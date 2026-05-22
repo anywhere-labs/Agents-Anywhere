@@ -4,13 +4,13 @@
 
 Agents Anywhere 是一款面向 Claude Code、Codex、Cursor、OpenCode、Gemini CLI 的移动端和 Web 端遥控器——无论你的 Agent 跑在笔记本、云端沙箱，还是远程服务器上。一个控制台，管全部。
 
-[申请内测](https://klaw-landing-phi.vercel.app) · [文档（敬请期待）](#)
+[申请内测](https://www.agents-anywhere.com) · [文档（敬请期待）](#)
 
 [English](README.md) · **简体中文**
 
 ---
 
-> **当前状态：内测中。** 这个仓库目前只放 README 和路线图，等我们把客户端和 CLI 打磨好之后，源码会陆续推到这里。想试用的话，去[候补名单](https://klaw-landing-phi.vercel.app)留个邮箱。
+> **当前状态：内测中。** 这个仓库目前只放 README 和路线图，等我们把客户端和 CLI 打磨好之后，源码会陆续推到这里。想试用的话，去[候补名单](https://www.agents-anywhere.com)留个邮箱。
 
 ## Agents Anywhere 是什么？
 
@@ -114,7 +114,7 @@ aw agent add claude
 ## 常见问题
 
 **什么时候能进？**
-我们正在私有内测，每周大概放 200 名开发者进来。到[候补名单](https://klaw-landing-phi.vercel.app)留个邮箱，名额轮到你的时候我们发邀请。
+我们正在私有内测，每周大概放 200 名开发者进来。到[候补名单](https://www.agents-anywhere.com)留个邮箱，名额轮到你的时候我们发邀请。
 
 **我的代码到底跑在哪？**
 跑在你指定的那台机器上——你的笔记本、云端沙箱、远程服务器都行。Agents Anywhere 是遥控器，不是运行环境。我们不会在我们的服务器上跑你的代码。
@@ -148,7 +148,7 @@ aw agent add claude
 
 客户端、CLI、适配器 Runtime 的源码会随着内测开放陆续推到这里。在那之前，最有用的几件事是：
 
-1. 去[候补名单](https://klaw-landing-phi.vercel.app)留下邮箱，等邀请试用内测。
+1. 去[候补名单](https://www.agents-anywhere.com)留下邮箱，等邀请试用内测。
 2. 在这里提 Issue——即使源码还没开放，我们每条都看，会用来决定优先级。
 
 `CONTRIBUTING.md` 会跟源码一起放出来。
@@ -159,4 +159,4 @@ MIT。源码开放后请见 [LICENSE](LICENSE)。
 
 ---
 
-**[加入候补 →](https://klaw-landing-phi.vercel.app)** · 一款给 AI 编码 Agent 用的遥控器。开源。每块屏幕都有原生客户端。
+**[加入候补 →](https://www.agents-anywhere.com)** · 一款给 AI 编码 Agent 用的遥控器。开源。每块屏幕都有原生客户端。

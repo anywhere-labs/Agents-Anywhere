@@ -6,11 +6,11 @@
 
 Agents Anywhere is a mobile and web remote for Claude Code, Codex, Cursor, OpenCode, and Gemini CLI — wherever they run. Your laptop, a cloud sandbox, a remote server. One control plane.
 
-[![Status](https://img.shields.io/badge/status-private%20beta-f5a524)](https://klaw-landing-phi.vercel.app)
+[![Status](https://img.shields.io/badge/status-private%20beta-f5a524)](https://www.agents-anywhere.com)
 [![License](https://img.shields.io/badge/license-MIT-blue)](#license)
 [![Platforms](https://img.shields.io/badge/platforms-iOS%20%C2%B7%20Android%20%C2%B7%20macOS%20%C2%B7%20Windows%20%C2%B7%20Web-lightgrey)](#supported-devices)
 
-[Request access](https://klaw-landing-phi.vercel.app) · [Docs (coming soon)](#)
+[Request access](https://www.agents-anywhere.com) · [Docs (coming soon)](#)
 
 **English** · [简体中文](README.zh-CN.md)
 
@@ -18,7 +18,7 @@ Agents Anywhere is a mobile and web remote for Claude Code, Codex, Cursor, OpenC
 
 ---
 
-> **Status: private beta.** This repo currently hosts the README and roadmap while we finish hardening the client and CLI. Source will land here as we open it up. Drop your email on [our waitlist](https://klaw-landing-phi.vercel.app) to get an invite.
+> **Status: private beta.** This repo currently hosts the README and roadmap while we finish hardening the client and CLI. Source will land here as we open it up. Drop your email on [our waitlist](https://www.agents-anywhere.com) to get an invite.
 
 ## What is Agents Anywhere?
 
@@ -137,7 +137,7 @@ That's it. Open the Agents Anywhere app on your phone — the agent is already i
 ## FAQ
 
 **When can I get in?**
-We're in private beta and letting in about 200 developers a week as we tune the experience. Drop your email on [our waitlist](https://klaw-landing-phi.vercel.app) and we'll send an invite as your slot opens.
+We're in private beta and letting in about 200 developers a week as we tune the experience. Drop your email on [our waitlist](https://www.agents-anywhere.com) and we'll send an invite as your slot opens.
 
 **Where does my code actually run?**
 On whatever machine you point Agents Anywhere at — your laptop, a cloud sandbox, a remote server. We're the remote, not the host. We never execute your code on our servers.
@@ -171,7 +171,7 @@ Yes. The relay is part of what we're opening up. If you'd rather not route traff
 
 The source for the client, CLI, and adapter runtime will land in this repo as we open the beta. Until then, the most useful thing you can do is:
 
-1. Join the [waitlist](https://klaw-landing-phi.vercel.app) and try the beta.
+1. Join the [waitlist](https://www.agents-anywhere.com) and try the beta.
 2. File issues here — even pre-source, we read every one and use them to prioritize.
 
 A `CONTRIBUTING.md` will arrive with the source drop.
@@ -184,6 +184,6 @@ MIT. See [LICENSE](LICENSE) once published.
 
 <div align="center">
 
-**[Join the waitlist →](https://klaw-landing-phi.vercel.app)** · A remote for AI coding agents. Open source. Native on every screen.
+**[Join the waitlist →](https://www.agents-anywhere.com)** · A remote for AI coding agents. Open source. Native on every screen.
 
 </div>
