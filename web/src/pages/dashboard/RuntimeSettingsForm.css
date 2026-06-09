@@ -1,0 +1,165 @@
+.kl-runtime-settings-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.kl-runtime-settings-label {
+  font-size: var(--fs-sm);
+  color: var(--text-faint);
+}
+
+.kl-runtime-settings-segmented {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  overflow: hidden;
+  width: fit-content;
+}
+
+.kl-runtime-settings-segmented button {
+  appearance: none;
+  border: 0;
+  border-right: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-mut);
+  padding: 4px 10px;
+  font-size: var(--fs-ui);
+  cursor: pointer;
+}
+
+.kl-runtime-settings-segmented button:last-child {
+  border-right: 0;
+}
+
+.kl-runtime-settings-segmented button.on {
+  background: var(--bg-elev);
+  color: var(--text);
+}
+
+.kl-runtime-settings-segmented button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.kl-runtime-settings-selectbtn,
+.kl-runtime-settings-input {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--text);
+  font-size: var(--fs-base);
+  padding: 0 10px;
+  outline: none;
+}
+
+.kl-runtime-settings-selectbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.kl-runtime-settings-selectbtn span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kl-runtime-settings-selectbtn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--border-md);
+}
+
+.kl-runtime-settings-selectbtn:disabled,
+.kl-runtime-settings-input:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.kl-runtime-settings-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  color: var(--text-mut);
+  font-size: var(--fs-base);
+}
+
+.kl-runtime-settings-check input {
+  margin: 0;
+}
+
+.kl-runtime-settings-empty {
+  grid-column: 1 / -1;
+  color: var(--text-faint);
+  font-size: var(--fs-ui);
+}
+
+.kl-runtime-settings-menu {
+  position: fixed;
+  z-index: 600;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-md);
+  border-radius: 9px;
+  box-shadow: var(--shadow-pop);
+  padding: 4px;
+  max-height: min(320px, calc(100vh - 24px));
+  overflow: auto;
+  animation: klaw-fade-up 0.12s ease;
+}
+
+.kl-runtime-settings-menu button {
+  appearance: none;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text-mid);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: space-between;
+  padding: 8px 9px;
+  border-radius: 6px;
+  font-size: var(--fs-base);
+  cursor: pointer;
+  text-align: left;
+}
+
+.kl-runtime-settings-menu-copy {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.kl-runtime-settings-menu-desc {
+  color: var(--text-faint);
+  font-size: var(--fs-sm);
+  line-height: 1.3;
+}
+
+.kl-runtime-settings-menu button:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.kl-runtime-settings-menu button svg {
+  opacity: 0;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.kl-runtime-settings-menu button.on {
+  color: var(--text);
+}
+
+.kl-runtime-settings-menu button.on svg {
+  opacity: 1;
+}

@@ -1,0 +1,22 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+
+# Local Claude tooling (launch.json, transcripts, worktree metadata)
+.claude/
+agent-server/*-review.html
+
+# Local runtime state
+*.sqlite
+*.sqlite3
+*.db
+agent-server/agent-server.files/
+
+# Generated reference-doc caches live under docs/reference locally.
+docs/reference/*
+!docs/reference/README.md
+
+_reference/*

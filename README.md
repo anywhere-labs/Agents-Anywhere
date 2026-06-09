@@ -1,189 +1,170 @@
-<div align="center">
-
 # Agents Anywhere
 
-**Control any coding agent on any device — from your phone.**
+Agents Anywhere is a web workspace for running local agent runtimes from a
+browser. The backend is the HTTP source of truth, the connector runs on a user
+machine or remote host, and the frontend provides auth, device pairing, session
+management, runtime settings, filesystem access, terminal access, approvals,
+and timeline inspection.
 
-Agents Anywhere is a mobile and web remote for Claude Code, Codex, Cursor, OpenCode, and Gemini CLI — wherever they run. Your laptop, a cloud sandbox, a remote server. One control plane.
+## Packages
 
-[![Status](https://img.shields.io/badge/status-private%20beta-f5a524)](https://www.agents-anywhere.com)
-[![License](https://img.shields.io/badge/license-MIT-blue)](#license)
-[![Platforms](https://img.shields.io/badge/platforms-iOS%20%C2%B7%20Android%20%C2%B7%20macOS%20%C2%B7%20Windows%20%C2%B7%20Web-lightgrey)](#supported-devices)
-
-[Request access](https://www.agents-anywhere.com) · [Docs (coming soon)](#)
-
-**English** · [简体中文](README.zh-CN.md)
-
-</div>
-
----
-
-> **Status: private beta.** This repo currently hosts the README and roadmap while we finish hardening the client and CLI. Source will land here as we open it up. Drop your email on [our waitlist](https://www.agents-anywhere.com) to get an invite.
-
-## What is Agents Anywhere?
-
-You opened Claude Code in a terminal. You started something. Then you closed your laptop, walked to lunch, and lost the thread.
-
-Agents Anywhere is the remote. Your agents keep running on whatever machine they live on — your MacBook, a cloud sandbox, a devbox on us-west-1 — and we give you a real client for them on every screen you own. Approve a diff from your phone. Read the live tool-call feed on the train. Pop a terminal from the browser tab on the kitchen iPad.
-
-**Agents Anywhere is the remote, not the host.** Your code never runs on our servers. You still pay your own model provider (Anthropic, OpenAI, Google). We just route the keystrokes.
-
-## Demo
-
-**Desktop · Multi-panel session view**
-
-![Multi-panel session view](docs/screenshots/hero.png)
-
-> Chat, file tree, in-conversation diff, and a live terminal panel — all in one window.
-
-**Desktop · Unified sessions sidebar**
-
-![Unified sessions sidebar](docs/screenshots/control-plane.png)
-
-> Every session across every machine in the same sidebar. Pinned at top, recents below.
-
-**Mobile · Sessions & Devices**
-
-![Mobile — Sessions and Devices](docs/screenshots/mobile.png)
-
-> Same control plane on iPhone. Sessions on one tab, paired devices on the other.
-
-## Why
-
-The agent boom turned every developer into someone tailing a long-running process. Coding agents take real time — minutes, sometimes hours. They also block on permission prompts that you, the human, have to clear before they can continue.
-
-Today that flow is:
-- Be at your laptop, or
-- Lose the session.
-
-That's a bad bargain. Agents Anywhere fixes it.
-
-## Architecture
-
-Three pieces:
-
-```
-┌──────────────┐         ┌──────────────┐         ┌────────────────────┐
-│   Client     │ ──────▶ │    Relay     │ ──────▶ │     Daemon         │
-│  iOS · Web   │         │              │         │  + your coding     │
-│  macOS · …   │ ◀────── │              │ ◀────── │   agent on YOUR    │
-└──────────────┘         └──────────────┘         │     machine        │
-                                                  └────────────────────┘
+```text
+server/      FastAPI backend, SQLite/PostgreSQL storage, connector RPC broker
+connector/   Local daemon and CLI for Codex / Claude runtime integration
+web/         React + Vite frontend
+docker/      Development, production, and PostgreSQL compose deployment files
+docs/        Shared reference notes only
 ```
 
-- **Client** — the app you read sessions and approve from. iOS, Android, macOS, Windows, web.
-- **Relay** — the small hosted service that routes messages between client and daemon. Self-hostable.
-- **Daemon** — runs next to your agents on whatever machine they live on. Reads what they're doing, sends prompts back in.
+Package-specific docs live with the package:
 
-## Supported agents
+- [Server](server/README.md)
+- [Connector](connector/README.md)
+- [Web](web/README.md)
+- [Docker](docker/README.md)
 
-Agents Anywhere runs alongside your existing agent, whichever one you reach for:
+## Quickstart
 
-| Agent          | Vendor      |
-| -------------- | ----------- |
-| Claude Code    | Anthropic   |
-| Codex          | OpenAI      |
-| Cursor         | Anysphere   |
-| OpenCode       | SST         |
-| Gemini CLI     | Google      |
+Use Docker when you want the fastest full-app startup from a clean checkout.
 
-The agent runtime is open source — adding your own adapter is straightforward.
-
-## Features
-
-- **One control plane.** Every session, every agent, every device — pinned, searchable, branch-aware — in the same sidebar.
-- **Push you actually want.** Notifications fire only when the agent is blocked on a permission, error, or completion. Not chatter.
-- **Approve from anywhere.** Read the diff on your phone. Hit approve. Or write back to course-correct. We hold the line until you're ready.
-- **Live tool-call feed.** Every `READ`, `EDIT`, `BASH`, `GREP` appears in the conversation as it happens.
-- **Terminal in the side panel.** Pop a real shell on the agent's machine. Run commands without leaving the chat.
-- **File tree, one tap away.** Browse the working directory. Open a file. Scroll through diffs.
-- **Branch-aware sessions.** Sessions remember the branch they were started on. Pick the same branch up later.
-- **Search across everything.** ⌘K to find any session by title, file, branch, or device.
-- **Pin and archive.** Keep what matters at the top. Archive the rest with one keystroke.
-- **Remote, no SSH.** Run the CLI once on any box and it's reachable. No keys, no port-forwarding gymnastics.
-
-## Supported devices
-
-| Platform | Status            |
-| -------- | ----------------- |
-| iOS      | Native, TestFlight |
-| Android  | Native, internal track |
-| macOS    | Native            |
-| Windows  | Native            |
-| Web      | Any modern browser |
-
-One account. All of them.
-
-## Getting started
+Development container: builds the backend + web dev image, starts FastAPI
+inside the container, starts Vite with its proxy pointed at that backend, and
+publishes only the Vite port.
 
 ```bash
-# 1. Install
-npm install agents-anywhere
-
-# 2. Pair this machine with your account
-aw pair
-
-# 3. Add an agent
-aw agent add claude
+docker build -f docker/Dockerfile.dev -t agents-anywhere:dev . \
+  && docker run --rm -it \
+    --name agents-anywhere-dev \
+    -p 5173:5173 \
+    -v agents-anywhere-dev-data:/data \
+    agents-anywhere:dev
 ```
 
-That's it. Open the Agents Anywhere app on your phone — the agent is already in your sidebar.
+Open `http://127.0.0.1:5173`.
 
-### Two ways to pair
+Production-style container: builds the frontend, serves the built assets from
+FastAPI, persists runtime data under `/data`, and publishes only the backend
+port.
 
-- **From the web.** Open the Agents Anywhere web app and sign in. Click *Add device* — it generates a command for you. Copy it and run it on the machine you want to bind: `aw pair tenh-ak35-44qj` (example code).
-- **From the daemon.** Run `aw pair` with no arguments. A QR code prints in the terminal — scan it with the mobile app to bind the device.
+```bash
+docker build -f docker/Dockerfile -t agents-anywhere:latest . \
+  && docker run --rm -it \
+    --name agents-anywhere \
+    -p 8000:8000 \
+    -v agents-anywhere-data:/data \
+    -e AGENT_SERVER_SECRET=change-me-before-production \
+    agents-anywhere:latest
+```
 
-## FAQ
+Open `http://127.0.0.1:8000`.
 
-**When can I get in?**
-We're in private beta and letting in about 200 developers a week as we tune the experience. Drop your email on [our waitlist](https://www.agents-anywhere.com) and we'll send an invite as your slot opens.
+PostgreSQL-backed production-style compose:
 
-**Where does my code actually run?**
-On whatever machine you point Agents Anywhere at — your laptop, a cloud sandbox, a remote server. We're the remote, not the host. We never execute your code on our servers.
+```bash
+POSTGRES_PASSWORD=change-me \
+AGENT_SERVER_SECRET=change-me-too \
+docker compose -f docker/docker-compose.postgres.yml up --build
+```
 
-**Do I need to install anything on my dev box?**
-Yes — one small CLI runs alongside your agents on whichever machine they live on. One command to install, one command to pair each new device.
+The first startup on an empty database logs a bootstrap token. Use it in the
+web UI to create the first admin user.
 
-**Is it free?**
-The client and CLI are MIT-licensed and free during the beta. You still pay your own model provider — we're the remote, not the brain.
+## Current Features
 
-**Which agents does it work with?**
-At launch: Claude Code, Codex, Cursor, OpenCode, and Gemini CLI. New agents land as official adapters; the agent runtime is open source so you can also write your own.
+- First-run bootstrap, login, registration control, user management, and avatar
+  upload.
+- Connector creation, browser-based pairing, token exchange, heartbeat,
+  reconnect, and online/offline status.
+- Runtime discovery and per-device agent settings for Codex and Claude.
+- Session create/list/update, archive/pin/read state, takeover, messages,
+  interrupt, sync, approvals, and timeline polling/SSE.
+- Connector RPC for local filesystem browsing, file read/write, uploads,
+  downloads, one-shot shell commands, shell tasks, and interactive terminals.
+- Web dashboard for sessions, devices, workspaces, runtime settings, team/admin
+  management, and session detail.
 
-**Will there be a self-hosted relay?**
-Yes. The relay is part of what we're opening up. If you'd rather not route traffic through our hosted relay, you'll be able to run your own.
+## Local Development
 
-## Roadmap
+Start the backend:
 
-- [x] iOS client (TestFlight)
-- [x] Web client
-- [x] Adapters for Claude Code, Codex, Cursor, OpenCode, Gemini CLI
-- [x] Live tool-call feed + push notifications
-- [ ] Public beta
-- [ ] Native macOS + Windows desktop clients
-- [ ] Android stable channel
-- [ ] Self-hosted relay
-- [ ] Adapter SDK + docs for third-party agents
-- [ ] Plugin marketplace
+```bash
+cd server
+uv sync
+AGENT_SERVER_DB=agent-server.sqlite3 \
+  uv run uvicorn agent_server.app:create_app --factory --host 127.0.0.1 --port 8000
+```
 
-## Contributing
+Start the web app in another shell:
 
-The source for the client, CLI, and adapter runtime will land in this repo as we open the beta. Until then, the most useful thing you can do is:
+```bash
+cd web
+yarn install
+yarn dev
+```
 
-1. Join the [waitlist](https://www.agents-anywhere.com) and try the beta.
-2. File issues here — even pre-source, we read every one and use them to prioritize.
+The Vite dev server proxies API and WebSocket routes to
+`http://127.0.0.1:8000` by default. Override the backend target when needed:
 
-A `CONTRIBUTING.md` will arrive with the source drop.
+```bash
+cd web
+AGENTS_ANYWHERE_API=http://127.0.0.1:8000 yarn dev
+```
 
-## License
+Create or pair a connector from the UI, then start the local connector:
 
-MIT. See [LICENSE](LICENSE) once published.
+```bash
+cd connector
+uv sync
+uv run agent-connector start \
+  --server-url http://127.0.0.1:8000 \
+  --connector-id conn_xxx \
+  --connector-token cxt_xxx
+```
 
----
+For a saved connector config:
 
-<div align="center">
+```bash
+cd connector
+uv run agent-connector configure \
+  --server-url http://127.0.0.1:8000 \
+  --connector-id conn_xxx \
+  --connector-token cxt_xxx
 
-**[Join the waitlist →](https://www.agents-anywhere.com)** · A remote for AI coding agents. Open source. Native on every screen.
+uv run agent-connector start
+```
 
-</div>
+If `codex` or `claude` is not on `PATH`, configure the runtime path from the UI
+or set `CODEX_BIN=/path/to/codex` / `CLAUDE_BIN=/path/to/claude` before
+starting the connector.
+
+## Verify
+
+```bash
+cd server
+uv run ruff check . --exclude .venv
+uv run pytest -q
+
+cd ../connector
+uv run ruff check connector tests
+uv run pytest -q
+
+cd ../web
+yarn build
+```
+
+## Deployment
+
+Docker deployment files are under [docker/](docker/README.md). The production
+image builds the frontend, serves it from the FastAPI backend, and persists
+database/files under `/data`. The compose file runs PostgreSQL for the server
+database and a separate persistent volume for uploaded files / attachments.
+
+## Notes
+
+- Local development servers are not started automatically by default.
+- Runtime control happens through the connector, so filesystem, shell, and
+  terminal features run with the connector machine's local permissions.
+- The pairing command shown in the frontend uses the current browser origin as
+  the server URL.
+- Local databases, virtual environments, build output, reference caches, and
+  runtime file stores are ignored by Git.

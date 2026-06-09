@@ -1,0 +1,41 @@
+FROM node:22-bookworm-slim AS node
+
+FROM python:3.12-slim
+
+ARG APT_MIRROR=
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_PROJECT_ENVIRONMENT=/opt/venv \
+    PYTHONPATH=/app/server \
+    AGENT_SERVER_DB=/data/agent-server.sqlite3 \
+    AGENTS_ANYWHERE_API=http://127.0.0.1:8000
+
+WORKDIR /app
+
+RUN if [ -n "$APT_MIRROR" ]; then \
+        sed -i "s|http://deb.debian.org/debian|$APT_MIRROR|g; s|http://deb.debian.org/debian-security|$APT_MIRROR-security|g" /etc/apt/sources.list.d/debian.sources; \
+    fi \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates tini \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir uv
+
+COPY --from=node /usr/local /usr/local
+COPY --from=node /opt/yarn-v1.22.22 /opt/yarn-v1.22.22
+
+COPY server/pyproject.toml server/uv.lock ./server/
+RUN cd server && uv sync --frozen --no-install-project
+
+COPY web/package.json web/yarn.lock ./web/
+RUN corepack enable && cd web && yarn install --immutable
+
+COPY server ./server
+COPY web ./web
+
+RUN mkdir -p /data
+VOLUME ["/data"]
+
+EXPOSE 5173
+ENTRYPOINT ["tini", "--"]
+CMD ["sh", "-c", "cd /app/server && uv run --no-sync uvicorn agent_server.app:create_app --factory --host 127.0.0.1 --port 8000 & cd /app/web && yarn dev --host 0.0.0.0"]
