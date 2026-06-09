@@ -1,0 +1,39 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: agents_anywhere
+      POSTGRES_USER: agents_anywhere
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agents_anywhere_dev_password}
+    volumes:
+      - agents-anywhere-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agents_anywhere -d agents_anywhere"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  server:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: agents-anywhere:postgres
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      AGENT_SERVER_DB_BACKEND: postgres
+      AGENT_SERVER_DB_URL: postgresql+asyncpg://agents_anywhere:${POSTGRES_PASSWORD:-agents_anywhere_dev_password}@postgres:5432/agents_anywhere
+      AGENT_SERVER_FILES_BACKEND: local
+      AGENT_SERVER_FILES_LOCAL_ROOT: /data/agent-server.files
+      AGENT_SERVER_SECRET: ${AGENT_SERVER_SECRET:-change-me-before-production}
+    volumes:
+      - agents-anywhere-files:/data
+    ports:
+      - "8000:8000"
+
+volumes:
+  agents-anywhere-pg:
+  agents-anywhere-files:

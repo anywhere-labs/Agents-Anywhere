@@ -1,0 +1,581 @@
+/* Auth surface — ported 1:1 from login.jsx LOGIN_STYLE. */
+
+.aa-auth {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  overflow: auto;
+  animation: klaw-fade-up 0.35s ease both;
+}
+
+.aa-auth-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 24px;
+  color: var(--text-mut);
+  font-size: var(--fs-ui);
+  flex-shrink: 0;
+}
+
+.aa-auth-top .left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+}
+
+.aa-auth-top .right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.aa-auth-top .right a {
+  color: var(--text-mut);
+  text-decoration: none;
+  font-size: var(--fs-sm);
+}
+
+.aa-auth-top .right a:hover {
+  color: var(--text);
+}
+
+.aa-auth-body {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 36px 24px 64px;
+  min-height: 520px;
+}
+
+.aa-card {
+  width: 400px;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+/* hero */
+.aa-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  text-align: center;
+}
+
+.aa-hero .mark-box {
+  width: 46px;
+  height: 46px;
+  border-radius: 11px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.aa-hero .mark-box::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: 12px;
+  background: radial-gradient(60% 60% at 50% 40%, var(--accent-soft), transparent 70%);
+  pointer-events: none;
+  z-index: -1;
+  filter: blur(8px);
+}
+
+.aa-hero h1 {
+  margin: 0;
+  font-size: var(--fs-xl);
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--text);
+}
+
+.aa-hero p {
+  margin: 0;
+  color: var(--text-mut);
+  font-size: var(--fs-ui);
+  max-width: 34ch;
+  text-wrap: pretty;
+}
+
+/* form */
+.aa-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.aa-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.aa-field .row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.aa-field label {
+  font-size: var(--fs-sm);
+  color: var(--text-mid);
+  font-weight: 500;
+}
+
+.aa-field .hint {
+  font-size: var(--fs-xs);
+  color: var(--text-mut);
+  font-family: var(--mono);
+}
+
+.aa-input {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.aa-input input {
+  flex: 1;
+  width: 100%;
+  height: 40px;
+  padding: 0 14px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-md);
+  border-radius: var(--r);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-base);
+  outline: none;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.aa-input.has-icon input {
+  padding-left: 36px;
+}
+
+.aa-input input.mono {
+  font-family: var(--mono);
+  font-size: var(--fs-ui);
+  letter-spacing: 0;
+}
+
+.aa-input input:hover {
+  border-color: var(--border-lg);
+}
+
+.aa-input input:focus {
+  border-color: var(--accent);
+  background: var(--bg-panel);
+}
+
+.aa-input input::placeholder {
+  color: var(--text-faint);
+}
+
+.aa-input .leading {
+  position: absolute;
+  left: 11px;
+  width: 18px;
+  height: 18px;
+  color: var(--text-mut);
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.aa-input .eye {
+  position: absolute;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  background: transparent;
+  border-radius: 6px;
+  color: var(--text-mut);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.aa-input .eye:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+/* password strength bar */
+.aa-strength {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.aa-strength .bars {
+  display: flex;
+  gap: 3px;
+}
+
+.aa-strength .bars i {
+  flex: 1;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--border-md);
+  transition: background 0.15s;
+}
+
+.aa-strength.s1 .bars i:nth-child(-n + 1) {
+  background: oklch(0.72 0.16 25);
+}
+
+.aa-strength.s2 .bars i:nth-child(-n + 2) {
+  background: oklch(0.78 0.14 60);
+}
+
+.aa-strength.s3 .bars i:nth-child(-n + 3) {
+  background: oklch(0.78 0.14 95);
+}
+
+.aa-strength.s4 .bars i {
+  background: oklch(0.72 0.14 152);
+}
+
+.aa-strength .label {
+  font-size: var(--fs-xs);
+  color: var(--text-mut);
+  font-family: var(--mono);
+}
+
+/* submit */
+.aa-submit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 40px;
+  background: var(--text);
+  color: var(--bg);
+  border: 0;
+  border-radius: var(--r);
+  font: inherit;
+  font-size: var(--fs-ui);
+  font-weight: 600;
+  cursor: pointer;
+  letter-spacing: 0;
+  transition: opacity 0.12s, transform 0.08s;
+}
+
+.aa-submit:hover {
+  opacity: 0.9;
+}
+
+.aa-submit:active {
+  transform: translateY(0.5px);
+}
+
+.aa-submit.loading {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+.aa-submit:disabled {
+  cursor: not-allowed;
+}
+
+.aa-submit .spin {
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: klaw-spin 0.6s linear infinite;
+}
+
+.aa-submit .kbd {
+  opacity: 0.5;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+}
+
+.aa-oauth-button,
+.aa-oauth-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 40px;
+  border: 1px solid var(--border-md);
+  border-radius: var(--r);
+  background: var(--bg-panel);
+  color: var(--text-mid);
+  font: inherit;
+  font-size: var(--fs-ui);
+  cursor: pointer;
+}
+
+.aa-oauth-button:hover,
+.aa-oauth-secondary:hover {
+  border-color: var(--border-lg);
+  color: var(--text);
+}
+
+.aa-oauth-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-mut);
+  font-size: var(--fs-sm);
+}
+
+.aa-oauth-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.aa-oauth-text-button {
+  border: 0;
+  background: transparent;
+  color: var(--text-mut);
+  font: inherit;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+
+.aa-oauth-text-button:hover {
+  color: var(--text);
+}
+
+.aa-oauth-user {
+  color: var(--text);
+  font-family: var(--mono);
+  font-weight: 500;
+}
+
+/* alerts */
+.aa-error {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+  background: oklch(0.72 0.16 25 / 0.10);
+  border: 1px solid oklch(0.72 0.16 25 / 0.40);
+  border-radius: var(--r);
+  color: oklch(0.78 0.14 25);
+  font-size: var(--fs-sm);
+}
+
+.aa-error .ico {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+/* bootstrap-only: hint box that explains where the token comes from. */
+.aa-setup-hint {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: oklch(0.65 0.15 250 / 0.07);
+  border: 1px solid oklch(0.65 0.15 250 / 0.3);
+  border-radius: var(--r);
+  color: var(--text-mut);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+
+.aa-setup-hint .lead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: var(--fs-sm);
+}
+
+.aa-setup-hint .lead .ico {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.aa-setup-hint code {
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  background: var(--surface-2, rgba(255, 255, 255, 0.05));
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: var(--text);
+}
+
+.aa-setup-hint .countdown {
+  font-family: var(--mono);
+  color: var(--text-mut);
+  font-size: var(--fs-xs);
+}
+
+.aa-setup-hint .countdown.expired {
+  color: oklch(0.78 0.14 25);
+}
+
+/* foot — switch between login/register or "registration closed" hint */
+.aa-foot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-sm);
+  color: var(--text-mut);
+  text-align: center;
+  text-wrap: pretty;
+}
+
+.aa-foot a,
+.aa-foot button.link {
+  color: var(--text);
+  text-decoration: none;
+  border-bottom: 1px solid var(--border-md);
+  background: transparent;
+  border-top: 0;
+  border-left: 0;
+  border-right: 0;
+  border-radius: 0;
+  font: inherit;
+  font-size: inherit;
+  cursor: pointer;
+  padding: 0 0 1px;
+}
+
+.aa-foot a:hover,
+.aa-foot button.link:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.aa-foot .closed {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-mut);
+  font-size: var(--fs-xs);
+}
+
+.aa-foot .closed .dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+/* bottom bar — instance info */
+.aa-auth-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+  font-family: var(--mono);
+  flex-shrink: 0;
+}
+
+.aa-auth-bottom .left,
+.aa-auth-bottom .right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.aa-server-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-mut);
+}
+
+.aa-server-chip .pulse {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: oklch(0.72 0.14 152);
+  box-shadow: 0 0 6px oklch(0.72 0.14 152 / 0.6);
+  animation: klaw-pulse 2.2s ease-in-out infinite;
+}
+
+.aa-server-chip code {
+  color: var(--text-mid);
+  font-family: inherit;
+}
+
+.aa-auth-bottom .right span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* "Agents Anywhere" wordmark — handwritten brand font (Caveat). */
+.aa-word {
+  display: inline-block;
+  font-family: var(--brand);
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1;
+  font-size: var(--fs-xl);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.aa-word.lg {
+  font-size: var(--fs-2xl);
+}
+
+.aa-word.xl {
+  font-size: var(--fs-3xl);
+}
+
+/* full-screen loading shell (waiting on /auth/config) */
+.aa-boot {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  color: var(--text-mut);
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  letter-spacing: 0;
+  text-transform: uppercase;
+  gap: 10px;
+}
+
+.aa-boot .spin {
+  width: 12px;
+  height: 12px;
+  border: 1.4px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: klaw-spin 0.6s linear infinite;
+}

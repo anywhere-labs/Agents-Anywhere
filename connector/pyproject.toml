@@ -1,0 +1,39 @@
+[project]
+name = "agent-connector"
+version = "0.1.0"
+description = "Local runtime connector for Agents Anywhere"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "claude-agent-sdk",
+    "httpx>=0.28.1",
+    "loguru>=0.7.3",
+    "pexpect>=4.9.0; sys_platform != 'win32'",
+    "ptyprocess>=0.7.0; sys_platform != 'win32'",
+    "pydantic>=2.0.0",
+    "pyte>=0.8.2",
+    "pywinpty>=2.0.13; sys_platform == 'win32'",
+    "websockets>=16.0",
+]
+
+[project.scripts]
+agent-connector = "connector.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "ruff>=0.15.13",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
+[tool.hatch.build.targets.wheel]
+packages = ["connector"]
+
+[tool.uv]
+package = true

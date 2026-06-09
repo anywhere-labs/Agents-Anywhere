@@ -1,0 +1,24 @@
+.DS_Store
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.pyc
+*.sqlite3
+*.db
+dist/
+build/
+node_modules/
+web/.yarn/unplugged/
+web/dist/
+web/node_modules/
+*.bin
+agent-server.*
+
+# Generated review dashboards (see scripts/)
+auth-review.html
+service-review.html
+file-upload-review.html
+
+# Runtime-created local file storage (uploaded attachment blobs)
+*.files/

@@ -1,0 +1,1722 @@
+/* ─── Session detail view — ported from the Klaw design ─────────────────── */
+
+.kl-main-detail {
+  --kl-chat-column: 920px;
+  --kl-chat-gutter: clamp(24px, 5vw, 56px);
+  --kl-chat-content-column: calc(var(--kl-chat-column) - (var(--kl-chat-gutter) * 2));
+}
+
+/* Outer row container: chat column (.kl-main-detail) on the left, optional
+   right-side runtime panel (Files / Terminal / File preview). */
+.kl-sd-row {
+  flex: 1;
+  display: flex;
+  flex-direction: row;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.kl-main-detail {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.kl-main-hd {
+  display: flex;
+  align-items: center;
+  height: 46px;
+  padding: 0 12px 0 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  gap: 10px;
+}
+/* When the dashboard sidebar is collapsed an absolutely-positioned
+   "expand" button sits in the top-left of .kl-main. Without this padding
+   the session title slides under it. */
+.kl-main-detail.sidebar-collapsed .kl-main-hd {
+  padding-left: 52px;
+}
+
+.kl-main-title-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: min(62%, 720px);
+  flex-shrink: 1;
+}
+
+.kl-claude-terminal-surface {
+  flex: 1;
+  min-height: 0;
+  padding: 12px;
+  display: flex;
+}
+
+.kl-claude-terminal-surface > .kl-term {
+  flex: 1;
+  min-height: 0;
+}
+
+.kl-claude-terminal-surface .kl-term-host {
+  border-radius: 0 0 12px 12px;
+}
+.kl-main-hd .title {
+  font-size: var(--fs-base);
+  font-weight: 500;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: 0;
+  flex-shrink: 1;
+  min-width: 0;
+  /* Tighter cap — too-long titles used to push the chips/actions off the
+     row. Now ellipsis kicks in earlier. */
+  max-width: 38ch;
+}
+.kl-main-title-wrap .title {
+  max-width: none;
+}
+.kl-main-hd .chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.kl-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 5px;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  color: var(--text-mid);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.kl-chip .dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+}
+.kl-chip.device {
+  cursor: default;
+}
+.kl-chip.workspace svg {
+  color: var(--text-mut);
+}
+
+.kl-session-runtime {
+  position: relative;
+  flex-shrink: 0;
+}
+.kl-session-runtime-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  max-width: 220px;
+  padding: 0 8px;
+  border-radius: 5px;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  color: var(--text-mid);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kl-session-runtime-chip .dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.kl-session-runtime-pop {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 80;
+  width: min(420px, calc(100vw - 40px));
+  padding: 12px;
+  border: 1px solid var(--border-md);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-pop);
+  color: var(--text-mid);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-3px);
+  transition: opacity 0.12s, transform 0.12s;
+}
+.kl-session-runtime:hover .kl-session-runtime-pop,
+.kl-session-runtime:focus-within .kl-session-runtime-pop {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+.kl-session-runtime-pop-title {
+  margin-bottom: 10px;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+.kl-session-runtime-grid {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 7px 10px;
+  font-size: var(--fs-xs);
+}
+.kl-session-runtime-grid span {
+  color: var(--text-mut);
+}
+.kl-session-runtime-grid strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-mid);
+  font-weight: 500;
+}
+.kl-session-runtime-export {
+  margin-top: 12px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-md);
+  background: var(--bg-elev);
+  color: var(--text-mid);
+  font: inherit;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.kl-session-runtime-export:hover {
+  border-color: var(--border-lg);
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+/* Takeover toggle */
+.kl-takeover {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 8px 0 6px;
+  border-radius: 5px;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  color: var(--text-mut);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+  flex-shrink: 0;
+}
+.kl-takeover:hover:not(:disabled) {
+  border-color: var(--border-lg);
+  color: var(--text-mid);
+}
+.kl-takeover .track {
+  width: 22px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--border-md);
+  position: relative;
+  transition: background 0.15s;
+}
+.kl-takeover .track::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  transition: transform 0.15s, background 0.15s;
+}
+.kl-takeover.on {
+  color: var(--text);
+  border-color: color-mix(in oklch, var(--accent) 35%, transparent);
+  background: color-mix(in oklch, var(--accent) 8%, var(--bg-elev));
+}
+.kl-takeover.on .track {
+  background: var(--accent);
+}
+.kl-takeover.on .track::after {
+  transform: translateX(10px);
+  background: var(--accent-ink);
+}
+.kl-takeover:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.kl-comp-takeover {
+  height: 28px;
+  border-radius: 6px;
+  background: transparent;
+  border-color: transparent;
+  padding: 0 6px;
+}
+.kl-comp-takeover.on {
+  background: transparent;
+  border-color: transparent;
+}
+.kl-comp-takeover:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: transparent;
+}
+
+/* ─── Message list ──────────────────────────────────────────────────────── */
+.kl-msgs-shell {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+  display: flex;
+}
+.kl-msgs {
+  flex: 1;
+  overflow-x: hidden;
+  overflow-y: auto;
+  min-width: 0;
+  min-height: 0;
+  padding: 30px 0 28px;
+  scroll-padding-bottom: 80px;
+}
+.kl-scroll-bottom {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  z-index: 30;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 1px solid var(--border-md);
+  background: color-mix(in oklch, var(--bg-panel) 92%, var(--text) 4%);
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: var(--shadow-pop);
+  transition:
+    background 0.12s,
+    border-color 0.12s,
+    transform 0.12s;
+}
+.kl-scroll-bottom:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-lg);
+  transform: translateX(-50%) translateY(-1px);
+}
+.kl-msgs-inner {
+  max-width: var(--kl-chat-column);
+  margin: 0 auto;
+  padding: 0 var(--kl-chat-gutter);
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+  min-width: 0;
+}
+.kl-msgs-inner > * { min-width: 0; max-width: 100%; }
+.kl-msg.assistant .text table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: var(--fs-sm);
+  margin: 8px 0;
+}
+.kl-msg.assistant .text table th,
+.kl-msg.assistant .text table td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+  color: var(--text);
+}
+.kl-msg.assistant .text table th {
+  background: var(--bg-elev);
+  font-weight: 600;
+  border-bottom: 2px solid var(--border-md);
+}
+.kl-msg.assistant .text table tbody tr:nth-child(even) td {
+  background: var(--bg-hover);
+}
+.kl-msg.assistant .text img,
+.kl-msg.user .bubble img {
+  max-width: 100%;
+  height: auto;
+}
+
+.kl-msgs-empty {
+  text-align: center;
+  color: var(--text-faint);
+  font-size: var(--fs-sm);
+  font-family: var(--mono);
+  padding: 48px 0;
+}
+
+.kl-msgs-skel { display: flex; flex-direction: column; gap: 24px; padding-top: 14px; }
+.kl-msgs-skel-block { display: flex; flex-direction: column; gap: 8px; max-width: 80%; }
+.kl-msgs-skel-block.right { align-self: flex-end; align-items: flex-end; }
+.kl-msgs-skel-meta { height: 12px; width: 92px; }
+.kl-msgs-skel-line { height: 14px; }
+
+.kl-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.kl-msg.user {
+  align-items: flex-end;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  max-width: 100%;
+}
+.kl-msg.user .bubble {
+  align-self: flex-end;
+  min-width: 0;
+  max-width: min(74%, 720px);
+  padding: 13px 18px;
+  background: color-mix(in oklch, var(--bg-elev) 82%, var(--text) 8%);
+  border: 0;
+  border-radius: 18px;
+  font-size: var(--fs-base);
+  line-height: 1.55;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  letter-spacing: 0;
+  order: 1;
+}
+.kl-msg.user .meta {
+  align-self: flex-end;
+  font-family: var(--mono);
+  font-size: var(--fs-2xs);
+  color: var(--text-faint);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  order: 2;
+  margin-top: 2px;
+}
+.kl-msg.user .meta .who {
+  color: var(--accent);
+  font-family: var(--sans);
+  font-weight: 600;
+  font-size: var(--fs-sm);
+  letter-spacing: 0;
+}
+
+/* Optimistic states for user messages. Pending = local-only, before the
+ * backend/connector accepts the turn. Accepted = connector accepted the turn,
+ * but the durable timeline item hasn't arrived yet. */
+.kl-msg.user.pending {
+  opacity: 0.42;
+}
+.kl-msg.user.accepted .meta {
+  color: var(--text-faint);
+}
+.kl-msg.user.failed {
+  box-shadow: none;
+}
+.kl-msg.user.failed .bubble {
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--danger, #e5484d) 60%, transparent);
+}
+.kl-msg.user.failed .meta {
+  color: var(--danger, #e5484d);
+}
+
+.kl-msg.assistant {
+  align-items: flex-start;
+}
+.kl-msg.assistant.continuation {
+  margin-top: -12px;
+}
+.kl-msg.assistant .meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--fs-xs);
+  color: var(--text-mut);
+}
+.kl-msg.assistant .meta .who {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-mid);
+  font-weight: 500;
+}
+.kl-msg.assistant .meta .who .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.kl-msg.assistant .meta .time {
+  font-family: var(--mono);
+  font-size: var(--fs-2xs);
+  color: var(--text-faint);
+}
+.kl-msg.assistant .text {
+  font-size: var(--fs-base);
+  line-height: 1.58;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  align-self: stretch;
+  min-width: 0;
+  letter-spacing: 0;
+}
+.kl-msg.assistant .text p {
+  margin: 0 0 0.78em;
+}
+.kl-msg.assistant .text p:last-child {
+  margin-bottom: 0;
+}
+.kl-msg.assistant .text code {
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  padding: 0.5px 5px;
+  border-radius: 4px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+.kl-msg.assistant .text pre {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  padding: 10px 12px;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin: 6px 0;
+}
+.kl-msg.assistant .text pre code {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font-size: var(--fs-sm);
+}
+.kl-msg.assistant .text blockquote {
+  margin: 0.5em 0;
+  padding-left: 12px;
+  border-left: 2px solid var(--border-md);
+  color: var(--text-mid);
+}
+.kl-msg.assistant .text ul,
+.kl-msg.assistant .text ol {
+  margin: 4px 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: var(--fs-base);
+  line-height: 1.58;
+}
+.kl-msg.assistant .text li {
+  padding-left: 4px;
+}
+.kl-msg.assistant .text li::marker {
+  color: var(--text-faint);
+}
+
+/* ─── Tool / artifact / system items ────────────────────────────────────── */
+.kl-tool {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  color: var(--text-mut);
+  cursor: default;
+  background: transparent;
+}
+.kl-tool:hover {
+  background: var(--bg-hover);
+  color: var(--text-mid);
+}
+.kl-tool .badge {
+  color: var(--text-mid);
+  font-weight: 600;
+  font-size: var(--fs-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0;
+  min-width: 34px;
+  flex-shrink: 0;
+}
+.kl-tool .target {
+  color: var(--text-mid);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.kl-tool .status-pill {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: var(--fs-2xs);
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+.kl-tool .status-pill.running {
+  color: var(--accent);
+}
+.kl-tool .status-pill.failed,
+.kl-tool .status-pill.interrupted {
+  color: oklch(0.72 0.16 25);
+}
+
+/* Bash card */
+.kl-tool-bash {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.kl-tool-bash .title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--sans);
+  font-size: var(--fs-ui);
+  color: var(--text-mid);
+  cursor: pointer;
+  user-select: none;
+  padding: 2px 0;
+  letter-spacing: 0;
+  background: none;
+  border: 0;
+  text-align: left;
+  width: 100%;
+}
+.kl-tool-bash .title:hover {
+  color: var(--text);
+}
+.kl-tool-bash .title .chev {
+  color: var(--text-faint);
+  display: flex;
+  transition: transform 0.15s;
+  flex-shrink: 0;
+}
+.kl-tool-bash.open .title .chev {
+  transform: rotate(90deg);
+  color: var(--text-mut);
+}
+.kl-tool-bash .title em {
+  color: var(--text-mid);
+  font-style: normal;
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+}
+.kl-tool-bash .title .err-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  font-family: var(--sans);
+  font-size: var(--fs-2xs);
+  letter-spacing: 0;
+  text-transform: uppercase;
+  color: oklch(0.78 0.13 25);
+  background: oklch(0.32 0.07 25 / 0.35);
+  border: 1px solid oklch(0.55 0.13 25 / 0.4);
+  padding: 1px 7px 1px 6px;
+  border-radius: 999px;
+  line-height: 1.45;
+}
+.kl-tool-bash .title .err-chip-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: oklch(0.72 0.18 25);
+}
+.kl-tool-bash .title .cmd-text {
+  min-width: 0;
+}
+.kl-tool-bash .body {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+  max-height: 420px;
+  overflow-y: auto;
+}
+.kl-tool-bash .body .label {
+  font-size: var(--fs-2xs);
+  letter-spacing: 0;
+  color: var(--text-mut);
+  margin-bottom: 8px;
+  font-weight: 500;
+  font-family: var(--sans);
+}
+.kl-tool-bash .body .cmd {
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin-bottom: 10px;
+}
+.kl-tool-bash .body .cmd .sigil {
+  color: oklch(0.74 0.13 50);
+  margin-right: 6px;
+}
+/* Output rendered like a terminal: dark pane, light default text so the
+ * ANSI-coloured spans (see AnsiText) read the way they would in a shell. */
+.kl-tool-bash .body .out {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #cdd3de;
+  background: #14171d;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  max-height: 340px;
+  overflow-y: auto;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  tab-size: 4;
+}
+
+/* Edit / file_change card */
+.kl-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.kl-edit .title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--sans);
+  font-size: var(--fs-ui);
+  color: var(--text-mid);
+  cursor: pointer;
+  user-select: none;
+  padding: 2px 0;
+  letter-spacing: 0;
+  background: none;
+  border: 0;
+  text-align: left;
+  width: 100%;
+}
+.kl-edit .title:hover {
+  color: var(--text);
+}
+.kl-edit .title .chev {
+  color: var(--text-faint);
+  display: flex;
+  transition: transform 0.15s;
+  flex-shrink: 0;
+}
+.kl-edit.open .title .chev {
+  transform: rotate(90deg);
+  color: var(--text-mut);
+}
+.kl-edit .title em {
+  color: var(--text-mid);
+  font-style: normal;
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+}
+.kl-edit .title .stat {
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  margin-left: 2px;
+}
+.kl-edit .title .stat.add {
+  color: oklch(0.74 0.14 152);
+}
+.kl-edit .title .stat.rem {
+  color: oklch(0.72 0.16 25);
+}
+.kl-edit .body {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  max-height: 420px;
+  overflow-y: auto;
+}
+.kl-edit .body .path {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 12px;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  color: var(--text-mut);
+  border-bottom: 1px solid var(--border);
+}
+.kl-edit .body .filelist {
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+}
+.kl-edit .body .filelist .row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-mid);
+}
+.kl-edit .body .filelist .row .verb {
+  text-transform: uppercase;
+  font-size: var(--fs-2xs);
+  letter-spacing: 0;
+  color: var(--text-faint);
+  min-width: 50px;
+}
+.kl-edit .body .filelist .row .path-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+/* Unified-diff rendering inside apply_patch / file_change cards. Each line
+ * becomes a span so we can color +/-/@@ distinctly without a real parser. */
+.kl-diff {
+  margin: 0;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  line-height: 1.55;
+  display: flex;
+  flex-direction: column;
+  overflow-x: auto;
+  background: var(--bg);
+}
+.kl-diff .ln {
+  display: block;
+  padding: 0 14px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-mid);
+}
+.kl-diff .ln.head {
+  color: var(--text-faint);
+}
+.kl-diff .ln.hunk {
+  color: var(--text-mut);
+  background: var(--bg-elev);
+}
+.kl-diff .ln.add {
+  color: oklch(0.85 0.13 152);
+  background: oklch(0.74 0.14 152 / 0.10);
+}
+.kl-diff .ln.del {
+  color: oklch(0.78 0.16 22);
+  background: oklch(0.65 0.18 22 / 0.10);
+}
+
+/* MCP tool card — same chrome family as kl-tool-bash but with args+result panes */
+.kl-tool-mcp {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg-panel);
+}
+.kl-tool-mcp .title {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+.kl-tool-mcp .title:hover {
+  background: var(--bg-hover);
+}
+.kl-tool-mcp .chev {
+  display: inline-flex;
+  transition: transform 0.12s;
+  color: var(--text-faint);
+}
+.kl-tool-mcp.open .chev {
+  transform: rotate(90deg);
+}
+.kl-tool-mcp .badge {
+  font-family: var(--mono);
+  font-size: var(--fs-2xs);
+  letter-spacing: 0;
+  padding: 1px 7px;
+  border-radius: 4px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  text-transform: uppercase;
+  font-weight: 600;
+}
+.kl-tool-mcp .target {
+  flex: 1;
+  font-size: var(--fs-sm);
+  color: var(--text-mid);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kl-tool-mcp .target em {
+  font-style: normal;
+  color: var(--text);
+  font-weight: 500;
+}
+.kl-tool-mcp .target .sep {
+  margin: 0 6px;
+  color: var(--text-faint);
+}
+.kl-tool-mcp .status-pill {
+  font-family: var(--mono);
+  font-size: var(--fs-2xs);
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+.kl-tool-mcp .status-pill.failed,
+.kl-tool-mcp .status-pill.interrupted {
+  color: oklch(0.72 0.16 22);
+}
+.kl-tool-mcp.err {
+  border-color: oklch(0.65 0.18 22 / 0.4);
+}
+.kl-tool-mcp .body {
+  border-top: 1px solid var(--border);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  max-height: 420px;
+  overflow-y: auto;
+}
+.kl-tool-mcp .body .label {
+  padding: 8px 14px 4px;
+  color: var(--text-faint);
+  font-size: var(--fs-2xs);
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+.kl-tool-mcp .body .label.err {
+  color: oklch(0.72 0.16 22);
+}
+.kl-tool-mcp .body pre {
+  margin: 0;
+  padding: 0 14px 10px;
+  color: var(--text-mid);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: var(--fs-xs);
+  line-height: 1.55;
+}
+.kl-tool-mcp .body pre.json {
+  color: var(--text);
+}
+.kl-tool-mcp .body pre.out.err {
+  color: oklch(0.78 0.16 22);
+}
+
+/* System / notice rows */
+.kl-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  padding: 2px 0;
+}
+.kl-notice > span {
+  color: var(--text-mut);
+}
+.kl-notice em {
+  font-style: normal;
+  color: var(--text-mut);
+}
+.kl-notice.err {
+  color: oklch(0.78 0.16 22);
+}
+.kl-notice.err > span,
+.kl-notice.err svg {
+  color: oklch(0.84 0.13 22);
+}
+.kl-notice.err em {
+  color: oklch(0.84 0.13 22);
+}
+.kl-notice.compact {
+  padding: 2px 0;
+}
+.kl-system-inline {
+  min-width: 0;
+}
+.kl-system {
+  display: grid;
+  gap: 6px;
+  padding: 2px 0;
+  color: var(--text-mut);
+  font-size: var(--fs-ui);
+}
+.kl-system-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+}
+.kl-system-head .pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-mut);
+}
+.kl-system.error {
+  border-color: color-mix(in oklab, oklch(0.78 0.16 22), transparent 58%);
+  background: color-mix(in oklab, oklch(0.28 0.08 22), transparent 78%);
+}
+.kl-system.error .kl-system-head {
+  color: oklch(0.84 0.13 22);
+}
+.kl-system.error .kl-system-head .pill {
+  border-color: color-mix(in oklab, oklch(0.78 0.16 22), transparent 46%);
+  color: oklch(0.84 0.13 22);
+}
+.kl-system-details {
+  min-width: 0;
+}
+.kl-system-details.inline {
+  display: block;
+  min-width: 0;
+}
+.kl-system-details summary {
+  cursor: pointer;
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  list-style: none;
+}
+.kl-system-details summary::-webkit-details-marker {
+  display: none;
+}
+.kl-system-details.inline summary {
+  display: block;
+}
+.kl-system-details.inline summary .kl-notice {
+  display: inline-flex;
+}
+.kl-system-summary-label {
+  color: color-mix(in oklab, oklch(0.84 0.13 22), transparent 34%);
+}
+.kl-system-details pre {
+  max-height: 220px;
+  overflow: auto;
+  margin: 8px 0 0 58px;
+  padding: 0;
+  background: transparent;
+  color: var(--text-mut);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.kl-system-details.inline pre {
+  display: block;
+  color: var(--text-faint);
+}
+.kl-system-body {
+  display: grid;
+  gap: 6px;
+}
+.kl-system-body p {
+  margin: 0;
+  white-space: pre-wrap;
+  line-height: 1.45;
+}
+.kl-system-body ul {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.kl-system-body li {
+  display: grid;
+  grid-template-columns: 10px 1fr;
+  align-items: start;
+  gap: 8px;
+  line-height: 1.4;
+}
+.plan-status {
+  width: 7px;
+  height: 7px;
+  margin-top: 0.45em;
+  border-radius: 999px;
+  background: var(--text-faint);
+}
+.plan-status.completed,
+.plan-status.done {
+  background: oklch(0.72 0.13 150);
+}
+.plan-status.in_progress,
+.plan-status.running {
+  background: oklch(0.78 0.14 82);
+}
+
+/* Streaming indicator */
+.kl-streaming {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-mut);
+  font-size: var(--fs-ui);
+}
+.kl-streaming .pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent-soft);
+  animation: klaw-pulse 1.4s ease-in-out infinite;
+}
+
+/* ─── Permission approval panel (above composer) ────────────────────────── */
+.kl-permission {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-md);
+  border-radius: 14px;
+  padding: 14px 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  animation: klaw-fade-up 0.2s ease;
+}
+.kl-permission.exiting {
+  pointer-events: none;
+  animation: kl-approval-exit 0.18s ease forwards;
+}
+.kl-permission .hd {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.kl-permission .hd .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+.kl-permission .hd .q {
+  flex: 1;
+  font-size: var(--fs-base);
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kl-permission .hd .q em {
+  font-family: var(--mono);
+  font-style: normal;
+  font-weight: 500;
+  font-size: var(--fs-sm);
+  background: var(--bg-elev);
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin: 0 2px;
+  color: var(--text);
+}
+.kl-permission .hd .scope {
+  font-family: var(--mono);
+  font-size: var(--fs-2xs);
+  font-weight: 500;
+  color: var(--accent);
+  background: var(--accent-soft);
+  padding: 3px 9px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  text-transform: lowercase;
+}
+.kl-permission .hd .queue {
+  font-family: var(--mono);
+  font-size: var(--fs-2xs);
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 8px;
+  flex-shrink: 0;
+}
+.kl-permission .hd .x {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--text-mut);
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.kl-permission .hd .x:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.kl-permission .desc-box {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  color: var(--text-mid);
+  white-space: pre-wrap;
+  max-height: 160px;
+  overflow-y: auto;
+}
+.kl-permission .actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+.kl-permission .actions .deny {
+  margin-right: auto;
+}
+.kl-permission .actions .kl-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.kl-permission .actions .kl-btn:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+.kl-permission .actions .spin,
+.kl-edit .spin {
+  animation: klaw-spin 0.6s linear infinite;
+}
+.kl-permission .actions .keybind {
+  font-family: var(--mono);
+  font-size: var(--fs-2xs);
+  color: rgba(0, 0, 0, 0.4);
+  margin-left: 4px;
+  padding-left: 6px;
+  border-left: 1px solid rgba(0, 0, 0, 0.15);
+}
+.kl-permission .actions .kl-btn.primary .keybind {
+  color: rgba(0, 0, 0, 0.45);
+  border-left-color: rgba(0, 0, 0, 0.18);
+}
+.kl-permission .actions .kl-btn.ghost .keybind {
+  color: var(--text-faint);
+  border-left-color: var(--border);
+}
+
+@keyframes kl-approval-exit {
+  to {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+}
+
+/* ─── Composer ──────────────────────────────────────────────────────────── */
+.kl-comp-wrap {
+  flex-shrink: 0;
+  padding: 0 28px 18px;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.kl-comp-wrap > * {
+  max-width: var(--kl-chat-content-column);
+  margin-left: auto;
+  margin-right: auto;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.kl-perm-btn {
+  position: relative;
+}
+.kl-perm-btn .badge-dot {
+  position: absolute;
+  top: 5px;
+  right: 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--bg-panel);
+}
+.kl-perm-btn.on {
+  color: var(--accent);
+}
+
+.kl-comp {
+  max-width: var(--kl-chat-content-column);
+  margin: 0 auto;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-md);
+  border-radius: 14px;
+  padding: 10px 12px 8px;
+  position: relative;
+  transition: border-color 0.12s;
+}
+.kl-comp:focus-within {
+  border-color: var(--border-lg);
+}
+.kl-comp.dragging {
+  border-color: var(--accent);
+}
+.kl-comp-drop-hint {
+  position: absolute;
+  inset: 6px;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--accent);
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--bg-panel) 88%, var(--accent));
+  color: var(--text);
+  font-size: var(--fs-sm);
+  pointer-events: none;
+}
+.kl-comp textarea {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  outline: none;
+  font: inherit;
+  font-size: var(--fs-base);
+  color: var(--text);
+  resize: none;
+  line-height: 1.55;
+  font-family: var(--sans);
+  min-height: 22px;
+  max-height: 160px;
+  padding: 6px 4px 4px;
+}
+.kl-comp textarea::placeholder {
+  color: var(--text-faint);
+}
+.kl-comp textarea:disabled {
+  cursor: not-allowed;
+}
+.kl-comp-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-top: 6px;
+}
+.kl-comp-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.kl-comp-attach-error {
+  color: var(--danger, #d97373);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  padding: 0 4px 4px;
+}
+.kl-comp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px 3px 4px;
+  border-radius: 8px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-md);
+  font-size: var(--fs-sm);
+  color: var(--text);
+  max-width: 220px;
+}
+.kl-comp-chip-thumb {
+  width: 22px;
+  height: 22px;
+  object-fit: cover;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.kl-comp-chip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  background: var(--bg-panel);
+  color: var(--text-mid);
+  flex-shrink: 0;
+}
+.kl-comp-chip-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kl-comp-chip-x {
+  background: transparent;
+  border: 0;
+  color: var(--text-mid);
+  cursor: pointer;
+  font-size: var(--fs-base);
+  line-height: 1;
+  padding: 0 4px;
+  border-radius: 3px;
+}
+.kl-comp-chip-x:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+.kl-msg-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+  justify-content: flex-end;
+  align-self: flex-end;
+  max-width: min(74%, 720px);
+}
+.kl-msg-att {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 8px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-md);
+  font-size: var(--fs-sm);
+  color: var(--text);
+  overflow: hidden;
+}
+.kl-msg-att.file {
+  padding: 5px 9px;
+  max-width: 260px;
+}
+.kl-msg-att.file.missing {
+  opacity: 0.7;
+}
+.kl-msg-att.image {
+  padding: 0;
+  max-width: 220px;
+  max-height: 180px;
+  display: inline-block;
+}
+.kl-msg-att.image img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: 220px;
+  max-height: 180px;
+  object-fit: cover;
+}
+.kl-msg-att-icon {
+  font-size: var(--fs-base);
+}
+.kl-msg-att-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kl-msg-att-meta {
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+}
+.kl-msg-att.skeleton {
+  width: 120px;
+  height: 32px;
+  background: var(--bg-hover);
+  border-radius: 8px;
+}
+.kl-comp-row .sep {
+  flex: 1;
+}
+.kl-comp-sel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  font-weight: 400;
+}
+.kl-comp-sel:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.kl-comp-sel .dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+}
+.kl-comp-tuning-sel {
+  max-width: min(44vw, 260px);
+}
+.kl-comp-tuning-sel .tier,
+.kl-comp-tuning-sel > span:not(.kl-comp-sel-dotsep) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: 400;
+}
+.kl-comp-sel-dotsep {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  opacity: 0.75;
+  flex-shrink: 0;
+}
+.kl-comp-sel:disabled {
+  cursor: not-allowed;
+  color: var(--text-faint);
+}
+.kl-send {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--text);
+  color: var(--bg);
+  border: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: opacity 0.12s, background 0.12s;
+}
+.kl-send:hover {
+  opacity: 0.9;
+}
+.kl-send:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+.kl-send.interrupt {
+  background: oklch(0.65 0.18 25);
+  color: #fff;
+  opacity: 1;
+}
+.kl-send.interrupt:hover {
+  filter: brightness(1.05);
+}
+
+/* Mode/Model popover */
+.kl-comp-menu {
+  position: fixed;
+  z-index: 400;
+  width: 230px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-md);
+  border-radius: 10px;
+  box-shadow: var(--shadow-pop);
+  padding: 4px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  animation: klaw-fade-up 0.12s ease;
+}
+.kl-comp-menu-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px 8px;
+  font-size: var(--fs-2xs);
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--text-faint);
+  text-transform: uppercase;
+}
+.kl-comp-menu-hd .keys {
+  display: flex;
+  gap: 3px;
+}
+.kl-comp-menu-hd kbd {
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: var(--text-mut);
+  min-width: 14px;
+  text-align: center;
+  text-transform: none;
+}
+.kl-comp-menu .item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: var(--fs-ui);
+  color: var(--text);
+}
+.kl-comp-menu .item:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.kl-comp-menu .item .lbl {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.kl-comp-menu .item .tier {
+  color: var(--text);
+  font-size: var(--fs-xs);
+  margin-left: 6px;
+}
+.kl-comp-menu .item .desc {
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+  line-height: 1.3;
+}
+.kl-comp-menu .item .check {
+  width: 13px;
+  color: var(--accent);
+  opacity: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.kl-comp-menu .item.on {
+  color: var(--text);
+}
+.kl-comp-menu .item.on .check {
+  opacity: 1;
+}
+.kl-comp-tuning-menu {
+  padding: 4px;
+}
+.kl-comp-tuning-menu .kl-comp-menu-hd {
+  padding: 6px 10px 8px;
+  font-size: var(--fs-2xs);
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+.kl-comp-model-menu {
+  padding: 4px;
+}
+.kl-comp-model-menu .kl-comp-menu-hd {
+  padding: 6px 10px 8px;
+  font-size: var(--fs-2xs);
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+.kl-comp-menu-row {
+  appearance: none;
+  width: 100%;
+  min-height: 36px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: var(--fs-ui);
+  text-align: left;
+  cursor: pointer;
+}
+.kl-comp-menu-row:hover,
+.kl-comp-menu-row.on,
+.kl-comp-menu-row.active {
+  background: var(--bg-hover);
+}
+.kl-comp-menu-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kl-comp-menu-row svg {
+  color: var(--text);
+  opacity: 0;
+  flex-shrink: 0;
+}
+.kl-comp-menu-row.on svg,
+.kl-comp-menu-row.model svg,
+.kl-comp-menu-row.active svg {
+  opacity: 1;
+}
+.kl-comp-menu-row.model {
+  color: var(--text);
+}
+.kl-comp-menu-sep {
+  height: 1px;
+  background: var(--border-md);
+  margin: 6px 10px;
+}
+/* Action error banner */
+.kl-comp-banner {
+  font-size: var(--fs-xs);
+  color: oklch(0.72 0.16 25);
+  font-family: var(--mono);
+  padding: 4px 0;
+  text-align: center;
+  cursor: pointer;
+}
+.kl-comp-runtime-error {
+  max-width: var(--kl-chat-content-column);
+  margin: 0 auto;
+  width: 100%;
+  box-sizing: border-box;
+  font-size: var(--fs-xs);
+  color: oklch(0.72 0.16 25);
+  font-family: var(--mono);
+  text-align: center;
+  padding: 2px 0 0;
+}
+
+/* Clickable file links injected by the frontend into assistant message text */
+.kl-file-link,
+.kl-msg.assistant .text .kl-file-link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+  cursor: pointer;
+}

@@ -1,0 +1,254 @@
+/* Agents Anywhere design tokens — ported 1:1 from the Klaw design bundle. */
+
+:root {
+  /* dark (default) */
+  --bg: #0a0a0b;
+  --bg-panel: #0e0e10;
+  --bg-elev: #161618;
+  --bg-hover: rgba(255, 255, 255, 0.035);
+  --bg-active: rgba(255, 255, 255, 0.06);
+  --bg-input: rgba(255, 255, 255, 0.04);
+  --border: rgba(255, 255, 255, 0.06);
+  --border-md: rgba(255, 255, 255, 0.09);
+  --border-lg: rgba(255, 255, 255, 0.14);
+  --text: rgba(255, 255, 255, 0.92);
+  --text-mid: rgba(255, 255, 255, 0.65);
+  --text-mut: rgba(255, 255, 255, 0.45);
+  --text-faint: rgba(255, 255, 255, 0.28);
+
+  --accent: oklch(0.80 0.13 78);
+  --accent-soft: oklch(0.80 0.13 78 / 0.14);
+  --accent-ink: #18120a;
+
+  --info: oklch(0.74 0.14 235);
+  --info-soft: oklch(0.74 0.14 235 / 0.14);
+
+  --agent-claude: oklch(0.74 0.13 50);
+  --agent-codex: oklch(0.74 0.14 152);
+  --agent-opencode: oklch(0.72 0.13 232);
+  --agent-cursor: oklch(0.70 0.15 295);
+
+  --r-sm: 6px;
+  --r: 8px;
+  --r-md: 10px;
+  --r-lg: 14px;
+
+  --shadow-pop:
+    0 24px 60px -20px rgba(0, 0, 0, 0.7),
+    0 8px 24px -8px rgba(0, 0, 0, 0.5);
+
+  --sans: "Geist", ui-sans-serif, -apple-system, system-ui, sans-serif;
+  --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --serif: "Instrument Serif", "Times New Roman", Cambria, serif;
+  --brand: "Caveat", "Snell Roundhand", cursive;
+
+  --fs-micro: 9.5px;
+  --fs-2xs: 10.5px;
+  --fs-xs: 11.5px;
+  --fs-sm: 12.5px;
+  --fs-ui: 13.5px;
+  --fs-base: 14.5px;
+  --fs-md: 15.5px;
+  --fs-lg: 18px;
+  --fs-xl: 22px;
+  --fs-2xl: 34px;
+  --fs-3xl: 44px;
+}
+
+[data-theme="light"] {
+  --bg: #fafaf9;
+  --bg-panel: #ffffff;
+  --bg-elev: #f4f4f2;
+  --bg-hover: rgba(0, 0, 0, 0.035);
+  --bg-active: rgba(0, 0, 0, 0.06);
+  --bg-input: rgba(0, 0, 0, 0.03);
+  --border: rgba(0, 0, 0, 0.07);
+  --border-md: rgba(0, 0, 0, 0.10);
+  --border-lg: rgba(0, 0, 0, 0.18);
+  --text: rgba(0, 0, 0, 0.92);
+  --text-mid: rgba(0, 0, 0, 0.60);
+  --text-mut: rgba(0, 0, 0, 0.45);
+  --text-faint: rgba(0, 0, 0, 0.28);
+  --accent-ink: #fff;
+  --shadow-pop:
+    0 24px 60px -20px rgba(0, 0, 0, 0.18),
+    0 8px 24px -8px rgba(0, 0, 0, 0.10);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: var(--fs-base);
+  line-height: 1.5;
+  letter-spacing: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--border-md);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--border-lg);
+  background-clip: content-box;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+.mono {
+  font-family: var(--mono);
+  font-feature-settings: "ss01", "ss02", "calt", "liga";
+}
+
+.serif {
+  font-family: var(--serif);
+  letter-spacing: 0;
+}
+
+/* Theme segmented toggle — reused in the auth top bar and (later) the sidebar foot */
+.theme-seg {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-panel);
+  height: 26px;
+}
+
+.theme-seg button {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 20px;
+  border: 0;
+  background: transparent;
+  color: var(--text-mut);
+  border-radius: 999px;
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.15s, color 0.15s;
+}
+
+.theme-seg button:hover {
+  color: var(--text);
+}
+
+.theme-seg button.on {
+  background: var(--bg-elev);
+  color: var(--text);
+  box-shadow: 0 0 0 1px var(--border) inset;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Klaw glyph slot (the SVG sits inside) */
+.klaw-mark {
+  --mk-size: 18px;
+  --mk-color: var(--accent);
+  display: inline-block;
+  width: var(--mk-size);
+  height: var(--mk-size);
+  flex-shrink: 0;
+}
+
+.klaw-mark svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+@keyframes klaw-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.55;
+    transform: scale(0.85);
+  }
+}
+
+@keyframes klaw-cursor {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes klaw-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes klaw-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.kl-skel {
+  background: linear-gradient(
+    90deg,
+    var(--bg-elev) 0%,
+    var(--bg-hover) 50%,
+    var(--bg-elev) 100%
+  );
+  background-size: 200% 100%;
+  animation: kl-skel-shimmer 1.4s ease-in-out infinite;
+  border-radius: 6px;
+}
+
+@keyframes kl-skel-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
