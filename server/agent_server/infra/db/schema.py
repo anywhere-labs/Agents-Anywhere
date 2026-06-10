@@ -43,6 +43,7 @@ device_agent_settings = Table(
     Column("connector_id", Text, ForeignKey("connectors.id", ondelete="CASCADE"), nullable=False),
     Column("runtime", Text, nullable=False),
     Column("settings_json", Text, nullable=False),
+    Column("default_run_mode_configured", Integer, nullable=False, server_default="0"),
     Column("schema_version", Integer, nullable=False),
     Column("updated_at", Text, nullable=False),
     PrimaryKeyConstraint("connector_id", "runtime"),

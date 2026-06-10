@@ -304,6 +304,7 @@ export type RuntimeSettingsResponse = {
   runtimeSettings?: Record<string, unknown> | null;
   runtimeSettingsOverride?: Record<string, unknown> | null;
   effectiveRunMode?: "chat" | "terminal" | null;
+  defaultRunModeConfigured: boolean;
   schemaVersion: number;
   serverTime: string;
 };

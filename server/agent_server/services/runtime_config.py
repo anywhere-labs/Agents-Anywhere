@@ -130,10 +130,29 @@ class RuntimeConfigService:
             connector_id,
             runtime,
             settings_json=_json_dumps(next_settings),
+            default_run_mode_configured=(
+                runtime == "claude" and "runMode" in normalized_patch
+            )
+            or None,
             schema_version=schema.schemaVersion,
             updated_at=utc_now(),
         )
         return next_settings
+
+    async def is_default_run_mode_configured(
+        self,
+        connector_id: str,
+        runtime: str,
+        *,
+        user_id: str | None = None,
+    ) -> bool:
+        await self._runtime_settings.require_connector(connector_id, user_id=user_id)
+        if runtime != "claude":
+            return True
+        return await self._runtime_settings.is_default_run_mode_configured(
+            connector_id,
+            runtime,
+        )
 
     async def get_session_runtime_settings_override(
         self,

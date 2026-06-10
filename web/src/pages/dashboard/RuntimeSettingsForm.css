@@ -10,6 +10,34 @@
   color: var(--text-faint);
 }
 
+.kl-runtime-settings-label-line {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  min-width: 0;
+  width: fit-content;
+}
+
+.kl-runmode-learn {
+  appearance: none;
+  border: 0;
+  border-bottom: 1px solid currentColor;
+  background: transparent;
+  color: var(--accent);
+  padding: 0;
+  font: inherit;
+  font-size: var(--fs-xs);
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.kl-runmode-learn:hover,
+.kl-runmode-learn:focus-visible {
+  color: var(--text);
+  outline: none;
+}
+
 .kl-runtime-settings-segmented {
   display: inline-flex;
   border: 1px solid var(--border);
