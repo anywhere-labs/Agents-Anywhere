@@ -17,6 +17,7 @@ type Props = {
   scope: "device" | "session";
   disabled?: boolean;
   className?: string;
+  onExplainRunMode?: () => void;
   onPatch: (settings: Record<string, unknown>) => void;
 };
 
@@ -27,6 +28,7 @@ export function RuntimeSettingsForm({
   scope,
   disabled = false,
   className = "kl-runtime-settings-form",
+  onExplainRunMode,
   onPatch,
 }: Props) {
   const fields = runtimeConfigFields(schema, settings, scope);
@@ -53,6 +55,7 @@ export function RuntimeSettingsForm({
           settings={settings}
           scope={scope}
           disabled={disabled || !settings}
+          onExplainRunMode={onExplainRunMode}
           onPatch={onPatch}
         />
       ))}
@@ -91,6 +94,7 @@ function RuntimeSettingField({
   settings,
   scope,
   disabled,
+  onExplainRunMode,
   onPatch,
 }: {
   runtime: string;
@@ -98,6 +102,7 @@ function RuntimeSettingField({
   settings: Record<string, unknown> | null;
   scope: "device" | "session";
   disabled: boolean;
+  onExplainRunMode?: () => void;
   onPatch: (settings: Record<string, unknown>) => void;
 }) {
   const resolvedField =
@@ -110,7 +115,19 @@ function RuntimeSettingField({
   if (runtime === "claude" && scope === "device" && field.key === "runMode") {
     const runMode = stringSetting(settings?.runMode, "chat");
     return (
-      <SettingRow label="Default run mode">
+      <div className="kl-runtime-settings-row">
+        <div className="kl-runtime-settings-label-line">
+          <span className="kl-runtime-settings-label">Default run mode</span>
+          {onExplainRunMode && (
+            <button
+              type="button"
+              className="kl-runmode-learn"
+              onClick={onExplainRunMode}
+            >
+              Learn More
+            </button>
+          )}
+        </div>
         <div className="kl-runtime-settings-segmented" role="group">
           {optionPairs(field).map((option) => (
             <button
@@ -124,7 +141,7 @@ function RuntimeSettingField({
             </button>
           ))}
         </div>
-      </SettingRow>
+      </div>
     );
   }
 

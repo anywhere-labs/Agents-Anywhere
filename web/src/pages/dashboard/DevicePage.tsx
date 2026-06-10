@@ -15,6 +15,7 @@ import { reportIsHealthy, runtimeAccent, runtimeLabel } from "../../lib/runtime"
 import { ConfirmModal } from "./ConfirmModal";
 import { AddAgentModal } from "./AddAgentModal";
 import { RuntimeSettingsForm } from "./RuntimeSettingsForm";
+import { RunModeGuide } from "./RunModeGuide";
 
 type SessionFilter = "active" | "archived" | "all";
 
@@ -84,6 +85,7 @@ export function DevicePage({
   // Agents-section state — kept lean now that there's no Refresh button.
   const [addOpen, setAddOpen] = useState(false);
   const [confirmRuntime, setConfirmRuntime] = useState<string | null>(null);
+  const [runModePromptOpen, setRunModePromptOpen] = useState(false);
   const [runtimeDeleteError, setRuntimeDeleteError] = useState<string | null>(
     null,
   );
@@ -113,6 +115,7 @@ export function DevicePage({
     setRenameError(null);
     setAddOpen(false);
     setConfirmRuntime(null);
+    setRunModePromptOpen(false);
     setRuntimeDeleteError(null);
     setConfirmRotate(false);
     setRotateBusy(false);
@@ -138,6 +141,13 @@ export function DevicePage({
     () => buildAgentRows(device.runtimeCapabilities),
     [device.runtimeCapabilities],
   );
+  const hasClaudeAgent = agentRows.some((row) => row.runtime === "claude");
+  const claudeSettingsResponse = agentSettings.claude;
+  const showClaudeRunModePrompt =
+    hasClaudeAgent && claudeSettingsResponse?.defaultRunModeConfigured === false;
+  const claudeSettings = agentSettings.claude?.settings ?? null;
+  const claudeSchema = agentSchemas.claude ?? null;
+  const claudeSettingsError = agentSettingsError.claude ?? null;
   const agentRuntimeKey = useMemo(
     () => agentRows.map((row) => row.runtime).join("\n"),
     [agentRows],
@@ -483,6 +493,22 @@ export function DevicePage({
           >
             <span className="dot" />
             <span>{renameError}</span>
+          </div>
+        )}
+
+        {showClaudeRunModePrompt && (
+          <div className="kl-runmode-alert kl-dev-runmode-alert" role="alert">
+            <Icons.AlertCircle size={15} />
+            <div className="kl-runmode-alert-copy">
+              <strong>Set your default Claude Code run mode</strong>
+              <span>
+                This can affect whether Claude Code uses API/relay billing or
+                your local Claude Code login.
+              </span>
+            </div>
+            <button type="button" onClick={() => setRunModePromptOpen(true)}>
+              Choose mode
+            </button>
           </div>
         )}
 
@@ -899,6 +925,17 @@ export function DevicePage({
           <span>{deleteError}</span>
         </div>
       )}
+      {runModePromptOpen && (
+        <RuntimeConfigModal
+          runtime="claude"
+          schema={claudeSchema}
+          settings={claudeSettings}
+          settingsError={claudeSettingsError}
+          initialView="runModeGuide"
+          onClose={() => setRunModePromptOpen(false)}
+          onPatchSettings={(settings) => patchAgentSettings("claude", settings)}
+        />
+      )}
       {confirmArchiveAllOpen &&
         (() => {
           const verb = targetArchivedForAll ? "Archive" : "Unarchive";
@@ -1020,6 +1057,7 @@ function RuntimeConfigModal({
   schema,
   settings,
   settingsError,
+  initialView = "settings",
   onClose,
   onPatchSettings,
 }: {
@@ -1027,42 +1065,94 @@ function RuntimeConfigModal({
   schema: RuntimeConfigSchema | null;
   settings: Record<string, unknown> | null;
   settingsError: string | null;
+  initialView?: "settings" | "runModeGuide";
   onClose: () => void;
   onPatchSettings: (settings: Record<string, unknown>) => void;
 }) {
+  const [view, setView] = useState<"settings" | "runModeGuide">(initialView);
+  const savedRunMode = settings?.runMode === "terminal" ? "terminal" : "chat";
+  const [draftRunMode, setDraftRunMode] = useState<"chat" | "terminal">(
+    savedRunMode,
+  );
+  const isRunModeGuide = runtime === "claude" && view === "runModeGuide";
+  useEffect(() => {
+    setDraftRunMode(savedRunMode);
+  }, [savedRunMode, isRunModeGuide]);
+
+  const handleDoneRunMode = () => {
+    if (settings && draftRunMode !== savedRunMode) {
+      onPatchSettings({ runMode: draftRunMode });
+    }
+    if (initialView === "runModeGuide") {
+      onClose();
+    } else {
+      setView("settings");
+    }
+  };
+
   return (
     <div className="kl-modal-backdrop" onClick={onClose}>
       <div
-        className="kl-modal kl-runtime-config-modal"
+        className={
+          isRunModeGuide
+            ? "kl-modal kl-runtime-config-modal guide-open"
+            : "kl-modal kl-runtime-config-modal"
+        }
         role="dialog"
         aria-label={`${runtimeLabel(runtime)} configuration`}
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="kl-runtime-config-hd">
-          <div>
-            <h3>{runtimeLabel(runtime)}</h3>
-            <span>Default configuration</span>
+        <div className="kl-runtime-config-viewport">
+          <div
+            className={
+              isRunModeGuide
+                ? "kl-runtime-config-pages show-guide"
+                : "kl-runtime-config-pages"
+            }
+          >
+            <div className="kl-runtime-config-page">
+              <div className="kl-runtime-config-hd">
+                <div>
+                  <h3>{runtimeLabel(runtime)}</h3>
+                  <span>Default configuration</span>
+                </div>
+                <button type="button" onClick={onClose} aria-label="Close">
+                  <Icons.X size={14} />
+                </button>
+              </div>
+              <RuntimeSettingsForm
+                runtime={runtime}
+                schema={schema}
+                settings={settings}
+                scope="device"
+                className="kl-dev-agent-settings kl-runtime-settings-form"
+                disabled={!settings}
+                onExplainRunMode={
+                  runtime === "claude" ? () => setView("runModeGuide") : undefined
+                }
+                onPatch={onPatchSettings}
+              />
+              {settingsError && (
+                <div className="kl-dev-agent-error">{settingsError}</div>
+              )}
+              <div className="kl-modal-actions">
+                <button type="button" className="kl-btn ghost" onClick={onClose}>
+                  Save
+                </button>
+              </div>
+            </div>
+            <div className="kl-runtime-config-page">
+              <RunModeGuide
+                value={draftRunMode}
+                disabled={!settings}
+                showBack={initialView !== "runModeGuide"}
+                onBack={() => setView("settings")}
+                onClose={onClose}
+                onDone={handleDoneRunMode}
+                onSelect={setDraftRunMode}
+              />
+            </div>
           </div>
-          <button type="button" onClick={onClose} aria-label="Close">
-            <Icons.X size={14} />
-          </button>
-        </div>
-        <RuntimeSettingsForm
-          runtime={runtime}
-          schema={schema}
-          settings={settings}
-          scope="device"
-          className="kl-dev-agent-settings kl-runtime-settings-form"
-          disabled={!settings}
-          onPatch={onPatchSettings}
-        />
-        {settingsError && (
-          <div className="kl-dev-agent-error">{settingsError}</div>
-        )}
-        <div className="kl-modal-actions">
-          <button type="button" className="kl-btn ghost" onClick={onClose}>
-            Save
-          </button>
         </div>
       </div>
     </div>

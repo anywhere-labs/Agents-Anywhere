@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from loguru import logger
@@ -8,6 +9,13 @@ from agent_server.core.runtime_config import RuntimeConfigSchema
 from agent_server.services.runtime_config import RuntimeConfigService
 from agent_server.services.session_run import SessionRunError, SessionRunService
 from agent_server.infra.repositories.facade import Store
+
+
+@dataclass(frozen=True)
+class DeviceAgentSettingsResult:
+    settings: dict[str, Any]
+    schema: RuntimeConfigSchema
+    default_run_mode_configured: bool
 
 
 class DeviceAgentSettingsService:
@@ -27,14 +35,25 @@ class DeviceAgentSettingsService:
         runtime: str,
         *,
         user_id: str,
-    ) -> tuple[dict[str, Any], RuntimeConfigSchema]:
+    ) -> DeviceAgentSettingsResult:
         settings = await self._runtime_config.get_device_agent_settings(
             connector_id,
             runtime,
             user_id=user_id,
         )
         schema = await self._runtime_config.get_runtime_config_schema(runtime)
-        return settings, schema
+        default_run_mode_configured = (
+            await self._runtime_config.is_default_run_mode_configured(
+                connector_id,
+                runtime,
+                user_id=user_id,
+            )
+        )
+        return DeviceAgentSettingsResult(
+            settings=settings,
+            schema=schema,
+            default_run_mode_configured=default_run_mode_configured,
+        )
 
     async def patch_settings(
         self,
@@ -43,7 +62,7 @@ class DeviceAgentSettingsService:
         patch: dict[str, Any],
         *,
         user_id: str,
-    ) -> tuple[dict[str, Any], RuntimeConfigSchema]:
+    ) -> DeviceAgentSettingsResult:
         current = await self._runtime_config.get_device_agent_settings(
             connector_id,
             runtime,
@@ -59,7 +78,18 @@ class DeviceAgentSettingsService:
             user_id=user_id,
         )
         schema = await self._runtime_config.get_runtime_config_schema(runtime)
-        return settings, schema
+        default_run_mode_configured = (
+            await self._runtime_config.is_default_run_mode_configured(
+                connector_id,
+                runtime,
+                user_id=user_id,
+            )
+        )
+        return DeviceAgentSettingsResult(
+            settings=settings,
+            schema=schema,
+            default_run_mode_configured=default_run_mode_configured,
+        )
 
     @staticmethod
     def _claude_run_mode_changed(

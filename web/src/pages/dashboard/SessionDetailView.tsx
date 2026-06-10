@@ -47,6 +47,7 @@ import { RuntimePanel } from "./session-detail/runtime/RuntimePanel";
 import { useRuntimeLayout } from "./session-detail/runtime/useRuntimeLayout";
 import { makeRuntimeApi } from "./session-detail/runtime/runtimeApi";
 import { optionLabel, runtimeConfigFields } from "./RuntimeSettingsForm";
+import { RunModeGuide } from "./RunModeGuide";
 import { filterClaudeEffortField } from "../../lib/claudeRuntime";
 import "./session-detail/runtime/runtime.css";
 import "./session_detail.css";
@@ -67,6 +68,11 @@ type TimelineState = {
   itemsById: Record<string, TimelineItem>;
   approvals: Approval[];
   nextSeq: number;
+};
+
+type PendingSend = {
+  content: string;
+  files: File[];
 };
 
 // SSE (see effect below) is the primary update path and CARRIES the item
@@ -115,7 +121,7 @@ export function SessionDetailView({
   useEffect(() => {
     setPreviewFile(null);
     setPoppedRuntime({ files: false, term: false, preview: false });
-  }, [sessionId]);
+  }, [sessionId, session.runtime]);
 
   const [state, setState] = useState<TimelineState>({
     itemsById: {},
@@ -150,6 +156,13 @@ export function SessionDetailView({
   const [takeoverConfirm, setTakeoverConfirm] = useState<"enable" | "disable" | null>(
     null,
   );
+  const [runModePromptOpen, setRunModePromptOpen] = useState(false);
+  const [defaultRunModeConfigured, setDefaultRunModeConfigured] = useState(
+    session.runtime !== "claude",
+  );
+  const [pendingRunModeSend, setPendingRunModeSend] = useState<PendingSend | null>(
+    null,
+  );
 
   // Reset timeline whenever the active session changes.
   useEffect(() => {
@@ -166,6 +179,9 @@ export function SessionDetailView({
     setExitingApprovalId(null);
     setLocallyResolvedApprovalIds(new Set());
     setSentRecords([]);
+    setRunModePromptOpen(false);
+    setDefaultRunModeConfigured(session.runtime !== "claude");
+    setPendingRunModeSend(null);
   }, [sessionId]);
 
   useEffect(() => {
@@ -179,6 +195,9 @@ export function SessionDetailView({
         if (cancelled) return;
         setRuntimeSettingsSchema(schemaRes.schema);
         setRuntimeSettings(settingsRes.runtimeSettings ?? settingsRes.settings);
+        setDefaultRunModeConfigured(
+          session.runtime !== "claude" || settingsRes.defaultRunModeConfigured,
+        );
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -571,7 +590,7 @@ export function SessionDetailView({
     if (interrupting && !serverBusy) setInterrupting(false);
   }, [interrupting, serverBusy]);
 
-  const handleSend = useCallback(
+  const sendNow = useCallback(
     async (content: string, files: File[] = []) => {
       // 1) Upload first so the optimistic message can show real thumbnails.
       //    On failure we surface the error and skip the optimistic message —
@@ -687,6 +706,18 @@ export function SessionDetailView({
     [token, sessionId, onUnauthorized],
   );
 
+  const handleSend = useCallback(
+    async (content: string, files: File[] = []) => {
+      if (session.runtime === "claude" && !defaultRunModeConfigured) {
+        setPendingRunModeSend({ content, files });
+        setRunModePromptOpen(true);
+        return;
+      }
+      await sendNow(content, files);
+    },
+    [session.runtime, defaultRunModeConfigured, sendNow],
+  );
+
   const handleInterrupt = useCallback(async () => {
     if (interrupting) return;
     setInterrupting(true);
@@ -736,6 +767,9 @@ export function SessionDetailView({
         const res = await api.patchSessionRuntimeSettings(token, sessionId, patch);
         const effective = res.runtimeSettings ?? res.settings;
         setRuntimeSettings(effective);
+        setDefaultRunModeConfigured(
+          session.runtime !== "claude" || res.defaultRunModeConfigured,
+        );
         onSessionRefreshed({
           ...session,
           effectiveRunMode: res.effectiveRunMode ?? session.effectiveRunMode,
@@ -753,6 +787,52 @@ export function SessionDetailView({
       }
     },
     [token, sessionId, session, onSessionRefreshed],
+  );
+
+  const handleChooseDefaultRunMode = useCallback(
+    async (runMode: "chat" | "terminal") => {
+      if (!connector) return;
+      try {
+        setRuntimeSettingsError(null);
+        const res = await api.patchConnectorAgentSettings(
+          token,
+          connector.id,
+          "claude",
+          { runMode },
+        );
+        const effective = res.runtimeSettings ?? res.settings;
+        setRuntimeSettings(effective);
+        setDefaultRunModeConfigured(res.defaultRunModeConfigured);
+        setRunModePromptOpen(false);
+        const pending = pendingRunModeSend;
+        setPendingRunModeSend(null);
+        onSessionRefreshed({
+          ...session,
+          effectiveRunMode:
+            runMode ?? res.effectiveRunMode ?? session.effectiveRunMode,
+          runtimeSettings: effective,
+        });
+        if (pending) {
+          await sendNow(pending.content, pending.files);
+        }
+      } catch (err) {
+        const msg =
+          err instanceof ApiError
+            ? err.detail
+            : err instanceof Error
+              ? err.message
+              : "Failed to save runtime settings.";
+        setRuntimeSettingsError(msg);
+      }
+    },
+    [
+      connector,
+      token,
+      pendingRunModeSend,
+      session,
+      onSessionRefreshed,
+      sendNow,
+    ],
   );
 
   // ─── Header ───────────────────────────────────────────────────────────
@@ -975,6 +1055,12 @@ export function SessionDetailView({
       {poppedRuntimeEl}
       {poppedTermEl}
       {poppedPreviewEl}
+      {runModePromptOpen && (
+        <SessionRunModePreviewModal
+          value={runtimeSettings?.runMode === "terminal" ? "terminal" : "chat"}
+          onSelect={handleChooseDefaultRunMode}
+        />
+      )}
     </div>
   );
 }
@@ -1215,6 +1301,41 @@ function TakeoverConfirmModal({
                 : "Disable takeover"}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function SessionRunModePreviewModal({
+  value,
+  onSelect,
+}: {
+  value: "chat" | "terminal";
+  onSelect: (runMode: "chat" | "terminal") => void;
+}) {
+  const [draftValue, setDraftValue] = useState<"chat" | "terminal">(value);
+  useEffect(() => {
+    setDraftValue(value);
+  }, [value]);
+
+  return (
+    <div className="kl-modal-backdrop">
+      <div
+        className="kl-modal kl-runtime-config-modal guide-open kl-session-runmode-modal"
+        role="dialog"
+        aria-label="Choose Claude Code run mode first"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <RunModeGuide
+          value={draftValue}
+          disabled={false}
+          title="Choose Claude Code run mode first"
+          subtitle="This can affect how Claude Code usage is billed."
+          showBack={false}
+          showClose={false}
+          onSelect={setDraftValue}
+          onDone={() => onSelect(draftValue)}
+        />
       </div>
     </div>
   );

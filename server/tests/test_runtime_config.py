@@ -93,6 +93,22 @@ def test_device_agent_settings_patch_and_read(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, _, headers = create_connector_and_session(client)
 
+    initial = client.get(
+        f"/connectors/{connector_id}/agents/claude/settings",
+        headers=headers,
+    )
+    assert initial.status_code == 200, initial.text
+    assert initial.json()["settings"]["runMode"] == "chat"
+    assert initial.json()["defaultRunModeConfigured"] is False
+
+    model_only = client.patch(
+        f"/connectors/{connector_id}/agents/claude/settings",
+        headers=headers,
+        json={"settings": {"model": "claude-sonnet-4-6"}},
+    )
+    assert model_only.status_code == 200, model_only.text
+    assert model_only.json()["defaultRunModeConfigured"] is False
+
     response = client.patch(
         f"/connectors/{connector_id}/agents/claude/settings",
         headers=headers,
@@ -112,6 +128,7 @@ def test_device_agent_settings_patch_and_read(tmp_path):
     assert settings["permissionMode"] == "plan"
     assert settings["model"] == "claude-sonnet-4-6"
     assert settings["effort"] == "high"
+    assert response.json()["defaultRunModeConfigured"] is True
 
     read_back = client.get(
         f"/connectors/{connector_id}/agents/claude/settings",
@@ -119,6 +136,42 @@ def test_device_agent_settings_patch_and_read(tmp_path):
     )
     assert read_back.status_code == 200
     assert read_back.json()["settings"] == settings
+    assert read_back.json()["defaultRunModeConfigured"] is True
+
+
+def test_session_runtime_settings_exposes_default_run_mode_configured(tmp_path):
+    client = make_client(tmp_path)
+    headers = auth_headers(client)
+    connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
+    connector_id = connector_response.json()["connector"]["id"]
+    session = asyncio.run(
+        client.app.state.store.upsert_connector_session(
+            connector_id=connector_id,
+            session_id="sess_claude_run_mode_flag",
+            runtime="claude",
+            external_session_id="uuid-claude-run-mode-flag",
+            title="Claude",
+            cwd="/repo",
+            status="idle",
+        )
+    )
+
+    initial = client.get(f"/sessions/{session.id}/runtime-settings", headers=headers)
+    assert initial.status_code == 200, initial.text
+    assert initial.json()["runtimeSettings"]["runMode"] == "chat"
+    assert initial.json()["defaultRunModeConfigured"] is False
+
+    configured = client.patch(
+        f"/connectors/{connector_id}/agents/claude/settings",
+        headers=headers,
+        json={"settings": {"runMode": "terminal"}},
+    )
+    assert configured.status_code == 200, configured.text
+
+    after = client.get(f"/sessions/{session.id}/runtime-settings", headers=headers)
+    assert after.status_code == 200, after.text
+    assert after.json()["runtimeSettings"]["runMode"] == "terminal"
+    assert after.json()["defaultRunModeConfigured"] is True
 
 
 def test_claude_effort_options_are_constrained_by_model(tmp_path):

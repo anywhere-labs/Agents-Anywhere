@@ -61,6 +61,7 @@ class RuntimeSettingsResponse(BaseModel):
     runtimeSettings: dict[str, Any] | None = None
     runtimeSettingsOverride: dict[str, Any] | None = None
     effectiveRunMode: Literal["chat", "terminal"] | None = None
+    defaultRunModeConfigured: bool = False
     schemaVersion: int
     serverTime: str
 

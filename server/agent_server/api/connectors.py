@@ -333,7 +333,7 @@ async def get_connector_agent_settings(
     user_id: str = Depends(current_user_id),
 ) -> RuntimeSettingsResponse:
     try:
-        settings, schema = await settings_service.get_settings(
+        result = await settings_service.get_settings(
             connector_id,
             runtime,
             user_id=user_id,
@@ -345,8 +345,9 @@ async def get_connector_agent_settings(
     return RuntimeSettingsResponse(
         connectorId=connector_id,
         runtime=runtime,
-        settings=settings,
-        schemaVersion=schema.schemaVersion,
+        settings=result.settings,
+        defaultRunModeConfigured=result.default_run_mode_configured,
+        schemaVersion=result.schema.schemaVersion,
         serverTime=utc_now(),
     )
 
@@ -363,7 +364,7 @@ async def patch_connector_agent_settings(
     user_id: str = Depends(current_user_id),
 ) -> RuntimeSettingsResponse:
     try:
-        settings, schema = await settings_service.patch_settings(
+        result = await settings_service.patch_settings(
             connector_id,
             runtime,
             payload.settings,
@@ -376,8 +377,9 @@ async def patch_connector_agent_settings(
     return RuntimeSettingsResponse(
         connectorId=connector_id,
         runtime=runtime,
-        settings=settings,
-        schemaVersion=schema.schemaVersion,
+        settings=result.settings,
+        defaultRunModeConfigured=result.default_run_mode_configured,
+        schemaVersion=result.schema.schemaVersion,
         serverTime=utc_now(),
     )
 
