@@ -535,24 +535,24 @@
   gap: 5px;
 }
 
-/* "Agents Anywhere" wordmark — handwritten brand font (Caveat). */
+/* "Agents Anywhere" wordmark. */
 .aa-word {
   display: inline-block;
   font-family: var(--brand);
-  font-weight: 500;
+  font-weight: 650;
   letter-spacing: 0;
-  line-height: 1;
-  font-size: var(--fs-xl);
+  line-height: 1.05;
+  font-size: var(--fs-lg);
   color: var(--text);
   white-space: nowrap;
 }
 
 .aa-word.lg {
-  font-size: var(--fs-2xl);
+  font-size: var(--fs-xl);
 }
 
 .aa-word.xl {
-  font-size: var(--fs-3xl);
+  font-size: var(--fs-2xl);
 }
 
 /* full-screen loading shell (waiting on /auth/config) */

@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
-import { Icons, KlawMark } from "../../components/Icons";
+import { BrandLogo } from "../../components/BrandLogo";
+import { Icons } from "../../components/Icons";
 import { Identicon } from "../../components/Identicon";
 import { AAWord } from "../auth/AAWord";
 import type { AuthMe, ConnectorView, SessionView } from "../../lib/api";
@@ -252,7 +253,7 @@ export function Sidebar({
       {!mini && (
         <div className="kl-sb-hd">
           <div className="brand">
-            <KlawMark size={20} />
+            <BrandLogo size={24} />
             <AAWord />
           </div>
           <div className="acts">

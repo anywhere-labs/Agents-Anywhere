@@ -1,4 +1,4 @@
-import { KlawMark } from "../../components/Icons";
+import { BrandLogo } from "../../components/BrandLogo";
 
 export function NoSessionsEmpty() {
   return (
@@ -18,7 +18,7 @@ export function NoSessionsEmpty() {
               <div className="ln w3" />
             </div>
             <span className="mark">
-              <KlawMark size={26} />
+              <BrandLogo size={32} />
             </span>
           </div>
 

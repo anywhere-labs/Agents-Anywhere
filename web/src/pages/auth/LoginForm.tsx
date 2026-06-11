@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Icons, KlawMark } from "../../components/Icons";
+import { BrandLogo } from "../../components/BrandLogo";
+import { Icons } from "../../components/Icons";
 import { AAWord } from "./AAWord";
 import type { AuthCredentials } from "../../lib/api";
 
@@ -36,7 +37,7 @@ export function LoginForm({
     <div className="aa-card">
       <div className="aa-hero">
         <div className="mark-box">
-          <KlawMark size={22} />
+          <BrandLogo size={30} />
         </div>
         <h1>
           Sign in to <AAWord size="lg" />

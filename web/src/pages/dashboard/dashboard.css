@@ -51,12 +51,12 @@
 .kl-sb-hd .brand {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 9px;
   color: var(--text);
 }
 
 .kl-sb-hd .brand .aa-word {
-  font-size: 20px;
+  font-size: var(--fs-lg);
 }
 
 .kl-sb-hd .acts {

@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import { Icons, KlawMark } from "../../components/Icons";
+import { BrandLogo } from "../../components/BrandLogo";
+import { Icons } from "../../components/Icons";
 import type { Theme } from "../../lib/theme";
 import { AAWord } from "./AAWord";
 
@@ -20,7 +21,7 @@ export function AuthChrome({
     <div className="aa-auth">
       <div className="aa-auth-top">
         <div className="left">
-          <KlawMark size={22} />
+          <BrandLogo size={26} />
           <AAWord />
         </div>
         <div className="right">
