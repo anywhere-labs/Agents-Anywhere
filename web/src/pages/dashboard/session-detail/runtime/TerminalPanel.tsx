@@ -42,10 +42,19 @@ export function TerminalPanel({
   const [busy, setBusy] = useState(false);
   const termsRef = useRef<TerminalView[]>([]);
   const terminalGroupIdRef = useRef(makeTerminalGroupId());
+  const renameTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     termsRef.current = terms;
   }, [terms]);
+
+  useEffect(() => {
+    return () => {
+      if (renameTimerRef.current !== null) {
+        window.clearTimeout(renameTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     setTerms([]);
@@ -111,8 +120,26 @@ export function TerminalPanel({
     }
   }, [api]);
 
+  const scheduleRename = useCallback((terminal: TerminalView) => {
+    if (renameTimerRef.current !== null) {
+      window.clearTimeout(renameTimerRef.current);
+    }
+    renameTimerRef.current = window.setTimeout(() => {
+      setRenamingId(terminal.terminalId);
+      setRenameText(terminal.label);
+      renameTimerRef.current = null;
+    }, 180);
+  }, []);
+
+  const cancelScheduledRename = useCallback(() => {
+    if (renameTimerRef.current === null) return;
+    window.clearTimeout(renameTimerRef.current);
+    renameTimerRef.current = null;
+  }, []);
+
   const closeTerminal = useCallback(
     async (tid: string) => {
+      cancelScheduledRename();
       try {
         await api.closeTerminal(tid);
       } catch (e) {
@@ -124,7 +151,7 @@ export function TerminalPanel({
         return next;
       });
     },
-    [api, activeId],
+    [api, activeId, cancelScheduledRename],
   );
 
   const renameTerminal = useCallback(
@@ -141,6 +168,86 @@ export function TerminalPanel({
         <div className="title">
           <Icons.Terminal size={14} /> {title}
         </div>
+        {!primary && <div
+          className="kl-term-tabs"
+          role="tablist"
+          onWheel={(e) => {
+            const scroll = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+            if (!scroll) return;
+            e.currentTarget.scrollLeft += scroll;
+            e.preventDefault();
+          }}
+        >
+          {terms.map((t) =>
+            renamingId === t.terminalId ? (
+              <input
+                key={t.terminalId}
+                className="kl-term-tab active"
+                value={renameText}
+                autoFocus
+                onChange={(e) => setRenameText(e.target.value)}
+                onBlur={() => renameTerminal(t.terminalId, renameText.trim() || t.label)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") renameTerminal(t.terminalId, renameText.trim() || t.label);
+                  if (e.key === "Escape") setRenamingId(null);
+                }}
+                style={{ width: 120, padding: "0 8px" }}
+              />
+            ) : (
+              <button
+                key={t.terminalId}
+                role="tab"
+                className={
+                  "kl-term-tab" +
+                  (activeId === t.terminalId ? " active" : "") +
+                  (t.status === "exited" ? " exited" : "")
+                }
+                onClick={(e) => {
+                  if (e.detail >= 3) {
+                    cancelScheduledRename();
+                    void closeTerminal(t.terminalId);
+                    return;
+                  }
+                  setActiveId(t.terminalId);
+                }}
+                onAuxClick={(e) => {
+                  if (e.button !== 1) return;
+                  e.preventDefault();
+                  void closeTerminal(t.terminalId);
+                }}
+                onMouseDown={(e) => {
+                  if (e.button === 1) e.preventDefault();
+                }}
+                onDoubleClick={() => scheduleRename(t)}
+                title={`${t.label} · pid ${t.pid ?? "?"}${t.status === "exited" ? ` (exit ${t.exitCode ?? "?"})` : ""}\nDouble-click to rename · middle-click or triple-click to close`}
+              >
+                <span className="dot" />
+                <span className="label">{t.label}</span>
+                {terms.length > 0 && (
+                  <span
+                    className="close"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void closeTerminal(t.terminalId);
+                    }}
+                    aria-label={`Close ${t.label}`}
+                  >
+                    <Icons.X size={11} />
+                  </span>
+                )}
+              </button>
+            ),
+          )}
+          <button
+            className="kl-term-add"
+            onClick={addTerminal}
+            disabled={busy}
+            title="New terminal"
+            aria-label="New terminal"
+          >
+            <Icons.Plus size={14} />
+          </button>
+        </div>}
         <span className="sep" />
         <div className="acts">
           {onPopOut && (
@@ -155,65 +262,6 @@ export function TerminalPanel({
           )}
         </div>
       </div>
-      {!primary && <div className="kl-term-tabs" role="tablist">
-        {terms.map((t) =>
-          renamingId === t.terminalId ? (
-            <input
-              key={t.terminalId}
-              className="kl-term-tab active"
-              value={renameText}
-              autoFocus
-              onChange={(e) => setRenameText(e.target.value)}
-              onBlur={() => renameTerminal(t.terminalId, renameText.trim() || t.label)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") renameTerminal(t.terminalId, renameText.trim() || t.label);
-                if (e.key === "Escape") setRenamingId(null);
-              }}
-              style={{ width: 120, padding: "0 8px" }}
-            />
-          ) : (
-            <button
-              key={t.terminalId}
-              role="tab"
-              className={
-                "kl-term-tab" +
-                (activeId === t.terminalId ? " active" : "") +
-                (t.status === "exited" ? " exited" : "")
-              }
-              onClick={() => setActiveId(t.terminalId)}
-              onDoubleClick={() => {
-                setRenamingId(t.terminalId);
-                setRenameText(t.label);
-              }}
-              title={`${t.label} · pid ${t.pid ?? "?"}${t.status === "exited" ? ` (exit ${t.exitCode ?? "?"})` : ""}\nDouble-click to rename`}
-            >
-              <span className="dot" />
-              <span className="label">{t.label}</span>
-              {terms.length > 0 && (
-                <span
-                  className="close"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void closeTerminal(t.terminalId);
-                  }}
-                  aria-label={`Close ${t.label}`}
-                >
-                  <Icons.X size={11} />
-                </span>
-              )}
-            </button>
-          ),
-        )}
-        <button
-          className="kl-term-add"
-          onClick={addTerminal}
-          disabled={busy}
-          title="New terminal"
-          aria-label="New terminal"
-        >
-          <Icons.Plus size={14} />
-        </button>
-      </div>}
       <div className="kl-term-host">
         {error && <div className="kl-term-status" style={{ color: "#f6a4a4" }}>{error}</div>}
         {terms.map((term) => (

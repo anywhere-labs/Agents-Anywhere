@@ -486,14 +486,18 @@ body.kl-resizing * {
 .kl-term .kl-rt-hd {
   border-bottom: 1px solid var(--border);
 }
+.kl-term .kl-rt-hd .title {
+  flex: 0 0 auto;
+}
 .kl-term-tabs {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 6px 10px 4px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
+  min-width: 0;
+  flex: 1 1 auto;
+  margin-left: 12px;
   overflow-x: auto;
+  overflow-y: hidden;
   scrollbar-width: thin;
 }
 .kl-term-tab {
@@ -509,7 +513,9 @@ body.kl-resizing * {
   cursor: pointer;
   font: inherit;
   font-size: var(--fs-sm);
-  flex-shrink: 0;
+  min-width: 72px;
+  max-width: 116px;
+  flex: 0 0 auto;
 }
 .kl-term-tab:hover {
   background: var(--bg-hover);
@@ -534,6 +540,9 @@ body.kl-resizing * {
   background: oklch(0.7 0.16 25);
 }
 .kl-term-tab .label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 .kl-term-tab .close {
@@ -569,6 +578,14 @@ body.kl-resizing * {
 .kl-term-add:hover {
   background: var(--bg-hover);
   color: var(--text);
+}
+.kl-term-add:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+.kl-term-add:disabled:hover {
+  background: transparent;
+  color: var(--text-mut);
 }
 
 .kl-term-host {
