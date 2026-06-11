@@ -151,9 +151,9 @@ button {
 
 .aa-logo-img {
   position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+  inset: var(--aa-logo-padding);
+  width: calc(100% - var(--aa-logo-padding) * 2);
+  height: calc(100% - var(--aa-logo-padding) * 2);
   object-fit: contain;
   user-select: none;
   pointer-events: none;

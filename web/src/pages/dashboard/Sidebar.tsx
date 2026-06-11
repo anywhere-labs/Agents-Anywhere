@@ -253,7 +253,7 @@ export function Sidebar({
       {!mini && (
         <div className="kl-sb-hd">
           <div className="brand">
-            <BrandLogo size={24} />
+            <BrandLogo size={22} padding={0.08} />
             <AAWord />
           </div>
           <div className="acts">

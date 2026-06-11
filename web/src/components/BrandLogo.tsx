@@ -4,11 +4,15 @@ import logoLightMode from "../assets/brand/aa-logo-light-mode.png";
 
 type BrandLogoProps = {
   size?: number;
+  padding?: number;
   className?: string;
 };
 
-export function BrandLogo({ size = 24, className }: BrandLogoProps) {
-  const style = { "--aa-logo-size": `${size}px` } as CSSProperties;
+export function BrandLogo({ size = 24, padding = 0.14, className }: BrandLogoProps) {
+  const style = {
+    "--aa-logo-size": `${size}px`,
+    "--aa-logo-padding": `${Math.max(0, Math.min(padding, 0.4)) * 100}%`,
+  } as CSSProperties;
   return (
     <span className={["aa-logo", className].filter(Boolean).join(" ")} style={style} aria-hidden="true">
       <img className="aa-logo-img aa-logo-dark-mode" src={logoDarkMode} alt="" draggable={false} />
