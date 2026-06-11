@@ -14,6 +14,7 @@ from agent_server.services.runtime_config import RuntimeConfigService
 from agent_server.services.session_run import SessionRunService
 from agent_server.services.terminal import TerminalService
 from agent_server.services.shell_tasks import ShellTaskManager
+from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.timeline_broker import TimelineBroker
 
@@ -70,6 +71,10 @@ def get_rpc(conn: HTTPConnection) -> ConnectorRpcManager:
 
 def get_shell_tasks(conn: HTTPConnection) -> ShellTaskManager:
     return conn.app.state.shell_tasks
+
+
+def get_fs_downloads(conn: HTTPConnection) -> FsDownloadRelayManager:
+    return conn.app.state.fs_downloads
 
 
 def get_timeline_broker(conn: HTTPConnection) -> TimelineBroker:

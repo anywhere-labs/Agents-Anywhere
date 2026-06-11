@@ -593,6 +593,18 @@ async def _exercise_local_ops(tmp_path) -> None:
         }
     ]
 
+    prepared = await client.dispatch(
+        "fs.prepareDownload",
+        {"root": str(workspace), "sessionId": "sess_1", "path": "hello.txt"},
+    )
+    assert prepared == {
+        "path": str(workspace / "hello.txt"),
+        "name": "hello.txt",
+        "size": len(b"hello\n"),
+        "sha256": hashlib.sha256(b"hello\n").hexdigest(),
+        "mediaType": "text/plain",
+    }
+
     write_result = await client.dispatch(
         "fs.writeFile",
         {"root": str(workspace), "path": "created.txt", "content": "created"},

@@ -114,8 +114,14 @@ export function SessionDetailView({
   });
   const runtimeLayout = useRuntimeLayout(sidebarCollapsed);
   const runtimeApi = useMemo(
-    () => makeRuntimeApi({ sessionId, token }),
-    [sessionId, token],
+    () =>
+      makeRuntimeApi({
+        sessionId,
+        connectorId: session.connectorId,
+        root: session.cwd,
+        token,
+      }),
+    [session.connectorId, session.cwd, sessionId, token],
   );
   // When the session changes, drop the open preview (it pointed at the old workspace).
   useEffect(() => {

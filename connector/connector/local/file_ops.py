@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import mimetypes
 from typing import Any
 
 from connector.local.common import (
@@ -40,6 +41,24 @@ class FileOps:
             "sha256": hashlib.sha256(data).hexdigest(),
             **upload,
         }
+
+    async def prepare_download(self, params: dict[str, Any]) -> dict[str, Any]:
+        root = workspace_root(params)
+        path = resolve_path(root, required_string(params, "path"))
+        if not path.is_file():
+            raise FileNotFoundError(f"file not found: {path}")
+        data = path.read_bytes()
+        return {
+            "path": str(path),
+            "name": path.name,
+            "size": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "mediaType": mimetypes.guess_type(path.name)[0] or "application/octet-stream",
+        }
+
+    def prepared_download_path(self, params: dict[str, Any]) -> str:
+        root = workspace_root(params)
+        return str(resolve_path(root, required_string(params, "path")))
 
     async def write_file(self, params: dict[str, Any]) -> dict[str, Any]:
         root = workspace_root(params)

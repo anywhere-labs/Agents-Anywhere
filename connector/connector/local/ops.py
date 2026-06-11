@@ -41,6 +41,12 @@ class LocalOps:
     async def read_file(self, params: dict[str, Any]) -> dict[str, Any]:
         return await self.files.read_file(params)
 
+    async def prepare_download(self, params: dict[str, Any]) -> dict[str, Any]:
+        return await self.files.prepare_download(params)
+
+    def prepared_download_path(self, params: dict[str, Any]) -> str:
+        return self.files.prepared_download_path(params)
+
     async def write_file(self, params: dict[str, Any]) -> dict[str, Any]:
         return await self.files.write_file(params)
 

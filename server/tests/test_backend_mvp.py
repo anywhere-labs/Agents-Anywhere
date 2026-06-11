@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from agent_server.api.sessions_terminal import _send_terminal_ws_error
 from agent_server.app import create_app
 from agent_server.infra.connector_rpc import ConnectorOfflineError, ConnectorRpcError, ConnectorRpcManager
+from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.services.terminal import TerminalService
 
 
@@ -4449,6 +4450,90 @@ def test_fs_read_allows_absolute_paths_outside_session_cwd(tmp_path):
         )
 
 
+def test_connector_fs_read_prepares_transfer_without_persisting(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _connector_access_token, _session_id, headers = create_connector_and_session(client)
+    data = b"binary\x00payload\n"
+
+    class TransferRpc(FakeLocalRpc):
+        async def request(
+            self,
+            connector_id: str,
+            method: str,
+            params: dict[str, Any],
+            *,
+            timeout: float = 30,
+        ) -> Any:
+            self.requests.append((connector_id, method, params, timeout))
+            if method == "fs.prepareDownload":
+                return {
+                    "path": params["path"],
+                    "name": "payload.bin",
+                    "size": len(data),
+                    "sha256": hashlib.sha256(data).hexdigest(),
+                    "mediaType": "application/octet-stream",
+                }
+            if method == "fs.uploadPreparedDownload":
+                return {"uploadStarted": True}
+            return await super().request(connector_id, method, params, timeout=timeout)
+
+    fake_rpc = TransferRpc()
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+
+    prepare_response = client.post(
+        f"/connectors/{connector_id}/fs/read?root=/repo",
+        headers=headers,
+        json={"path": "payload.bin"},
+    )
+    assert prepare_response.status_code == 200
+    prepared = prepare_response.json()["result"]
+    assert prepared["downloadUrl"].startswith(f"/connectors/{connector_id}/fs/transfers/")
+    assert "contentBase64" not in prepared
+    assert fake_rpc.requests[0][1] == "fs.prepareDownload"
+    assert fake_rpc.requests[0][2]["root"] == "/repo"
+    assert fake_rpc.requests[0][2]["path"] == "/repo/payload.bin"
+
+
+def test_fs_download_relay_streams_uploaded_chunks():
+    asyncio.run(_exercise_fs_download_relay_streams_uploaded_chunks())
+
+
+async def _exercise_fs_download_relay_streams_uploaded_chunks() -> None:
+    manager = FsDownloadRelayManager()
+    transfer = manager.create(
+        connector_id="conn_1",
+        root="/repo",
+        path="/repo/payload.bin",
+        name="payload.bin",
+        size=6,
+        sha256="abc",
+        media_type="application/octet-stream",
+    )
+
+    async def chunks():
+        yield b"abc"
+        yield b"def"
+
+    async def upload():
+        assert await manager.upload(
+            transfer_id=transfer.transfer_id,
+            token=transfer.token,
+            chunks=chunks(),
+        )
+
+    upload_task = asyncio.create_task(upload())
+    streamed = [
+        chunk
+        async for chunk in manager.stream(
+            transfer_id=transfer.transfer_id,
+            token=transfer.token,
+        )
+    ]
+    await upload_task
+    assert b"".join(streamed) == b"abcdef"
+
+
 def test_fs_and_shell_rpc_forward_validated_workspace_params(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, session_id, headers = create_connector_and_session(client)
@@ -4614,6 +4699,50 @@ def test_fs_and_shell_rpc_forward_windows_workspace_params(tmp_path):
                 "timeoutMs": 120000,
             },
             125.0,
+        ),
+    ]
+
+
+def test_connector_fs_list_supports_body_and_query_roots(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, _, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+
+    legacy_response = client.post(
+        f"/connectors/{connector_id}/fs/list",
+        headers=headers,
+        json={"root": "~", "path": "."},
+    )
+    query_response = client.post(
+        f"/connectors/{connector_id}/fs/list?root=/repo",
+        headers=headers,
+        json={"path": "src"},
+    )
+
+    assert legacy_response.status_code == 200
+    assert query_response.status_code == 200
+    assert fake_rpc.requests[-2:] == [
+        (
+            connector_id,
+            "fs.readDir",
+            {
+                "sessionId": f"browse_{connector_id}",
+                "root": "~",
+                "path": "~",
+            },
+            30,
+        ),
+        (
+            connector_id,
+            "fs.readDir",
+            {
+                "sessionId": f"browse_{connector_id}",
+                "root": "/repo",
+                "path": "/repo/src",
+            },
+            30,
         ),
     ]
 

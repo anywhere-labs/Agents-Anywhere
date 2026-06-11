@@ -51,7 +51,9 @@ export type FsReadFileResult = {
   name: string;
   size: number;
   sha256: string;
-  fileId: string;
+  fileId?: string;
+  transferId?: string;
+  token?: string;
   downloadUrl: string;
 };
 
@@ -107,11 +109,17 @@ export type DemoMode = boolean;
 
 export function makeRuntimeApi(opts: {
   sessionId: string;
+  connectorId?: string | null;
+  root?: string | null;
   token: string | null;
   demo?: DemoMode;
 }) {
-  const { sessionId, token, demo = false } = opts;
+  const { sessionId, connectorId, root, token, demo = false } = opts;
   const auth = () => (token ? { authorization: `Bearer ${token}` } : {});
+  const connectorFsPath = (suffix: string) =>
+    connectorId && root
+      ? `/connectors/${encodeURIComponent(connectorId)}/fs/${suffix}?root=${encodeURIComponent(root)}`
+      : null;
 
   async function call<T>(
     path: string,
@@ -152,24 +160,31 @@ export function makeRuntimeApi(opts: {
     demo,
     fsList(path: string | null): Promise<{ ok: boolean; result: FsListResult }> {
       if (demo) return Promise.resolve(demoFsList(path));
-      return call(`/sessions/${sessionId}/fs/list`, {
+      return call(connectorFsPath("list") ?? `/sessions/${sessionId}/fs/list`, {
         method: "POST",
         body: JSON.stringify({ path }),
       });
     },
     fsReadText(path: string, maxBytes = 1_048_576): Promise<FsReadTextResult> {
       if (demo) return Promise.resolve(demoFsReadText(path));
-      return call(`/sessions/${sessionId}/fs/readText`, {
+      return call(connectorFsPath("readText") ?? `/sessions/${sessionId}/fs/readText`, {
         method: "POST",
         body: JSON.stringify({ path, maxBytes }),
       });
     },
     fsReadFile(path: string): Promise<{ ok: boolean; result: FsReadFileResult }> {
       if (demo) return Promise.resolve(demoFsReadFile(path));
-      return call(`/sessions/${sessionId}/fs/read`, {
+      return call(connectorFsPath("read") ?? `/sessions/${sessionId}/fs/read`, {
         method: "POST",
         body: JSON.stringify({ path }),
       });
+    },
+    async fsDownloadBlob(downloadUrl: string): Promise<Blob> {
+      const headers = new Headers();
+      for (const [k, v] of Object.entries(auth())) headers.set(k, v);
+      const res = await fetch(downloadUrl, { headers });
+      if (!res.ok) throw new RuntimeApiError(res.status, await res.text());
+      return await res.blob();
     },
     fsDownload(fileId: string): Promise<FsDownloadResult> {
       if (demo) return Promise.resolve(demoFsDownload(fileId));

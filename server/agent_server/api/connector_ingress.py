@@ -8,6 +8,7 @@ from fastapi import (
     Depends,
     Header,
     HTTPException,
+    Request,
     Response,
     WebSocket,
     WebSocketDisconnect,
@@ -24,11 +25,13 @@ from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.deps import (
     get_attachment_service,
     get_connector_ingest_service,
+    get_fs_downloads,
     get_rpc,
     get_shell_tasks,
     get_store,
     get_timeline_broker,
 )
+from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.core.models import (
     ApprovalIn,
     ConnectorAuthResponse,
@@ -193,6 +196,31 @@ async def connector_fs_download(
             "X-File-Sha256": str(metadata.get("sha256") or ""),
         },
     )
+
+
+@router.put("/connector/fs/transfers/{transfer_id}")
+async def connector_fs_transfer_upload(
+    transfer_id: str,
+    request: Request,
+    token: str,
+    authorization: str = Header(..., alias="Authorization"),
+    db: Store = Depends(get_store),
+    downloads: FsDownloadRelayManager = Depends(get_fs_downloads),
+) -> dict[str, str]:
+    connector_id = _connector_id_from_bearer(authorization)
+    await _require_active_connector(connector_id, db)
+    await db.record_connector_activity(connector_id)
+    transfer = downloads.get(transfer_id, token)
+    if transfer is None or transfer.connector_id != connector_id:
+        raise HTTPException(status_code=404, detail="transfer not found")
+    accepted = await downloads.upload(
+        transfer_id=transfer_id,
+        token=token,
+        chunks=request.stream(),
+    )
+    if not accepted:
+        raise HTTPException(status_code=404, detail="transfer not found")
+    return {"status": "accepted"}
 
 
 async def _reconcile_active_run_from_timeline(db: Store, session_id: str) -> None:

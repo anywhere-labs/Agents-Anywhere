@@ -32,6 +32,7 @@ from agent_server.api import (
 from agent_server.core.setup_token import SetupToken
 from agent_server.services.shell_tasks import ShellTaskManager
 from agent_server.services.dashboard_events import publish_dashboard_changed
+from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.terminal_broker import TerminalBroker
 from agent_server.core.utc import utc_now
@@ -91,6 +92,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     )
     app.state.store = Store(db_path or os.environ.get("AGENT_SERVER_DB"))
     app.state.rpc = ConnectorRpcManager()
+    app.state.fs_downloads = FsDownloadRelayManager()
     app.state.shell_tasks = ShellTaskManager()
     app.state.terminal_broker = TerminalBroker()
     app.state.timeline_broker = TimelineBroker()

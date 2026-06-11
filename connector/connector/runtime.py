@@ -170,6 +170,7 @@ class BackendRpcClient:
         self._access_token_expires_at: float = 0
         self._auth_lock = asyncio.Lock()
         self._send_lock = asyncio.Lock()
+        self._background_tasks: set[asyncio.Task[Any]] = set()
         # Persistent HTTP client: a long-lived connection pool eliminates the
         # 5–10ms TCP/TLS setup that the old `async with AsyncClient(...)`
         # per-call pattern paid on every notification.
@@ -332,6 +333,13 @@ class BackendRpcClient:
             return await self._resolve_adapter(params).resolve_approval(params)
         if method == "fs.readFile":
             return await self.local_ops.read_file(params)
+        if method == "fs.prepareDownload":
+            return await self.local_ops.prepare_download(params)
+        if method == "fs.uploadPreparedDownload":
+            task = asyncio.create_task(self.upload_prepared_download(params))
+            self._background_tasks.add(task)
+            task.add_done_callback(self._on_background_upload_done)
+            return {"transferId": params.get("transferId"), "uploadStarted": True}
         if method == "fs.writeFile":
             return await self.local_ops.write_file(params)
         if method == "fs.readDir":
@@ -812,12 +820,69 @@ class BackendRpcClient:
             )
             return response.content, name, media_type
 
+    async def upload_prepared_download(self, params: dict[str, Any]) -> dict[str, Any]:
+        transfer_id = params.get("transferId")
+        token = params.get("token")
+        upload_url = params.get("uploadUrl")
+        if not isinstance(transfer_id, str) or not transfer_id:
+            raise ValueError("transferId is required")
+        if not isinstance(token, str) or not token:
+            raise ValueError("token is required")
+        if not isinstance(upload_url, str) or not upload_url:
+            raise ValueError("uploadUrl is required")
+        path = Path(self.local_ops.prepared_download_path(params))
+        if not path.is_file():
+            raise FileNotFoundError(f"file not found: {path}")
+        access_token = await self.ensure_access_token()
+        timeout = httpx.Timeout(300.0, connect=30.0)
+        target = urljoin(self.config.server_url + "/", upload_url.lstrip("/"))
+        headers = {"Authorization": f"Bearer {access_token}"}
+        params_query = {"token": token}
+        async with self._new_http_client(timeout=timeout) as client:
+            response = await client.put(
+                target,
+                params=params_query,
+                headers=headers,
+                content=_file_chunks(path),
+            )
+            if getattr(response, "status_code", None) == 401:
+                access_token = await self.ensure_access_token(force=True)
+                headers = {"Authorization": f"Bearer {access_token}"}
+                response = await client.put(
+                    target,
+                    params=params_query,
+                    headers=headers,
+                    content=_file_chunks(path),
+                )
+                if getattr(response, "status_code", None) == 401:
+                    raise ConnectorAuthenticationError("connector credential no longer valid")
+            response.raise_for_status()
+        return {"transferId": transfer_id, "uploaded": True}
+
+    def _on_background_upload_done(self, task: asyncio.Task[Any]) -> None:
+        self._background_tasks.discard(task)
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("fs prepared download upload failed")
+
     def _new_http_client(self, *, timeout: httpx.Timeout | float) -> httpx.AsyncClient:
         return httpx.AsyncClient(timeout=timeout, trust_env=not _is_loopback_url(self.config.server_url))
 
 
 def _strip_backend_notifications(result: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in result.items() if key != "backendNotifications"}
+
+
+async def _file_chunks(path: Path, chunk_size: int = 1024 * 1024):
+    with path.open("rb") as fh:
+        while True:
+            chunk = fh.read(chunk_size)
+            if not chunk:
+                break
+            yield chunk
 
 
 def _is_auth_close(exc: ConnectionClosed) -> bool:
