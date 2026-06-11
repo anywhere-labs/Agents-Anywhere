@@ -10,6 +10,7 @@ dependencies = [
     "claude-agent-sdk",
     "fastapi>=0.136.1",
     "httpx>=0.28.1",
+    "httpx-s3-client",
     "loguru>=0.7.3",
     "python-multipart>=0.0.20",
     "sqlalchemy[asyncio]>=2.0.36",
@@ -27,3 +28,6 @@ dev = [
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+
+[tool.uv.sources]
+httpx-s3-client = { git = "https://gitlab.t4wefan.pub/t4wefan/httpx-s3-client.git" }
