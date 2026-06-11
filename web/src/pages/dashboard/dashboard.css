@@ -1555,6 +1555,29 @@
   border-color: transparent;
 }
 
+.aa-acct-btn.danger {
+  background: transparent;
+  color: oklch(0.62 0.16 25);
+  border-color: color-mix(in oklch, oklch(0.62 0.16 25) 40%, var(--border-md));
+}
+
+.aa-acct-btn.danger:hover {
+  background: color-mix(in oklch, oklch(0.62 0.16 25) 10%, transparent);
+  border-color: oklch(0.62 0.16 25);
+  color: oklch(0.62 0.16 25);
+}
+
+.aa-acct-btn.danger.solid {
+  background: oklch(0.65 0.18 25);
+  border-color: transparent;
+  color: #fff;
+}
+
+.aa-acct-btn.danger.solid:hover {
+  background: oklch(0.68 0.18 25);
+  color: #fff;
+}
+
 .aa-acct-btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
@@ -1574,6 +1597,21 @@
   justify-content: flex-end;
   gap: 8px;
   padding-top: 4px;
+}
+
+.aa-reset-password-modal {
+  width: 430px;
+}
+
+.aa-reset-password-form {
+  margin: -2px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
+
+.aa-reset-password-form h3 {
+  margin: 0 0 2px;
 }
 
 /* ─── Team page ─────────────────────────────────────────────────────────── */
