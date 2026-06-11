@@ -114,8 +114,14 @@ export function SessionDetailView({
   });
   const runtimeLayout = useRuntimeLayout(sidebarCollapsed);
   const runtimeApi = useMemo(
-    () => makeRuntimeApi({ sessionId, token }),
-    [sessionId, token],
+    () =>
+      makeRuntimeApi({
+        sessionId,
+        connectorId: session.connectorId,
+        root: session.cwd,
+        token,
+      }),
+    [session.connectorId, session.cwd, sessionId, token],
   );
   // When the session changes, drop the open preview (it pointed at the old workspace).
   useEffect(() => {
@@ -602,8 +608,8 @@ export function SessionDetailView({
           const result = await api.uploadSessionAttachments(token, sessionId, files);
           uploadedMeta = result.attachments;
           attachmentRefs = result.attachments.map((a) => ({ fileId: a.fileId }));
-          // Persist each file's bytes locally so the message preview survives
-          // page refresh and the backend's delete-on-consume behavior.
+          // Keep a local preview cache so recent image chips render instantly;
+          // the platform file remains durable on the backend.
           await Promise.all(
             uploadedMeta.map((meta, i) =>
               putAttachment({
@@ -635,6 +641,9 @@ export function SessionDetailView({
         .toString(36)
         .slice(2, 8)}`;
       const now = new Date().toISOString();
+      const visibleContent = content.trim();
+      const sendContent =
+        visibleContent || (uploadedMeta.length > 0 ? ATTACHMENT_ONLY_PROMPT : content);
 
       // Persist the message↔attachment association durably so the real server
       // item (which has no attachment refs) can be re-enriched after refresh.
@@ -642,12 +651,13 @@ export function SessionDetailView({
         const record: SentMessageRecord = {
           sentId: tempId,
           sessionId,
-          text: content,
+          text: visibleContent,
           attachments: uploadedMeta.map((m) => ({
             fileId: m.fileId,
             name: m.name,
             mediaType: m.mediaType,
             size: m.size,
+            openUrl: m.openUrl,
           })),
           createdAt: now,
         };
@@ -666,7 +676,7 @@ export function SessionDetailView({
         role: "user",
         content:
           uploadedMeta.length > 0
-            ? { text: content, attachments: uploadedMeta }
+            ? { text: visibleContent, attachments: uploadedMeta }
             : { text: content },
         source: {},
         orderSeq: Number.MAX_SAFE_INTEGER,
@@ -679,7 +689,7 @@ export function SessionDetailView({
       };
       setOptimisticItems((prev) => [...prev, optimistic]);
       try {
-        await api.sendSessionMessage(token, sessionId, content, attachmentRefs, tempId);
+        await api.sendSessionMessage(token, sessionId, sendContent, attachmentRefs, tempId);
         setOptimisticItems((prev) =>
           prev.map((m) =>
             m.id === tempId && m.status === "pending"
@@ -2313,6 +2323,7 @@ function ApprovalButtons({
 // composer rejects obvious mistakes before paying the round-trip.
 const MAX_ATTACHMENT_FILES = 5;
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+const ATTACHMENT_ONLY_PROMPT = "Please review the attached file.";
 
 function attachmentImageExtension(type: string): string {
   switch (type) {

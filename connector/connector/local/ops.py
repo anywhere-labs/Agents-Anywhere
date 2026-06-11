@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 from typing import Any
 
-from connector.local.common import Notify, UploadFile
+from connector.local.common import Notify
 from connector.local.file_ops import FileOps
 from connector.local.shell import ShellBackend, UnixShellBackend, WindowsShellBackend
 from connector.local.terminal import TerminalBackend, default_terminal_backend
@@ -22,14 +22,6 @@ class LocalOps:
         self.terminal = terminal
 
     @property
-    def upload_file(self) -> UploadFile | None:
-        return self.files.upload_file
-
-    @upload_file.setter
-    def upload_file(self, value: UploadFile | None) -> None:
-        self.files.upload_file = value
-
-    @property
     def notify(self) -> Notify | None:
         return self.shell.notify
 
@@ -38,8 +30,11 @@ class LocalOps:
         self.shell.notify = value
         self.terminal.notify = value
 
-    async def read_file(self, params: dict[str, Any]) -> dict[str, Any]:
-        return await self.files.read_file(params)
+    async def prepare_download(self, params: dict[str, Any]) -> dict[str, Any]:
+        return await self.files.prepare_download(params)
+
+    def prepared_download_path(self, params: dict[str, Any]) -> str:
+        return self.files.prepared_download_path(params)
 
     async def write_file(self, params: dict[str, Any]) -> dict[str, Any]:
         return await self.files.write_file(params)
@@ -76,10 +71,9 @@ class LocalOps:
 
 
 def create_local_ops(
-    upload_file: UploadFile | None = None,
     notify: Notify | None = None,
 ) -> LocalOps:
-    files = FileOps(upload_file=upload_file)
+    files = FileOps()
     shell: ShellBackend
     if sys.platform == "win32":
         shell = WindowsShellBackend(notify=notify)

@@ -7,9 +7,13 @@ import os
 import signal
 import sys
 from pathlib import Path
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from connector.local.common import Notify, nearest_existing_dir, required_string, resolve_path, workspace_root
+
+
+TerminalOutput = Callable[[str, dict[str, Any]], Awaitable[None]]
 
 
 class TerminalBackend:
@@ -17,7 +21,12 @@ class TerminalBackend:
         self.notify = notify
         self._terminals: dict[str, dict[str, Any]] = {}
 
-    async def create(self, params: dict[str, Any]) -> dict[str, Any]:
+    async def create(
+        self,
+        params: dict[str, Any],
+        *,
+        output: TerminalOutput | None = None,
+    ) -> dict[str, Any]:
         root = workspace_root(params)
         raw_cwd = params.get("cwd")
         if isinstance(raw_cwd, str) and raw_cwd.strip():
@@ -63,6 +72,7 @@ class TerminalBackend:
             "args": args,
             "closed": False,
             "seq": 0,
+            "output": output,
         }
         record["task"] = asyncio.create_task(self._pump_terminal_output(record))
         self._terminals[terminal_id] = record
@@ -202,6 +212,13 @@ class TerminalBackend:
         self._close(record["pty"])
 
     async def _notify(self, method: str, params: dict[str, Any]) -> None:
+        terminal_id = params.get("terminalId")
+        if isinstance(terminal_id, str):
+            record = self._terminals.get(terminal_id)
+            output = record.get("output") if record is not None else None
+            if output is not None:
+                await output(method, params)
+                return
         if self.notify is not None:
             await self.notify(method, params)
 

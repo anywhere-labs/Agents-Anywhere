@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import base64
-import hashlib
 import time
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -11,7 +9,6 @@ MAX_DIR_ENTRIES = 500
 MAX_OUTPUT_CHARS = 64_000
 MAX_READ_TEXT_BYTES = 4 * 1024 * 1024
 
-UploadFile = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 Notify = Callable[[str, dict[str, Any]], Awaitable[None]]
 
 
@@ -118,16 +115,4 @@ def shell_result(
         "stderr": stderr_text,
         "stdoutTruncated": stdout_truncated,
         "stderrTruncated": stderr_truncated,
-    }
-
-
-def file_upload_payload(session_id: str, path: Path, data: bytes) -> dict[str, Any]:
-    sha256 = hashlib.sha256(data).hexdigest()
-    return {
-        "sessionId": session_id,
-        "path": str(path),
-        "name": path.name,
-        "size": len(data),
-        "sha256": sha256,
-        "contentBase64": base64.b64encode(data).decode("ascii"),
     }

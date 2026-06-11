@@ -90,6 +90,7 @@ const MAX_ATTACHMENT_FILES = 5;
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 const COMPOSER_MENU_MARGIN = 8;
 const COMPOSER_MENU_GAP = 8;
+const ATTACHMENT_ONLY_PROMPT = "Please review the attached file.";
 
 export function NewSessionPage({
   token,
@@ -117,6 +118,7 @@ export function NewSessionPage({
   const [prompt, setPrompt] = useState("");
   const [workspaceCwd, setWorkspaceCwd] = useState<string | null>(initialCwd || null);
   const [manualCwd, setManualCwd] = useState(initialCwd || "~");
+  const [homeCwd, setHomeCwd] = useState<string | null>(null);
   const [fsEntries, setFsEntries] = useState<FsEntry[]>([]);
   const [fsLoading, setFsLoading] = useState(false);
   const [fsError, setFsError] = useState<string | null>(null);
@@ -263,6 +265,20 @@ export function NewSessionPage({
     [connector, token],
   );
 
+  const resolveHomeCwd = useCallback(async () => {
+    if (!connector) return null;
+    try {
+      const res = await api.connectorFsList(token, connector.id, {
+        root: "~",
+        path: ".",
+      });
+      const resolved = res.result.path;
+      return resolved && resolved !== "~" ? resolved : null;
+    } catch {
+      return null;
+    }
+  }, [connector, token]);
+
   useEffect(() => {
     if (!connector) return;
     const rs = attachedRuntimes(connector);
@@ -307,11 +323,23 @@ export function NewSessionPage({
     lastConnectorRef.current = connector.id;
     setWorkspaceCwd(initialCwd || null);
     setManualCwd(initialCwd || "~");
+    setHomeCwd(null);
     setFsEntries([]);
     setFsError(null);
     setManualWorkspace(false);
     setWorkspaceOpen(false);
   }, [connector, initialCwd]);
+
+  useEffect(() => {
+    if (!connector) return;
+    let cancelled = false;
+    void resolveHomeCwd().then((resolved) => {
+      if (!cancelled) setHomeCwd(resolved);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [connector, resolveHomeCwd]);
 
   useEffect(() => {
     if (!workspaceOpen) return;
@@ -342,7 +370,6 @@ export function NewSessionPage({
     [connector, sessions],
   );
   const selectedWorkspaceCwd = workspaceCwd?.trim() || "";
-  const effectiveCwd = selectedWorkspaceCwd || "~";
   const runtimeFields = runtimeConfigFields(runtimeSchema, runtimeSettings, "session");
   const modelField = runtimeFields.find((field) => field.key === "model");
   const effortField = filterClaudeEffortField(
@@ -445,11 +472,12 @@ export function NewSessionPage({
     setCreateTick(0);
     setCreateError(null);
     try {
+      const cwdForCreate = selectedWorkspaceCwd || homeCwd || (await resolveHomeCwd()) || "~";
       const created = await api.createSession(token, {
         connectorId: connector.id,
         runtime,
         title: prompt.trim() || undefined,
-        cwd: effectiveCwd || undefined,
+        cwd: cwdForCreate || undefined,
         approvalPolicy: permission.approvalPolicy,
         sandbox: permission.sandbox,
       });
@@ -458,7 +486,8 @@ export function NewSessionPage({
       if (runtimeSettings && Object.keys(runtimeSettings).length > 0) {
         await api.patchSessionRuntimeSettings(token, sessionId, runtimeSettings);
       }
-      const text = prompt.trim();
+      const visibleText = prompt.trim();
+      const text = visibleText || (files.length > 0 ? ATTACHMENT_ONLY_PROMPT : "");
       if (text || files.length > 0) {
         let uploadedMeta: UploadedAttachment[] = [];
         let attachmentRefs: { fileId: string }[] = [];
@@ -487,12 +516,13 @@ export function NewSessionPage({
           const record: SentMessageRecord = {
             sentId: clientMessageId,
             sessionId,
-            text,
+            text: visibleText,
             attachments: uploadedMeta.map((meta) => ({
               fileId: meta.fileId,
               name: meta.name,
               mediaType: meta.mediaType,
               size: meta.size,
+              openUrl: meta.openUrl,
             })),
             createdAt: new Date().toISOString(),
           };
@@ -514,7 +544,7 @@ export function NewSessionPage({
     } finally {
       setCreating(false);
     }
-  }, [connector, creating, effectiveCwd, files, onCreated, permission, prompt, runtime, token]);
+  }, [connector, creating, files, homeCwd, onCreated, permission, prompt, resolveHomeCwd, runtime, selectedWorkspaceCwd, token]);
 
   return (
     <div className="kl-new-page">
@@ -741,11 +771,11 @@ export function NewSessionPage({
             className={`kl-new-workspace-trigger${workspaceOpen ? " on" : ""}`}
             onClick={() => setWorkspaceOpen((open) => !open)}
             disabled={!connector}
-            title={selectedWorkspaceCwd || "Home directory"}
+            title={selectedWorkspaceCwd || homeCwd || "Home directory"}
           >
             <Icons.Folder size={14} />
             <span>{selectedWorkspaceCwd ? workspaceLabel(selectedWorkspaceCwd) : "Home directory"}</span>
-            <em>{selectedWorkspaceCwd || "Default workspace"}</em>
+            <em>{selectedWorkspaceCwd || homeCwd || "Default workspace"}</em>
             <Icons.ChevDown size={13} />
           </button>
           {workspaceOpen && (
@@ -1277,11 +1307,15 @@ function clipboardImageFiles(data: DataTransfer): File[] {
 }
 
 function parentPath(path: string): string {
-  const clean = path.trim().replace(/[/\\]+$/, "") || ".";
+  const clean = normalizeWindowsDrivePath(path).trim().replace(/[/\\]+$/, "") || ".";
   if (clean === "." || clean === "/" || /^[A-Za-z]:[\\/]?$/.test(clean)) return "";
   const normalized = clean.replace(/\\/g, "/");
   const slash = normalized.lastIndexOf("/");
   if (slash < 0) return ".";
   if (slash === 0) return "/";
   return normalized.slice(0, slash);
+}
+
+function normalizeWindowsDrivePath(path: string): string {
+  return path.replace(/^\/([A-Za-z]:[\\/])/, "$1");
 }

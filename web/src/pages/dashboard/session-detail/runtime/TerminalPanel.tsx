@@ -228,6 +228,7 @@ export function TerminalPanel({
               terminal={term}
               active={activeId === term.terminalId}
               api={api}
+              streamScope={primary ? "session" : "workspace"}
               onError={(m) => setError(m)}
               onClosed={() => {
                 if (primary) return;
@@ -256,12 +257,14 @@ function XtermHost({
   api,
   onError,
   onClosed,
+  streamScope = "workspace",
 }: {
   terminal: TerminalView;
   active: boolean;
   api: RuntimeApi;
   onError: (m: string) => void;
   onClosed: () => void;
+  streamScope?: "workspace" | "session";
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [status, setStatus] = useState<"connecting" | "open" | "closed" | "exited">("connecting");
@@ -373,7 +376,7 @@ function XtermHost({
       resizeObserver.observe(host);
 
       // Open the websocket.
-      const url = api.streamUrl(terminal.terminalId, 0);
+      const url = api.streamUrl(terminal.terminalId, 0, streamScope);
       socket = new WebSocket(url);
       socket.addEventListener("open", () => {
         if (cancelled) return;
@@ -429,7 +432,7 @@ function XtermHost({
       term?.dispose();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api.sessionId, terminal.terminalId]);
+  }, [api.sessionId, streamScope, terminal.terminalId]);
 
   // Refocus xterm whenever the host is clicked. xterm.js auto-focuses on
   // its own canvas, but if the click lands on padding / edge area we want

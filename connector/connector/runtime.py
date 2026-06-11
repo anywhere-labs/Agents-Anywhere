@@ -164,12 +164,13 @@ class BackendRpcClient:
         self._last_preferences: dict[str, Any] | None = None
         self._runtime_capabilities: dict[str, Any] | None = None
         self._active_runtimes: set[str] = set()
-        self.local_ops = create_local_ops(upload_file=self.upload_file, notify=self.send_backend_notification)
+        self.local_ops = create_local_ops(notify=self.send_backend_notification)
         self._ws: ClientConnection | None = None
         self._access_token: str | None = None
         self._access_token_expires_at: float = 0
         self._auth_lock = asyncio.Lock()
         self._send_lock = asyncio.Lock()
+        self._background_tasks: set[asyncio.Task[Any]] = set()
         # Persistent HTTP client: a long-lived connection pool eliminates the
         # 5–10ms TCP/TLS setup that the old `async with AsyncClient(...)`
         # per-call pattern paid on every notification.
@@ -330,8 +331,13 @@ class BackendRpcClient:
             return await self._resolve_adapter(params).interrupt_turn(params)
         if method == "approval.resolve":
             return await self._resolve_adapter(params).resolve_approval(params)
-        if method == "fs.readFile":
-            return await self.local_ops.read_file(params)
+        if method == "fs.prepareDownload":
+            return await self.local_ops.prepare_download(params)
+        if method == "fs.uploadPreparedDownload":
+            task = asyncio.create_task(self.upload_prepared_download(params))
+            self._background_tasks.add(task)
+            task.add_done_callback(self._on_background_upload_done)
+            return {"transferId": params.get("transferId"), "uploadStarted": True}
         if method == "fs.writeFile":
             return await self.local_ops.write_file(params)
         if method == "fs.readDir":
@@ -354,6 +360,8 @@ class BackendRpcClient:
             return await self.local_ops.terminal_close(params)
         if method == "terminal.list":
             return await self.local_ops.terminal_list(params)
+        if method == "terminal.relay.connect":
+            return await self.start_terminal_relay(params)
         if method == "capabilities.scanRuntime":
             runtime = params.get("runtime")
             if not isinstance(runtime, str) or not runtime:
@@ -742,61 +750,30 @@ class BackendRpcClient:
             timeout=60,
         )
 
-    async def upload_file(self, payload: dict[str, Any]) -> dict[str, Any]:
-        access_token = await self.ensure_access_token()
-        client = self._http_client
-        owned = client is None
-        if client is None:
-            client = self._new_http_client(timeout=httpx.Timeout(300.0, connect=30.0))
-        try:
-            response = await client.post(
-                urljoin(self.config.server_url + "/", "connector/fs/uploads"),
-                headers={"Authorization": f"Bearer {access_token}"},
-                json=payload,
-                timeout=httpx.Timeout(300.0, connect=30.0),
-            )
-            if getattr(response, "status_code", None) == 401:
-                access_token = await self.ensure_access_token(force=True)
-                response = await client.post(
-                    urljoin(self.config.server_url + "/", "connector/fs/uploads"),
-                    headers={"Authorization": f"Bearer {access_token}"},
-                    json=payload,
-                    timeout=httpx.Timeout(300.0, connect=30.0),
-                )
-                if getattr(response, "status_code", None) == 401:
-                    raise ConnectorAuthenticationError("connector credential no longer valid")
-            response.raise_for_status()
-            result = response.json()
-            logger.info(
-                "uploaded fs file session_id={} path={} size={} file_id={}",
-                payload.get("sessionId"),
-                payload.get("path"),
-                payload.get("size"),
-                result.get("fileId"),
-            )
-            return result
-        finally:
-            if owned:
-                await client.aclose()
+    async def download_attachment(self, session_id: str, file_id: str) -> tuple[bytes, str, str]:
+        """Pull a user-uploaded attachment by session_id and file_id.
 
-    async def download_attachment(self, file_id: str) -> tuple[bytes, str, str]:
-        """Pull a user-uploaded attachment by file_id.
-
-        Returns (data, filename, media_type). The backend deletes the stored
-        blob after the response stream completes, so this is a one-shot call;
-        callers should persist the bytes locally before invoking the agent.
+        Returns (data, filename, media_type). The backend keeps the durable
+        platform file after runtime consumption; callers still persist a local
+        copy before invoking the agent.
         """
         access_token = await self.ensure_access_token()
         timeout = httpx.Timeout(300.0, connect=30.0)
         async with self._new_http_client(timeout=timeout) as client:
             response = await client.get(
-                urljoin(self.config.server_url + "/", f"connector/fs/downloads/{file_id}"),
+                urljoin(
+                    self.config.server_url + "/",
+                    f"connector/sessions/{session_id}/attachments/{file_id}/content",
+                ),
                 headers={"Authorization": f"Bearer {access_token}"},
             )
             if getattr(response, "status_code", None) == 401:
                 access_token = await self.ensure_access_token(force=True)
                 response = await client.get(
-                    urljoin(self.config.server_url + "/", f"connector/fs/downloads/{file_id}"),
+                    urljoin(
+                        self.config.server_url + "/",
+                        f"connector/sessions/{session_id}/attachments/{file_id}/content",
+                    ),
                     headers={"Authorization": f"Bearer {access_token}"},
                 )
                 if getattr(response, "status_code", None) == 401:
@@ -812,12 +789,145 @@ class BackendRpcClient:
             )
             return response.content, name, media_type
 
+    async def upload_prepared_download(self, params: dict[str, Any]) -> dict[str, Any]:
+        transfer_id = params.get("transferId")
+        token = params.get("token")
+        upload_url = params.get("uploadUrl")
+        if not isinstance(transfer_id, str) or not transfer_id:
+            raise ValueError("transferId is required")
+        if not isinstance(token, str) or not token:
+            raise ValueError("token is required")
+        if not isinstance(upload_url, str) or not upload_url:
+            raise ValueError("uploadUrl is required")
+        path = Path(self.local_ops.prepared_download_path(params))
+        if not path.is_file():
+            raise FileNotFoundError(f"file not found: {path}")
+        access_token = await self.ensure_access_token()
+        timeout = httpx.Timeout(300.0, connect=30.0)
+        target = urljoin(self.config.server_url + "/", upload_url.lstrip("/"))
+        headers = {"Authorization": f"Bearer {access_token}"}
+        params_query = {"token": token}
+        async with self._new_http_client(timeout=timeout) as client:
+            response = await client.put(
+                target,
+                params=params_query,
+                headers=headers,
+                content=_file_chunks(path),
+            )
+            if getattr(response, "status_code", None) == 401:
+                access_token = await self.ensure_access_token(force=True)
+                headers = {"Authorization": f"Bearer {access_token}"}
+                response = await client.put(
+                    target,
+                    params=params_query,
+                    headers=headers,
+                    content=_file_chunks(path),
+                )
+                if getattr(response, "status_code", None) == 401:
+                    raise ConnectorAuthenticationError("connector credential no longer valid")
+            response.raise_for_status()
+        return {"transferId": transfer_id, "uploaded": True}
+
+    async def start_terminal_relay(self, params: dict[str, Any]) -> dict[str, Any]:
+        terminal_id = params.get("terminalId")
+        token = params.get("token")
+        if not isinstance(terminal_id, str) or not terminal_id:
+            raise ValueError("terminalId is required")
+        if not isinstance(token, str) or not token:
+            raise ValueError("token is required")
+        task = asyncio.create_task(self._run_terminal_relay(terminal_id, token))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._on_background_upload_done)
+        return {"terminalId": terminal_id, "connecting": True}
+
+    async def _run_terminal_relay(self, terminal_id: str, token: str) -> None:
+        relay_url = _ws_url(self.config.server_url, f"/connector/terminals/{terminal_id}/relay")
+        relay_url = f"{relay_url}?token={token}"
+        logger.info("connecting terminal relay terminal_id={}", terminal_id)
+        send_lock = asyncio.Lock()
+        async with websockets.connect(
+            relay_url,
+            proxy=None if _is_loopback_url(self.config.server_url) else True,
+        ) as ws:
+            start_raw = await ws.recv()
+            start = json.loads(start_raw)
+            if not isinstance(start, dict) or start.get("type") != "start":
+                raise RuntimeError("terminal relay missing start frame")
+
+            async def send_frame(frame: dict[str, Any]) -> None:
+                async with send_lock:
+                    await ws.send(json.dumps(frame, ensure_ascii=False))
+
+            async def output(method: str, params: dict[str, Any]) -> None:
+                if method == "terminal.output":
+                    await send_frame(
+                        {
+                            "type": "output",
+                            "seq": params.get("seq"),
+                            "data": params.get("dataBase64"),
+                        }
+                    )
+                elif method == "terminal.exited":
+                    await send_frame(
+                        {
+                            "type": "exit",
+                            "exitCode": params.get("exitCode"),
+                            "reason": params.get("reason"),
+                        }
+                    )
+
+            created = await self.local_ops.terminal.create(start, output=output)
+            await send_frame({"type": "ready", "pid": created.get("pid")})
+            try:
+                async for raw in ws:
+                    message = json.loads(raw)
+                    if not isinstance(message, dict):
+                        continue
+                    mtype = message.get("type")
+                    if mtype == "input":
+                        data = message.get("data")
+                        if isinstance(data, str):
+                            await self.local_ops.terminal.write(
+                                {"terminalId": terminal_id, "dataBase64": data}
+                            )
+                    elif mtype == "resize":
+                        await self.local_ops.terminal.resize(
+                            {
+                                "terminalId": terminal_id,
+                                "cols": message.get("cols"),
+                                "rows": message.get("rows"),
+                            }
+                        )
+                    elif mtype == "close":
+                        await self.local_ops.terminal.close({"terminalId": terminal_id})
+                        break
+            finally:
+                await self.local_ops.terminal.close({"terminalId": terminal_id})
+
+    def _on_background_upload_done(self, task: asyncio.Task[Any]) -> None:
+        self._background_tasks.discard(task)
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("fs prepared download upload failed")
+
     def _new_http_client(self, *, timeout: httpx.Timeout | float) -> httpx.AsyncClient:
         return httpx.AsyncClient(timeout=timeout, trust_env=not _is_loopback_url(self.config.server_url))
 
 
 def _strip_backend_notifications(result: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in result.items() if key != "backendNotifications"}
+
+
+async def _file_chunks(path: Path, chunk_size: int = 1024 * 1024):
+    with path.open("rb") as fh:
+        while True:
+            chunk = fh.read(chunk_size)
+            if not chunk:
+                break
+            yield chunk
 
 
 def _is_auth_close(exc: ConnectionClosed) -> bool:

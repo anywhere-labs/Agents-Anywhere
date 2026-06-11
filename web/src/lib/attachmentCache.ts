@@ -1,13 +1,9 @@
-// IndexedDB-backed cache for user-uploaded attachments.
+// IndexedDB-backed preview cache for user-uploaded attachments. The backend
+// keeps durable platform files; this local copy only lets recent image
+// thumbnails render immediately without another round-trip.
 //
-// The backend deletes blobs as soon as the connector has consumed them, so the
-// browser is the only place a preview thumbnail lives for "messages I sent
-// earlier." We key by fileId (returned from POST /sessions/{id}/uploads) and
-// store the raw Blob; the UI reconstitutes an object URL on demand.
-//
-// Cross-device limitation: opening the same session in a different browser
-// won't have these cached → preview falls back to file name only. That's the
-// explicit trade-off for not keeping bytes server-side.
+// Cross-device fallback: opening the same session in a different browser won't
+// have these cached, but the message can still open the platform file URL.
 
 export type CachedAttachment = {
   fileId: string;
@@ -30,6 +26,7 @@ export type SentAttachmentMeta = {
   name: string;
   mediaType: string;
   size: number;
+  openUrl?: string;
 };
 
 export type SentMessageRecord = {

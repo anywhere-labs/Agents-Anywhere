@@ -83,6 +83,33 @@ class InterruptThreadNotFoundRpc(FakeCodexRpc):
         return await super().request(method, params)
 
 
+class ArchivedThreadListRpc(FakeCodexRpc):
+    async def request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        if method == "thread/list":
+            return {
+                "data": [
+                    {
+                        "id": "thr_archived",
+                        "updatedAt": 1779291318,
+                        "archived": True,
+                    },
+                    {
+                        "id": "thr_unresumable",
+                        "updatedAt": 1779291319,
+                        "resumeSupported": False,
+                    },
+                ]
+            }
+        return await super().request(method, params)
+
+
+class ArchivedResumeRpc(FakeCodexRpc):
+    async def request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        if method == "thread/resume":
+            raise RuntimeError(json.dumps({"code": -32600, "message": "thread is archived"}))
+        return await super().request(method, params)
+
+
 def test_stdio_client_stream_limit_is_large_enough_for_codex_jsonl() -> None:
     assert APP_SERVER_STREAM_LIMIT >= 64 * 1024 * 1024
 
@@ -851,6 +878,14 @@ def test_adapter_uses_separate_scan_and_changed_thread_timeouts(monkeypatch) -> 
     asyncio.run(_exercise_existing_thread_sync_timeouts(monkeypatch))
 
 
+def test_adapter_skips_archived_and_unresumable_codex_threads() -> None:
+    asyncio.run(_exercise_archived_thread_sync())
+
+
+def test_adapter_treats_archived_resume_failure_as_skipped() -> None:
+    asyncio.run(_exercise_archived_resume_failure_sync())
+
+
 async def _exercise_existing_thread_sync() -> None:
     rpc = FakeCodexRpc()
     adapter = CodexAdapter(rpc=rpc)  # type: ignore[arg-type]
@@ -886,6 +921,30 @@ async def _exercise_existing_thread_sync() -> None:
     assert forced["threads"] == ["thr_existing"]
     assert forced["skippedThreads"] == []
     assert [notification["method"] for notification in sent_notifications[0]] == ["session.updated", "timeline.sync"]
+
+
+async def _exercise_archived_thread_sync() -> None:
+    rpc = ArchivedThreadListRpc()
+    adapter = CodexAdapter(rpc=rpc)  # type: ignore[arg-type]
+
+    result = await adapter.sync_existing_sessions("conn_1")
+
+    assert result["threads"] == []
+    assert result["skippedThreads"] == ["thr_archived", "thr_unresumable"]
+    assert result["backendNotifications"] == []
+    assert ("thread/resume", {"threadId": "thr_archived"}) not in rpc.requests
+    assert ("thread/resume", {"threadId": "thr_unresumable"}) not in rpc.requests
+
+
+async def _exercise_archived_resume_failure_sync() -> None:
+    rpc = ArchivedResumeRpc()
+    adapter = CodexAdapter(rpc=rpc)  # type: ignore[arg-type]
+
+    result = await adapter.sync_existing_sessions("conn_1")
+
+    assert result["threads"] == []
+    assert result["skippedThreads"] == ["thr_existing"]
+    assert result["backendNotifications"] == []
 
 
 async def _exercise_existing_thread_sync_timeouts(monkeypatch) -> None:
@@ -940,6 +999,49 @@ async def _exercise_delayed_thread_read_sync() -> None:
 
 def test_adapter_registers_client_message_id_after_turn_start() -> None:
     asyncio.run(_exercise_adapter_registers_client_message_id())
+
+
+def test_codex_adapter_materializes_attachments_to_user_dir(tmp_path, monkeypatch) -> None:
+    asyncio.run(_exercise_codex_adapter_materializes_attachments_to_user_dir(tmp_path, monkeypatch))
+
+
+async def _exercise_codex_adapter_materializes_attachments_to_user_dir(tmp_path, monkeypatch) -> None:
+    attachments_root = tmp_path / "runtime-attachments"
+    monkeypatch.setenv("AGENT_CONNECTOR_ATTACHMENTS_ROOT", str(attachments_root))
+    rpc = FakeCodexRpc()
+    adapter = CodexAdapter(rpc=rpc)  # type: ignore[arg-type]
+    adapter.reducer.bind_session("sess_attach", "thr_attach")
+
+    async def download(session_id: str, file_id: str) -> tuple[bytes, str, str]:
+        assert session_id == "sess_attach"
+        if file_id == "file_note":
+            return b"hello\n", "../notes.md", "text/markdown"
+        return b"\x89PNG\r\n\x1a\n", "diagram.png", "image/png"
+
+    adapter.attachment_downloader = download
+    await adapter.start_turn(
+        {
+            "sessionId": "sess_attach",
+            "externalSessionId": "thr_attach",
+            "cwd": "/repo",
+            "content": "review",
+            "attachments": [
+                {"fileId": "file_note", "name": "../notes.md"},
+                {"fileId": "file_img", "name": "diagram.png"},
+            ],
+        }
+    )
+
+    note = attachments_root / "sess_attach" / "file_note-notes.md"
+    image = attachments_root / "sess_attach" / "file_img-diagram.png"
+    assert note.read_bytes() == b"hello\n"
+    assert image.read_bytes() == b"\x89PNG\r\n\x1a\n"
+    params = rpc.requests[-1][1]
+    assert params is not None
+    assert params["input"][0]["text"] == (
+        f"review\n\n[Attached file: ../notes.md (text/markdown, 6 bytes) at {note}]"
+    )
+    assert params["input"][1] == {"type": "localImage", "path": str(image)}
 
 
 async def _exercise_adapter_registers_client_message_id() -> None:

@@ -202,7 +202,7 @@ async def test_claude_sdk_adapter_streams_timeline_and_updates_external_session(
                     "mediaType": "text/plain",
                     "size": 12,
                     "sha256": "abc",
-                    "downloadUrl": "/sessions/sess_1/fs/downloads/file_1",
+                    "downloadUrl": "/sessions/sess_1/attachments/file_1",
                     "pathHint": "/repo/.aa-attachments/file_1-report.txt",
                 }
             ],
@@ -241,7 +241,7 @@ async def test_claude_sdk_adapter_streams_timeline_and_updates_external_session(
             "mediaType": "text/plain",
             "size": 12,
             "sha256": "abc",
-            "downloadUrl": "/sessions/sess_1/fs/downloads/file_1",
+            "downloadUrl": "/sessions/sess_1/attachments/file_1",
         }
     ]
     assert timeline[2]["content"]["text"] == "I'll run that."
@@ -456,13 +456,16 @@ async def test_claude_sdk_adapter_approval_bridge_resolves_to_sdk_allow():
 
 
 @pytest.mark.anyio
-async def test_claude_sdk_adapter_materializes_file_attachment_to_cwd(tmp_path):
+async def test_claude_sdk_adapter_materializes_file_attachment_to_user_dir(tmp_path, monkeypatch):
     FakeClient.instances = []
     workspace = tmp_path / "repo"
     workspace.mkdir()
+    attachments_root = tmp_path / "runtime-attachments"
+    monkeypatch.setenv("AGENT_CONNECTOR_ATTACHMENTS_ROOT", str(attachments_root))
     adapter = ClaudeSdkAdapter(sdk_module=FakeSdk)
 
-    async def download(file_id: str) -> tuple[bytes, str, str]:
+    async def download(session_id: str, file_id: str) -> tuple[bytes, str, str]:
+        assert session_id == "sess_file"
         assert file_id == "file_1"
         return b"hello\n", "../notes.md", "text/markdown"
 
@@ -479,7 +482,7 @@ async def test_claude_sdk_adapter_materializes_file_attachment_to_cwd(tmp_path):
     )
     await adapter._sessions["sess_file"].active_task
 
-    materialized = workspace / ".claude-attachments" / "file_1-notes.md"
+    materialized = attachments_root / "sess_file" / "file_1-notes.md"
     assert materialized.read_bytes() == b"hello\n"
     prompt = FakeClient.instances[-1].queries[0]
     yielded = []
@@ -498,14 +501,17 @@ async def test_claude_sdk_adapter_materializes_file_attachment_to_cwd(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_claude_sdk_adapter_sends_image_attachment_as_base64_block(tmp_path):
+async def test_claude_sdk_adapter_sends_image_attachment_as_base64_block(tmp_path, monkeypatch):
     FakeClient.instances = []
     workspace = tmp_path / "repo"
     workspace.mkdir()
+    attachments_root = tmp_path / "runtime-attachments"
+    monkeypatch.setenv("AGENT_CONNECTOR_ATTACHMENTS_ROOT", str(attachments_root))
     adapter = ClaudeSdkAdapter(sdk_module=FakeSdk)
     image_bytes = b"\x89PNG\r\n\x1a\n"
 
-    async def download(file_id: str) -> tuple[bytes, str, str]:
+    async def download(session_id: str, file_id: str) -> tuple[bytes, str, str]:
+        assert session_id == "sess_image"
         assert file_id == "file_img"
         return image_bytes, "diagram.png", "image/png"
 
@@ -522,7 +528,7 @@ async def test_claude_sdk_adapter_sends_image_attachment_as_base64_block(tmp_pat
     )
     await adapter._sessions["sess_image"].active_task
 
-    materialized = workspace / ".claude-attachments" / "file_img-diagram.png"
+    materialized = attachments_root / "sess_image" / "file_img-diagram.png"
     assert materialized.read_bytes() == image_bytes
     prompt = FakeClient.instances[-1].queries[0]
     yielded = []

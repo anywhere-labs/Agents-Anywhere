@@ -305,7 +305,11 @@ Server:
 | `AGENT_SERVER_DB` | SQLite database path. Defaults to `agent-server.sqlite3`. |
 | `AGENT_SERVER_DB_URL` | Explicit SQLAlchemy URL. Takes precedence over `AGENT_SERVER_DB`. |
 | `AGENT_SERVER_DB_BACKEND` | Database backend selector. Use `postgres` for PostgreSQL deployments. |
+| `AGENT_SERVER_FILES_BACKEND` | File storage backend. Use `local` or `s3`. Defaults to `local`. |
 | `AGENT_SERVER_FILES_LOCAL_ROOT` | Local file/attachment storage directory. |
+| `AGENT_SERVER_FILES_S3_BUCKET` | S3 bucket name when `AGENT_SERVER_FILES_BACKEND=s3`. |
+| `AGENT_SERVER_FILES_S3_PREFIX` | Optional S3 key prefix. |
+| `AGENT_SERVER_FILES_S3_ENDPOINT_URL` | Optional S3-compatible endpoint URL. |
 | `AGENT_SERVER_SECRET` | Server secret for signed auth tokens. Required in production. |
 | `AGENT_SERVER_STATIC_DIR` | Frontend build output directory. When set, the backend serves the Web UI. |
 | `AGENT_SERVER_CORS_ORIGINS` | Explicit allowed CORS origins. |
@@ -318,6 +322,7 @@ Connector:
 | `AGENT_SERVER_URL` | Backend URL used when `--server-url` is omitted. |
 | `AGENT_CONNECTOR_ID` | Connector id used when `--connector-id` is omitted. |
 | `AGENT_CONNECTOR_TOKEN` | Connector token used when `--connector-token` is omitted. |
+| `AGENT_CONNECTOR_ATTACHMENTS_ROOT` | Runtime attachment download directory. Defaults to `~/.agents-anywhere/attachments`. |
 | `CODEX_BIN` | Codex CLI/app-server path. |
 | `CLAUDE_BIN` | Claude Code CLI path. |
 

@@ -83,6 +83,10 @@ Persistent data under `/data`:
 - SQLite database: `/data/agent-server.sqlite3`
 - uploaded files / attachments: `/data/agent-server.files/`
 
+Set `AGENT_SERVER_FILES_BACKEND=s3` and the matching
+`AGENT_SERVER_FILES_S3_*` variables to store uploaded files in S3-compatible
+object storage instead of the local `/data/agent-server.files/` directory.
+
 ## PostgreSQL Compose
 
 `docker/docker-compose.postgres.yml` runs PostgreSQL and the production-style

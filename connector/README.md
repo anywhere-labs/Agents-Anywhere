@@ -82,6 +82,7 @@ The server can ask an online connector to perform local work:
 | `AGENT_SERVER_URL` | Server URL used when `--server-url` is omitted. |
 | `AGENT_CONNECTOR_ID` | Connector id used when `--connector-id` is omitted. |
 | `AGENT_CONNECTOR_TOKEN` | Connector token used when `--connector-token` is omitted. |
+| `AGENT_CONNECTOR_ATTACHMENTS_ROOT` | Runtime attachment download directory. Defaults to `~/.agents-anywhere/attachments`. |
 | `CODEX_BIN` | Explicit Codex CLI/app-server path. |
 | `CLAUDE_BIN` | Explicit Claude Code CLI path. |
 

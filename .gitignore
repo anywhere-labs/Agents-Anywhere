@@ -20,3 +20,5 @@ docs/reference/*
 !docs/reference/README.md
 
 _reference/*
+!_reference/httpx-s3-client/
+!_reference/httpx-s3-client/**
