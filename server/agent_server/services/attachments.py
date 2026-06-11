@@ -13,8 +13,10 @@ from agent_server.core.utc import utc_now
 
 
 LOCAL_FILE_TOKEN_KIND = "local_file"
+FILE_OPEN_TOKEN_KIND = "file_open"
 LOCAL_FILE_TOKEN_EXPIRES_IN = 300
 FILE_OPEN_EXPIRES_IN = 300
+FILE_OPEN_TOKEN_EXPIRES_IN = 300
 
 
 class AttachmentService:
@@ -122,6 +124,34 @@ class AttachmentService:
             file_id=file_id,
             user_id=user_id,
         )
+        return await self.signed_file_open_url(session_id=session_id, file_id=file_id)
+
+    async def user_file_open_token_url(
+        self,
+        *,
+        session_id: str,
+        file_id: str,
+        user_id: str,
+    ) -> str:
+        await self.user_file_metadata(
+            session_id=session_id,
+            file_id=file_id,
+            user_id=user_id,
+        )
+        token = create_signed_token(
+            FILE_OPEN_TOKEN_KIND,
+            {"sessionId": session_id, "fileId": file_id},
+            FILE_OPEN_TOKEN_EXPIRES_IN,
+        )
+        return f"/sessions/{session_id}/files/{file_id}/open?token={token}"
+
+    async def signed_file_open_url(
+        self,
+        *,
+        session_id: str,
+        file_id: str,
+    ) -> str:
+        self._validate_file_id(file_id)
         native = await self._files.open_url(
             session_id,
             file_id,

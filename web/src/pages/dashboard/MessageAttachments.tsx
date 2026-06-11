@@ -16,16 +16,19 @@ export type AttachmentDescriptor = {
   openUrl?: string;
 };
 
+type ImagePreview = {
+  src: string;
+  name: string;
+  size?: number;
+  revoke?: boolean;
+};
+
 export function MessageAttachments({
   attachments,
 }: {
   attachments: AttachmentDescriptor[];
 }) {
-  const [preview, setPreview] = useState<{
-    src: string;
-    name: string;
-    size?: number;
-  } | null>(null);
+  const [preview, setPreview] = useState<ImagePreview | null>(null);
 
   useEffect(() => {
     if (!preview) return;
@@ -33,7 +36,10 @@ export function MessageAttachments({
       if (event.key === "Escape") setPreview(null);
     };
     document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      if (preview.revoke) URL.revokeObjectURL(preview.src);
+    };
   }, [preview]);
 
   if (!attachments || attachments.length === 0) return null;
@@ -82,7 +88,7 @@ function AttachmentTile({
   onPreview,
 }: {
   descriptor: AttachmentDescriptor;
-  onPreview: (preview: { src: string; name: string; size?: number }) => void;
+  onPreview: (preview: ImagePreview) => void;
 }) {
   const [cached, setCached] = useState<CachedAttachment | null | "loading">(
     "loading",
@@ -134,6 +140,25 @@ function AttachmentTile({
     );
   }
 
+  if (!cached && isImage && platformUrl) {
+    return (
+      <a
+        className="kl-msg-att image missing"
+        href={platformUrl}
+        onClick={openPlatformImage(platformUrl, {
+          name: name ?? descriptor.fileId,
+          size: sizeBytes,
+          onPreview,
+        })}
+        title={name ?? descriptor.fileId}
+      >
+        <span className="kl-msg-att-image-fallback">
+          {name ?? descriptor.fileId}
+        </span>
+      </a>
+    );
+  }
+
   // Non-image OR no IndexedDB hit. Show name + size, and open the durable
   // platform file when the server provided a URL.
   const body = (
@@ -175,23 +200,53 @@ function AttachmentTile({
 function openPlatformFile(url: string) {
   return async (event: MouseEvent<HTMLAnchorElement>) => {
     event.preventDefault();
-    const session = loadSession();
-    window.open(
-      withUserToken(url, session?.accessToken ?? null),
-      "_blank",
-      "noopener,noreferrer",
-    );
+    const signedUrl = await signedOpenUrl(url);
+    window.open(signedUrl, "_blank", "noopener,noreferrer");
   };
 }
 
-function withUserToken(url: string, token: string | null): string {
-  if (!token) return url;
-  const parsed = new URL(url, window.location.origin);
-  parsed.searchParams.set("token", token);
-  if (url.startsWith("/")) {
-    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+function openPlatformImage(
+  url: string,
+  opts: {
+    name: string;
+    size?: number;
+    onPreview: (preview: ImagePreview) => void;
+  },
+) {
+  return async (event: MouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault();
+    try {
+      const signedUrl = await signedOpenUrl(url);
+      const response = await fetch(signedUrl);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const blob = await response.blob();
+      opts.onPreview({
+        src: URL.createObjectURL(blob),
+        name: opts.name,
+        size: opts.size,
+        revoke: true,
+      });
+      return;
+    } catch {
+      const signedUrl = await signedOpenUrl(url).catch(() => url);
+      window.open(signedUrl, "_blank", "noopener,noreferrer");
+    }
+  };
+}
+
+async function signedOpenUrl(url: string): Promise<string> {
+  const session = loadSession();
+  if (!session?.accessToken) return url;
+  const tokenUrl = `${url.replace(/[?#].*$/, "")}-token`;
+  const response = await fetch(tokenUrl, {
+    headers: { authorization: `Bearer ${session.accessToken}` },
+  });
+  if (!response.ok) return url;
+  const payload = (await response.json()) as { openUrl?: unknown };
+  if (typeof payload.openUrl !== "string" || !payload.openUrl) {
+    return url;
   }
-  return parsed.toString();
+  return payload.openUrl;
 }
 
 function formatBytes(n: number): string {

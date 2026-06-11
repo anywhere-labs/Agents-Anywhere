@@ -4755,10 +4755,19 @@ def test_connector_uploads_fs_read_artifact_and_user_downloads_it(tmp_path):
     assert raw_response.status_code == 200
     assert raw_response.content == data
 
-    query_open_response = client.get(
+    user_token_open_response = client.get(
         f"{upload_body['openUrl']}?token={headers['Authorization'].removeprefix('Bearer ')}",
         follow_redirects=False,
     )
+    assert user_token_open_response.status_code == 401
+
+    token_response = client.get(f"{upload_body['openUrl']}-token", headers=headers)
+    assert token_response.status_code == 200
+    signed_open_url = token_response.json()["openUrl"]
+    assert signed_open_url.startswith(
+        f"/sessions/{session_id}/files/{upload_body['fileId']}/open?token="
+    )
+    query_open_response = client.get(signed_open_url, follow_redirects=False)
     assert query_open_response.status_code == 302
 
     connector_download = client.get(

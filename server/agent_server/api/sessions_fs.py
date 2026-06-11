@@ -23,7 +23,11 @@ from agent_server.services.workspace import (
     request_connector,
     resolve_workspace_path,
 )
-from agent_server.services.attachments import AttachmentService, LOCAL_FILE_TOKEN_KIND
+from agent_server.services.attachments import (
+    AttachmentService,
+    FILE_OPEN_TOKEN_KIND,
+    LOCAL_FILE_TOKEN_KIND,
+)
 from agent_server.infra.repositories.facade import Store
 from agent_server.core.auth import verify_signed_token, verify_user_access_token
 from agent_server.core.utc import utc_now
@@ -88,9 +92,35 @@ async def file_open(
     authorization: str | None = Header(None, alias="Authorization"),
     attachments: AttachmentService = Depends(get_attachment_service),
 ) -> RedirectResponse:
-    user_id = _user_id_from_header_or_query(authorization=authorization, token=token)
     try:
-        url = await attachments.user_file_open_url(
+        payload = verify_signed_token(FILE_OPEN_TOKEN_KIND, token) if token else None
+        if payload:
+            if payload.get("sessionId") != session_id or payload.get("fileId") != file_id:
+                raise HTTPException(status_code=401, detail="invalid file token")
+            url = await attachments.signed_file_open_url(session_id=session_id, file_id=file_id)
+        else:
+            user_id = _user_id_from_header(authorization=authorization)
+            url = await attachments.user_file_open_url(
+                session_id=session_id,
+                file_id=file_id,
+                user_id=user_id,
+            )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="file not found") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return RedirectResponse(url=url, status_code=302)
+
+
+@router.get("/{session_id}/files/{file_id}/open-token")
+async def file_open_token(
+    session_id: str,
+    file_id: str,
+    user_id: str = Depends(current_user_id),
+    attachments: AttachmentService = Depends(get_attachment_service),
+) -> dict[str, str]:
+    try:
+        url = await attachments.user_file_open_token_url(
             session_id=session_id,
             file_id=file_id,
             user_id=user_id,
@@ -99,7 +129,7 @@ async def file_open(
         raise HTTPException(status_code=404, detail="file not found") from None
     except ValueError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    return RedirectResponse(url=url, status_code=302)
+    return {"openUrl": url, "serverTime": utc_now()}
 
 
 @router.get("/local/{session_id}/{file_id}", include_in_schema=False)
@@ -201,18 +231,13 @@ def _safe_header_value(value: str) -> str:
     return value.encode("latin-1", errors="replace").decode("latin-1")
 
 
-def _user_id_from_header_or_query(
+def _user_id_from_header(
     *,
     authorization: str | None,
-    token: str | None,
 ) -> str:
     prefix = "Bearer "
     if authorization and authorization.startswith(prefix):
         user_id = verify_user_access_token(authorization[len(prefix) :])
-        if user_id is not None:
-            return user_id
-    if token:
-        user_id = verify_user_access_token(token)
         if user_id is not None:
             return user_id
     raise HTTPException(status_code=401, detail="invalid user access token")
