@@ -321,19 +321,8 @@ export function FilePreviewPanel({
     setDownloading(true);
     try {
       const read = await api.fsReadFile(file.path);
-      if (read.result.downloadUrl && !read.result.fileId) {
-        const blob = await api.fsDownloadBlob(read.result.downloadUrl);
-        downloadBlob(blob, read.result.name || file.name);
-      } else {
-        const downloaded = await api.fsDownload(read.result.fileId!);
-        const bytes = base64ToBytes(downloaded.contentBase64);
-        const copy = new Uint8Array(bytes.byteLength);
-        copy.set(bytes);
-        downloadBlob(
-          new Blob([copy.buffer]),
-          downloaded.name || file.name,
-        );
-      }
+      const blob = await api.fsDownloadBlob(read.result.downloadUrl);
+      downloadBlob(blob, read.result.name || file.name);
     } catch (err) {
       setDownloadError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -537,9 +526,4 @@ function EditWarningDialog({
       </div>
     </div>
   );
-}
-
-function base64ToBytes(value: string): Uint8Array {
-  const binary = atob(value);
-  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
 }

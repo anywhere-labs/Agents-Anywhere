@@ -2267,7 +2267,7 @@ def test_send_message_forwards_uploaded_attachment_metadata_to_connector(tmp_pat
             "mediaType": "text/markdown",
             "size": len(data),
             "sha256": hashlib.sha256(data).hexdigest(),
-            "downloadUrl": f"/connector/fs/downloads/{attachment['fileId']}",
+            "downloadUrl": f"/connector/files/downloads/{attachment['fileId']}",
             "platformOpenUrl": f"/sessions/{session_id}/files/{attachment['fileId']}/open",
         }
     ]
@@ -4406,33 +4406,33 @@ def test_interrupted_turn_closes_pending_approval_tool_item(tmp_path):
     assert tool["content"]["approval"]["status"] == "cancelled"
 
 
-def test_fs_read_does_not_require_takeover(tmp_path):
+def test_connector_fs_read_does_not_require_takeover(tmp_path):
     client = make_client(tmp_path)
-    connector_id, _, session_id, headers = create_connector_and_session(client)
+    connector_id, _, _session_id, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
     client.app.state.rpc = fake_rpc
     asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
 
     response = client.post(
-        f"/sessions/{session_id}/fs/read",
+        f"/connectors/{connector_id}/fs/read?root=/repo",
         headers=headers,
         json={"path": "README.md"},
     )
 
     assert response.status_code == 200
-    assert fake_rpc.requests[-1][1] == "fs.readFile"
+    assert fake_rpc.requests[-1][1] == "fs.prepareDownload"
+    assert fake_rpc.requests[-1][2]["sessionId"] == f"browse_{connector_id}"
 
 
-def test_fs_read_allows_absolute_paths_outside_session_cwd(tmp_path):
+def test_connector_fs_read_allows_absolute_paths_outside_workspace_root(tmp_path):
     client = make_client(tmp_path)
-    connector_id, _, session_id, headers = create_connector_and_session(client)
+    connector_id, _, _session_id, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
     client.app.state.rpc = fake_rpc
     asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
-    assert client.post(f"/sessions/{session_id}/takeover", headers=headers).status_code == 200
 
     response = client.post(
-        f"/sessions/{session_id}/fs/read",
+        f"/connectors/{connector_id}/fs/read?root=/repo",
         headers=headers,
         json={"path": "/etc/passwd"},
     )
@@ -4440,14 +4440,14 @@ def test_fs_read_allows_absolute_paths_outside_session_cwd(tmp_path):
     assert response.status_code == 200
     assert fake_rpc.requests[-1] == (
         connector_id,
-        "fs.readFile",
+        "fs.prepareDownload",
         {
-                "sessionId": session_id,
-                "root": "/repo",
-                "path": "/etc/passwd",
-            },
-            30,
-        )
+            "sessionId": f"browse_{connector_id}",
+            "root": "/repo",
+            "path": "/etc/passwd",
+        },
+        30,
+    )
 
 
 def test_connector_fs_read_prepares_transfer_without_persisting(tmp_path):
@@ -4542,18 +4542,13 @@ def test_fs_and_shell_rpc_forward_validated_workspace_params(tmp_path):
     asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
     assert client.post(f"/sessions/{session_id}/takeover", headers=headers).status_code == 200
 
-    read_response = client.post(
-        f"/sessions/{session_id}/fs/read",
-        headers=headers,
-        json={"path": "src/index.ts"},
-    )
     write_response = client.post(
-        f"/sessions/{session_id}/fs/write",
+        f"/connectors/{connector_id}/fs/write?root=/repo",
         headers=headers,
         json={"path": "src/index.ts", "content": "hello"},
     )
     list_response = client.post(
-        f"/sessions/{session_id}/fs/list",
+        f"/connectors/{connector_id}/fs/list?root=/repo",
         headers=headers,
         json={"path": "."},
     )
@@ -4563,26 +4558,15 @@ def test_fs_and_shell_rpc_forward_validated_workspace_params(tmp_path):
         json={"command": "pwd", "timeoutMs": 120000},
     )
 
-    assert read_response.status_code == 200
     assert write_response.status_code == 200
     assert list_response.status_code == 200
     assert shell_response.status_code == 200
     assert fake_rpc.requests == [
         (
             connector_id,
-            "fs.readFile",
-            {
-                "sessionId": session_id,
-                "root": "/repo",
-                "path": "/repo/src/index.ts",
-            },
-            30,
-        ),
-        (
-            connector_id,
             "fs.writeFile",
             {
-                "sessionId": session_id,
+                "sessionId": f"browse_{connector_id}",
                 "root": "/repo",
                 "path": "/repo/src/index.ts",
                 "content": "hello",
@@ -4594,7 +4578,7 @@ def test_fs_and_shell_rpc_forward_validated_workspace_params(tmp_path):
             connector_id,
             "fs.readDir",
             {
-                "sessionId": session_id,
+                "sessionId": f"browse_{connector_id}",
                 "root": "/repo",
                 "path": "/repo",
             },
@@ -4632,18 +4616,13 @@ def test_fs_and_shell_rpc_forward_windows_workspace_params(tmp_path):
     )
     assert client.post(f"/sessions/{session.id}/takeover", headers=headers).status_code == 200
 
-    read_response = client.post(
-        f"/sessions/{session.id}/fs/read",
-        headers=headers,
-        json={"path": r"agent-server\pyproject.toml"},
-    )
     list_response = client.post(
-        f"/sessions/{session.id}/fs/list",
+        f"/connectors/{connector_id}/fs/list?root=C%3A%5CUsers%5Cadmin",
         headers=headers,
         json={"path": "."},
     )
     slash_drive_response = client.post(
-        f"/sessions/{session.id}/fs/read",
+        f"/connectors/{connector_id}/fs/read?root=C%3A%5CUsers%5Cadmin",
         headers=headers,
         json={"path": "/C:/Users/admin/agent-server/README.md"},
     )
@@ -4653,26 +4632,15 @@ def test_fs_and_shell_rpc_forward_windows_workspace_params(tmp_path):
         json={"command": "pwd", "timeoutMs": 120000},
     )
 
-    assert read_response.status_code == 200
     assert list_response.status_code == 200
     assert slash_drive_response.status_code == 200
     assert shell_response.status_code == 200
-    assert fake_rpc.requests[-4:] == [
-        (
-            connector_id,
-            "fs.readFile",
-            {
-                "sessionId": session.id,
-                "root": r"C:\Users\admin",
-                "path": r"C:\Users\admin\agent-server\pyproject.toml",
-            },
-            30,
-        ),
+    assert fake_rpc.requests[-3:] == [
         (
             connector_id,
             "fs.readDir",
             {
-                "sessionId": session.id,
+                "sessionId": f"browse_{connector_id}",
                 "root": r"C:\Users\admin",
                 "path": r"C:\Users\admin",
             },
@@ -4680,9 +4648,9 @@ def test_fs_and_shell_rpc_forward_windows_workspace_params(tmp_path):
         ),
         (
             connector_id,
-            "fs.readFile",
+            "fs.prepareDownload",
             {
-                "sessionId": session.id,
+                "sessionId": f"browse_{connector_id}",
                 "root": r"C:\Users\admin",
                 "path": r"C:\Users\admin\agent-server\README.md",
             },
@@ -4846,7 +4814,7 @@ def test_connector_uploads_fs_read_artifact_and_user_downloads_it(tmp_path):
     sha256 = hashlib.sha256(data).hexdigest()
 
     upload_response = client.post(
-        "/connector/fs/uploads",
+        "/connector/files/uploads",
         headers={"Authorization": f"Bearer {connector_access_token}"},
         json={
             "sessionId": session_id,
@@ -4864,7 +4832,7 @@ def test_connector_uploads_fs_read_artifact_and_user_downloads_it(tmp_path):
     assert upload_body["path"] == "/repo/blob.bin"
     assert upload_body["size"] == len(data)
     assert upload_body["sha256"] == sha256
-    assert upload_body["downloadUrl"] == f"/sessions/{session_id}/fs/downloads/{upload_body['fileId']}"
+    assert upload_body["downloadUrl"] == f"/sessions/{session_id}/files/{upload_body['fileId']}/download"
     assert upload_body["openUrl"] == f"/sessions/{session_id}/files/{upload_body['fileId']}/open"
 
     download_response = client.get(upload_body["downloadUrl"], headers=headers)
@@ -4900,7 +4868,7 @@ def test_connector_uploads_fs_read_artifact_and_user_downloads_it(tmp_path):
     assert query_open_response.status_code == 302
 
     connector_download = client.get(
-        f"/connector/fs/downloads/{upload_body['fileId']}",
+        f"/connector/files/downloads/{upload_body['fileId']}",
         headers={"Authorization": f"Bearer {connector_access_token}"},
     )
     assert connector_download.status_code == 200

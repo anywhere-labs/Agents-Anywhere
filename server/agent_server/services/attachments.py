@@ -230,7 +230,7 @@ class AttachmentService:
             sha256=saved["sha256"],
             mediaType=saved.get("mediaType") or fallback_media_type,
             createdAt=saved["createdAt"],
-            downloadUrl=f"/sessions/{session_id}/fs/downloads/{saved['fileId']}",
+            downloadUrl=f"/sessions/{session_id}/files/{saved['fileId']}/download",
             openUrl=f"/sessions/{session_id}/files/{saved['fileId']}/open",
         )
 

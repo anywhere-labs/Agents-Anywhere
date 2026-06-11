@@ -395,7 +395,7 @@ class CodexAdapter:
 
           * image/* attachments → `localImage` input item
           * everything else     → mention appended to the leading text item so
-            the model can `fs.readText` / `fs.readFile` the path later.
+            the model can inspect the materialized local path later.
         """
         if not attachments:
             return content, []

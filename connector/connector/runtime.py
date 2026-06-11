@@ -164,7 +164,7 @@ class BackendRpcClient:
         self._last_preferences: dict[str, Any] | None = None
         self._runtime_capabilities: dict[str, Any] | None = None
         self._active_runtimes: set[str] = set()
-        self.local_ops = create_local_ops(upload_file=self.upload_file, notify=self.send_backend_notification)
+        self.local_ops = create_local_ops(notify=self.send_backend_notification)
         self._ws: ClientConnection | None = None
         self._access_token: str | None = None
         self._access_token_expires_at: float = 0
@@ -331,8 +331,6 @@ class BackendRpcClient:
             return await self._resolve_adapter(params).interrupt_turn(params)
         if method == "approval.resolve":
             return await self._resolve_adapter(params).resolve_approval(params)
-        if method == "fs.readFile":
-            return await self.local_ops.read_file(params)
         if method == "fs.prepareDownload":
             return await self.local_ops.prepare_download(params)
         if method == "fs.uploadPreparedDownload":
@@ -750,43 +748,6 @@ class BackendRpcClient:
             timeout=60,
         )
 
-    async def upload_file(self, payload: dict[str, Any]) -> dict[str, Any]:
-        access_token = await self.ensure_access_token()
-        client = self._http_client
-        owned = client is None
-        if client is None:
-            client = self._new_http_client(timeout=httpx.Timeout(300.0, connect=30.0))
-        try:
-            response = await client.post(
-                urljoin(self.config.server_url + "/", "connector/fs/uploads"),
-                headers={"Authorization": f"Bearer {access_token}"},
-                json=payload,
-                timeout=httpx.Timeout(300.0, connect=30.0),
-            )
-            if getattr(response, "status_code", None) == 401:
-                access_token = await self.ensure_access_token(force=True)
-                response = await client.post(
-                    urljoin(self.config.server_url + "/", "connector/fs/uploads"),
-                    headers={"Authorization": f"Bearer {access_token}"},
-                    json=payload,
-                    timeout=httpx.Timeout(300.0, connect=30.0),
-                )
-                if getattr(response, "status_code", None) == 401:
-                    raise ConnectorAuthenticationError("connector credential no longer valid")
-            response.raise_for_status()
-            result = response.json()
-            logger.info(
-                "uploaded fs file session_id={} path={} size={} file_id={}",
-                payload.get("sessionId"),
-                payload.get("path"),
-                payload.get("size"),
-                result.get("fileId"),
-            )
-            return result
-        finally:
-            if owned:
-                await client.aclose()
-
     async def download_attachment(self, file_id: str) -> tuple[bytes, str, str]:
         """Pull a user-uploaded attachment by file_id.
 
@@ -798,13 +759,13 @@ class BackendRpcClient:
         timeout = httpx.Timeout(300.0, connect=30.0)
         async with self._new_http_client(timeout=timeout) as client:
             response = await client.get(
-                urljoin(self.config.server_url + "/", f"connector/fs/downloads/{file_id}"),
+                urljoin(self.config.server_url + "/", f"connector/files/downloads/{file_id}"),
                 headers={"Authorization": f"Bearer {access_token}"},
             )
             if getattr(response, "status_code", None) == 401:
                 access_token = await self.ensure_access_token(force=True)
                 response = await client.get(
-                    urljoin(self.config.server_url + "/", f"connector/fs/downloads/{file_id}"),
+                    urljoin(self.config.server_url + "/", f"connector/files/downloads/{file_id}"),
                     headers={"Authorization": f"Bearer {access_token}"},
                 )
                 if getattr(response, "status_code", None) == 401:

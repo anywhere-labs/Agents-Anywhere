@@ -1,8 +1,8 @@
-/** Tiny HTTP/WS helpers for the runtime panel — fs + terminal endpoints.
+/** Tiny HTTP/WS helpers for the runtime panel — workspace fs + terminal endpoints.
  *
- * These are scoped to a single session at construction time so the panels
- * don't have to thread sessionId/token through every call. Errors come
- * back as RuntimeApiError instances.
+ * Terminal endpoints remain session-scoped. Runtime filesystem operations are
+ * connector/workspace-scoped so they can browse or edit files without tying the
+ * API shape to a resumable session.
  */
 
 export class RuntimeApiError extends Error {
@@ -51,22 +51,9 @@ export type FsReadFileResult = {
   name: string;
   size: number;
   sha256: string;
-  fileId?: string;
-  transferId?: string;
-  token?: string;
+  transferId: string;
+  token: string;
   downloadUrl: string;
-};
-
-export type FsDownloadResult = {
-  fileId: string;
-  sessionId: string;
-  path: string;
-  name: string;
-  size: number;
-  sha256: string;
-  contentBase64: string;
-  createdAt: string;
-  serverTime: string;
 };
 
 export type FsWriteResult = {
@@ -116,10 +103,12 @@ export function makeRuntimeApi(opts: {
 }) {
   const { sessionId, connectorId, root, token, demo = false } = opts;
   const auth = () => (token ? { authorization: `Bearer ${token}` } : {});
-  const connectorFsPath = (suffix: string) =>
-    connectorId && root
-      ? `/connectors/${encodeURIComponent(connectorId)}/fs/${suffix}?root=${encodeURIComponent(root)}`
-      : null;
+  const connectorFsPath = (suffix: string) => {
+    if (!connectorId || !root) {
+      throw new RuntimeApiError(409, "workspace filesystem requires connectorId and root");
+    }
+    return `/connectors/${encodeURIComponent(connectorId)}/fs/${suffix}?root=${encodeURIComponent(root)}`;
+  };
 
   async function call<T>(
     path: string,
@@ -160,21 +149,21 @@ export function makeRuntimeApi(opts: {
     demo,
     fsList(path: string | null): Promise<{ ok: boolean; result: FsListResult }> {
       if (demo) return Promise.resolve(demoFsList(path));
-      return call(connectorFsPath("list") ?? `/sessions/${sessionId}/fs/list`, {
+      return call(connectorFsPath("list"), {
         method: "POST",
         body: JSON.stringify({ path }),
       });
     },
     fsReadText(path: string, maxBytes = 1_048_576): Promise<FsReadTextResult> {
       if (demo) return Promise.resolve(demoFsReadText(path));
-      return call(connectorFsPath("readText") ?? `/sessions/${sessionId}/fs/readText`, {
+      return call(connectorFsPath("readText"), {
         method: "POST",
         body: JSON.stringify({ path, maxBytes }),
       });
     },
     fsReadFile(path: string): Promise<{ ok: boolean; result: FsReadFileResult }> {
       if (demo) return Promise.resolve(demoFsReadFile(path));
-      return call(connectorFsPath("read") ?? `/sessions/${sessionId}/fs/read`, {
+      return call(connectorFsPath("read"), {
         method: "POST",
         body: JSON.stringify({ path }),
       });
@@ -186,17 +175,13 @@ export function makeRuntimeApi(opts: {
       if (!res.ok) throw new RuntimeApiError(res.status, await res.text());
       return await res.blob();
     },
-    fsDownload(fileId: string): Promise<FsDownloadResult> {
-      if (demo) return Promise.resolve(demoFsDownload(fileId));
-      return call(`/sessions/${sessionId}/fs/downloads/${encodeURIComponent(fileId)}`);
-    },
     fsWrite(
       path: string,
       content: string,
       ifMatch: string | null,
     ): Promise<{ ok: boolean; result: FsWriteResult }> {
       if (demo) return Promise.resolve(demoFsWrite(path, content));
-      return call(`/sessions/${sessionId}/fs/write`, {
+      return call(connectorFsPath("write"), {
         method: "POST",
         body: JSON.stringify({ path, content, ifMatch: ifMatch ?? undefined }),
       });
@@ -391,25 +376,10 @@ function demoFsReadFile(path: string): { ok: boolean; result: FsReadFileResult }
       name: text.name,
       size: text.size,
       sha256: text.sha256,
-      fileId: `demo:${text.path}`,
-      downloadUrl: `/sessions/demo/fs/downloads/${encodeURIComponent(text.path)}`,
+      transferId: `demo:${text.path}`,
+      token: "demo",
+      downloadUrl: `data:text/plain;charset=utf-8,${encodeURIComponent(text.content)}`,
     },
-  };
-}
-
-function demoFsDownload(fileId: string): FsDownloadResult {
-  const path = fileId.startsWith("demo:") ? fileId.slice(5) : fileId;
-  const text = demoFsReadText(path);
-  return {
-    fileId,
-    sessionId: "demo",
-    path: text.path,
-    name: text.name,
-    size: text.size,
-    sha256: text.sha256,
-    contentBase64: btoa(unescape(encodeURIComponent(text.content))),
-    createdAt: new Date().toISOString(),
-    serverTime: new Date().toISOString(),
   };
 }
 

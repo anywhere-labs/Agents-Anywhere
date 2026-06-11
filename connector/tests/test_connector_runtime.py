@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import hashlib
 import json
 import sys
@@ -558,41 +557,6 @@ async def _exercise_local_ops(tmp_path) -> None:
         ),
         adapter=FakeAdapter(),  # type: ignore[arg-type]
     )
-    uploads: list[dict[str, Any]] = []
-
-    async def upload_file(payload: dict[str, Any]) -> dict[str, Any]:
-        uploads.append(payload)
-        return {
-            "fileId": "file_1",
-            "sessionId": payload["sessionId"],
-            "path": payload["path"],
-            "name": payload["name"],
-            "size": payload["size"],
-            "sha256": payload["sha256"],
-            "downloadUrl": "/sessions/sess_1/fs/downloads/file_1",
-            "createdAt": "2026-01-01T00:00:00Z",
-        }
-
-    client.local_ops.upload_file = upload_file
-
-    read_result = await client.dispatch(
-        "fs.readFile",
-        {"root": str(workspace), "sessionId": "sess_1", "path": "hello.txt"},
-    )
-    assert read_result["fileId"] == "file_1"
-    assert read_result["downloadUrl"] == "/sessions/sess_1/fs/downloads/file_1"
-    assert "content" not in read_result
-    assert uploads == [
-        {
-            "sessionId": "sess_1",
-            "path": str(workspace / "hello.txt"),
-            "name": "hello.txt",
-            "size": len(b"hello\n"),
-            "sha256": hashlib.sha256(b"hello\n").hexdigest(),
-            "contentBase64": base64.b64encode(b"hello\n").decode("ascii"),
-        }
-    ]
-
     prepared = await client.dispatch(
         "fs.prepareDownload",
         {"root": str(workspace), "sessionId": "sess_1", "path": "hello.txt"},
@@ -663,7 +627,7 @@ async def _exercise_local_ops(tmp_path) -> None:
     assert notifications[-1][1]["result"]["stdout"].strip() == str(workspace)
 
     outside_result = await client.dispatch(
-        "fs.readFile",
+        "fs.prepareDownload",
         {"root": str(workspace), "sessionId": "sess_1", "path": "../outside.txt"},
     )
     assert outside_result["path"] == str(outside)

@@ -161,8 +161,8 @@ async def connector_claude_transcript_cursors(
     }
 
 
-@router.get("/connector/fs/downloads/{file_id}")
-async def connector_fs_download(
+@router.get("/connector/files/downloads/{file_id}")
+async def connector_file_download(
     file_id: str,
     authorization: str = Header(..., alias="Authorization"),
     db: Store = Depends(get_store),
@@ -235,8 +235,8 @@ def _safe_header_value(value: str) -> str:
     return value.encode("latin-1", errors="replace").decode("latin-1")
 
 
-@router.post("/connector/fs/uploads", response_model=FsUploadResponse)
-async def connector_fs_upload(
+@router.post("/connector/files/uploads", response_model=FsUploadResponse)
+async def connector_file_upload(
     payload: FsUploadRequest,
     authorization: str = Header(..., alias="Authorization"),
     db: Store = Depends(get_store),
@@ -261,7 +261,7 @@ async def connector_fs_upload(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return FsUploadResponse(
         **saved,
-        downloadUrl=f"/sessions/{payload.sessionId}/fs/downloads/{saved['fileId']}",
+        downloadUrl=f"/sessions/{payload.sessionId}/files/{saved['fileId']}/download",
         openUrl=f"/sessions/{payload.sessionId}/files/{saved['fileId']}/open",
     )
 

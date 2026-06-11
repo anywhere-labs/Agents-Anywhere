@@ -202,7 +202,7 @@ async def test_claude_sdk_adapter_streams_timeline_and_updates_external_session(
                     "mediaType": "text/plain",
                     "size": 12,
                     "sha256": "abc",
-                    "downloadUrl": "/sessions/sess_1/fs/downloads/file_1",
+                    "downloadUrl": "/sessions/sess_1/files/file_1/download",
                     "pathHint": "/repo/.aa-attachments/file_1-report.txt",
                 }
             ],
@@ -241,7 +241,7 @@ async def test_claude_sdk_adapter_streams_timeline_and_updates_external_session(
             "mediaType": "text/plain",
             "size": 12,
             "sha256": "abc",
-            "downloadUrl": "/sessions/sess_1/fs/downloads/file_1",
+            "downloadUrl": "/sessions/sess_1/files/file_1/download",
         }
     ]
     assert timeline[2]["content"]["text"] == "I'll run that."

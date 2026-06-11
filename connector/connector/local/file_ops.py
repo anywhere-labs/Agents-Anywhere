@@ -1,16 +1,14 @@
 from __future__ import annotations
 
-import hashlib
 import mimetypes
+import hashlib
 from typing import Any
 
 from connector.local.common import (
     MAX_DIR_ENTRIES,
     MAX_READ_TEXT_BYTES,
     StaleFileError,
-    UploadFile,
     encoding,
-    file_upload_payload,
     nearest_existing_dir,
     required_string,
     required_text,
@@ -20,28 +18,6 @@ from connector.local.common import (
 
 
 class FileOps:
-    def __init__(self, upload_file: UploadFile | None = None) -> None:
-        self.upload_file = upload_file
-
-    async def read_file(self, params: dict[str, Any]) -> dict[str, Any]:
-        root = workspace_root(params)
-        path = resolve_path(root, required_string(params, "path"))
-        if not path.is_file():
-            raise FileNotFoundError(f"file not found: {path}")
-        if self.upload_file is None:
-            raise RuntimeError("file upload handler is not configured")
-        data = path.read_bytes()
-        upload = await self.upload_file(
-            file_upload_payload(required_string(params, "sessionId"), path, data)
-        )
-        return {
-            "path": str(path),
-            "name": path.name,
-            "size": len(data),
-            "sha256": hashlib.sha256(data).hexdigest(),
-            **upload,
-        }
-
     async def prepare_download(self, params: dict[str, Any]) -> dict[str, Any]:
         root = workspace_root(params)
         path = resolve_path(root, required_string(params, "path"))
