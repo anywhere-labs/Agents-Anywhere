@@ -62,7 +62,6 @@ from agent_server.services.device_agent_settings import DeviceAgentSettingsServi
 from agent_server.services.workspace import request_connector, resolve_workspace_path
 from agent_server.services.shell_tasks import ShellTaskManager
 from agent_server.services.terminal import (
-    TerminalNotFoundError,
     TerminalService,
     TerminalServiceError,
     terminal_connector_scope_id,
@@ -648,7 +647,6 @@ async def connector_terminal_stream(
 
     db: Store = websocket.app.state.store
     broker: TerminalBroker = websocket.app.state.terminal_broker
-    manager: ConnectorRpcManager = websocket.app.state.rpc
     try:
         await _require_owned_connector(connector_id, user_id, db)
     except HTTPException:
@@ -661,9 +659,10 @@ async def connector_terminal_stream(
         await websocket.close(code=4404)
         return
 
-    terminal_service = TerminalService(db, manager, broker)
+    terminal_service = TerminalService(db, websocket.app.state.rpc, broker)
     await websocket.accept()
     await broker.attach_client(terminal_id, websocket, from_seq=fromSeq)
+    await broker.send_to_connector(terminal_id, {"type": "attach"})
     try:
         while True:
             message = await websocket.receive_json()
@@ -672,46 +671,22 @@ async def connector_terminal_stream(
                 data_b64 = message.get("data")
                 if not isinstance(data_b64, str):
                     continue
-                try:
-                    await terminal_service.write_for_connector(
-                        connector_id,
-                        terminal_id,
-                        data_base64=data_b64,
-                    )
-                except TerminalNotFoundError:
+                if not await broker.send_to_connector(
+                    terminal_id,
+                    {"type": "input", "data": data_b64},
+                ):
                     break
-                except Exception as exc:
-                    code = getattr(exc, "status_code", 500)
-                    detail = getattr(exc, "detail", str(exc))
-                    try:
-                        await websocket.send_json(
-                            {"type": "error", "code": code, "message": str(detail)}
-                        )
-                    except RuntimeError:
-                        break
             elif mtype == "resize":
                 cols = int(message.get("cols") or term.cols)
                 rows = int(message.get("rows") or term.rows)
                 cols = max(1, min(500, cols))
                 rows = max(1, min(200, rows))
-                try:
-                    await terminal_service.resize_dimensions_for_connector(
-                        connector_id,
-                        terminal_id,
-                        cols=cols,
-                        rows=rows,
-                    )
-                except TerminalNotFoundError:
+                await broker.resize(terminal_id, cols, rows)
+                if not await broker.send_to_connector(
+                    terminal_id,
+                    {"type": "resize", "cols": cols, "rows": rows},
+                ):
                     break
-                except Exception as exc:
-                    code = getattr(exc, "status_code", 500)
-                    detail = getattr(exc, "detail", str(exc))
-                    try:
-                        await websocket.send_json(
-                            {"type": "error", "code": code, "message": str(detail)}
-                        )
-                    except RuntimeError:
-                        break
             elif mtype == "ping":
                 await websocket.send_json({"type": "pong"})
     except WebSocketDisconnect:

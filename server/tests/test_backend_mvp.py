@@ -513,6 +513,8 @@ class FakeLocalRpc:
         self.delay_terminal_close = 0.0
         self.closed_on_resize: set[str] = set()
         self.interrupt_result: dict[str, Any] = {"interrupted": True}
+        self.terminal_relay_broker: Any | None = None
+        self.terminal_relay_sockets: dict[str, FakeWebSocket] = {}
 
     def is_online(self, connector_id: str) -> bool:
         return True
@@ -537,6 +539,14 @@ class FakeLocalRpc:
                 "closed": False,
             }
             return {"terminalId": terminal_id, "pid": 123}
+        if method == "terminal.relay.connect":
+            terminal_id = params["terminalId"]
+            token = params["token"]
+            if self.terminal_relay_broker is not None:
+                ws = FakeWebSocket()
+                await self.terminal_relay_broker.attach_connector(terminal_id, token, ws)
+                self.terminal_relay_sockets[terminal_id] = ws
+            return {"terminalId": terminal_id, "connecting": True}
         if method == "terminal.close":
             if self.delay_terminal_close:
                 await asyncio.sleep(self.delay_terminal_close)
@@ -2822,6 +2832,7 @@ def test_connector_terminal_lifecycle_uses_workspace_scope(tmp_path):
     connector_id, _, _, headers = create_connector_and_session(client)
     scope_id = f"browse_{connector_id}"
     fake_rpc = FakeLocalRpc()
+    fake_rpc.terminal_relay_broker = client.app.state.terminal_broker
     client.app.state.rpc = fake_rpc
 
     async def seed() -> None:
@@ -2841,19 +2852,11 @@ def test_connector_terminal_lifecycle_uses_workspace_scope(tmp_path):
     assert terminal["cwd"] == "/repo/src"
     assert fake_rpc.requests[-1] == (
         connector_id,
-        "terminal.create",
+        "terminal.relay.connect",
         {
             "terminalId": terminal_id,
             "sessionId": scope_id,
-            "root": "/repo",
-            "cwd": "/repo/src",
-            "shell": None,
-            "command": None,
-            "args": [],
-            "profile": None,
-            "cols": 80,
-            "rows": 24,
-            "env": {},
+            "token": client.app.state.terminal_broker.get(terminal_id).relay_token,
         },
         15,
     )
@@ -2862,30 +2865,23 @@ def test_connector_terminal_lifecycle_uses_workspace_scope(tmp_path):
     assert listing.status_code == 200, listing.text
     assert [item["terminalId"] for item in listing.json()["terminals"]] == [terminal_id]
 
+    relay_ws = fake_rpc.terminal_relay_sockets[terminal_id]
+
     resized = client.post(
         f"/connectors/{connector_id}/terminals/{terminal_id}/resize",
         headers=headers,
         json={"cols": 100, "rows": 30},
     )
     assert resized.status_code == 200, resized.text
-    assert fake_rpc.requests[-1] == (
-        connector_id,
-        "terminal.resize",
-        {"terminalId": terminal_id, "sessionId": scope_id, "cols": 100, "rows": 30},
-        10,
-    )
+    assert asyncio.run(relay_ws.sent.get()) == {"type": "resize", "cols": 100, "rows": 30}
 
     closed = client.delete(
         f"/connectors/{connector_id}/terminals/{terminal_id}",
         headers=headers,
     )
     assert closed.status_code == 200, closed.text
-    assert fake_rpc.requests[-1] == (
-        connector_id,
-        "terminal.close",
-        {"terminalId": terminal_id, "sessionId": scope_id},
-        10,
-    )
+    assert asyncio.run(relay_ws.sent.get()) == {"type": "close"}
+    assert [request[1] for request in fake_rpc.requests].count("terminal.relay.connect") == 1
     listing = client.get(f"/connectors/{connector_id}/terminals", headers=headers)
     assert listing.status_code == 200, listing.text
     assert listing.json()["terminals"] == []
@@ -2971,6 +2967,36 @@ def test_terminal_broker_removes_connector_ephemeral_terminals_only(tmp_path):
     assert [terminal.id for terminal in removed] == [user_terminal_id]
     assert client.app.state.terminal_broker.get(user_terminal_id) is None
     assert client.app.state.terminal_broker.get(primary_terminal_id) is not None
+
+
+def test_terminal_broker_forwards_browser_events_to_connector_relay(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, _, _ = create_connector_and_session(client)
+
+    async def exercise() -> list[dict[str, Any]]:
+        broker = client.app.state.terminal_broker
+        term = await broker.register(
+            session_id=f"browse_{connector_id}",
+            connector_id=connector_id,
+            label="zsh",
+            root="/repo",
+            cwd="/repo",
+            shell="zsh",
+            cols=80,
+            rows=24,
+            purpose="user",
+        )
+        ws = FakeWebSocket()
+        attached = await broker.attach_connector(term.id, term.relay_token, ws)  # type: ignore[arg-type]
+        assert attached is not None
+        assert await broker.send_to_connector(term.id, {"type": "input", "data": "YQ=="})
+        assert await broker.send_to_connector(term.id, {"type": "resize", "cols": 100, "rows": 30})
+        return [await ws.sent.get(), await ws.sent.get()]
+
+    assert asyncio.run(exercise()) == [
+        {"type": "input", "data": "YQ=="},
+        {"type": "resize", "cols": 100, "rows": 30},
+    ]
 
 
 def test_user_terminal_resize_removes_terminal_missing_on_connector(tmp_path):

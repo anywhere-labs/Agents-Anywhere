@@ -360,6 +360,8 @@ class BackendRpcClient:
             return await self.local_ops.terminal_close(params)
         if method == "terminal.list":
             return await self.local_ops.terminal_list(params)
+        if method == "terminal.relay.connect":
+            return await self.start_terminal_relay(params)
         if method == "capabilities.scanRuntime":
             runtime = params.get("runtime")
             if not isinstance(runtime, str) or not runtime:
@@ -825,6 +827,82 @@ class BackendRpcClient:
                     raise ConnectorAuthenticationError("connector credential no longer valid")
             response.raise_for_status()
         return {"transferId": transfer_id, "uploaded": True}
+
+    async def start_terminal_relay(self, params: dict[str, Any]) -> dict[str, Any]:
+        terminal_id = params.get("terminalId")
+        token = params.get("token")
+        if not isinstance(terminal_id, str) or not terminal_id:
+            raise ValueError("terminalId is required")
+        if not isinstance(token, str) or not token:
+            raise ValueError("token is required")
+        task = asyncio.create_task(self._run_terminal_relay(terminal_id, token))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._on_background_upload_done)
+        return {"terminalId": terminal_id, "connecting": True}
+
+    async def _run_terminal_relay(self, terminal_id: str, token: str) -> None:
+        relay_url = _ws_url(self.config.server_url, f"/connector/terminals/{terminal_id}/relay")
+        relay_url = f"{relay_url}?token={token}"
+        logger.info("connecting terminal relay terminal_id={}", terminal_id)
+        send_lock = asyncio.Lock()
+        async with websockets.connect(
+            relay_url,
+            proxy=None if _is_loopback_url(self.config.server_url) else True,
+        ) as ws:
+            start_raw = await ws.recv()
+            start = json.loads(start_raw)
+            if not isinstance(start, dict) or start.get("type") != "start":
+                raise RuntimeError("terminal relay missing start frame")
+
+            async def send_frame(frame: dict[str, Any]) -> None:
+                async with send_lock:
+                    await ws.send(json.dumps(frame, ensure_ascii=False))
+
+            async def output(method: str, params: dict[str, Any]) -> None:
+                if method == "terminal.output":
+                    await send_frame(
+                        {
+                            "type": "output",
+                            "seq": params.get("seq"),
+                            "data": params.get("dataBase64"),
+                        }
+                    )
+                elif method == "terminal.exited":
+                    await send_frame(
+                        {
+                            "type": "exit",
+                            "exitCode": params.get("exitCode"),
+                            "reason": params.get("reason"),
+                        }
+                    )
+
+            created = await self.local_ops.terminal.create(start, output=output)
+            await send_frame({"type": "ready", "pid": created.get("pid")})
+            try:
+                async for raw in ws:
+                    message = json.loads(raw)
+                    if not isinstance(message, dict):
+                        continue
+                    mtype = message.get("type")
+                    if mtype == "input":
+                        data = message.get("data")
+                        if isinstance(data, str):
+                            await self.local_ops.terminal.write(
+                                {"terminalId": terminal_id, "dataBase64": data}
+                            )
+                    elif mtype == "resize":
+                        await self.local_ops.terminal.resize(
+                            {
+                                "terminalId": terminal_id,
+                                "cols": message.get("cols"),
+                                "rows": message.get("rows"),
+                            }
+                        )
+                    elif mtype == "close":
+                        await self.local_ops.terminal.close({"terminalId": terminal_id})
+                        break
+            finally:
+                await self.local_ops.terminal.close({"terminalId": terminal_id})
 
     def _on_background_upload_done(self, task: asyncio.Task[Any]) -> None:
         self._background_tasks.discard(task)

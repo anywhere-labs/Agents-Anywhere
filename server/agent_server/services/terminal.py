@@ -135,10 +135,15 @@ class TerminalService:
                 session_id=session.id,
                 connector_id=session.connectorId,
                 label=_label_for(payload, len(existing)),
+                root=session.cwd,
                 cwd=cwd,
                 shell=payload.shell or "",
                 cols=payload.cols,
                 rows=payload.rows,
+                command=payload.command,
+                args=payload.args,
+                profile=payload.profile,
+                env=payload.env,
                 ephemeral_group_id=payload.ephemeralGroupId,
             )
             try:
@@ -191,37 +196,35 @@ class TerminalService:
                 session_id=scope_id,
                 connector_id=connector_id,
                 label=_label_for(payload, len(existing)),
+                root=root,
                 cwd=cwd,
                 shell=payload.shell or "",
                 cols=payload.cols,
                 rows=payload.rows,
+                command=payload.command,
+                args=payload.args,
+                profile=payload.profile,
+                env=payload.env,
                 ephemeral_group_id=payload.ephemeralGroupId,
             )
             try:
-                result = await request_connector(
+                await request_connector(
                     self._manager,
                     connector_id,
-                    "terminal.create",
+                    "terminal.relay.connect",
                     {
                         "terminalId": term.id,
                         "sessionId": scope_id,
-                        "root": root,
-                        "cwd": cwd,
-                        "shell": payload.shell,
-                        "command": payload.command,
-                        "args": payload.args or [],
-                        "profile": payload.profile,
-                        "cols": payload.cols,
-                        "rows": payload.rows,
-                        "env": payload.env or {},
+                        "token": term.relay_token,
                     },
                     timeout=15,
                 )
+                connected = await self._broker.wait_connector(term.id, timeout=10)
+                if connected is None:
+                    raise TerminalConflictError("terminal relay did not connect")
             except Exception:
                 await self._broker.remove(term.id)
                 raise
-            pid = result.get("pid") if isinstance(result, dict) else None
-            await self._broker.mark_running(term.id, pid=pid)
             return TerminalResponse(terminal=TerminalView(**term.view()), serverTime=utc_now())
 
     async def ensure_primary_claude(
@@ -422,6 +425,7 @@ class TerminalService:
             session_id=session.id,
             connector_id=session.connectorId,
             label="Claude",
+            root=session.cwd,
             cwd=cwd,
             shell="",
             cols=120,
@@ -547,22 +551,7 @@ class TerminalService:
         term = self._broker.get(terminal_id)
         if term is None or term.session_id != scope_id:
             raise TerminalNotFoundError("terminal not found")
-        try:
-            await request_connector(
-                self._manager,
-                connector_id,
-                "terminal.close",
-                {"terminalId": terminal_id, "sessionId": scope_id},
-                timeout=10,
-            )
-        except Exception as exc:
-            status_code = getattr(exc, "status_code", "?")
-            logger.warning(
-                "terminal.close rpc failed terminal_id={} session_id={} status={}",
-                terminal_id,
-                scope_id,
-                status_code,
-            )
+        await self._broker.send_to_connector(terminal_id, {"type": "close"})
         snapshot = TerminalView(**term.view())
         await self._broker.remove(terminal_id)
         return TerminalResponse(terminal=snapshot, serverTime=utc_now())
@@ -635,13 +624,11 @@ class TerminalService:
         term = self._broker.get(terminal_id)
         if term is None or term.session_id != scope_id:
             raise TerminalNotFoundError("terminal not found")
-        await request_connector(
-            self._manager,
-            term.connector_id,
-            "terminal.write",
-            {"terminalId": terminal_id, "sessionId": scope_id, "dataBase64": data_base64},
-            timeout=10,
-        )
+        if not await self._broker.send_to_connector(
+            terminal_id,
+            {"type": "input", "data": data_base64},
+        ):
+            raise TerminalNotFoundError("terminal not found")
 
     async def resize_dimensions(
         self,
@@ -680,14 +667,9 @@ class TerminalService:
         term = self._broker.get(terminal_id)
         if term is None or term.session_id != scope_id:
             raise TerminalNotFoundError("terminal not found")
-        result = await request_connector(
-            self._manager,
-            term.connector_id,
-            "terminal.resize",
-            {"terminalId": terminal_id, "sessionId": scope_id, "cols": cols, "rows": rows},
-            timeout=10,
-        )
-        if isinstance(result, dict) and result.get("closed") is True:
-            await self._broker.remove(terminal_id)
-            raise TerminalNotFoundError("terminal not found")
         await self._broker.resize(terminal_id, cols, rows)
+        if not await self._broker.send_to_connector(
+            terminal_id,
+            {"type": "resize", "cols": cols, "rows": rows},
+        ):
+            raise TerminalNotFoundError("terminal not found")

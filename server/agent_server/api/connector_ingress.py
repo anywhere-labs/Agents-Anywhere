@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import base64
 from typing import Any
 
 from fastapi import (
@@ -293,6 +294,76 @@ async def connector_ws(
                 connector_id=connector_id,
                 reason="connector.offline",
             )
+
+
+@router.websocket("/connector/terminals/{terminal_id}/relay")
+async def connector_terminal_relay_ws(
+    websocket: WebSocket,
+    terminal_id: str,
+    broker: TerminalBroker = Depends(get_terminal_broker),
+) -> None:
+    token = websocket.query_params.get("token")
+    if not isinstance(token, str) or not token:
+        await websocket.close(code=1008)
+        return
+    term = broker.get(terminal_id)
+    if term is None:
+        await websocket.close(code=1008, reason="terminal not found")
+        return
+    if term.relay_token != token:
+        await websocket.close(code=1008, reason="invalid terminal relay token")
+        return
+
+    await websocket.accept()
+    if await broker.attach_connector(terminal_id, token, websocket) is None:
+        await websocket.close(code=1008, reason="invalid terminal relay token")
+        return
+    await websocket.send_json(
+        {
+            "type": "start",
+            "terminalId": term.id,
+            "sessionId": term.session_id,
+            "root": term.root,
+            "cwd": term.cwd,
+            "shell": term.shell or None,
+            "command": term.command,
+            "args": term.args,
+            "profile": term.profile,
+            "cols": term.cols,
+            "rows": term.rows,
+            "env": term.env,
+        }
+    )
+    try:
+        while True:
+            message = await websocket.receive_json()
+            mtype = message.get("type")
+            if mtype == "ready":
+                pid = message.get("pid")
+                await broker.mark_running(terminal_id, pid=pid if isinstance(pid, int) else None)
+            elif mtype == "output":
+                data_b64 = message.get("data")
+                seq = message.get("seq")
+                if isinstance(data_b64, str) and isinstance(seq, int):
+                    try:
+                        data = base64.b64decode(data_b64)
+                    except Exception:
+                        data = b""
+                    if data:
+                        await broker.on_output(terminal_id, data=data, seq=seq)
+            elif mtype == "exit":
+                exit_code = message.get("exitCode")
+                reason = message.get("reason") if isinstance(message.get("reason"), str) else None
+                await broker.on_exited(
+                    terminal_id,
+                    exit_code=exit_code if isinstance(exit_code, int) else None,
+                    reason=reason,
+                )
+                break
+    except WebSocketDisconnect:
+        pass
+    finally:
+        broker.detach_connector(terminal_id, websocket)
 
 
 async def _handle_connector_message(
