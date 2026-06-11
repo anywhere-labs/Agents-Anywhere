@@ -1001,6 +1001,48 @@ def test_adapter_registers_client_message_id_after_turn_start() -> None:
     asyncio.run(_exercise_adapter_registers_client_message_id())
 
 
+def test_codex_adapter_materializes_attachments_to_user_dir(tmp_path, monkeypatch) -> None:
+    asyncio.run(_exercise_codex_adapter_materializes_attachments_to_user_dir(tmp_path, monkeypatch))
+
+
+async def _exercise_codex_adapter_materializes_attachments_to_user_dir(tmp_path, monkeypatch) -> None:
+    attachments_root = tmp_path / "runtime-attachments"
+    monkeypatch.setenv("AGENT_CONNECTOR_ATTACHMENTS_ROOT", str(attachments_root))
+    rpc = FakeCodexRpc()
+    adapter = CodexAdapter(rpc=rpc)  # type: ignore[arg-type]
+    adapter.reducer.bind_session("sess_attach", "thr_attach")
+
+    async def download(file_id: str) -> tuple[bytes, str, str]:
+        if file_id == "file_note":
+            return b"hello\n", "../notes.md", "text/markdown"
+        return b"\x89PNG\r\n\x1a\n", "diagram.png", "image/png"
+
+    adapter.attachment_downloader = download
+    await adapter.start_turn(
+        {
+            "sessionId": "sess_attach",
+            "externalSessionId": "thr_attach",
+            "cwd": "/repo",
+            "content": "review",
+            "attachments": [
+                {"fileId": "file_note", "name": "../notes.md"},
+                {"fileId": "file_img", "name": "diagram.png"},
+            ],
+        }
+    )
+
+    note = attachments_root / "sess_attach" / "file_note-notes.md"
+    image = attachments_root / "sess_attach" / "file_img-diagram.png"
+    assert note.read_bytes() == b"hello\n"
+    assert image.read_bytes() == b"\x89PNG\r\n\x1a\n"
+    params = rpc.requests[-1][1]
+    assert params is not None
+    assert params["input"][0]["text"] == (
+        f"review\n\n[Attached file: ../notes.md (text/markdown, 6 bytes) at {note}]"
+    )
+    assert params["input"][1] == {"type": "localImage", "path": str(image)}
+
+
 async def _exercise_adapter_registers_client_message_id() -> None:
     notifications: list[tuple[str, dict[str, Any]]] = []
 

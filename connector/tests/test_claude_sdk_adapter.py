@@ -456,10 +456,12 @@ async def test_claude_sdk_adapter_approval_bridge_resolves_to_sdk_allow():
 
 
 @pytest.mark.anyio
-async def test_claude_sdk_adapter_materializes_file_attachment_to_cwd(tmp_path):
+async def test_claude_sdk_adapter_materializes_file_attachment_to_user_dir(tmp_path, monkeypatch):
     FakeClient.instances = []
     workspace = tmp_path / "repo"
     workspace.mkdir()
+    attachments_root = tmp_path / "runtime-attachments"
+    monkeypatch.setenv("AGENT_CONNECTOR_ATTACHMENTS_ROOT", str(attachments_root))
     adapter = ClaudeSdkAdapter(sdk_module=FakeSdk)
 
     async def download(file_id: str) -> tuple[bytes, str, str]:
@@ -479,7 +481,7 @@ async def test_claude_sdk_adapter_materializes_file_attachment_to_cwd(tmp_path):
     )
     await adapter._sessions["sess_file"].active_task
 
-    materialized = workspace / ".claude-attachments" / "file_1-notes.md"
+    materialized = attachments_root / "sess_file" / "file_1-notes.md"
     assert materialized.read_bytes() == b"hello\n"
     prompt = FakeClient.instances[-1].queries[0]
     yielded = []
@@ -498,10 +500,12 @@ async def test_claude_sdk_adapter_materializes_file_attachment_to_cwd(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_claude_sdk_adapter_sends_image_attachment_as_base64_block(tmp_path):
+async def test_claude_sdk_adapter_sends_image_attachment_as_base64_block(tmp_path, monkeypatch):
     FakeClient.instances = []
     workspace = tmp_path / "repo"
     workspace.mkdir()
+    attachments_root = tmp_path / "runtime-attachments"
+    monkeypatch.setenv("AGENT_CONNECTOR_ATTACHMENTS_ROOT", str(attachments_root))
     adapter = ClaudeSdkAdapter(sdk_module=FakeSdk)
     image_bytes = b"\x89PNG\r\n\x1a\n"
 
@@ -522,7 +526,7 @@ async def test_claude_sdk_adapter_sends_image_attachment_as_base64_block(tmp_pat
     )
     await adapter._sessions["sess_image"].active_task
 
-    materialized = workspace / ".claude-attachments" / "file_img-diagram.png"
+    materialized = attachments_root / "sess_image" / "file_img-diagram.png"
     assert materialized.read_bytes() == image_bytes
     prompt = FakeClient.instances[-1].queries[0]
     yielded = []

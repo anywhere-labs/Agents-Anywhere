@@ -322,6 +322,7 @@ Connector：
 | `AGENT_SERVER_URL` | 未传 `--server-url` 时使用的后端地址。 |
 | `AGENT_CONNECTOR_ID` | 未传 `--connector-id` 时使用的 Connector id。 |
 | `AGENT_CONNECTOR_TOKEN` | 未传 `--connector-token` 时使用的 Connector token。 |
+| `AGENT_CONNECTOR_ATTACHMENTS_ROOT` | Runtime 附件下载目录，默认 `~/.agents-anywhere/attachments`。 |
 | `CODEX_BIN` | Codex CLI/app-server 路径。 |
 | `CLAUDE_BIN` | Claude Code CLI 路径。 |
 

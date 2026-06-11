@@ -6,13 +6,12 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 import hashlib
 import json
-import re
 import time
-from pathlib import Path
 from typing import Any
 
 from loguru import logger
 
+from connector.attachments import attachment_target
 from connector.codex.reducer import CODEX_APPROVAL_METHODS, ReductionResult, TimelineReducer
 from connector.codex.rpc import JsonRpcStdioClient
 from connector.time import utc_now
@@ -21,17 +20,8 @@ from connector.time import utc_now
 AttachmentDownloader = Callable[[str], Awaitable[tuple[bytes, str, str]]]
 """(file_id) → (data, original_name, media_type)"""
 
-# Subdirectory under the session cwd where user-uploaded attachments land. Living
-# inside cwd is required for the path-mention fallback (non-image files), since
-# codex's `fs.readText` is rooted at cwd. The leading dot keeps it out of most
-# default `ls` views.
-ATTACHMENT_DIRNAME = ".codex-attachments"
 EXISTING_SYNC_SCAN_TIMEOUT_SECONDS = 1200.0
 EXISTING_SYNC_CHANGED_THREAD_TIMEOUT_SECONDS = 1200.0
-# Filename sanitizer for the on-disk copy. We keep the original name (so the
-# model sees something meaningful in `[Attached file: ...]`) but strip anything
-# path-traversal-shaped or shell-hostile.
-_SAFE_FILENAME_RE = re.compile(r"[^\w.\-+]+")
 
 
 def _thread_id_from_result(value: dict[str, Any]) -> str | None:
@@ -341,7 +331,7 @@ class CodexAdapter:
         attachments = params.get("attachments") or []
         cwd = _optional_string(params.get("cwd"))
         text_content, extra_inputs = await self._materialize_attachments(
-            content, attachments, cwd
+            content, attachments, cwd, session_id
         )
 
         input_items: list[dict[str, Any]] = [
@@ -395,8 +385,9 @@ class CodexAdapter:
         content: str,
         attachments: list[Any],
         cwd: str | None,
+        session_id: str,
     ) -> tuple[str, list[dict[str, Any]]]:
-        """Download each attachment to <cwd>/.codex-attachments/ and translate
+        """Download each attachment to the connector user attachment dir and translate
         into codex `UserInput` items.
 
         Codex's `turn/start` `input` array supports text / image / localImage /
@@ -411,17 +402,6 @@ class CodexAdapter:
         if self.attachment_downloader is None:
             logger.warning("dropping {} attachments — no downloader is wired", len(attachments))
             return content, []
-        if not cwd:
-            # We have nowhere to land the bytes. Surface the file names in text
-            # so the user sees them in the transcript but no payload reaches
-            # the model.
-            stub_names = ", ".join(
-                _attachment_name_from(att) or "file" for att in attachments
-            )
-            return f"{content}\n\n[Attachments dropped — session has no cwd: {stub_names}]", []
-
-        uploads_dir = Path(cwd) / ATTACHMENT_DIRNAME
-        uploads_dir.mkdir(parents=True, exist_ok=True)
 
         text = content
         items: list[dict[str, Any]] = []
@@ -435,8 +415,8 @@ class CodexAdapter:
                 logger.exception("attachment download failed file_id={}", file_id)
                 text += f"\n\n[Failed to load attachment {file_id}: {exc}]"
                 continue
-            safe_name = _safe_filename(original_name) or file_id
-            target = uploads_dir / f"{file_id}-{safe_name}"
+            target = attachment_target(session_id, file_id, original_name)
+            target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
             try:
                 target.chmod(0o600)
@@ -860,15 +840,6 @@ def _attachment_name_from(att: Any) -> str | None:
         if isinstance(candidate, str) and candidate:
             return candidate
     return None
-
-
-def _safe_filename(name: str) -> str:
-    """Reduce an arbitrary upload name to something safe to write to disk."""
-    # Drop any leading directory components and the dot-dot business so the
-    # caller's `<cwd>/.codex-attachments/` is the actual write target.
-    name = name.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
-    sanitized = _SAFE_FILENAME_RE.sub("_", name).strip("._") or ""
-    return sanitized[:120]
 
 
 __all__ = ["CODEX_APPROVAL_METHODS", "CodexAdapter", "JsonRpcStdioClient", "TimelineReducer"]

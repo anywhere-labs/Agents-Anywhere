@@ -322,6 +322,7 @@ Connector:
 | `AGENT_SERVER_URL` | Backend URL used when `--server-url` is omitted. |
 | `AGENT_CONNECTOR_ID` | Connector id used when `--connector-id` is omitted. |
 | `AGENT_CONNECTOR_TOKEN` | Connector token used when `--connector-token` is omitted. |
+| `AGENT_CONNECTOR_ATTACHMENTS_ROOT` | Runtime attachment download directory. Defaults to `~/.agents-anywhere/attachments`. |
 | `CODEX_BIN` | Codex CLI/app-server path. |
 | `CLAUDE_BIN` | Claude Code CLI path. |
 
