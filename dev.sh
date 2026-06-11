@@ -21,9 +21,14 @@ if ! command -v yarn >/dev/null 2>&1; then
 fi
 
 pids=()
+shutting_down=0
 
 cleanup() {
   local code=$?
+  if ((shutting_down)); then
+    exit "$code"
+  fi
+  shutting_down=1
   trap - INT TERM EXIT
   if ((${#pids[@]} > 0)); then
     kill "${pids[@]}" >/dev/null 2>&1 || true
@@ -69,4 +74,12 @@ echo
 start_server
 start_web
 
-wait -n "${pids[@]}"
+while true; do
+  for pid in "${pids[@]}"; do
+    if ! kill -0 "$pid" >/dev/null 2>&1; then
+      wait "$pid" || true
+      exit 1
+    fi
+  done
+  sleep 1
+done
