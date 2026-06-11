@@ -146,19 +146,6 @@ async def connector_ingest(
     return await ingest_service.ingest(connector_id=connector_id, payload=payload)
 
 
-@router.get("/connector/claude/transcript-cursors")
-async def connector_claude_transcript_cursors(
-    authorization: str = Header(..., alias="Authorization"),
-    db: Store = Depends(get_store),
-) -> dict[str, Any]:
-    connector_id = _connector_id_from_bearer(authorization)
-    await _require_active_connector(connector_id, db)
-    await db.record_connector_activity(connector_id)
-    return {
-        "cursors": await db.list_claude_transcript_cursors_for_connector(connector_id),
-    }
-
-
 @router.get("/connector/fs/downloads/{file_id}")
 async def connector_fs_download(
     file_id: str,
@@ -472,15 +459,20 @@ async def apply_connector_notification(
         session_id = await _resolve_timeline_session_id(connector_id, params["sessionId"], items, db)
         if await filter_.session_disabled(session_id):
             return IngestEffect()
-        if await _is_active_claude_chat_run(db, session_id):
-            logger.info("ignored claude transcript sync during active SDK chat run session_id={}", session_id)
-            return IngestEffect()
         items = [_timeline_item_for_session(item, session_id) for item in items]
-        await db.replace_timeline(
-            session_id=session_id,
-            source_observed_at=params.get("sourceObservedAt"),
-            items=items,
-        )
+        items = await _tag_active_run_user_messages(db, session_id, items)
+        if await _should_replace_timeline_snapshot(db, session_id, items):
+            await db.replace_timeline_snapshot(
+                session_id=session_id,
+                source_observed_at=params.get("sourceObservedAt"),
+                items=items,
+            )
+        else:
+            await db.replace_timeline(
+                session_id=session_id,
+                source_observed_at=params.get("sourceObservedAt"),
+                items=items,
+            )
         if any(item.type == "turn.end" for item in items):
             await _reconcile_active_run_from_timeline(db, session_id)
         # Bulk replace can also remove items — let the client do one /state to
@@ -510,23 +502,6 @@ async def apply_connector_notification(
             item=stored.model_dump(mode="json"),
             session_changed=item.type in ("turn.start", "turn.end"),
         )
-    elif method == "claude.transcriptCursorAdvanced":
-        session_id = params.get("sessionId")
-        transcript_path = params.get("transcriptPath")
-        last_offset = params.get("lastOffset")
-        if not isinstance(session_id, str) or not isinstance(transcript_path, str) or not isinstance(last_offset, int):
-            return IngestEffect()
-        session_id = await _resolve_timeline_session_id(connector_id, session_id, [], db)
-        if await filter_.session_disabled(session_id):
-            return IngestEffect()
-        async with db.timeline_writer_lock(session_id):
-            await db.update_claude_transcript_cursor(
-                session_id=session_id,
-                transcript_path=transcript_path,
-                last_offset=last_offset,
-                last_event_key=params.get("lastEventKey") if isinstance(params.get("lastEventKey"), str) else None,
-            )
-        return IngestEffect()
     elif method == "approval.requested":
         approval = ApprovalIn.model_validate(params)
         session_id = await _resolve_approval_session_id(connector_id, approval, db)
@@ -596,13 +571,6 @@ async def apply_connector_notification(
     return IngestEffect()
 
 
-async def _is_active_claude_chat_run(db: Store, session_id: str) -> bool:
-    active_run = await db.get_active_run(session_id)
-    if active_run is None or active_run.get("runtime") != "claude":
-        return False
-    return active_run.get("runMode") in {None, "chat"}
-
-
 async def _resolve_timeline_session_id(
     connector_id: str,
     session_id: str,
@@ -642,6 +610,80 @@ def _timeline_item_for_session(item: TimelineItemIn, session_id: str) -> Timelin
     if item.sessionId == session_id:
         return item
     return TimelineItemIn.model_validate({**item.model_dump(), "sessionId": session_id})
+
+
+async def _should_replace_timeline_snapshot(
+    db: Store,
+    session_id: str,
+    items: list[TimelineItemIn],
+) -> bool:
+    if items:
+        return all(item.source.runtime == "claude" for item in items)
+    try:
+        session = await db.get_session(session_id)
+    except KeyError:
+        return False
+    return session.runtime == "claude"
+
+
+async def _tag_active_run_user_messages(
+    db: Store,
+    session_id: str,
+    items: list[TimelineItemIn],
+) -> list[TimelineItemIn]:
+    active = await db.get_active_run(session_id)
+    if active is None or active.get("runtime") != "claude":
+        return items
+    params = active.get("params")
+    if not isinstance(params, dict):
+        return items
+    client_message_id = params.get("clientMessageId")
+    expected_text = params.get("content")
+    if not isinstance(client_message_id, str) or not client_message_id:
+        return items
+    if not isinstance(expected_text, str):
+        return items
+
+    tagged: list[TimelineItemIn] = []
+    did_tag = False
+    for item in items:
+        if did_tag or not _active_run_user_message_matches(item, expected_text):
+            tagged.append(item)
+            continue
+        source = item.source.model_dump()
+        if source.get("clientMessageId"):
+            did_tag = True
+            tagged.append(item)
+            continue
+        source["clientMessageId"] = client_message_id
+        tagged.append(
+            TimelineItemIn.model_validate(
+                {
+                    **item.model_dump(),
+                    "source": source,
+                }
+            )
+        )
+        did_tag = True
+    return tagged
+
+
+def _active_run_user_message_matches(item: TimelineItemIn, expected_text: str) -> bool:
+    if item.type != "message" or item.role != "user":
+        return False
+    if item.source.runtime != "claude":
+        return False
+    content = item.content if isinstance(item.content, dict) else {}
+    actual_text = content.get("text")
+    if not isinstance(actual_text, str):
+        return False
+    return _client_message_text_matches(actual_text, expected_text)
+
+
+def _client_message_text_matches(actual: str, expected: str) -> bool:
+    if actual == expected:
+        return True
+    return actual.startswith(expected) and actual[len(expected) :].startswith("\n\n[")
 
 
 def _approval_for_session(approval: ApprovalIn, session_id: str) -> ApprovalIn:

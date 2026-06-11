@@ -100,6 +100,31 @@ class TimelineRepositoryMixin:
         await self.refresh_session_status_from_timeline(session_id)
         return normalized
 
+    async def replace_timeline_snapshot(
+        self,
+        *,
+        session_id: str,
+        items: list[TimelineItemIn],
+        source_observed_at: str | None = None,
+    ) -> list[TimelineItem]:
+        async with self._timeline_lock(session_id):
+            now = utc_now()
+            async with self._engine.begin() as conn:
+                if source_observed_at is not None:
+                    await conn.execute(
+                        update(sessions_t)
+                        .where(sessions_t.c.id == session_id)
+                        .values(source_observed_at=source_observed_at)
+                    )
+                updated_seq = await self._bump_session(conn, session_id)
+                normalized = [
+                    _timeline_item_from_input(item, updated_seq=updated_seq, now=now)
+                    for item in items
+                ]
+            await self.timeline.replace(session_id, normalized)
+        await self.refresh_session_status_from_timeline(session_id)
+        return normalized
+
 
     async def upsert_timeline_item(
         self,

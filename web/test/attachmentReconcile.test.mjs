@@ -9,6 +9,7 @@ import {
   stripInjectedAttachmentMentions,
   assignSentRecords,
   extractAttachments,
+  mergeOptimisticTimelineItems,
 } from "../src/lib/attachmentReconcile.ts";
 
 let pass = 0;
@@ -27,6 +28,24 @@ const userItem = (id, text, ms, clientMessageId) => ({
   content: { text },
   source: clientMessageId ? { clientMessageId } : {},
   createdAt: at(ms),
+});
+const timelineItem = (id, type, role, turnId, orderSeq, updatedSeq, extra = {}) => ({
+  id,
+  sessionId: "sess",
+  turnId,
+  type,
+  status: type === "turn.start" ? "running" : "done",
+  role,
+  content: {},
+  source: {},
+  orderSeq,
+  revision: 1,
+  contentHash: id,
+  updatedSeq,
+  createdAt: at(updatedSeq),
+  updatedAt: at(updatedSeq),
+  completedAt: type === "turn.start" ? null : at(updatedSeq),
+  ...extra,
 });
 
 console.log("userMessageMatches:");
@@ -120,5 +139,51 @@ t("parses attachment array from content", () =>
   ]),
 );
 t("returns [] when no attachments", () => assert.deepEqual(extractAttachments({ text: "hi" }), []));
+
+console.log("mergeOptimisticTimelineItems:");
+t("anchors optimistic user after its running turn start", () => {
+  const real = [
+    timelineItem("turn_1:start", "turn.start", null, "turn_1", 1, 10),
+    timelineItem("assistant_1", "message", "assistant", "turn_1", 2, 11, { content: { text: "working" } }),
+    timelineItem("tool_1", "tool", "tool", "turn_1", 3, 12),
+  ];
+  const opt = timelineItem("opt_1", "message", "user", "turn_1", Number.MAX_SAFE_INTEGER, 0, {
+    status: "running",
+    content: { text: "do it" },
+  });
+  assert.deepEqual(
+    mergeOptimisticTimelineItems(real, [opt]).map((item) => item.id),
+    ["turn_1:start", "opt_1", "assistant_1", "tool_1"],
+  );
+});
+t("dedupes optimistic user once real item carries clientMessageId", () => {
+  const real = [
+    timelineItem("turn_1:start", "turn.start", null, "turn_1", 1, 10),
+    timelineItem("real_user", "message", "user", "turn_1", 2, 11, {
+      content: { text: "do it" },
+      source: { clientMessageId: "opt_1" },
+    }),
+    timelineItem("assistant_1", "message", "assistant", "turn_1", 3, 12),
+  ];
+  const opt = timelineItem("opt_1", "message", "user", "turn_1", Number.MAX_SAFE_INTEGER, 0, {
+    status: "running",
+    content: { text: "do it" },
+  });
+  assert.deepEqual(
+    mergeOptimisticTimelineItems(real, [opt]).map((item) => item.id),
+    ["turn_1:start", "real_user", "assistant_1"],
+  );
+});
+t("keeps unanchored optimistic items at the end", () => {
+  const real = [timelineItem("assistant_1", "message", "assistant", "turn_1", 1, 10)];
+  const opt = timelineItem("opt_1", "message", "user", null, Number.MAX_SAFE_INTEGER, 0, {
+    status: "pending",
+    content: { text: "do it" },
+  });
+  assert.deepEqual(
+    mergeOptimisticTimelineItems(real, [opt]).map((item) => item.id),
+    ["assistant_1", "opt_1"],
+  );
+});
 
 console.log(`\nALL ${pass} ASSERTIONS PASSED`);

@@ -35,6 +35,7 @@ import {
 import {
   assignSentRecords,
   extractAttachments,
+  mergeOptimisticTimelineItems,
   stripInjectedAttachmentMentions,
   userMessageMatches,
 } from "../../lib/attachmentReconcile";
@@ -93,6 +94,7 @@ type PendingTimelineDelta = {
   approvals?: Approval[];
   session?: SessionView;
   nextSeq?: number;
+  replaceItems?: boolean;
 };
 
 export function SessionDetailView({
@@ -258,6 +260,7 @@ export function SessionDetailView({
       approvals?: Approval[];
       session?: SessionView;
       nextSeq?: number;
+      replaceItems?: boolean;
     };
 
     function commitDelta(delta: PendingTimelineDelta) {
@@ -266,10 +269,10 @@ export function SessionDetailView({
       }
       if (delta.session) onSessionRefreshedRef.current(delta.session);
       setState((prev) => {
-        let itemsById = prev.itemsById;
+        let itemsById = delta.replaceItems ? {} : prev.itemsById;
         const items = Object.values(delta.itemsById);
         if (items.length) {
-          itemsById = { ...prev.itemsById };
+          itemsById = { ...itemsById };
           for (const item of items) {
             const existing = itemsById[item.id];
             if (!existing || existing.updatedSeq <= item.updatedSeq) {
@@ -303,6 +306,10 @@ export function SessionDetailView({
       const pending =
         pendingDeltaRef.current ??
         (pendingDeltaRef.current = { itemsById: {} });
+      if (delta.replaceItems) {
+        pending.itemsById = {};
+        pending.replaceItems = true;
+      }
       if (delta.items && delta.items.length) {
         for (const item of delta.items) {
           const existing = pending.itemsById[item.id];
@@ -334,9 +341,9 @@ export function SessionDetailView({
       }
     }
 
-    // Incremental GET /state catch-up. Used ONLY for: initial load,
-    // SSE-reconnect catch-up (refetch envelopes), and the dead-SSE fallback
-    // poll. Never per streaming event.
+    // Full GET /state reconcile. Used ONLY for: initial load, SSE-reconnect
+    // catch-up (refetch envelopes), bulk syncs, and the dead-SSE fallback poll.
+    // Never per streaming event.
     async function refetch() {
       if (cancelled || inFlight) return;
       if (
@@ -347,8 +354,12 @@ export function SessionDetailView({
       }
       inFlight = true;
       try {
-        let afterSeq = nextSeqRef.current;
+        let afterSeq = 0;
         let hasMore = true;
+        let collectedItems: TimelineItem[] = [];
+        let latestApprovals: Approval[] | undefined;
+        let latestSession: SessionView | undefined;
+        let latestNextSeq = nextSeqRef.current;
         while (!cancelled && hasMore) {
           const response = await api.getSessionState(
             token,
@@ -357,15 +368,10 @@ export function SessionDetailView({
             STATE_PAGE_LIMIT,
           );
           if (cancelled) return;
-          applyDelta(
-            {
-              items: response.items,
-              approvals: response.approvals,
-              session: response.session,
-              nextSeq: response.nextSeq,
-            },
-            { immediate: true },
-          );
+          collectedItems = [...collectedItems, ...response.items];
+          latestApprovals = response.approvals;
+          latestSession = response.session;
+          latestNextSeq = Math.max(latestNextSeq, response.nextSeq);
           hasMore = response.hasMore;
           const lastItem = response.items.at(-1);
           if (!lastItem || lastItem.updatedSeq <= afterSeq) {
@@ -374,6 +380,16 @@ export function SessionDetailView({
           afterSeq = lastItem.updatedSeq;
           nextSeqRef.current = Math.max(nextSeqRef.current, afterSeq);
         }
+        applyDelta(
+          {
+            items: collectedItems,
+            approvals: latestApprovals,
+            session: latestSession,
+            nextSeq: latestNextSeq,
+            replaceItems: true,
+          },
+          { immediate: true },
+        );
       } catch (err) {
         if (cancelled) return;
         if (err instanceof ApiError && err.status === 401) {
@@ -389,7 +405,7 @@ export function SessionDetailView({
 
     // SSE: steady-state events carry item payloads — apply directly, no
     // /state call. A `refetch` envelope (initial frame + bulk sync) triggers
-    // exactly one GET /state to reconcile.
+    // exactly one full GET /state reconcile.
     let eventSource: EventSource | null = null;
     try {
       eventSource = new EventSource(api.sessionEventsUrl(token, sessionId));
@@ -476,17 +492,7 @@ export function SessionDetailView({
               : item,
           );
 
-    // Optimistic items only show while no matching real message exists yet
-    // (or they failed). Prefix-aware matching means file attachments — whose
-    // server text gets a "[Attached file: …]" suffix injected by the connector
-    // — still dedupe, instead of rendering a second card.
-    if (optimisticItems.length === 0) return enriched;
-    const pending = optimisticItems.filter(
-      (opt) =>
-        opt.status === "failed" ||
-        !real.some((r) => userMessageMatches(r, opt.id)),
-    );
-    return pending.length === 0 ? enriched : [...enriched, ...pending];
+    return mergeOptimisticTimelineItems(enriched, optimisticItems);
   }, [state.itemsById, optimisticItems, sentRecords]);
 
   // GC optimistic items from state once their real counterpart lands (keeps
@@ -679,11 +685,24 @@ export function SessionDetailView({
       };
       setOptimisticItems((prev) => [...prev, optimistic]);
       try {
-        await api.sendSessionMessage(token, sessionId, content, attachmentRefs, tempId);
+        const response = await api.sendSessionMessage(
+          token,
+          sessionId,
+          content,
+          attachmentRefs,
+          tempId,
+        );
+        const turnId =
+          response.result &&
+          typeof response.result === "object" &&
+          "turnId" in response.result &&
+          typeof response.result.turnId === "string"
+            ? response.result.turnId
+            : null;
         setOptimisticItems((prev) =>
           prev.map((m) =>
             m.id === tempId && m.status === "pending"
-              ? { ...m, status: "running" }
+              ? { ...m, status: "running", turnId }
               : m,
           ),
         );
@@ -1762,38 +1781,31 @@ function MessageEntry({
   const text = textOf(item.content.text) ?? "";
   const time = formatTime(item.createdAt);
   const attachments = extractAttachments(item.content);
-  if (item.role === "user") {
-    const pending = item.status === "pending";
-    const accepted = item.status === "running";
-    const failed = item.status === "failed";
-    const stateClass = failed
-      ? " failed"
-      : pending
-        ? " pending"
-        : accepted
-          ? " accepted"
-          : "";
-    const stateLabel = failed
-      ? "Failed to send"
-      : pending
-        ? "Sending..."
-        : accepted
-          ? "Processing..."
-        : time;
+	  if (item.role === "user") {
+	    const pending = item.status === "pending";
+	    const failed = item.status === "failed";
+	    const stateClass = failed
+	      ? " failed"
+	      : pending
+	        ? " pending"
+	        : "";
+	    const stateLabel = failed
+	      ? "Failed to send"
+	      : pending
+	        ? "Sending..."
+	        : time;
     // When chips are shown, hide the machine-injected "[Attached file: …]"
     // mention the connector appends for codex — the chip says the same thing.
     const displayText =
       attachments.length > 0 ? stripInjectedAttachmentMentions(text) : text;
     return (
       <div className={`kl-msg user${stateClass}`}>
-        {attachments.length > 0 && <MessageAttachments attachments={attachments} />}
-        {displayText && <div className="bubble">{displayText}</div>}
-        {(pending || accepted || failed) && (
-          <div className="meta">{stateLabel}</div>
-        )}
-      </div>
-    );
-  }
+	        {attachments.length > 0 && <MessageAttachments attachments={attachments} />}
+	        {displayText && <div className="bubble">{displayText}</div>}
+	        {(pending || failed) && <div className="meta">{stateLabel}</div>}
+	      </div>
+	    );
+	  }
   return (
     <div
       className={`kl-msg assistant${hideAssistantHeader ? " continuation" : ""}`}

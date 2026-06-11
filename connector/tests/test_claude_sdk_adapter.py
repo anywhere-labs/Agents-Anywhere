@@ -7,9 +7,8 @@ from typing import Any
 
 import pytest
 
-import connector.claude.sdk_adapter as sdk_adapter_module
+from connector.claude.history_adapter import ClaudeHistoryAdapter
 from connector.claude.sdk_adapter import ClaudeSdkAdapter
-from connector.claude.path_utils import encode_cwd
 from connector.launch import launch_target
 
 
@@ -28,10 +27,19 @@ class FakeToolUseBlock:
 
 
 @dataclass
+class FakeToolResultBlock:
+    tool_use_id: str
+    content: Any
+    is_error: bool = False
+    type: str = "tool_result"
+
+
+@dataclass
 class FakeAssistantMessage:
-    id: str
+    message_id: str | None
     content: list[Any]
     role: str = "assistant"
+    uuid: str | None = None
 
 
 @dataclass
@@ -93,7 +101,7 @@ class FakeClient:
 
     async def receive_response(self):
         yield FakeAssistantMessage(
-            id="msg_assistant_1",
+            message_id="msg_assistant_1",
             content=[
                 FakeTextBlock(text="I'll run that."),
                 FakeToolUseBlock(id="toolu_1", name="Bash", input={"command": "pytest -q"}),
@@ -118,7 +126,7 @@ class SystemThenAssistantClient(FakeClient):
     async def receive_response(self):
         yield FakeSystemMessage(subtype="init", data={})
         yield FakeAssistantMessage(
-            id="msg_assistant_after_system",
+            message_id="msg_assistant_after_system",
             content=[FakeTextBlock(text="still streaming")],
         )
         yield FakeResultMessage(session_id="claude_session_system")
@@ -149,6 +157,83 @@ class StreamingDeltaClient(FakeClient):
         yield FakeResultMessage(session_id="claude_session_stream")
 
 
+class PartialAssistantMessagesClient(FakeClient):
+    async def receive_response(self):
+        yield FakeAssistantMessage(
+            message_id="resp_partial_1",
+            content=[FakeTextBlock(text="Starting")],
+        )
+        yield FakeAssistantMessage(
+            message_id="resp_partial_2",
+            content=[FakeTextBlock(text="Starting\n\nFull answer")],
+        )
+        yield FakeResultMessage(session_id="claude_session_partial_messages")
+
+
+class MultiAssistantMessagesClient(FakeClient):
+    async def receive_response(self):
+        yield FakeAssistantMessage(
+            message_id="resp_intro",
+            content=[FakeTextBlock(text="First I will run a command.")],
+        )
+        yield FakeAssistantMessage(
+            message_id="resp_after_tool",
+            content=[FakeTextBlock(text="Command is done. Now the essay.")],
+        )
+        yield FakeAssistantMessage(
+            message_id="resp_essay",
+            content=[FakeTextBlock(text="You have unusual talent.")],
+        )
+        yield FakeResultMessage(session_id="claude_session_multi_messages")
+
+
+class ToolResultClient(FakeClient):
+    async def receive_response(self):
+        yield FakeAssistantMessage(
+            message_id="msg_assistant_tool",
+            content=[
+                FakeToolUseBlock(id="toolu_write", name="Write", input={"file_path": "/repo/app.py", "content": "print('hi')\n"}),
+            ],
+        )
+        yield FakeAssistantMessage(
+            message_id="msg_user_tool_result",
+            role="user",
+            content=[
+                FakeToolResultBlock(tool_use_id="toolu_write", content="File created"),
+            ],
+        )
+        yield FakeResultMessage(session_id="claude_session_tool_result")
+
+
+class TaskUpdateClient(FakeClient):
+    async def receive_response(self):
+        yield FakeAssistantMessage(
+            message_id="msg_task_update",
+            content=[
+                FakeToolUseBlock(
+                    id="call_task_1",
+                    name="TaskUpdate",
+                    input={"taskId": "13", "status": "deleted", "description": "obsolete"},
+                ),
+            ],
+        )
+        yield FakeAssistantMessage(
+            message_id="msg_task_result",
+            role="user",
+            content=[
+                FakeToolResultBlock(
+                    tool_use_id="call_task_1",
+                    content="Updated task #13 deleted",
+                ),
+            ],
+        )
+        yield FakeAssistantMessage(
+            message_id="msg_task_answer",
+            content=[FakeTextBlock(text="Here is the answer.")],
+        )
+        yield FakeResultMessage(session_id="claude_session_task_update")
+
+
 class BlockingClient(FakeClient):
     started: asyncio.Event
     release: asyncio.Event
@@ -167,23 +252,105 @@ class FakeSdk:
     PermissionResultDeny = FakeDeny
 
 
+class RecordingHistoryAdapter(ClaudeHistoryAdapter):
+    def __init__(self) -> None:
+        super().__init__()
+        self.consumed: list[tuple[str | None, str | None]] = []
+        self.synced = 0
+        self.sync_session_params: list[dict[str, Any]] = []
+
+    async def mark_session_consumed(self, *, external_session_id: str | None, cwd: str | None = None) -> None:
+        self.consumed.append((external_session_id, cwd))
+
+    async def sync_session(self, params):
+        self.sync_session_params.append(params)
+        pending = params.get("pendingClientMessages") or []
+        items = [
+            {
+                "id": "turn_history:turn-start",
+                "sessionId": params["sessionId"],
+                "turnId": "turn_history",
+                "type": "turn.start",
+                "status": "running",
+                "role": None,
+                "content": {},
+                "source": {
+                    "runtime": "claude",
+                    "sessionId": params["externalSessionId"],
+                    "turnId": "turn_history",
+                    "itemId": "turn_history:turn-start",
+                    "itemType": "turn.start",
+                    "event": "turn.start",
+                    "derivedKey": "turn-start",
+                },
+                "orderSeq": 1,
+                "revision": 1,
+                "contentHash": "sha256:history-start",
+            },
+            {
+                "id": "claude_msg_history_user",
+                "sessionId": params["sessionId"],
+                "turnId": "turn_history",
+                "type": "message",
+                "status": "done",
+                "role": "user",
+                "content": {"text": "Run tests"},
+                "source": {
+                    "runtime": "claude",
+                    "sessionId": params["externalSessionId"],
+                    "turnId": "turn_history",
+                    "itemId": "u1",
+                    "itemType": "text",
+                    "event": "u1:0",
+                    "derivedKey": "message",
+                    **({"clientMessageId": pending[0]["clientMessageId"]} if pending else {}),
+                },
+                "orderSeq": 2,
+                "revision": 1,
+                "contentHash": "sha256:history-user",
+            },
+        ]
+        if pending and pending[0].get("attachments"):
+            items[1]["content"]["attachments"] = pending[0]["attachments"]
+        return {
+            "backendNotifications": [
+                {
+                    "method": "timeline.sync",
+                    "params": {
+                        "sessionId": params["sessionId"],
+                        "items": items,
+                    },
+                }
+            ]
+        }
+
+    async def sync_existing_sessions(
+        self,
+        connector_id,
+        *,
+        limit=100,
+        force=False,
+        skip_external_session_ids=None,
+        notification_sink=None,
+    ):
+        self.synced += 1
+        self.skip_external_session_ids = skip_external_session_ids or set()
+        if notification_sink is not None:
+            await notification_sink([])
+        return {"threads": ["sess_scanned"], "skippedThreads": [], "backendNotifications": []}
+
+
 @pytest.mark.anyio
-async def test_claude_sdk_adapter_streams_timeline_and_updates_external_session(tmp_path, monkeypatch):
+async def test_claude_sdk_adapter_streams_timeline_and_updates_external_session():
     notifications: list[tuple[str, dict[str, Any]]] = []
 
     async def sink(method: str, params: dict[str, Any]) -> None:
         notifications.append((method, params))
 
-    project_dir = tmp_path / encode_cwd("/repo")
-    project_dir.mkdir(parents=True)
-    transcript = project_dir / "claude_session_1.jsonl"
-    transcript.write_text('{"type":"result"}\n', encoding="utf-8")
-    monkeypatch.setattr(sdk_adapter_module, "projects_root", lambda: tmp_path)
-
     FakeClient.instances = []
-    adapter = ClaudeSdkAdapter(notification_sink=sink, sdk_module=FakeSdk)
+    history_adapter = RecordingHistoryAdapter()
+    adapter = ClaudeSdkAdapter(notification_sink=sink, sdk_module=FakeSdk, history_adapter=history_adapter)
     adapter.claude_target = launch_target("custom", "/opt/claude")
-    adapter.transcript_adapter.projects_dir = tmp_path
 
     created = await adapter.create_session({"sessionId": "sess_1", "cwd": "/repo"})
     started = await adapter.start_turn(
@@ -229,10 +396,10 @@ async def test_claude_sdk_adapter_streams_timeline_and_updates_external_session(
         "message",
         "message",
         "tool",
+        "message",
         "turn.end",
     ]
-    assert timeline[1]["id"].startswith("claude_msg_")
-    assert not timeline[1]["id"].startswith(started["turnId"])
+    assert timeline[1]["role"] == "user"
     assert timeline[1]["source"]["clientMessageId"] == "opt_1"
     assert timeline[1]["content"]["attachments"] == [
         {
@@ -244,29 +411,24 @@ async def test_claude_sdk_adapter_streams_timeline_and_updates_external_session(
             "downloadUrl": "/sessions/sess_1/fs/downloads/file_1",
         }
     ]
+    assert timeline[2]["id"].startswith("claude_msg_")
+    assert not timeline[2]["id"].startswith(started["turnId"])
+    assert timeline[2]["role"] == "assistant"
     assert timeline[2]["content"]["text"] == "I'll run that."
+    assert timeline[2]["status"] == "running"
+    assert timeline[2]["source"]["itemId"] == "msg_assistant_1"
     assert timeline[3]["content"]["toolName"] == "Bash"
+    assert timeline[3]["content"]["kind"] == "command"
+    assert timeline[3]["content"]["command"] == "pytest -q"
+    assert timeline[3]["role"] == "tool"
+    assert timeline[4]["id"] == timeline[2]["id"]
+    assert timeline[4]["status"] == "done"
+    assert timeline[4]["revision"] == timeline[2]["revision"] + 1
     assert timeline[-1]["status"] == "done"
 
     updates = [params for method, params in notifications if method == "session.updated"]
     assert any(update["externalSessionId"] == "claude_session_1" for update in updates)
-    cursor_updates = [
-        params
-        for method, params in notifications
-        if method == "claude.transcriptCursorAdvanced"
-    ]
-    assert cursor_updates == [
-        {
-            "sessionId": "sess_1",
-            "runtime": "claude",
-            "externalSessionId": "claude_session_1",
-            "transcriptPath": str(transcript),
-            "lastOffset": transcript.stat().st_size,
-            "lastEventKey": started["turnId"],
-        }
-    ]
-    cursor = adapter.transcript_adapter._cursors[transcript]
-    assert cursor.offset == transcript.stat().st_size
+    assert history_adapter.consumed == [("claude_session_1", "/repo")]
 
     sync_notifications: list[list[dict[str, Any]]] = []
 
@@ -274,8 +436,9 @@ async def test_claude_sdk_adapter_streams_timeline_and_updates_external_session(
         sync_notifications.append(notifications)
 
     sync_result = await adapter.sync_existing_sessions("conn_x", notification_sink=sync_sink)
-    assert sync_result["threads"] == []
-    assert sync_notifications == []
+    assert sync_result["threads"] == ["sess_scanned"]
+    assert sync_result["skippedThreads"] == []
+    assert sync_notifications == [[]]
 
     prompt = client.queries[0]
     yielded = []
@@ -299,24 +462,82 @@ async def test_claude_sdk_adapter_streams_timeline_and_updates_external_session(
 
 
 @pytest.mark.anyio
-async def test_claude_sdk_adapter_skips_live_transcript_scan_without_cursor_advance(tmp_path, monkeypatch):
-    project_dir = tmp_path / encode_cwd("/repo")
-    project_dir.mkdir(parents=True)
-    transcript = project_dir / "claude_session_live.jsonl"
-    transcript.write_text(
-        '{"type":"user","uuid":"u-live","message":{"content":"hi"},"cwd":"/repo"}\n',
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(sdk_adapter_module, "projects_root", lambda: tmp_path)
+async def test_claude_sdk_adapter_merges_live_tool_result_into_tool_call():
+    class ToolResultSdk(FakeSdk):
+        ClaudeSDKClient = ToolResultClient
 
+    notifications: list[tuple[str, dict[str, Any]]] = []
+
+    async def sink(method: str, params: dict[str, Any]) -> None:
+        notifications.append((method, params))
+
+    adapter = ClaudeSdkAdapter(notification_sink=sink, sdk_module=ToolResultSdk)
+
+    await adapter.start_turn(
+        {
+            "sessionId": "sess_1",
+            "cwd": "/repo",
+            "content": "write a file",
+        }
+    )
+    await adapter._sessions["sess_1"].active_task
+
+    tool_items = [
+        params["item"]
+        for method, params in notifications
+        if method == "timeline.itemUpsert" and params["item"]["type"] == "tool"
+    ]
+
+    assert len(tool_items) == 2
+    assert tool_items[0]["id"] == tool_items[1]["id"]
+    assert tool_items[0]["status"] == "running"
+    assert tool_items[1]["status"] == "done"
+    assert tool_items[1]["content"]["kind"] == "file_change"
+    assert tool_items[1]["content"]["changes"][0]["path"] == "/repo/app.py"
+    assert tool_items[1]["content"]["changes"][0]["kind"] == {"type": "add"}
+    assert tool_items[1]["content"]["result"] == "File created"
+    assert tool_items[1]["content"]["outputPreview"] == "File created"
+
+
+@pytest.mark.anyio
+async def test_claude_sdk_adapter_filters_live_task_update_tool_events():
+    class TaskUpdateSdk(FakeSdk):
+        ClaudeSDKClient = TaskUpdateClient
+
+    notifications: list[tuple[str, dict[str, Any]]] = []
+
+    async def sink(method: str, params: dict[str, Any]) -> None:
+        notifications.append((method, params))
+
+    adapter = ClaudeSdkAdapter(notification_sink=sink, sdk_module=TaskUpdateSdk)
+    await adapter.start_turn(
+        {
+            "sessionId": "sess_task_update",
+            "cwd": "/repo",
+            "externalSessionId": "claude_session_task_update",
+            "content": "write",
+            "clientMessageId": "opt_task_update",
+        }
+    )
+    await adapter._sessions["sess_task_update"].active_task
+
+    timeline = [params["item"] for method, params in notifications if method == "timeline.itemUpsert"]
+    assert [item["type"] for item in timeline] == ["turn.start", "message", "message", "message", "turn.end"]
+    assistant = [item for item in timeline if item["type"] == "message" and item["role"] == "assistant"]
+    assert [item["content"]["text"] for item in assistant] == ["Here is the answer.", "Here is the answer."]
+    assert not any(item["type"] == "tool" for item in timeline)
+
+
+@pytest.mark.anyio
+async def test_claude_sdk_adapter_skips_active_session_during_history_scan():
     class BlockingSdk(FakeSdk):
         ClaudeSDKClient = BlockingClient
 
     BlockingClient.instances = []
     BlockingClient.started = asyncio.Event()
     BlockingClient.release = asyncio.Event()
-    adapter = ClaudeSdkAdapter(sdk_module=BlockingSdk)
-    adapter.transcript_adapter.projects_dir = tmp_path
+    history_adapter = RecordingHistoryAdapter()
+    adapter = ClaudeSdkAdapter(sdk_module=BlockingSdk, history_adapter=history_adapter)
 
     await adapter.start_turn(
         {
@@ -334,10 +555,10 @@ async def test_claude_sdk_adapter_skips_live_transcript_scan_without_cursor_adva
         sync_notifications.append(notifications)
 
     sync_result = await adapter.sync_existing_sessions("conn_x", notification_sink=sync_sink)
-    assert sync_result["threads"] == []
-    assert sync_result["skippedThreads"] == ["claude_session_live"]
-    assert sync_notifications == []
-    assert transcript not in adapter.transcript_adapter._cursors
+    assert sync_result["threads"] == ["sess_scanned"]
+    assert sync_result["skippedThreads"] == []
+    assert history_adapter.skip_external_session_ids == {"claude_session_live"}
+    assert sync_notifications == [[]]
 
     BlockingClient.release.set()
     await adapter._sessions["sess_live"].active_task
@@ -353,7 +574,11 @@ async def test_claude_sdk_adapter_does_not_treat_system_subtype_as_result():
     class SystemSdk(FakeSdk):
         ClaudeSDKClient = SystemThenAssistantClient
 
-    adapter = ClaudeSdkAdapter(notification_sink=sink, sdk_module=SystemSdk)
+    adapter = ClaudeSdkAdapter(
+        notification_sink=sink,
+        sdk_module=SystemSdk,
+        history_adapter=RecordingHistoryAdapter(),
+    )
 
     started = await adapter.start_turn(
         {
@@ -371,13 +596,19 @@ async def test_claude_sdk_adapter_does_not_treat_system_subtype_as_result():
         "turn.start",
         "message",
         "message",
+        "message",
         "turn.end",
     ]
     assert timeline[1]["role"] == "user"
     assert timeline[1]["source"]["clientMessageId"] == "opt_system"
     assert timeline[2]["role"] == "assistant"
+    assert timeline[2]["id"] == timeline[3]["id"]
     assert timeline[2]["content"]["text"] == "still streaming"
+    assert timeline[2]["status"] == "running"
+    assert timeline[3]["status"] == "done"
     assert timeline[-1]["turnId"] == started["turnId"]
+
+    assert not any(method == "timeline.sync" for method, _params in notifications)
 
 
 @pytest.mark.anyio
@@ -417,6 +648,59 @@ async def test_claude_sdk_adapter_versions_live_stream_message_snapshots():
     assert assistant[0]["orderSeq"] == assistant[1]["orderSeq"] == assistant[2]["orderSeq"]
     assert assistant[0]["createdAt"] == assistant[1]["createdAt"] == assistant[2]["createdAt"]
     assert assistant[-1]["completedAt"]
+
+
+@pytest.mark.anyio
+async def test_claude_sdk_adapter_keeps_distinct_sdk_assistant_messages_separate():
+    notifications: list[tuple[str, dict[str, Any]]] = []
+
+    async def sink(method: str, params: dict[str, Any]) -> None:
+        notifications.append((method, params))
+
+    class MultiMessagesSdk(FakeSdk):
+        ClaudeSDKClient = MultiAssistantMessagesClient
+
+    adapter = ClaudeSdkAdapter(
+        notification_sink=sink,
+        sdk_module=MultiMessagesSdk,
+        history_adapter=RecordingHistoryAdapter(),
+    )
+
+    started = await adapter.start_turn(
+        {
+            "sessionId": "sess_multi_messages",
+            "cwd": "/repo",
+            "externalSessionId": "claude_session_multi_messages",
+            "content": "write",
+        }
+    )
+    await adapter._sessions["sess_multi_messages"].active_task
+
+    timeline = [params["item"] for method, params in notifications if method == "timeline.itemUpsert"]
+    assistant = [
+        item
+        for item in timeline
+        if item["type"] == "message" and item.get("role") == "assistant"
+    ]
+
+    assert len(assistant) == 6
+    assert len({item["id"] for item in assistant}) == 3
+    assert all(item["id"].startswith("claude_msg_") for item in assistant)
+    assert all(item["turnId"] == started["turnId"] for item in assistant)
+    assert {item["source"]["derivedKey"] for item in assistant} == {"message"}
+    by_source_id: dict[str, list[dict[str, Any]]] = {}
+    for item in assistant:
+        by_source_id.setdefault(item["source"]["itemId"], []).append(item)
+    assert set(by_source_id) == {"resp_intro", "resp_after_tool", "resp_essay"}
+    expected_text = {
+        "resp_intro": "First I will run a command.",
+        "resp_after_tool": "Command is done. Now the essay.",
+        "resp_essay": "You have unusual talent.",
+    }
+    for source_id, items in by_source_id.items():
+        assert [item["content"]["text"] for item in items] == [expected_text[source_id], expected_text[source_id]]
+        assert [item["revision"] for item in items] == [1, 2]
+        assert [item["status"] for item in items] == ["running", "done"]
 
 
 @pytest.mark.anyio

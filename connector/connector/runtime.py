@@ -22,7 +22,6 @@ from connector.capabilities import (
     discover_codex_capability,
     discover_runtime_capabilities,
 )
-from connector.claude.adapter import ClaudeAdapter
 from connector.claude.sdk_adapter import ClaudeSdkAdapter
 from connector.claude.preferences import read_local_preferences
 from connector.codex.adapter import CodexAdapter
@@ -319,8 +318,6 @@ class BackendRpcClient:
             return _strip_backend_notifications(result)
         if method == "session.sync":
             adapter = self._resolve_adapter(params)
-            if params.get("runtime") == "claude":
-                await self._refresh_claude_transcript_cursors(adapter)
             result = await adapter.sync_session(params)
             await self._send_backend_notifications(result)
             return _strip_backend_notifications(result)
@@ -472,8 +469,6 @@ class BackendRpcClient:
                     logger.info("skipping {} existing session sync; runtime inactive", runtime)
                     continue
                 try:
-                    if runtime == "claude":
-                        await self._refresh_claude_transcript_cursors(adapter)
                     sync_timeout = (
                         RUNTIME_CHANGED_SYNC_TIMEOUT_SECONDS
                         if runtime == "codex"
@@ -545,11 +540,6 @@ class BackendRpcClient:
         target = claude_target if isinstance(claude_target, LaunchTarget) else launch_target("cli", claude_target)
         if isinstance(claude, ClaudeSdkAdapter):
             claude.claude_target = target
-            claude.transcript_adapter.claude_target = target
-            claude.transcript_adapter.claude_bin = target.path
-        if isinstance(claude, ClaudeAdapter):
-            claude.claude_target = target
-            claude.claude_bin = claude.claude_target.path
 
     async def _scan_runtime(
         self, runtime: str, path: str | None
@@ -581,8 +571,6 @@ class BackendRpcClient:
         if adapter is None:
             return
         try:
-            if runtime == "claude":
-                await self._refresh_claude_transcript_cursors(adapter)
             await asyncio.wait_for(
                 adapter.sync_existing_sessions(
                     self.config.connector_id,
@@ -602,22 +590,6 @@ class BackendRpcClient:
             logger.exception(
                 "forced {} session sync failed during refresh/scan", runtime
             )
-
-    async def _refresh_claude_transcript_cursors(self, adapter: Adapter) -> None:
-        apply_cursors = getattr(adapter, "apply_transcript_cursors", None)
-        if not callable(apply_cursors):
-            transcript_adapter = getattr(adapter, "transcript_adapter", None)
-            apply_cursors = getattr(transcript_adapter, "apply_transcript_cursors", None)
-        if not callable(apply_cursors):
-            return
-        try:
-            payload = await self._get_json("connector/claude/transcript-cursors")
-        except Exception:
-            logger.exception("failed to refresh claude transcript cursors")
-            return
-        cursors = payload.get("cursors") if isinstance(payload, dict) else None
-        if isinstance(cursors, list):
-            apply_cursors(cursors)
 
     def _invalidate_runtime(self, runtime: str) -> None:
         """Clear adapter sync cursors after the server deleted this runtime."""

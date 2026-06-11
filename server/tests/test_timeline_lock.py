@@ -65,38 +65,6 @@ async def test_timeline_lock_serializes_concurrent_upserts(tmp_path):
     finally:
         await store.close()
 
-
-@pytest.mark.anyio
-async def test_timeline_writer_lock_and_claude_transcript_cursor(tmp_path):
-    store = Store(tmp_path / "cursor.sqlite3")
-    try:
-        await store.init_schema()
-        connector, _, _ = await store.create_connector(name="dev", user_id="u1")
-        session = await store.create_session(
-            connector_id=connector.id,
-            user_id="u1",
-            runtime="claude",
-            external_session_id="claude_uuid",
-            title="t",
-            cwd="/repo",
-        )
-
-        async with store.timeline_writer_lock(session.id):
-            cursor = await store.update_claude_transcript_cursor(
-                session_id=session.id,
-                transcript_path="/Users/u/.claude/projects/repo/claude_uuid.jsonl",
-                last_offset=1234,
-                last_event_key="evt_1",
-            )
-
-        assert cursor["lastOffset"] == 1234
-        assert cursor["lastEventKey"] == "evt_1"
-        read_back = await store.get_claude_transcript_cursor(session.id)
-        assert read_back == cursor
-    finally:
-        await store.close()
-
-
 @pytest.fixture
 def anyio_backend() -> str:
     return "asyncio"

@@ -23,7 +23,15 @@ export type ReconcileItem = {
   role: string | null;
   content: Record<string, unknown>;
   source?: Record<string, unknown>;
+  turnId?: string | null;
+  status?: string;
+  orderSeq?: number;
+  updatedSeq?: number;
+  revision?: number;
+  contentHash?: string;
   createdAt: string;
+  updatedAt?: string;
+  completedAt?: string | null;
 };
 
 export type ReconcileSentRecord = {
@@ -100,4 +108,47 @@ export function assignSentRecords(
     if (rec) out.set(item.id, rec.attachments);
   }
   return out;
+}
+
+export function mergeOptimisticTimelineItems<T extends ReconcileItem>(
+  realItems: T[],
+  optimisticItems: T[],
+): T[] {
+  if (optimisticItems.length === 0) return realItems;
+  const pending = optimisticItems.filter(
+    (opt) =>
+      opt.status === "failed" ||
+      !realItems.some((real) => userMessageMatches(real, opt.id)),
+  );
+  if (pending.length === 0) return realItems;
+
+  const out = [...realItems];
+  for (const optimistic of pending) {
+    const anchorTurnId = optimistic.turnId;
+    if (!anchorTurnId) {
+      out.push(optimistic);
+      continue;
+    }
+    const existingIndex = out.findIndex((item) => item.id === optimistic.id);
+    if (existingIndex !== -1) out.splice(existingIndex, 1);
+    out.splice(_optimisticInsertIndex(out, anchorTurnId), 0, optimistic);
+  }
+  return out;
+}
+
+function _optimisticInsertIndex(items: ReconcileItem[], turnId: string): number {
+  const turnStartIndex = items.findIndex(
+    (item) => item.type === "turn.start" && item.turnId === turnId,
+  );
+  if (turnStartIndex === -1) return items.length;
+  let index = turnStartIndex + 1;
+  while (
+    index < items.length &&
+    items[index].turnId === turnId &&
+    items[index].type === "message" &&
+    items[index].role === "user"
+  ) {
+    index += 1;
+  }
+  return index;
 }

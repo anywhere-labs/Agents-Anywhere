@@ -46,6 +46,45 @@ type PairingState =
 const DASHBOARD_RETRY_SYNC_MS = 10000;
 const HOVER_CLOSE_DELAY_MS = 180;
 
+function fresherSession(existing: SessionView | undefined, incoming: SessionView) {
+  if (!existing) return incoming;
+  return incoming.updatedSeq < existing.updatedSeq ? existing : incoming;
+}
+
+function sortSessions(sessions: SessionView[]): SessionView[] {
+  return [...sessions].sort((a, b) => {
+    const sortAt = (b.sortAt ?? "").localeCompare(a.sortAt ?? "");
+    if (sortAt !== 0) return sortAt;
+    const orderSeq = (b.lastItemOrderSeq ?? -1) - (a.lastItemOrderSeq ?? -1);
+    if (orderSeq !== 0) return orderSeq;
+    return b.updatedSeq - a.updatedSeq;
+  });
+}
+
+function mergeSessionList(
+  existing: SessionView[],
+  incoming: SessionView[],
+): SessionView[] {
+  const byId = new Map(existing.map((session) => [session.id, session]));
+  return sortSessions(
+    incoming.map((session) => fresherSession(byId.get(session.id), session)),
+  );
+}
+
+function mergeSessionPatches(
+  existing: SessionView[],
+  incoming: SessionView[],
+): SessionView[] {
+  if (incoming.length === 0) return existing;
+  const byId = new Map(incoming.map((session) => [session.id, session]));
+  return sortSessions(
+    existing.map((session) => {
+      const next = byId.get(session.id);
+      return next ? fresherSession(session, next) : session;
+    }),
+  );
+}
+
 export function SessionsPage({
   token,
   initialMe,
@@ -120,7 +159,7 @@ export function SessionsPage({
   const refreshSessions = useCallback(async () => {
     try {
       const res = await api.listSessions(token);
-      setSessions(res.sessions);
+      setSessions((prev) => mergeSessionList(prev, res.sessions));
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) onSignOut();
     } finally {
@@ -209,14 +248,19 @@ export function SessionsPage({
     [filters],
   );
 
-  // Filter options derived from the loaded data so we never offer a value
-  // that wouldn't match anything. Device labels prefer the connector's
-  // friendly name when available, falling back to a short id.
+  // Filter options mostly come from loaded sessions, but agent choices should
+  // also reflect explicitly attached device agents. A newly paired device can
+  // know about Claude before its historical sessions have finished syncing.
   const filterOptions = useMemo<Record<FilterKey, FilterOption[]>>(() => {
     const connectorNames = new Map(connectors.map((c) => [c.id, c.name]));
     const devices = new Map<string, string>();
     const agents = new Map<string, string>();
     const workspaces = new Map<string, string>();
+    for (const c of connectors) {
+      for (const runtime of Object.keys(c.runtimeCapabilities.attached)) {
+        if (!agents.has(runtime)) agents.set(runtime, runtimeLabel(runtime));
+      }
+    }
     for (const s of sessions) {
       if (!devices.has(s.connectorId)) {
         devices.set(
@@ -291,13 +335,11 @@ export function SessionsPage({
     setMe((prev) => ({ ...prev, avatar }));
 
   const handleSessionRefreshed = useCallback((next: SessionView) => {
-    setSessions((list) => list.map((s) => (s.id === next.id ? next : s)));
+    setSessions((list) => mergeSessionPatches(list, [next]));
   }, []);
 
   const handleSessionsBulkPatched = useCallback((updated: SessionView[]) => {
-    if (updated.length === 0) return;
-    const byId = new Map(updated.map((s) => [s.id, s]));
-    setSessions((list) => list.map((s) => byId.get(s.id) ?? s));
+    setSessions((list) => mergeSessionPatches(list, updated));
   }, []);
 
   const applySessionPatch = (
@@ -306,9 +348,7 @@ export function SessionsPage({
   ) => {
     api.patchSession(token, id, patch).then(
       (res) => {
-        setSessions((list) =>
-          list.map((s) => (s.id === id ? res.session : s)),
-        );
+        setSessions((list) => mergeSessionPatches(list, [res.session]));
       },
       (err: unknown) => {
         if (err instanceof ApiError && err.status === 401) onSignOut();
@@ -346,9 +386,7 @@ export function SessionsPage({
       );
       api.markSessionRead(token, id).then(
         (res) => {
-          setSessions((list) =>
-            list.map((s) => (s.id === id ? res.session : s)),
-          );
+          setSessions((list) => mergeSessionPatches(list, [res.session]));
         },
         (err: unknown) => {
           if (err instanceof ApiError && err.status === 401) onSignOut();

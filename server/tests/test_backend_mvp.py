@@ -414,56 +414,6 @@ def test_session_updated_without_external_id_does_not_clear_existing_external_id
     assert state["session"]["title"] == "Updated without external id"
 
 
-def test_claude_transcript_cursor_advanced_notification_is_persisted(tmp_path):
-    client = make_client(tmp_path)
-    headers = auth_headers(client)
-    connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
-    connector_body = connector_response.json()
-    connector_id = connector_body["connector"]["id"]
-    connector_token = connector_body["connectorToken"]
-    access_token = client.post(
-        "/connector/auth",
-        headers={"Authorization": f"Connector {connector_id}:{connector_token}"},
-    ).json()["accessToken"]
-    session = asyncio.run(
-        client.app.state.store.create_session(
-            connector_id=connector_id,
-            user_id=ADMIN_USER,
-            runtime="claude",
-            external_session_id="claude_cursor_1",
-            title="Claude cursor",
-            cwd="/repo",
-        )
-    )
-
-    with client.websocket_connect(
-        "/connector/ws",
-        headers={"Authorization": f"Bearer {access_token}"},
-    ) as ws:
-        ws.send_json(
-            {
-                "type": "notification",
-                "method": "claude.transcriptCursorAdvanced",
-                "params": {
-                    "sessionId": session.id,
-                    "runtime": "claude",
-                    "externalSessionId": "claude_cursor_1",
-                    "transcriptPath": "/Users/u/.claude/projects/repo/claude_cursor_1.jsonl",
-                    "lastOffset": 4242,
-                    "lastEventKey": "turn_cursor_1",
-                },
-            }
-        )
-
-        cursor = wait_for(
-            lambda: asyncio.run(client.app.state.store.get_claude_transcript_cursor(session.id))
-        )
-
-    assert cursor["lastOffset"] == 4242
-    assert cursor["lastEventKey"] == "turn_cursor_1"
-    assert cursor["transcriptPath"].endswith("claude_cursor_1.jsonl")
-
-
 def wait_for_state_items(client: TestClient, session_id: str, headers: dict[str, str], predicate):
     def read_state():
         body = client.get(f"/sessions/{session_id}/state", headers=headers, params={"afterSeq": 0}).json()
@@ -2304,7 +2254,7 @@ def test_send_message_records_active_run(tmp_path):
     response = client.post(
         f"/sessions/{session_id}/messages",
         headers=headers,
-        json={"content": "hi"},
+        json={"content": "hi", "clientMessageId": "opt_active"},
     )
 
     assert response.status_code == 200
@@ -2516,7 +2466,7 @@ def test_turn_start_updates_and_turn_end_clears_active_run(tmp_path):
     assert asyncio.run(client.app.state.store.get_active_run(session_id)) is None
 
 
-def test_claude_chat_active_run_ignores_transcript_timeline_sync(tmp_path):
+def test_claude_chat_active_run_merges_history_timeline_sync(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, _, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
@@ -2526,7 +2476,7 @@ def test_claude_chat_active_run_ignores_transcript_timeline_sync(tmp_path):
     response = client.post(
         f"/sessions/{session_id}/messages",
         headers=headers,
-        json={"content": "hi"},
+        json={"content": "hi", "clientMessageId": "opt_active"},
     )
     assert response.status_code == 200, response.text
     active = asyncio.run(client.app.state.store.get_active_run(session_id))
@@ -2572,8 +2522,79 @@ def test_claude_chat_active_run_ignores_transcript_timeline_sync(tmp_path):
 
     assert response.status_code == 200, response.text
     state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
-    assert state["items"] == []
+    assert [item["id"] for item in state["items"]] == ["claude_msg_scanner_duplicate"]
+    assert state["items"][0]["source"]["clientMessageId"] == "opt_active"
     assert asyncio.run(client.app.state.store.get_active_run(session_id)) is not None
+
+
+def test_timeline_sync_keeps_existing_client_message_id(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+
+    tagged_item = {
+        "id": "claude_msg_user",
+        "sessionId": session_id,
+        "turnId": "turn_1",
+        "type": "message",
+        "status": "done",
+        "role": "user",
+        "content": {"text": "hi"},
+        "source": {
+            "runtime": "codex",
+            "sessionId": "thread-demo",
+            "turnId": "turn_1",
+            "event": "history-user",
+            "derivedKey": "message",
+            "clientMessageId": "opt_keep",
+        },
+        "orderSeq": 1,
+        "revision": 1,
+        "contentHash": "sha256:user-hi",
+    }
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.sync",
+                    "params": {
+                        "sessionId": session_id,
+                        "items": [tagged_item],
+                    },
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    untagged = {
+        **tagged_item,
+        "source": {
+            key: value
+            for key, value in tagged_item["source"].items()
+            if key != "clientMessageId"
+        },
+    }
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.sync",
+                    "params": {
+                        "sessionId": session_id,
+                        "items": [untagged],
+                    },
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+    assert state["items"][0]["source"]["clientMessageId"] == "opt_keep"
 
 
 def test_live_timeline_upsert_appends_when_connector_order_seq_restarts(tmp_path):
@@ -3738,6 +3759,368 @@ def test_timeline_sync_keeps_existing_realtime_items_missing_from_snapshot(tmp_p
         assert item_ids == {"tl_live_tool", "tl_snapshot_message"}
         tool = next(item for item in state["items"] if item["id"] == "tl_live_tool")
         assert tool["content"]["outputText"] == "passed"
+
+
+def test_claude_history_sync_keeps_more_complete_live_item_with_same_id(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+
+    with client.websocket_connect(
+        "/connector/ws",
+        headers={"Authorization": f"Bearer {access_token}"},
+    ) as ws:
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "session.updated",
+                "params": {
+                    "sessionId": session_id,
+                    "runtime": "claude",
+                    "externalSessionId": "claude_session_1",
+                    "status": "idle",
+                },
+            }
+        )
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "timeline.itemUpsert",
+                "params": {
+                    "sessionId": session_id,
+                    "item": {
+                        "id": "claude_tool_result_same",
+                        "sessionId": session_id,
+                        "turnId": "turn_1",
+                        "type": "tool",
+                        "status": "done",
+                        "role": "tool",
+                        "content": {
+                            "toolUseId": "toolu_1",
+                            "result": "passed",
+                            "outputText": "passed\n",
+                            "outputLength": 7,
+                        },
+                        "source": {
+                            "runtime": "claude",
+                            "sessionId": "claude_session_1",
+                            "turnId": "turn_1",
+                            "itemId": "toolu_1",
+                            "itemType": "tool_result",
+                        },
+                        "orderSeq": 10,
+                        "revision": 2,
+                        "contentHash": "sha256:live-tool",
+                    },
+                },
+            }
+        )
+        wait_for_item_update(client, session_id, headers, 0)
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "timeline.sync",
+                "params": {
+                    "sessionId": session_id,
+                    "items": [
+                        {
+                            "id": "claude_tool_result_same",
+                            "sessionId": session_id,
+                            "turnId": "turn_1",
+                            "type": "tool",
+                            "status": "done",
+                            "role": "tool",
+                            "content": {"toolUseId": "toolu_1", "result": "passed"},
+                            "source": {
+                                "runtime": "claude",
+                                "sessionId": "claude_session_1",
+                                "turnId": "turn_1",
+                                "itemId": "toolu_1",
+                                "itemType": "tool_result",
+                            },
+                            "orderSeq": 11,
+                            "revision": 1,
+                            "contentHash": "sha256:history-tool",
+                        }
+                    ],
+                },
+            }
+        )
+
+        state = wait_for_state_items(
+            client,
+            session_id,
+            headers,
+            lambda items: len(items) == 1 and items[0]["content"].get("outputText") == "passed\n",
+        )
+        tool = state["items"][0]
+        assert tool["id"] == "claude_tool_result_same"
+        assert tool["content"]["outputText"] == "passed\n"
+        assert tool["revision"] == 2
+
+
+def test_claude_timeline_sync_replaces_existing_timeline(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+
+    with client.websocket_connect(
+        "/connector/ws",
+        headers={"Authorization": f"Bearer {access_token}"},
+    ) as ws:
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "session.updated",
+                "params": {
+                    "sessionId": session_id,
+                    "runtime": "claude",
+                    "externalSessionId": "claude_session_1",
+                    "status": "running",
+                },
+            }
+        )
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "timeline.itemUpsert",
+                "params": {
+                    "sessionId": session_id,
+                    "item": {
+                        "id": "claude_msg_live_partial",
+                        "sessionId": session_id,
+                        "turnId": "turn_live",
+                        "type": "message",
+                        "status": "running",
+                        "role": "assistant",
+                        "content": {"text": "partial answer"},
+                        "source": {
+                            "runtime": "claude",
+                            "sessionId": "claude_session_1",
+                            "turnId": "turn_live",
+                            "itemId": "turn_live:assistant",
+                            "itemType": "text",
+                            "derivedKey": "live-message",
+                        },
+                        "orderSeq": 10,
+                        "revision": 1,
+                        "contentHash": "sha256:live-message",
+                    },
+                },
+            }
+        )
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "timeline.itemUpsert",
+                "params": {
+                    "sessionId": session_id,
+                    "item": {
+                        "id": "turn_live:user",
+                        "sessionId": session_id,
+                        "turnId": "turn_live",
+                        "type": "message",
+                        "status": "done",
+                        "role": "user",
+                        "content": {"text": "prompt"},
+                        "source": {
+                            "runtime": "claude",
+                            "sessionId": "claude_session_1",
+                            "turnId": "turn_live",
+                            "itemId": "turn_live:user",
+                            "itemType": "text",
+                            "derivedKey": "live-user-message",
+                            "clientMessageId": "opt_1",
+                        },
+                        "orderSeq": 11,
+                        "revision": 1,
+                        "contentHash": "sha256:live-user-message",
+                    },
+                },
+            }
+        )
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "timeline.itemUpsert",
+                "params": {
+                    "sessionId": session_id,
+                    "item": {
+                        "id": "claude_tool_live",
+                        "sessionId": session_id,
+                        "turnId": "turn_live",
+                        "type": "tool",
+                        "status": "done",
+                        "role": "tool",
+                        "content": {
+                            "kind": "command",
+                            "command": "date",
+                            "outputText": "Thu Jun 11",
+                        },
+                        "source": {
+                            "runtime": "claude",
+                            "sessionId": "claude_session_1",
+                            "turnId": "turn_live",
+                            "itemId": "toolu_1",
+                            "itemType": "tool_result",
+                        },
+                        "orderSeq": 12,
+                        "revision": 1,
+                        "contentHash": "sha256:live-tool",
+                    },
+                },
+            }
+        )
+        wait_for_state_items(
+            client,
+            session_id,
+            headers,
+            lambda items: {item["id"] for item in items}
+            == {"claude_msg_live_partial", "turn_live:user", "claude_tool_live"},
+        )
+
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "timeline.sync",
+                "params": {
+                    "sessionId": session_id,
+                    "items": [
+                        {
+                            "id": "turn_history:turn-start",
+                            "sessionId": session_id,
+                            "turnId": "turn_history",
+                            "type": "turn.start",
+                            "status": "running",
+                            "role": None,
+                            "content": {},
+                            "source": {
+                                "runtime": "claude",
+                                "sessionId": "claude_session_1",
+                                "turnId": "turn_history",
+                                "itemId": "turn_history:turn-start",
+                                "itemType": "turn.start",
+                                "derivedKey": "turn-start",
+                            },
+                            "orderSeq": 1,
+                            "revision": 1,
+                            "contentHash": "sha256:history-start",
+                        },
+                        {
+                            "id": "claude_msg_history_user",
+                            "sessionId": session_id,
+                            "turnId": "turn_history",
+                            "type": "message",
+                            "status": "done",
+                            "role": "user",
+                            "content": {"text": "prompt"},
+                            "source": {
+                                "runtime": "claude",
+                                "sessionId": "claude_session_1",
+                                "turnId": "turn_history",
+                                "itemId": "prompt_history",
+                                "itemType": "text",
+                                "derivedKey": "message",
+                                "clientMessageId": "opt_1",
+                            },
+                            "orderSeq": 2,
+                            "revision": 1,
+                            "contentHash": "sha256:history-user",
+                        },
+                        {
+                            "id": "claude_msg_history_answer",
+                            "sessionId": session_id,
+                            "turnId": "turn_history",
+                            "type": "message",
+                            "status": "done",
+                            "role": "assistant",
+                            "content": {"text": "full answer"},
+                            "source": {
+                                "runtime": "claude",
+                                "sessionId": "claude_session_1",
+                                "turnId": "turn_history",
+                                "itemId": "resp_history",
+                                "itemType": "text",
+                                "derivedKey": "message",
+                            },
+                            "orderSeq": 3,
+                            "revision": 1,
+                            "contentHash": "sha256:history-message",
+                        },
+                    ],
+                },
+            }
+        )
+
+        state = wait_for_state_items(
+            client,
+            session_id,
+            headers,
+            lambda items: {item["id"] for item in items}
+            == {
+                "turn_history:turn-start",
+                "claude_msg_history_user",
+                "claude_msg_history_answer",
+            },
+        )
+        item_ids = {item["id"] for item in state["items"]}
+        assert "claude_msg_live_partial" not in item_ids
+        assert "turn_live:user" not in item_ids
+        assert "claude_tool_live" not in item_ids
+        assert "turn_history:turn-start" in item_ids
+        assert "claude_msg_history_user" in item_ids
+        assert "claude_msg_history_answer" in item_ids
+
+
+def test_claude_empty_timeline_sync_clears_existing_timeline(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, _, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+    session_id = _create_claude_session(client, connector_id, headers, fake_rpc)
+
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.itemUpsert",
+                    "params": {
+                        "sessionId": session_id,
+                        "item": {
+                            "id": "claude_live_only",
+                            "sessionId": session_id,
+                            "turnId": "turn_live",
+                            "type": "message",
+                            "status": "done",
+                            "role": "assistant",
+                            "content": {"text": "live"},
+                            "source": {
+                                "runtime": "claude",
+                                "sessionId": "claude_session_1",
+                                "turnId": "turn_live",
+                                "itemId": "msg_live",
+                                "itemType": "assistant",
+                            },
+                            "orderSeq": 1,
+                            "revision": 1,
+                            "contentHash": "sha256:live",
+                        },
+                    },
+                },
+                {
+                    "method": "timeline.sync",
+                    "params": {
+                        "sessionId": session_id,
+                        "items": [],
+                    },
+                },
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+    assert state["items"] == []
 
 
 def test_timeline_sync_without_changes_does_not_rearm_unread(tmp_path):

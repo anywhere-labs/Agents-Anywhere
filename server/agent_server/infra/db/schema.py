@@ -180,17 +180,6 @@ session_active_runs = Table(
 )
 
 
-claude_transcript_cursors = Table(
-    "claude_transcript_cursors",
-    metadata,
-    Column("session_id", Text, ForeignKey("sessions.id", ondelete="CASCADE"), primary_key=True),
-    Column("transcript_path", Text, nullable=False),
-    Column("last_offset", Integer, nullable=False, server_default="0"),
-    Column("last_event_key", Text),
-    Column("updated_at", Text, nullable=False),
-)
-
-
 timeline_items = Table(
     "timeline_items",
     metadata,

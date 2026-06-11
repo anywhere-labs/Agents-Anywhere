@@ -1080,7 +1080,7 @@ function RuntimeConfigModal({
   }, [savedRunMode, isRunModeGuide]);
 
   const handleDoneRunMode = () => {
-    if (settings && draftRunMode !== savedRunMode) {
+    if (settings) {
       onPatchSettings({ runMode: draftRunMode });
     }
     if (initialView === "runModeGuide") {
