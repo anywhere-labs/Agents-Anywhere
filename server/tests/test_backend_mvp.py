@@ -3600,6 +3600,39 @@ def test_connector_http_ingest_upserts_session_and_timeline(tmp_path):
     assert state["items"][0]["content"]["kind"] == "command"
 
 
+def test_connector_ingest_skips_new_local_archived_session(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, _, headers = create_connector_and_session(client)
+
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "session.updated",
+                    "params": {
+                        "sessionId": "sess_local_archived",
+                        "runtime": "codex",
+                        "externalSessionId": "thr_local_archived",
+                        "title": "Local archived",
+                        "cwd": "/repo",
+                        "status": "idle",
+                        "localState": "archived",
+                    },
+                },
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] == 1
+    listed = client.get("/sessions", headers=headers).json()["sessions"]
+    assert all(session["id"] != "sess_local_archived" for session in listed)
+    state = client.get("/sessions/sess_local_archived/state", headers=headers)
+    assert state.status_code == 404
+
+
 def test_connector_http_ingest_accepts_status_update_before_external_id(tmp_path):
     client = make_client(tmp_path)
     _, access_token, _, headers = create_connector_and_session(client)

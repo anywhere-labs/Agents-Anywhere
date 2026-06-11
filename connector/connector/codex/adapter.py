@@ -206,6 +206,15 @@ class CodexAdapter:
             thread_id = _thread_id_from_result(thread_ref)
             if not thread_id:
                 continue
+            local_state = _local_thread_state(thread_ref)
+            if local_state in {"archived", "deleted", "unresumable"}:
+                logger.info(
+                    "codex skipping local {} thread thread_id={}",
+                    local_state,
+                    thread_id,
+                )
+                skipped_threads.append(thread_id)
+                continue
             sync_marker = _thread_sync_marker(thread_ref)
             current_name = _optional_string(thread_ref.get("name"))
             if not force and sync_marker is not None and self._existing_thread_sync_markers.get(thread_id) == sync_marker:
@@ -248,6 +257,18 @@ class CodexAdapter:
                 )
                 continue
             except Exception as exc:
+                reason = _unresumable_thread_failure_reason(str(exc))
+                if reason is not None:
+                    logger.info(
+                        "codex skipping {} thread thread_id={} error={}",
+                        reason,
+                        thread_id,
+                        exc,
+                    )
+                    skipped_threads.append(thread_id)
+                    if sync_marker is not None:
+                        self._existing_thread_sync_markers[thread_id] = sync_marker
+                    continue
                 logger.warning("codex existing thread sync failed thread_id={} error={}", thread_id, exc)
                 continue
             if _is_imported_external_thread(reduced.timeline_items):
@@ -688,6 +709,43 @@ def _thread_refs_from_list_result(result: dict[str, Any]) -> list[dict[str, Any]
     return []
 
 
+def _local_thread_state(thread_ref: dict[str, Any]) -> str:
+    """Best-effort local thread state from Codex list metadata.
+
+    Codex app-server is versioned independently, so keep this deliberately
+    tolerant: if any common archived/deleted flag is present we treat the
+    thread as not resumable and never publish it to the backend.
+    """
+    for key in ("localState", "local_state", "lifecycleState", "lifecycle_state"):
+        value = thread_ref.get(key)
+        if isinstance(value, str):
+            normalized = value.lower()
+            if normalized in {"active", "archived", "deleted", "unresumable", "unknown"}:
+                return normalized
+    status = thread_ref.get("status")
+    if isinstance(status, dict):
+        status = status.get("type") or status.get("state")
+    if isinstance(status, str):
+        normalized_status = status.lower()
+        if normalized_status in {"archived", "deleted", "unresumable"}:
+            return normalized_status
+    for key in ("archived", "isArchived", "is_archived"):
+        if thread_ref.get(key) is True:
+            return "archived"
+    for key in ("deleted", "isDeleted", "is_deleted"):
+        if thread_ref.get(key) is True:
+            return "deleted"
+    for key in ("archivedAt", "archived_at"):
+        if thread_ref.get(key):
+            return "archived"
+    for key in ("deletedAt", "deleted_at", "removedAt", "removed_at"):
+        if thread_ref.get(key):
+            return "deleted"
+    if thread_ref.get("resumeSupported") is False or thread_ref.get("resumable") is False:
+        return "unresumable"
+    return "active"
+
+
 def _required_string(params: dict[str, Any], key: str) -> str:
     value = params.get(key)
     if not isinstance(value, str) or not value:
@@ -765,6 +823,26 @@ def _soft_interrupt_failure_reason(error_text: str) -> str | None:
         return "thread_not_found"
     if "turn not found" in normalized:
         return "turn_not_found"
+    return None
+
+
+def _unresumable_thread_failure_reason(error_text: str) -> str | None:
+    message = error_text
+    try:
+        parsed = json.loads(error_text)
+        if isinstance(parsed, dict):
+            raw = parsed.get("message")
+            if isinstance(raw, str):
+                message = raw
+    except json.JSONDecodeError:
+        pass
+    normalized = message.lower()
+    if "thread not found" in normalized or "session not found" in normalized:
+        return "deleted"
+    if "archived" in normalized:
+        return "archived"
+    if "cannot resume" in normalized or "not resumable" in normalized or "unresumable" in normalized:
+        return "unresumable"
     return None
 
 

@@ -431,6 +431,7 @@ async def apply_connector_notification(
     elif method == "session.updated":
         if await filter_.runtime_disabled(params.get("runtime")):
             return IngestEffect()
+        local_state = _local_session_state(params)
         session_id = params["sessionId"]
         external_session_id = params.get("externalSessionId")
         try:
@@ -453,6 +454,15 @@ async def apply_connector_notification(
             await db.refresh_session_status_from_timeline(session_id)
             return IngestEffect(session_id=session_id, session_changed=True)
         except KeyError:
+            if local_state in {"archived", "deleted", "unresumable"}:
+                logger.info(
+                    "ignored local {} session discovery connector_id={} session_id={} external_session_id={}",
+                    local_state,
+                    connector_id,
+                    session_id,
+                    external_session_id,
+                )
+                return IngestEffect()
             session = await db.upsert_connector_session(
                 connector_id=connector_id,
                 session_id=session_id,
@@ -636,6 +646,21 @@ async def _resolve_approval_session_id(
         )
     except KeyError:
         return approval.sessionId
+
+
+def _local_session_state(params: dict[str, Any]) -> str:
+    value = params.get("localState") or params.get("local_state")
+    if isinstance(value, str):
+        normalized = value.lower()
+        if normalized in {"active", "archived", "deleted", "unresumable", "unknown"}:
+            return normalized
+    if params.get("localArchived") is True or params.get("local_archived") is True:
+        return "archived"
+    if params.get("localDeleted") is True or params.get("local_deleted") is True:
+        return "deleted"
+    if params.get("resumeSupported") is False or params.get("resumable") is False:
+        return "unresumable"
+    return "active"
 
 
 def _timeline_item_for_session(item: TimelineItemIn, session_id: str) -> TimelineItemIn:

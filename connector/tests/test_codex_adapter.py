@@ -83,6 +83,33 @@ class InterruptThreadNotFoundRpc(FakeCodexRpc):
         return await super().request(method, params)
 
 
+class ArchivedThreadListRpc(FakeCodexRpc):
+    async def request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        if method == "thread/list":
+            return {
+                "data": [
+                    {
+                        "id": "thr_archived",
+                        "updatedAt": 1779291318,
+                        "archived": True,
+                    },
+                    {
+                        "id": "thr_unresumable",
+                        "updatedAt": 1779291319,
+                        "resumeSupported": False,
+                    },
+                ]
+            }
+        return await super().request(method, params)
+
+
+class ArchivedResumeRpc(FakeCodexRpc):
+    async def request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        if method == "thread/resume":
+            raise RuntimeError(json.dumps({"code": -32600, "message": "thread is archived"}))
+        return await super().request(method, params)
+
+
 def test_stdio_client_stream_limit_is_large_enough_for_codex_jsonl() -> None:
     assert APP_SERVER_STREAM_LIMIT >= 64 * 1024 * 1024
 
@@ -851,6 +878,14 @@ def test_adapter_uses_separate_scan_and_changed_thread_timeouts(monkeypatch) -> 
     asyncio.run(_exercise_existing_thread_sync_timeouts(monkeypatch))
 
 
+def test_adapter_skips_archived_and_unresumable_codex_threads() -> None:
+    asyncio.run(_exercise_archived_thread_sync())
+
+
+def test_adapter_treats_archived_resume_failure_as_skipped() -> None:
+    asyncio.run(_exercise_archived_resume_failure_sync())
+
+
 async def _exercise_existing_thread_sync() -> None:
     rpc = FakeCodexRpc()
     adapter = CodexAdapter(rpc=rpc)  # type: ignore[arg-type]
@@ -886,6 +921,30 @@ async def _exercise_existing_thread_sync() -> None:
     assert forced["threads"] == ["thr_existing"]
     assert forced["skippedThreads"] == []
     assert [notification["method"] for notification in sent_notifications[0]] == ["session.updated", "timeline.sync"]
+
+
+async def _exercise_archived_thread_sync() -> None:
+    rpc = ArchivedThreadListRpc()
+    adapter = CodexAdapter(rpc=rpc)  # type: ignore[arg-type]
+
+    result = await adapter.sync_existing_sessions("conn_1")
+
+    assert result["threads"] == []
+    assert result["skippedThreads"] == ["thr_archived", "thr_unresumable"]
+    assert result["backendNotifications"] == []
+    assert ("thread/resume", {"threadId": "thr_archived"}) not in rpc.requests
+    assert ("thread/resume", {"threadId": "thr_unresumable"}) not in rpc.requests
+
+
+async def _exercise_archived_resume_failure_sync() -> None:
+    rpc = ArchivedResumeRpc()
+    adapter = CodexAdapter(rpc=rpc)  # type: ignore[arg-type]
+
+    result = await adapter.sync_existing_sessions("conn_1")
+
+    assert result["threads"] == []
+    assert result["skippedThreads"] == ["thr_existing"]
+    assert result["backendNotifications"] == []
 
 
 async def _exercise_existing_thread_sync_timeouts(monkeypatch) -> None:
