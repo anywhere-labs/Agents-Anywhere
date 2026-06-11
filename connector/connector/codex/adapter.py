@@ -518,8 +518,6 @@ class CodexAdapter:
         await self.rpc.request("thread/resume", {"threadId": thread_id})
 
     async def _ensure_thread_loaded(self, thread_id: str) -> None:
-        if thread_id in self._loaded_thread_ids:
-            return
         await self._resume_thread(thread_id)
         self._loaded_thread_ids.add(thread_id)
 

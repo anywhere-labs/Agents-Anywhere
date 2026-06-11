@@ -2661,6 +2661,95 @@ def test_live_timeline_upsert_appends_when_connector_order_seq_restarts(tmp_path
     assert by_id["tl_live"]["orderSeq"] == 51
 
 
+def test_timeline_sync_appends_when_connector_order_seq_restarts(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, session_id, headers = create_connector_and_session(client)
+
+    seed = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.sync",
+                    "params": {
+                        "sessionId": session_id,
+                        "items": [
+                            {
+                                "id": "tl_history",
+                                "sessionId": session_id,
+                                "type": "message",
+                                "status": "done",
+                                "role": "assistant",
+                                "content": {"text": "old"},
+                                "source": {"runtime": "codex", "itemId": "old"},
+                                "orderSeq": 50,
+                                "revision": 1,
+                                "contentHash": "sha256:old",
+                            }
+                        ],
+                    },
+                }
+            ]
+        },
+    )
+    assert seed.status_code == 200, seed.text
+
+    synced = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.sync",
+                    "params": {
+                        "sessionId": session_id,
+                        "items": [
+                            {
+                                "id": "tl_history",
+                                "sessionId": session_id,
+                                "type": "message",
+                                "status": "done",
+                                "role": "assistant",
+                                "content": {"text": "old edited"},
+                                "source": {"runtime": "codex", "itemId": "old"},
+                                "orderSeq": 50,
+                                "revision": 2,
+                                "contentHash": "sha256:old-edited",
+                            },
+                            {
+                                "id": "tl_synced_new",
+                                "sessionId": session_id,
+                                "turnId": "turn_synced",
+                                "type": "message",
+                                "status": "done",
+                                "role": "user",
+                                "content": {"text": "new from Codex app"},
+                                "source": {
+                                    "runtime": "codex",
+                                    "turnId": "turn_synced",
+                                    "itemId": "new",
+                                },
+                                "orderSeq": 2,
+                                "revision": 1,
+                                "contentHash": "sha256:new",
+                            },
+                        ],
+                    },
+                }
+            ]
+        },
+    )
+    assert synced.status_code == 200, synced.text
+
+    state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+    by_id = {item["id"]: item for item in state["items"]}
+    assert by_id["tl_history"]["orderSeq"] == 50
+    assert by_id["tl_history"]["content"]["text"] == "old edited"
+    assert by_id["tl_synced_new"]["orderSeq"] == 51
+    assert [item["id"] for item in state["items"]] == ["tl_history", "tl_synced_new"]
+
+
 def test_claude_terminal_ensure_primary_creates_structured_resume_terminal(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, _, headers = create_connector_and_session(client)

@@ -727,7 +727,7 @@ async def _exercise_adapter() -> None:
 
     turn = await adapter.start_turn({"sessionId": "sess_1", "content": "continue"})
     assert turn["turnId"] == "turn_2"
-    assert [request[0] for request in rpc.requests].count("thread/resume") == 0
+    assert [request[0] for request in rpc.requests].count("thread/resume") == 2
     assert rpc.requests[-1][0] == "turn/start"
     assert rpc.requests[-1][1]["threadId"] == "thr_1"
 
@@ -746,6 +746,21 @@ async def _exercise_adapter() -> None:
 
     await adapter.resolve_approval({"requestId": 42, "status": "approved"})
     assert rpc.responses[-1] == (42, {"decision": "accept"})
+
+
+def test_adapter_sync_session_refreshes_loaded_codex_thread() -> None:
+    async def exercise() -> None:
+        rpc = FakeCodexRpc()
+        adapter = CodexAdapter(rpc=rpc)  # type: ignore[arg-type]
+
+        await adapter.create_session({"sessionId": "sess_1", "cwd": "/repo"})
+        await adapter.sync_session({"sessionId": "sess_1", "externalSessionId": "thr_1"})
+        await adapter.sync_session({"sessionId": "sess_1", "externalSessionId": "thr_1"})
+
+        assert rpc.requests.count(("thread/resume", {"threadId": "thr_1"})) == 2
+        assert rpc.requests.count(("thread/read", {"threadId": "thr_1", "includeTurns": True})) == 2
+
+    asyncio.run(exercise())
 
 
 def test_adapter_maps_thread_start_sandbox_policy_to_mode() -> None:
