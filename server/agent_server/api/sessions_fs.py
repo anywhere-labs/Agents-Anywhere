@@ -3,6 +3,7 @@ from __future__ import annotations
 import mimetypes
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi.responses import RedirectResponse, Response
 
 from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.deps import current_user_id, get_attachment_service, get_rpc, get_store
@@ -22,8 +23,9 @@ from agent_server.services.workspace import (
     request_connector,
     resolve_workspace_path,
 )
-from agent_server.services.attachments import AttachmentService
+from agent_server.services.attachments import AttachmentService, LOCAL_FILE_TOKEN_KIND
 from agent_server.infra.repositories.facade import Store
+from agent_server.core.auth import verify_signed_token
 from agent_server.core.utc import utc_now
 
 
@@ -76,6 +78,56 @@ async def fs_download(
     except ValueError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return FsDownloadResponse(**downloaded, serverTime=utc_now())
+
+
+@router.get("/{session_id}/files/{file_id}/open")
+async def file_open(
+    session_id: str,
+    file_id: str,
+    user_id: str = Depends(current_user_id),
+    attachments: AttachmentService = Depends(get_attachment_service),
+) -> RedirectResponse:
+    try:
+        url = await attachments.user_file_open_url(
+            session_id=session_id,
+            file_id=file_id,
+            user_id=user_id,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="file not found") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return RedirectResponse(url=url, status_code=302)
+
+
+@router.get("/local/{session_id}/{file_id}", include_in_schema=False)
+async def local_file_raw(
+    session_id: str,
+    file_id: str,
+    token: str,
+    attachments: AttachmentService = Depends(get_attachment_service),
+) -> Response:
+    payload = verify_signed_token(LOCAL_FILE_TOKEN_KIND, token)
+    if not payload or payload.get("sessionId") != session_id or payload.get("fileId") != file_id:
+        raise HTTPException(status_code=401, detail="invalid file token")
+    try:
+        data, metadata = await attachments.read_local_signed_file(
+            session_id=session_id,
+            file_id=file_id,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="file not found") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return Response(
+        content=data,
+        media_type=metadata.get("mediaType") or "application/octet-stream",
+        headers={
+            "Content-Disposition": f"inline; filename={_quoted_filename(metadata.get('name') or file_id)}",
+            "X-File-Name": _safe_header_value(metadata.get("name") or file_id),
+            "X-File-Sha256": str(metadata.get("sha256") or ""),
+        },
+    )
 
 
 @router.post("/{session_id}/uploads", response_model=UserUploadResponse)
@@ -136,6 +188,15 @@ async def user_uploads(
             )
         )
     return UserUploadResponse(attachments=results, serverTime=utc_now())
+
+
+def _quoted_filename(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace('"', r"\"")
+    return f'"{escaped}"'
+
+
+def _safe_header_value(value: str) -> str:
+    return value.encode("latin-1", errors="replace").decode("latin-1")
 
 
 @router.post("/{session_id}/fs/write", response_model=RpcResponsePayload)

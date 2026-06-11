@@ -5,7 +5,6 @@ from typing import Any
 
 from fastapi import (
     APIRouter,
-    BackgroundTasks,
     Depends,
     Header,
     HTTPException,
@@ -162,17 +161,15 @@ async def connector_claude_transcript_cursors(
 @router.get("/connector/fs/downloads/{file_id}")
 async def connector_fs_download(
     file_id: str,
-    background_tasks: BackgroundTasks,
     authorization: str = Header(..., alias="Authorization"),
     db: Store = Depends(get_store),
     attachments: AttachmentService = Depends(get_attachment_service),
 ) -> Response:
     """Connector-side download of a user-uploaded attachment.
 
-    The blob is deleted from backend storage **after** the response has been
-    sent — so a failed transfer leaves the file in place for the connector to
-    retry. Two response headers carry metadata the connector needs without
-    spelunking through a JSON envelope:
+    The blob remains in platform storage after connector consumption. Two
+    response headers carry metadata the connector needs without spelunking
+    through a JSON envelope:
 
       X-File-Name      original upload filename
       X-File-Sha256    sha256 hex of the bytes in the body
@@ -188,9 +185,6 @@ async def connector_fs_download(
         raise HTTPException(status_code=404, detail="file not found") from None
     except ValueError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    session_id = metadata.get("sessionId")
-    if isinstance(session_id, str):
-        background_tasks.add_task(_delete_after_response, attachments, session_id, file_id)
     return Response(
         content=data,
         media_type=metadata.get("mediaType") or "application/octet-stream",
@@ -199,20 +193,6 @@ async def connector_fs_download(
             "X-File-Sha256": str(metadata.get("sha256") or ""),
         },
     )
-
-
-async def _delete_after_response(
-    attachments: AttachmentService,
-    session_id: str,
-    file_id: str,
-) -> None:
-    try:
-        await attachments.delete_file(session_id=session_id, file_id=file_id)
-    except Exception:
-        # Background cleanup — surfacing failures here would just spam logs and
-        # the worst case is the blob staying on disk a little longer than
-        # planned. Leave it for the future GC pass.
-        logger.exception("failed to delete consumed file session_id={} file_id={}", session_id, file_id)
 
 
 async def _reconcile_active_run_from_timeline(db: Store, session_id: str) -> None:
@@ -254,6 +234,7 @@ async def connector_fs_upload(
     return FsUploadResponse(
         **saved,
         downloadUrl=f"/sessions/{payload.sessionId}/fs/downloads/{saved['fileId']}",
+        openUrl=f"/sessions/{payload.sessionId}/files/{saved['fileId']}/open",
     )
 
 

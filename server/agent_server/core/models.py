@@ -596,6 +596,7 @@ class UploadedAttachment(BaseModel):
     mediaType: str
     createdAt: str
     downloadUrl: str
+    openUrl: str
 
 
 class UserUploadResponse(BaseModel):
@@ -626,6 +627,7 @@ class FsUploadResponse(BaseModel):
     size: int
     sha256: str
     downloadUrl: str
+    openUrl: str
     createdAt: str
 
 

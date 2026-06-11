@@ -2266,7 +2266,8 @@ def test_send_message_forwards_uploaded_attachment_metadata_to_connector(tmp_pat
             "mediaType": "text/markdown",
             "size": len(data),
             "sha256": hashlib.sha256(data).hexdigest(),
-            "downloadUrl": f"/sessions/{session_id}/fs/downloads/{attachment['fileId']}",
+            "downloadUrl": f"/connector/fs/downloads/{attachment['fileId']}",
+            "platformOpenUrl": f"/sessions/{session_id}/files/{attachment['fileId']}/open",
         }
     ]
 
@@ -4719,6 +4720,7 @@ def test_connector_uploads_fs_read_artifact_and_user_downloads_it(tmp_path):
     assert upload_body["size"] == len(data)
     assert upload_body["sha256"] == sha256
     assert upload_body["downloadUrl"] == f"/sessions/{session_id}/fs/downloads/{upload_body['fileId']}"
+    assert upload_body["openUrl"] == f"/sessions/{session_id}/files/{upload_body['fileId']}/open"
 
     download_response = client.get(upload_body["downloadUrl"], headers=headers)
 
@@ -4727,6 +4729,23 @@ def test_connector_uploads_fs_read_artifact_and_user_downloads_it(tmp_path):
     assert download_body["fileId"] == upload_body["fileId"]
     assert download_body["contentBase64"] == base64.b64encode(data).decode("ascii")
     assert base64.b64decode(download_body["contentBase64"]) == data
+
+    open_response = client.get(upload_body["openUrl"], headers=headers, follow_redirects=False)
+    assert open_response.status_code == 302
+    local_url = open_response.headers["location"]
+    assert local_url.startswith(f"/sessions/local/{session_id}/{upload_body['fileId']}?token=")
+
+    raw_response = client.get(local_url)
+    assert raw_response.status_code == 200
+    assert raw_response.content == data
+
+    connector_download = client.get(
+        f"/connector/fs/downloads/{upload_body['fileId']}",
+        headers={"Authorization": f"Bearer {connector_access_token}"},
+    )
+    assert connector_download.status_code == 200
+    still_available = client.get(upload_body["downloadUrl"], headers=headers)
+    assert still_available.status_code == 200
 
 
 async def _exercise_rpc_manager():

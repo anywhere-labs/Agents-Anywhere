@@ -40,6 +40,9 @@ class LocalFileStorage(FileStorage):
     async def exists(self, session_id: str, file_id: str) -> bool:
         return await asyncio.to_thread(self._exists, session_id, file_id)
 
+    async def metadata(self, session_id: str, file_id: str) -> dict[str, Any]:
+        return await asyncio.to_thread(self._metadata, session_id, file_id)
+
     def _write(
         self,
         session_id: str,
@@ -56,14 +59,20 @@ class LocalFileStorage(FileStorage):
         )
 
     def _read(self, session_id: str, file_id: str) -> tuple[bytes, dict[str, Any]]:
+        metadata = self._metadata(session_id, file_id)
         session_dir = self._root / session_id
         file_path = session_dir / f"{file_id}.bin"
-        metadata_path = session_dir / f"{file_id}.json"
-        if not file_path.is_file() or not metadata_path.is_file():
+        if not file_path.is_file():
             raise KeyError(file_id)
         data = file_path.read_bytes()
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         return data, metadata
+
+    def _metadata(self, session_id: str, file_id: str) -> dict[str, Any]:
+        session_dir = self._root / session_id
+        metadata_path = session_dir / f"{file_id}.json"
+        if not metadata_path.is_file():
+            raise KeyError(file_id)
+        return json.loads(metadata_path.read_text(encoding="utf-8"))
 
     def _delete(self, session_id: str, file_id: str) -> None:
         session_dir = self._root / session_id

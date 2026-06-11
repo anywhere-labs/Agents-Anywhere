@@ -49,8 +49,15 @@ curl http://127.0.0.1:8000/health
 | `AGENT_SERVER_DB` | SQLite database path. Defaults to `agent-server.sqlite3`. |
 | `AGENT_SERVER_DB_URL` | Explicit SQLAlchemy URL. Takes precedence over `AGENT_SERVER_DB`. |
 | `AGENT_SERVER_DB_BACKEND` | Database backend selector. Use `postgres` with `AGENT_SERVER_DB_URL`. |
-| `AGENT_SERVER_FILES_BACKEND` | File storage backend. Current supported value is `local`. |
+| `AGENT_SERVER_FILES_BACKEND` | File storage backend. Use `local` or `s3`. Defaults to `local`. |
 | `AGENT_SERVER_FILES_LOCAL_ROOT` | Local attachment/file root. Defaults next to the database. |
+| `AGENT_SERVER_FILES_S3_BUCKET` | S3 bucket name when `AGENT_SERVER_FILES_BACKEND=s3`. |
+| `AGENT_SERVER_FILES_S3_PREFIX` | Optional S3 key prefix. |
+| `AGENT_SERVER_FILES_S3_ACCESS_KEY` | S3 access key. |
+| `AGENT_SERVER_FILES_S3_SECRET_KEY` | S3 secret key. |
+| `AGENT_SERVER_FILES_S3_REGION` | S3 region. Defaults to `us-east-1`. |
+| `AGENT_SERVER_FILES_S3_ENDPOINT_URL` | Optional S3-compatible endpoint URL. |
+| `AGENT_SERVER_FILES_S3_VIRTUAL_HOST_STYLE` | Set to `true` for virtual-host-style S3 URLs. |
 | `AGENT_SERVER_SECRET` | Secret used for signed auth tokens. Set this outside local dev. |
 | `AGENT_SERVER_SETUP_TOKEN_TTL` | First-run setup token TTL in seconds. |
 | `AGENT_SERVER_CORS_ORIGINS` | Comma-separated explicit CORS origins. |

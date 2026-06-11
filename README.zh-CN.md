@@ -305,7 +305,11 @@ Server：
 | `AGENT_SERVER_DB` | SQLite 数据库路径，默认 `agent-server.sqlite3`。 |
 | `AGENT_SERVER_DB_URL` | 显式 SQLAlchemy URL，优先级高于 `AGENT_SERVER_DB`。 |
 | `AGENT_SERVER_DB_BACKEND` | 数据库后端选择，PostgreSQL 部署时使用 `postgres`。 |
+| `AGENT_SERVER_FILES_BACKEND` | 文件存储后端，可选 `local` 或 `s3`，默认 `local`。 |
 | `AGENT_SERVER_FILES_LOCAL_ROOT` | 本地文件/附件存储目录。 |
+| `AGENT_SERVER_FILES_S3_BUCKET` | `AGENT_SERVER_FILES_BACKEND=s3` 时的 S3 bucket。 |
+| `AGENT_SERVER_FILES_S3_PREFIX` | 可选 S3 key 前缀。 |
+| `AGENT_SERVER_FILES_S3_ENDPOINT_URL` | 可选 S3 兼容服务 endpoint URL。 |
 | `AGENT_SERVER_SECRET` | 签发认证 token 的服务端密钥，生产环境必须设置。 |
 | `AGENT_SERVER_STATIC_DIR` | 前端构建产物目录，设置后由后端托管 Web UI。 |
 | `AGENT_SERVER_CORS_ORIGINS` | 显式允许的 CORS origin 列表。 |

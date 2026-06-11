@@ -8,7 +8,13 @@ from typing import Any
 
 from agent_server.infra.files import FileStorage
 from agent_server.core.models import UploadedAttachment
+from agent_server.core.auth import create_signed_token
 from agent_server.core.utc import utc_now
+
+
+LOCAL_FILE_TOKEN_KIND = "local_file"
+LOCAL_FILE_TOKEN_EXPIRES_IN = 300
+FILE_OPEN_EXPIRES_IN = 300
 
 
 class AttachmentService:
@@ -82,6 +88,54 @@ class AttachmentService:
             "contentBase64": base64.b64encode(data).decode("ascii"),
         }
 
+    async def read_local_signed_file(
+        self,
+        *,
+        session_id: str,
+        file_id: str,
+    ) -> tuple[bytes, dict[str, Any]]:
+        self._validate_file_id(file_id)
+        data, metadata = await self._files.read(session_id, file_id)
+        self._validate_blob_integrity(data, metadata)
+        return data, metadata
+
+    async def user_file_metadata(
+        self,
+        *,
+        session_id: str,
+        file_id: str,
+        user_id: str,
+    ) -> dict[str, Any]:
+        await self._store.get_session(session_id, user_id=user_id)
+        self._validate_file_id(file_id)
+        return await self._files.metadata(session_id, file_id)
+
+    async def user_file_open_url(
+        self,
+        *,
+        session_id: str,
+        file_id: str,
+        user_id: str,
+    ) -> str:
+        await self.user_file_metadata(
+            session_id=session_id,
+            file_id=file_id,
+            user_id=user_id,
+        )
+        native = await self._files.open_url(
+            session_id,
+            file_id,
+            expires_in=FILE_OPEN_EXPIRES_IN,
+        )
+        if native is not None:
+            return native.url
+        token = create_signed_token(
+            LOCAL_FILE_TOKEN_KIND,
+            {"sessionId": session_id, "fileId": file_id},
+            LOCAL_FILE_TOKEN_EXPIRES_IN,
+        )
+        return f"/sessions/local/{session_id}/{file_id}?token={token}"
+
     async def read_connector_handoff(
         self,
         *,
@@ -95,6 +149,30 @@ class AttachmentService:
         data, metadata = await self._files.read(session_id, file_id)
         self._validate_blob_integrity(data, metadata)
         return data, metadata
+
+    async def connector_file_open_url(
+        self,
+        *,
+        file_id: str,
+        connector_id: str,
+    ) -> str:
+        self._validate_file_id(file_id)
+        session_id = await self.session_id_for_connector_file(file_id, connector_id)
+        if session_id is None:
+            raise KeyError(file_id)
+        native = await self._files.open_url(
+            session_id,
+            file_id,
+            expires_in=FILE_OPEN_EXPIRES_IN,
+        )
+        if native is not None:
+            return native.url
+        token = create_signed_token(
+            LOCAL_FILE_TOKEN_KIND,
+            {"sessionId": session_id, "fileId": file_id},
+            LOCAL_FILE_TOKEN_EXPIRES_IN,
+        )
+        return f"/sessions/local/{session_id}/{file_id}?token={token}"
 
     async def delete_file(self, *, session_id: str, file_id: str) -> None:
         self._validate_file_id(file_id)
@@ -123,6 +201,7 @@ class AttachmentService:
             mediaType=saved.get("mediaType") or fallback_media_type,
             createdAt=saved["createdAt"],
             downloadUrl=f"/sessions/{session_id}/fs/downloads/{saved['fileId']}",
+            openUrl=f"/sessions/{session_id}/files/{saved['fileId']}/open",
         )
 
     async def _persist_file_blob(
@@ -172,4 +251,3 @@ class AttachmentMaterializer:
         media_type = metadata.get("mediaType") or "application/octet-stream"
         size = metadata.get("size") or 0
         return f"[Attached file: {name} ({media_type}, {size} bytes) at {path}]"
-

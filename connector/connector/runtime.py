@@ -782,9 +782,9 @@ class BackendRpcClient:
     async def download_attachment(self, file_id: str) -> tuple[bytes, str, str]:
         """Pull a user-uploaded attachment by file_id.
 
-        Returns (data, filename, media_type). The backend deletes the stored
-        blob after the response stream completes, so this is a one-shot call;
-        callers should persist the bytes locally before invoking the agent.
+        Returns (data, filename, media_type). The backend keeps the durable
+        platform file after runtime consumption; callers still persist a local
+        copy before invoking the agent.
         """
         access_token = await self.ensure_access_token()
         timeout = httpx.Timeout(300.0, connect=30.0)
