@@ -602,8 +602,8 @@ export function SessionDetailView({
           const result = await api.uploadSessionAttachments(token, sessionId, files);
           uploadedMeta = result.attachments;
           attachmentRefs = result.attachments.map((a) => ({ fileId: a.fileId }));
-          // Persist each file's bytes locally so the message preview survives
-          // page refresh and the backend's delete-on-consume behavior.
+          // Keep a local preview cache so recent image chips render instantly;
+          // the platform file remains durable on the backend.
           await Promise.all(
             uploadedMeta.map((meta, i) =>
               putAttachment({
