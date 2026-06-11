@@ -2,39 +2,30 @@
 
 **在浏览器里，遥控跑在任何机器上的编码 Agent。**
 
-Agents Anywhere 是面向 Claude Code、Codex 等 AI 编码助手的 Web 工作台。
-你的 Agent 继续运行在自己的笔记本、远程开发机或云端沙箱里；Agents Anywhere
-负责把会话、审批、文件、终端和 Runtime 状态带到同一个控制台。
+Agents Anywhere 是面向 Claude Code、Codex 等 AI 编码助手的 Web 工作台。你的 Agent 继续运行在自己的笔记本、远程开发机或云端沙箱里；Agents Anywhere 负责把会话、审批、文件、终端和 Runtime 状态带到同一个控制台。
 
 [English](README.md) · **简体中文**
 
 ---
 
 > **当前状态：开源开发中。**
-> 当前仓库包含完整的 Web 前端、FastAPI 后端和 Python Connector CLI，可本地运行，
-> 也可通过 Docker 自托管。当前主要客户端是 Web 控制台；移动端可通过浏览器访问，
-> 原生移动/桌面客户端不在当前仓库范围内。
+> 当前仓库包含完整的 Web 前端、FastAPI 后端和 Python Connector CLI，可本地运行，也可通过 Docker 自托管。当前主要客户端是 Web 控制台；移动端可通过浏览器访问，原生移动/桌面客户端不在当前仓库范围内。
 
 ## Agents Anywhere 是什么？
 
-你在终端里启动了一个 Claude Code 或 Codex 任务，然后它开始跑很久：读文件、
-改代码、跑测试、等你批准某个操作。问题是，Agent 一旦卡在审批、报错或需要你
-补一句话，你就必须回到那台机器前。
+你在终端里启动了一个 Claude Code 或 Codex 任务，然后它开始跑很久：读文件、改代码、跑测试、等你批准某个操作。问题是，Agent 一旦卡在审批、报错或需要你补一句话，你就必须回到那台机器前。
 
 Agents Anywhere 做的是一层远程控制面：
 
 - Agent 仍然运行在你的机器上，使用你的本地账号、本地文件和本地权限。
-- Connector 和 Agent 跑在同一台机器上，负责把 Runtime 状态、安全范围内的文件操作、
-  shell/terminal 能力和审批请求同步给后端。
+- Connector 和 Agent 跑在同一台机器上，负责把 Runtime 状态、安全范围内的文件操作、shell/terminal 能力和审批请求同步给后端。
 - Web 控制台连接后端，让你查看 Session、接管任务、处理审批、浏览文件、打开终端。
 
-**它是遥控器，不是新的 Agent 运行环境。** 你的代码不会被搬到中继服务里执行，
-模型账号和模型费用也仍然来自你自己的 Claude Code / Codex 等工具链。
+**它是遥控器，不是新的 Agent 运行环境。** 你的代码不会被搬到中继服务里执行，模型账号和模型费用也仍然来自你自己的 Claude Code / Codex 等工具链。
 
 ## 为什么需要它？
 
-编码 Agent 已经不再只是一次性的聊天窗口。它会跑几分钟甚至更久，会跨文件改动，
-会触发工具调用，也会在关键时刻等你做决定。
+编码 Agent 已经不再只是一次性的聊天窗口。它会跑几分钟甚至更久，会跨文件改动，会触发工具调用，也会在关键时刻等你做决定。
 
 没有远程控制面时，现实通常是：
 
@@ -42,8 +33,7 @@ Agents Anywhere 做的是一层远程控制面：
 - 你离开后，任务很可能卡在审批或错误上。
 - 多台机器、多条 Session、多种 Runtime 很难统一管理。
 
-Agents Anywhere 把这些长跑任务变成一个可以随时打开的工作台：看状态、看文件、
-看输出、批操作、打断、继续、切换设备，都在同一个 Web UI 里完成。
+Agents Anywhere 把这些长跑任务变成一个可以随时打开的工作台：看状态、看文件、看输出、批操作、打断、继续、切换设备，都在同一个 Web UI 里完成。
 
 ## 当前能力
 
@@ -97,8 +87,7 @@ docs/        共享参考文档
 
 ## Quickstart：Docker 启动完整应用
 
-从仓库根目录运行开发容器。它会在同一个容器内启动 FastAPI 后端和 Vite 前端，
-只暴露 Vite 端口：
+从仓库根目录运行开发容器。它会在同一个容器内启动 FastAPI 后端和 Vite 前端，只暴露 Vite 端口：
 
 ```bash
 docker build -f docker/Dockerfile.dev -t agents-anywhere:dev . \
@@ -115,8 +104,7 @@ docker build -f docker/Dockerfile.dev -t agents-anywhere:dev . \
 http://127.0.0.1:5173
 ```
 
-首次启动空数据库时，服务日志会输出 bootstrap token。用它在 Web UI 中创建第一个
-管理员用户。
+首次启动空数据库时，服务日志会输出 bootstrap token。用它在 Web UI 中创建第一个管理员用户。
 
 ## Quickstart：本地开发
 
@@ -137,8 +125,7 @@ yarn install
 yarn dev
 ```
 
-Vite 默认监听 `127.0.0.1:5173`，并把 API / WebSocket 请求代理到
-`http://127.0.0.1:8000`。需要换后端地址时：
+Vite 默认监听 `127.0.0.1:5173`，并把 API / WebSocket 请求代理到 `http://127.0.0.1:8000`。需要换后端地址时：
 
 ```bash
 cd web
@@ -147,8 +134,7 @@ AGENTS_ANYWHERE_API=http://127.0.0.1:8000 yarn dev
 
 ## 配对并启动 Connector
 
-Connector 应该运行在真正拥有代码工作区和 Agent Runtime 的机器上。它会使用该机器
-的本地文件权限、本地 shell 权限，以及本地 Codex / Claude 登录状态。
+Connector 应该运行在真正拥有代码工作区和 Agent Runtime 的机器上。它会使用该机器的本地文件权限、本地 shell 权限，以及本地 Codex / Claude 登录状态。
 
 ### 方式 A：从 Web 控制台生成启动命令
 
@@ -175,8 +161,7 @@ uv run agent-connector configure \
 uv run agent-connector start
 ```
 
-默认配置文件路径是 `~/.agent-server/connector.json`，可用 `--config` 或
-`AGENT_CONNECTOR_CONFIG` 覆盖。
+默认配置文件路径是 `~/.agent-server/connector.json`，可用 `--config` 或 `AGENT_CONNECTOR_CONFIG` 覆盖。
 
 ### 方式 B：从 Connector 端发起配对
 
@@ -186,15 +171,13 @@ uv sync
 uv run agent-connector login --server-url http://127.0.0.1:8000
 ```
 
-终端会输出 pairing code。在 Web UI 的配对窗口中输入该 code 后，Connector 会保存
-配置并启动。只想保存配置、不立即启动时：
+终端会输出 pairing code。在 Web UI 的配对窗口中输入该 code 后，Connector 会保存配置并启动。只想保存配置、不立即启动时：
 
 ```bash
 uv run agent-connector login --server-url http://127.0.0.1:8000 --no-start
 ```
 
-如果 `codex` 或 `claude` 不在 `PATH` 中，可以在 UI 中配置 Runtime 路径，或在
-启动 Connector 前设置：
+如果 `codex` 或 `claude` 不在 `PATH` 中，可以在 UI 中配置 Runtime 路径，或在启动 Connector 前设置：
 
 ```bash
 CODEX_BIN=/path/to/codex
@@ -205,8 +188,7 @@ CLAUDE_BIN=/path/to/claude
 
 ### 单容器 SQLite
 
-生产风格镜像会先构建前端，再由 FastAPI 托管静态资源；数据库和文件数据持久化到
-`/data`：
+生产风格镜像会先构建前端，再由 FastAPI 托管静态资源；数据库和文件数据持久化到 `/data`：
 
 ```bash
 docker build -f docker/Dockerfile -t agents-anywhere:latest . \
@@ -283,20 +265,16 @@ yarn build
 ## 常见问题
 
 **我的代码到底跑在哪？**
-跑在 Connector 所在的机器上。后端负责认证、状态、文件元数据和 RPC 转发，不把你的
-代码搬到服务器上执行。
+跑在 Connector 所在的机器上。后端负责认证、状态、文件元数据和 RPC 转发，不把你的代码搬到服务器上执行。
 
 **需要在开发机上装什么？**
-需要运行 `connector/` 里的 Python CLI。它应该和 Codex / Claude 以及代码工作区在
-同一台机器上。
+需要运行 `connector/` 里的 Python CLI。它应该和 Codex / Claude 以及代码工作区在同一台机器上。
 
 **模型账号会经过 Agents Anywhere 吗？**
-不会。Connector 使用本机已有的 Codex / Claude Runtime 和登录状态，Agents Anywhere
-不代理模型账号凭据。
+不会。Connector 使用本机已有的 Codex / Claude Runtime 和登录状态，Agents Anywhere 不代理模型账号凭据。
 
 **可以自托管吗？**
-可以。开发环境可用 SQLite，生产风格部署可用单容器 SQLite 或 PostgreSQL compose。
-详见 [docker/README.md](docker/README.md)。
+可以。开发环境可用 SQLite，生产风格部署可用单容器 SQLite 或 PostgreSQL compose。详见 [docker/README.md](docker/README.md)。
 
 **当前支持哪些 Agent？**
 当前代码重点集成 Codex 和 Claude。其他 Runtime 可以通过新增 Connector adapter 的方式扩展。
