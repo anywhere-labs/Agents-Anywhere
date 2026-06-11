@@ -85,7 +85,7 @@ export function RegisterForm({
               id="reg-user"
               className="mono"
               type="text"
-              placeholder="e.g. benson"
+              placeholder="enter your username"
               value={userId}
               onChange={(e) =>
                 setUserId(

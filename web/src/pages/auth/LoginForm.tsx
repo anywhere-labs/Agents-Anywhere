@@ -63,7 +63,7 @@ export function LoginForm({
               id="login-user"
               className="mono"
               type="text"
-              placeholder="e.g. benson"
+              placeholder="enter your username"
               value={userId}
               onChange={(e) => setUserId(e.target.value.replace(/\s/g, ""))}
               autoComplete="username"
