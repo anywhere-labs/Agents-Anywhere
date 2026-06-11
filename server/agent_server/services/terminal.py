@@ -96,6 +96,10 @@ def _launch_signature(command: str, args: list[str]) -> str:
     return json.dumps([command, args], separators=(",", ":"), ensure_ascii=True)
 
 
+def terminal_connector_scope_id(connector_id: str) -> str:
+    return f"browse_{connector_id}"
+
+
 class TerminalService:
     def __init__(
         self,
@@ -146,6 +150,62 @@ class TerminalService:
                         "terminalId": term.id,
                         "sessionId": session.id,
                         "root": session.cwd,
+                        "cwd": cwd,
+                        "shell": payload.shell,
+                        "command": payload.command,
+                        "args": payload.args or [],
+                        "profile": payload.profile,
+                        "cols": payload.cols,
+                        "rows": payload.rows,
+                        "env": payload.env or {},
+                    },
+                    timeout=15,
+                )
+            except Exception:
+                await self._broker.remove(term.id)
+                raise
+            pid = result.get("pid") if isinstance(result, dict) else None
+            await self._broker.mark_running(term.id, pid=pid)
+            return TerminalResponse(terminal=TerminalView(**term.view()), serverTime=utc_now())
+
+    async def create_for_connector(
+        self,
+        connector_id: str,
+        root: str,
+        payload: TerminalCreateRequest,
+    ) -> TerminalResponse:
+        scope_id = terminal_connector_scope_id(connector_id)
+        async with self._broker.session_lock(scope_id):
+            await self._cleanup_stale_user_terminals(
+                connector_id=connector_id,
+                session_id=scope_id,
+                keep_group_id=payload.ephemeralGroupId,
+            )
+            cwd = resolve_workspace_path(root, payload.cwd or ".")
+            existing = [
+                term
+                for term in self._broker.get_for_session(scope_id)
+                if term.purpose == "user" and term.ephemeral_group_id == payload.ephemeralGroupId
+            ]
+            term = await self._broker.register(
+                session_id=scope_id,
+                connector_id=connector_id,
+                label=_label_for(payload, len(existing)),
+                cwd=cwd,
+                shell=payload.shell or "",
+                cols=payload.cols,
+                rows=payload.rows,
+                ephemeral_group_id=payload.ephemeralGroupId,
+            )
+            try:
+                result = await request_connector(
+                    self._manager,
+                    connector_id,
+                    "terminal.create",
+                    {
+                        "terminalId": term.id,
+                        "sessionId": scope_id,
+                        "root": root,
                         "cwd": cwd,
                         "shell": payload.shell,
                         "command": payload.command,
@@ -411,6 +471,15 @@ class TerminalService:
         ]
         return TerminalListResponse(terminals=items, serverTime=utc_now())
 
+    async def list_for_connector(self, connector_id: str) -> TerminalListResponse:
+        scope_id = terminal_connector_scope_id(connector_id)
+        items = [
+            TerminalView(**t.view())
+            for t in self._broker.get_for_session(scope_id)
+            if t.purpose == "user"
+        ]
+        return TerminalListResponse(terminals=items, serverTime=utc_now())
+
     async def rename(
         self,
         session_id: str,
@@ -425,6 +494,19 @@ class TerminalService:
             raise TerminalNotFoundError("session not found") from None
         term = self._broker.get(terminal_id)
         if term is None or term.session_id != session.id:
+            raise TerminalNotFoundError("terminal not found")
+        await self._broker.rename(terminal_id, payload.label.strip())
+        return TerminalResponse(terminal=TerminalView(**term.view()), serverTime=utc_now())
+
+    async def rename_for_connector(
+        self,
+        connector_id: str,
+        terminal_id: str,
+        payload: TerminalPatchRequest,
+    ) -> TerminalResponse:
+        scope_id = terminal_connector_scope_id(connector_id)
+        term = self._broker.get(terminal_id)
+        if term is None or term.session_id != scope_id:
             raise TerminalNotFoundError("terminal not found")
         await self._broker.rename(terminal_id, payload.label.strip())
         return TerminalResponse(terminal=TerminalView(**term.view()), serverTime=utc_now())
@@ -460,6 +542,31 @@ class TerminalService:
         await self._broker.remove(terminal_id)
         return TerminalResponse(terminal=snapshot, serverTime=utc_now())
 
+    async def close_for_connector(self, connector_id: str, terminal_id: str) -> TerminalResponse:
+        scope_id = terminal_connector_scope_id(connector_id)
+        term = self._broker.get(terminal_id)
+        if term is None or term.session_id != scope_id:
+            raise TerminalNotFoundError("terminal not found")
+        try:
+            await request_connector(
+                self._manager,
+                connector_id,
+                "terminal.close",
+                {"terminalId": terminal_id, "sessionId": scope_id},
+                timeout=10,
+            )
+        except Exception as exc:
+            status_code = getattr(exc, "status_code", "?")
+            logger.warning(
+                "terminal.close rpc failed terminal_id={} session_id={} status={}",
+                terminal_id,
+                scope_id,
+                status_code,
+            )
+        snapshot = TerminalView(**term.view())
+        await self._broker.remove(terminal_id)
+        return TerminalResponse(terminal=snapshot, serverTime=utc_now())
+
     async def resize(
         self,
         session_id: str,
@@ -474,6 +581,23 @@ class TerminalService:
             cols=payload.cols,
             rows=payload.rows,
             user_id=user_id,
+        )
+        term = self._broker.get(terminal_id)
+        if term is None:
+            raise TerminalNotFoundError("terminal not found")
+        return TerminalResponse(terminal=TerminalView(**term.view()), serverTime=utc_now())
+
+    async def resize_for_connector(
+        self,
+        connector_id: str,
+        terminal_id: str,
+        payload: TerminalResizeRequest,
+    ) -> TerminalResponse:
+        await self.resize_dimensions_for_connector(
+            connector_id,
+            terminal_id,
+            cols=payload.cols,
+            rows=payload.rows,
         )
         term = self._broker.get(terminal_id)
         if term is None:
@@ -500,6 +624,25 @@ class TerminalService:
             timeout=10,
         )
 
+    async def write_for_connector(
+        self,
+        connector_id: str,
+        terminal_id: str,
+        *,
+        data_base64: str,
+    ) -> None:
+        scope_id = terminal_connector_scope_id(connector_id)
+        term = self._broker.get(terminal_id)
+        if term is None or term.session_id != scope_id:
+            raise TerminalNotFoundError("terminal not found")
+        await request_connector(
+            self._manager,
+            term.connector_id,
+            "terminal.write",
+            {"terminalId": terminal_id, "sessionId": scope_id, "dataBase64": data_base64},
+            timeout=10,
+        )
+
     async def resize_dimensions(
         self,
         session_id: str,
@@ -518,6 +661,30 @@ class TerminalService:
             term.connector_id,
             "terminal.resize",
             {"terminalId": terminal_id, "sessionId": session.id, "cols": cols, "rows": rows},
+            timeout=10,
+        )
+        if isinstance(result, dict) and result.get("closed") is True:
+            await self._broker.remove(terminal_id)
+            raise TerminalNotFoundError("terminal not found")
+        await self._broker.resize(terminal_id, cols, rows)
+
+    async def resize_dimensions_for_connector(
+        self,
+        connector_id: str,
+        terminal_id: str,
+        *,
+        cols: int,
+        rows: int,
+    ) -> None:
+        scope_id = terminal_connector_scope_id(connector_id)
+        term = self._broker.get(terminal_id)
+        if term is None or term.session_id != scope_id:
+            raise TerminalNotFoundError("terminal not found")
+        result = await request_connector(
+            self._manager,
+            term.connector_id,
+            "terminal.resize",
+            {"terminalId": terminal_id, "sessionId": scope_id, "cols": cols, "rows": rows},
             timeout=10,
         )
         if isinstance(result, dict) and result.get("closed") is True:

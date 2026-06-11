@@ -2817,6 +2817,80 @@ def test_user_terminal_create_cleans_stale_ephemeral_groups(tmp_path):
     assert [terminal["terminalId"] for terminal in listing.json()["terminals"]] == [third_id]
 
 
+def test_connector_terminal_lifecycle_uses_workspace_scope(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, _, headers = create_connector_and_session(client)
+    scope_id = f"browse_{connector_id}"
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+
+    async def seed() -> None:
+        await client.app.state.store.set_connector_status(connector_id, "online")
+
+    asyncio.run(seed())
+
+    created = client.post(
+        f"/connectors/{connector_id}/terminals?root=/repo",
+        headers=headers,
+        json={"cols": 80, "rows": 24, "cwd": "src", "ephemeralGroupId": "panel_a"},
+    )
+    assert created.status_code == 200, created.text
+    terminal = created.json()["terminal"]
+    terminal_id = terminal["terminalId"]
+    assert terminal["sessionId"] == scope_id
+    assert terminal["cwd"] == "/repo/src"
+    assert fake_rpc.requests[-1] == (
+        connector_id,
+        "terminal.create",
+        {
+            "terminalId": terminal_id,
+            "sessionId": scope_id,
+            "root": "/repo",
+            "cwd": "/repo/src",
+            "shell": None,
+            "command": None,
+            "args": [],
+            "profile": None,
+            "cols": 80,
+            "rows": 24,
+            "env": {},
+        },
+        15,
+    )
+
+    listing = client.get(f"/connectors/{connector_id}/terminals", headers=headers)
+    assert listing.status_code == 200, listing.text
+    assert [item["terminalId"] for item in listing.json()["terminals"]] == [terminal_id]
+
+    resized = client.post(
+        f"/connectors/{connector_id}/terminals/{terminal_id}/resize",
+        headers=headers,
+        json={"cols": 100, "rows": 30},
+    )
+    assert resized.status_code == 200, resized.text
+    assert fake_rpc.requests[-1] == (
+        connector_id,
+        "terminal.resize",
+        {"terminalId": terminal_id, "sessionId": scope_id, "cols": 100, "rows": 30},
+        10,
+    )
+
+    closed = client.delete(
+        f"/connectors/{connector_id}/terminals/{terminal_id}",
+        headers=headers,
+    )
+    assert closed.status_code == 200, closed.text
+    assert fake_rpc.requests[-1] == (
+        connector_id,
+        "terminal.close",
+        {"terminalId": terminal_id, "sessionId": scope_id},
+        10,
+    )
+    listing = client.get(f"/connectors/{connector_id}/terminals", headers=headers)
+    assert listing.status_code == 200, listing.text
+    assert listing.json()["terminals"] == []
+
+
 def test_user_terminal_cleanup_does_not_close_primary_claude_terminal(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, _, headers = create_connector_and_session(client)

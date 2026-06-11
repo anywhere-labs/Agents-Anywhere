@@ -1,8 +1,8 @@
 /** Tiny HTTP/WS helpers for the runtime panel — workspace fs + terminal endpoints.
  *
- * Terminal endpoints remain session-scoped. Runtime filesystem operations are
- * connector/workspace-scoped so they can browse or edit files without tying the
- * API shape to a resumable session.
+ * Runtime filesystem and user terminal operations are connector/workspace-scoped
+ * so they can browse, edit, and run shell processes without tying the API shape
+ * to a resumable session. Primary Claude terminals remain session-scoped.
  */
 
 export class RuntimeApiError extends Error {
@@ -109,6 +109,13 @@ export function makeRuntimeApi(opts: {
     }
     return `/connectors/${encodeURIComponent(connectorId)}/fs/${suffix}?root=${encodeURIComponent(root)}`;
   };
+  const connectorTerminalPath = (suffix = "") => {
+    if (!connectorId || !root) {
+      return null;
+    }
+    const segment = suffix ? `/${suffix}` : "";
+    return `/connectors/${encodeURIComponent(connectorId)}/terminals${segment}?root=${encodeURIComponent(root)}`;
+  };
 
   async function call<T>(
     path: string,
@@ -188,10 +195,19 @@ export function makeRuntimeApi(opts: {
     },
     listTerminals(): Promise<{ terminals: TerminalView[]; serverTime: string }> {
       if (demo) return Promise.resolve({ terminals: [], serverTime: new Date().toISOString() });
+      const connectorPath = connectorTerminalPath();
+      if (connectorPath) return call(connectorPath);
       return call(`/sessions/${sessionId}/terminals`);
     },
     createTerminal(args: TerminalCreateArgs): Promise<{ terminal: TerminalView }> {
       if (demo) return Promise.resolve(demoCreateTerminal(args));
+      const connectorPath = connectorTerminalPath();
+      if (connectorPath) {
+        return call(connectorPath, {
+          method: "POST",
+          body: JSON.stringify(args),
+        });
+      }
       return call(`/sessions/${sessionId}/terminals`, {
         method: "POST",
         body: JSON.stringify(args),
@@ -205,6 +221,13 @@ export function makeRuntimeApi(opts: {
     },
     renameTerminal(tid: string, label: string): Promise<{ terminal: TerminalView }> {
       if (demo) return Promise.resolve({ terminal: { ...demoTerminal(tid), label } });
+      const connectorPath = connectorTerminalPath(encodeURIComponent(tid));
+      if (connectorPath) {
+        return call(connectorPath, {
+          method: "PATCH",
+          body: JSON.stringify({ label }),
+        });
+      }
       return call(`/sessions/${sessionId}/terminals/${tid}`, {
         method: "PATCH",
         body: JSON.stringify({ label }),
@@ -212,18 +235,30 @@ export function makeRuntimeApi(opts: {
     },
     closeTerminal(tid: string): Promise<{ terminal: TerminalView }> {
       if (demo) return Promise.resolve({ terminal: { ...demoTerminal(tid), status: "exited" } });
+      const connectorPath = connectorTerminalPath(encodeURIComponent(tid));
+      if (connectorPath) return call(connectorPath, { method: "DELETE" });
       return call(`/sessions/${sessionId}/terminals/${tid}`, { method: "DELETE" });
     },
     resizeTerminal(tid: string, cols: number, rows: number): Promise<{ terminal: TerminalView }> {
       if (demo) return Promise.resolve({ terminal: { ...demoTerminal(tid), cols, rows } });
+      const connectorPath = connectorTerminalPath(`${encodeURIComponent(tid)}/resize`);
+      if (connectorPath) {
+        return call(connectorPath, {
+          method: "POST",
+          body: JSON.stringify({ cols, rows }),
+        });
+      }
       return call(`/sessions/${sessionId}/terminals/${tid}/resize`, {
         method: "POST",
         body: JSON.stringify({ cols, rows }),
       });
     },
-    streamUrl(tid: string, fromSeq = 0): string {
+    streamUrl(tid: string, fromSeq = 0, scope: "workspace" | "session" = "workspace"): string {
       const base = window.location.origin.replace(/^http/, "ws");
       const t = token ? `&token=${encodeURIComponent(token)}` : "";
+      if (scope === "workspace" && connectorId && root) {
+        return `${base}/connectors/${encodeURIComponent(connectorId)}/terminals/${encodeURIComponent(tid)}/stream?fromSeq=${fromSeq}${t}`;
+      }
       return `${base}/sessions/${sessionId}/terminals/${tid}/stream?fromSeq=${fromSeq}${t}`;
     },
   };

@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
+import urllib.parse
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from loguru import logger
 
+from agent_server.core.auth import verify_user_access_token
 from agent_server.infra.connector_rpc import (
     ConnectorOfflineError,
     ConnectorRpcError,
@@ -19,6 +21,7 @@ from agent_server.deps import (
     get_rpc,
     get_shell_tasks,
     get_store,
+    get_terminal_service,
     get_timeline_broker,
 )
 from agent_server.core.models import (
@@ -45,6 +48,11 @@ from agent_server.core.models import (
     ShellExecRequest,
     ShellTaskStartResponse,
     ShellTaskWaitResponse,
+    TerminalCreateRequest,
+    TerminalListResponse,
+    TerminalPatchRequest,
+    TerminalResizeRequest,
+    TerminalResponse,
 )
 from agent_server.core.runtime_config import RuntimeSettingsPatchRequest, RuntimeSettingsResponse
 from agent_server.services.runtime_activation import send_active_runtimes
@@ -53,8 +61,15 @@ from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.device_agent_settings import DeviceAgentSettingsService
 from agent_server.services.workspace import request_connector, resolve_workspace_path
 from agent_server.services.shell_tasks import ShellTaskManager
+from agent_server.services.terminal import (
+    TerminalNotFoundError,
+    TerminalService,
+    TerminalServiceError,
+    terminal_connector_scope_id,
+)
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.infra.repositories.facade import Store, report_is_attachable
+from agent_server.infra.terminal_broker import TerminalBroker
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.core.utc import utc_now
 
@@ -64,6 +79,10 @@ router = APIRouter(prefix="/connectors", tags=["connectors"])
 
 def _connector_for_response(manager: ConnectorRpcManager, connector: ConnectorView) -> ConnectorView:
     return with_effective_connector_status(manager, connector)
+
+
+def _raise_terminal_service_error(exc: TerminalServiceError) -> None:
+    raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
 async def _send_invalidate_runtime(
@@ -526,6 +545,185 @@ async def connector_shell_task_wait(
         raise
     completed = tasks.pop(task.id, session_id=scope_id)
     return ShellTaskWaitResponse(**completed.view(), serverTime=utc_now())
+
+
+@router.post("/{connector_id}/terminals", response_model=TerminalResponse)
+async def connector_terminal_create(
+    connector_id: str,
+    payload: TerminalCreateRequest,
+    root: str = Query(..., min_length=1),
+    user_id: str = Depends(current_user_id),
+    db: Store = Depends(get_store),
+    manager: ConnectorRpcManager = Depends(get_rpc),
+    terminal_service: TerminalService = Depends(get_terminal_service),
+) -> TerminalResponse:
+    await _require_owned_online_connector(connector_id, user_id, db, manager)
+    try:
+        return await terminal_service.create_for_connector(connector_id, root, payload)
+    except TerminalServiceError as exc:
+        _raise_terminal_service_error(exc)
+
+
+@router.get("/{connector_id}/terminals", response_model=TerminalListResponse)
+async def connector_terminal_list(
+    connector_id: str,
+    user_id: str = Depends(current_user_id),
+    db: Store = Depends(get_store),
+    terminal_service: TerminalService = Depends(get_terminal_service),
+) -> TerminalListResponse:
+    await _require_owned_connector(connector_id, user_id, db)
+    try:
+        return await terminal_service.list_for_connector(connector_id)
+    except TerminalServiceError as exc:
+        _raise_terminal_service_error(exc)
+
+
+@router.patch("/{connector_id}/terminals/{terminal_id}", response_model=TerminalResponse)
+async def connector_terminal_rename(
+    connector_id: str,
+    terminal_id: str,
+    payload: TerminalPatchRequest,
+    user_id: str = Depends(current_user_id),
+    db: Store = Depends(get_store),
+    terminal_service: TerminalService = Depends(get_terminal_service),
+) -> TerminalResponse:
+    await _require_owned_connector(connector_id, user_id, db)
+    try:
+        return await terminal_service.rename_for_connector(connector_id, terminal_id, payload)
+    except TerminalServiceError as exc:
+        _raise_terminal_service_error(exc)
+
+
+@router.delete("/{connector_id}/terminals/{terminal_id}", response_model=TerminalResponse)
+async def connector_terminal_close(
+    connector_id: str,
+    terminal_id: str,
+    user_id: str = Depends(current_user_id),
+    db: Store = Depends(get_store),
+    manager: ConnectorRpcManager = Depends(get_rpc),
+    terminal_service: TerminalService = Depends(get_terminal_service),
+) -> TerminalResponse:
+    await _require_owned_online_connector(connector_id, user_id, db, manager)
+    try:
+        return await terminal_service.close_for_connector(connector_id, terminal_id)
+    except TerminalServiceError as exc:
+        _raise_terminal_service_error(exc)
+
+
+@router.post("/{connector_id}/terminals/{terminal_id}/resize", response_model=TerminalResponse)
+async def connector_terminal_resize(
+    connector_id: str,
+    terminal_id: str,
+    payload: TerminalResizeRequest,
+    user_id: str = Depends(current_user_id),
+    db: Store = Depends(get_store),
+    manager: ConnectorRpcManager = Depends(get_rpc),
+    terminal_service: TerminalService = Depends(get_terminal_service),
+) -> TerminalResponse:
+    await _require_owned_online_connector(connector_id, user_id, db, manager)
+    try:
+        return await terminal_service.resize_for_connector(connector_id, terminal_id, payload)
+    except TerminalServiceError as exc:
+        _raise_terminal_service_error(exc)
+
+
+@router.websocket("/{connector_id}/terminals/{terminal_id}/stream")
+async def connector_terminal_stream(
+    websocket: WebSocket,
+    connector_id: str,
+    terminal_id: str,
+    fromSeq: int = Query(default=0, ge=0),
+) -> None:
+    token = websocket.query_params.get("token")
+    auth_header = websocket.headers.get("authorization")
+    if not token and auth_header and auth_header.startswith("Bearer "):
+        token = auth_header[len("Bearer "):]
+    if not token:
+        await websocket.close(code=4401)
+        return
+    user_id = verify_user_access_token(urllib.parse.unquote(token))
+    if user_id is None:
+        await websocket.close(code=4401)
+        return
+
+    db: Store = websocket.app.state.store
+    broker: TerminalBroker = websocket.app.state.terminal_broker
+    manager: ConnectorRpcManager = websocket.app.state.rpc
+    try:
+        await _require_owned_connector(connector_id, user_id, db)
+    except HTTPException:
+        await websocket.close(code=4404)
+        return
+
+    scope_id = terminal_connector_scope_id(connector_id)
+    term = broker.get(terminal_id)
+    if term is None or term.session_id != scope_id:
+        await websocket.close(code=4404)
+        return
+
+    terminal_service = TerminalService(db, manager, broker)
+    await websocket.accept()
+    await broker.attach_client(terminal_id, websocket, from_seq=fromSeq)
+    try:
+        while True:
+            message = await websocket.receive_json()
+            mtype = message.get("type")
+            if mtype == "input":
+                data_b64 = message.get("data")
+                if not isinstance(data_b64, str):
+                    continue
+                try:
+                    await terminal_service.write_for_connector(
+                        connector_id,
+                        terminal_id,
+                        data_base64=data_b64,
+                    )
+                except TerminalNotFoundError:
+                    break
+                except Exception as exc:
+                    code = getattr(exc, "status_code", 500)
+                    detail = getattr(exc, "detail", str(exc))
+                    try:
+                        await websocket.send_json(
+                            {"type": "error", "code": code, "message": str(detail)}
+                        )
+                    except RuntimeError:
+                        break
+            elif mtype == "resize":
+                cols = int(message.get("cols") or term.cols)
+                rows = int(message.get("rows") or term.rows)
+                cols = max(1, min(500, cols))
+                rows = max(1, min(200, rows))
+                try:
+                    await terminal_service.resize_dimensions_for_connector(
+                        connector_id,
+                        terminal_id,
+                        cols=cols,
+                        rows=rows,
+                    )
+                except TerminalNotFoundError:
+                    break
+                except Exception as exc:
+                    code = getattr(exc, "status_code", 500)
+                    detail = getattr(exc, "detail", str(exc))
+                    try:
+                        await websocket.send_json(
+                            {"type": "error", "code": code, "message": str(detail)}
+                        )
+                    except RuntimeError:
+                        break
+            elif mtype == "ping":
+                await websocket.send_json({"type": "pong"})
+    except WebSocketDisconnect:
+        pass
+    finally:
+        broker.detach_client(terminal_id, websocket)
+        term = broker.get(terminal_id)
+        if term is not None and term.purpose == "user" and not term.clients:
+            try:
+                await terminal_service.close_for_connector(connector_id, terminal_id)
+            except Exception:
+                pass
 
 
 # ── Device agents (attach / scan / delete) ─────────────────────────────────
