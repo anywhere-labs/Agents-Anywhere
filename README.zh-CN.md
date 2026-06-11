@@ -1,10 +1,18 @@
+<div align="center">
+
 # Agents Anywhere
 
-**在浏览器里，遥控跑在任何机器上的编码 Agent。**
+<h3>面向 Claude Code、Codex 和更多编码 Agent 的远程控制台。</h3>
 
-Agents Anywhere 是面向 Claude Code、Codex 等 AI 编码助手的 Web 工作台。你的 Agent 继续运行在自己的笔记本、远程开发机或云端沙箱里；Agents Anywhere 负责把会话、审批、文件、终端和 Runtime 状态带到同一个控制台。
+让 Agent 继续运行在你的笔记本、远程开发机或云端沙箱里；在一个可自托管的 Web 工作台里管理会话、审批、文件、终端和 Runtime 状态。
 
-[English](README.md) · **简体中文**
+[Docker Quickstart](#quickstartdocker-启动完整应用) · [配对 Connector](#配对并启动-connector) · [自托管](#self-host生产风格部署) · [English](README.md)
+
+![Agents Anywhere 会话工作台](docs/screenshots/hero.png)
+
+查看长时间运行的 Session、批准操作、浏览文件、打开终端，同时让 Agent 留在原来的机器上运行。想跑起当前开源版本，可以从 [Docker Quickstart](#quickstartdocker-启动完整应用) 开始。
+
+</div>
 
 ---
 
@@ -36,12 +44,6 @@ Agents Anywhere 做的是一层远程控制面：
 Agents Anywhere 把这些长跑任务变成一个可以随时打开的工作台：看状态、看文件、看输出、批操作、打断、继续、切换设备，都在同一个 Web UI 里完成。
 
 ## 产品预览
-
-**桌面端：多面板 Session 工作台**
-
-![桌面端多面板 Session 工作台](docs/screenshots/hero.png)
-
-聊天、文件树、对话内 diff、终端和 Runtime 状态放在同一个任务视图里，适合长时间跟进一个 Agent Session。
 
 **桌面端：统一控制台**
 

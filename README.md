@@ -1,10 +1,18 @@
+<div align="center">
+
 # Agents Anywhere
 
-**Control coding agents running on any machine, from your browser.**
+<h3>Remote control plane for Claude Code, Codex, and more coding agents.</h3>
 
-Agents Anywhere is a web workspace for Claude Code, Codex, and other AI coding agents. Your agent keeps running on your laptop, remote devbox, or cloud sandbox; Agents Anywhere brings sessions, approvals, files, terminals, and runtime state into one control plane.
+Run agents on your own laptop, remote devbox, or cloud sandbox. Control sessions, approvals, files, terminals, and runtime state from one self-hostable web workspace.
 
-**English** · [简体中文](README.zh-CN.md)
+[Docker Quickstart](#quickstart-run-the-full-app-with-docker) · [Pair Connector](#pair-and-start-the-connector) · [Self-host](#self-host-production-style-deployment) · [简体中文](README.zh-CN.md)
+
+![Agents Anywhere session workspace](docs/screenshots/hero.png)
+
+Watch long-running sessions, approve actions, inspect files, and open a terminal without moving the agent out of its original machine. To run the current open-source stack, start with [Docker Quickstart](#quickstart-run-the-full-app-with-docker).
+
+</div>
 
 ---
 
@@ -36,12 +44,6 @@ Without a remote control plane:
 Agents Anywhere turns those long-running tasks into a workspace you can reopen at any time: check state, inspect files, watch output, approve, interrupt, continue, and switch devices from the same Web UI.
 
 ## Product Preview
-
-**Desktop: multi-panel session workspace**
-
-![Desktop multi-panel session workspace](docs/screenshots/hero.png)
-
-Chat, file tree, inline diffs, terminal, and runtime state live in one task view for following a long-running agent session.
 
 **Desktop: unified control plane**
 
