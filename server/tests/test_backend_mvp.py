@@ -4553,7 +4553,7 @@ def test_fs_and_shell_rpc_forward_validated_workspace_params(tmp_path):
         json={"path": "."},
     )
     shell_response = client.post(
-        f"/sessions/{session_id}/shell/exec",
+        f"/connectors/{connector_id}/shell/exec?root=/repo",
         headers=headers,
         json={"command": "pwd", "timeoutMs": 120000},
     )
@@ -4588,7 +4588,7 @@ def test_fs_and_shell_rpc_forward_validated_workspace_params(tmp_path):
             connector_id,
             "shell.exec",
             {
-                "sessionId": session_id,
+                "sessionId": f"browse_{connector_id}",
                 "root": "/repo",
                 "cwd": "/repo",
                 "command": "pwd",
@@ -4627,7 +4627,7 @@ def test_fs_and_shell_rpc_forward_windows_workspace_params(tmp_path):
         json={"path": "/C:/Users/admin/agent-server/README.md"},
     )
     shell_response = client.post(
-        f"/sessions/{session.id}/shell/exec",
+        f"/connectors/{connector_id}/shell/exec?root=C%3A%5CUsers%5Cadmin",
         headers=headers,
         json={"command": "pwd", "timeoutMs": 120000},
     )
@@ -4660,7 +4660,7 @@ def test_fs_and_shell_rpc_forward_windows_workspace_params(tmp_path):
             connector_id,
             "shell.exec",
             {
-                "sessionId": session.id,
+                "sessionId": f"browse_{connector_id}",
                 "root": r"C:\Users\admin",
                 "cwd": r"C:\Users\admin",
                 "command": "pwd",
@@ -4718,12 +4718,13 @@ def test_connector_fs_list_supports_body_and_query_roots(tmp_path):
 def test_shell_task_start_waits_for_connector_completion(tmp_path):
     client = make_client(tmp_path)
     connector_id, connector_access_token, session_id, headers = create_connector_and_session(client)
+    scope_id = f"browse_{connector_id}"
     fake_rpc = FakeLocalRpc()
     client.app.state.rpc = fake_rpc
     asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
 
     start_response = client.post(
-        f"/sessions/{session_id}/shell/tasks",
+        f"/connectors/{connector_id}/shell/tasks?root=/repo",
         headers=headers,
         json={"command": "pwd", "timeoutMs": 120000},
     )
@@ -4736,7 +4737,7 @@ def test_shell_task_start_waits_for_connector_completion(tmp_path):
         "shell.task.start",
         {
             "taskId": task_id,
-            "sessionId": session_id,
+            "sessionId": scope_id,
             "root": "/repo",
             "cwd": "/repo",
             "command": "pwd",
@@ -4754,7 +4755,7 @@ def test_shell_task_start_waits_for_connector_completion(tmp_path):
                     "method": "shell.task.completed",
                     "params": {
                         "taskId": task_id,
-                        "sessionId": session_id,
+                        "sessionId": scope_id,
                         "status": "completed",
                         "result": {
                             "cwd": "/repo",
@@ -4774,7 +4775,7 @@ def test_shell_task_start_waits_for_connector_completion(tmp_path):
     )
     assert ingest_response.status_code == 200
 
-    wait_response = client.get(f"/sessions/{session_id}/shell/tasks/{task_id}/wait", headers=headers)
+    wait_response = client.get(f"/connectors/{connector_id}/shell/tasks/{task_id}/wait", headers=headers)
 
     assert wait_response.status_code == 200
     wait_body = wait_response.json()
@@ -4785,24 +4786,25 @@ def test_shell_task_start_waits_for_connector_completion(tmp_path):
 def test_shell_task_wait_timeout_abandons_and_cancels(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, session_id, headers = create_connector_and_session(client)
+    scope_id = f"browse_{connector_id}"
     fake_rpc = FakeLocalRpc()
     client.app.state.rpc = fake_rpc
     asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
     client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
     start_response = client.post(
-        f"/sessions/{session_id}/shell/tasks",
+        f"/connectors/{connector_id}/shell/tasks?root=/repo",
         headers=headers,
         json={"command": "sleep 10", "timeoutMs": 120000},
     )
     task_id = start_response.json()["taskId"]
 
-    wait_response = client.get(f"/sessions/{session_id}/shell/tasks/{task_id}/wait?timeoutMs=1", headers=headers)
+    wait_response = client.get(f"/connectors/{connector_id}/shell/tasks/{task_id}/wait?timeoutMs=1", headers=headers)
 
     assert wait_response.status_code == 408
     assert fake_rpc.requests[-1] == (
         connector_id,
         "shell.task.cancel",
-        {"taskId": task_id, "sessionId": session_id},
+        {"taskId": task_id, "sessionId": scope_id},
         5,
     )
 

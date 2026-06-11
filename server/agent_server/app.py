@@ -25,7 +25,6 @@ from agent_server.api import (
     pairing,
     sessions,
     sessions_fs,
-    sessions_shell,
     sessions_terminal,
     service,
 )
@@ -114,7 +113,6 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     app.include_router(pairing.router)
     app.include_router(sessions.router)
     app.include_router(sessions_fs.router)
-    app.include_router(sessions_shell.router)
     app.include_router(sessions_terminal.router)
     app.include_router(approvals.router)
 
