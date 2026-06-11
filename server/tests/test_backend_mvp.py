@@ -4557,6 +4557,11 @@ def test_fs_and_shell_rpc_forward_windows_workspace_params(tmp_path):
         headers=headers,
         json={"path": "."},
     )
+    slash_drive_response = client.post(
+        f"/sessions/{session.id}/fs/read",
+        headers=headers,
+        json={"path": "/C:/Users/admin/agent-server/README.md"},
+    )
     shell_response = client.post(
         f"/sessions/{session.id}/shell/exec",
         headers=headers,
@@ -4565,8 +4570,9 @@ def test_fs_and_shell_rpc_forward_windows_workspace_params(tmp_path):
 
     assert read_response.status_code == 200
     assert list_response.status_code == 200
+    assert slash_drive_response.status_code == 200
     assert shell_response.status_code == 200
-    assert fake_rpc.requests[-3:] == [
+    assert fake_rpc.requests[-4:] == [
         (
             connector_id,
             "fs.readFile",
@@ -4584,6 +4590,16 @@ def test_fs_and_shell_rpc_forward_windows_workspace_params(tmp_path):
                 "sessionId": session.id,
                 "root": r"C:\Users\admin",
                 "path": r"C:\Users\admin",
+            },
+            30,
+        ),
+        (
+            connector_id,
+            "fs.readFile",
+            {
+                "sessionId": session.id,
+                "root": r"C:\Users\admin",
+                "path": r"C:\Users\admin\agent-server\README.md",
             },
             30,
         ),
@@ -4738,6 +4754,12 @@ def test_connector_uploads_fs_read_artifact_and_user_downloads_it(tmp_path):
     raw_response = client.get(local_url)
     assert raw_response.status_code == 200
     assert raw_response.content == data
+
+    query_open_response = client.get(
+        f"{upload_body['openUrl']}?token={headers['Authorization'].removeprefix('Bearer ')}",
+        follow_redirects=False,
+    )
+    assert query_open_response.status_code == 302
 
     connector_download = client.get(
         f"/connector/fs/downloads/{upload_body['fileId']}",

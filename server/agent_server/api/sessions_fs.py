@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import mimetypes
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Header, Query
 from fastapi.responses import RedirectResponse, Response
 
 from agent_server.infra.connector_rpc import ConnectorRpcManager
@@ -25,7 +25,7 @@ from agent_server.services.workspace import (
 )
 from agent_server.services.attachments import AttachmentService, LOCAL_FILE_TOKEN_KIND
 from agent_server.infra.repositories.facade import Store
-from agent_server.core.auth import verify_signed_token
+from agent_server.core.auth import verify_signed_token, verify_user_access_token
 from agent_server.core.utc import utc_now
 
 
@@ -84,9 +84,11 @@ async def fs_download(
 async def file_open(
     session_id: str,
     file_id: str,
-    user_id: str = Depends(current_user_id),
+    token: str | None = Query(None),
+    authorization: str | None = Header(None, alias="Authorization"),
     attachments: AttachmentService = Depends(get_attachment_service),
 ) -> RedirectResponse:
+    user_id = _user_id_from_header_or_query(authorization=authorization, token=token)
     try:
         url = await attachments.user_file_open_url(
             session_id=session_id,
@@ -197,6 +199,23 @@ def _quoted_filename(value: str) -> str:
 
 def _safe_header_value(value: str) -> str:
     return value.encode("latin-1", errors="replace").decode("latin-1")
+
+
+def _user_id_from_header_or_query(
+    *,
+    authorization: str | None,
+    token: str | None,
+) -> str:
+    prefix = "Bearer "
+    if authorization and authorization.startswith(prefix):
+        user_id = verify_user_access_token(authorization[len(prefix) :])
+        if user_id is not None:
+            return user_id
+    if token:
+        user_id = verify_user_access_token(token)
+        if user_id is not None:
+            return user_id
+    raise HTTPException(status_code=401, detail="invalid user access token")
 
 
 @router.post("/{session_id}/fs/write", response_model=RpcResponsePayload)

@@ -635,6 +635,9 @@ export function SessionDetailView({
         .toString(36)
         .slice(2, 8)}`;
       const now = new Date().toISOString();
+      const visibleContent = content.trim();
+      const sendContent =
+        visibleContent || (uploadedMeta.length > 0 ? ATTACHMENT_ONLY_PROMPT : content);
 
       // Persist the message↔attachment association durably so the real server
       // item (which has no attachment refs) can be re-enriched after refresh.
@@ -642,12 +645,13 @@ export function SessionDetailView({
         const record: SentMessageRecord = {
           sentId: tempId,
           sessionId,
-          text: content,
+          text: visibleContent,
           attachments: uploadedMeta.map((m) => ({
             fileId: m.fileId,
             name: m.name,
             mediaType: m.mediaType,
             size: m.size,
+            openUrl: m.openUrl,
           })),
           createdAt: now,
         };
@@ -666,7 +670,7 @@ export function SessionDetailView({
         role: "user",
         content:
           uploadedMeta.length > 0
-            ? { text: content, attachments: uploadedMeta }
+            ? { text: visibleContent, attachments: uploadedMeta }
             : { text: content },
         source: {},
         orderSeq: Number.MAX_SAFE_INTEGER,
@@ -679,7 +683,7 @@ export function SessionDetailView({
       };
       setOptimisticItems((prev) => [...prev, optimistic]);
       try {
-        await api.sendSessionMessage(token, sessionId, content, attachmentRefs, tempId);
+        await api.sendSessionMessage(token, sessionId, sendContent, attachmentRefs, tempId);
         setOptimisticItems((prev) =>
           prev.map((m) =>
             m.id === tempId && m.status === "pending"
@@ -2313,6 +2317,7 @@ function ApprovalButtons({
 // composer rejects obvious mistakes before paying the round-trip.
 const MAX_ATTACHMENT_FILES = 5;
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+const ATTACHMENT_ONLY_PROMPT = "Please review the attached file.";
 
 function attachmentImageExtension(type: string): string {
   switch (type) {

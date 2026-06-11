@@ -464,6 +464,7 @@ export type UploadedAttachment = {
   mediaType: string;
   createdAt: string;
   downloadUrl: string;
+  openUrl: string;
 };
 
 export type UserUploadResponse = {
