@@ -49,6 +49,38 @@ export function AccountModal({
   token,
   onAvatarChange,
 }: AccountModalProps) {
+  if (!open) return null;
+
+  return (
+    <div className="kl-modal-backdrop" onClick={onClose}>
+      <div
+        className="aa-acct-modal"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-label="Account"
+      >
+        <div className="aa-acct-hd">
+          <h3>Account</h3>
+          <button type="button" className="x" onClick={onClose} aria-label="Close">
+            <Icons.X size={14} />
+          </button>
+        </div>
+
+        <AccountPanel me={me} token={token} onAvatarChange={onAvatarChange} />
+      </div>
+    </div>
+  );
+}
+
+export function AccountPanel({
+  me,
+  token,
+  onAvatarChange,
+}: {
+  me: AuthMe;
+  token: string;
+  onAvatarChange: (avatar: string | null) => void;
+}) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [avatarError, setAvatarError] = useState<string | null>(null);
@@ -63,18 +95,14 @@ export function AccountModal({
   const [success, setSuccess] = useState(false);
 
   useEffect(() => {
-    if (open) {
-      setShowForm(false);
-      setOldPw("");
-      setNewPw("");
-      setConfirmPw("");
-      setError(null);
-      setSuccess(false);
-      setAvatarError(null);
-    }
-  }, [open]);
-
-  if (!open) return null;
+    setShowForm(false);
+    setOldPw("");
+    setNewPw("");
+    setConfirmPw("");
+    setError(null);
+    setSuccess(false);
+    setAvatarError(null);
+  }, [me.userId]);
 
   const score = passwordScore(newPw);
   const mismatch = !!(newPw && confirmPw && newPw !== confirmPw);
@@ -157,20 +185,6 @@ export function AccountModal({
   const roleLabel = me.role === "admin" ? "Admin" : "Member";
 
   return (
-    <div className="kl-modal-backdrop" onClick={onClose}>
-      <div
-        className="aa-acct-modal"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-label="Account"
-      >
-        <div className="aa-acct-hd">
-          <h3>Account</h3>
-          <button type="button" className="x" onClick={onClose} aria-label="Close">
-            <Icons.X size={14} />
-          </button>
-        </div>
-
         <div className="aa-acct-body">
           <div className="aa-acct-id">
             <div
@@ -336,7 +350,5 @@ export function AccountModal({
             </form>
           )}
         </div>
-      </div>
-    </div>
   );
 }

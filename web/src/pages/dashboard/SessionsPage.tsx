@@ -14,9 +14,9 @@ import type { Theme } from "../../lib/theme";
 import { Icons } from "../../components/Icons";
 import { Sidebar, workspaceKey } from "./Sidebar";
 import { SessionDetailView } from "./SessionDetailView";
-import { AccountModal } from "./AccountModal";
 import { TeamPage } from "./TeamPage";
 import { ServicePage } from "./ServicePage";
+import { SettingsPage } from "./SettingsPage";
 import { DevicePage } from "./DevicePage";
 import { WorkspacePage } from "./WorkspacePage";
 import { PairDeviceModal } from "./PairDeviceModal";
@@ -36,7 +36,7 @@ type SessionsPageProps = {
   token: string;
   initialMe: AuthMe;
   theme: Theme;
-  onToggleTheme: () => void;
+  onSetTheme: (theme: Theme) => void;
   onSignOut: () => void;
 };
 
@@ -50,7 +50,7 @@ export function SessionsPage({
   token,
   initialMe,
   theme,
-  onToggleTheme,
+  onSetTheme,
   onSignOut,
 }: SessionsPageProps) {
   const navigate = useNavigate();
@@ -60,12 +60,12 @@ export function SessionsPage({
   const deviceMatch = useMatch("/devices/:deviceId");
   const teamMatch = useMatch("/team");
   const serviceMatch = useMatch("/service");
+  const settingsMatch = useMatch("/settings");
   const routeSessionId = sessionMatch?.params.sessionId ?? null;
   const routeDeviceId =
     workspaceMatch?.params.deviceId ?? deviceMatch?.params.deviceId ?? null;
 
   const [me, setMe] = useState<AuthMe>(initialMe);
-  const [accountOpen, setAccountOpen] = useState(false);
 
   const [connectors, setConnectors] = useState<ConnectorView[]>([]);
   const [sessions, setSessions] = useState<SessionView[]>([]);
@@ -481,9 +481,8 @@ export function SessionsPage({
   const sidebarProps = {
     me,
     theme,
-    onToggleTheme,
     onLogout: onSignOut,
-    onOpenAccount: () => setAccountOpen(true),
+    onOpenSettings: () => navigate("/settings"),
     onOpenTeam: () => navigate("/team"),
     onOpenService: () => navigate("/service"),
     connectors: visibleConnectors,
@@ -657,13 +656,16 @@ export function SessionsPage({
         />
       )}
 
-      <AccountModal
-        open={accountOpen}
-        onClose={() => setAccountOpen(false)}
-        me={me}
-        token={token}
-        onAvatarChange={handleAvatarChange}
-      />
+      {settingsMatch && (
+        <SettingsPage
+          me={me}
+          token={token}
+          theme={theme}
+          onSetTheme={onSetTheme}
+          onAvatarChange={handleAvatarChange}
+          onBack={() => navigate("/")}
+        />
+      )}
 
       {teamMatch && (
         <TeamPage me={me} token={token} onBack={() => navigate("/")} />

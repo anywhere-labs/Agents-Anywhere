@@ -5,14 +5,14 @@ import { AAWord } from "./AAWord";
 
 type AuthChromeProps = {
   theme: Theme;
-  onToggleTheme: () => void;
+  onSetTheme: (theme: Theme) => void;
   serverUrl: string;
   children: ReactNode;
 };
 
 export function AuthChrome({
   theme,
-  onToggleTheme,
+  onSetTheme,
   serverUrl,
   children,
 }: AuthChromeProps) {
@@ -36,7 +36,7 @@ export function AuthChrome({
             <button
               type="button"
               className={theme === "light" ? "on" : ""}
-              onClick={() => theme !== "light" && onToggleTheme()}
+              onClick={() => onSetTheme("light")}
               aria-label="Light mode"
               title="Light mode"
             >
@@ -45,7 +45,7 @@ export function AuthChrome({
             <button
               type="button"
               className={theme === "dark" ? "on" : ""}
-              onClick={() => theme !== "dark" && onToggleTheme()}
+              onClick={() => onSetTheme("dark")}
               aria-label="Dark mode"
               title="Dark mode"
             >

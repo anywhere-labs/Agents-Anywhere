@@ -17,7 +17,7 @@ type AuthState =
   | { kind: "ready"; session: StoredSession; me: AuthMe };
 
 export default function App() {
-  const [theme, toggleTheme] = useTheme();
+  const [theme, setTheme] = useTheme();
 
   // URL-driven entry point for the runtime-panel demo. Real dashboard
   // navigation uses HashRouter paths such as #/sessions/:id and #/devices/:id.
@@ -125,7 +125,7 @@ export default function App() {
         token={state.session.accessToken}
         initialMe={state.me}
         theme={theme}
-        onToggleTheme={toggleTheme}
+        onSetTheme={setTheme}
         onSignOut={handleSignOut}
       />
     );
@@ -134,7 +134,7 @@ export default function App() {
   return (
     <AuthPage
       theme={theme}
-      onToggleTheme={toggleTheme}
+      onSetTheme={setTheme}
       onAuthed={handleAuthed}
     />
   );

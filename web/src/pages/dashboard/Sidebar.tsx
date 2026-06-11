@@ -3,16 +3,13 @@ import { Icons, KlawMark } from "../../components/Icons";
 import { Identicon } from "../../components/Identicon";
 import { AAWord } from "../auth/AAWord";
 import type { AuthMe, ConnectorView, SessionView } from "../../lib/api";
-import type { Theme } from "../../lib/theme";
 import { UserMenu } from "./UserMenu";
 import type { FilterState } from "./FilterMenu";
 
 type SidebarProps = {
   me: AuthMe;
-  theme: Theme;
-  onToggleTheme: () => void;
   onLogout: () => void;
-  onOpenAccount: () => void;
+  onOpenSettings: () => void;
   onOpenTeam: () => void;
   onOpenService: () => void;
   // Devices section (from main)
@@ -205,10 +202,8 @@ export function workspaceKey(cwd: string | null): string {
 
 export function Sidebar({
   me,
-  theme,
-  onToggleTheme,
   onLogout,
-  onOpenAccount,
+  onOpenSettings,
   onOpenTeam,
   onOpenService,
   connectors,
@@ -458,37 +453,12 @@ export function Sidebar({
             <UserMenu
               me={me}
               onClose={() => setUserMenu(false)}
-              onOpenAccount={onOpenAccount}
+              onOpenSettings={onOpenSettings}
               onOpenTeam={onOpenTeam}
               onOpenService={onOpenService}
               onLogout={onLogout}
             />
           )}
-
-          <div className="theme-seg" role="group" aria-label="Color theme">
-            <button
-              type="button"
-              className={theme === "light" ? "on" : ""}
-              onClick={() => {
-                if (theme !== "light") onToggleTheme();
-              }}
-              aria-label="Light mode"
-              title="Light mode"
-            >
-              <Icons.Sun size={13} />
-            </button>
-            <button
-              type="button"
-              className={theme === "dark" ? "on" : ""}
-              onClick={() => {
-                if (theme !== "dark") onToggleTheme();
-              }}
-              aria-label="Dark mode"
-              title="Dark mode"
-            >
-              <Icons.Moon size={13} />
-            </button>
-          </div>
         </div>
       )}
     </div>

@@ -27,7 +27,7 @@ type OAuthPending = {
 
 type AuthPageProps = {
   theme: Theme;
-  onToggleTheme: () => void;
+  onSetTheme: (theme: Theme) => void;
   onAuthed: (auth: AuthResponse) => void;
   serverUrl?: string;
 };
@@ -42,7 +42,7 @@ const DEFAULT_SERVER_URL =
 
 export function AuthPage({
   theme,
-  onToggleTheme,
+  onSetTheme,
   onAuthed,
   serverUrl = DEFAULT_SERVER_URL,
 }: AuthPageProps) {
@@ -197,7 +197,7 @@ export function AuthPage({
     return (
       <AuthChrome
         theme={theme}
-        onToggleTheme={onToggleTheme}
+        onSetTheme={onSetTheme}
         serverUrl={serverUrl}
       >
         <div className="aa-card">
@@ -212,7 +212,7 @@ export function AuthPage({
   const cfg = config!;
   if (oauthPending && oauthPending.status !== "authenticated") {
     return (
-      <AuthChrome theme={theme} onToggleTheme={onToggleTheme} serverUrl={serverUrl}>
+      <AuthChrome theme={theme} onSetTheme={onSetTheme} serverUrl={serverUrl}>
         <OAuthFinalizeCard
           mode={oauthPending.status}
           initialUserId={oauthPending.userId}
@@ -255,7 +255,7 @@ export function AuthPage({
   return (
     <AuthChrome
       theme={theme}
-      onToggleTheme={onToggleTheme}
+      onSetTheme={onSetTheme}
       serverUrl={serverUrl}
     >
       {view}
