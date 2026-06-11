@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import secrets
-from pathlib import Path
 from typing import Any
 
 from agent_server.infra.files import FileStorage
@@ -13,48 +12,14 @@ from agent_server.core.utc import utc_now
 
 
 LOCAL_FILE_TOKEN_KIND = "local_file"
-FILE_OPEN_TOKEN_KIND = "file_open"
 LOCAL_FILE_TOKEN_EXPIRES_IN = 300
 FILE_OPEN_EXPIRES_IN = 300
-FILE_OPEN_TOKEN_EXPIRES_IN = 300
 
 
 class AttachmentService:
     def __init__(self, store: Any, files: FileStorage) -> None:
         self._store = store
         self._files = files
-
-    async def save_connector_upload(
-        self,
-        *,
-        connector_id: str,
-        session_id: str,
-        path: str,
-        name: str | None,
-        size: int,
-        sha256: str,
-        content_base64: str,
-    ) -> dict[str, Any]:
-        if not await self._store.session_owned_by_connector(session_id, connector_id):
-            raise KeyError(session_id)
-
-        try:
-            data = base64.b64decode(content_base64.encode("ascii"), validate=True)
-        except (ValueError, UnicodeEncodeError) as exc:
-            raise ValueError("contentBase64 is not valid base64") from exc
-        if len(data) != size:
-            raise ValueError("uploaded file size does not match metadata")
-        actual_sha256 = hashlib.sha256(data).hexdigest()
-        if actual_sha256 != sha256:
-            raise ValueError("uploaded file sha256 does not match metadata")
-
-        return await self._persist_file_blob(
-            session_id=session_id,
-            data=data,
-            name=name or Path(path).name or None,
-            source_path=path,
-            origin="connector",
-        )
 
     async def save_user_upload(
         self,
@@ -126,25 +91,6 @@ class AttachmentService:
         )
         return await self.signed_file_open_url(session_id=session_id, file_id=file_id)
 
-    async def user_file_open_token_url(
-        self,
-        *,
-        session_id: str,
-        file_id: str,
-        user_id: str,
-    ) -> str:
-        await self.user_file_metadata(
-            session_id=session_id,
-            file_id=file_id,
-            user_id=user_id,
-        )
-        token = create_signed_token(
-            FILE_OPEN_TOKEN_KIND,
-            {"sessionId": session_id, "fileId": file_id},
-            FILE_OPEN_TOKEN_EXPIRES_IN,
-        )
-        return f"/sessions/{session_id}/files/{file_id}/open?token={token}"
-
     async def signed_file_open_url(
         self,
         *,
@@ -166,54 +112,23 @@ class AttachmentService:
         )
         return f"/sessions/local/{session_id}/{file_id}?token={token}"
 
-    async def read_connector_handoff(
+    async def read_connector_attachment(
         self,
         *,
+        session_id: str,
         file_id: str,
         connector_id: str,
     ) -> tuple[bytes, dict[str, Any]]:
         self._validate_file_id(file_id)
-        session_id = await self.session_id_for_connector_file(file_id, connector_id)
-        if session_id is None:
-            raise KeyError(file_id)
+        if not await self._store.session_owned_by_connector(session_id, connector_id):
+            raise KeyError(session_id)
         data, metadata = await self._files.read(session_id, file_id)
         self._validate_blob_integrity(data, metadata)
         return data, metadata
 
-    async def connector_file_open_url(
-        self,
-        *,
-        file_id: str,
-        connector_id: str,
-    ) -> str:
-        self._validate_file_id(file_id)
-        session_id = await self.session_id_for_connector_file(file_id, connector_id)
-        if session_id is None:
-            raise KeyError(file_id)
-        native = await self._files.open_url(
-            session_id,
-            file_id,
-            expires_in=FILE_OPEN_EXPIRES_IN,
-        )
-        if native is not None:
-            return native.url
-        token = create_signed_token(
-            LOCAL_FILE_TOKEN_KIND,
-            {"sessionId": session_id, "fileId": file_id},
-            LOCAL_FILE_TOKEN_EXPIRES_IN,
-        )
-        return f"/sessions/local/{session_id}/{file_id}?token={token}"
-
     async def delete_file(self, *, session_id: str, file_id: str) -> None:
         self._validate_file_id(file_id)
         await self._files.delete(session_id, file_id)
-
-    async def session_id_for_connector_file(
-        self,
-        file_id: str,
-        connector_id: str,
-    ) -> str | None:
-        return await self._store.session_id_for_uploaded_file(file_id, connector_id)
 
     async def uploaded_attachment_view(
         self,
@@ -230,8 +145,8 @@ class AttachmentService:
             sha256=saved["sha256"],
             mediaType=saved.get("mediaType") or fallback_media_type,
             createdAt=saved["createdAt"],
-            downloadUrl=f"/sessions/{session_id}/files/{saved['fileId']}/download",
-            openUrl=f"/sessions/{session_id}/files/{saved['fileId']}/open",
+            downloadUrl=f"/sessions/{session_id}/attachments/{saved['fileId']}",
+            openUrl=f"/sessions/{session_id}/attachments/{saved['fileId']}/open",
         )
 
     async def _persist_file_blob(

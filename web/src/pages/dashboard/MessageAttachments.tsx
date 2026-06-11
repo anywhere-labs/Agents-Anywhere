@@ -200,8 +200,7 @@ function AttachmentTile({
 function openPlatformFile(url: string) {
   return async (event: MouseEvent<HTMLAnchorElement>) => {
     event.preventDefault();
-    const signedUrl = await signedOpenUrl(url);
-    window.open(signedUrl, "_blank", "noopener,noreferrer");
+    window.open(authenticatedOpenUrl(url), "_blank", "noopener,noreferrer");
   };
 }
 
@@ -216,8 +215,7 @@ function openPlatformImage(
   return async (event: MouseEvent<HTMLAnchorElement>) => {
     event.preventDefault();
     try {
-      const signedUrl = await signedOpenUrl(url);
-      const response = await fetch(signedUrl);
+      const response = await fetchWithAuth(url);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const blob = await response.blob();
       opts.onPreview({
@@ -228,25 +226,23 @@ function openPlatformImage(
       });
       return;
     } catch {
-      const signedUrl = await signedOpenUrl(url).catch(() => url);
-      window.open(signedUrl, "_blank", "noopener,noreferrer");
+      window.open(authenticatedOpenUrl(url), "_blank", "noopener,noreferrer");
     }
   };
 }
 
-async function signedOpenUrl(url: string): Promise<string> {
+function authenticatedOpenUrl(url: string): string {
   const session = loadSession();
   if (!session?.accessToken) return url;
-  const tokenUrl = `${url.replace(/[?#].*$/, "")}-token`;
-  const response = await fetch(tokenUrl, {
-    headers: { authorization: `Bearer ${session.accessToken}` },
-  });
-  if (!response.ok) return url;
-  const payload = (await response.json()) as { openUrl?: unknown };
-  if (typeof payload.openUrl !== "string" || !payload.openUrl) {
-    return url;
-  }
-  return payload.openUrl;
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}token=${encodeURIComponent(session.accessToken)}`;
+}
+
+function fetchWithAuth(url: string): Promise<Response> {
+  const session = loadSession();
+  const headers = new Headers();
+  if (session?.accessToken) headers.set("authorization", `Bearer ${session.accessToken}`);
+  return fetch(url, { headers });
 }
 
 function formatBytes(n: number): string {

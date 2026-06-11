@@ -25,8 +25,8 @@ from connector.launch import LaunchTarget, launch_target
 from connector.time import utc_now
 
 
-AttachmentDownloader = Callable[[str], Awaitable[tuple[bytes, str, str]]]
-"""(file_id) -> (data, original_name, media_type)"""
+AttachmentDownloader = Callable[[str, str], Awaitable[tuple[bytes, str, str]]]
+"""(session_id, file_id) -> (data, original_name, media_type)"""
 
 _MAX_STDERR_LINES = 80
 _MAX_STDERR_CHARS = 8000
@@ -664,7 +664,9 @@ class ClaudeSdkAdapter:
             if file_id is None:
                 continue
             try:
-                data, original_name, media_type = await self.attachment_downloader(file_id)
+                data, original_name, media_type = await self.attachment_downloader(
+                    session_id, file_id
+                )
             except Exception as exc:
                 logger.exception("Claude attachment download failed file_id={}", file_id)
                 blocks.append({"type": "text", "text": f"\n\n[Failed to load attachment {file_id}: {exc}]"})

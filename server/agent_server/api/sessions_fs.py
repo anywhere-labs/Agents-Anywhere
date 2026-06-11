@@ -13,7 +13,6 @@ from agent_server.core.models import (
 )
 from agent_server.services.attachments import (
     AttachmentService,
-    FILE_OPEN_TOKEN_KIND,
     LOCAL_FILE_TOKEN_KIND,
 )
 from agent_server.infra.repositories.facade import Store
@@ -28,8 +27,8 @@ MAX_UPLOAD_FILES_PER_REQUEST = 5
 MAX_UPLOAD_FILE_BYTES = 25 * 1024 * 1024  # 25 MiB
 
 
-@router.get("/{session_id}/files/{file_id}/download", response_model=FsDownloadResponse)
-async def file_download(
+@router.get("/{session_id}/attachments/{file_id}", response_model=FsDownloadResponse)
+async def attachment_download(
     session_id: str,
     file_id: str,
     user_id: str = Depends(current_user_id),
@@ -48,8 +47,8 @@ async def file_download(
     return FsDownloadResponse(**downloaded, serverTime=utc_now())
 
 
-@router.get("/{session_id}/files/{file_id}/open")
-async def file_open(
+@router.get("/{session_id}/attachments/{file_id}/open")
+async def attachment_open(
     session_id: str,
     file_id: str,
     token: str | None = Query(None),
@@ -57,34 +56,8 @@ async def file_open(
     attachments: AttachmentService = Depends(get_attachment_service),
 ) -> RedirectResponse:
     try:
-        payload = verify_signed_token(FILE_OPEN_TOKEN_KIND, token) if token else None
-        if payload:
-            if payload.get("sessionId") != session_id or payload.get("fileId") != file_id:
-                raise HTTPException(status_code=401, detail="invalid file token")
-            url = await attachments.signed_file_open_url(session_id=session_id, file_id=file_id)
-        else:
-            user_id = _user_id_from_header(authorization=authorization)
-            url = await attachments.user_file_open_url(
-                session_id=session_id,
-                file_id=file_id,
-                user_id=user_id,
-            )
-    except KeyError:
-        raise HTTPException(status_code=404, detail="file not found") from None
-    except ValueError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    return RedirectResponse(url=url, status_code=302)
-
-
-@router.get("/{session_id}/files/{file_id}/open-token")
-async def file_open_token(
-    session_id: str,
-    file_id: str,
-    user_id: str = Depends(current_user_id),
-    attachments: AttachmentService = Depends(get_attachment_service),
-) -> dict[str, str]:
-    try:
-        url = await attachments.user_file_open_token_url(
+        user_id = _user_id_from_header(authorization=authorization, token=token)
+        url = await attachments.user_file_open_url(
             session_id=session_id,
             file_id=file_id,
             user_id=user_id,
@@ -93,7 +66,7 @@ async def file_open_token(
         raise HTTPException(status_code=404, detail="file not found") from None
     except ValueError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    return {"openUrl": url, "serverTime": utc_now()}
+    return RedirectResponse(url=url, status_code=302)
 
 
 @router.get("/local/{session_id}/{file_id}", include_in_schema=False)
@@ -126,8 +99,8 @@ async def local_file_raw(
     )
 
 
-@router.post("/{session_id}/uploads", response_model=UserUploadResponse)
-async def user_uploads(
+@router.post("/{session_id}/attachments", response_model=UserUploadResponse)
+async def create_attachments(
     session_id: str,
     files: list[UploadFile] = File(...),
     user_id: str = Depends(current_user_id),
@@ -135,9 +108,7 @@ async def user_uploads(
     attachments: AttachmentService = Depends(get_attachment_service),
 ) -> UserUploadResponse:
     """User-driven attachment upload — files staged on the backend for the agent
-    to pick up via the connector. One blob per uploaded file. The bytes get
-    deleted from disk as soon as the connector has consumed them (see
-    `/connector/files/downloads/{file_id}`)."""
+    to pick up via the connector. One blob per uploaded file."""
     if not files:
         raise HTTPException(status_code=422, detail="no files were uploaded")
     if len(files) > MAX_UPLOAD_FILES_PER_REQUEST:
@@ -198,10 +169,15 @@ def _safe_header_value(value: str) -> str:
 def _user_id_from_header(
     *,
     authorization: str | None,
+    token: str | None = None,
 ) -> str:
     prefix = "Bearer "
     if authorization and authorization.startswith(prefix):
         user_id = verify_user_access_token(authorization[len(prefix) :])
+        if user_id is not None:
+            return user_id
+    if token:
+        user_id = verify_user_access_token(token)
         if user_id is not None:
             return user_id
     raise HTTPException(status_code=401, detail="invalid user access token")

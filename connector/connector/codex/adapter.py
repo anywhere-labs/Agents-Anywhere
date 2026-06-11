@@ -17,8 +17,8 @@ from connector.codex.rpc import JsonRpcStdioClient
 from connector.time import utc_now
 
 
-AttachmentDownloader = Callable[[str], Awaitable[tuple[bytes, str, str]]]
-"""(file_id) → (data, original_name, media_type)"""
+AttachmentDownloader = Callable[[str, str], Awaitable[tuple[bytes, str, str]]]
+"""(session_id, file_id) -> (data, original_name, media_type)"""
 
 EXISTING_SYNC_SCAN_TIMEOUT_SECONDS = 1200.0
 EXISTING_SYNC_CHANGED_THREAD_TIMEOUT_SECONDS = 1200.0
@@ -410,7 +410,9 @@ class CodexAdapter:
             if file_id is None:
                 continue
             try:
-                data, original_name, media_type = await self.attachment_downloader(file_id)
+                data, original_name, media_type = await self.attachment_downloader(
+                    session_id, file_id
+                )
             except Exception as exc:
                 logger.exception("attachment download failed file_id={}", file_id)
                 text += f"\n\n[Failed to load attachment {file_id}: {exc}]"

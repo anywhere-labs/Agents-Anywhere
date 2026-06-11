@@ -2242,7 +2242,7 @@ def test_send_message_forwards_uploaded_attachment_metadata_to_connector(tmp_pat
     data = b"attachment body\n"
 
     upload_response = client.post(
-        f"/sessions/{session_id}/uploads",
+        f"/sessions/{session_id}/attachments",
         headers=headers,
         files={"files": ("notes.md", data, "text/markdown")},
     )
@@ -2267,8 +2267,8 @@ def test_send_message_forwards_uploaded_attachment_metadata_to_connector(tmp_pat
             "mediaType": "text/markdown",
             "size": len(data),
             "sha256": hashlib.sha256(data).hexdigest(),
-            "downloadUrl": f"/connector/files/downloads/{attachment['fileId']}",
-            "platformOpenUrl": f"/sessions/{session_id}/files/{attachment['fileId']}/open",
+            "downloadUrl": f"/connector/sessions/{session_id}/attachments/{attachment['fileId']}/content",
+            "platformOpenUrl": f"/sessions/{session_id}/attachments/{attachment['fileId']}/open",
         }
     ]
 
@@ -4807,33 +4807,25 @@ def test_shell_task_wait_timeout_abandons_and_cancels(tmp_path):
     )
 
 
-def test_connector_uploads_fs_read_artifact_and_user_downloads_it(tmp_path):
+def test_client_uploads_attachment_and_connector_downloads_by_session(tmp_path):
     client = make_client(tmp_path)
     connector_id, connector_access_token, session_id, headers = create_connector_and_session(client)
     data = b"\x00hello\n\xff"
-    sha256 = hashlib.sha256(data).hexdigest()
 
     upload_response = client.post(
-        "/connector/files/uploads",
-        headers={"Authorization": f"Bearer {connector_access_token}"},
-        json={
-            "sessionId": session_id,
-            "path": "/repo/blob.bin",
-            "name": "blob.bin",
-            "size": len(data),
-            "sha256": sha256,
-            "contentBase64": base64.b64encode(data).decode("ascii"),
-        },
+        f"/sessions/{session_id}/attachments",
+        headers=headers,
+        files={"files": ("blob.bin", data, "application/octet-stream")},
     )
 
     assert upload_response.status_code == 200
-    upload_body = upload_response.json()
+    upload_body = upload_response.json()["attachments"][0]
     assert upload_body["sessionId"] == session_id
-    assert upload_body["path"] == "/repo/blob.bin"
+    assert upload_body["name"] == "blob.bin"
     assert upload_body["size"] == len(data)
-    assert upload_body["sha256"] == sha256
-    assert upload_body["downloadUrl"] == f"/sessions/{session_id}/files/{upload_body['fileId']}/download"
-    assert upload_body["openUrl"] == f"/sessions/{session_id}/files/{upload_body['fileId']}/open"
+    assert upload_body["sha256"] == hashlib.sha256(data).hexdigest()
+    assert upload_body["downloadUrl"] == f"/sessions/{session_id}/attachments/{upload_body['fileId']}"
+    assert upload_body["openUrl"] == f"/sessions/{session_id}/attachments/{upload_body['fileId']}/open"
 
     download_response = client.get(upload_body["downloadUrl"], headers=headers)
 
@@ -4856,19 +4848,11 @@ def test_connector_uploads_fs_read_artifact_and_user_downloads_it(tmp_path):
         f"{upload_body['openUrl']}?token={headers['Authorization'].removeprefix('Bearer ')}",
         follow_redirects=False,
     )
-    assert user_token_open_response.status_code == 401
-
-    token_response = client.get(f"{upload_body['openUrl']}-token", headers=headers)
-    assert token_response.status_code == 200
-    signed_open_url = token_response.json()["openUrl"]
-    assert signed_open_url.startswith(
-        f"/sessions/{session_id}/files/{upload_body['fileId']}/open?token="
-    )
-    query_open_response = client.get(signed_open_url, follow_redirects=False)
-    assert query_open_response.status_code == 302
+    assert user_token_open_response.status_code == 302
+    assert client.get(f"{upload_body['openUrl']}-token", headers=headers).status_code == 404
 
     connector_download = client.get(
-        f"/connector/files/downloads/{upload_body['fileId']}",
+        f"/connector/sessions/{session_id}/attachments/{upload_body['fileId']}/content",
         headers={"Authorization": f"Bearer {connector_access_token}"},
     )
     assert connector_download.status_code == 200

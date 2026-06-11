@@ -600,7 +600,7 @@ class UploadedAttachment(BaseModel):
 
 
 class UserUploadResponse(BaseModel):
-    """Result of POST /sessions/{id}/uploads — one entry per uploaded file."""
+    """Result of POST /sessions/{id}/attachments — one entry per uploaded file."""
 
     attachments: list[UploadedAttachment]
     serverTime: str
@@ -608,27 +608,6 @@ class UserUploadResponse(BaseModel):
 
 class FsReadRequest(BaseModel):
     path: str = Field(min_length=1)
-
-
-class FsUploadRequest(BaseModel):
-    sessionId: str = Field(min_length=1)
-    path: str = Field(min_length=1)
-    name: str | None = None
-    size: int = Field(ge=0)
-    sha256: str = Field(min_length=64, max_length=64)
-    contentBase64: str
-
-
-class FsUploadResponse(BaseModel):
-    fileId: str
-    sessionId: str
-    path: str
-    name: str
-    size: int
-    sha256: str
-    downloadUrl: str
-    openUrl: str
-    createdAt: str
 
 
 class FsDownloadResponse(BaseModel):

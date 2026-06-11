@@ -934,7 +934,7 @@ export const api = {
     let res: Response;
     try {
       res = await fetch(
-        `${BASE}/sessions/${encodeURIComponent(sessionId)}/uploads`,
+        `${BASE}/sessions/${encodeURIComponent(sessionId)}/attachments`,
         { method: "POST", body: form, headers },
       );
     } catch (err) {

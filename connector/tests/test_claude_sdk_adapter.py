@@ -202,7 +202,7 @@ async def test_claude_sdk_adapter_streams_timeline_and_updates_external_session(
                     "mediaType": "text/plain",
                     "size": 12,
                     "sha256": "abc",
-                    "downloadUrl": "/sessions/sess_1/files/file_1/download",
+                    "downloadUrl": "/sessions/sess_1/attachments/file_1",
                     "pathHint": "/repo/.aa-attachments/file_1-report.txt",
                 }
             ],
@@ -241,7 +241,7 @@ async def test_claude_sdk_adapter_streams_timeline_and_updates_external_session(
             "mediaType": "text/plain",
             "size": 12,
             "sha256": "abc",
-            "downloadUrl": "/sessions/sess_1/files/file_1/download",
+            "downloadUrl": "/sessions/sess_1/attachments/file_1",
         }
     ]
     assert timeline[2]["content"]["text"] == "I'll run that."
@@ -464,7 +464,8 @@ async def test_claude_sdk_adapter_materializes_file_attachment_to_user_dir(tmp_p
     monkeypatch.setenv("AGENT_CONNECTOR_ATTACHMENTS_ROOT", str(attachments_root))
     adapter = ClaudeSdkAdapter(sdk_module=FakeSdk)
 
-    async def download(file_id: str) -> tuple[bytes, str, str]:
+    async def download(session_id: str, file_id: str) -> tuple[bytes, str, str]:
+        assert session_id == "sess_file"
         assert file_id == "file_1"
         return b"hello\n", "../notes.md", "text/markdown"
 
@@ -509,7 +510,8 @@ async def test_claude_sdk_adapter_sends_image_attachment_as_base64_block(tmp_pat
     adapter = ClaudeSdkAdapter(sdk_module=FakeSdk)
     image_bytes = b"\x89PNG\r\n\x1a\n"
 
-    async def download(file_id: str) -> tuple[bytes, str, str]:
+    async def download(session_id: str, file_id: str) -> tuple[bytes, str, str]:
+        assert session_id == "sess_image"
         assert file_id == "file_img"
         return image_bytes, "diagram.png", "image/png"
 

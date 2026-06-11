@@ -748,8 +748,8 @@ class BackendRpcClient:
             timeout=60,
         )
 
-    async def download_attachment(self, file_id: str) -> tuple[bytes, str, str]:
-        """Pull a user-uploaded attachment by file_id.
+    async def download_attachment(self, session_id: str, file_id: str) -> tuple[bytes, str, str]:
+        """Pull a user-uploaded attachment by session_id and file_id.
 
         Returns (data, filename, media_type). The backend keeps the durable
         platform file after runtime consumption; callers still persist a local
@@ -759,13 +759,19 @@ class BackendRpcClient:
         timeout = httpx.Timeout(300.0, connect=30.0)
         async with self._new_http_client(timeout=timeout) as client:
             response = await client.get(
-                urljoin(self.config.server_url + "/", f"connector/files/downloads/{file_id}"),
+                urljoin(
+                    self.config.server_url + "/",
+                    f"connector/sessions/{session_id}/attachments/{file_id}/content",
+                ),
                 headers={"Authorization": f"Bearer {access_token}"},
             )
             if getattr(response, "status_code", None) == 401:
                 access_token = await self.ensure_access_token(force=True)
                 response = await client.get(
-                    urljoin(self.config.server_url + "/", f"connector/files/downloads/{file_id}"),
+                    urljoin(
+                        self.config.server_url + "/",
+                        f"connector/sessions/{session_id}/attachments/{file_id}/content",
+                    ),
                     headers={"Authorization": f"Bearer {access_token}"},
                 )
                 if getattr(response, "status_code", None) == 401:

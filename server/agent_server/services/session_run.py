@@ -239,8 +239,8 @@ class SessionRunService:
                     "mediaType": metadata.get("mediaType") or "",
                     "size": metadata.get("size"),
                     "sha256": metadata.get("sha256"),
-                    "downloadUrl": f"/connector/files/downloads/{file_id}",
-                    "platformOpenUrl": f"/sessions/{session_id}/files/{file_id}/open",
+                    "downloadUrl": f"/connector/sessions/{session_id}/attachments/{file_id}/content",
+                    "platformOpenUrl": f"/sessions/{session_id}/attachments/{file_id}/open",
                 }
             )
         return payloads

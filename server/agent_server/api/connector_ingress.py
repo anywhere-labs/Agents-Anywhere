@@ -37,8 +37,6 @@ from agent_server.core.models import (
     ConnectorAuthResponse,
     ConnectorIngestRequest,
     ConnectorIngestResponse,
-    FsUploadRequest,
-    FsUploadResponse,
     TimelineItemIn,
 )
 from agent_server.services.attachments import AttachmentService
@@ -161,8 +159,9 @@ async def connector_claude_transcript_cursors(
     }
 
 
-@router.get("/connector/files/downloads/{file_id}")
-async def connector_file_download(
+@router.get("/connector/sessions/{session_id}/attachments/{file_id}/content")
+async def connector_attachment_content(
+    session_id: str,
     file_id: str,
     authorization: str = Header(..., alias="Authorization"),
     db: Store = Depends(get_store),
@@ -181,8 +180,10 @@ async def connector_file_download(
     await _require_active_connector(connector_id, db)
     await db.record_connector_activity(connector_id)
     try:
-        data, metadata = await attachments.read_connector_handoff(
-            file_id=file_id, connector_id=connector_id
+        data, metadata = await attachments.read_connector_attachment(
+            session_id=session_id,
+            file_id=file_id,
+            connector_id=connector_id,
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="file not found") from None
@@ -233,37 +234,6 @@ def _safe_header_value(value: str) -> str:
     # already knows the canonical name from its turn.start request — this is
     # only a debug aid.
     return value.encode("latin-1", errors="replace").decode("latin-1")
-
-
-@router.post("/connector/files/uploads", response_model=FsUploadResponse)
-async def connector_file_upload(
-    payload: FsUploadRequest,
-    authorization: str = Header(..., alias="Authorization"),
-    db: Store = Depends(get_store),
-    attachments: AttachmentService = Depends(get_attachment_service),
-) -> FsUploadResponse:
-    connector_id = _connector_id_from_bearer(authorization)
-    await _require_active_connector(connector_id, db)
-    await db.record_connector_activity(connector_id)
-    try:
-        saved = await attachments.save_connector_upload(
-            connector_id=connector_id,
-            session_id=payload.sessionId,
-            path=payload.path,
-            name=payload.name,
-            size=payload.size,
-            sha256=payload.sha256,
-            content_base64=payload.contentBase64,
-        )
-    except KeyError:
-        raise HTTPException(status_code=404, detail="session not found") from None
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return FsUploadResponse(
-        **saved,
-        downloadUrl=f"/sessions/{payload.sessionId}/files/{saved['fileId']}/download",
-        openUrl=f"/sessions/{payload.sessionId}/files/{saved['fileId']}/open",
-    )
 
 
 @router.websocket("/connector/ws")

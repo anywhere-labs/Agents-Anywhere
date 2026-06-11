@@ -1012,7 +1012,8 @@ async def _exercise_codex_adapter_materializes_attachments_to_user_dir(tmp_path,
     adapter = CodexAdapter(rpc=rpc)  # type: ignore[arg-type]
     adapter.reducer.bind_session("sess_attach", "thr_attach")
 
-    async def download(file_id: str) -> tuple[bytes, str, str]:
+    async def download(session_id: str, file_id: str) -> tuple[bytes, str, str]:
+        assert session_id == "sess_attach"
         if file_id == "file_note":
             return b"hello\n", "../notes.md", "text/markdown"
         return b"\x89PNG\r\n\x1a\n", "diagram.png", "image/png"
