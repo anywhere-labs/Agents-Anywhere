@@ -2,10 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Icons } from "../../components/Icons";
 import { Identicon } from "../../components/Identicon";
 import { ApiError, api, type AuthMe } from "../../lib/api";
-import {
-  createPasswordVerifier,
-  derivePasswordVerifier,
-} from "../../lib/passwordVerifier";
+import { createPasswordVerifier } from "../../lib/passwordVerifier";
 import { passwordScore, STRENGTH_LABEL } from "../auth/password";
 
 type AccountModalProps = {
@@ -86,7 +83,6 @@ export function AccountPanel({
   const [avatarError, setAvatarError] = useState<string | null>(null);
 
   const [showForm, setShowForm] = useState(false);
-  const [oldPw, setOldPw] = useState("");
   const [newPw, setNewPw] = useState("");
   const [confirmPw, setConfirmPw] = useState("");
   const [showPw, setShowPw] = useState(false);
@@ -96,7 +92,6 @@ export function AccountPanel({
 
   useEffect(() => {
     setShowForm(false);
-    setOldPw("");
     setNewPw("");
     setConfirmPw("");
     setError(null);
@@ -107,8 +102,7 @@ export function AccountPanel({
   const score = passwordScore(newPw);
   const mismatch = !!(newPw && confirmPw && newPw !== confirmPw);
   const tooShort = !!(newPw && newPw.length < 8);
-  const sameAsOld = !!(newPw && oldPw && newPw === oldPw);
-  const ok = !!(oldPw && newPw && confirmPw && !mismatch && !tooShort && !sameAsOld);
+  const ok = !!(newPw && confirmPw && !mismatch && !tooShort);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -116,16 +110,15 @@ export function AccountPanel({
     setError(null);
     setLoading(true);
     try {
-      const { salt } = await api.passwordSalt(me.userId);
+      const verifier = await createPasswordVerifier(newPw);
       await api.changePassword(token, {
-        oldPasswordVerifier: await derivePasswordVerifier(oldPw, salt),
-        ...(await createPasswordVerifier(newPw)),
+        newPasswordVerifier: verifier.passwordVerifier,
+        newPasswordSalt: verifier.passwordSalt,
       });
       setSuccess(true);
       window.setTimeout(() => {
         setShowForm(false);
         setSuccess(false);
-        setOldPw("");
         setNewPw("");
         setConfirmPw("");
       }, 1100);
@@ -174,9 +167,7 @@ export function AccountPanel({
     ? { cls: "err", text: error }
     : success
       ? { cls: "ok", text: "Password updated." }
-      : sameAsOld
-        ? { cls: "err", text: "New password must differ from current" }
-        : mismatch
+      : mismatch
           ? { cls: "err", text: "Passwords don't match" }
           : newPw
             ? { cls: "", text: STRENGTH_LABEL[score] }
@@ -261,13 +252,14 @@ export function AccountPanel({
           ) : (
             <form onSubmit={submit} className="aa-acct-form">
               <div className="row">
-                <label>Current password</label>
+                <label>New password</label>
                 <div className="field">
                   <input
                     type={showPw ? "text" : "password"}
-                    value={oldPw}
-                    onChange={(e) => setOldPw(e.target.value)}
-                    autoComplete="current-password"
+                    value={newPw}
+                    onChange={(e) => setNewPw(e.target.value)}
+                    placeholder="at least 8 characters"
+                    autoComplete="new-password"
                     required
                     autoFocus
                   />
@@ -280,20 +272,6 @@ export function AccountPanel({
                   >
                     {showPw ? <Icons.EyeOff size={13} /> : <Icons.Eye size={13} />}
                   </button>
-                </div>
-              </div>
-
-              <div className="row">
-                <label>New password</label>
-                <div className="field">
-                  <input
-                    type={showPw ? "text" : "password"}
-                    value={newPw}
-                    onChange={(e) => setNewPw(e.target.value)}
-                    placeholder="at least 8 characters"
-                    autoComplete="new-password"
-                    required
-                  />
                 </div>
                 {newPw && (
                   <div className={`aa-acct-strength s${score}`}>
@@ -330,7 +308,6 @@ export function AccountPanel({
                   className="aa-acct-btn ghost"
                   onClick={() => {
                     setShowForm(false);
-                    setOldPw("");
                     setNewPw("");
                     setConfirmPw("");
                     setError(null);

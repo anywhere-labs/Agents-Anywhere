@@ -249,13 +249,13 @@ def test_auth_me_requires_token(tmp_path):
 # ---------- /auth/change-password --------------------------------------------
 
 
-def test_change_password_succeeds_with_correct_old_password(tmp_path):
+def test_change_password_succeeds_without_old_password(tmp_path):
     client = make_client(tmp_path)
     token = admin_token(client)
     response = client.post(
         "/auth/change-password",
         headers=bearer(token),
-        json={"oldPassword": "secret", "newPassword": "new-secret"},
+        json={"newPassword": "new-secret"},
     )
     assert response.status_code == 204
     assert login(client, "user1", password="secret").status_code == 401
@@ -265,13 +265,11 @@ def test_change_password_succeeds_with_correct_old_password(tmp_path):
 def test_change_password_accepts_verifiers(tmp_path):
     client = make_client(tmp_path)
     token = admin_token(client)
-    old_salt = client.post("/auth/password-salt", json={"userId": "user1"}).json()["salt"]
     new_salt = "changed-salt"
     response = client.post(
         "/auth/change-password",
         headers=bearer(token),
         json={
-            "oldPasswordVerifier": password_verifier("secret", old_salt),
             "newPasswordSalt": new_salt,
             "newPasswordVerifier": password_verifier("new-secret", new_salt),
         },
@@ -281,7 +279,7 @@ def test_change_password_accepts_verifiers(tmp_path):
     assert login(client, "user1", password="new-secret").status_code == 200
 
 
-def test_change_password_rejects_wrong_old_password(tmp_path):
+def test_change_password_ignores_old_password_when_present(tmp_path):
     client = make_client(tmp_path)
     token = admin_token(client)
     response = client.post(
@@ -289,7 +287,8 @@ def test_change_password_rejects_wrong_old_password(tmp_path):
         headers=bearer(token),
         json={"oldPassword": "wrong", "newPassword": "new-secret"},
     )
-    assert response.status_code == 401
+    assert response.status_code == 204
+    assert login(client, "user1", password="new-secret").status_code == 200
 
 
 def test_change_password_requires_non_empty_new_password(tmp_path):
@@ -298,7 +297,7 @@ def test_change_password_requires_non_empty_new_password(tmp_path):
     response = client.post(
         "/auth/change-password",
         headers=bearer(token),
-        json={"oldPassword": "secret", "newPassword": ""},
+        json={"newPassword": ""},
     )
     assert response.status_code == 422
 

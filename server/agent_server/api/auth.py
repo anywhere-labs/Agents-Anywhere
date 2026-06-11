@@ -327,20 +327,13 @@ async def change_password(
     user: UserView = Depends(current_user),
     db: Store = Depends(get_store),
 ) -> None:
-    """Caller changes their own password, must supply old password."""
+    """Caller changes their own password.
+
+    The bearer token is the authentication factor here. Until 2FA exists, do
+    not require users to re-enter the current password just to set a new one.
+    """
     if not payload.newPassword and not payload.newPasswordVerifier:
         raise HTTPException(status_code=422, detail="new password is required")
-    if payload.oldPasswordVerifier is not None:
-        verified = await db.verify_user_verifier(
-            user_id=user.userId,
-            verifier=payload.oldPasswordVerifier,
-        )
-    elif payload.oldPassword is not None:
-        verified = await db.verify_user(user_id=user.userId, password=payload.oldPassword)
-    else:
-        verified = None
-    if verified is None:
-        raise HTTPException(status_code=401, detail="old password is incorrect")
     await db.update_user_password(
         user.userId,
         payload.newPassword,
