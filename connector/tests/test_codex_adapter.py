@@ -751,7 +751,7 @@ async def _exercise_adapter() -> None:
 
     turn = await adapter.start_turn({"sessionId": "sess_1", "content": "continue"})
     assert turn["turnId"] == "turn_2"
-    assert [request[0] for request in rpc.requests].count("thread/resume") == 2
+    assert [request[0] for request in rpc.requests].count("thread/resume") == 1
     assert rpc.requests[-1][0] == "turn/start"
     assert rpc.requests[-1][1]["threadId"] == "thr_1"
 

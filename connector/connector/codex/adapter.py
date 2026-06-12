@@ -155,7 +155,7 @@ class CodexAdapter:
         self.reducer.bind_session(session_id, thread_id)
         started = time.perf_counter()
         logger.info("codex session sync started session_id={} thread_id={}", session_id, thread_id)
-        await self._ensure_thread_loaded(thread_id)
+        await self._ensure_thread_loaded(thread_id, force=True)
         reduced, thread = await self._reduce_current_timeline(session_id, thread_id)
         elapsed_ms = (time.perf_counter() - started) * 1000
         logger.info(
@@ -580,7 +580,9 @@ class CodexAdapter:
         assert self.rpc is not None
         await self.rpc.request("thread/resume", {"threadId": thread_id})
 
-    async def _ensure_thread_loaded(self, thread_id: str) -> None:
+    async def _ensure_thread_loaded(self, thread_id: str, *, force: bool = False) -> None:
+        if not force and thread_id in self._loaded_thread_ids:
+            return
         await self._resume_thread(thread_id)
         self._loaded_thread_ids.add(thread_id)
 
