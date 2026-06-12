@@ -6,7 +6,7 @@ import type { AuthMe } from "../../lib/api";
 type UserMenuProps = {
   me: AuthMe;
   onClose: () => void;
-  onOpenAccount: () => void;
+  onOpenSettings: () => void;
   onOpenTeam: () => void;
   onOpenService: () => void;
   onLogout: () => void;
@@ -15,7 +15,7 @@ type UserMenuProps = {
 export function UserMenu({
   me,
   onClose,
-  onOpenAccount,
+  onOpenSettings,
   onOpenTeam,
   onOpenService,
   onLogout,
@@ -73,10 +73,10 @@ export function UserMenu({
         className="item"
         onClick={() => {
           onClose();
-          onOpenAccount();
+          onOpenSettings();
         }}
       >
-        <Icons.User size={13} /> Account
+        <Icons.Settings size={13} /> Settings
       </div>
 
       {isAdmin && (

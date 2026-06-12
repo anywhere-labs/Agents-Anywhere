@@ -51,6 +51,8 @@ def _looks_like_windows_path(path: str) -> bool:
 
 def _clean_remote_path(path: str) -> str:
     value = path.strip()
+    if re.match(r"^/[A-Za-z]:", value):
+        value = value[1:]
     return value or "."
 
 

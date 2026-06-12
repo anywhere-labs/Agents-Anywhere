@@ -464,6 +464,7 @@ export type UploadedAttachment = {
   mediaType: string;
   createdAt: string;
   downloadUrl: string;
+  openUrl: string;
 };
 
 export type UserUploadResponse = {
@@ -510,9 +511,6 @@ export class ApiError extends Error {
 }
 
 const BASE = "";
-const BACKEND_PUBLIC_URL =
-  (typeof __BACKEND_PUBLIC_URL__ === "string" && __BACKEND_PUBLIC_URL__) ||
-  window.location.origin;
 
 async function request<T>(
   path: string,
@@ -553,7 +551,6 @@ async function request<T>(
 }
 
 export const api = {
-  backendPublicUrl: BACKEND_PUBLIC_URL,
   health: () => request<HealthResponse>("/health"),
   authConfig: () => request<AuthConfig>("/auth/config"),
   passwordSalt: (userId: string) =>
@@ -933,7 +930,7 @@ export const api = {
     let res: Response;
     try {
       res = await fetch(
-        `${BASE}/sessions/${encodeURIComponent(sessionId)}/uploads`,
+        `${BASE}/sessions/${encodeURIComponent(sessionId)}/attachments`,
         { method: "POST", body: form, headers },
       );
     } catch (err) {

@@ -27,22 +27,16 @@ type OAuthPending = {
 
 type AuthPageProps = {
   theme: Theme;
-  onToggleTheme: () => void;
+  onSetTheme: (theme: Theme) => void;
   onAuthed: (auth: AuthResponse) => void;
   serverUrl?: string;
 };
 
-// In dev, vite injects the proxy target so the chip shows the real backend
-// (e.g. http://127.0.0.1:8001) rather than the dev server origin
-// (http://127.0.0.1:5173). In production builds the backend serves the
-// frontend on the same origin, so window.location.origin is correct.
-const DEFAULT_SERVER_URL =
-  (typeof __BACKEND_PUBLIC_URL__ === "string" && __BACKEND_PUBLIC_URL__) ||
-  window.location.origin;
+const DEFAULT_SERVER_URL = window.location.origin;
 
 export function AuthPage({
   theme,
-  onToggleTheme,
+  onSetTheme,
   onAuthed,
   serverUrl = DEFAULT_SERVER_URL,
 }: AuthPageProps) {
@@ -197,7 +191,7 @@ export function AuthPage({
     return (
       <AuthChrome
         theme={theme}
-        onToggleTheme={onToggleTheme}
+        onSetTheme={onSetTheme}
         serverUrl={serverUrl}
       >
         <div className="aa-card">
@@ -212,7 +206,7 @@ export function AuthPage({
   const cfg = config!;
   if (oauthPending && oauthPending.status !== "authenticated") {
     return (
-      <AuthChrome theme={theme} onToggleTheme={onToggleTheme} serverUrl={serverUrl}>
+      <AuthChrome theme={theme} onSetTheme={onSetTheme} serverUrl={serverUrl}>
         <OAuthFinalizeCard
           mode={oauthPending.status}
           initialUserId={oauthPending.userId}
@@ -255,7 +249,7 @@ export function AuthPage({
   return (
     <AuthChrome
       theme={theme}
-      onToggleTheme={onToggleTheme}
+      onSetTheme={onSetTheme}
       serverUrl={serverUrl}
     >
       {view}

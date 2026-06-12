@@ -40,7 +40,7 @@
   --sans: "Geist", ui-sans-serif, -apple-system, system-ui, sans-serif;
   --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
   --serif: "Instrument Serif", "Times New Roman", Cambria, serif;
-  --brand: "Caveat", "Snell Roundhand", cursive;
+  --brand: var(--sans);
 
   --fs-micro: 9.5px;
   --fs-2xs: 10.5px;
@@ -139,6 +139,38 @@ button {
   letter-spacing: 0;
 }
 
+.aa-logo {
+  position: relative;
+  display: inline-flex;
+  width: var(--aa-logo-size);
+  height: var(--aa-logo-size);
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.aa-logo-img {
+  position: absolute;
+  inset: var(--aa-logo-padding);
+  width: calc(100% - var(--aa-logo-padding) * 2);
+  height: calc(100% - var(--aa-logo-padding) * 2);
+  object-fit: contain;
+  user-select: none;
+  pointer-events: none;
+}
+
+.aa-logo-light-mode {
+  display: none;
+}
+
+[data-theme="light"] .aa-logo-dark-mode {
+  display: none;
+}
+
+[data-theme="light"] .aa-logo-light-mode {
+  display: block;
+}
+
 /* Theme segmented toggle — reused in the auth top bar and (later) the sidebar foot */
 .theme-seg {
   display: inline-flex;
@@ -178,22 +210,6 @@ button {
 
 .num {
   font-variant-numeric: tabular-nums;
-}
-
-/* Klaw glyph slot (the SVG sits inside) */
-.klaw-mark {
-  --mk-size: 18px;
-  --mk-color: var(--accent);
-  display: inline-block;
-  width: var(--mk-size);
-  height: var(--mk-size);
-  flex-shrink: 0;
-}
-
-.klaw-mark svg {
-  display: block;
-  width: 100%;
-  height: 100%;
 }
 
 @keyframes klaw-pulse {

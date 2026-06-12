@@ -1,4 +1,4 @@
-import { useId, type CSSProperties, type ReactNode, type SVGProps } from "react";
+import type { CSSProperties, ReactNode, SVGProps } from "react";
 
 type IconProps = {
   size?: number;
@@ -337,51 +337,3 @@ export const Icons = {
     </StrokeIcon>
   ),
 };
-
-export function KlawMark({ size = 18, color }: { size?: number; color?: string }) {
-  // Three claw scratches — curved, tapered, fading like a real swipe.
-  const uid = useId().replace(/[:.]/g, "");
-  const gid = `kw-grad-${uid}`;
-  const style = {
-    "--mk-size": `${size}px`,
-    "--mk-color": color ?? "var(--accent)",
-  } as CSSProperties;
-  return (
-    <span className="klaw-mark" style={style}>
-      <svg viewBox="0 0 24 24" fill="none">
-        <defs>
-          <linearGradient
-            id={gid}
-            gradientUnits="userSpaceOnUse"
-            x1="12"
-            y1="1"
-            x2="12"
-            y2="22"
-          >
-            <stop offset="0%" stopColor="var(--mk-color)" stopOpacity="1" />
-            <stop offset="55%" stopColor="var(--mk-color)" stopOpacity="0.85" />
-            <stop offset="100%" stopColor="var(--mk-color)" stopOpacity="0.30" />
-          </linearGradient>
-        </defs>
-        <path
-          d="M 5.6 3.2 C 4.4 7.8, 3.6 12, 3.7 17.2"
-          stroke={`url(#${gid})`}
-          strokeWidth="1.7"
-          strokeLinecap="round"
-        />
-        <path
-          d="M 11.4 1.6 C 11.3 7.6, 10.4 14.4, 9.2 21.6"
-          stroke={`url(#${gid})`}
-          strokeWidth="2.15"
-          strokeLinecap="round"
-        />
-        <path
-          d="M 17.6 2.8 C 17.6 7.4, 17.1 12.6, 15.6 18.8"
-          stroke={`url(#${gid})`}
-          strokeWidth="1.85"
-          strokeLinecap="round"
-        />
-      </svg>
-    </span>
-  );
-}

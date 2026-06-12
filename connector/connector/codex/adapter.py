@@ -6,33 +6,23 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 import hashlib
 import json
-import re
 import time
-from pathlib import Path
 from typing import Any
 
 from loguru import logger
 
+from connector.attachments import attachment_target
 from connector.codex.reducer import CODEX_APPROVAL_METHODS, ReductionResult, TimelineReducer
 from connector.codex.rpc import JsonRpcStdioClient
 from connector.sync_state import SyncStateStore
 from connector.time import utc_now
 
 
-AttachmentDownloader = Callable[[str], Awaitable[tuple[bytes, str, str]]]
-"""(file_id) → (data, original_name, media_type)"""
+AttachmentDownloader = Callable[[str, str], Awaitable[tuple[bytes, str, str]]]
+"""(session_id, file_id) -> (data, original_name, media_type)"""
 
-# Subdirectory under the session cwd where user-uploaded attachments land. Living
-# inside cwd is required for the path-mention fallback (non-image files), since
-# codex's `fs.readText` is rooted at cwd. The leading dot keeps it out of most
-# default `ls` views.
-ATTACHMENT_DIRNAME = ".codex-attachments"
 EXISTING_SYNC_SCAN_TIMEOUT_SECONDS = 1200.0
 EXISTING_SYNC_CHANGED_THREAD_TIMEOUT_SECONDS = 1200.0
-# Filename sanitizer for the on-disk copy. We keep the original name (so the
-# model sees something meaningful in `[Attached file: ...]`) but strip anything
-# path-traversal-shaped or shell-hostile.
-_SAFE_FILENAME_RE = re.compile(r"[^\w.\-+]+")
 
 
 def _thread_id_from_result(value: dict[str, Any]) -> str | None:
@@ -213,6 +203,15 @@ class CodexAdapter:
             thread_id = _thread_id_from_result(thread_ref)
             if not thread_id:
                 continue
+            local_state = _local_thread_state(thread_ref)
+            if local_state in {"archived", "deleted", "unresumable"}:
+                logger.info(
+                    "codex skipping local {} thread thread_id={}",
+                    local_state,
+                    thread_id,
+                )
+                skipped_threads.append(thread_id)
+                continue
             sync_marker = _thread_sync_marker(thread_ref)
             current_name = _optional_string(thread_ref.get("name"))
             persisted_state = (
@@ -269,6 +268,18 @@ class CodexAdapter:
                 )
                 continue
             except Exception as exc:
+                reason = _unresumable_thread_failure_reason(str(exc))
+                if reason is not None:
+                    logger.info(
+                        "codex skipping {} thread thread_id={} error={}",
+                        reason,
+                        thread_id,
+                        exc,
+                    )
+                    skipped_threads.append(thread_id)
+                    if sync_marker is not None:
+                        self._existing_thread_sync_markers[thread_id] = sync_marker
+                    continue
                 logger.warning("codex existing thread sync failed thread_id={} error={}", thread_id, exc)
                 continue
             if _is_imported_external_thread(reduced.timeline_items):
@@ -360,7 +371,7 @@ class CodexAdapter:
         attachments = params.get("attachments") or []
         cwd = _optional_string(params.get("cwd"))
         text_content, extra_inputs = await self._materialize_attachments(
-            content, attachments, cwd
+            content, attachments, cwd, session_id
         )
 
         input_items: list[dict[str, Any]] = [
@@ -414,8 +425,9 @@ class CodexAdapter:
         content: str,
         attachments: list[Any],
         cwd: str | None,
+        session_id: str,
     ) -> tuple[str, list[dict[str, Any]]]:
-        """Download each attachment to <cwd>/.codex-attachments/ and translate
+        """Download each attachment to the connector user attachment dir and translate
         into codex `UserInput` items.
 
         Codex's `turn/start` `input` array supports text / image / localImage /
@@ -423,24 +435,13 @@ class CodexAdapter:
 
           * image/* attachments → `localImage` input item
           * everything else     → mention appended to the leading text item so
-            the model can `fs.readText` / `fs.readFile` the path later.
+            the model can inspect the materialized local path later.
         """
         if not attachments:
             return content, []
         if self.attachment_downloader is None:
             logger.warning("dropping {} attachments — no downloader is wired", len(attachments))
             return content, []
-        if not cwd:
-            # We have nowhere to land the bytes. Surface the file names in text
-            # so the user sees them in the transcript but no payload reaches
-            # the model.
-            stub_names = ", ".join(
-                _attachment_name_from(att) or "file" for att in attachments
-            )
-            return f"{content}\n\n[Attachments dropped — session has no cwd: {stub_names}]", []
-
-        uploads_dir = Path(cwd) / ATTACHMENT_DIRNAME
-        uploads_dir.mkdir(parents=True, exist_ok=True)
 
         text = content
         items: list[dict[str, Any]] = []
@@ -449,13 +450,15 @@ class CodexAdapter:
             if file_id is None:
                 continue
             try:
-                data, original_name, media_type = await self.attachment_downloader(file_id)
+                data, original_name, media_type = await self.attachment_downloader(
+                    session_id, file_id
+                )
             except Exception as exc:
                 logger.exception("attachment download failed file_id={}", file_id)
                 text += f"\n\n[Failed to load attachment {file_id}: {exc}]"
                 continue
-            safe_name = _safe_filename(original_name) or file_id
-            target = uploads_dir / f"{file_id}-{safe_name}"
+            target = attachment_target(session_id, file_id, original_name)
+            target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
             try:
                 target.chmod(0o600)
@@ -555,8 +558,6 @@ class CodexAdapter:
         await self.rpc.request("thread/resume", {"threadId": thread_id})
 
     async def _ensure_thread_loaded(self, thread_id: str) -> None:
-        if thread_id in self._loaded_thread_ids:
-            return
         await self._resume_thread(thread_id)
         self._loaded_thread_ids.add(thread_id)
 
@@ -728,6 +729,43 @@ def _thread_refs_from_list_result(result: dict[str, Any]) -> list[dict[str, Any]
     return []
 
 
+def _local_thread_state(thread_ref: dict[str, Any]) -> str:
+    """Best-effort local thread state from Codex list metadata.
+
+    Codex app-server is versioned independently, so keep this deliberately
+    tolerant: if any common archived/deleted flag is present we treat the
+    thread as not resumable and never publish it to the backend.
+    """
+    for key in ("localState", "local_state", "lifecycleState", "lifecycle_state"):
+        value = thread_ref.get(key)
+        if isinstance(value, str):
+            normalized = value.lower()
+            if normalized in {"active", "archived", "deleted", "unresumable", "unknown"}:
+                return normalized
+    status = thread_ref.get("status")
+    if isinstance(status, dict):
+        status = status.get("type") or status.get("state")
+    if isinstance(status, str):
+        normalized_status = status.lower()
+        if normalized_status in {"archived", "deleted", "unresumable"}:
+            return normalized_status
+    for key in ("archived", "isArchived", "is_archived"):
+        if thread_ref.get(key) is True:
+            return "archived"
+    for key in ("deleted", "isDeleted", "is_deleted"):
+        if thread_ref.get(key) is True:
+            return "deleted"
+    for key in ("archivedAt", "archived_at"):
+        if thread_ref.get(key):
+            return "archived"
+    for key in ("deletedAt", "deleted_at", "removedAt", "removed_at"):
+        if thread_ref.get(key):
+            return "deleted"
+    if thread_ref.get("resumeSupported") is False or thread_ref.get("resumable") is False:
+        return "unresumable"
+    return "active"
+
+
 def _required_string(params: dict[str, Any], key: str) -> str:
     value = params.get(key)
     if not isinstance(value, str) or not value:
@@ -808,6 +846,26 @@ def _soft_interrupt_failure_reason(error_text: str) -> str | None:
     return None
 
 
+def _unresumable_thread_failure_reason(error_text: str) -> str | None:
+    message = error_text
+    try:
+        parsed = json.loads(error_text)
+        if isinstance(parsed, dict):
+            raw = parsed.get("message")
+            if isinstance(raw, str):
+                message = raw
+    except json.JSONDecodeError:
+        pass
+    normalized = message.lower()
+    if "thread not found" in normalized or "session not found" in normalized:
+        return "deleted"
+    if "archived" in normalized:
+        return "archived"
+    if "cannot resume" in normalized or "not resumable" in normalized or "unresumable" in normalized:
+        return "unresumable"
+    return None
+
+
 def _attachment_file_id(att: Any) -> str | None:
     if isinstance(att, dict):
         candidate = att.get("fileId")
@@ -822,15 +880,6 @@ def _attachment_name_from(att: Any) -> str | None:
         if isinstance(candidate, str) and candidate:
             return candidate
     return None
-
-
-def _safe_filename(name: str) -> str:
-    """Reduce an arbitrary upload name to something safe to write to disk."""
-    # Drop any leading directory components and the dot-dot business so the
-    # caller's `<cwd>/.codex-attachments/` is the actual write target.
-    name = name.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
-    sanitized = _SAFE_FILENAME_RE.sub("_", name).strip("._") or ""
-    return sanitized[:120]
 
 
 __all__ = ["CODEX_APPROVAL_METHODS", "CodexAdapter", "JsonRpcStdioClient", "TimelineReducer"]

@@ -42,10 +42,18 @@ class Terminal:
     session_id: str
     connector_id: str
     label: str
+    root: str
     cwd: str
     shell: str
     cols: int
     rows: int
+    command: str | None = None
+    args: list[str] = field(default_factory=list)
+    profile: str | None = None
+    env: dict[str, str] = field(default_factory=dict)
+    relay_token: str = field(default_factory=lambda: secrets.token_urlsafe(32))
+    connector_socket: WebSocket | None = None
+    connector_ready: asyncio.Event = field(default_factory=asyncio.Event)
     purpose: str = "user"
     launch_signature: str | None = None
     ephemeral_group_id: str | None = None
@@ -120,9 +128,14 @@ class TerminalBroker:
         connector_id: str,
         label: str,
         cwd: str,
+        root: str | None = None,
         shell: str,
         cols: int,
         rows: int,
+        command: str | None = None,
+        args: list[str] | None = None,
+        profile: str | None = None,
+        env: dict[str, str] | None = None,
         purpose: str = "user",
         launch_signature: str | None = None,
         ephemeral_group_id: str | None = None,
@@ -134,10 +147,15 @@ class TerminalBroker:
                 session_id=session_id,
                 connector_id=connector_id,
                 label=label,
+                root=root or cwd,
                 cwd=cwd,
                 shell=shell,
                 cols=cols,
                 rows=rows,
+                command=command,
+                args=list(args or []),
+                profile=profile,
+                env=dict(env or {}),
                 purpose=purpose,
                 launch_signature=launch_signature,
                 ephemeral_group_id=ephemeral_group_id,
@@ -189,6 +207,12 @@ class TerminalBroker:
             except Exception:
                 pass
         term.clients.clear()
+        if term.connector_socket is not None:
+            try:
+                await term.connector_socket.close()
+            except Exception:
+                pass
+            term.connector_socket = None
         return term
 
     async def remove_ephemeral_for_connector(self, connector_id: str) -> list[Terminal]:
@@ -266,3 +290,52 @@ class TerminalBroker:
         if term is None:
             return
         term.clients.discard(websocket)
+
+    async def attach_connector(
+        self,
+        terminal_id: str,
+        token: str,
+        websocket: WebSocket,
+    ) -> Terminal | None:
+        term = self._terminals.get(terminal_id)
+        if term is None or term.relay_token != token:
+            return None
+        if term.connector_socket is not None and term.connector_socket is not websocket:
+            try:
+                await term.connector_socket.close()
+            except Exception:
+                pass
+        term.connector_socket = websocket
+        term.connector_ready.set()
+        return term
+
+    def detach_connector(self, terminal_id: str, websocket: WebSocket) -> None:
+        term = self._terminals.get(terminal_id)
+        if term is None or term.connector_socket is not websocket:
+            return
+        term.connector_socket = None
+        term.connector_ready.clear()
+
+    async def wait_connector(self, terminal_id: str, *, timeout: float) -> Terminal | None:
+        term = self._terminals.get(terminal_id)
+        if term is None:
+            return None
+        try:
+            await asyncio.wait_for(term.connector_ready.wait(), timeout=timeout)
+        except TimeoutError:
+            return None
+        if term.connector_socket is None:
+            return None
+        return term
+
+    async def send_to_connector(self, terminal_id: str, payload: dict[str, Any]) -> bool:
+        term = self._terminals.get(terminal_id)
+        if term is None or term.connector_socket is None:
+            return False
+        try:
+            await term.connector_socket.send_json(payload)
+            return True
+        except Exception:
+            term.connector_socket = None
+            term.connector_ready.clear()
+            return False

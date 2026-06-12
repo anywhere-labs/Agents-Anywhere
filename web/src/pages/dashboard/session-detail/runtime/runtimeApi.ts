@@ -1,8 +1,8 @@
-/** Tiny HTTP/WS helpers for the runtime panel — fs + terminal endpoints.
+/** Tiny HTTP/WS helpers for the runtime panel — workspace fs + terminal endpoints.
  *
- * These are scoped to a single session at construction time so the panels
- * don't have to thread sessionId/token through every call. Errors come
- * back as RuntimeApiError instances.
+ * Runtime filesystem and user terminal operations are connector/workspace-scoped
+ * so they can browse, edit, and run shell processes without tying the API shape
+ * to a resumable session. Primary Claude terminals remain session-scoped.
  */
 
 export class RuntimeApiError extends Error {
@@ -51,20 +51,9 @@ export type FsReadFileResult = {
   name: string;
   size: number;
   sha256: string;
-  fileId: string;
+  transferId: string;
+  token: string;
   downloadUrl: string;
-};
-
-export type FsDownloadResult = {
-  fileId: string;
-  sessionId: string;
-  path: string;
-  name: string;
-  size: number;
-  sha256: string;
-  contentBase64: string;
-  createdAt: string;
-  serverTime: string;
 };
 
 export type FsWriteResult = {
@@ -107,11 +96,26 @@ export type DemoMode = boolean;
 
 export function makeRuntimeApi(opts: {
   sessionId: string;
+  connectorId?: string | null;
+  root?: string | null;
   token: string | null;
   demo?: DemoMode;
 }) {
-  const { sessionId, token, demo = false } = opts;
+  const { sessionId, connectorId, root, token, demo = false } = opts;
   const auth = () => (token ? { authorization: `Bearer ${token}` } : {});
+  const connectorFsPath = (suffix: string) => {
+    if (!connectorId || !root) {
+      throw new RuntimeApiError(409, "workspace filesystem requires connectorId and root");
+    }
+    return `/connectors/${encodeURIComponent(connectorId)}/fs/${suffix}?root=${encodeURIComponent(root)}`;
+  };
+  const connectorTerminalPath = (suffix = "") => {
+    if (!connectorId || !root) {
+      return null;
+    }
+    const segment = suffix ? `/${suffix}` : "";
+    return `/connectors/${encodeURIComponent(connectorId)}/terminals${segment}?root=${encodeURIComponent(root)}`;
+  };
 
   async function call<T>(
     path: string,
@@ -152,28 +156,31 @@ export function makeRuntimeApi(opts: {
     demo,
     fsList(path: string | null): Promise<{ ok: boolean; result: FsListResult }> {
       if (demo) return Promise.resolve(demoFsList(path));
-      return call(`/sessions/${sessionId}/fs/list`, {
+      return call(connectorFsPath("list"), {
         method: "POST",
         body: JSON.stringify({ path }),
       });
     },
     fsReadText(path: string, maxBytes = 1_048_576): Promise<FsReadTextResult> {
       if (demo) return Promise.resolve(demoFsReadText(path));
-      return call(`/sessions/${sessionId}/fs/readText`, {
+      return call(connectorFsPath("readText"), {
         method: "POST",
         body: JSON.stringify({ path, maxBytes }),
       });
     },
     fsReadFile(path: string): Promise<{ ok: boolean; result: FsReadFileResult }> {
       if (demo) return Promise.resolve(demoFsReadFile(path));
-      return call(`/sessions/${sessionId}/fs/read`, {
+      return call(connectorFsPath("read"), {
         method: "POST",
         body: JSON.stringify({ path }),
       });
     },
-    fsDownload(fileId: string): Promise<FsDownloadResult> {
-      if (demo) return Promise.resolve(demoFsDownload(fileId));
-      return call(`/sessions/${sessionId}/fs/downloads/${encodeURIComponent(fileId)}`);
+    async fsDownloadBlob(downloadUrl: string): Promise<Blob> {
+      const headers = new Headers();
+      for (const [k, v] of Object.entries(auth())) headers.set(k, v);
+      const res = await fetch(downloadUrl, { headers });
+      if (!res.ok) throw new RuntimeApiError(res.status, await res.text());
+      return await res.blob();
     },
     fsWrite(
       path: string,
@@ -181,17 +188,26 @@ export function makeRuntimeApi(opts: {
       ifMatch: string | null,
     ): Promise<{ ok: boolean; result: FsWriteResult }> {
       if (demo) return Promise.resolve(demoFsWrite(path, content));
-      return call(`/sessions/${sessionId}/fs/write`, {
+      return call(connectorFsPath("write"), {
         method: "POST",
         body: JSON.stringify({ path, content, ifMatch: ifMatch ?? undefined }),
       });
     },
     listTerminals(): Promise<{ terminals: TerminalView[]; serverTime: string }> {
       if (demo) return Promise.resolve({ terminals: [], serverTime: new Date().toISOString() });
+      const connectorPath = connectorTerminalPath();
+      if (connectorPath) return call(connectorPath);
       return call(`/sessions/${sessionId}/terminals`);
     },
     createTerminal(args: TerminalCreateArgs): Promise<{ terminal: TerminalView }> {
       if (demo) return Promise.resolve(demoCreateTerminal(args));
+      const connectorPath = connectorTerminalPath();
+      if (connectorPath) {
+        return call(connectorPath, {
+          method: "POST",
+          body: JSON.stringify(args),
+        });
+      }
       return call(`/sessions/${sessionId}/terminals`, {
         method: "POST",
         body: JSON.stringify(args),
@@ -205,6 +221,13 @@ export function makeRuntimeApi(opts: {
     },
     renameTerminal(tid: string, label: string): Promise<{ terminal: TerminalView }> {
       if (demo) return Promise.resolve({ terminal: { ...demoTerminal(tid), label } });
+      const connectorPath = connectorTerminalPath(encodeURIComponent(tid));
+      if (connectorPath) {
+        return call(connectorPath, {
+          method: "PATCH",
+          body: JSON.stringify({ label }),
+        });
+      }
       return call(`/sessions/${sessionId}/terminals/${tid}`, {
         method: "PATCH",
         body: JSON.stringify({ label }),
@@ -212,18 +235,30 @@ export function makeRuntimeApi(opts: {
     },
     closeTerminal(tid: string): Promise<{ terminal: TerminalView }> {
       if (demo) return Promise.resolve({ terminal: { ...demoTerminal(tid), status: "exited" } });
+      const connectorPath = connectorTerminalPath(encodeURIComponent(tid));
+      if (connectorPath) return call(connectorPath, { method: "DELETE" });
       return call(`/sessions/${sessionId}/terminals/${tid}`, { method: "DELETE" });
     },
     resizeTerminal(tid: string, cols: number, rows: number): Promise<{ terminal: TerminalView }> {
       if (demo) return Promise.resolve({ terminal: { ...demoTerminal(tid), cols, rows } });
+      const connectorPath = connectorTerminalPath(`${encodeURIComponent(tid)}/resize`);
+      if (connectorPath) {
+        return call(connectorPath, {
+          method: "POST",
+          body: JSON.stringify({ cols, rows }),
+        });
+      }
       return call(`/sessions/${sessionId}/terminals/${tid}/resize`, {
         method: "POST",
         body: JSON.stringify({ cols, rows }),
       });
     },
-    streamUrl(tid: string, fromSeq = 0): string {
+    streamUrl(tid: string, fromSeq = 0, scope: "workspace" | "session" = "workspace"): string {
       const base = window.location.origin.replace(/^http/, "ws");
       const t = token ? `&token=${encodeURIComponent(token)}` : "";
+      if (scope === "workspace" && connectorId && root) {
+        return `${base}/connectors/${encodeURIComponent(connectorId)}/terminals/${encodeURIComponent(tid)}/stream?fromSeq=${fromSeq}${t}`;
+      }
       return `${base}/sessions/${sessionId}/terminals/${tid}/stream?fromSeq=${fromSeq}${t}`;
     },
   };
@@ -376,25 +411,10 @@ function demoFsReadFile(path: string): { ok: boolean; result: FsReadFileResult }
       name: text.name,
       size: text.size,
       sha256: text.sha256,
-      fileId: `demo:${text.path}`,
-      downloadUrl: `/sessions/demo/fs/downloads/${encodeURIComponent(text.path)}`,
+      transferId: `demo:${text.path}`,
+      token: "demo",
+      downloadUrl: `data:text/plain;charset=utf-8,${encodeURIComponent(text.content)}`,
     },
-  };
-}
-
-function demoFsDownload(fileId: string): FsDownloadResult {
-  const path = fileId.startsWith("demo:") ? fileId.slice(5) : fileId;
-  const text = demoFsReadText(path);
-  return {
-    fileId,
-    sessionId: "demo",
-    path: text.path,
-    name: text.name,
-    size: text.size,
-    sha256: text.sha256,
-    contentBase64: btoa(unescape(encodeURIComponent(text.content))),
-    createdAt: new Date().toISOString(),
-    serverTime: new Date().toISOString(),
   };
 }
 

@@ -42,7 +42,8 @@ export function ServicePage({ token, onBack }: ServicePageProps) {
   );
   const [clientName, setClientName] = useState("");
   const [clientRedirectUris, setClientRedirectUris] = useState("");
-  const externalOAuthRedirectUrl = info ? `${info.endpoint}/auth/oauth/callback` : "";
+  const publicUrl = browserPublicUrl();
+  const externalOAuthRedirectUrl = `${publicUrl}/auth/oauth/callback`;
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -192,12 +193,12 @@ export function ServicePage({ token, onBack }: ServicePageProps) {
                 <div className="aa-srv-row">
                   <span className="k">Endpoint</span>
                   <span className="v">
-                    <code>{info.endpoint}</code>
+                    <code>{publicUrl}</code>
                   </span>
                   <button
                     type="button"
                     className="copy"
-                    onClick={() => copy("url", info.endpoint)}
+                    onClick={() => copy("url", publicUrl)}
                     aria-label="Copy URL"
                   >
                     {copied === "url" ? <Icons.Check size={12} /> : <Icons.Copy size={12} />}
@@ -442,6 +443,10 @@ function defaultOAuthForm(): OAuthProviderConfig & { clientSecret: string } {
     emailClaim: "email",
     nameClaim: "name",
   };
+}
+
+function browserPublicUrl(): string {
+  return window.location.origin.replace(/\/$/, "");
 }
 
 function ServiceInput({

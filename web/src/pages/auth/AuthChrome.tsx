@@ -1,18 +1,19 @@
 import type { ReactNode } from "react";
-import { Icons, KlawMark } from "../../components/Icons";
+import { BrandLogo } from "../../components/BrandLogo";
+import { Icons } from "../../components/Icons";
 import type { Theme } from "../../lib/theme";
 import { AAWord } from "./AAWord";
 
 type AuthChromeProps = {
   theme: Theme;
-  onToggleTheme: () => void;
+  onSetTheme: (theme: Theme) => void;
   serverUrl: string;
   children: ReactNode;
 };
 
 export function AuthChrome({
   theme,
-  onToggleTheme,
+  onSetTheme,
   serverUrl,
   children,
 }: AuthChromeProps) {
@@ -20,7 +21,7 @@ export function AuthChrome({
     <div className="aa-auth">
       <div className="aa-auth-top">
         <div className="left">
-          <KlawMark size={22} />
+          <BrandLogo size={26} />
           <AAWord />
         </div>
         <div className="right">
@@ -36,7 +37,7 @@ export function AuthChrome({
             <button
               type="button"
               className={theme === "light" ? "on" : ""}
-              onClick={() => theme !== "light" && onToggleTheme()}
+              onClick={() => onSetTheme("light")}
               aria-label="Light mode"
               title="Light mode"
             >
@@ -45,7 +46,7 @@ export function AuthChrome({
             <button
               type="button"
               className={theme === "dark" ? "on" : ""}
-              onClick={() => theme !== "dark" && onToggleTheme()}
+              onClick={() => onSetTheme("dark")}
               aria-label="Dark mode"
               title="Dark mode"
             >

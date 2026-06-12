@@ -15,6 +15,7 @@ export type ReconcileAttachment = {
   name?: string;
   size?: number;
   mediaType?: string;
+  openUrl?: string;
 };
 
 export type ReconcileItem = {
@@ -56,6 +57,7 @@ export function extractAttachments(
     if (typeof obj.name === "string") att.name = obj.name;
     if (typeof obj.size === "number") att.size = obj.size;
     if (typeof obj.mediaType === "string") att.mediaType = obj.mediaType;
+    if (typeof obj.openUrl === "string") att.openUrl = obj.openUrl;
     out.push(att);
   }
   return out;

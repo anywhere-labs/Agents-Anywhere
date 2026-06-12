@@ -170,13 +170,17 @@ export function FilesPanel({
 }
 
 function parentOf(rawPath: string): string {
-  const clean = rawPath.trim().replace(/[/\\]+$/, "") || ".";
+  const clean = normalizeWindowsDrivePath(rawPath).trim().replace(/[/\\]+$/, "") || ".";
   if (clean === "." || clean === "/" || /^[A-Za-z]:[\\/]?$/.test(clean)) return "";
   const normalized = clean.replace(/\\/g, "/");
   const slash = normalized.lastIndexOf("/");
   if (slash < 0) return ".";
   if (slash === 0) return "/";
   return normalized.slice(0, slash);
+}
+
+function normalizeWindowsDrivePath(path: string): string {
+  return path.replace(/^\/([A-Za-z]:[\\/])/, "$1");
 }
 
 function formatBytes(size: number): string {

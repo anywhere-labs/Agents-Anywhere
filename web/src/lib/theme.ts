@@ -1,28 +1,40 @@
 import { useEffect, useState } from "react";
 
 const KEY = "aa.theme.v1";
-export type Theme = "dark" | "light";
+export type Theme = "auto" | "dark" | "light";
 
 function readTheme(): Theme {
   try {
     const stored = localStorage.getItem(KEY);
-    if (stored === "light" || stored === "dark") return stored;
+    if (stored === "auto" || stored === "light" || stored === "dark") return stored;
   } catch {
     /* ignore */
   }
-  return "dark";
+  return "auto";
 }
 
-export function useTheme(): [Theme, () => void] {
+function systemTheme(): "dark" | "light" {
+  return window.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark";
+}
+
+export function useTheme(): [Theme, (theme: Theme) => void] {
   const [theme, setTheme] = useState<Theme>(() => readTheme());
+
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
+    const apply = () => {
+      document.documentElement.dataset.theme = theme === "auto" ? systemTheme() : theme;
+    };
+    apply();
     try {
       localStorage.setItem(KEY, theme);
     } catch {
       /* ignore */
     }
+    if (theme !== "auto") return;
+    const query = window.matchMedia?.("(prefers-color-scheme: light)");
+    query?.addEventListener("change", apply);
+    return () => query?.removeEventListener("change", apply);
   }, [theme]);
-  const toggle = () => setTheme((t) => (t === "dark" ? "light" : "dark"));
-  return [theme, toggle];
+
+  return [theme, setTheme];
 }

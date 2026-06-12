@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import base64
 from typing import Any
 
 from fastapi import (
     APIRouter,
-    BackgroundTasks,
     Depends,
     Header,
     HTTPException,
+    Request,
     Response,
     WebSocket,
     WebSocketDisconnect,
@@ -25,18 +26,18 @@ from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.deps import (
     get_attachment_service,
     get_connector_ingest_service,
+    get_fs_downloads,
     get_rpc,
     get_shell_tasks,
     get_store,
     get_timeline_broker,
 )
+from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.core.models import (
     ApprovalIn,
     ConnectorAuthResponse,
     ConnectorIngestRequest,
     ConnectorIngestResponse,
-    FsUploadRequest,
-    FsUploadResponse,
     TimelineItemIn,
 )
 from agent_server.services.attachments import AttachmentService
@@ -146,20 +147,19 @@ async def connector_ingest(
     return await ingest_service.ingest(connector_id=connector_id, payload=payload)
 
 
-@router.get("/connector/fs/downloads/{file_id}")
-async def connector_fs_download(
+@router.get("/connector/sessions/{session_id}/attachments/{file_id}/content")
+async def connector_attachment_content(
+    session_id: str,
     file_id: str,
-    background_tasks: BackgroundTasks,
     authorization: str = Header(..., alias="Authorization"),
     db: Store = Depends(get_store),
     attachments: AttachmentService = Depends(get_attachment_service),
 ) -> Response:
     """Connector-side download of a user-uploaded attachment.
 
-    The blob is deleted from backend storage **after** the response has been
-    sent — so a failed transfer leaves the file in place for the connector to
-    retry. Two response headers carry metadata the connector needs without
-    spelunking through a JSON envelope:
+    The blob remains in platform storage after connector consumption. Two
+    response headers carry metadata the connector needs without spelunking
+    through a JSON envelope:
 
       X-File-Name      original upload filename
       X-File-Sha256    sha256 hex of the bytes in the body
@@ -168,16 +168,15 @@ async def connector_fs_download(
     await _require_active_connector(connector_id, db)
     await db.record_connector_activity(connector_id)
     try:
-        data, metadata = await attachments.read_connector_handoff(
-            file_id=file_id, connector_id=connector_id
+        data, metadata = await attachments.read_connector_attachment(
+            session_id=session_id,
+            file_id=file_id,
+            connector_id=connector_id,
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="file not found") from None
     except ValueError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    session_id = metadata.get("sessionId")
-    if isinstance(session_id, str):
-        background_tasks.add_task(_delete_after_response, attachments, session_id, file_id)
     return Response(
         content=data,
         media_type=metadata.get("mediaType") or "application/octet-stream",
@@ -188,18 +187,29 @@ async def connector_fs_download(
     )
 
 
-async def _delete_after_response(
-    attachments: AttachmentService,
-    session_id: str,
-    file_id: str,
-) -> None:
-    try:
-        await attachments.delete_file(session_id=session_id, file_id=file_id)
-    except Exception:
-        # Background cleanup — surfacing failures here would just spam logs and
-        # the worst case is the blob staying on disk a little longer than
-        # planned. Leave it for the future GC pass.
-        logger.exception("failed to delete consumed file session_id={} file_id={}", session_id, file_id)
+@router.put("/connector/fs/transfers/{transfer_id}")
+async def connector_fs_transfer_upload(
+    transfer_id: str,
+    request: Request,
+    token: str,
+    authorization: str = Header(..., alias="Authorization"),
+    db: Store = Depends(get_store),
+    downloads: FsDownloadRelayManager = Depends(get_fs_downloads),
+) -> dict[str, str]:
+    connector_id = _connector_id_from_bearer(authorization)
+    await _require_active_connector(connector_id, db)
+    await db.record_connector_activity(connector_id)
+    transfer = downloads.get(transfer_id, token)
+    if transfer is None or transfer.connector_id != connector_id:
+        raise HTTPException(status_code=404, detail="transfer not found")
+    accepted = await downloads.upload(
+        transfer_id=transfer_id,
+        token=token,
+        chunks=request.stream(),
+    )
+    if not accepted:
+        raise HTTPException(status_code=404, detail="transfer not found")
+    return {"status": "accepted"}
 
 
 async def _reconcile_active_run_from_timeline(db: Store, session_id: str) -> None:
@@ -212,36 +222,6 @@ def _safe_header_value(value: str) -> str:
     # already knows the canonical name from its turn.start request — this is
     # only a debug aid.
     return value.encode("latin-1", errors="replace").decode("latin-1")
-
-
-@router.post("/connector/fs/uploads", response_model=FsUploadResponse)
-async def connector_fs_upload(
-    payload: FsUploadRequest,
-    authorization: str = Header(..., alias="Authorization"),
-    db: Store = Depends(get_store),
-    attachments: AttachmentService = Depends(get_attachment_service),
-) -> FsUploadResponse:
-    connector_id = _connector_id_from_bearer(authorization)
-    await _require_active_connector(connector_id, db)
-    await db.record_connector_activity(connector_id)
-    try:
-        saved = await attachments.save_connector_upload(
-            connector_id=connector_id,
-            session_id=payload.sessionId,
-            path=payload.path,
-            name=payload.name,
-            size=payload.size,
-            sha256=payload.sha256,
-            content_base64=payload.contentBase64,
-        )
-    except KeyError:
-        raise HTTPException(status_code=404, detail="session not found") from None
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return FsUploadResponse(
-        **saved,
-        downloadUrl=f"/sessions/{payload.sessionId}/fs/downloads/{saved['fileId']}",
-    )
 
 
 @router.websocket("/connector/ws")
@@ -301,6 +281,76 @@ async def connector_ws(
                 connector_id=connector_id,
                 reason="connector.offline",
             )
+
+
+@router.websocket("/connector/terminals/{terminal_id}/relay")
+async def connector_terminal_relay_ws(
+    websocket: WebSocket,
+    terminal_id: str,
+    broker: TerminalBroker = Depends(get_terminal_broker),
+) -> None:
+    token = websocket.query_params.get("token")
+    if not isinstance(token, str) or not token:
+        await websocket.close(code=1008)
+        return
+    term = broker.get(terminal_id)
+    if term is None:
+        await websocket.close(code=1008, reason="terminal not found")
+        return
+    if term.relay_token != token:
+        await websocket.close(code=1008, reason="invalid terminal relay token")
+        return
+
+    await websocket.accept()
+    if await broker.attach_connector(terminal_id, token, websocket) is None:
+        await websocket.close(code=1008, reason="invalid terminal relay token")
+        return
+    await websocket.send_json(
+        {
+            "type": "start",
+            "terminalId": term.id,
+            "sessionId": term.session_id,
+            "root": term.root,
+            "cwd": term.cwd,
+            "shell": term.shell or None,
+            "command": term.command,
+            "args": term.args,
+            "profile": term.profile,
+            "cols": term.cols,
+            "rows": term.rows,
+            "env": term.env,
+        }
+    )
+    try:
+        while True:
+            message = await websocket.receive_json()
+            mtype = message.get("type")
+            if mtype == "ready":
+                pid = message.get("pid")
+                await broker.mark_running(terminal_id, pid=pid if isinstance(pid, int) else None)
+            elif mtype == "output":
+                data_b64 = message.get("data")
+                seq = message.get("seq")
+                if isinstance(data_b64, str) and isinstance(seq, int):
+                    try:
+                        data = base64.b64decode(data_b64)
+                    except Exception:
+                        data = b""
+                    if data:
+                        await broker.on_output(terminal_id, data=data, seq=seq)
+            elif mtype == "exit":
+                exit_code = message.get("exitCode")
+                reason = message.get("reason") if isinstance(message.get("reason"), str) else None
+                await broker.on_exited(
+                    terminal_id,
+                    exit_code=exit_code if isinstance(exit_code, int) else None,
+                    reason=reason,
+                )
+                break
+    except WebSocketDisconnect:
+        pass
+    finally:
+        broker.detach_connector(terminal_id, websocket)
 
 
 async def _handle_connector_message(
@@ -418,6 +468,7 @@ async def apply_connector_notification(
     elif method == "session.updated":
         if await filter_.runtime_disabled(params.get("runtime")):
             return IngestEffect()
+        local_state = _local_session_state(params)
         session_id = params["sessionId"]
         external_session_id = params.get("externalSessionId")
         try:
@@ -440,6 +491,15 @@ async def apply_connector_notification(
             await db.refresh_session_status_from_timeline(session_id)
             return IngestEffect(session_id=session_id, session_changed=True)
         except KeyError:
+            if local_state in {"archived", "deleted", "unresumable"}:
+                logger.info(
+                    "ignored local {} session discovery connector_id={} session_id={} external_session_id={}",
+                    local_state,
+                    connector_id,
+                    session_id,
+                    external_session_id,
+                )
+                return IngestEffect()
             session = await db.upsert_connector_session(
                 connector_id=connector_id,
                 session_id=session_id,
@@ -604,6 +664,21 @@ async def _resolve_approval_session_id(
         )
     except KeyError:
         return approval.sessionId
+
+
+def _local_session_state(params: dict[str, Any]) -> str:
+    value = params.get("localState") or params.get("local_state")
+    if isinstance(value, str):
+        normalized = value.lower()
+        if normalized in {"active", "archived", "deleted", "unresumable", "unknown"}:
+            return normalized
+    if params.get("localArchived") is True or params.get("local_archived") is True:
+        return "archived"
+    if params.get("localDeleted") is True or params.get("local_deleted") is True:
+        return "deleted"
+    if params.get("resumeSupported") is False or params.get("resumable") is False:
+        return "unresumable"
+    return "active"
 
 
 def _timeline_item_for_session(item: TimelineItemIn, session_id: str) -> TimelineItemIn:

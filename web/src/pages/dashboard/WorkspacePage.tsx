@@ -64,9 +64,14 @@ export function WorkspacePage({
   const runtimeApi = useMemo(
     () =>
       selected
-        ? makeRuntimeApi({ sessionId: selected.latest.id, token })
+        ? makeRuntimeApi({
+            sessionId: selected.latest.id,
+            connectorId: device.id,
+            root: selected.cwd,
+            token,
+          })
         : null,
-    [selected?.latest.id, token],
+    [device.id, selected?.cwd, selected?.latest.id, token],
   );
   const offline = device.status !== "online";
   const shellPanel = runtimeApi ? (

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type MouseEvent } from "react";
 
 import {
   getAttachment,
@@ -6,12 +6,21 @@ import {
   urlForCached,
   type CachedAttachment,
 } from "../../lib/attachmentCache";
+import { loadSession } from "../../lib/session";
 
 export type AttachmentDescriptor = {
   fileId: string;
   name?: string;
   size?: number;
   mediaType?: string;
+  openUrl?: string;
+};
+
+type ImagePreview = {
+  src: string;
+  name: string;
+  size?: number;
+  revoke?: boolean;
 };
 
 export function MessageAttachments({
@@ -19,17 +28,68 @@ export function MessageAttachments({
 }: {
   attachments: AttachmentDescriptor[];
 }) {
+  const [preview, setPreview] = useState<ImagePreview | null>(null);
+
+  useEffect(() => {
+    if (!preview) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPreview(null);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      if (preview.revoke) URL.revokeObjectURL(preview.src);
+    };
+  }, [preview]);
+
   if (!attachments || attachments.length === 0) return null;
   return (
-    <div className="kl-msg-attachments">
-      {attachments.map((att) => (
-        <AttachmentTile key={att.fileId} descriptor={att} />
-      ))}
-    </div>
+    <>
+      <div className="kl-msg-attachments">
+        {attachments.map((att) => (
+          <AttachmentTile
+            key={att.fileId}
+            descriptor={att}
+            onPreview={setPreview}
+          />
+        ))}
+      </div>
+      {preview && (
+        <div className="kl-img-preview" role="dialog" aria-modal="true">
+          <button
+            type="button"
+            className="kl-img-preview-backdrop"
+            aria-label="Close image preview"
+            onClick={() => setPreview(null)}
+          />
+          <div className="kl-img-preview-inner">
+            <button
+              type="button"
+              className="kl-img-preview-close"
+              aria-label="Close image preview"
+              onClick={() => setPreview(null)}
+            >
+              ×
+            </button>
+            <img src={preview.src} alt={preview.name} />
+            <div className="kl-img-preview-caption">
+              <span>{preview.name}</span>
+              {typeof preview.size === "number" && <em>{formatBytes(preview.size)}</em>}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
-function AttachmentTile({ descriptor }: { descriptor: AttachmentDescriptor }) {
+function AttachmentTile({
+  descriptor,
+  onPreview,
+}: {
+  descriptor: AttachmentDescriptor;
+  onPreview: (preview: ImagePreview) => void;
+}) {
   const [cached, setCached] = useState<CachedAttachment | null | "loading">(
     "loading",
   );
@@ -55,6 +115,7 @@ function AttachmentTile({ descriptor }: { descriptor: AttachmentDescriptor }) {
   const sizeBytes =
     cached && cached !== "loading" ? cached.size : descriptor.size;
   const isImage = isImageMediaType(mediaType);
+  const platformUrl = descriptor.openUrl;
 
   if (cached === "loading") {
     // Skeleton placeholder — short enough that you barely see it but stable
@@ -63,24 +124,45 @@ function AttachmentTile({ descriptor }: { descriptor: AttachmentDescriptor }) {
   }
 
   if (cached && isImage) {
+    const cachedUrl = urlForCached(cached);
     return (
       <a
         className="kl-msg-att image"
-        href={urlForCached(cached)}
-        target="_blank"
-        rel="noreferrer"
+        href={platformUrl || cachedUrl}
+        onClick={(event) => {
+          event.preventDefault();
+          onPreview({ src: cachedUrl, name: cached.name, size: cached.size });
+        }}
         title={`${cached.name} · ${formatBytes(cached.size)}`}
       >
-        <img src={urlForCached(cached)} alt={cached.name} />
+        <img src={cachedUrl} alt={cached.name} />
       </a>
     );
   }
 
-  // Non-image OR no IndexedDB hit (e.g. session opened in a different browser).
-  // Show name + size. We don't auto-download from the server because backend
-  // deletes user-uploaded files after the connector consumes them.
-  return (
-    <div className={`kl-msg-att file${cached ? "" : " missing"}`}>
+  if (!cached && isImage && platformUrl) {
+    return (
+      <a
+        className="kl-msg-att image missing"
+        href={platformUrl}
+        onClick={openPlatformImage(platformUrl, {
+          name: name ?? descriptor.fileId,
+          size: sizeBytes,
+          onPreview,
+        })}
+        title={name ?? descriptor.fileId}
+      >
+        <span className="kl-msg-att-image-fallback">
+          {name ?? descriptor.fileId}
+        </span>
+      </a>
+    );
+  }
+
+  // Non-image OR no IndexedDB hit. Show name + size, and open the durable
+  // platform file when the server provided a URL.
+  const body = (
+    <>
       <span className="kl-msg-att-icon" aria-hidden="true">
         📎
       </span>
@@ -88,13 +170,79 @@ function AttachmentTile({ descriptor }: { descriptor: AttachmentDescriptor }) {
       {typeof sizeBytes === "number" && (
         <span className="kl-msg-att-meta">{formatBytes(sizeBytes)}</span>
       )}
-      {!cached && (
+      {!cached && !platformUrl && (
         <span className="kl-msg-att-meta" title="Preview not cached on this device">
           (preview unavailable)
         </span>
       )}
+    </>
+  );
+  if (platformUrl) {
+    return (
+      <a
+        className={`kl-msg-att file${cached ? "" : " missing"}`}
+        href={platformUrl}
+        target="_blank"
+        rel="noreferrer"
+        onClick={openPlatformFile(platformUrl)}
+      >
+        {body}
+      </a>
+    );
+  }
+  return (
+    <div className={`kl-msg-att file${cached ? "" : " missing"}`}>
+      {body}
     </div>
   );
+}
+
+function openPlatformFile(url: string) {
+  return async (event: MouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault();
+    window.open(authenticatedOpenUrl(url), "_blank", "noopener,noreferrer");
+  };
+}
+
+function openPlatformImage(
+  url: string,
+  opts: {
+    name: string;
+    size?: number;
+    onPreview: (preview: ImagePreview) => void;
+  },
+) {
+  return async (event: MouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault();
+    try {
+      const response = await fetchWithAuth(url);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const blob = await response.blob();
+      opts.onPreview({
+        src: URL.createObjectURL(blob),
+        name: opts.name,
+        size: opts.size,
+        revoke: true,
+      });
+      return;
+    } catch {
+      window.open(authenticatedOpenUrl(url), "_blank", "noopener,noreferrer");
+    }
+  };
+}
+
+function authenticatedOpenUrl(url: string): string {
+  const session = loadSession();
+  if (!session?.accessToken) return url;
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}token=${encodeURIComponent(session.accessToken)}`;
+}
+
+function fetchWithAuth(url: string): Promise<Response> {
+  const session = loadSession();
+  const headers = new Headers();
+  if (session?.accessToken) headers.set("authorization", `Bearer ${session.accessToken}`);
+  return fetch(url, { headers });
 }
 
 function formatBytes(n: number): string {

@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from agent_server.api.sessions_terminal import _send_terminal_ws_error
 from agent_server.app import create_app
 from agent_server.infra.connector_rpc import ConnectorOfflineError, ConnectorRpcError, ConnectorRpcManager
+from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.services.terminal import TerminalService
 
 
@@ -462,6 +463,8 @@ class FakeLocalRpc:
         self.delay_terminal_close = 0.0
         self.closed_on_resize: set[str] = set()
         self.interrupt_result: dict[str, Any] = {"interrupted": True}
+        self.terminal_relay_broker: Any | None = None
+        self.terminal_relay_sockets: dict[str, FakeWebSocket] = {}
 
     def is_online(self, connector_id: str) -> bool:
         return True
@@ -486,6 +489,14 @@ class FakeLocalRpc:
                 "closed": False,
             }
             return {"terminalId": terminal_id, "pid": 123}
+        if method == "terminal.relay.connect":
+            terminal_id = params["terminalId"]
+            token = params["token"]
+            if self.terminal_relay_broker is not None:
+                ws = FakeWebSocket()
+                await self.terminal_relay_broker.attach_connector(terminal_id, token, ws)
+                self.terminal_relay_sockets[terminal_id] = ws
+            return {"terminalId": terminal_id, "connecting": True}
         if method == "terminal.close":
             if self.delay_terminal_close:
                 await asyncio.sleep(self.delay_terminal_close)
@@ -2191,7 +2202,7 @@ def test_send_message_forwards_uploaded_attachment_metadata_to_connector(tmp_pat
     data = b"attachment body\n"
 
     upload_response = client.post(
-        f"/sessions/{session_id}/uploads",
+        f"/sessions/{session_id}/attachments",
         headers=headers,
         files={"files": ("notes.md", data, "text/markdown")},
     )
@@ -2216,7 +2227,8 @@ def test_send_message_forwards_uploaded_attachment_metadata_to_connector(tmp_pat
             "mediaType": "text/markdown",
             "size": len(data),
             "sha256": hashlib.sha256(data).hexdigest(),
-            "downloadUrl": f"/sessions/{session_id}/fs/downloads/{attachment['fileId']}",
+            "downloadUrl": f"/connector/sessions/{session_id}/attachments/{attachment['fileId']}/content",
+            "platformOpenUrl": f"/sessions/{session_id}/attachments/{attachment['fileId']}/open",
         }
     ]
 
@@ -2670,6 +2682,95 @@ def test_live_timeline_upsert_appends_when_connector_order_seq_restarts(tmp_path
     assert by_id["tl_live"]["orderSeq"] == 51
 
 
+def test_timeline_sync_appends_when_connector_order_seq_restarts(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, session_id, headers = create_connector_and_session(client)
+
+    seed = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.sync",
+                    "params": {
+                        "sessionId": session_id,
+                        "items": [
+                            {
+                                "id": "tl_history",
+                                "sessionId": session_id,
+                                "type": "message",
+                                "status": "done",
+                                "role": "assistant",
+                                "content": {"text": "old"},
+                                "source": {"runtime": "codex", "itemId": "old"},
+                                "orderSeq": 50,
+                                "revision": 1,
+                                "contentHash": "sha256:old",
+                            }
+                        ],
+                    },
+                }
+            ]
+        },
+    )
+    assert seed.status_code == 200, seed.text
+
+    synced = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.sync",
+                    "params": {
+                        "sessionId": session_id,
+                        "items": [
+                            {
+                                "id": "tl_history",
+                                "sessionId": session_id,
+                                "type": "message",
+                                "status": "done",
+                                "role": "assistant",
+                                "content": {"text": "old edited"},
+                                "source": {"runtime": "codex", "itemId": "old"},
+                                "orderSeq": 50,
+                                "revision": 2,
+                                "contentHash": "sha256:old-edited",
+                            },
+                            {
+                                "id": "tl_synced_new",
+                                "sessionId": session_id,
+                                "turnId": "turn_synced",
+                                "type": "message",
+                                "status": "done",
+                                "role": "user",
+                                "content": {"text": "new from Codex app"},
+                                "source": {
+                                    "runtime": "codex",
+                                    "turnId": "turn_synced",
+                                    "itemId": "new",
+                                },
+                                "orderSeq": 2,
+                                "revision": 1,
+                                "contentHash": "sha256:new",
+                            },
+                        ],
+                    },
+                }
+            ]
+        },
+    )
+    assert synced.status_code == 200, synced.text
+
+    state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+    by_id = {item["id"]: item for item in state["items"]}
+    assert by_id["tl_history"]["orderSeq"] == 50
+    assert by_id["tl_history"]["content"]["text"] == "old edited"
+    assert by_id["tl_synced_new"]["orderSeq"] == 51
+    assert [item["id"] for item in state["items"]] == ["tl_history", "tl_synced_new"]
+
+
 def test_claude_terminal_ensure_primary_creates_structured_resume_terminal(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, _, headers = create_connector_and_session(client)
@@ -2836,6 +2937,66 @@ def test_user_terminal_create_cleans_stale_ephemeral_groups(tmp_path):
     assert [terminal["terminalId"] for terminal in listing.json()["terminals"]] == [third_id]
 
 
+def test_connector_terminal_lifecycle_uses_workspace_scope(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, _, headers = create_connector_and_session(client)
+    scope_id = f"browse_{connector_id}"
+    fake_rpc = FakeLocalRpc()
+    fake_rpc.terminal_relay_broker = client.app.state.terminal_broker
+    client.app.state.rpc = fake_rpc
+
+    async def seed() -> None:
+        await client.app.state.store.set_connector_status(connector_id, "online")
+
+    asyncio.run(seed())
+
+    created = client.post(
+        f"/connectors/{connector_id}/terminals?root=/repo",
+        headers=headers,
+        json={"cols": 80, "rows": 24, "cwd": "src", "ephemeralGroupId": "panel_a"},
+    )
+    assert created.status_code == 200, created.text
+    terminal = created.json()["terminal"]
+    terminal_id = terminal["terminalId"]
+    assert terminal["sessionId"] == scope_id
+    assert terminal["cwd"] == "/repo/src"
+    assert fake_rpc.requests[-1] == (
+        connector_id,
+        "terminal.relay.connect",
+        {
+            "terminalId": terminal_id,
+            "sessionId": scope_id,
+            "token": client.app.state.terminal_broker.get(terminal_id).relay_token,
+        },
+        15,
+    )
+
+    listing = client.get(f"/connectors/{connector_id}/terminals", headers=headers)
+    assert listing.status_code == 200, listing.text
+    assert [item["terminalId"] for item in listing.json()["terminals"]] == [terminal_id]
+
+    relay_ws = fake_rpc.terminal_relay_sockets[terminal_id]
+
+    resized = client.post(
+        f"/connectors/{connector_id}/terminals/{terminal_id}/resize",
+        headers=headers,
+        json={"cols": 100, "rows": 30},
+    )
+    assert resized.status_code == 200, resized.text
+    assert asyncio.run(relay_ws.sent.get()) == {"type": "resize", "cols": 100, "rows": 30}
+
+    closed = client.delete(
+        f"/connectors/{connector_id}/terminals/{terminal_id}",
+        headers=headers,
+    )
+    assert closed.status_code == 200, closed.text
+    assert asyncio.run(relay_ws.sent.get()) == {"type": "close"}
+    assert [request[1] for request in fake_rpc.requests].count("terminal.relay.connect") == 1
+    listing = client.get(f"/connectors/{connector_id}/terminals", headers=headers)
+    assert listing.status_code == 200, listing.text
+    assert listing.json()["terminals"] == []
+
+
 def test_user_terminal_cleanup_does_not_close_primary_claude_terminal(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, _, headers = create_connector_and_session(client)
@@ -2916,6 +3077,36 @@ def test_terminal_broker_removes_connector_ephemeral_terminals_only(tmp_path):
     assert [terminal.id for terminal in removed] == [user_terminal_id]
     assert client.app.state.terminal_broker.get(user_terminal_id) is None
     assert client.app.state.terminal_broker.get(primary_terminal_id) is not None
+
+
+def test_terminal_broker_forwards_browser_events_to_connector_relay(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, _, _ = create_connector_and_session(client)
+
+    async def exercise() -> list[dict[str, Any]]:
+        broker = client.app.state.terminal_broker
+        term = await broker.register(
+            session_id=f"browse_{connector_id}",
+            connector_id=connector_id,
+            label="zsh",
+            root="/repo",
+            cwd="/repo",
+            shell="zsh",
+            cols=80,
+            rows=24,
+            purpose="user",
+        )
+        ws = FakeWebSocket()
+        attached = await broker.attach_connector(term.id, term.relay_token, ws)  # type: ignore[arg-type]
+        assert attached is not None
+        assert await broker.send_to_connector(term.id, {"type": "input", "data": "YQ=="})
+        assert await broker.send_to_connector(term.id, {"type": "resize", "cols": 100, "rows": 30})
+        return [await ws.sent.get(), await ws.sent.get()]
+
+    assert asyncio.run(exercise()) == [
+        {"type": "input", "data": "YQ=="},
+        {"type": "resize", "cols": 100, "rows": 30},
+    ]
 
 
 def test_user_terminal_resize_removes_terminal_missing_on_connector(tmp_path):
@@ -3621,6 +3812,39 @@ def test_connector_http_ingest_upserts_session_and_timeline(tmp_path):
     assert state["items"][0]["content"]["kind"] == "command"
 
 
+def test_connector_ingest_skips_new_local_archived_session(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, _, headers = create_connector_and_session(client)
+
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "session.updated",
+                    "params": {
+                        "sessionId": "sess_local_archived",
+                        "runtime": "codex",
+                        "externalSessionId": "thr_local_archived",
+                        "title": "Local archived",
+                        "cwd": "/repo",
+                        "status": "idle",
+                        "localState": "archived",
+                    },
+                },
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] == 1
+    listed = client.get("/sessions", headers=headers).json()["sessions"]
+    assert all(session["id"] != "sess_local_archived" for session in listed)
+    state = client.get("/sessions/sess_local_archived/state", headers=headers)
+    assert state.status_code == 404
+
+
 def test_connector_http_ingest_accepts_status_update_before_external_id(tmp_path):
     client = make_client(tmp_path)
     _, access_token, _, headers = create_connector_and_session(client)
@@ -3761,7 +3985,7 @@ def test_timeline_sync_keeps_existing_realtime_items_missing_from_snapshot(tmp_p
         assert tool["content"]["outputText"] == "passed"
 
 
-def test_claude_history_sync_keeps_more_complete_live_item_with_same_id(tmp_path):
+def test_claude_history_sync_replaces_live_item_with_snapshot_same_id(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
 
@@ -3850,12 +4074,14 @@ def test_claude_history_sync_keeps_more_complete_live_item_with_same_id(tmp_path
             client,
             session_id,
             headers,
-            lambda items: len(items) == 1 and items[0]["content"].get("outputText") == "passed\n",
+            lambda items: len(items) == 1
+            and items[0]["content"].get("result") == "passed"
+            and items[0]["content"].get("outputText") is None,
         )
         tool = state["items"][0]
         assert tool["id"] == "claude_tool_result_same"
-        assert tool["content"]["outputText"] == "passed\n"
-        assert tool["revision"] == 2
+        assert tool["content"] == {"toolUseId": "toolu_1", "result": "passed"}
+        assert tool["revision"] == 1
 
 
 def test_claude_timeline_sync_replaces_existing_timeline(tmp_path):
@@ -4754,33 +4980,33 @@ def test_interrupted_turn_closes_pending_approval_tool_item(tmp_path):
     assert tool["content"]["approval"]["status"] == "cancelled"
 
 
-def test_fs_read_does_not_require_takeover(tmp_path):
+def test_connector_fs_read_does_not_require_takeover(tmp_path):
     client = make_client(tmp_path)
-    connector_id, _, session_id, headers = create_connector_and_session(client)
+    connector_id, _, _session_id, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
     client.app.state.rpc = fake_rpc
     asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
 
     response = client.post(
-        f"/sessions/{session_id}/fs/read",
+        f"/connectors/{connector_id}/fs/read?root=/repo",
         headers=headers,
         json={"path": "README.md"},
     )
 
     assert response.status_code == 200
-    assert fake_rpc.requests[-1][1] == "fs.readFile"
+    assert fake_rpc.requests[-1][1] == "fs.prepareDownload"
+    assert fake_rpc.requests[-1][2]["sessionId"] == f"browse_{connector_id}"
 
 
-def test_fs_read_allows_absolute_paths_outside_session_cwd(tmp_path):
+def test_connector_fs_read_allows_absolute_paths_outside_workspace_root(tmp_path):
     client = make_client(tmp_path)
-    connector_id, _, session_id, headers = create_connector_and_session(client)
+    connector_id, _, _session_id, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
     client.app.state.rpc = fake_rpc
     asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
-    assert client.post(f"/sessions/{session_id}/takeover", headers=headers).status_code == 200
 
     response = client.post(
-        f"/sessions/{session_id}/fs/read",
+        f"/connectors/{connector_id}/fs/read?root=/repo",
         headers=headers,
         json={"path": "/etc/passwd"},
     )
@@ -4788,14 +5014,98 @@ def test_fs_read_allows_absolute_paths_outside_session_cwd(tmp_path):
     assert response.status_code == 200
     assert fake_rpc.requests[-1] == (
         connector_id,
-        "fs.readFile",
+        "fs.prepareDownload",
         {
-                "sessionId": session_id,
-                "root": "/repo",
-                "path": "/etc/passwd",
-            },
-            30,
+            "sessionId": f"browse_{connector_id}",
+            "root": "/repo",
+            "path": "/etc/passwd",
+        },
+        30,
+    )
+
+
+def test_connector_fs_read_prepares_transfer_without_persisting(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _connector_access_token, _session_id, headers = create_connector_and_session(client)
+    data = b"binary\x00payload\n"
+
+    class TransferRpc(FakeLocalRpc):
+        async def request(
+            self,
+            connector_id: str,
+            method: str,
+            params: dict[str, Any],
+            *,
+            timeout: float = 30,
+        ) -> Any:
+            self.requests.append((connector_id, method, params, timeout))
+            if method == "fs.prepareDownload":
+                return {
+                    "path": params["path"],
+                    "name": "payload.bin",
+                    "size": len(data),
+                    "sha256": hashlib.sha256(data).hexdigest(),
+                    "mediaType": "application/octet-stream",
+                }
+            if method == "fs.uploadPreparedDownload":
+                return {"uploadStarted": True}
+            return await super().request(connector_id, method, params, timeout=timeout)
+
+    fake_rpc = TransferRpc()
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+
+    prepare_response = client.post(
+        f"/connectors/{connector_id}/fs/read?root=/repo",
+        headers=headers,
+        json={"path": "payload.bin"},
+    )
+    assert prepare_response.status_code == 200
+    prepared = prepare_response.json()["result"]
+    assert prepared["downloadUrl"].startswith(f"/connectors/{connector_id}/fs/transfers/")
+    assert "contentBase64" not in prepared
+    assert fake_rpc.requests[0][1] == "fs.prepareDownload"
+    assert fake_rpc.requests[0][2]["root"] == "/repo"
+    assert fake_rpc.requests[0][2]["path"] == "/repo/payload.bin"
+
+
+def test_fs_download_relay_streams_uploaded_chunks():
+    asyncio.run(_exercise_fs_download_relay_streams_uploaded_chunks())
+
+
+async def _exercise_fs_download_relay_streams_uploaded_chunks() -> None:
+    manager = FsDownloadRelayManager()
+    transfer = manager.create(
+        connector_id="conn_1",
+        root="/repo",
+        path="/repo/payload.bin",
+        name="payload.bin",
+        size=6,
+        sha256="abc",
+        media_type="application/octet-stream",
+    )
+
+    async def chunks():
+        yield b"abc"
+        yield b"def"
+
+    async def upload():
+        assert await manager.upload(
+            transfer_id=transfer.transfer_id,
+            token=transfer.token,
+            chunks=chunks(),
         )
+
+    upload_task = asyncio.create_task(upload())
+    streamed = [
+        chunk
+        async for chunk in manager.stream(
+            transfer_id=transfer.transfer_id,
+            token=transfer.token,
+        )
+    ]
+    await upload_task
+    assert b"".join(streamed) == b"abcdef"
 
 
 def test_fs_and_shell_rpc_forward_validated_workspace_params(tmp_path):
@@ -4806,47 +5116,31 @@ def test_fs_and_shell_rpc_forward_validated_workspace_params(tmp_path):
     asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
     assert client.post(f"/sessions/{session_id}/takeover", headers=headers).status_code == 200
 
-    read_response = client.post(
-        f"/sessions/{session_id}/fs/read",
-        headers=headers,
-        json={"path": "src/index.ts"},
-    )
     write_response = client.post(
-        f"/sessions/{session_id}/fs/write",
+        f"/connectors/{connector_id}/fs/write?root=/repo",
         headers=headers,
         json={"path": "src/index.ts", "content": "hello"},
     )
     list_response = client.post(
-        f"/sessions/{session_id}/fs/list",
+        f"/connectors/{connector_id}/fs/list?root=/repo",
         headers=headers,
         json={"path": "."},
     )
     shell_response = client.post(
-        f"/sessions/{session_id}/shell/exec",
+        f"/connectors/{connector_id}/shell/exec?root=/repo",
         headers=headers,
         json={"command": "pwd", "timeoutMs": 120000},
     )
 
-    assert read_response.status_code == 200
     assert write_response.status_code == 200
     assert list_response.status_code == 200
     assert shell_response.status_code == 200
     assert fake_rpc.requests == [
         (
             connector_id,
-            "fs.readFile",
-            {
-                "sessionId": session_id,
-                "root": "/repo",
-                "path": "/repo/src/index.ts",
-            },
-            30,
-        ),
-        (
-            connector_id,
             "fs.writeFile",
             {
-                "sessionId": session_id,
+                "sessionId": f"browse_{connector_id}",
                 "root": "/repo",
                 "path": "/repo/src/index.ts",
                 "content": "hello",
@@ -4858,7 +5152,7 @@ def test_fs_and_shell_rpc_forward_validated_workspace_params(tmp_path):
             connector_id,
             "fs.readDir",
             {
-                "sessionId": session_id,
+                "sessionId": f"browse_{connector_id}",
                 "root": "/repo",
                 "path": "/repo",
             },
@@ -4868,7 +5162,7 @@ def test_fs_and_shell_rpc_forward_validated_workspace_params(tmp_path):
             connector_id,
             "shell.exec",
             {
-                "sessionId": session_id,
+                "sessionId": f"browse_{connector_id}",
                 "root": "/repo",
                 "cwd": "/repo",
                 "command": "pwd",
@@ -4896,41 +5190,31 @@ def test_fs_and_shell_rpc_forward_windows_workspace_params(tmp_path):
     )
     assert client.post(f"/sessions/{session.id}/takeover", headers=headers).status_code == 200
 
-    read_response = client.post(
-        f"/sessions/{session.id}/fs/read",
-        headers=headers,
-        json={"path": r"agent-server\pyproject.toml"},
-    )
     list_response = client.post(
-        f"/sessions/{session.id}/fs/list",
+        f"/connectors/{connector_id}/fs/list?root=C%3A%5CUsers%5Cadmin",
         headers=headers,
         json={"path": "."},
     )
+    slash_drive_response = client.post(
+        f"/connectors/{connector_id}/fs/read?root=C%3A%5CUsers%5Cadmin",
+        headers=headers,
+        json={"path": "/C:/Users/admin/agent-server/README.md"},
+    )
     shell_response = client.post(
-        f"/sessions/{session.id}/shell/exec",
+        f"/connectors/{connector_id}/shell/exec?root=C%3A%5CUsers%5Cadmin",
         headers=headers,
         json={"command": "pwd", "timeoutMs": 120000},
     )
 
-    assert read_response.status_code == 200
     assert list_response.status_code == 200
+    assert slash_drive_response.status_code == 200
     assert shell_response.status_code == 200
     assert fake_rpc.requests[-3:] == [
         (
             connector_id,
-            "fs.readFile",
-            {
-                "sessionId": session.id,
-                "root": r"C:\Users\admin",
-                "path": r"C:\Users\admin\agent-server\pyproject.toml",
-            },
-            30,
-        ),
-        (
-            connector_id,
             "fs.readDir",
             {
-                "sessionId": session.id,
+                "sessionId": f"browse_{connector_id}",
                 "root": r"C:\Users\admin",
                 "path": r"C:\Users\admin",
             },
@@ -4938,9 +5222,19 @@ def test_fs_and_shell_rpc_forward_windows_workspace_params(tmp_path):
         ),
         (
             connector_id,
+            "fs.prepareDownload",
+            {
+                "sessionId": f"browse_{connector_id}",
+                "root": r"C:\Users\admin",
+                "path": r"C:\Users\admin\agent-server\README.md",
+            },
+            30,
+        ),
+        (
+            connector_id,
             "shell.exec",
             {
-                "sessionId": session.id,
+                "sessionId": f"browse_{connector_id}",
                 "root": r"C:\Users\admin",
                 "cwd": r"C:\Users\admin",
                 "command": "pwd",
@@ -4951,15 +5245,60 @@ def test_fs_and_shell_rpc_forward_windows_workspace_params(tmp_path):
     ]
 
 
+def test_connector_fs_list_supports_body_and_query_roots(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, _, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+
+    legacy_response = client.post(
+        f"/connectors/{connector_id}/fs/list",
+        headers=headers,
+        json={"root": "~", "path": "."},
+    )
+    query_response = client.post(
+        f"/connectors/{connector_id}/fs/list?root=/repo",
+        headers=headers,
+        json={"path": "src"},
+    )
+
+    assert legacy_response.status_code == 200
+    assert query_response.status_code == 200
+    assert fake_rpc.requests[-2:] == [
+        (
+            connector_id,
+            "fs.readDir",
+            {
+                "sessionId": f"browse_{connector_id}",
+                "root": "~",
+                "path": "~",
+            },
+            30,
+        ),
+        (
+            connector_id,
+            "fs.readDir",
+            {
+                "sessionId": f"browse_{connector_id}",
+                "root": "/repo",
+                "path": "/repo/src",
+            },
+            30,
+        ),
+    ]
+
+
 def test_shell_task_start_waits_for_connector_completion(tmp_path):
     client = make_client(tmp_path)
     connector_id, connector_access_token, session_id, headers = create_connector_and_session(client)
+    scope_id = f"browse_{connector_id}"
     fake_rpc = FakeLocalRpc()
     client.app.state.rpc = fake_rpc
     asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
 
     start_response = client.post(
-        f"/sessions/{session_id}/shell/tasks",
+        f"/connectors/{connector_id}/shell/tasks?root=/repo",
         headers=headers,
         json={"command": "pwd", "timeoutMs": 120000},
     )
@@ -4972,7 +5311,7 @@ def test_shell_task_start_waits_for_connector_completion(tmp_path):
         "shell.task.start",
         {
             "taskId": task_id,
-            "sessionId": session_id,
+            "sessionId": scope_id,
             "root": "/repo",
             "cwd": "/repo",
             "command": "pwd",
@@ -4990,7 +5329,7 @@ def test_shell_task_start_waits_for_connector_completion(tmp_path):
                     "method": "shell.task.completed",
                     "params": {
                         "taskId": task_id,
-                        "sessionId": session_id,
+                        "sessionId": scope_id,
                         "status": "completed",
                         "result": {
                             "cwd": "/repo",
@@ -5010,7 +5349,7 @@ def test_shell_task_start_waits_for_connector_completion(tmp_path):
     )
     assert ingest_response.status_code == 200
 
-    wait_response = client.get(f"/sessions/{session_id}/shell/tasks/{task_id}/wait", headers=headers)
+    wait_response = client.get(f"/connectors/{connector_id}/shell/tasks/{task_id}/wait", headers=headers)
 
     assert wait_response.status_code == 200
     wait_body = wait_response.json()
@@ -5021,54 +5360,48 @@ def test_shell_task_start_waits_for_connector_completion(tmp_path):
 def test_shell_task_wait_timeout_abandons_and_cancels(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, session_id, headers = create_connector_and_session(client)
+    scope_id = f"browse_{connector_id}"
     fake_rpc = FakeLocalRpc()
     client.app.state.rpc = fake_rpc
     asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
     client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
     start_response = client.post(
-        f"/sessions/{session_id}/shell/tasks",
+        f"/connectors/{connector_id}/shell/tasks?root=/repo",
         headers=headers,
         json={"command": "sleep 10", "timeoutMs": 120000},
     )
     task_id = start_response.json()["taskId"]
 
-    wait_response = client.get(f"/sessions/{session_id}/shell/tasks/{task_id}/wait?timeoutMs=1", headers=headers)
+    wait_response = client.get(f"/connectors/{connector_id}/shell/tasks/{task_id}/wait?timeoutMs=1", headers=headers)
 
     assert wait_response.status_code == 408
     assert fake_rpc.requests[-1] == (
         connector_id,
         "shell.task.cancel",
-        {"taskId": task_id, "sessionId": session_id},
+        {"taskId": task_id, "sessionId": scope_id},
         5,
     )
 
 
-def test_connector_uploads_fs_read_artifact_and_user_downloads_it(tmp_path):
+def test_client_uploads_attachment_and_connector_downloads_by_session(tmp_path):
     client = make_client(tmp_path)
     connector_id, connector_access_token, session_id, headers = create_connector_and_session(client)
     data = b"\x00hello\n\xff"
-    sha256 = hashlib.sha256(data).hexdigest()
 
     upload_response = client.post(
-        "/connector/fs/uploads",
-        headers={"Authorization": f"Bearer {connector_access_token}"},
-        json={
-            "sessionId": session_id,
-            "path": "/repo/blob.bin",
-            "name": "blob.bin",
-            "size": len(data),
-            "sha256": sha256,
-            "contentBase64": base64.b64encode(data).decode("ascii"),
-        },
+        f"/sessions/{session_id}/attachments",
+        headers=headers,
+        files={"files": ("blob.bin", data, "application/octet-stream")},
     )
 
     assert upload_response.status_code == 200
-    upload_body = upload_response.json()
+    upload_body = upload_response.json()["attachments"][0]
     assert upload_body["sessionId"] == session_id
-    assert upload_body["path"] == "/repo/blob.bin"
+    assert upload_body["name"] == "blob.bin"
     assert upload_body["size"] == len(data)
-    assert upload_body["sha256"] == sha256
-    assert upload_body["downloadUrl"] == f"/sessions/{session_id}/fs/downloads/{upload_body['fileId']}"
+    assert upload_body["sha256"] == hashlib.sha256(data).hexdigest()
+    assert upload_body["downloadUrl"] == f"/sessions/{session_id}/attachments/{upload_body['fileId']}"
+    assert upload_body["openUrl"] == f"/sessions/{session_id}/attachments/{upload_body['fileId']}/open"
 
     download_response = client.get(upload_body["downloadUrl"], headers=headers)
 
@@ -5077,6 +5410,30 @@ def test_connector_uploads_fs_read_artifact_and_user_downloads_it(tmp_path):
     assert download_body["fileId"] == upload_body["fileId"]
     assert download_body["contentBase64"] == base64.b64encode(data).decode("ascii")
     assert base64.b64decode(download_body["contentBase64"]) == data
+
+    open_response = client.get(upload_body["openUrl"], headers=headers, follow_redirects=False)
+    assert open_response.status_code == 302
+    local_url = open_response.headers["location"]
+    assert local_url.startswith(f"/sessions/local/{session_id}/{upload_body['fileId']}?token=")
+
+    raw_response = client.get(local_url)
+    assert raw_response.status_code == 200
+    assert raw_response.content == data
+
+    user_token_open_response = client.get(
+        f"{upload_body['openUrl']}?token={headers['Authorization'].removeprefix('Bearer ')}",
+        follow_redirects=False,
+    )
+    assert user_token_open_response.status_code == 302
+    assert client.get(f"{upload_body['openUrl']}-token", headers=headers).status_code == 404
+
+    connector_download = client.get(
+        f"/connector/sessions/{session_id}/attachments/{upload_body['fileId']}/content",
+        headers={"Authorization": f"Bearer {connector_access_token}"},
+    )
+    assert connector_download.status_code == 200
+    still_available = client.get(upload_body["downloadUrl"], headers=headers)
+    assert still_available.status_code == 200
 
 
 async def _exercise_rpc_manager():

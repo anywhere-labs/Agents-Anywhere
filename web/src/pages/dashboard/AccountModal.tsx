@@ -2,10 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Icons } from "../../components/Icons";
 import { Identicon } from "../../components/Identicon";
 import { ApiError, api, type AuthMe } from "../../lib/api";
-import {
-  createPasswordVerifier,
-  derivePasswordVerifier,
-} from "../../lib/passwordVerifier";
+import { createPasswordVerifier } from "../../lib/passwordVerifier";
 import { passwordScore, STRENGTH_LABEL } from "../auth/password";
 
 type AccountModalProps = {
@@ -49,12 +46,44 @@ export function AccountModal({
   token,
   onAvatarChange,
 }: AccountModalProps) {
+  if (!open) return null;
+
+  return (
+    <div className="kl-modal-backdrop" onClick={onClose}>
+      <div
+        className="aa-acct-modal"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-label="Account"
+      >
+        <div className="aa-acct-hd">
+          <h3>Account</h3>
+          <button type="button" className="x" onClick={onClose} aria-label="Close">
+            <Icons.X size={14} />
+          </button>
+        </div>
+
+        <AccountPanel me={me} token={token} onAvatarChange={onAvatarChange} />
+      </div>
+    </div>
+  );
+}
+
+export function AccountPanel({
+  me,
+  token,
+  onAvatarChange,
+}: {
+  me: AuthMe;
+  token: string;
+  onAvatarChange: (avatar: string | null) => void;
+}) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [avatarError, setAvatarError] = useState<string | null>(null);
 
-  const [showForm, setShowForm] = useState(false);
-  const [oldPw, setOldPw] = useState("");
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetConfirmed, setResetConfirmed] = useState(false);
   const [newPw, setNewPw] = useState("");
   const [confirmPw, setConfirmPw] = useState("");
   const [showPw, setShowPw] = useState(false);
@@ -63,24 +92,31 @@ export function AccountModal({
   const [success, setSuccess] = useState(false);
 
   useEffect(() => {
-    if (open) {
-      setShowForm(false);
-      setOldPw("");
-      setNewPw("");
-      setConfirmPw("");
-      setError(null);
-      setSuccess(false);
-      setAvatarError(null);
-    }
-  }, [open]);
+    setResetOpen(false);
+    setResetConfirmed(false);
+    setNewPw("");
+    setConfirmPw("");
+    setError(null);
+    setSuccess(false);
+    setAvatarError(null);
+  }, [me.userId]);
 
-  if (!open) return null;
+  useEffect(() => {
+    if (!resetOpen || loading) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setResetOpen(false);
+      setResetConfirmed(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [loading, resetOpen]);
 
   const score = passwordScore(newPw);
   const mismatch = !!(newPw && confirmPw && newPw !== confirmPw);
   const tooShort = !!(newPw && newPw.length < 8);
-  const sameAsOld = !!(newPw && oldPw && newPw === oldPw);
-  const ok = !!(oldPw && newPw && confirmPw && !mismatch && !tooShort && !sameAsOld);
+  const ok = !!(newPw && confirmPw && !mismatch && !tooShort);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -88,16 +124,16 @@ export function AccountModal({
     setError(null);
     setLoading(true);
     try {
-      const { salt } = await api.passwordSalt(me.userId);
+      const verifier = await createPasswordVerifier(newPw);
       await api.changePassword(token, {
-        oldPasswordVerifier: await derivePasswordVerifier(oldPw, salt),
-        ...(await createPasswordVerifier(newPw)),
+        newPasswordVerifier: verifier.passwordVerifier,
+        newPasswordSalt: verifier.passwordSalt,
       });
       setSuccess(true);
       window.setTimeout(() => {
-        setShowForm(false);
+        setResetOpen(false);
+        setResetConfirmed(false);
         setSuccess(false);
-        setOldPw("");
         setNewPw("");
         setConfirmPw("");
       }, 1100);
@@ -146,9 +182,7 @@ export function AccountModal({
     ? { cls: "err", text: error }
     : success
       ? { cls: "ok", text: "Password updated." }
-      : sameAsOld
-        ? { cls: "err", text: "New password must differ from current" }
-        : mismatch
+      : mismatch
           ? { cls: "err", text: "Passwords don't match" }
           : newPw
             ? { cls: "", text: STRENGTH_LABEL[score] }
@@ -157,20 +191,6 @@ export function AccountModal({
   const roleLabel = me.role === "admin" ? "Admin" : "Member";
 
   return (
-    <div className="kl-modal-backdrop" onClick={onClose}>
-      <div
-        className="aa-acct-modal"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-label="Account"
-      >
-        <div className="aa-acct-hd">
-          <h3>Account</h3>
-          <button type="button" className="x" onClick={onClose} aria-label="Close">
-            <Icons.X size={14} />
-          </button>
-        </div>
-
         <div className="aa-acct-body">
           <div className="aa-acct-id">
             <div
@@ -230,113 +250,142 @@ export function AccountModal({
             <span className="v">{roleLabel.toLowerCase()}</span>
           </div>
 
-          {!showForm ? (
-            <div className="aa-acct-cp-row">
-              <div className="lbl">
-                <span className="t">Password</span>
-                <span className="s">Change the password used to sign in.</span>
-              </div>
-              <button
-                type="button"
-                className="aa-acct-btn"
-                onClick={() => setShowForm(true)}
-              >
-                Change password
-              </button>
+          <div className="aa-acct-cp-row">
+            <div className="lbl">
+              <span className="t">Password</span>
+              <span className="s">Reset the password used to sign in.</span>
             </div>
-          ) : (
-            <form onSubmit={submit} className="aa-acct-form">
-              <div className="row">
-                <label>Current password</label>
-                <div className="field">
-                  <input
-                    type={showPw ? "text" : "password"}
-                    value={oldPw}
-                    onChange={(e) => setOldPw(e.target.value)}
-                    autoComplete="current-password"
-                    required
-                    autoFocus
-                  />
-                  <button
-                    type="button"
-                    className="eye"
-                    onClick={() => setShowPw((v) => !v)}
-                    tabIndex={-1}
-                    aria-label="Toggle password visibility"
-                  >
-                    {showPw ? <Icons.EyeOff size={13} /> : <Icons.Eye size={13} />}
-                  </button>
-                </div>
-              </div>
+            <button
+              type="button"
+              className="aa-acct-btn danger"
+              onClick={() => {
+                setResetOpen(true);
+                setResetConfirmed(false);
+                setNewPw("");
+                setConfirmPw("");
+                setError(null);
+                setSuccess(false);
+              }}
+            >
+              Reset password
+            </button>
+          </div>
 
-              <div className="row">
-                <label>New password</label>
-                <div className="field">
-                  <input
-                    type={showPw ? "text" : "password"}
-                    value={newPw}
-                    onChange={(e) => setNewPw(e.target.value)}
-                    placeholder="at least 8 characters"
-                    autoComplete="new-password"
-                    required
-                  />
-                </div>
-                {newPw && (
-                  <div className={`aa-acct-strength s${score}`}>
-                    <div className="bars">
-                      <i />
-                      <i />
-                      <i />
-                      <i />
+          {resetOpen && (
+            <div className="kl-modal-backdrop" onClick={() => !loading && setResetOpen(false)}>
+              <div
+                className="kl-modal kl-confirm aa-reset-password-modal"
+                onClick={(e) => e.stopPropagation()}
+                role="alertdialog"
+                aria-modal="true"
+              >
+                {!resetConfirmed ? (
+                  <>
+                    <h3>Reset password?</h3>
+                    <p>
+                      This will replace the current password for this account.
+                      Existing sessions may remain active until they expire or
+                      are signed out.
+                    </p>
+                    <div className="kl-modal-actions">
+                      <button
+                        type="button"
+                        className="kl-btn ghost"
+                        onClick={() => setResetOpen(false)}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        className="kl-btn danger"
+                        onClick={() => setResetConfirmed(true)}
+                      >
+                        Continue
+                      </button>
                     </div>
-                    <span className="label">{STRENGTH_LABEL[score]}</span>
-                  </div>
+                  </>
+                ) : (
+                  <form onSubmit={submit} className="aa-acct-form aa-reset-password-form">
+                    <h3>Set new password</h3>
+                    <div className="row">
+                      <label>New password</label>
+                      <div className="field">
+                        <input
+                          type={showPw ? "text" : "password"}
+                          value={newPw}
+                          onChange={(e) => setNewPw(e.target.value)}
+                          placeholder="at least 8 characters"
+                          autoComplete="new-password"
+                          required
+                          autoFocus
+                        />
+                        <button
+                          type="button"
+                          className="eye"
+                          onClick={() => setShowPw((v) => !v)}
+                          tabIndex={-1}
+                          aria-label="Toggle password visibility"
+                        >
+                          {showPw ? <Icons.EyeOff size={13} /> : <Icons.Eye size={13} />}
+                        </button>
+                      </div>
+                      {newPw && (
+                        <div className={`aa-acct-strength s${score}`}>
+                          <div className="bars">
+                            <i />
+                            <i />
+                            <i />
+                            <i />
+                          </div>
+                          <span className="label">{STRENGTH_LABEL[score]}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="row">
+                      <label>Confirm new password</label>
+                      <div className="field">
+                        <input
+                          type={showPw ? "text" : "password"}
+                          value={confirmPw}
+                          onChange={(e) => setConfirmPw(e.target.value)}
+                          autoComplete="new-password"
+                          required
+                        />
+                      </div>
+                      {msg && msg.cls !== "" && newPw && (
+                        <div className={`aa-acct-msg ${msg.cls}`}>{msg.text}</div>
+                      )}
+                    </div>
+
+                    <div className="aa-acct-actions">
+                      <button
+                        type="button"
+                        className="aa-acct-btn ghost"
+                        onClick={() => {
+                          setResetOpen(false);
+                          setResetConfirmed(false);
+                          setNewPw("");
+                          setConfirmPw("");
+                          setError(null);
+                        }}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        className="aa-acct-btn danger solid"
+                        disabled={!ok || loading}
+                      >
+                        {loading && <span className="spin" />}
+                        {success ? "Saved" : loading ? "Saving" : "Reset password"}
+                      </button>
+                    </div>
+                  </form>
                 )}
               </div>
-
-              <div className="row">
-                <label>Confirm new password</label>
-                <div className="field">
-                  <input
-                    type={showPw ? "text" : "password"}
-                    value={confirmPw}
-                    onChange={(e) => setConfirmPw(e.target.value)}
-                    autoComplete="new-password"
-                    required
-                  />
-                </div>
-                {msg && msg.cls !== "" && newPw && (
-                  <div className={`aa-acct-msg ${msg.cls}`}>{msg.text}</div>
-                )}
-              </div>
-
-              <div className="aa-acct-actions">
-                <button
-                  type="button"
-                  className="aa-acct-btn ghost"
-                  onClick={() => {
-                    setShowForm(false);
-                    setOldPw("");
-                    setNewPw("");
-                    setConfirmPw("");
-                    setError(null);
-                  }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="aa-acct-btn primary"
-                  disabled={!ok || loading}
-                >
-                  {loading && <span className="spin" />}
-                  {success ? "Saved" : loading ? "Saving" : "Update password"}
-                </button>
-              </div>
-            </form>
+            </div>
           )}
         </div>
-      </div>
-    </div>
   );
 }

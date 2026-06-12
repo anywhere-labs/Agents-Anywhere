@@ -80,6 +80,7 @@ class TimelineRepositoryMixin:
             ]
             deduped_ids = {item.id for item in _dedupe_legacy_history_items(candidate)}
             normalized_by_id: dict[str, TimelineItem] = {}
+            max_order_seq = max((existing.orderSeq for existing in current.values()), default=0)
             async with self._engine.begin() as conn:
                 if source_observed_at is not None:
                     await conn.execute(
@@ -94,7 +95,21 @@ class TimelineRepositoryMixin:
                         normalized_by_id[item_id] = item
                         continue
                     updated_seq = await self._bump_session(conn, session_id)
-                    normalized_by_id[item_id] = _timeline_item_from_input(item, updated_seq=updated_seq, now=now)
+                    existing = current.get(item_id)
+                    if existing is not None:
+                        order_seq = existing.orderSeq
+                    elif item.orderSeq > max_order_seq:
+                        order_seq = item.orderSeq
+                    else:
+                        max_order_seq += 1
+                        order_seq = max_order_seq
+                    max_order_seq = max(max_order_seq, order_seq)
+                    normalized_by_id[item_id] = _timeline_item_from_input(
+                        item,
+                        updated_seq=updated_seq,
+                        now=now,
+                        order_seq=order_seq,
+                    )
             normalized = list(normalized_by_id.values())
             await self.timeline.replace(session_id, normalized)
         await self.refresh_session_status_from_timeline(session_id)

@@ -13,6 +13,7 @@ from typing import Any
 
 from loguru import logger
 
+from connector.attachments import attachment_target
 from connector.adapter import NotificationSink
 from connector.claude.history_adapter import ClaudeHistoryAdapter
 from connector.claude.normalized import NormalizedClaudeEvent
@@ -22,11 +23,9 @@ from connector.launch import LaunchTarget, launch_target
 from connector.time import utc_now
 
 
-AttachmentDownloader = Callable[[str], Awaitable[tuple[bytes, str, str]]]
-"""(file_id) -> (data, original_name, media_type)"""
+AttachmentDownloader = Callable[[str, str], Awaitable[tuple[bytes, str, str]]]
+"""(session_id, file_id) -> (data, original_name, media_type)"""
 
-CLAUDE_ATTACHMENT_DIRNAME = ".claude-attachments"
-_SAFE_FILENAME_RE = re.compile(r"[^\w.\-+]+")
 _MAX_STDERR_LINES = 80
 _MAX_STDERR_CHARS = 8000
 _SECRET_RE = re.compile(
@@ -233,6 +232,7 @@ class ClaudeSdkAdapter:
                 content=content,
                 attachments=params.get("attachments"),
                 cwd=runtime.cwd,
+                session_id=runtime.session_id,
             )
             await client.query(_prompt_stream(runtime_content))
             await self._receive_response(runtime, client, turn_id)
@@ -639,6 +639,7 @@ class ClaudeSdkAdapter:
         content: str,
         attachments: Any,
         cwd: str | None,
+        session_id: str,
     ) -> Any:
         if not isinstance(attachments, list) or not attachments:
             return content
@@ -665,18 +666,7 @@ class ClaudeSdkAdapter:
                 }
             )
             return blocks
-        if not cwd:
-            stub_names = ", ".join(_attachment_name_from(att) or "file" for att in attachments)
-            blocks.append(
-                {
-                    "type": "text",
-                    "text": f"\n\n[Attachments dropped - session has no cwd: {stub_names}]",
-                }
-            )
-            return blocks
 
-        uploads_dir = Path(cwd) / CLAUDE_ATTACHMENT_DIRNAME
-        uploads_dir.mkdir(parents=True, exist_ok=True)
         for attachment in attachments:
             if not isinstance(attachment, dict):
                 continue
@@ -686,14 +676,17 @@ class ClaudeSdkAdapter:
             if file_id is None:
                 continue
             try:
-                data, original_name, media_type = await self.attachment_downloader(file_id)
+                data, original_name, media_type = await self.attachment_downloader(
+                    session_id, file_id
+                )
             except Exception as exc:
                 logger.exception("Claude attachment download failed file_id={}", file_id)
                 blocks.append({"type": "text", "text": f"\n\n[Failed to load attachment {file_id}: {exc}]"})
                 continue
             original_name = original_name or _attachment_name_from(attachment) or file_id
             media_type = media_type or _optional_string(attachment.get("mediaType")) or "application/octet-stream"
-            target = uploads_dir / f"{file_id}-{_safe_filename(original_name) or file_id}"
+            target = attachment_target(session_id, file_id, original_name)
+            target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
             try:
                 target.chmod(0o600)
@@ -1380,11 +1373,6 @@ def _attachment_name_from(att: Any) -> str | None:
         if isinstance(candidate, str) and candidate:
             return candidate
     return None
-
-
-def _safe_filename(name: str) -> str:
-    name = name.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
-    return _SAFE_FILENAME_RE.sub("_", name).strip("._")[:120]
 
 
 __all__ = ["ClaudeSdkAdapter", "ClaudeSdkAdapterError"]
