@@ -834,10 +834,11 @@ def test_mobile_login_qr_requires_phone_request_and_web_confirm(tmp_path):
     qr = client.post("/auth/mobile-login/qr", headers=bearer(token))
     assert qr.status_code == 200, qr.text
     qr_body = qr.json()
-    assert qr_body["payload"]["type"] == "agents-anywhere.mobile-login"
-    assert qr_body["payload"]["userId"] == "user1"
-    assert qr_body["payload"]["loginToken"] == qr_body["loginToken"]
-    assert qr_body["payload"]["expiresAt"] == qr_body["expiresAt"]
+    assert qr_body["userId"] == "user1"
+    assert qr_body["loginToken"]
+    assert qr_body["expiresAt"]
+    assert "payload" not in qr_body
+    assert "serverUrl" not in qr_body
 
     premature = client.post(
         "/auth/mobile-login/exchange",

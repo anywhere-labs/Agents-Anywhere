@@ -454,7 +454,7 @@ export function MobileSignInPanel({ me, token }: { me: AuthMe; token: string }) 
     setError(null);
     try {
       const qr = await api.createMobileLoginQr(token);
-      const image = await QRCode.toDataURL(JSON.stringify(qr.payload), {
+      const image = await QRCode.toDataURL(JSON.stringify(mobileLoginQrPayload(qr)), {
         errorCorrectionLevel: "M",
         margin: 1,
         width: 260,
@@ -606,4 +606,15 @@ function mobileLoginStatusText(status: MobileLoginStatusResponse | null): string
   if (status.status === "rejected") return "Rejected";
   if (status.status === "expired") return "Expired";
   return "Used";
+}
+
+function mobileLoginQrPayload(qr: MobileLoginQrResponse) {
+  return {
+    type: "agents-anywhere.mobile-login",
+    version: 1,
+    webUrl: window.location.origin.replace(/\/$/, ""),
+    userId: qr.userId,
+    loginToken: qr.loginToken,
+    expiresAt: qr.expiresAt,
+  };
 }

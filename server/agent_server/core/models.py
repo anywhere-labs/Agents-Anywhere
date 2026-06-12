@@ -315,7 +315,6 @@ class MobileLoginQrCreateResponse(BaseModel):
     userId: str
     loginToken: str
     expiresAt: str
-    payload: dict[str, Any]
     serverTime: str
 
 

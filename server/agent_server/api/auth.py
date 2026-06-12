@@ -360,7 +360,6 @@ async def change_password(
 
 @router.post("/auth/mobile-login/qr", response_model=MobileLoginQrCreateResponse)
 async def create_mobile_login_qr(
-    request: Request,
     user: UserView = Depends(current_user),
     db: Store = Depends(get_store),
 ) -> MobileLoginQrCreateResponse:
@@ -380,19 +379,10 @@ async def create_mobile_login_qr(
         user_id=user.userId,
         expires_at=expires_at,
     )
-    payload = {
-        "type": "agents-anywhere.mobile-login",
-        "version": 1,
-        "serverUrl": _public_origin(request),
-        "userId": user.userId,
-        "loginToken": login_token,
-        "expiresAt": expires_at,
-    }
     return MobileLoginQrCreateResponse(
         userId=user.userId,
         loginToken=login_token,
         expiresAt=expires_at,
-        payload=payload,
         serverTime=utc_now(),
     )
 

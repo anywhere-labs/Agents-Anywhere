@@ -81,14 +81,6 @@ export type MobileLoginQrResponse = {
   userId: string;
   loginToken: string;
   expiresAt: string;
-  payload: {
-    type: "agents-anywhere.mobile-login";
-    version: number;
-    serverUrl: string;
-    userId: string;
-    loginToken: string;
-    expiresAt: string;
-  };
   serverTime: string;
 };
 
