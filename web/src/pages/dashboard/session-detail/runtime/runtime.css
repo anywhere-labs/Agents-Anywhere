@@ -498,7 +498,11 @@ body.kl-resizing * {
   margin-left: 12px;
   overflow-x: auto;
   overflow-y: hidden;
-  scrollbar-width: thin;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.kl-term-tabs::-webkit-scrollbar {
+  display: none;
 }
 .kl-term-tab {
   display: inline-flex;
