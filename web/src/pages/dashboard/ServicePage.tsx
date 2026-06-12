@@ -315,7 +315,7 @@ export function ServicePage({ token, onBack }: ServicePageProps) {
                 </div>
 
                 <div className="aa-oauth-grid">
-                  <label className="aa-srv-field">
+                  <label className={"aa-srv-field" + (oauthTemplate === "custom" ? "" : " span-2")}>
                     <span>Base URL</span>
                     <input
                       value={oauthBaseUrl}
@@ -323,14 +323,14 @@ export function ServicePage({ token, onBack }: ServicePageProps) {
                       placeholder={oauthTemplate === "custom" ? "https://idp.example.com" : oauthTemplates[oauthTemplate].defaultBaseUrl}
                     />
                   </label>
-                  <label className="aa-srv-field">
+                  <label className={"aa-srv-field" + (oauthTemplate === "custom" ? "" : " span-2")}>
                     <span>Client ID</span>
                     <input
                       value={oauthDraft.clientId}
                       onChange={(e) => updateOAuthDraft({ clientId: e.target.value })}
                     />
                   </label>
-                  <label className="aa-srv-field">
+                  <label className={"aa-srv-field" + (oauthTemplate === "custom" ? "" : " span-2")}>
                     <span>Client secret</span>
                     <input
                       type="password"
