@@ -107,7 +107,7 @@ export function PairDeviceModal({
   }, [connectorId, connectorToken, credential, serverUrl]);
 
   const pairCmd = useMemo(
-    () => `uvx anywhere-cli pair ${shellQuote(serverUrl)}`,
+    () => `uvx anywhere-cli pair ${shellQuote(pairServerAddress(serverUrl))}`,
     [serverUrl],
   );
 
@@ -519,6 +519,16 @@ function CommandBlock({
 
 function browserServerUrl(): string {
   return window.location.origin.replace(/\/$/, "");
+}
+
+function pairServerAddress(serverUrl: string): string {
+  try {
+    const url = new URL(serverUrl);
+    if (url.protocol === "https:") return url.host;
+  } catch {
+    return serverUrl;
+  }
+  return serverUrl;
 }
 
 function readableDeviceName(): string {
