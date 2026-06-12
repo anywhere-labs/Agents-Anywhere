@@ -57,7 +57,7 @@
 }
 
 .kl-sb-hd .brand .aa-word {
-  font-size: var(--fs-md);
+  font-size: var(--fs-sm);
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -3203,6 +3203,10 @@
   color: var(--text-mut);
   line-height: 1.6;
   letter-spacing: 0;
+}
+
+.aa-srv-about .aa-word {
+  font-size: var(--fs-sm);
 }
 
 .aa-srv-about .links {

@@ -259,7 +259,7 @@ export function ServicePage({ token, onBack }: ServicePageProps) {
             </div>
             <div className="aa-srv-about">
               <p>
-                <span className="aa-word" style={{ fontSize: "17px" }}>
+                <span className="aa-word">
                   Agents Anywhere
                 </span>{" "}
                 is an open-source remote control surface for your AI coding agents.
