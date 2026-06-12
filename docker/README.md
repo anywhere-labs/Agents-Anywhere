@@ -105,6 +105,8 @@ The compose file uses:
 - `agents-anywhere-files` volume mounted at `/data` for uploaded files /
   attachments
 - port `8000` for the backend and frontend by default
+- `AGENT_SERVER_STATIC_DIR=/app/web-dist` so the backend serves the built web UI
+  and root assets such as `/site.webmanifest`
 
 Set `AGENTS_ANYWHERE_PORT=18000` to publish the service on a different host
 port:
@@ -118,3 +120,11 @@ docker compose -f docker-compose.postgres.yml up --build
 
 Use a non-default `AGENT_SERVER_SECRET` and database password outside local
 development.
+
+If root web assets return 404, check that the running server container has the
+built files:
+
+```bash
+docker compose -f docker-compose.postgres.yml exec server \
+  sh -lc 'echo "$AGENT_SERVER_STATIC_DIR" && ls -l /app/web-dist/site.webmanifest'
+```

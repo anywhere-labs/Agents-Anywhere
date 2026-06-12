@@ -29,6 +29,7 @@ services:
       AGENT_SERVER_FILES_BACKEND: local
       AGENT_SERVER_FILES_LOCAL_ROOT: /data/agent-server.files
       AGENT_SERVER_SECRET: ${AGENT_SERVER_SECRET:-change-me-before-production}
+      AGENT_SERVER_STATIC_DIR: /app/web-dist
     volumes:
       - agents-anywhere-files:/data
     ports:

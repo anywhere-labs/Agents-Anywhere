@@ -294,6 +294,8 @@ The compose file runs PostgreSQL and the production-style server image:
 - Set `AGENTS_ANYWHERE_PORT=18000` to publish the service on another host port.
 - PostgreSQL data uses the `agents-anywhere-pg` volume.
 - Uploads and attachments use a persistent volume mounted at `/data`.
+- The backend serves the built web UI from `/app/web-dist`, including root assets
+  such as `/site.webmanifest`.
 
 For production, change at least `AGENT_SERVER_SECRET` and the database password, and put HTTPS in front of the service.
 

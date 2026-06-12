@@ -294,6 +294,8 @@ compose 会启动 PostgreSQL 和生产风格 server 镜像：
 - 设置 `AGENTS_ANYWHERE_PORT=18000` 可以改用其他宿主机端口。
 - PostgreSQL 数据使用 `agents-anywhere-pg` volume。
 - 上传文件和附件使用挂载到 `/data` 的持久化 volume。
+- 后端会从 `/app/web-dist` 托管构建后的 Web UI，包括 `/site.webmanifest`
+  这类根路径静态资源。
 
 生产环境请至少修改 `AGENT_SERVER_SECRET` 和数据库密码，并在反向代理层配置 HTTPS。
 

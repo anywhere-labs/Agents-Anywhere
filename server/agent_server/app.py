@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from loguru import logger
 
 from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.api import (
@@ -121,6 +122,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         static_path = Path(static_dir)
         if not static_path.is_dir():
             raise RuntimeError(f"AGENT_SERVER_STATIC_DIR does not exist: {static_path}")
+        logger.info("serving web static files from {}", static_path)
         app.mount("/assets", StaticFiles(directory=static_path / "assets"), name="web-assets")
 
         @app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
