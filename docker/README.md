@@ -198,3 +198,47 @@ The container user is `agent`. SSH listens on container port `2222`; change it
 with `SSH_PORT` if needed and publish the same container port. Prefer
 `SSH_AUTHORIZED_KEYS` for login. `SSH_PASSWORD` is also supported for temporary
 local testing.
+
+## Connector Ubuntu Image With Agent Installers
+
+`docker/Dockerfile.connector-agents-ubuntu` copies the Connector Ubuntu image
+shape and adds Node/npm plus runtime install hooks. At container startup, set
+environment variables to install Codex CLI and/or Claude Code before the
+Connector starts.
+
+Build:
+
+```bash
+docker build -f docker/Dockerfile.connector-agents-ubuntu -t agents-anywhere-connector:agents-ubuntu2404 .
+```
+
+Start and install both agent CLIs at runtime:
+
+```bash
+docker run --rm -it \
+  -p 2222:2222 \
+  -v agents-anywhere-connector-data:/data \
+  -v "$PWD:/workspace" \
+  -e AGENT_CONNECTOR_MODE=pair \
+  -e AGENT_SERVER_URL=http://host.docker.internal:8000 \
+  -e INSTALL_CODEX=true \
+  -e INSTALL_CLAUDE=true \
+  -e SSH_AUTHORIZED_KEYS="$(cat ~/.ssh/id_ed25519.pub)" \
+  agents-anywhere-connector:agents-ubuntu2404
+```
+
+Runtime install variables:
+
+| Variable | Purpose |
+| --- | --- |
+| `INSTALL_CODEX` | Install Codex CLI before starting the Connector when true/yes/1/on. |
+| `CODEX_NPM_PACKAGE` | Codex npm package. Defaults to `@openai/codex`. |
+| `CODEX_VERSION` | Optional Codex package version. |
+| `INSTALL_CLAUDE` | Install Claude Code before starting the Connector when true/yes/1/on. |
+| `CLAUDE_NPM_PACKAGE` | Claude Code npm package. Defaults to `@anthropic-ai/claude-code`. |
+| `CLAUDE_VERSION` | Optional Claude Code package version. |
+| `NPM_CONFIG_REGISTRY` | Optional npm registry mirror. |
+
+The image sets `CODEX_BIN=/usr/local/bin/codex` and
+`CLAUDE_BIN=/usr/local/bin/claude` by default so Connector runtime discovery
+uses the globally installed CLIs.

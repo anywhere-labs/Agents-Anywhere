@@ -1,0 +1,86 @@
+FROM ubuntu:24.04
+
+ARG APT_MIRROR=
+ARG UV_VERSION=0.9.17
+ARG UV_INDEX_URL=
+ARG TARGETARCH
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_PROJECT_ENVIRONMENT=/opt/anywhere-cli-venv \
+    AGENT_CONNECTOR_CONFIG=/data/connector.json \
+    AGENT_CONNECTOR_STATE_DB=/data/connector-state.sqlite3 \
+    AGENT_CONNECTOR_ATTACHMENTS_ROOT=/data/attachments \
+    AGENT_CONNECTOR_WORKDIR=/workspace \
+    SSH_PORT=2222 \
+    CODEX_BIN=/usr/local/bin/codex \
+    CLAUDE_BIN=/usr/local/bin/claude
+
+WORKDIR /app
+
+RUN if [ -n "$APT_MIRROR" ]; then \
+        sed -i "s|http://archive.ubuntu.com/ubuntu/|$APT_MIRROR/|g; s|http://security.ubuntu.com/ubuntu/|$APT_MIRROR/|g" /etc/apt/sources.list.d/ubuntu.sources; \
+    fi \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        bash \
+        build-essential \
+        ca-certificates \
+        curl \
+        dnsutils \
+        fd-find \
+        git \
+        gzip \
+        iproute2 \
+        iputils-ping \
+        jq \
+        less \
+        lsof \
+        nano \
+        netcat-openbsd \
+        nodejs \
+        npm \
+        openssh-server \
+        procps \
+        python3.12 \
+        python3.12-venv \
+        ripgrep \
+        rsync \
+        sudo \
+        tar \
+        tini \
+        unzip \
+        vim-tiny \
+        xz-utils \
+        zip \
+    && rm -rf /var/lib/apt/lists/* \
+    && case "${TARGETARCH:-amd64}" in \
+        amd64) uv_arch="x86_64-unknown-linux-gnu" ;; \
+        arm64) uv_arch="aarch64-unknown-linux-gnu" ;; \
+        *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+      esac \
+    && curl -LsSf "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${uv_arch}.tar.gz" \
+      | tar -xz --strip-components=1 -C /usr/local/bin --wildcards '*/uv' '*/uvx' \
+    && useradd --create-home --shell /bin/bash --uid 1000 agent \
+    && usermod -aG sudo agent \
+    && passwd -d agent \
+    && mkdir -p /run/sshd /data /workspace /home/agent/.ssh \
+    && chown -R agent:agent /data /workspace /home/agent/.ssh \
+    && chmod 700 /home/agent/.ssh \
+    && printf 'agent ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/agent \
+    && chmod 0440 /etc/sudoers.d/agent
+
+COPY connector ./connector
+RUN if [ -n "$UV_INDEX_URL" ]; then export UV_INDEX_URL="$UV_INDEX_URL"; fi \
+    && cd connector \
+    && uv sync --no-dev
+COPY docker/connector-agents-entrypoint.sh /usr/local/bin/connector-agents-entrypoint
+
+RUN chmod +x /usr/local/bin/connector-agents-entrypoint \
+    && chown -R agent:agent /app/connector
+
+VOLUME ["/data", "/workspace"]
+EXPOSE 2222
+
+ENTRYPOINT ["tini", "--", "connector-agents-entrypoint"]
