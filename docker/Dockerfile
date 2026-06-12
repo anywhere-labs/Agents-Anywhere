@@ -26,7 +26,7 @@ RUN if [ -n "$APT_MIRROR" ]; then \
         sed -i "s|http://deb.debian.org/debian|$APT_MIRROR|g; s|http://deb.debian.org/debian-security|$APT_MIRROR-security|g" /etc/apt/sources.list.d/debian.sources; \
     fi \
     && apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates tini \
+    && apt-get install -y --no-install-recommends ca-certificates tini git \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir uv
 
