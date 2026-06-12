@@ -6,6 +6,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 
@@ -16,21 +17,41 @@ def main(argv: list[str] | None = None) -> None:
     parser = _build_parser()
     args = parser.parse_args(argv)
     try:
-        if args.command == "login":
-            asyncio.run(_login(args))
+        if args.command in {"pair", "login"}:
+            asyncio.run(_pair(args))
         elif args.command == "configure":
             _configure(args)
         elif args.command == "start":
             asyncio.run(_start(args))
         else:
             parser.print_help()
+    except CliError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        raise SystemExit(2) from None
+    except httpx.TimeoutException as exc:
+        print(f"error: request timed out: {exc.request.url if exc.request else exc}", file=sys.stderr)
+        raise SystemExit(2) from None
+    except httpx.HTTPStatusError as exc:
+        detail = _response_detail(exc.response)
+        print(f"error: server returned HTTP {exc.response.status_code}: {detail}", file=sys.stderr)
+        raise SystemExit(2) from None
+    except httpx.RequestError as exc:
+        print(f"error: cannot reach server: {exc}", file=sys.stderr)
+        raise SystemExit(2) from None
+    except (TimeoutError, RuntimeError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        raise SystemExit(2) from None
     except KeyboardInterrupt:
         raise SystemExit(130) from None
 
 
+class CliError(RuntimeError):
+    pass
+
+
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="agent-connector", description="Agent Server Codex connector CLI")
-    subparsers = parser.add_subparsers(dest="command")
+    parser = argparse.ArgumentParser(prog="anywhere-cli", description="Agent Server Codex connector CLI")
+    subparsers = parser.add_subparsers(dest="command", metavar="{start,pair,configure}")
 
     start = subparsers.add_parser("start", help="start the connector")
     _add_config_args(start)
@@ -38,12 +59,12 @@ def _build_parser() -> argparse.ArgumentParser:
     start.add_argument("--connector-id", help="connector id")
     start.add_argument("--connector-token", help="connector token")
 
-    login = subparsers.add_parser("login", help="pair with a backend, save credentials, and start the connector")
-    _add_config_args(login)
-    login.add_argument("--server-url", required=True, help="backend server URL")
-    login.add_argument("--poll-interval", type=float, default=2, help="seconds between pairing polls")
-    login.add_argument("--timeout", type=float, default=600, help="pairing timeout in seconds")
-    login.add_argument("--no-start", action="store_true", help="save credentials without starting the connector")
+    pair = subparsers.add_parser(
+        "pair",
+        aliases=["login"],
+        help="pair with a backend, save credentials, and start the connector",
+    )
+    _add_pair_args(pair)
 
     configure = subparsers.add_parser("configure", help="save connector credentials to local JSON")
     _add_config_args(configure)
@@ -61,13 +82,22 @@ def _add_config_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_pair_args(parser: argparse.ArgumentParser) -> None:
+    _add_config_args(parser)
+    parser.add_argument("server", nargs="?", help="backend server URL, for example anywhere.com or https://api.anywhere.com")
+    parser.add_argument("--server-url", help="backend server URL (deprecated; use positional server)")
+    parser.add_argument("--poll-interval", type=float, default=2, help="seconds between pairing polls")
+    parser.add_argument("--timeout", type=float, default=600, help="pairing timeout in seconds")
+    parser.add_argument("--no-start", action="store_true", help="save credentials without starting the connector")
+
+
 async def _start(args: argparse.Namespace) -> None:
     config = _resolve_config(args)
     await BackendRpcClient(config).run_forever()
 
 
-async def _login(args: argparse.Namespace) -> None:
-    server_url = args.server_url.rstrip("/")
+async def _pair(args: argparse.Namespace) -> None:
+    server_url = await _resolve_server_url_for_pair(args.server or args.server_url, timeout=10)
     async with httpx.AsyncClient(timeout=30) as client:
         start_response = await client.post(
             f"{server_url}/pairing/start",
@@ -109,6 +139,35 @@ async def _login(args: argparse.Namespace) -> None:
     raise TimeoutError("pairing timed out")
 
 
+async def _resolve_server_url_for_pair(value: str | None, *, timeout: float = 10) -> str:
+    if not value:
+        raise CliError("missing server address. Usage: anywhere-cli pair <server>")
+    normalized = value.strip().rstrip("/")
+    if not normalized:
+        raise CliError("missing server address. Usage: anywhere-cli pair <server>")
+
+    parsed = urlparse(normalized)
+    if parsed.scheme:
+        if parsed.scheme in {"http", "https"}:
+            return normalized
+        if "://" in normalized:
+            raise CliError("server URL must use http or https")
+
+    candidates = [f"https://{normalized}", f"http://{normalized}"]
+    errors: list[str] = []
+    for candidate in candidates:
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.get(f"{candidate}/health")
+                if response.status_code < 500:
+                    return candidate
+                errors.append(f"{candidate}: HTTP {response.status_code}")
+        except httpx.RequestError as exc:
+            errors.append(f"{candidate}: {exc}")
+    joined = "; ".join(errors)
+    raise CliError(f"could not reach server over https or http ({joined})")
+
+
 def _configure(args: argparse.Namespace) -> None:
     config = ConnectorConfig(
         server_url=args.server_url.rstrip("/"),
@@ -142,7 +201,19 @@ def _resolve_config(args: argparse.Namespace) -> ConnectorConfig:
     if not connector_token:
         missing.append("--connector-token")
     missing.append(f"or config file {config_path}")
-    raise SystemExit("missing connector credentials: " + ", ".join(missing))
+    raise CliError("missing connector credentials: " + ", ".join(missing))
+
+
+def _response_detail(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except ValueError:
+        text = response.text.strip()
+        return text[:300] if text else response.reason_phrase
+    if isinstance(payload, dict):
+        detail = payload.get("detail") or payload.get("message") or payload
+        return str(detail)
+    return str(payload)
 
 
 if __name__ == "__main__":

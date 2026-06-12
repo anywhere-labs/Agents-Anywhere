@@ -64,7 +64,7 @@ Native mobile clients are in development. Today, you can also use the Web consol
 - **Approvals and sync.** Supports interrupt, sync, approval resolution, and timeline polling/SSE.
 - **Local file access.** Browse workspaces, read/write files, upload content, and download content through an online Connector.
 - **Remote shell and terminal.** Run one-shot shell commands, shell tasks, and interactive terminals.
-- **Device pairing.** Start from a Web-generated token command or from `agent-connector login` with a pairing code.
+- **Device pairing.** Start from a Web-generated token command or from `uvx anywhere-cli pair` with a pairing code.
 - **Self-hosted backend.** The FastAPI backend supports SQLite for local development and PostgreSQL for production-style deployments.
 - **Web console.** React + Vite frontend for auth, devices, workspaces, runtime settings, team/admin management, and session detail.
 
@@ -217,7 +217,7 @@ Add a device in the Web UI, copy the generated command, and run it on the target
 ```bash
 cd connector
 uv sync
-uv run agent-connector start \
+uvx anywhere-cli start \
   --server-url http://127.0.0.1:8000 \
   --connector-id conn_xxx \
   --connector-token cxt_xxx
@@ -227,29 +227,29 @@ You can also save the config first, then start:
 
 ```bash
 cd connector
-uv run agent-connector configure \
+uvx anywhere-cli configure \
   --server-url http://127.0.0.1:8000 \
   --connector-id conn_xxx \
   --connector-token cxt_xxx
 
-uv run agent-connector start
+uvx anywhere-cli start
 ```
 
 The default config path is `~/.agent-server/connector.json`. Override it with `--config` or `AGENT_CONNECTOR_CONFIG`.
 
-### Option B: Start Pairing From The Connector
+### Option B: Start Pairing From The CLI
 
 ```bash
-cd connector
-uv sync
-uv run agent-connector login --server-url http://127.0.0.1:8000
+uvx anywhere-cli pair anywhere.example.com
 ```
 
 The terminal prints a pairing code. Enter that code in the Web UI pairing dialog; the Connector saves its config and starts. To save the config without starting immediately:
 
 ```bash
-uv run agent-connector login --server-url http://127.0.0.1:8000 --no-start
+uvx anywhere-cli pair anywhere.example.com --no-start
 ```
+
+The server address can be a bare host, host with port, or a full URL. When the scheme is omitted, the CLI tries HTTPS first and then HTTP.
 
 If `codex` or `claude` is not on `PATH`, configure the runtime path from the UI or set these before starting the Connector:
 

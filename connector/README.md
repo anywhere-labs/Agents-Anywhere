@@ -1,4 +1,4 @@
-# Agent Connector
+# Anywhere CLI
 
 Local runtime connector for Agents Anywhere. It runs on the machine that owns
 the workspace and agent runtimes, connects to the server over HTTP/WebSocket,
@@ -12,7 +12,7 @@ connector/
   claude/       Claude Code discovery, adapter, reducer, and transcript logic
   codex/        Codex app-server discovery, RPC, adapter, and reducer logic
   local/        Local filesystem, shell, and terminal backends
-  cli.py        agent-connector CLI
+  cli.py        anywhere-cli CLI
   runtime.py    Connector config, auth, WebSocket loop, and RPC dispatch
 tests/          Connector tests
 pyproject.toml  Connector dependencies and console script
@@ -30,7 +30,7 @@ uv sync
 Start with explicit credentials from the web pairing flow:
 
 ```bash
-uv run agent-connector start \
+uvx anywhere-cli start \
   --server-url http://127.0.0.1:8000 \
   --connector-id conn_xxx \
   --connector-token cxt_xxx
@@ -39,12 +39,12 @@ uv run agent-connector start \
 Or save the config locally and start without arguments:
 
 ```bash
-uv run agent-connector configure \
+uvx anywhere-cli configure \
   --server-url http://127.0.0.1:8000 \
   --connector-id conn_xxx \
   --connector-token cxt_xxx
 
-uv run agent-connector start
+uvx anywhere-cli start
 ```
 
 The default config path is `~/.agent-server/connector.json`. Override it with

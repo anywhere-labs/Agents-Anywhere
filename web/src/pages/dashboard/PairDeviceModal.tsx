@@ -85,7 +85,7 @@ export function PairDeviceModal({
   const [waitingForOnline, setWaitingForOnline] = useState(false);
   const [claimError, setClaimError] = useState<string | null>(null);
   const [connected, setConnected] = useState<ConnectorView | null>(null);
-  const [copied, setCopied] = useState<"token" | "login" | null>(null);
+  const [copied, setCopied] = useState<"token" | "pair" | null>(null);
   const [exitConfirm, setExitConfirm] = useState(false);
 
   const mintingRef = useRef(false);
@@ -99,15 +99,15 @@ export function PairDeviceModal({
   const startCmd = useMemo(() => {
     if (!credential) return "";
     return [
-      "agent-connector start",
+      "uvx anywhere-cli start",
       `--server-url ${shellQuote(serverUrl)}`,
       `--connector-id ${shellQuote(connectorId)}`,
       `--connector-token ${shellQuote(connectorToken)}`,
     ].join(" ");
   }, [connectorId, connectorToken, credential, serverUrl]);
 
-  const loginCmd = useMemo(
-    () => `agent-connector login --server-url ${shellQuote(serverUrl)}`,
+  const pairCmd = useMemo(
+    () => `uvx anywhere-cli pair ${shellQuote(serverUrl)}`,
     [serverUrl],
   );
 
@@ -182,7 +182,7 @@ export function PairDeviceModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connected]);
 
-  const copy = async (which: "token" | "login", text: string) => {
+  const copy = async (which: "token" | "pair", text: string) => {
     try {
       await navigator.clipboard.writeText(text);
     } catch {
@@ -196,7 +196,7 @@ export function PairDeviceModal({
     if (!credential || claiming || waitingForOnline) return;
     const code = pairCode.trim().toUpperCase();
     if (!code) {
-      setClaimError("Enter the code shown by agent-connector login.");
+      setClaimError("Enter the code shown by uvx anywhere-cli pair.");
       return;
     }
     setClaiming(true);
@@ -340,7 +340,7 @@ export function PairDeviceModal({
               >
                 <Icons.Terminal size={16} />
                 <strong>Pair code</strong>
-                <span>Run login on the target machine and claim its code here.</span>
+                <span>Run pair on the target machine and claim its code here.</span>
               </button>
             </div>
             <ConnectionStatus connected={connected} connectorId={connectorId} />
@@ -372,9 +372,9 @@ export function PairDeviceModal({
             </p>
             <div className="kl-pair-code-flow">
               <CommandBlock
-                cmd={loginCmd}
-                copied={copied === "login"}
-                onCopy={() => copy("login", loginCmd)}
+                cmd={pairCmd}
+                copied={copied === "pair"}
+                onCopy={() => copy("pair", pairCmd)}
               />
               <div className="kl-pair-code-row">
                 <input

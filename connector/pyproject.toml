@@ -1,6 +1,6 @@
 [project]
-name = "agent-connector"
-version = "0.1.0"
+name = "anywhere-cli"
+version = "0.1.1"
 description = "Local runtime connector for Agents Anywhere"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -17,6 +17,7 @@ dependencies = [
 ]
 
 [project.scripts]
+anywhere-cli = "connector.cli:main"
 agent-connector = "connector.cli:main"
 
 [build-system]

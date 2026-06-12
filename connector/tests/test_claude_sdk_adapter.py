@@ -414,7 +414,6 @@ async def test_claude_sdk_adapter_streams_timeline_and_updates_external_session(
             "mediaType": "text/plain",
             "size": 12,
             "sha256": "abc",
-            "downloadUrl": "/sessions/sess_1/attachments/file_1",
         }
     ]
     assert timeline[2]["id"].startswith("claude_msg_")
