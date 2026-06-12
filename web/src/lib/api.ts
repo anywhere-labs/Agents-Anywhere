@@ -277,6 +277,38 @@ export type AgentCatalogResponse = {
   serverTime: string;
 };
 
+export type UserAgentDefaultRuntime = {
+  runtime: string;
+  enabled: boolean;
+  settings: Record<string, unknown>;
+  models: AgentCatalogEntry[];
+  efforts: AgentCatalogEntry[];
+};
+
+export type UserAgentDefaultsResponse = {
+  runtimes: Record<string, UserAgentDefaultRuntime>;
+  serverTime: string;
+};
+
+export type AgentCatalogEntryUpdate = {
+  key: string;
+  displayLabel: string;
+  description?: string | null;
+  isDefault?: boolean;
+  sortOrder?: number;
+};
+
+export type UserAgentDefaultRuntimeUpdate = {
+  enabled?: boolean;
+  settings?: Record<string, unknown>;
+  models?: AgentCatalogEntryUpdate[];
+  efforts?: AgentCatalogEntryUpdate[];
+};
+
+export type UserAgentDefaultsUpdate = {
+  runtimes: Record<string, UserAgentDefaultRuntimeUpdate>;
+};
+
 export type RuntimeConfigOption = {
   value: string | boolean;
   label: string;
@@ -845,6 +877,14 @@ export const api = {
     request<AgentCatalogResponse>(
       `/agents/${encodeURIComponent(runtime)}/modes`,
       {},
+      token,
+    ),
+  getAgentDefaults: (token: string) =>
+    request<UserAgentDefaultsResponse>("/agents/defaults", {}, token),
+  patchAgentDefaults: (token: string, update: UserAgentDefaultsUpdate) =>
+    request<UserAgentDefaultsResponse>(
+      "/agents/defaults",
+      { method: "PATCH", body: JSON.stringify(update) },
       token,
     ),
   listAgentModels: (token: string, runtime: string) =>

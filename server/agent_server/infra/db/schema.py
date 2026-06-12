@@ -72,6 +72,20 @@ agent_models = _agent_catalog_table("agent_models")
 agent_efforts = _agent_catalog_table("agent_efforts")
 
 
+user_agent_defaults = Table(
+    "user_agent_defaults",
+    metadata,
+    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("runtime", Text, nullable=False),
+    Column("enabled", Integer, nullable=False),
+    Column("settings_json", Text, nullable=False),
+    Column("models_json", Text, nullable=False),
+    Column("efforts_json", Text, nullable=False),
+    Column("updated_at", Text, nullable=False),
+    PrimaryKeyConstraint("user_id", "runtime"),
+)
+
+
 users = Table(
     "users",
     metadata,

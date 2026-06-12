@@ -2988,6 +2988,160 @@
   padding: 18px 20px 20px;
 }
 
+.aa-agent-default-card .hd {
+  justify-content: space-between;
+}
+
+.aa-agent-runtime-switch {
+  margin-left: auto;
+}
+
+.aa-srv-card .body.aa-agent-defaults-body {
+  padding: 14px 16px 16px;
+}
+
+.aa-agent-defaults-empty {
+  color: var(--text-mut);
+  font-size: var(--fs-sm);
+}
+
+.aa-agent-field {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 9px 0;
+}
+
+.aa-agent-field span,
+.aa-agent-catalog-head span {
+  color: var(--text-mid);
+  font-size: var(--fs-sm);
+}
+
+.aa-agent-field select,
+.aa-agent-catalog-row input {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elev);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+  outline: none;
+}
+
+.aa-agent-field select {
+  padding: 0 9px;
+}
+
+.aa-agent-catalog-row input {
+  padding: 0 8px;
+}
+
+.aa-agent-field select:focus,
+.aa-agent-catalog-row input:focus {
+  border-color: var(--accent);
+  background: var(--bg-input);
+}
+
+.aa-agent-catalog {
+  margin-top: 12px;
+  padding-top: 13px;
+  border-top: 1px solid var(--border);
+}
+
+.aa-agent-catalog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.aa-agent-catalog-head button,
+.aa-agent-defaults-actions button {
+  appearance: none;
+  border: 1px solid var(--border-md);
+  border-radius: 7px;
+  background: var(--bg-elev);
+  color: var(--text);
+  height: 30px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--fs-sm);
+}
+
+.aa-agent-catalog-head button:hover,
+.aa-agent-defaults-actions button:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.aa-agent-defaults-actions button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.aa-agent-catalog-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.aa-agent-catalog-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.9fr) minmax(140px, 1fr) auto 30px;
+  gap: 8px;
+  align-items: center;
+}
+
+.aa-agent-default-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-mut);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+
+.aa-agent-icon-btn {
+  appearance: none;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-mut);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.aa-agent-icon-btn:hover {
+  background: var(--bg-hover);
+  color: var(--danger);
+}
+
+.aa-agent-defaults-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+}
+
+.aa-agent-defaults-error {
+  color: var(--danger);
+  font-size: var(--fs-sm);
+}
+
 @media (max-width: 720px) {
   .aa-settings-layout {
     grid-template-columns: 1fr;
@@ -3010,6 +3164,20 @@
 
   .aa-theme-grid {
     grid-template-columns: 1fr;
+  }
+
+  .aa-agent-field,
+  .aa-agent-catalog-row {
+    grid-template-columns: 1fr;
+  }
+
+  .aa-agent-default-radio {
+    min-height: 28px;
+  }
+
+  .aa-agent-defaults-actions {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .aa-qr-login-card.in-modal {

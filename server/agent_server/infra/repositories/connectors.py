@@ -22,6 +22,10 @@ class ConnectorRepositoryMixin:
                     updated_at=now,
                 )
             )
+        await self.apply_user_agent_defaults_to_connector(
+            user_id=user_id,
+            connector_id=connector_id,
+        )
         return await self.get_connector(connector_id), token, prefix
 
 

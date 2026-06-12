@@ -2,6 +2,7 @@ import { Icons } from "../../components/Icons";
 import type { AuthMe } from "../../lib/api";
 import type { Theme } from "../../lib/theme";
 import { AccountPanel, MobileSignInPanel } from "./AccountModal";
+import { AgentDefaultsPanel } from "./AgentDefaultsPanel";
 import { useState } from "react";
 
 type SettingsPageProps = {
@@ -47,7 +48,7 @@ export function SettingsPage({
   onAvatarChange,
   onBack,
 }: SettingsPageProps) {
-  const [section, setSection] = useState<"account" | "appearance">("account");
+  const [section, setSection] = useState<"account" | "agents" | "appearance">("account");
 
   return (
     <div className="aa-srv aa-settings" data-screen-label="Settings">
@@ -72,6 +73,14 @@ export function SettingsPage({
               >
                 <Icons.User size={14} />
                 Account
+              </button>
+              <button
+                type="button"
+                className={section === "agents" ? "on" : ""}
+                onClick={() => setSection("agents")}
+              >
+                <Icons.Settings size={14} />
+                Agent settings
               </button>
               <button
                 type="button"
@@ -101,6 +110,8 @@ export function SettingsPage({
                   </div>
                 </div>
               )}
+
+              {section === "agents" && <AgentDefaultsPanel token={token} />}
 
               {section === "appearance" && (
                 <div className="aa-srv-card">

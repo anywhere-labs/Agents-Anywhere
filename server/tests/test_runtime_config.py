@@ -89,6 +89,130 @@ def test_runtime_config_schema_is_seeded_and_readable(tmp_path):
     assert fields["permissionMode"]["allowSessionOverride"] is True
 
 
+def test_user_agent_defaults_customize_schema_and_new_connectors(tmp_path):
+    client = make_client(tmp_path)
+    headers = auth_headers(client)
+
+    defaults = client.get("/agents/defaults", headers=headers)
+    assert defaults.status_code == 200, defaults.text
+    assert defaults.json()["runtimes"]["codex"]["enabled"] is True
+    assert defaults.json()["runtimes"]["claude"]["settings"]["runMode"] == "chat"
+
+    updated = client.patch(
+        "/agents/defaults",
+        headers=headers,
+        json={
+            "runtimes": {
+                "codex": {
+                    "enabled": False,
+                    "settings": {"permissionMode": "auto", "model": "gpt-custom"},
+                    "models": [
+                        {
+                            "key": "gpt-custom",
+                            "displayLabel": "GPT Custom",
+                            "isDefault": True,
+                            "sortOrder": 1,
+                        }
+                    ],
+                },
+                "claude": {
+                    "settings": {
+                        "runMode": "terminal",
+                        "permissionMode": "plan",
+                        "model": "claude-custom",
+                        "effort": "high",
+                    },
+                    "models": [
+                        {
+                            "key": "claude-custom",
+                            "displayLabel": "Claude Custom",
+                            "isDefault": True,
+                            "sortOrder": 1,
+                        }
+                    ],
+                    "efforts": [
+                        {
+                            "key": "high",
+                            "displayLabel": "High",
+                            "isDefault": True,
+                            "sortOrder": 1,
+                        }
+                    ],
+                },
+            }
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    body = updated.json()["runtimes"]
+    assert body["codex"]["enabled"] is False
+    assert body["codex"]["settings"]["permissionMode"] == "auto"
+    assert body["codex"]["models"][0]["key"] == "gpt-custom"
+
+    schema = client.get("/agents/codex/config-schema", headers=headers)
+    assert schema.status_code == 200, schema.text
+    fields = {field["key"]: field for field in schema.json()["schema"]["fields"]}
+    assert fields["model"]["options"] == [
+        {"value": "gpt-custom", "label": "GPT Custom", "description": None}
+    ]
+
+    connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
+    assert connector_response.status_code == 200, connector_response.text
+    connector_id = connector_response.json()["connector"]["id"]
+
+    codex_settings = client.get(
+        f"/connectors/{connector_id}/agents/codex/settings",
+        headers=headers,
+    )
+    assert codex_settings.status_code == 200, codex_settings.text
+    assert codex_settings.json()["settings"]["permissionMode"] == "auto"
+    assert codex_settings.json()["settings"]["model"] == "gpt-custom"
+
+    claude_settings = client.get(
+        f"/connectors/{connector_id}/agents/claude/settings",
+        headers=headers,
+    )
+    assert claude_settings.status_code == 200, claude_settings.text
+    assert claude_settings.json()["settings"]["runMode"] == "terminal"
+    assert claude_settings.json()["settings"]["permissionMode"] == "plan"
+
+
+def test_first_discovery_respects_user_agent_default_enabled(tmp_path):
+    client = make_client(tmp_path)
+    headers = auth_headers(client)
+    disabled = client.patch(
+        "/agents/defaults",
+        headers=headers,
+        json={"runtimes": {"codex": {"enabled": False}, "claude": {"enabled": True}}},
+    )
+    assert disabled.status_code == 200, disabled.text
+    connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
+    connector_id = connector_response.json()["connector"]["id"]
+
+    state = asyncio.run(
+        client.app.state.store.apply_discovery(
+            connector_id,
+                {
+                    "runtimes": {
+                        "codex": {
+                            "history": "ok",
+                            "execution": "ok",
+                            "selected": {"source": "cli", "path": "/usr/bin/codex"},
+                        },
+                        "claude": {
+                            "history": "ok",
+                            "execution": "ok",
+                            "selected": {"source": "cli", "path": "/usr/bin/claude"},
+                        },
+                    }
+                },
+            )
+    )
+
+    assert "claude" in state["attached"]
+    assert "codex" not in state["attached"]
+    assert "codex" not in state["disabled"]
+
+
 def test_device_agent_settings_patch_and_read(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, _, headers = create_connector_and_session(client)

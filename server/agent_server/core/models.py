@@ -603,6 +603,38 @@ class AgentCatalogResponse(BaseModel):
     serverTime: str
 
 
+class UserAgentDefaultRuntime(BaseModel):
+    runtime: RuntimeName
+    enabled: bool = True
+    settings: dict[str, Any] = Field(default_factory=dict)
+    models: list[AgentCatalogEntry] = Field(default_factory=list)
+    efforts: list[AgentCatalogEntry] = Field(default_factory=list)
+
+
+class UserAgentDefaultsResponse(BaseModel):
+    runtimes: dict[str, UserAgentDefaultRuntime]
+    serverTime: str
+
+
+class AgentCatalogEntryUpdate(BaseModel):
+    key: str = Field(min_length=1)
+    displayLabel: str = Field(min_length=1)
+    description: str | None = None
+    isDefault: bool = False
+    sortOrder: int = 0
+
+
+class UserAgentDefaultRuntimeUpdate(BaseModel):
+    enabled: bool | None = None
+    settings: dict[str, Any] | None = None
+    models: list[AgentCatalogEntryUpdate] | None = None
+    efforts: list[AgentCatalogEntryUpdate] | None = None
+
+
+class UserAgentDefaultsUpdateRequest(BaseModel):
+    runtimes: dict[str, UserAgentDefaultRuntimeUpdate] = Field(default_factory=dict)
+
+
 class ConnectorPreferencesResponse(BaseModel):
     connectorId: str
     preferences: dict[str, Any]

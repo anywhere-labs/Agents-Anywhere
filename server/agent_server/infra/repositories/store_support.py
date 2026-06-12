@@ -30,6 +30,7 @@ from agent_server.infra.db import (
     approvals as approvals_t,
     build_engine,
     connectors as connectors_t,
+    device_agent_settings as device_agent_settings_t,
     init_db,
     mobile_login_tokens as mobile_login_tokens_t,
     oauth_accounts as oauth_accounts_t,
@@ -38,6 +39,7 @@ from agent_server.infra.db import (
     pairing_codes as pairing_codes_t,
     sessions as sessions_t,
     timeline_items as timeline_items_t,
+    user_agent_defaults as user_agent_defaults_t,
     users as users_t,
 )
 from agent_server.infra.db.engine import (
@@ -78,6 +80,26 @@ USERNAME_RE = re.compile(r"^[a-z0-9_-]{3,32}$")
 # instance_settings keys
 SETTING_REGISTRATION_OPEN = "registration_open"
 SETTING_OAUTH_REGISTRATION_OPEN = "oauth_registration_open"
+
+
+SUPPORTED_DEFAULT_AGENT_RUNTIMES = ("codex", "claude")
+
+
+def default_agent_settings(runtime: str) -> dict[str, Any]:
+    if runtime == "codex":
+        return {
+            "permissionMode": "ask",
+            "model": None,
+            "effort": None,
+        }
+    if runtime == "claude":
+        return {
+            "runMode": "chat",
+            "permissionMode": "acceptEdits",
+            "model": None,
+            "effort": None,
+        }
+    raise ValueError(f"unsupported runtime: {runtime}")
 SETTING_OAUTH_PROVIDER = "oauth_provider"
 
 UserRole = str  # "admin" | "member"

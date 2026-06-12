@@ -1350,14 +1350,32 @@ def test_agent_catalog_lists_seeded_claude_entries(tmp_path):
     assert next(e for e in efforts["entries"] if e["isDefault"])["key"] == "xhigh"
 
 
-def test_agent_catalog_is_empty_for_codex_phase1(tmp_path):
+def test_codex_agent_catalog_uses_user_default_schema_options(tmp_path):
     client = make_client(tmp_path)
     headers = auth_headers(client)
 
-    for endpoint in ("modes", "models", "efforts"):
-        body = client.get(f"/agents/codex/{endpoint}", headers=headers).json()
-        assert body["runtime"] == "codex"
-        assert body["entries"] == []
+    modes = client.get("/agents/codex/modes", headers=headers).json()
+    assert modes["runtime"] == "codex"
+    assert modes["entries"] == []
+
+    models = client.get("/agents/codex/models", headers=headers).json()
+    assert models["runtime"] == "codex"
+    assert [entry["key"] for entry in models["entries"]] == [
+        "gpt-5.5",
+        "gpt-5.4",
+        "gpt-5.4-mini",
+        "gpt-5.3-codex",
+        "gpt-5.2",
+    ]
+
+    efforts = client.get("/agents/codex/efforts", headers=headers).json()
+    assert efforts["runtime"] == "codex"
+    assert [entry["key"] for entry in efforts["entries"]] == [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+    ]
 
 
 def test_agent_catalog_requires_authentication(tmp_path):
