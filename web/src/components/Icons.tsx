@@ -87,6 +87,14 @@ export const Icons = {
       <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
     </StrokeIcon>
   ),
+  QrCode: (p: IconProps) => (
+    <StrokeIcon {...p}>
+      <rect x="3" y="3" width="6" height="6" rx="1" />
+      <rect x="15" y="3" width="6" height="6" rx="1" />
+      <rect x="3" y="15" width="6" height="6" rx="1" />
+      <path d="M15 15h2v2h-2zM19 15h2v6h-6v-2M13 13h2M13 17h2M17 13h4" />
+    </StrokeIcon>
+  ),
   Pencil: (p: IconProps) => (
     <StrokeIcon {...p} d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z" />
   ),

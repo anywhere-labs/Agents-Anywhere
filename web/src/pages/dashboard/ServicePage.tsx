@@ -4,8 +4,6 @@ import {
   ApiError,
   api,
   type InstanceSettings,
-  type OAuthClient,
-  type OAuthProviderConfig,
   type ServiceInfo,
 } from "../../lib/api";
 
@@ -31,19 +29,11 @@ function formatUptime(seconds: number): string {
 export function ServicePage({ token, onBack }: ServicePageProps) {
   const [info, setInfo] = useState<ServiceInfo | null>(null);
   const [settings, setSettings] = useState<InstanceSettings | null>(null);
-  const [oauthClients, setOauthClients] = useState<OAuthClient[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [togglePending, setTogglePending] = useState(false);
-  const [oauthPending, setOauthPending] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
-  const [oauthForm, setOauthForm] = useState<OAuthProviderConfig & { clientSecret: string }>(
-    defaultOAuthForm(),
-  );
-  const [clientName, setClientName] = useState("");
-  const [clientRedirectUris, setClientRedirectUris] = useState("");
   const publicUrl = browserPublicUrl();
-  const externalOAuthRedirectUrl = `${publicUrl}/auth/oauth/callback`;
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -53,11 +43,8 @@ export function ServicePage({ token, onBack }: ServicePageProps) {
         api.getServiceInfo(token),
         api.getSettings(token),
       ]);
-      const clients = await api.listOAuthClients(token);
       setInfo(svc);
       setSettings(settingsBody);
-      setOauthClients(clients.clients);
-      setOauthForm({ ...defaultOAuthForm(), ...(settingsBody.oauth ?? {}), clientSecret: "" });
     } catch (err) {
       if (err instanceof ApiError) setError(err.detail);
       else setError("Failed to load service info.");
@@ -83,64 +70,6 @@ export function ServicePage({ token, onBack }: ServicePageProps) {
       if (err instanceof ApiError) setError(err.detail);
     } finally {
       setTogglePending(false);
-    }
-  };
-
-  const saveOAuthProvider = async () => {
-    if (oauthPending) return;
-    setOauthPending(true);
-    setError(null);
-    try {
-      const updated = await api.updateSettings(token, {
-        oauth: {
-          ...oauthForm,
-          clientSecret: oauthForm.clientSecret || undefined,
-        },
-      });
-      setSettings(updated);
-      setOauthForm({ ...defaultOAuthForm(), ...(updated.oauth ?? {}), clientSecret: "" });
-    } catch (err) {
-      if (err instanceof ApiError) setError(err.detail);
-      else setError("Failed to save OAuth provider.");
-    } finally {
-      setOauthPending(false);
-    }
-  };
-
-  const createClient = async () => {
-    const redirects = clientRedirectUris
-      .split(/\s+/)
-      .map((value) => value.trim())
-      .filter(Boolean);
-    if (!clientName.trim() || redirects.length === 0) return;
-    setOauthPending(true);
-    setError(null);
-    try {
-      const created = await api.createOAuthClient(token, {
-        name: clientName.trim(),
-        redirectUris: redirects,
-      });
-      setOauthClients((prev) => [...prev, created]);
-      setClientName("");
-      setClientRedirectUris("");
-    } catch (err) {
-      if (err instanceof ApiError) setError(err.detail);
-      else setError("Failed to create OAuth client.");
-    } finally {
-      setOauthPending(false);
-    }
-  };
-
-  const deleteClient = async (clientId: string) => {
-    setOauthPending(true);
-    setError(null);
-    try {
-      await api.deleteOAuthClient(token, clientId);
-      setOauthClients((prev) => prev.filter((client) => client.clientId !== clientId));
-    } catch (err) {
-      if (err instanceof ApiError) setError(err.detail);
-    } finally {
-      setOauthPending(false);
     }
   };
 
@@ -290,101 +219,35 @@ export function ServicePage({ token, onBack }: ServicePageProps) {
             </div>
           )}
 
-          {settings && (
-            <div className="aa-srv-card">
-              <div className="hd">
-                <h3>External OAuth Login</h3>
-              </div>
-              <div className="body">
-                <div className="aa-srv-toggle">
-                  <div className="info">
-                    <span className="t">External provider</span>
-                    <span className="s">Use an upstream OAuth or OIDC provider for web sign-in.</span>
-                  </div>
-                  <label className="aa-srv-switch">
-                    <input
-                      type="checkbox"
-                      checked={oauthForm.enabled}
-                      onChange={(e) => setOauthForm((prev) => ({ ...prev, enabled: e.target.checked }))}
-                    />
-                    <span className="track" />
-                    <span className="knob" />
-                  </label>
-                </div>
-                <ServiceInput label="Provider" value={oauthForm.provider} onChange={(provider) => setOauthForm((prev) => ({ ...prev, provider }))} />
-                <div className="aa-srv-row">
-                  <span className="k">Redirect URL</span>
-                  <span className="v">
-                    <code>{externalOAuthRedirectUrl}</code>
-                  </span>
-                  <button
-                    type="button"
-                    className="copy"
-                    onClick={() => copy("oauth-redirect", externalOAuthRedirectUrl)}
-                    aria-label="Copy OAuth redirect URL"
-                  >
-                    {copied === "oauth-redirect" ? <Icons.Check size={12} /> : <Icons.Copy size={12} />}
-                  </button>
-                </div>
-                <ServiceInput label="Button label" value={oauthForm.label} onChange={(label) => setOauthForm((prev) => ({ ...prev, label }))} />
-                <ServiceInput label="Authorize URL" value={oauthForm.authorizeUrl} onChange={(authorizeUrl) => setOauthForm((prev) => ({ ...prev, authorizeUrl }))} />
-                <ServiceInput label="Token URL" value={oauthForm.tokenUrl} onChange={(tokenUrl) => setOauthForm((prev) => ({ ...prev, tokenUrl }))} />
-                <ServiceInput label="UserInfo URL" value={oauthForm.userInfoUrl} onChange={(userInfoUrl) => setOauthForm((prev) => ({ ...prev, userInfoUrl }))} />
-                <ServiceInput label="Client ID" value={oauthForm.clientId} onChange={(clientId) => setOauthForm((prev) => ({ ...prev, clientId }))} />
-                <ServiceInput label="Client secret" type="password" value={oauthForm.clientSecret} placeholder="Leave blank to keep existing" onChange={(clientSecret) => setOauthForm((prev) => ({ ...prev, clientSecret }))} />
-                <ServiceInput label="Scopes" value={oauthForm.scopes} onChange={(scopes) => setOauthForm((prev) => ({ ...prev, scopes }))} />
-                <ServiceInput label="Username claim" value={oauthForm.usernameClaim} onChange={(usernameClaim) => setOauthForm((prev) => ({ ...prev, usernameClaim }))} />
-                <div className="aa-srv-row">
-                  <span className="k">Status</span>
-                  <span className="v">
-                    <span className="badge">{oauthForm.enabled ? "enabled" : "disabled"}</span>
-                  </span>
-                  <button type="button" className="copy" disabled={oauthPending} onClick={saveOAuthProvider} aria-label="Save OAuth provider">
-                    <Icons.Check size={13} />
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
           <div className="aa-srv-card">
             <div className="hd">
-              <h3>OAuth Clients</h3>
+              <h3>First-party Clients</h3>
             </div>
             <div className="body">
               <div className="aa-srv-toggle">
                 <div className="info">
-                  <span className="t">Authorization server</span>
-                  <span className="s">Native and desktop clients can use this server with authorization code + PKCE.</span>
-                </div>
-                <span className="aa-srv-count">{oauthClients.length}</span>
-              </div>
-              {oauthClients.map((client) => (
-                <div className="aa-srv-row" key={client.clientId}>
-                  <span className="k">{client.name}</span>
-                  <span className="v aa-srv-client-value">
-                    <code>{client.clientId}</code>
-                    <span>{client.redirectUris.join(" ")}</span>
+                  <span className="t">Mobile OAuth callback</span>
+                  <span className="s">
+                    Built-in clients use the fixed custom scheme callback. Generic
+                    OAuth client configuration is intentionally not exposed.
                   </span>
-                  <button type="button" className="copy" onClick={() => deleteClient(client.clientId)} aria-label="Delete OAuth client">
-                    <Icons.X size={13} />
-                  </button>
                 </div>
-              ))}
-              <ServiceInput label="Client name" value={clientName} onChange={setClientName} />
-              <ServiceInput
-                label="Redirect URIs"
-                value={clientRedirectUris}
-                placeholder="Space separated, e.g. agents-anywhere://oauth/callback"
-                onChange={setClientRedirectUris}
-              />
+                <span className="aa-srv-count">locked</span>
+              </div>
               <div className="aa-srv-row">
-                <span className="k">New client</span>
+                <span className="k">Client ID</span>
                 <span className="v">
-                  <span className="badge">PKCE</span>
+                  <code>agents-anywhere-mobile</code>
                 </span>
-                <button type="button" className="copy" disabled={oauthPending} onClick={createClient} aria-label="Create OAuth client">
-                  <Icons.Plus size={13} />
+                <span />
+              </div>
+              <div className="aa-srv-row">
+                <span className="k">Callback</span>
+                <span className="v">
+                  <code>agents-anywhere://oauth/callback</code>
+                </span>
+                <button type="button" className="copy" onClick={() => copy("first-party-callback", "agents-anywhere://oauth/callback")} aria-label="Copy callback">
+                  {copied === "first-party-callback" ? <Icons.Check size={12} /> : <Icons.Copy size={12} />}
                 </button>
               </div>
             </div>
@@ -427,53 +290,6 @@ export function ServicePage({ token, onBack }: ServicePageProps) {
   );
 }
 
-function defaultOAuthForm(): OAuthProviderConfig & { clientSecret: string } {
-  return {
-    enabled: false,
-    provider: "oidc",
-    label: "OAuth",
-    authorizeUrl: "",
-    tokenUrl: "",
-    userInfoUrl: "",
-    clientId: "",
-    clientSecret: "",
-    scopes: "openid profile email",
-    usernameClaim: "preferred_username",
-    subjectClaim: "sub",
-    emailClaim: "email",
-    nameClaim: "name",
-  };
-}
-
 function browserPublicUrl(): string {
   return window.location.origin.replace(/\/$/, "");
-}
-
-function ServiceInput({
-  label,
-  value,
-  onChange,
-  type = "text",
-  placeholder,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  type?: string;
-  placeholder?: string;
-}) {
-  return (
-    <div className="aa-srv-row aa-srv-edit-row">
-      <span className="k">{label}</span>
-      <span className="v">
-      <input
-        type={type}
-        value={value}
-        placeholder={placeholder}
-        onChange={(event) => onChange(event.target.value)}
-      />
-      </span>
-      <span />
-    </div>
-  );
 }

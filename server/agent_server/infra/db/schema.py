@@ -117,7 +117,7 @@ oauth_authorization_codes = Table(
     "oauth_authorization_codes",
     metadata,
     Column("code_hash", Text, primary_key=True),
-    Column("client_id", Text, ForeignKey("oauth_clients.id", ondelete="CASCADE"), nullable=False),
+    Column("client_id", Text, nullable=False),
     Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
     Column("redirect_uri", Text, nullable=False),
     Column("scope", Text, nullable=False),
@@ -126,6 +126,21 @@ oauth_authorization_codes = Table(
     Column("expires_at", Text, nullable=False),
     Column("consumed_at", Text),
     Column("created_at", Text, nullable=False),
+)
+
+
+mobile_login_tokens = Table(
+    "mobile_login_tokens",
+    metadata,
+    Column("token_hash", Text, primary_key=True),
+    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("device_name", Text),
+    Column("expires_at", Text, nullable=False),
+    Column("created_at", Text, nullable=False),
+    Column("requested_at", Text),
+    Column("approved_at", Text),
+    Column("rejected_at", Text),
+    Column("consumed_at", Text),
 )
 
 

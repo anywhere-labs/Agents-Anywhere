@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import re
 import secrets
+import time
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from agent_server.core.auth import create_user_access_token, hash_password_verifier
+from agent_server.core.auth import (
+    create_signed_token,
+    create_user_access_token,
+    hash_password_verifier,
+    verify_signed_token,
+)
 from agent_server.deps import current_user, get_store
 from agent_server.core.models import (
     AuthConfigResponse,
@@ -17,6 +23,13 @@ from agent_server.core.models import (
     AuthRequest,
     AuthResponse,
     ChangePasswordRequest,
+    MobileLoginConfirmRequest,
+    MobileLoginExchangeRequest,
+    MobileLoginExchangeResponse,
+    MobileLoginQrCreateResponse,
+    MobileLoginRequestRequest,
+    MobileLoginStatusRequest,
+    MobileLoginStatusResponse,
     OAuthFinalizeRequest,
     OAuthFinalizeResponse,
     OAuthStartResponse,
@@ -43,6 +56,10 @@ def _setup_token(request: Request) -> SetupToken:
 
 
 router = APIRouter(tags=["auth"])
+MOBILE_LOGIN_TOKEN_KIND = "mobile_login"
+MOBILE_REFRESH_TOKEN_KIND = "mobile_refresh"
+MOBILE_LOGIN_EXPIRES_IN = 120
+MOBILE_REFRESH_EXPIRES_IN = 60 * 60 * 24 * 30
 
 
 @router.get("/auth/config", response_model=AuthConfigResponse)
@@ -341,12 +358,149 @@ async def change_password(
     )
 
 
+@router.post("/auth/mobile-login/qr", response_model=MobileLoginQrCreateResponse)
+async def create_mobile_login_qr(
+    user: UserView = Depends(current_user),
+    db: Store = Depends(get_store),
+) -> MobileLoginQrCreateResponse:
+    expires_at_ts = int(time.time()) + MOBILE_LOGIN_EXPIRES_IN
+    expires_at = _iso_from_epoch(expires_at_ts)
+    login_token = create_signed_token(
+        MOBILE_LOGIN_TOKEN_KIND,
+        {
+            "sub": user.userId,
+            "aud": "agents-anywhere-mobile",
+            "nonce": secrets.token_urlsafe(12),
+        },
+        MOBILE_LOGIN_EXPIRES_IN,
+    )
+    await db.record_mobile_login_token(
+        token=login_token,
+        user_id=user.userId,
+        expires_at=expires_at,
+    )
+    return MobileLoginQrCreateResponse(
+        userId=user.userId,
+        loginToken=login_token,
+        expiresAt=expires_at,
+        serverTime=utc_now(),
+    )
+
+
+@router.post("/auth/mobile-login/exchange", response_model=MobileLoginExchangeResponse)
+async def exchange_mobile_login(
+    payload: MobileLoginExchangeRequest,
+    db: Store = Depends(get_store),
+) -> MobileLoginExchangeResponse:
+    token_payload = verify_signed_token(MOBILE_LOGIN_TOKEN_KIND, payload.loginToken)
+    if token_payload is None or token_payload.get("sub") != payload.userId:
+        raise HTTPException(status_code=401, detail="invalid or expired mobile login token")
+    if not await db.consume_mobile_login_token(token=payload.loginToken, user_id=payload.userId):
+        raise HTTPException(status_code=401, detail="invalid or expired mobile login token")
+    try:
+        user = await db.get_user(payload.userId)
+    except KeyError:
+        raise HTTPException(status_code=401, detail="user no longer exists") from None
+    if user.disabled:
+        raise HTTPException(status_code=403, detail="account disabled")
+    refresh_token = create_signed_token(
+        MOBILE_REFRESH_TOKEN_KIND,
+        {
+            "sub": user.userId,
+            "aud": "agents-anywhere-mobile",
+            "nonce": secrets.token_urlsafe(16),
+        },
+        MOBILE_REFRESH_EXPIRES_IN,
+    )
+    return MobileLoginExchangeResponse(
+        auth=_auth_response(user),
+        refreshToken=refresh_token,
+        expiresAt=_iso_from_epoch(int(time.time()) + MOBILE_REFRESH_EXPIRES_IN),
+        serverTime=utc_now(),
+    )
+
+
+@router.post("/auth/mobile-login/request", response_model=MobileLoginStatusResponse)
+async def request_mobile_login(
+    payload: MobileLoginRequestRequest,
+    db: Store = Depends(get_store),
+) -> MobileLoginStatusResponse:
+    token_payload = verify_signed_token(MOBILE_LOGIN_TOKEN_KIND, payload.loginToken)
+    if token_payload is None or token_payload.get("sub") != payload.userId:
+        raise HTTPException(status_code=401, detail="invalid or expired mobile login token")
+    row = await db.request_mobile_login_token(
+        token=payload.loginToken,
+        user_id=payload.userId,
+        device_name=payload.deviceName,
+    )
+    if row is None:
+        raise HTTPException(status_code=401, detail="invalid or expired mobile login token")
+    return _mobile_login_status_response(row)
+
+
+@router.post("/auth/mobile-login/status", response_model=MobileLoginStatusResponse)
+async def mobile_login_status(
+    payload: MobileLoginStatusRequest,
+    db: Store = Depends(get_store),
+) -> MobileLoginStatusResponse:
+    row = await db.mobile_login_token_status(token=payload.loginToken)
+    if row is None:
+        raise HTTPException(status_code=404, detail="mobile login token not found")
+    return _mobile_login_status_response(row)
+
+
+@router.post("/auth/mobile-login/confirm", response_model=MobileLoginStatusResponse)
+async def confirm_mobile_login(
+    payload: MobileLoginConfirmRequest,
+    user: UserView = Depends(current_user),
+    db: Store = Depends(get_store),
+) -> MobileLoginStatusResponse:
+    token_payload = verify_signed_token(MOBILE_LOGIN_TOKEN_KIND, payload.loginToken)
+    if token_payload is None or token_payload.get("sub") != user.userId:
+        raise HTTPException(status_code=401, detail="invalid or expired mobile login token")
+    row = await db.resolve_mobile_login_token(token=payload.loginToken, approved=payload.approved)
+    if row is None:
+        raise HTTPException(status_code=401, detail="invalid or expired mobile login token")
+    return _mobile_login_status_response(row)
+
+
 def _auth_response(user: UserView) -> AuthResponse:
     return AuthResponse(
         userId=user.userId,
         role=user.role,
         accessToken=create_user_access_token(user.userId),
         serverTime=utc_now(),
+    )
+
+
+def _iso_from_epoch(value: int) -> str:
+    from datetime import UTC, datetime
+
+    return datetime.fromtimestamp(value, UTC).isoformat().replace("+00:00", "Z")
+
+
+def _mobile_login_status_response(row: dict[str, object]) -> MobileLoginStatusResponse:
+    now = utc_now()
+    if row.get("consumed_at"):
+        status = "consumed"
+    elif str(row.get("expires_at") or "") < now:
+        status = "expired"
+    elif row.get("rejected_at"):
+        status = "rejected"
+    elif row.get("approved_at"):
+        status = "approved"
+    elif row.get("requested_at"):
+        status = "pending_web_confirm"
+    else:
+        status = "pending_scan"
+    return MobileLoginStatusResponse(
+        status=status,
+        userId=str(row.get("user_id") or "") or None,
+        deviceName=str(row.get("device_name") or "") or None,
+        expiresAt=str(row.get("expires_at") or "") or None,
+        requestedAt=str(row.get("requested_at") or "") or None,
+        approvedAt=str(row.get("approved_at") or "") or None,
+        serverTime=now,
     )
 
 

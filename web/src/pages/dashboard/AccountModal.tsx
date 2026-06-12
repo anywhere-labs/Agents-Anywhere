@@ -1,7 +1,14 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import QRCode from "qrcode";
 import { Icons } from "../../components/Icons";
 import { Identicon } from "../../components/Identicon";
-import { ApiError, api, type AuthMe } from "../../lib/api";
+import {
+  ApiError,
+  api,
+  type AuthMe,
+  type MobileLoginQrResponse,
+  type MobileLoginStatusResponse,
+} from "../../lib/api";
 import { createPasswordVerifier } from "../../lib/passwordVerifier";
 import { passwordScore, STRENGTH_LABEL } from "../auth/password";
 
@@ -388,4 +395,226 @@ export function AccountPanel({
           )}
         </div>
   );
+}
+
+export function MobileSignInPanel({ me, token }: { me: AuthMe; token: string }) {
+  const [open, setOpen] = useState(false);
+  const [confirmedRisk, setConfirmedRisk] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [qrLogin, setQrLogin] = useState<MobileLoginQrResponse | null>(null);
+  const [qrStatus, setQrStatus] = useState<MobileLoginStatusResponse | null>(null);
+  const [qrImage, setQrImage] = useState<string | null>(null);
+
+  const resetQrState = () => {
+    setConfirmedRisk(false);
+    setLoading(false);
+    setError(null);
+    setQrLogin(null);
+    setQrStatus(null);
+    setQrImage(null);
+  };
+
+  useEffect(() => {
+    setOpen(false);
+    resetQrState();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me.userId]);
+
+  useEffect(() => {
+    if (!open || !qrLogin) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const status = await api.mobileLoginStatus(token, qrLogin.loginToken);
+        if (!cancelled) setQrStatus(status);
+      } catch (err) {
+        if (!cancelled && err instanceof ApiError && err.status !== 404) {
+          setError(err.detail);
+        }
+      }
+    };
+    void poll();
+    const timer = window.setInterval(poll, 1600);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [open, qrLogin, token]);
+
+  const close = () => {
+    if (loading) return;
+    setOpen(false);
+    resetQrState();
+  };
+
+  const generateQrLogin = async () => {
+    if (loading) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const qr = await api.createMobileLoginQr(token);
+      const image = await QRCode.toDataURL(JSON.stringify(mobileLoginQrPayload(qr)), {
+        errorCorrectionLevel: "M",
+        margin: 1,
+        width: 260,
+        color: {
+          dark: "#111111",
+          light: "#ffffff",
+        },
+      });
+      setQrLogin(qr);
+      setQrStatus(null);
+      setQrImage(image);
+      setConfirmedRisk(true);
+    } catch (err) {
+      if (err instanceof ApiError) setError(err.detail);
+      else setError(err instanceof Error ? err.message : "failed to create QR code");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const confirmQrLogin = async (approved: boolean) => {
+    if (!qrLogin || loading) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const status = await api.confirmMobileLogin(token, qrLogin.loginToken, approved);
+      setQrStatus(status);
+    } catch (err) {
+      if (err instanceof ApiError) setError(err.detail);
+      else setError(err instanceof Error ? err.message : "failed to confirm mobile sign-in");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="body aa-mobile-signin-body">
+        <div className="aa-acct-cp-row">
+          <div className="lbl">
+            <span className="t">Mobile sign-in</span>
+            <span className="s">Sign in to the mobile client by scanning a short-lived QR code.</span>
+          </div>
+          <button
+            type="button"
+            className="aa-acct-btn primary"
+            onClick={() => {
+              resetQrState();
+              setOpen(true);
+            }}
+          >
+            <Icons.QrCode size={13} />
+            Generate QR
+          </button>
+        </div>
+      </div>
+
+      {open && (
+        <div className="kl-modal-backdrop" onClick={close}>
+          <div
+            className="kl-modal kl-confirm aa-mobile-signin-modal"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Mobile sign-in"
+          >
+            {!confirmedRisk ? (
+              <>
+                <h3>Generate mobile sign-in QR?</h3>
+                <p>
+                  Anyone who scans this code before it expires can request to
+                  sign in as {me.userId}. You will still need to confirm the
+                  request in this browser.
+                </p>
+                {error && <div className="aa-acct-msg err">{error}</div>}
+                <div className="kl-modal-actions">
+                  <button type="button" className="kl-btn ghost" onClick={close} disabled={loading}>
+                    Cancel
+                  </button>
+                  <button type="button" className="kl-btn danger" onClick={generateQrLogin} disabled={loading}>
+                    {loading && <span className="spin" />}
+                    Generate
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h3>Mobile sign-in</h3>
+                {qrImage && qrLogin && (
+                  <div className="aa-qr-login-card in-modal">
+                    <img src={qrImage} alt="Mobile sign-in QR code" />
+                    <div className="aa-qr-login-copy">
+                      <span className="t">Scan with Agents Anywhere mobile</span>
+                      <span className="s">
+                        {mobileLoginStatusText(qrStatus)} · Expires {formatExpiry(qrLogin.expiresAt)}
+                      </span>
+                      <code>{qrLogin.userId}</code>
+                    </div>
+                  </div>
+                )}
+                {error && <div className="aa-acct-msg err">{error}</div>}
+                <div className="kl-modal-actions">
+                  <button type="button" className="kl-btn ghost" onClick={close} disabled={loading}>
+                    Close
+                  </button>
+                  {qrStatus?.status === "pending_web_confirm" && (
+                    <>
+                      <button
+                        type="button"
+                        className="kl-btn ghost"
+                        onClick={() => void confirmQrLogin(false)}
+                        disabled={loading}
+                      >
+                        Reject
+                      </button>
+                      <button
+                        type="button"
+                        className="kl-btn danger"
+                        onClick={() => void confirmQrLogin(true)}
+                        disabled={loading}
+                      >
+                        {loading && <span className="spin" />}
+                        Confirm sign-in
+                      </button>
+                    </>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+function formatExpiry(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function mobileLoginStatusText(status: MobileLoginStatusResponse | null): string {
+  if (!status) return "Waiting for scan";
+  const device = status.deviceName ? ` from ${status.deviceName}` : "";
+  if (status.status === "pending_scan") return "Waiting for scan";
+  if (status.status === "pending_web_confirm") return `Scan received${device}. Confirm on this browser`;
+  if (status.status === "approved") return "Confirmed. Complete sign-in on mobile";
+  if (status.status === "rejected") return "Rejected";
+  if (status.status === "expired") return "Expired";
+  return "Used";
+}
+
+function mobileLoginQrPayload(qr: MobileLoginQrResponse) {
+  return {
+    type: "agents-anywhere.mobile-login",
+    version: 1,
+    webUrl: window.location.origin.replace(/\/$/, ""),
+    userId: qr.userId,
+    loginToken: qr.loginToken,
+    expiresAt: qr.expiresAt,
+  };
 }
