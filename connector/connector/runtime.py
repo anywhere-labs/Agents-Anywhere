@@ -22,12 +22,14 @@ from connector.capabilities import (
     discover_codex_capability,
     discover_runtime_capabilities,
 )
+from connector.claude.history_adapter import ClaudeHistoryAdapter
 from connector.claude.sdk_adapter import ClaudeSdkAdapter
 from connector.claude.preferences import read_local_preferences
 from connector.codex.adapter import CodexAdapter
 from connector.codex.rpc import JsonRpcStdioClient
 from connector.launch import LaunchTarget, launch_target
 from connector.local_ops import create_local_ops
+from connector.sync_state import SqliteSyncStateStore, SyncStateStore
 
 
 DEFAULT_RUNTIME = "codex"
@@ -55,6 +57,7 @@ class ConnectorConfig:
     reconnect_seconds: float = 3
     sync_existing_on_connect: bool = True
     sync_interval_seconds: float = 30
+    state_db_path: str | None = None
 
     @classmethod
     def default_path(cls) -> Path:
@@ -77,6 +80,7 @@ class ConnectorConfig:
             reconnect_seconds=float(os.environ.get("AGENT_CONNECTOR_RECONNECT_SECONDS", "3")),
             sync_existing_on_connect=_bool_env("AGENT_CONNECTOR_SYNC_EXISTING", True),
             sync_interval_seconds=float(os.environ.get("AGENT_CONNECTOR_SYNC_INTERVAL_SECONDS", "30")),
+            state_db_path=os.environ.get("AGENT_CONNECTOR_STATE_DB"),
         )
 
     @classmethod
@@ -95,6 +99,7 @@ class ConnectorConfig:
             reconnect_seconds=float(data.get("reconnectSeconds", 3)),
             sync_existing_on_connect=bool(data.get("syncExistingOnConnect", True)),
             sync_interval_seconds=float(data.get("syncIntervalSeconds", 30)),
+            state_db_path=data.get("stateDbPath") if isinstance(data.get("stateDbPath"), str) else None,
         )
 
     def save(self, path: str | Path | None = None) -> Path:
@@ -110,6 +115,7 @@ class ConnectorConfig:
                     "reconnectSeconds": self.reconnect_seconds,
                     "syncExistingOnConnect": self.sync_existing_on_connect,
                     "syncIntervalSeconds": self.sync_interval_seconds,
+                    "stateDbPath": self.state_db_path,
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -133,8 +139,12 @@ class BackendRpcClient:
         *,
         adapters: dict[str, Adapter] | None = None,
         preferences_reader: Callable[[], dict[str, Any]] | None = None,
+        sync_state_store: SyncStateStore | None = None,
     ) -> None:
         self.config = config
+        self.sync_state_store = sync_state_store
+        if adapters is None and self.sync_state_store is None:
+            self.sync_state_store = SqliteSyncStateStore(config.state_db_path or SqliteSyncStateStore.default_path())
         if adapters is not None:
             self.adapters: dict[str, Adapter] = dict(adapters)
         else:
@@ -142,8 +152,15 @@ class BackendRpcClient:
             # implementation arrives in Task 3+). `adapter=` kwarg stays as a
             # single-adapter override for existing tests.
             self.adapters = {
-                "codex": adapter or CodexAdapter(notification_sink=self.send_backend_notification),
-                "claude": ClaudeSdkAdapter(notification_sink=self.send_backend_notification),
+                "codex": adapter
+                or CodexAdapter(
+                    notification_sink=self.send_backend_notification,
+                    sync_state_store=self.sync_state_store,
+                ),
+                "claude": ClaudeSdkAdapter(
+                    notification_sink=self.send_backend_notification,
+                    history_adapter=ClaudeHistoryAdapter(sync_state_store=self.sync_state_store),
+                ),
             }
         for ad in self.adapters.values():
             if getattr(ad, "notification_sink", None) is None:
@@ -322,7 +339,9 @@ class BackendRpcClient:
             await self._send_backend_notifications(result)
             return _strip_backend_notifications(result)
         if method == "turn.start":
-            return await self._resolve_adapter(params).start_turn(params)
+            return await self._resolve_adapter(params).start_turn(
+                {**params, "connectorId": self.config.connector_id}
+            )
         if method == "turn.interrupt":
             return await self._resolve_adapter(params).interrupt_turn(params)
         if method == "approval.resolve":
@@ -597,6 +616,13 @@ class BackendRpcClient:
         adapter = self.adapters.get(runtime)
         if adapter is None:
             return
+        forget_persisted = getattr(adapter, "forget_persisted_sync_state", None)
+        if callable(forget_persisted):
+            try:
+                forget_persisted(self.config.connector_id)
+                return
+            except Exception:
+                logger.exception("forget_persisted_sync_state failed runtime={}", runtime)
         forget = getattr(adapter, "forget_sync_state", None)
         if callable(forget):
             try:

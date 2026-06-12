@@ -48,6 +48,7 @@ class _PendingSdkApproval:
 @dataclass(slots=True)
 class _SdkSessionRuntime:
     session_id: str
+    connector_id: str | None = None
     cwd: str | None = None
     external_session_id: str | None = None
     client: Any | None = None
@@ -91,6 +92,9 @@ class ClaudeSdkAdapter:
 
     def forget_sync_state(self) -> None:
         self.history_adapter.forget_sync_state()
+
+    def forget_persisted_sync_state(self, connector_id: str) -> None:
+        self.history_adapter.forget_persisted_sync_state(connector_id)
 
     def apply_history_sync_state(self, state: list[dict[str, Any]]) -> None:
         self.history_adapter.apply_history_sync_state(state)
@@ -137,6 +141,9 @@ class ClaudeSdkAdapter:
         session_id = _required(params, "sessionId")
         content = _required(params, "content")
         runtime = self._runtime_for(session_id, params)
+        connector_id = _optional_string(params.get("connectorId"))
+        if connector_id is not None:
+            runtime.connector_id = connector_id
         if runtime.lock.locked():
             raise ClaudeSdkAdapterError("Claude SDK turn already running for this session")
         await runtime.lock.acquire()
@@ -499,6 +506,7 @@ class ClaudeSdkAdapter:
         try:
             self._prepare_history_adapter()
             await self.history_adapter.mark_session_consumed(
+                connector_id=runtime.connector_id,
                 external_session_id=runtime.external_session_id,
                 cwd=runtime.cwd,
             )

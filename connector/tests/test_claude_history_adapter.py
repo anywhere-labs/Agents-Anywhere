@@ -6,6 +6,7 @@ from typing import Any
 
 from connector.claude.history_adapter import ClaudeHistoryAdapter
 from connector.claude.path_utils import stable_claude_session_id
+from connector.sync_state import SqliteSyncStateStore
 
 
 @dataclass
@@ -126,18 +127,12 @@ def test_sdk_history_sync_emits_session_update_and_timeline_sync() -> None:
         "turn.start",
         "message",
         "message",
-        "tool",
         "turn.end",
     ]
     assert timeline[1]["role"] == "user"
     assert timeline[0]["source"]["itemType"] == "turn.start"
     assert timeline[-1]["source"]["itemType"] == "turn.end"
     assert timeline[2]["content"]["text"] == "I'll run them."
-    assert timeline[3]["content"]["toolName"] == "Bash"
-    assert timeline[3]["content"]["kind"] == "command"
-    assert timeline[3]["content"]["command"] == "pytest -q"
-    assert timeline[3]["content"]["result"] == "passed"
-    assert timeline[3]["content"]["outputPreview"] == "passed"
     assert timeline[-1]["content"]["result"] == "completed"
 
 
@@ -184,6 +179,19 @@ def test_sdk_history_sync_after_cursor_emits_incremental_item_upserts() -> None:
     assert second["backendNotifications"][-1]["params"]["item"]["type"] == "turn.end"
 
 
+def test_sdk_history_sync_uses_persisted_cursor_after_restart(tmp_path) -> None:
+    store = SqliteSyncStateStore(tmp_path / "connector-state.sqlite3")
+    first_adapter = ClaudeHistoryAdapter(sdk_module=FakeHistorySdk, sync_state_store=store)
+    second_adapter = ClaudeHistoryAdapter(sdk_module=FakeHistorySdk, sync_state_store=store)
+
+    first = asyncio.run(first_adapter.sync_existing_sessions("conn_x"))
+    second = asyncio.run(second_adapter.sync_existing_sessions("conn_x"))
+
+    assert [item["method"] for item in first["backendNotifications"]] == ["session.updated", "timeline.sync"]
+    assert second["backendNotifications"] == []
+    assert second["skippedThreads"] == [FakeHistorySdk.sessions[0].session_id]
+
+
 def test_sdk_history_sync_skips_active_external_session() -> None:
     adapter = ClaudeHistoryAdapter(sdk_module=FakeHistorySdk)
 
@@ -227,3 +235,110 @@ def test_sdk_history_sync_session_tags_pending_client_message() -> None:
     )
     assert user["source"]["clientMessageId"] == "opt_1"
     assert user["content"]["attachments"] == [{"fileId": "file_1", "name": "report.txt"}]
+
+
+def test_sdk_history_sync_filters_incomplete_tool_calls() -> None:
+    class IncompleteToolHistorySdk(FakeHistorySdk):
+        messages = [
+            FakeSessionMessage(
+                type="user",
+                uuid="u1",
+                session_id=FakeHistorySdk.sessions[0].session_id,
+                message={"role": "user", "content": [{"type": "text", "text": "Fetch docs"}]},
+            ),
+            FakeSessionMessage(
+                type="assistant",
+                uuid="a1",
+                session_id=FakeHistorySdk.sessions[0].session_id,
+                message={
+                    "id": "msg_a1",
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "I'll fetch it."},
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_missing",
+                            "name": "mcp__docs__get",
+                            "input": {"path": "/overview"},
+                        },
+                    ],
+                },
+            ),
+        ]
+
+    result = asyncio.run(ClaudeHistoryAdapter(sdk_module=IncompleteToolHistorySdk).sync_existing_sessions("conn_x"))
+    sync = next(item for item in result["backendNotifications"] if item["method"] == "timeline.sync")
+
+    assert [item["type"] for item in sync["params"]["items"]] == [
+        "turn.start",
+        "message",
+        "message",
+        "turn.end",
+    ]
+    assert all(item["type"] != "tool" for item in sync["params"]["items"])
+
+
+def test_sdk_history_sync_keeps_file_changes_but_filters_mcp_tools() -> None:
+    class MixedToolHistorySdk(FakeHistorySdk):
+        messages = [
+            FakeSessionMessage(
+                type="user",
+                uuid="u1",
+                session_id=FakeHistorySdk.sessions[0].session_id,
+                message={"role": "user", "content": [{"type": "text", "text": "Update file and fetch docs"}]},
+            ),
+            FakeSessionMessage(
+                type="assistant",
+                uuid="a1",
+                session_id=FakeHistorySdk.sessions[0].session_id,
+                message={
+                    "id": "msg_a1",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_write",
+                            "name": "Write",
+                            "input": {"file_path": "/repo/app.py", "content": "print('hi')\n"},
+                        },
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_mcp",
+                            "name": "mcp__docs__get",
+                            "input": {"path": "/overview"},
+                        },
+                    ],
+                },
+            ),
+            FakeSessionMessage(
+                type="user",
+                uuid="u_results",
+                session_id=FakeHistorySdk.sessions[0].session_id,
+                message={
+                    "role": "user",
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": "toolu_write", "content": "File written"},
+                        {"type": "tool_result", "tool_use_id": "toolu_mcp", "content": "Docs result"},
+                    ],
+                },
+            ),
+            FakeSessionMessage(
+                type="assistant",
+                uuid="a2",
+                session_id=FakeHistorySdk.sessions[0].session_id,
+                message={
+                    "id": "msg_a2",
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "Updated."}],
+                },
+            ),
+        ]
+
+    result = asyncio.run(ClaudeHistoryAdapter(sdk_module=MixedToolHistorySdk).sync_existing_sessions("conn_x"))
+    sync = next(item for item in result["backendNotifications"] if item["method"] == "timeline.sync")
+    tools = [item for item in sync["params"]["items"] if item["type"] == "tool"]
+
+    assert len(tools) == 1
+    assert tools[0]["content"]["kind"] == "file_change"
+    assert tools[0]["content"]["toolName"] == "Write"
+    assert tools[0]["content"]["result"] == "File written"

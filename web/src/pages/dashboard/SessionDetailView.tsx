@@ -2139,9 +2139,12 @@ function McpToolCard({ item }: { item: TimelineItem }) {
   const server = textOf(item.content.server) || "mcp";
   const tool = textOf(item.content.tool) || "tool";
   const args = recordOf(item.content.arguments);
-  const result = recordOf(item.content.result);
   const error = textOf(item.content.error);
-  const resultText = mcpResultText(result);
+  const resultText = mcpResultText(
+    item.content.result,
+    item.content.outputText,
+    item.content.text,
+  );
   const isError =
     Boolean(error) ||
     item.status === "failed" ||
@@ -2194,13 +2197,30 @@ function McpToolCard({ item }: { item: TimelineItem }) {
 }
 
 // Codex MCP results are MCP-protocol shaped: { content: [{ type, text }],
-// structuredContent, _meta }. Concatenate the text parts; fall back to JSON.
-function mcpResultText(result: Record<string, unknown> | null): string {
-  if (!result) return "";
-  const content = result.content;
+// structuredContent, _meta }. Claude results may be a raw text block array or
+// string, with outputText/text already normalized by the reducer.
+function mcpResultText(result: unknown, ...fallbacks: unknown[]): string {
+  const fallback = fallbacks.map(textOf).find((text) => text && text.length > 0);
+  if (Array.isArray(result)) {
+    const texts = result
+      .map((item) => {
+        if (typeof item === "string") return item;
+        if (!item || typeof item !== "object") return "";
+        const text = (item as { text?: unknown }).text;
+        return typeof text === "string" ? text : "";
+      })
+      .filter(Boolean);
+    if (texts.length > 0) return texts.join("\n");
+    return fallback || "";
+  }
+  if (typeof result === "string") return result;
+  const record = recordOf(result);
+  if (!record) return fallback || "";
+  const content = record.content;
   if (Array.isArray(content)) {
     const texts = content
       .map((c) => {
+        if (typeof c === "string") return c;
         if (!c || typeof c !== "object") return "";
         const text = (c as { text?: unknown }).text;
         return typeof text === "string" ? text : "";
@@ -2208,9 +2228,9 @@ function mcpResultText(result: Record<string, unknown> | null): string {
       .filter(Boolean);
     if (texts.length > 0) return texts.join("\n");
   }
-  const structured = result.structuredContent;
+  const structured = record.structuredContent;
   if (structured != null) return safeJson(structured);
-  return "";
+  return fallback || "";
 }
 
 function safeJson(v: unknown): string {

@@ -255,12 +255,18 @@ class FakeSdk:
 class RecordingHistoryAdapter(ClaudeHistoryAdapter):
     def __init__(self) -> None:
         super().__init__()
-        self.consumed: list[tuple[str | None, str | None]] = []
+        self.consumed: list[tuple[str | None, str | None, str | None]] = []
         self.synced = 0
         self.sync_session_params: list[dict[str, Any]] = []
 
-    async def mark_session_consumed(self, *, external_session_id: str | None, cwd: str | None = None) -> None:
-        self.consumed.append((external_session_id, cwd))
+    async def mark_session_consumed(
+        self,
+        *,
+        connector_id: str | None = None,
+        external_session_id: str | None,
+        cwd: str | None = None,
+    ) -> None:
+        self.consumed.append((connector_id, external_session_id, cwd))
 
     async def sync_session(self, params):
         self.sync_session_params.append(params)
@@ -428,7 +434,7 @@ async def test_claude_sdk_adapter_streams_timeline_and_updates_external_session(
 
     updates = [params for method, params in notifications if method == "session.updated"]
     assert any(update["externalSessionId"] == "claude_session_1" for update in updates)
-    assert history_adapter.consumed == [("claude_session_1", "/repo")]
+    assert history_adapter.consumed == [(None, "claude_session_1", "/repo")]
 
     sync_notifications: list[list[dict[str, Any]]] = []
 

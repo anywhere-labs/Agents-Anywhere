@@ -12,6 +12,7 @@ from connector.claude.normalizers import ClaudeTranscriptNormalizer
 from connector.claude.path_utils import stable_claude_session_id
 from connector.claude.timeline_identity import content_hash
 from connector.claude.timeline_reducer import ClaudeTimelineReducer
+from connector.sync_state import SyncStateStore
 from connector.time import utc_now
 
 
@@ -41,10 +42,16 @@ class ClaudeHistoryAdapter:
     """Claude history scanner backed by Claude Agent SDK session APIs."""
 
     sdk_module: Any | None = None
+    sync_state_store: SyncStateStore | None = None
     _cursors: dict[str, _HistoryCursor] = field(default_factory=dict)
 
     def forget_sync_state(self) -> None:
         self._cursors.clear()
+
+    def forget_persisted_sync_state(self, connector_id: str) -> None:
+        self.forget_sync_state()
+        if self.sync_state_store is not None:
+            self.sync_state_store.delete_runtime("claude", connector_id)
 
     def apply_history_sync_state(self, _state: list[dict[str, Any]]) -> None:
         # Reserved for future persisted SDK history state. For now, the
@@ -83,13 +90,13 @@ class ClaudeHistoryAdapter:
                 directory=_string_attr(session, "cwd"),
             )
             cursor = _cursor_for(session, messages)
-            previous_cursor = None if force else self._cursors.get(external_session_id)
-            if previous_cursor == cursor:
+            previous_cursor = self._previous_cursor(connector_id, external_session_id)
+            if not force and previous_cursor == cursor:
                 skipped.append(external_session_id)
                 continue
             sync_messages = messages if previous_cursor is None else _messages_after_cursor(messages, previous_cursor)
             if not sync_messages:
-                self._cursors[external_session_id] = cursor
+                self._store_cursor(connector_id, external_session_id, cursor)
                 skipped.append(external_session_id)
                 continue
 
@@ -100,7 +107,7 @@ class ClaudeHistoryAdapter:
                 messages=sync_messages,
                 timeline_method="timeline.sync" if previous_cursor is None else "timeline.itemUpsert",
             )
-            self._cursors[external_session_id] = cursor
+            self._store_cursor(connector_id, external_session_id, cursor)
             if notification_sink is not None:
                 await notification_sink(thread_notifications)
             else:
@@ -145,6 +152,7 @@ class ClaudeHistoryAdapter:
     async def mark_session_consumed(
         self,
         *,
+        connector_id: str | None = None,
         external_session_id: str | None,
         cwd: str | None = None,
     ) -> None:
@@ -153,7 +161,36 @@ class ClaudeHistoryAdapter:
         sdk = self._load_sdk()
         session_info = _get_session_info(sdk, external_session_id, directory=cwd)
         messages = _get_session_messages(sdk, external_session_id, directory=cwd)
-        self._cursors[external_session_id] = _cursor_for(session_info, messages)
+        cursor = _cursor_for(session_info, messages)
+        if connector_id is None:
+            self._cursors[external_session_id] = cursor
+        else:
+            self._store_cursor(connector_id, external_session_id, cursor)
+
+    def _previous_cursor(self, connector_id: str, external_session_id: str) -> _HistoryCursor | None:
+        cursor = self._cursors.get(external_session_id)
+        if cursor is not None:
+            return cursor
+        if self.sync_state_store is None:
+            return None
+        state = self.sync_state_store.get("claude", connector_id, external_session_id)
+        if state is None:
+            return None
+        cursor = _cursor_from_state(state.fingerprint, state.cursor)
+        if cursor is not None:
+            self._cursors[external_session_id] = cursor
+        return cursor
+
+    def _store_cursor(self, connector_id: str, external_session_id: str, cursor: _HistoryCursor) -> None:
+        self._cursors[external_session_id] = cursor
+        if self.sync_state_store is not None:
+            self.sync_state_store.set(
+                "claude",
+                connector_id,
+                external_session_id,
+                fingerprint=_cursor_fingerprint_json(cursor),
+                cursor=_cursor_position_json(cursor),
+            )
 
     def _load_sdk(self) -> Any:
         if self.sdk_module is not None:
@@ -262,7 +299,7 @@ def _timeline_items_from_messages(
             turn_id=turn.turn_id,
             events=events,
         )
-        for item in reduced:
+        for item in _visible_history_items(reduced):
             adjusted = dict(item)
             adjusted["orderSeq"] = next_order
             next_order += 1
@@ -325,6 +362,26 @@ def _raw_from_session_message(message: Any, *, session_info: Any, index: int) ->
         "timestamp": _stable_message_timestamp(session_info, index),
         "message": normalized_message,
     }
+
+
+def _visible_history_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [item for item in items if _is_visible_history_item(item)]
+
+
+def _is_visible_history_item(item: dict[str, Any]) -> bool:
+    if item.get("type") != "tool":
+        return True
+    content = item.get("content")
+    if not isinstance(content, dict):
+        return False
+    if content.get("kind") != "file_change":
+        return False
+    status = item.get("status")
+    has_call = isinstance(content.get("toolUseId"), str) and isinstance(content.get("toolName"), str)
+    has_result = status in {"done", "failed"} and (
+        "result" in content or "outputText" in content or "error" in content
+    )
+    return has_call and has_result
 
 
 class _PendingClientMessageMatcher:
@@ -483,6 +540,36 @@ def _cursor_for(session_info: Any, messages: list[Any]) -> _HistoryCursor:
     )
 
 
+def _cursor_fingerprint_json(cursor: _HistoryCursor) -> dict[str, Any]:
+    return {
+        "lastModified": cursor.last_modified,
+        "fileSize": cursor.file_size,
+    }
+
+
+def _cursor_position_json(cursor: _HistoryCursor) -> dict[str, Any]:
+    return {
+        "messageCount": cursor.message_count,
+        "lastMessageUuid": cursor.last_message_uuid,
+    }
+
+
+def _cursor_from_state(
+    fingerprint: dict[str, Any] | None,
+    cursor: dict[str, Any] | None,
+) -> _HistoryCursor | None:
+    if fingerprint is None and cursor is None:
+        return None
+    fingerprint = fingerprint or {}
+    cursor = cursor or {}
+    return _HistoryCursor(
+        last_modified=_optional_int(fingerprint.get("lastModified")),
+        file_size=_optional_int(fingerprint.get("fileSize")),
+        message_count=_optional_int(cursor.get("messageCount")) or 0,
+        last_message_uuid=_optional_json_string(cursor.get("lastMessageUuid")),
+    )
+
+
 def _messages_after_cursor(messages: list[Any], cursor: _HistoryCursor) -> list[Any]:
     if cursor.last_message_uuid:
         for index, message in enumerate(messages):
@@ -491,6 +578,23 @@ def _messages_after_cursor(messages: list[Any], cursor: _HistoryCursor) -> list[
     if cursor.message_count > 0:
         return messages[cursor.message_count :]
     return messages
+
+
+def _optional_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _optional_json_string(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None
 
 
 def _stable_message_timestamp(session_info: Any, index: int) -> str:
