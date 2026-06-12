@@ -288,6 +288,16 @@ AGENT_SERVER_SECRET=change-me-too \
 docker compose -f docker/docker-compose.postgres.yml up --build
 ```
 
+When building from networks where PyPI or Debian mirrors are slow, pass mirrors
+to the compose build step:
+
+```bash
+docker compose -f docker/docker-compose.postgres.yml build \
+  --build-arg APT_MIRROR=https://mirrors.ustc.edu.cn/debian \
+  --build-arg PIP_INDEX_URL=https://mirrors.ustc.edu.cn/pypi/simple \
+  server
+```
+
 The compose file runs PostgreSQL and the production-style server image:
 
 - Backend and frontend are available on port `8000` by default.

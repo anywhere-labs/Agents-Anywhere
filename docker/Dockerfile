@@ -12,6 +12,7 @@ RUN yarn build
 FROM python:3.12-slim
 
 ARG APT_MIRROR=
+ARG PIP_INDEX_URL=
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -28,10 +29,12 @@ RUN if [ -n "$APT_MIRROR" ]; then \
     && apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates tini git \
     && rm -rf /var/lib/apt/lists/* \
+    && if [ -n "$PIP_INDEX_URL" ]; then pip config set global.index-url "$PIP_INDEX_URL"; fi \
     && pip install --no-cache-dir uv
 
 COPY server/pyproject.toml server/uv.lock ./server/
-RUN cd server && uv sync --frozen --no-dev --no-install-project
+RUN if [ -n "$PIP_INDEX_URL" ]; then export UV_INDEX_URL="$PIP_INDEX_URL"; fi \
+    && cd server && uv sync --frozen --no-dev --no-install-project
 
 COPY server ./server
 COPY --from=web-build /app/web/dist ./web-dist

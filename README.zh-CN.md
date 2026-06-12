@@ -288,6 +288,15 @@ AGENT_SERVER_SECRET=change-me-too \
 docker compose -f docker/docker-compose.postgres.yml up --build
 ```
 
+如果构建环境访问 Debian 或 PyPI 官方源较慢，可以在 compose build 时传入镜像：
+
+```bash
+docker compose -f docker/docker-compose.postgres.yml build \
+  --build-arg APT_MIRROR=https://mirrors.ustc.edu.cn/debian \
+  --build-arg PIP_INDEX_URL=https://mirrors.ustc.edu.cn/pypi/simple \
+  server
+```
+
 compose 会启动 PostgreSQL 和生产风格 server 镜像：
 
 - 后端和前端默认通过 `8000` 端口访问。

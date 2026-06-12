@@ -29,11 +29,12 @@ docker build -f docker/Dockerfile -t agents-anywhere:latest . \
     agents-anywhere:latest
 ```
 
-Use a Debian apt mirror when official apt sources are slow:
+Use Debian apt and PyPI mirrors when official sources are slow:
 
 ```bash
 docker build -f docker/Dockerfile -t agents-anywhere:latest \
-  --build-arg APT_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/debian \
+  --build-arg APT_MIRROR=https://mirrors.ustc.edu.cn/debian \
+  --build-arg PIP_INDEX_URL=https://mirrors.ustc.edu.cn/pypi/simple \
   .
 ```
 
