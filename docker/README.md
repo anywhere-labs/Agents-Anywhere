@@ -202,14 +202,24 @@ local testing.
 ## Connector Ubuntu Image With Agent Installers
 
 `docker/Dockerfile.connector-agents-ubuntu` copies the Connector Ubuntu image
-shape and adds Node/npm plus runtime install hooks. At container startup, set
-environment variables to install Codex CLI and/or Claude Code before the
-Connector starts.
+shape and adds Node.js from the official Linux tarball plus runtime install
+hooks. At container startup, set environment variables to install Codex CLI
+and/or Claude Code before the Connector starts.
 
 Build:
 
 ```bash
 docker build -f docker/Dockerfile.connector-agents-ubuntu -t agents-anywhere-connector:agents-ubuntu2404 .
+```
+
+Use mirrors for apt, PyPI, and npm when official sources are slow:
+
+```bash
+docker build -f docker/Dockerfile.connector-agents-ubuntu \
+  -t agents-anywhere-connector:agents-ubuntu2404 \
+  --build-arg APT_MIRROR=https://mirrors.ustc.edu.cn/ubuntu \
+  --build-arg UV_INDEX_URL=https://mirrors.ustc.edu.cn/pypi/simple \
+  .
 ```
 
 Start and install both agent CLIs at runtime:
@@ -238,6 +248,12 @@ Runtime install variables:
 | `CLAUDE_NPM_PACKAGE` | Claude Code npm package. Defaults to `@anthropic-ai/claude-code`. |
 | `CLAUDE_VERSION` | Optional Claude Code package version. |
 | `NPM_CONFIG_REGISTRY` | Optional npm registry mirror. |
+
+Build variables:
+
+| Variable | Purpose |
+| --- | --- |
+| `NODE_VERSION` | Node.js version copied from the official Linux tarball. Defaults to `22.11.0`. |
 
 The image sets `CODEX_BIN=/usr/local/bin/codex` and
 `CLAUDE_BIN=/usr/local/bin/claude` by default so Connector runtime discovery

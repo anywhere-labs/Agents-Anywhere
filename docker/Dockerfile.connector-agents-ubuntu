@@ -2,6 +2,7 @@ FROM ubuntu:24.04
 
 ARG APT_MIRROR=
 ARG UV_VERSION=0.9.17
+ARG NODE_VERSION=22.11.0
 ARG UV_INDEX_URL=
 ARG TARGETARCH
 
@@ -53,8 +54,6 @@ RUN if [ -n "$APT_MIRROR" ]; then \
         lsof \
         nano \
         netcat-openbsd \
-        nodejs \
-        npm \
         openssh-server \
         procps \
         python3.12 \
@@ -70,10 +69,12 @@ RUN if [ -n "$APT_MIRROR" ]; then \
         zip \
     && rm -rf /var/lib/apt/lists/* \
     && case "${TARGETARCH:-amd64}" in \
-        amd64) uv_arch="x86_64-unknown-linux-gnu" ;; \
-        arm64) uv_arch="aarch64-unknown-linux-gnu" ;; \
+        amd64) uv_arch="x86_64-unknown-linux-gnu"; node_arch="x64" ;; \
+        arm64) uv_arch="aarch64-unknown-linux-gnu"; node_arch="arm64" ;; \
         *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
       esac \
+    && curl -LsSf "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${node_arch}.tar.xz" \
+      | tar -xJ --strip-components=1 -C /usr/local \
     && curl -LsSf "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${uv_arch}.tar.gz" \
       | tar -xz --strip-components=1 -C /usr/local/bin --wildcards '*/uv' '*/uvx' \
     && useradd --create-home --shell /bin/bash --uid 1000 agent \
