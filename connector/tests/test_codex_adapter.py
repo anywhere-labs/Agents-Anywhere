@@ -111,6 +111,25 @@ class ArchivedResumeRpc(FakeCodexRpc):
         return await super().request(method, params)
 
 
+class MissingRolloutResumeRpc(FakeCodexRpc):
+    async def request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        self.requests.append((method, params))
+        if method == "thread/resume":
+            raise RuntimeError(
+                json.dumps(
+                    {
+                        "code": -32600,
+                        "message": "no rollout found for thread id thr_missing_rollout",
+                    }
+                )
+            )
+        if method == "thread/start":
+            return {"thread": {"id": "thr_replacement", "status": {"type": "loaded"}}}
+        if method == "turn/start":
+            return {"turn": {"id": "turn_2", "status": "inProgress"}}
+        return {}
+
+
 def test_stdio_client_stream_limit_is_large_enough_for_codex_jsonl() -> None:
     assert APP_SERVER_STREAM_LIMIT >= 64 * 1024 * 1024
 
@@ -708,6 +727,10 @@ def test_adapter_creates_syncs_and_starts_codex_turn() -> None:
     asyncio.run(_exercise_adapter())
 
 
+def test_adapter_replaces_missing_rollout_before_starting_turn() -> None:
+    asyncio.run(_exercise_missing_rollout_replacement())
+
+
 async def _exercise_adapter() -> None:
     notifications: list[tuple[str, dict[str, Any]]] = []
 
@@ -747,6 +770,53 @@ async def _exercise_adapter() -> None:
 
     await adapter.resolve_approval({"requestId": 42, "status": "approved"})
     assert rpc.responses[-1] == (42, {"decision": "accept"})
+
+
+async def _exercise_missing_rollout_replacement() -> None:
+    notifications: list[tuple[str, dict[str, Any]]] = []
+
+    async def sink(method: str, params: dict[str, Any]) -> None:
+        notifications.append((method, params))
+
+    rpc = MissingRolloutResumeRpc()
+    adapter = CodexAdapter(rpc=rpc, notification_sink=sink)  # type: ignore[arg-type]
+
+    turn = await adapter.start_turn(
+        {
+            "sessionId": "sess_1",
+            "externalSessionId": "thr_missing_rollout",
+            "content": "continue",
+            "cwd": "/repo",
+        }
+    )
+
+    assert turn["turnId"] == "turn_2"
+    assert turn["externalSessionId"] == "thr_replacement"
+    assert ("thread/resume", {"threadId": "thr_missing_rollout"}) in rpc.requests
+    assert ("thread/start", {"cwd": "/repo", "model": None, "approvalPolicy": None, "sandbox": None, "ephemeral": False}) in rpc.requests
+    assert rpc.requests[-1] == (
+        "turn/start",
+        {
+            "threadId": "thr_replacement",
+            "input": [{"type": "text", "text": "continue", "text_elements": []}],
+            "approvalPolicy": None,
+            "sandboxPolicy": None,
+            "model": None,
+            "effort": None,
+            "approvalsReviewer": None,
+        },
+    )
+    assert notifications == [
+        (
+            "session.updated",
+            {
+                "sessionId": "sess_1",
+                "runtime": "codex",
+                "externalSessionId": "thr_replacement",
+                "cwd": "/repo",
+            },
+        )
+    ]
 
 
 def test_adapter_sync_session_refreshes_loaded_codex_thread() -> None:

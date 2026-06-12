@@ -366,7 +366,28 @@ class CodexAdapter:
             raise ValueError("externalSessionId is required before starting a Codex turn")
         content = _required_string(params, "content")
         self.reducer.bind_session(session_id, thread_id)
-        await self._ensure_thread_loaded(thread_id)
+        backend_notifications: list[dict[str, Any]] = []
+        try:
+            await self._ensure_thread_loaded(thread_id)
+        except RuntimeError as exc:
+            if _unresumable_thread_failure_reason(str(exc)) != "deleted":
+                raise
+            logger.warning(
+                "codex thread rollout missing; creating replacement thread session_id={} old_thread_id={} error={}",
+                session_id,
+                thread_id,
+                exc,
+            )
+            replacement = await self._create_replacement_thread(params)
+            thread_id = replacement["externalSessionId"]
+            self.reducer.bind_session(session_id, thread_id)
+            backend_notifications = replacement["backendNotifications"]
+            for notification in backend_notifications:
+                if notification.get("method") == "session.updated":
+                    notification.get("params", {}).pop("status", None)
+            for notification in backend_notifications:
+                if self.notification_sink is not None:
+                    await self.notification_sink(notification["method"], notification["params"])
 
         attachments = params.get("attachments") or []
         cwd = _optional_string(params.get("cwd"))
@@ -418,6 +439,8 @@ class CodexAdapter:
         return {
             "turnId": turn_id,
             "turn": result.get("turn") or result,
+            "externalSessionId": thread_id,
+            "backendNotifications": backend_notifications,
         }
 
     async def _materialize_attachments(
@@ -560,6 +583,18 @@ class CodexAdapter:
     async def _ensure_thread_loaded(self, thread_id: str) -> None:
         await self._resume_thread(thread_id)
         self._loaded_thread_ids.add(thread_id)
+
+    async def _create_replacement_thread(self, params: dict[str, Any]) -> dict[str, Any]:
+        return await self.create_session(
+            {
+                "sessionId": _required_string(params, "sessionId"),
+                "cwd": params.get("cwd"),
+                "model": params.get("model"),
+                "approvalPolicy": params.get("approvalPolicy"),
+                "sandbox": params.get("sandboxPolicy"),
+                "ephemeral": params.get("ephemeral", False),
+            }
+        )
 
     async def _best_effort_bootstrap_reads(self) -> None:
         assert self.rpc is not None
@@ -857,7 +892,11 @@ def _unresumable_thread_failure_reason(error_text: str) -> str | None:
     except json.JSONDecodeError:
         pass
     normalized = message.lower()
-    if "thread not found" in normalized or "session not found" in normalized:
+    if (
+        "thread not found" in normalized
+        or "session not found" in normalized
+        or "no rollout found" in normalized
+    ):
         return "deleted"
     if "archived" in normalized:
         return "archived"
