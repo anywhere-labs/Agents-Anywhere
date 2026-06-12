@@ -1,7 +1,7 @@
 import { Icons } from "../../components/Icons";
 import type { AuthMe } from "../../lib/api";
 import type { Theme } from "../../lib/theme";
-import { AccountPanel } from "./AccountModal";
+import { AccountPanel, MobileSignInPanel } from "./AccountModal";
 import { useState } from "react";
 
 type SettingsPageProps = {
@@ -85,11 +85,20 @@ export function SettingsPage({
 
             <div className="aa-settings-main">
               {section === "account" && (
-                <div className="aa-srv-card aa-settings-account">
-                  <div className="hd">
-                    <h3>Account</h3>
+                <div className="aa-settings-stack">
+                  <div className="aa-srv-card aa-settings-account">
+                    <div className="hd">
+                      <h3>Account</h3>
+                    </div>
+                    <AccountPanel me={me} token={token} onAvatarChange={onAvatarChange} />
                   </div>
-                  <AccountPanel me={me} token={token} onAvatarChange={onAvatarChange} />
+
+                  <div className="aa-srv-card aa-settings-mobile">
+                    <div className="hd">
+                      <h3>Mobile sign-in</h3>
+                    </div>
+                    <MobileSignInPanel me={me} token={token} />
+                  </div>
                 </div>
               )}
 

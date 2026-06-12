@@ -1612,6 +1612,11 @@
   background: var(--bg-elev);
 }
 
+.aa-qr-login-card.in-modal {
+  margin: 10px 0 14px;
+  align-items: flex-start;
+}
+
 .aa-qr-login-card img {
   display: block;
   width: 132px;
@@ -1620,6 +1625,11 @@
   background: #fff;
   padding: 8px;
   flex-shrink: 0;
+}
+
+.aa-qr-login-card.in-modal img {
+  width: 190px;
+  height: 190px;
 }
 
 .aa-qr-login-copy {
@@ -1659,6 +1669,10 @@
 
 .aa-reset-password-modal {
   width: 430px;
+}
+
+.aa-mobile-signin-modal {
+  width: 560px;
 }
 
 .aa-reset-password-form {
@@ -2873,6 +2887,12 @@
   min-width: 0;
 }
 
+.aa-settings-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
 .aa-srv-card .body.aa-settings-appearance {
   padding: 16px;
 }
@@ -2964,6 +2984,10 @@
   padding: 18px 20px 20px;
 }
 
+.aa-settings-mobile .aa-mobile-signin-body {
+  padding: 18px 20px 20px;
+}
+
 @media (max-width: 720px) {
   .aa-settings-layout {
     grid-template-columns: 1fr;
@@ -2988,9 +3012,13 @@
     grid-template-columns: 1fr;
   }
 
-  .aa-qr-login-card {
+  .aa-qr-login-card.in-modal {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .aa-mobile-signin-modal {
+    width: min(560px, calc(100vw - 28px));
   }
 }
 
