@@ -253,6 +253,26 @@ uv run agent-connector login --server-url http://127.0.0.1:8000 --no-start
 
 如果 `codex` 或 `claude` 不在 `PATH` 中，可以在 UI 中配置 Runtime 路径，或在启动 Connector 前设置：
 
+### Docker 化 Ubuntu Connector
+
+如果需要一个带 SSH 和 Connector 的一次性 Ubuntu 24.04 runtime：
+
+```bash
+docker build -f docker/Dockerfile.connector-ubuntu -t agents-anywhere-connector:ubuntu2404 .
+docker run --rm -it \
+  -p 2222:2222 \
+  -v agents-anywhere-connector-data:/data \
+  -v "$PWD:/workspace" \
+  -e AGENT_SERVER_URL=http://host.docker.internal:8000 \
+  -e AGENT_CONNECTOR_ID=conn_xxx \
+  -e AGENT_CONNECTOR_TOKEN=cxt_xxx \
+  -e SSH_AUTHORIZED_KEYS="$(cat ~/.ssh/id_ed25519.pub)" \
+  agents-anywhere-connector:ubuntu2404
+```
+
+如果不传 `AGENT_CONNECTOR_ID` / `AGENT_CONNECTOR_TOKEN`，并设置
+`AGENT_CONNECTOR_MODE=pair`，容器会进入配对流程。
+
 ```bash
 CODEX_BIN=/path/to/codex
 CLAUDE_BIN=/path/to/claude
