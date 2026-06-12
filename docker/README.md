@@ -100,6 +100,22 @@ AGENT_SERVER_SECRET=change-me-too \
 docker compose -f docker-compose.postgres.yml up --build
 ```
 
+Connector Ubuntu image with SSH:
+
+```bash
+docker build -f docker/Dockerfile.connector-ubuntu -t agents-anywhere-connector:ubuntu2404 .
+docker run --rm -it \
+  --name agents-anywhere-connector \
+  -p 2222:2222 \
+  -v agents-anywhere-connector-data:/data \
+  -v "$PWD:/workspace" \
+  -e AGENT_SERVER_URL=http://host.docker.internal:8000 \
+  -e AGENT_CONNECTOR_ID=conn_xxx \
+  -e AGENT_CONNECTOR_TOKEN=cxt_xxx \
+  -e SSH_AUTHORIZED_KEYS="$(cat ~/.ssh/id_ed25519.pub)" \
+  agents-anywhere-connector:ubuntu2404
+```
+
 The compose file uses:
 
 - `agents-anywhere-pg` volume for PostgreSQL data
@@ -129,3 +145,56 @@ built files:
 docker compose -f docker-compose.postgres.yml exec server \
   sh -lc 'echo "$AGENT_SERVER_STATIC_DIR" && ls -l /app/web-dist/site.webmanifest'
 ```
+
+## Connector Ubuntu Image
+
+`docker/Dockerfile.connector-ubuntu` builds an Ubuntu 24.04 environment with
+common CLI tools, `uv`, OpenSSH server, and the Agents Anywhere Connector. It
+does not contain server credentials; choose token startup or pairing at runtime.
+
+Build:
+
+```bash
+docker build -f docker/Dockerfile.connector-ubuntu -t agents-anywhere-connector:ubuntu2404 .
+```
+
+Use USTC mirrors when official sources are slow:
+
+```bash
+docker build -f docker/Dockerfile.connector-ubuntu -t agents-anywhere-connector:ubuntu2404 \
+  --build-arg APT_MIRROR=https://mirrors.ustc.edu.cn/ubuntu \
+  --build-arg UV_INDEX_URL=https://mirrors.ustc.edu.cn/pypi/simple \
+  .
+```
+
+Start with an existing connector token:
+
+```bash
+docker run --rm -it \
+  -p 2222:2222 \
+  -v agents-anywhere-connector-data:/data \
+  -v "$PWD:/workspace" \
+  -e AGENT_SERVER_URL=http://host.docker.internal:8000 \
+  -e AGENT_CONNECTOR_ID=conn_xxx \
+  -e AGENT_CONNECTOR_TOKEN=cxt_xxx \
+  -e SSH_AUTHORIZED_KEYS="$(cat ~/.ssh/id_ed25519.pub)" \
+  agents-anywhere-connector:ubuntu2404
+```
+
+Start pairing from the container instead:
+
+```bash
+docker run --rm -it \
+  -p 2222:2222 \
+  -v agents-anywhere-connector-data:/data \
+  -v "$PWD:/workspace" \
+  -e AGENT_CONNECTOR_MODE=pair \
+  -e AGENT_SERVER_URL=http://host.docker.internal:8000 \
+  -e SSH_AUTHORIZED_KEYS="$(cat ~/.ssh/id_ed25519.pub)" \
+  agents-anywhere-connector:ubuntu2404
+```
+
+The container user is `agent`. SSH listens on container port `2222`; change it
+with `SSH_PORT` if needed and publish the same container port. Prefer
+`SSH_AUTHORIZED_KEYS` for login. `SSH_PASSWORD` is also supported for temporary
+local testing.

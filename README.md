@@ -253,6 +253,26 @@ The server address can be a bare host, host with port, or a full URL. When the s
 
 If `codex` or `claude` is not on `PATH`, configure the runtime path from the UI or set these before starting the Connector:
 
+### Dockerized Ubuntu Connector
+
+For a disposable Ubuntu 24.04 runtime with SSH and the Connector installed:
+
+```bash
+docker build -f docker/Dockerfile.connector-ubuntu -t agents-anywhere-connector:ubuntu2404 .
+docker run --rm -it \
+  -p 2222:2222 \
+  -v agents-anywhere-connector-data:/data \
+  -v "$PWD:/workspace" \
+  -e AGENT_SERVER_URL=http://host.docker.internal:8000 \
+  -e AGENT_CONNECTOR_ID=conn_xxx \
+  -e AGENT_CONNECTOR_TOKEN=cxt_xxx \
+  -e SSH_AUTHORIZED_KEYS="$(cat ~/.ssh/id_ed25519.pub)" \
+  agents-anywhere-connector:ubuntu2404
+```
+
+Omit `AGENT_CONNECTOR_ID` / `AGENT_CONNECTOR_TOKEN` and set
+`AGENT_CONNECTOR_MODE=pair` to start the pairing flow instead.
+
 ```bash
 CODEX_BIN=/path/to/codex
 CLAUDE_BIN=/path/to/claude
