@@ -19,8 +19,12 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 WORKDIR /app
 
-RUN if [ -n "$APT_MIRROR" ]; then \
-        sed -i "s|http://archive.ubuntu.com/ubuntu/|$APT_MIRROR/|g; s|http://security.ubuntu.com/ubuntu/|$APT_MIRROR/|g" /etc/apt/sources.list.d/ubuntu.sources; \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && if [ -n "$APT_MIRROR" ]; then \
+        mirror="${APT_MIRROR%/}"; \
+        sed -i "s|http://archive.ubuntu.com/ubuntu|$mirror|g; s|http://security.ubuntu.com/ubuntu|$mirror|g" /etc/apt/sources.list.d/ubuntu.sources; \
     fi \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
