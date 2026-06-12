@@ -28,7 +28,7 @@ COPY --from=node /opt/yarn-v1.22.22 /opt/yarn-v1.22.22
 
 COPY server/pyproject.toml server/uv.lock ./server/
 RUN if [ -n "$PIP_INDEX_URL" ]; then export UV_INDEX_URL="$PIP_INDEX_URL"; fi \
-    && cd server && uv sync --frozen --no-install-project
+    && cd server && uv sync --no-install-project
 
 COPY web/package.json web/yarn.lock ./web/
 RUN corepack enable && cd web && yarn install --immutable

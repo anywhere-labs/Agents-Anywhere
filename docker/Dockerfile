@@ -34,7 +34,7 @@ RUN if [ -n "$APT_MIRROR" ]; then \
 
 COPY server/pyproject.toml server/uv.lock ./server/
 RUN if [ -n "$PIP_INDEX_URL" ]; then export UV_INDEX_URL="$PIP_INDEX_URL"; fi \
-    && cd server && uv sync --frozen --no-dev --no-install-project
+    && cd server && uv sync --no-dev --no-install-project
 
 COPY server ./server
 COPY --from=web-build /app/web/dist ./web-dist
