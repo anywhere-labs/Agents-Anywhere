@@ -127,6 +127,19 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         def web_index() -> FileResponse:
             return FileResponse(static_path / "index.html")
 
+        @app.api_route("/{asset_name}", methods=["GET", "HEAD"], include_in_schema=False)
+        def web_root_asset(asset_name: str) -> FileResponse:
+            if asset_name not in {
+                "apple-touch-icon.png",
+                "favicon-dark-mode.png",
+                "favicon-light-mode.png",
+                "icon-192.png",
+                "icon-512.png",
+                "site.webmanifest",
+            }:
+                return FileResponse(static_path / "index.html")
+            return FileResponse(static_path / asset_name)
+
     return app
 
 # this is a comment

@@ -4,6 +4,7 @@ WORKDIR /app/web
 COPY web/package.json web/yarn.lock ./
 RUN corepack enable && yarn install --immutable
 COPY web/index.html web/tsconfig.json web/vite.config.ts ./
+COPY web/public ./public
 COPY web/src ./src
 COPY web/test ./test
 RUN yarn build
