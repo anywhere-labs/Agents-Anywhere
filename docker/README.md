@@ -104,7 +104,17 @@ The compose file uses:
 - `agents-anywhere-pg` volume for PostgreSQL data
 - `agents-anywhere-files` volume mounted at `/data` for uploaded files /
   attachments
-- port `8000` for the backend and frontend
+- port `8000` for the backend and frontend by default
+
+Set `AGENTS_ANYWHERE_PORT=18000` to publish the service on a different host
+port:
+
+```bash
+AGENTS_ANYWHERE_PORT=18000 \
+POSTGRES_PASSWORD=change-me \
+AGENT_SERVER_SECRET=change-me-too \
+docker compose -f docker-compose.postgres.yml up --build
+```
 
 Use a non-default `AGENT_SERVER_SECRET` and database password outside local
 development.

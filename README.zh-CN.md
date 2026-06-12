@@ -290,7 +290,8 @@ docker compose -f docker/docker-compose.postgres.yml up --build
 
 compose 会启动 PostgreSQL 和生产风格 server 镜像：
 
-- 后端和前端通过 `8000` 端口访问。
+- 后端和前端默认通过 `8000` 端口访问。
+- 设置 `AGENTS_ANYWHERE_PORT=18000` 可以改用其他宿主机端口。
 - PostgreSQL 数据使用 `agents-anywhere-pg` volume。
 - 上传文件和附件使用挂载到 `/data` 的持久化 volume。
 

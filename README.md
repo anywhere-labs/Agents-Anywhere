@@ -290,7 +290,8 @@ docker compose -f docker/docker-compose.postgres.yml up --build
 
 The compose file runs PostgreSQL and the production-style server image:
 
-- Backend and frontend are available on port `8000`.
+- Backend and frontend are available on port `8000` by default.
+- Set `AGENTS_ANYWHERE_PORT=18000` to publish the service on another host port.
 - PostgreSQL data uses the `agents-anywhere-pg` volume.
 - Uploads and attachments use a persistent volume mounted at `/data`.
 

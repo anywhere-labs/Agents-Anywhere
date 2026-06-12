@@ -32,7 +32,7 @@ services:
     volumes:
       - agents-anywhere-files:/data
     ports:
-      - "8000:8000"
+      - "${AGENTS_ANYWHERE_PORT:-8000}:8000"
 
 volumes:
   agents-anywhere-pg:
