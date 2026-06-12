@@ -545,6 +545,7 @@ async def apply_connector_notification(
         if await filter_.session_disabled(session_id):
             return IngestEffect()
         item = _timeline_item_for_session(item, session_id)
+        item = (await _tag_active_run_user_messages(db, session_id, [item]))[0]
         stored = await db.upsert_timeline_item(
             session_id=session_id,
             source_observed_at=params.get("sourceObservedAt"),
@@ -707,13 +708,14 @@ async def _tag_active_run_user_messages(
     items: list[TimelineItemIn],
 ) -> list[TimelineItemIn]:
     active = await db.get_active_run(session_id)
-    if active is None or active.get("runtime") != "claude":
+    if active is None:
         return items
     params = active.get("params")
     if not isinstance(params, dict):
         return items
     client_message_id = params.get("clientMessageId")
     expected_text = params.get("content")
+    attachments = _timeline_attachments_from_active_run(params)
     if not isinstance(client_message_id, str) or not client_message_id:
         return items
     if not isinstance(expected_text, str):
@@ -726,16 +728,26 @@ async def _tag_active_run_user_messages(
             tagged.append(item)
             continue
         source = item.source.model_dump()
-        if source.get("clientMessageId"):
+        content = item.content if isinstance(item.content, dict) else {}
+        next_source = source
+        next_content = content
+        changed = False
+        if not source.get("clientMessageId"):
+            next_source = {**next_source, "clientMessageId": client_message_id}
+            changed = True
+        if attachments and not _content_has_attachments(content):
+            next_content = {**next_content, "attachments": attachments}
+            changed = True
+        if not changed:
             did_tag = True
             tagged.append(item)
             continue
-        source["clientMessageId"] = client_message_id
         tagged.append(
             TimelineItemIn.model_validate(
                 {
                     **item.model_dump(),
-                    "source": source,
+                    "source": next_source,
+                    "content": next_content,
                 }
             )
         )
@@ -746,13 +758,43 @@ async def _tag_active_run_user_messages(
 def _active_run_user_message_matches(item: TimelineItemIn, expected_text: str) -> bool:
     if item.type != "message" or item.role != "user":
         return False
-    if item.source.runtime != "claude":
-        return False
     content = item.content if isinstance(item.content, dict) else {}
     actual_text = content.get("text")
     if not isinstance(actual_text, str):
         return False
     return _client_message_text_matches(actual_text, expected_text)
+
+
+def _timeline_attachments_from_active_run(params: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = params.get("timelineAttachments")
+    if not isinstance(raw, list):
+        raw = params.get("attachments")
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        file_id = entry.get("fileId")
+        if not isinstance(file_id, str) or not file_id:
+            continue
+        att: dict[str, Any] = {"fileId": file_id}
+        for source, target in (
+            ("name", "name"),
+            ("mediaType", "mediaType"),
+            ("size", "size"),
+            ("sha256", "sha256"),
+        ):
+            value = entry.get(source)
+            if value is not None and target not in att:
+                att[target] = value
+        out.append(att)
+    return out
+
+
+def _content_has_attachments(content: dict[str, Any]) -> bool:
+    attachments = content.get("attachments")
+    return isinstance(attachments, list) and len(attachments) > 0
 
 
 def _client_message_text_matches(actual: str, expected: str) -> bool:

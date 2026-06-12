@@ -743,7 +743,6 @@ def _attachments_metadata(params: dict[str, Any]) -> list[dict[str, Any]] | None
             ("mediaType", "mediaType"),
             ("size", "size"),
             ("sha256", "sha256"),
-            ("downloadUrl", "downloadUrl"),
         ):
             value = attachment.get(source_key)
             if value is not None and target_key not in item:

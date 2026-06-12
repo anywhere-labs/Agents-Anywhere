@@ -1,7 +1,9 @@
-import { memo, useMemo } from "react";
+import { memo, useMemo, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
+import { Icons } from "../../components/Icons";
+import { highlightCode } from "../../lib/codeHighlight";
 
 const remarkPlugins = [remarkGfm];
 
@@ -58,8 +60,34 @@ function makeComponents(onOpenFile?: (path: string) => void): Components {
         </a>
       );
     },
+    pre({ children }) {
+      const child = Array.isArray(children) ? children[0] : children;
+      if (
+        child &&
+        typeof child === "object" &&
+        "props" in child &&
+        child.props &&
+        typeof child.props === "object"
+      ) {
+        const props = child.props as {
+          className?: string;
+          children?: ReactNode;
+        };
+        const raw = textFromChildren(props.children);
+        const language = languageFromClassName(props.className);
+        return (
+          <CodePanel
+            label={language || "code"}
+            code={raw}
+            className={props.className}
+          />
+        );
+      }
+      return <pre>{children}</pre>;
+    },
     code({ className, children }) {
       const isBlock = Boolean(className);
+      if (isBlock) return <code className={className}>{children}</code>;
       if (!isBlock && typeof children === "string" && onOpenFile) {
         const path = parseFileRef(children);
         if (path) {
@@ -79,6 +107,67 @@ function makeComponents(onOpenFile?: (path: string) => void): Components {
       return <code className={className}>{children}</code>;
     },
   };
+}
+
+function CodePanel({
+  label,
+  code,
+  className,
+}: {
+  label: string;
+  code: string;
+  className?: string;
+}) {
+  return (
+    <div className="kl-code-panel">
+      <span className="kl-code-panel-label">{label}</span>
+      <CopyButton text={code} label="Copy code" />
+      <pre className="kl-code-panel-body">
+        <code className={className}>{highlightCode(code, label)}</code>
+      </pre>
+    </div>
+  );
+}
+
+export function CopyButton({ text, label }: { text: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  const disabled = !text;
+  const copy = async () => {
+    if (disabled) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1100);
+    } catch {
+      setCopied(false);
+    }
+  };
+  return (
+    <button
+      type="button"
+      className={"kl-copy-btn" + (copied ? " ok" : "")}
+      onClick={copy}
+      disabled={disabled}
+      aria-label={label}
+      title={copied ? "Copied" : label}
+    >
+      {copied ? <Icons.Check size={12} /> : <Icons.Copy size={12} />}
+    </button>
+  );
+}
+
+function languageFromClassName(className: string | undefined): string {
+  const match = /language-([^\s]+)/.exec(className ?? "");
+  return match?.[1] ?? "";
+}
+
+function textFromChildren(children: ReactNode): string {
+  if (children == null || typeof children === "boolean") return "";
+  if (typeof children === "string" || typeof children === "number") {
+    return String(children).replace(/\n$/, "");
+  }
+  if (Array.isArray(children)) return children.map(textFromChildren).join("");
+  return "";
 }
 
 export const SessionMessageMarkdown = memo(function SessionMessageMarkdown({

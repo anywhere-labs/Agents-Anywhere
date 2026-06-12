@@ -1,21 +1,15 @@
-// Pure, framework-free reconciliation between the durable message↔attachment
-// records (IndexedDB) and the real server timeline. Kept out of the React
-// component so it can be unit-tested directly.
+// Pure, framework-free helpers for timeline attachment rendering and optimistic
+// message reconciliation. Kept out of the React component so they can be
+// unit-tested directly.
 //
 // Dedup: connector adapters tag each real user-message item with
 // `source.clientMessageId` (= the optimistic temp id). Match is by id only.
 //
-// Attachment rehydration: the server item carries no attachment refs (codex
-// only echoes back text; the connector injects a "[Attached file: …]" mention
-// for non-image files). We restore them from a local durable record keyed by
-// the same client id.
-
 export type ReconcileAttachment = {
   fileId: string;
   name?: string;
   size?: number;
   mediaType?: string;
-  openUrl?: string;
 };
 
 export type ReconcileItem = {
@@ -35,13 +29,6 @@ export type ReconcileItem = {
   completedAt?: string | null;
 };
 
-export type ReconcileSentRecord = {
-  sentId: string;
-  text: string;
-  createdAt: string;
-  attachments: ReconcileAttachment[];
-};
-
 export function extractAttachments(
   content: Record<string, unknown>,
 ): ReconcileAttachment[] {
@@ -57,7 +44,6 @@ export function extractAttachments(
     if (typeof obj.name === "string") att.name = obj.name;
     if (typeof obj.size === "number") att.size = obj.size;
     if (typeof obj.mediaType === "string") att.mediaType = obj.mediaType;
-    if (typeof obj.openUrl === "string") att.openUrl = obj.openUrl;
     out.push(att);
   }
   return out;
@@ -89,27 +75,6 @@ export function userMessageMatches(
   const realClientId = (real.source as { clientMessageId?: string } | undefined)
     ?.clientMessageId;
   return Boolean(realClientId && realClientId === clientId);
-}
-
-// Map each durable sent-record to its real timeline counterpart by client id.
-// Result: timeline-item id → attachment descriptors to merge in for rendering.
-export function assignSentRecords(
-  real: ReconcileItem[],
-  sentRecords: ReconcileSentRecord[],
-): Map<string, ReconcileAttachment[]> {
-  const out = new Map<string, ReconcileAttachment[]>();
-  if (sentRecords.length === 0) return out;
-  const bySentId = new Map(sentRecords.map((r) => [r.sentId, r]));
-  for (const item of real) {
-    if (item.type !== "message" || item.role !== "user") continue;
-    if (extractAttachments(item.content).length > 0) continue;
-    const clientId = (item.source as { clientMessageId?: string } | undefined)
-      ?.clientMessageId;
-    if (!clientId) continue;
-    const rec = bySentId.get(clientId);
-    if (rec) out.set(item.id, rec.attachments);
-  }
-  return out;
 }
 
 export function mergeOptimisticTimelineItems<T extends ReconcileItem>(

@@ -38,6 +38,28 @@ def _thread_id_from_result(value: dict[str, Any]) -> str | None:
     return None
 
 
+def _timeline_attachments(params: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = params.get("timelineAttachments")
+    if not isinstance(raw, list):
+        raw = params.get("attachments")
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        file_id = entry.get("fileId") or entry.get("id")
+        if not isinstance(file_id, str) or not file_id:
+            continue
+        item: dict[str, Any] = {"fileId": file_id}
+        for key in ("name", "mediaType", "size", "sha256"):
+            value = entry.get(key)
+            if value is not None:
+                item[key] = value
+        out.append(item)
+    return out
+
+
 def _turn_id_from_result(value: dict[str, Any]) -> str | None:
     turn = value.get("turn") if isinstance(value.get("turn"), dict) else value
     if not isinstance(turn, dict):
@@ -400,12 +422,14 @@ class CodexAdapter:
             *extra_inputs,
         ]
         client_message_id = _optional_string(params.get("clientMessageId"))
+        timeline_attachments = _timeline_attachments(params)
         if client_message_id:
             self.reducer.register_client_message(
                 session_id=session_id,
                 thread_id=thread_id,
                 client_message_id=client_message_id,
                 text=text_content,
+                attachments=timeline_attachments,
             )
         result = await self.rpc.request(
             "turn/start",
@@ -427,6 +451,7 @@ class CodexAdapter:
                 turn_id=turn_id,
                 client_message_id=client_message_id,
                 text=text_content,
+                attachments=timeline_attachments,
             )
         logger.info(
             "codex turn started session_id={} thread_id={} turn_id={} input_chars={} attachments={}",

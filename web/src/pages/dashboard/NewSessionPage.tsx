@@ -21,11 +21,7 @@ import {
 } from "../../lib/api";
 import { Icons } from "../../components/Icons";
 import { reportIsHealthy, runtimeLabel } from "../../lib/runtime";
-import {
-  putAttachment,
-  putSentMessage,
-  type SentMessageRecord,
-} from "../../lib/attachmentCache";
+import { putAttachment } from "../../lib/attachmentCache";
 import { filterClaudeEffortField } from "../../lib/claudeRuntime";
 import { optionLabel, runtimeConfigFields } from "./RuntimeSettingsForm";
 import "./session_detail.css";
@@ -90,7 +86,7 @@ const MAX_ATTACHMENT_FILES = 5;
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 const COMPOSER_MENU_MARGIN = 8;
 const COMPOSER_MENU_GAP = 8;
-const ATTACHMENT_ONLY_PROMPT = "Please review the attached file.";
+const ATTACHMENT_ONLY_PROMPT = "(No text content.)";
 
 export function NewSessionPage({
   token,
@@ -512,24 +508,6 @@ export function NewSessionPage({
         const clientMessageId = `new_${Date.now()}_${Math.random()
           .toString(36)
           .slice(2, 8)}`;
-        if (uploadedMeta.length > 0) {
-          const record: SentMessageRecord = {
-            sentId: clientMessageId,
-            sessionId,
-            text: visibleText,
-            attachments: uploadedMeta.map((meta) => ({
-              fileId: meta.fileId,
-              name: meta.name,
-              mediaType: meta.mediaType,
-              size: meta.size,
-              openUrl: meta.openUrl,
-            })),
-            createdAt: new Date().toISOString(),
-          };
-          await putSentMessage(record).catch(() => {
-            /* preview persistence is best-effort */
-          });
-        }
         await api.sendSessionMessage(token, sessionId, text, attachmentRefs, clientMessageId);
       }
       onCreated(takeover.session);

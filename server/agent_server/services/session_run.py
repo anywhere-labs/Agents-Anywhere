@@ -184,11 +184,15 @@ class SessionRunService:
         if payload.clientMessageId:
             params["clientMessageId"] = payload.clientMessageId
         if payload.attachments:
-            params["attachments"] = await self._attachment_payloads(
+            attachment_payloads = await self._attachment_payloads(
                 session_id=session_id,
                 user_id=user_id,
                 file_ids=[a.fileId for a in payload.attachments],
             )
+            params["attachments"] = attachment_payloads
+            params["timelineAttachments"] = [
+                _timeline_attachment_payload(item) for item in attachment_payloads
+            ]
 
         await self._store.start_active_run(
             session_id=session_id,
@@ -311,3 +315,13 @@ def _interrupt_target_not_found(result: object) -> bool:
         return False
     reason = result.get("reason")
     return reason in {"thread_not_found", "turn_not_found"}
+
+
+def _timeline_attachment_payload(value: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "fileId": value.get("fileId"),
+        "name": value.get("name"),
+        "mediaType": value.get("mediaType"),
+        "size": value.get("size"),
+        "sha256": value.get("sha256"),
+    }

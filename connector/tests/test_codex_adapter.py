@@ -410,6 +410,14 @@ def test_reducer_matches_pending_client_message_after_attachment_suffix() -> Non
         thread_id="thr_1",
         client_message_id="opt_file",
         text="summarize",
+        attachments=[
+            {
+                "fileId": "file_1",
+                "name": "notes.md",
+                "mediaType": "text/markdown",
+                "size": 10,
+            }
+        ],
     )
 
     reduced = reducer.reduce_notification(
@@ -428,6 +436,14 @@ def test_reducer_matches_pending_client_message_after_attachment_suffix() -> Non
     )
 
     assert reduced.timeline_items[0]["source"]["clientMessageId"] == "opt_file"
+    assert reduced.timeline_items[0]["content"]["attachments"] == [
+        {
+            "fileId": "file_1",
+            "name": "notes.md",
+            "mediaType": "text/markdown",
+            "size": 10,
+        }
+    ]
 
 
 def test_history_uses_canonical_message_keys_and_filters_bootstrap_prompt() -> None:

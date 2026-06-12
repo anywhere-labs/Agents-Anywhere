@@ -498,19 +498,108 @@
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
 }
-.kl-msg.assistant .text pre {
-  background: var(--bg-elev);
-  border: 1px solid var(--border);
-  padding: 10px 12px;
-  border-radius: 8px;
-  overflow-x: auto;
-  margin: 6px 0;
-}
-.kl-msg.assistant .text pre code {
+.kl-msg.assistant .text pre code,
+.kl-msg.assistant .text .kl-code-panel code {
   background: transparent;
   border: 0;
   padding: 0;
   font-size: var(--fs-sm);
+}
+.kl-code-panel {
+  position: relative;
+  margin: 8px 0;
+  overflow: hidden;
+  border: 1px solid var(--border-md);
+  border-radius: 10px;
+  background: #07090d;
+}
+.kl-code-panel-label {
+  position: absolute;
+  top: 9px;
+  left: 12px;
+  z-index: 1;
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: var(--fs-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+.kl-code-panel > .kl-copy-btn {
+  position: absolute;
+  top: 7px;
+  right: 8px;
+  z-index: 2;
+  background: color-mix(in srgb, #07090d 82%, transparent);
+}
+.kl-code-panel-body {
+  margin: 0;
+  padding: 34px 48px 12px 14px;
+  overflow-x: auto;
+  color: #d8dee9;
+  background: #07090d;
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+}
+.kl-copy-btn {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-faint);
+  background: transparent;
+  cursor: pointer;
+}
+.kl-copy-btn:hover:not(:disabled),
+.kl-copy-btn.ok {
+  color: var(--text);
+  background: var(--bg-hover);
+  border-color: var(--border);
+}
+.kl-copy-btn:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+.kl-code-panel .cm-aa-keyword {
+  color: #c792ea;
+}
+.kl-code-panel .cm-aa-string {
+  color: #a3be8c;
+}
+.kl-code-panel .cm-aa-literal {
+  color: #f2b56b;
+}
+.kl-code-panel .cm-aa-comment {
+  color: #6f7785;
+  font-style: italic;
+}
+.kl-code-panel .cm-aa-function {
+  color: #82aaff;
+}
+.kl-code-panel .cm-aa-type {
+  color: #7fdbca;
+}
+.kl-code-panel .cm-aa-property {
+  color: #80cbc4;
+}
+.kl-code-panel .cm-aa-variable {
+  color: #d8dee9;
+}
+.kl-code-panel .cm-aa-operator,
+.kl-code-panel .cm-aa-punctuation {
+  color: #89a4c7;
+}
+.kl-code-panel .cm-aa-heading {
+  color: #f2d17b;
+  font-weight: 650;
+}
+.kl-code-panel .cm-aa-emphasis {
+  color: #b6c7ff;
+  font-style: italic;
 }
 .kl-msg.assistant .text blockquote {
   margin: 0.5em 0;
@@ -588,7 +677,8 @@
 .kl-tool-bash {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
+  margin: -2px 0;
 }
 .kl-tool-bash .title {
   display: flex;
@@ -599,12 +689,13 @@
   color: var(--text-mid);
   cursor: pointer;
   user-select: none;
-  padding: 2px 0;
+  padding: 1px 0;
   letter-spacing: 0;
   background: none;
   border: 0;
   text-align: left;
   width: 100%;
+  min-width: 0;
 }
 .kl-tool-bash .title:hover {
   color: var(--text);
@@ -620,46 +711,47 @@
   color: var(--text-mut);
 }
 .kl-tool-bash .title em {
+  display: block;
   color: var(--text-mid);
   font-style: normal;
   font-family: var(--mono);
   font-size: var(--fs-sm);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .kl-tool-bash .title .err-chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
   flex-shrink: 0;
-  font-family: var(--sans);
-  font-size: var(--fs-2xs);
-  letter-spacing: 0;
-  text-transform: uppercase;
-  color: oklch(0.78 0.13 25);
-  background: oklch(0.32 0.07 25 / 0.35);
-  border: 1px solid oklch(0.55 0.13 25 / 0.4);
-  padding: 1px 7px 1px 6px;
-  border-radius: 999px;
-  line-height: 1.45;
+  padding: 0 2px;
 }
 .kl-tool-bash .title .err-chip-dot {
-  width: 5px;
-  height: 5px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: oklch(0.72 0.18 25);
 }
 .kl-tool-bash .title .cmd-text {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45ch;
+  flex: 1;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .kl-tool-bash .body {
-  background: var(--bg-elev);
-  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-md);
   border-radius: 10px;
-  padding: 12px 14px;
+  padding: 0;
   font-family: var(--mono);
   font-size: var(--fs-sm);
   line-height: 1.55;
-  max-height: 420px;
-  overflow-y: auto;
+  overflow: hidden;
 }
 .kl-tool-bash .body .label {
   font-size: var(--fs-2xs);
@@ -669,27 +761,64 @@
   font-weight: 500;
   font-family: var(--sans);
 }
+.kl-tool-bash .body .cmd-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 0 16px;
+}
 .kl-tool-bash .body .cmd {
-  color: var(--text);
-  white-space: pre-wrap;
-  word-break: break-all;
-  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  color: #edf2f7;
+  background: transparent;
+  padding: 12px 0;
+  white-space: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  margin: 0;
+}
+.kl-tool-bash .body .cmd::-webkit-scrollbar {
+  display: none;
 }
 .kl-tool-bash .body .cmd .sigil {
-  color: oklch(0.74 0.13 50);
-  margin-right: 6px;
+  flex: 0 0 auto;
+  color: oklch(0.76 0.15 50);
+}
+.kl-tool-bash .body .cmd .cmd-line {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.kl-tool-bash .body .out-panel > .kl-copy-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  background: color-mix(in srgb, var(--bg-panel) 82%, transparent);
 }
 /* Output rendered like a terminal: dark pane, light default text so the
  * ANSI-coloured spans (see AnsiText) read the way they would in a shell. */
+.kl-tool-bash .body .out-panel {
+  position: relative;
+  border-top: 1px solid var(--border);
+  background: #07090d;
+}
+.kl-tool-bash .body .out-panel > .kl-copy-btn {
+  background: color-mix(in srgb, #07090d 82%, transparent);
+}
 .kl-tool-bash .body .out {
   margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
-  color: #cdd3de;
-  background: #14171d;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px 12px;
+  color: #d8dee9;
+  background: #07090d;
+  border: 0;
+  border-radius: 0;
+  padding: 12px 48px 12px 16px;
   overflow-x: auto;
   max-height: 340px;
   overflow-y: auto;
@@ -839,13 +968,14 @@
   border-radius: 10px;
   overflow: hidden;
   background: var(--bg-panel);
+  margin: -2px 0;
 }
 .kl-tool-mcp .title {
   width: 100%;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
+  padding: 6px 10px;
   background: transparent;
   border: 0;
   cursor: pointer;
@@ -908,13 +1038,15 @@
 }
 .kl-tool-mcp .body {
   border-top: 1px solid var(--border);
+  background: var(--bg-panel);
+  padding: 10px;
   font-family: var(--mono);
   font-size: var(--fs-xs);
   max-height: 420px;
   overflow-y: auto;
 }
 .kl-tool-mcp .body .label {
-  padding: 8px 14px 4px;
+  padding: 2px 4px 6px;
   color: var(--text-faint);
   font-size: var(--fs-2xs);
   letter-spacing: 0;
@@ -925,15 +1057,18 @@
 }
 .kl-tool-mcp .body pre {
   margin: 0;
-  padding: 0 14px 10px;
-  color: var(--text-mid);
+  padding: 10px 12px;
+  color: #d8dee9;
+  background: #07090d;
+  border: 1px solid color-mix(in oklab, var(--border-md) 80%, black);
+  border-radius: 8px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-size: var(--fs-xs);
   line-height: 1.55;
 }
 .kl-tool-mcp .body pre.json {
-  color: var(--text);
+  color: #edf2f7;
 }
 .kl-tool-mcp .body pre.out.err {
   color: oklch(0.78 0.16 22);
@@ -1409,7 +1544,7 @@
 .kl-msg-att {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   border-radius: 8px;
   background: var(--bg-panel);
   border: 1px solid var(--border-md);
@@ -1418,11 +1553,23 @@
   overflow: hidden;
 }
 .kl-msg-att.file {
-  padding: 5px 9px;
-  max-width: 260px;
+  min-width: 220px;
+  max-width: min(340px, 100%);
+  min-height: 52px;
+  padding: 8px 10px 8px 8px;
+  text-decoration: none;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease,
+    transform 0.15s ease;
 }
 .kl-msg-att.file.missing {
-  opacity: 0.7;
+  background: var(--bg);
+}
+.kl-msg-att.file:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+  transform: translateY(-1px);
 }
 .kl-msg-att.image {
   padding: 0;
@@ -1439,21 +1586,52 @@
   object-fit: cover;
 }
 .kl-msg-att-icon {
-  font-size: var(--fs-base);
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border-radius: 7px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.kl-msg-att-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
 }
 .kl-msg-att-name {
-  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: 560;
+  line-height: 1.25;
 }
 .kl-msg-att-meta {
   color: var(--text-faint);
   font-size: var(--fs-xs);
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kl-msg-att-open {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  color: var(--text-faint);
+  border-radius: 6px;
+}
+.kl-msg-att.file:hover .kl-msg-att-open {
+  color: var(--text);
+  background: var(--bg-panel);
 }
 .kl-msg-att.skeleton {
-  width: 120px;
-  height: 32px;
+  width: 220px;
+  height: 52px;
   background: var(--bg-hover);
   border-radius: 8px;
 }

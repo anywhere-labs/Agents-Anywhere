@@ -31,8 +31,8 @@ class TimelineReducer:
         self._items: dict[str, dict[str, Any]] = {}
         self._order_by_item: dict[str, int] = {}
         self._tool_kind_by_call: dict[str, str] = {}
-        self._client_message_by_turn: dict[tuple[str, str | None, str], str] = {}
-        self._pending_client_messages: dict[tuple[str, str | None], list[dict[str, str | None]]] = {}
+        self._client_message_by_turn: dict[tuple[str, str | None, str], dict[str, Any]] = {}
+        self._pending_client_messages: dict[tuple[str, str | None], list[dict[str, Any]]] = {}
         self._next_order = 1
 
     def bind_session(self, session_id: str, thread_id: str) -> None:
@@ -73,9 +73,11 @@ class TimelineReducer:
         client_message_id: str,
         text: str | None = None,
         turn_id: str | None = None,
+        attachments: list[dict[str, Any]] | None = None,
     ) -> None:
+        message = {"clientMessageId": client_message_id, "text": text, "attachments": attachments or []}
         if turn_id:
-            self._client_message_by_turn[(session_id, thread_id, turn_id)] = client_message_id
+            self._client_message_by_turn[(session_id, thread_id, turn_id)] = message
             pending_key = (session_id, thread_id)
             pending = self._pending_client_messages.get(pending_key)
             if pending is not None:
@@ -84,7 +86,7 @@ class TimelineReducer:
                 ]
             return
         self._pending_client_messages.setdefault((session_id, thread_id), []).append(
-            {"clientMessageId": client_message_id, "text": text}
+            message
         )
 
     def reduce_thread_snapshot(
@@ -395,11 +397,15 @@ class TimelineReducer:
             timeline_type = "message"
             role = "user"
             content = {"text": _message_text(item), "format": "markdown"}
-            client_message_id = self._client_message_id_for_user_message(
+            client_message = self._client_message_for_user_message(
                 session_id, thread_id, turn_id, content["text"]
             )
+            client_message_id = client_message.get("clientMessageId") if client_message else None
             if client_message_id:
                 source_extra = {"clientMessageId": client_message_id}
+            attachments = client_message.get("attachments") if client_message else None
+            if isinstance(attachments, list) and attachments:
+                content["attachments"] = attachments
         elif codex_type == "agentMessage":
             timeline_type = "message"
             role = "assistant"
@@ -486,13 +492,13 @@ class TimelineReducer:
             source_extra=source_extra,
         )
 
-    def _client_message_id_for_user_message(
+    def _client_message_for_user_message(
         self,
         session_id: str,
         thread_id: str | None,
         turn_id: str | None,
         text: str,
-    ) -> str | None:
+    ) -> dict[str, Any] | None:
         if turn_id is not None:
             mapped = self._client_message_by_turn.get((session_id, thread_id, turn_id))
             if mapped:
@@ -507,8 +513,8 @@ class TimelineReducer:
                 client_message_id = candidate.get("clientMessageId")
                 del pending[index]
                 if turn_id is not None and client_message_id:
-                    self._client_message_by_turn[(session_id, thread_id, turn_id)] = client_message_id
-                return client_message_id
+                    self._client_message_by_turn[(session_id, thread_id, turn_id)] = candidate
+                return candidate
         return None
 
     def _upsert_turn_start(

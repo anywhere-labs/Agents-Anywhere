@@ -1,9 +1,6 @@
 // IndexedDB-backed preview cache for user-uploaded attachments. The backend
-// keeps durable platform files; this local copy only lets recent image
-// thumbnails render immediately without another round-trip.
-//
-// Cross-device fallback: opening the same session in a different browser won't
-// have these cached, but the message can still open the platform file URL.
+// keeps durable platform files and timeline attachment metadata; this local
+// copy only lets recent image thumbnails render immediately.
 
 export type CachedAttachment = {
   fileId: string;
@@ -12,28 +9,6 @@ export type CachedAttachment = {
   mediaType: string;
   size: number;
   blob: Blob;
-  createdAt: string;
-};
-
-// Durable "which message carried which attachments" association. The server
-// timeline item for a user message does NOT carry attachment refs (codex only
-// echoes back text — and for non-image files the connector injects a path
-// mention into that text), so this is the only place the message↔fileId link
-// survives a page refresh. Keyed by a client-generated sentId; indexed by
-// sessionId so we can re-attach on load.
-export type SentAttachmentMeta = {
-  fileId: string;
-  name: string;
-  mediaType: string;
-  size: number;
-  openUrl?: string;
-};
-
-export type SentMessageRecord = {
-  sentId: string;
-  sessionId: string;
-  text: string;
-  attachments: SentAttachmentMeta[];
   createdAt: string;
 };
 
@@ -84,29 +59,6 @@ export async function getAttachment(
     const req = tx.objectStore(STORE).get(fileId);
     req.onsuccess = () => resolve((req.result as CachedAttachment) ?? null);
     req.onerror = () => reject(req.error ?? new Error("get failed"));
-  });
-}
-
-export async function putSentMessage(entry: SentMessageRecord): Promise<void> {
-  const db = await openDb();
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(SENT_STORE, "readwrite");
-    tx.objectStore(SENT_STORE).put(entry);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error ?? new Error("put sent failed"));
-  });
-}
-
-export async function listSentMessages(
-  sessionId: string,
-): Promise<SentMessageRecord[]> {
-  const db = await openDb();
-  return await new Promise((resolve, reject) => {
-    const tx = db.transaction(SENT_STORE, "readonly");
-    const index = tx.objectStore(SENT_STORE).index("sessionId");
-    const req = index.getAll(sessionId);
-    req.onsuccess = () => resolve((req.result as SentMessageRecord[]) ?? []);
-    req.onerror = () => reject(req.error ?? new Error("list sent failed"));
   });
 }
 

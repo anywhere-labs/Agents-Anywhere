@@ -3,9 +3,11 @@ import { useEffect, useState, type MouseEvent } from "react";
 import {
   getAttachment,
   isImageMediaType,
+  putAttachment,
   urlForCached,
   type CachedAttachment,
 } from "../../lib/attachmentCache";
+import { Icons } from "../../components/Icons";
 import { loadSession } from "../../lib/session";
 
 export type AttachmentDescriptor = {
@@ -13,7 +15,6 @@ export type AttachmentDescriptor = {
   name?: string;
   size?: number;
   mediaType?: string;
-  openUrl?: string;
 };
 
 type ImagePreview = {
@@ -24,8 +25,10 @@ type ImagePreview = {
 };
 
 export function MessageAttachments({
+  sessionId,
   attachments,
 }: {
+  sessionId: string;
   attachments: AttachmentDescriptor[];
 }) {
   const [preview, setPreview] = useState<ImagePreview | null>(null);
@@ -49,6 +52,7 @@ export function MessageAttachments({
         {attachments.map((att) => (
           <AttachmentTile
             key={att.fileId}
+            sessionId={sessionId}
             descriptor={att}
             onPreview={setPreview}
           />
@@ -84,9 +88,11 @@ export function MessageAttachments({
 }
 
 function AttachmentTile({
+  sessionId,
   descriptor,
   onPreview,
 }: {
+  sessionId: string;
   descriptor: AttachmentDescriptor;
   onPreview: (preview: ImagePreview) => void;
 }) {
@@ -99,7 +105,12 @@ function AttachmentTile({
     void (async () => {
       try {
         const entry = await getAttachment(descriptor.fileId);
-        if (!cancelled) setCached(entry);
+        if (entry || !isImageMediaType(descriptor.mediaType)) {
+          if (!cancelled) setCached(entry);
+          return;
+        }
+        const fetched = await fetchAttachmentBlob(sessionId, descriptor);
+        if (!cancelled) setCached(fetched);
       } catch {
         if (!cancelled) setCached(null);
       }
@@ -107,7 +118,13 @@ function AttachmentTile({
     return () => {
       cancelled = true;
     };
-  }, [descriptor.fileId]);
+  }, [
+    descriptor.fileId,
+    descriptor.mediaType,
+    descriptor.name,
+    descriptor.size,
+    sessionId,
+  ]);
 
   const name = cached && cached !== "loading" ? cached.name : descriptor.name;
   const mediaType =
@@ -115,7 +132,7 @@ function AttachmentTile({
   const sizeBytes =
     cached && cached !== "loading" ? cached.size : descriptor.size;
   const isImage = isImageMediaType(mediaType);
-  const platformUrl = descriptor.openUrl;
+  const platformUrl = attachmentOpenUrl(sessionId, descriptor.fileId);
 
   if (cached === "loading") {
     // Skeleton placeholder — short enough that you barely see it but stable
@@ -140,7 +157,7 @@ function AttachmentTile({
     );
   }
 
-  if (!cached && isImage && platformUrl) {
+  if (!cached && isImage) {
     return (
       <a
         className="kl-msg-att image missing"
@@ -160,41 +177,58 @@ function AttachmentTile({
   }
 
   // Non-image OR no IndexedDB hit. Show name + size, and open the durable
-  // platform file when the server provided a URL.
+  // platform file through the authenticated backend route.
   const body = (
     <>
-      <span className="kl-msg-att-icon" aria-hidden="true">
-        📎
+      <span className="kl-msg-att-icon">
+        <Icons.File size={16} />
       </span>
-      <span className="kl-msg-att-name">{name ?? descriptor.fileId}</span>
-      {typeof sizeBytes === "number" && (
-        <span className="kl-msg-att-meta">{formatBytes(sizeBytes)}</span>
-      )}
-      {!cached && !platformUrl && (
-        <span className="kl-msg-att-meta" title="Preview not cached on this device">
-          (preview unavailable)
+      <span className="kl-msg-att-main">
+        <span className="kl-msg-att-name">{name ?? descriptor.fileId}</span>
+        <span className="kl-msg-att-meta">
+          {attachmentMetaLabel(mediaType, sizeBytes)}
         </span>
-      )}
+      </span>
+      <span className="kl-msg-att-open">
+        <Icons.External size={13} />
+      </span>
     </>
   );
-  if (platformUrl) {
-    return (
-      <a
-        className={`kl-msg-att file${cached ? "" : " missing"}`}
-        href={platformUrl}
-        target="_blank"
-        rel="noreferrer"
-        onClick={openPlatformFile(platformUrl)}
-      >
-        {body}
-      </a>
-    );
-  }
   return (
-    <div className={`kl-msg-att file${cached ? "" : " missing"}`}>
+    <a
+      className={`kl-msg-att file${cached ? "" : " missing"}`}
+      href={platformUrl}
+      target="_blank"
+      rel="noreferrer"
+      onClick={openPlatformFile(platformUrl)}
+    >
       {body}
-    </div>
+    </a>
   );
+}
+
+function attachmentOpenUrl(sessionId: string, fileId: string): string {
+  return `/sessions/${encodeURIComponent(sessionId)}/attachments/${encodeURIComponent(fileId)}/open`;
+}
+
+async function fetchAttachmentBlob(
+  sessionId: string,
+  descriptor: AttachmentDescriptor,
+): Promise<CachedAttachment> {
+  const response = await fetchWithAuth(attachmentOpenUrl(sessionId, descriptor.fileId));
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const blob = await response.blob();
+  const entry: CachedAttachment = {
+    fileId: descriptor.fileId,
+    sessionId,
+    name: descriptor.name ?? descriptor.fileId,
+    mediaType: descriptor.mediaType || blob.type || "application/octet-stream",
+    size: descriptor.size ?? blob.size,
+    blob,
+    createdAt: new Date().toISOString(),
+  };
+  await putAttachment(entry);
+  return entry;
 }
 
 function openPlatformFile(url: string) {
@@ -249,4 +283,19 @@ function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function attachmentMetaLabel(mediaType: string | undefined, size: number | undefined): string {
+  const kind = fileKindLabel(mediaType);
+  if (typeof size !== "number") return kind;
+  return `${kind} · ${formatBytes(size)}`;
+}
+
+function fileKindLabel(mediaType: string | undefined): string {
+  if (!mediaType) return "File";
+  if (mediaType === "application/pdf") return "PDF";
+  if (mediaType.startsWith("text/")) return "Text";
+  if (mediaType.includes("json")) return "JSON";
+  if (mediaType.includes("zip") || mediaType.includes("archive")) return "Archive";
+  return mediaType.split(";")[0] || "File";
 }

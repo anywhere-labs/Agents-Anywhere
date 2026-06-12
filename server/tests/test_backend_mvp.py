@@ -2249,6 +2249,90 @@ def test_send_message_forwards_uploaded_attachment_metadata_to_connector(tmp_pat
             "platformOpenUrl": f"/sessions/{session_id}/attachments/{attachment['fileId']}/open",
         }
     ]
+    assert params["timelineAttachments"] == [
+        {
+            "fileId": attachment["fileId"],
+            "name": "notes.md",
+            "mediaType": "text/markdown",
+            "size": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+        }
+    ]
+
+
+def test_ingest_adds_active_run_attachments_to_user_message(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+    data = b"attachment body\n"
+
+    upload_response = client.post(
+        f"/sessions/{session_id}/attachments",
+        headers=headers,
+        files={"files": ("notes.md", data, "text/markdown")},
+    )
+    assert upload_response.status_code == 200, upload_response.text
+    attachment = upload_response.json()["attachments"][0]
+
+    response = client.post(
+        f"/sessions/{session_id}/messages",
+        headers=headers,
+        json={
+            "content": "read attachment",
+            "attachments": [{"fileId": attachment["fileId"]}],
+            "clientMessageId": "opt_file",
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.itemUpsert",
+                    "params": {
+                        "sessionId": session_id,
+                        "item": {
+                            "id": "tl_user_file",
+                            "sessionId": session_id,
+                            "turnId": "turn_file",
+                            "type": "message",
+                            "status": "done",
+                            "role": "user",
+                            "content": {"text": "read attachment"},
+                            "source": {
+                                "runtime": "codex",
+                                "sessionId": "thr_demo",
+                                "turnId": "turn_file",
+                                "event": "item/completed",
+                            },
+                            "orderSeq": 1,
+                            "revision": 1,
+                            "contentHash": "sha256:user-file",
+                        },
+                    },
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+    state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+    item = next(item for item in state["items"] if item["id"] == "tl_user_file")
+    assert item["source"]["clientMessageId"] == "opt_file"
+    assert item["content"]["attachments"] == [
+        {
+            "fileId": attachment["fileId"],
+            "name": "notes.md",
+            "mediaType": "text/markdown",
+            "size": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+        }
+    ]
 
 
 def test_send_message_omits_unspecified_overrides(tmp_path):

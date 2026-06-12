@@ -8,6 +8,7 @@ import {
   type ClipboardEvent,
   type CSSProperties,
   type DragEvent,
+  type WheelEvent,
 } from "react";
 import {
   ApiError,
@@ -23,17 +24,11 @@ import {
 } from "../../lib/api";
 import { Icons } from "../../components/Icons";
 import { runtimeAccent, runtimeLabel } from "../../lib/runtime";
-import { SessionMessageMarkdown } from "./SessionMessageMarkdown";
+import { CopyButton, SessionMessageMarkdown } from "./SessionMessageMarkdown";
 import { AnsiText } from "./AnsiText";
 import { MessageAttachments } from "./MessageAttachments";
+import { putAttachment } from "../../lib/attachmentCache";
 import {
-  putAttachment,
-  putSentMessage,
-  listSentMessages,
-  type SentMessageRecord,
-} from "../../lib/attachmentCache";
-import {
-  assignSentRecords,
   extractAttachments,
   mergeOptimisticTimelineItems,
   stripInjectedAttachmentMentions,
@@ -157,10 +152,6 @@ export function SessionDetailView({
   const [locallyResolvedApprovalIds, setLocallyResolvedApprovalIds] = useState<Set<string>>(
     () => new Set(),
   );
-  // Durable message↔attachment associations for this session (IndexedDB). Used
-  // to re-attach previews to real server items after the optimistic card is
-  // pruned or the page is refreshed.
-  const [sentRecords, setSentRecords] = useState<SentMessageRecord[]>([]);
   const [takeoverConfirm, setTakeoverConfirm] = useState<"enable" | "disable" | null>(
     null,
   );
@@ -186,7 +177,6 @@ export function SessionDetailView({
     setResolvingApprovalStatus(null);
     setExitingApprovalId(null);
     setLocallyResolvedApprovalIds(new Set());
-    setSentRecords([]);
     setRunModePromptOpen(false);
     setDefaultRunModeConfigured(session.runtime !== "claude");
     setPendingRunModeSend(null);
@@ -221,22 +211,6 @@ export function SessionDetailView({
       cancelled = true;
     };
   }, [session.runtime, sessionId, token]);
-
-  // Load durable sent-attachment records for this session from IndexedDB.
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const records = await listSentMessages(sessionId);
-        if (!cancelled) setSentRecords(records);
-      } catch {
-        if (!cancelled) setSentRecords([]);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [sessionId]);
 
   // Hold the latest callbacks in refs so the polling effect doesn't restart
   // when parents pass inline arrow functions.
@@ -478,28 +452,8 @@ export function SessionDetailView({
       (a, b) => a.orderSeq - b.orderSeq || a.updatedSeq - b.updatedSeq,
     );
 
-    // Re-attach previews: assign each durable sent-record to the earliest
-    // matching real user message that doesn't already carry attachments, then
-    // merge the refs into its content so MessageAttachments can render them
-    // (from IndexedDB). This is what makes previews survive refresh.
-    const attByItemId = assignSentRecords(real, sentRecords);
-    const enriched =
-      attByItemId.size === 0
-        ? real
-        : real.map((item) =>
-            attByItemId.has(item.id)
-              ? {
-                  ...item,
-                  content: {
-                    ...item.content,
-                    attachments: attByItemId.get(item.id),
-                  },
-                }
-              : item,
-          );
-
-    return mergeOptimisticTimelineItems(enriched, optimisticItems);
-  }, [state.itemsById, optimisticItems, sentRecords]);
+    return mergeOptimisticTimelineItems(real, optimisticItems);
+  }, [state.itemsById, optimisticItems]);
 
   // GC optimistic items from state once their real counterpart lands (keeps
   // memory + the "Sending…" status honest). Failed ones stay until the user
@@ -650,28 +604,6 @@ export function SessionDetailView({
       const visibleContent = content.trim();
       const sendContent =
         visibleContent || (uploadedMeta.length > 0 ? ATTACHMENT_ONLY_PROMPT : content);
-
-      // Persist the message↔attachment association durably so the real server
-      // item (which has no attachment refs) can be re-enriched after refresh.
-      if (uploadedMeta.length > 0) {
-        const record: SentMessageRecord = {
-          sentId: tempId,
-          sessionId,
-          text: visibleContent,
-          attachments: uploadedMeta.map((m) => ({
-            fileId: m.fileId,
-            name: m.name,
-            mediaType: m.mediaType,
-            size: m.size,
-            openUrl: m.openUrl,
-          })),
-          createdAt: now,
-        };
-        setSentRecords((prev) => [...prev, record]);
-        void putSentMessage(record).catch(() => {
-          /* preview persistence is best-effort */
-        });
-      }
 
       const optimistic: TimelineItem = {
         id: tempId,
@@ -1810,7 +1742,9 @@ function MessageEntry({
       attachments.length > 0 ? stripInjectedAttachmentMentions(text) : text;
     return (
       <div className={`kl-msg user${stateClass}`}>
-	        {attachments.length > 0 && <MessageAttachments attachments={attachments} />}
+	        {attachments.length > 0 && (
+	          <MessageAttachments sessionId={item.sessionId} attachments={attachments} />
+	        )}
 	        {displayText && <div className="bubble">{displayText}</div>}
 	        {(pending || failed) && <div className="meta">{stateLabel}</div>}
 	      </div>
@@ -1984,7 +1918,6 @@ function BashToolCard({ item }: { item: TimelineItem }) {
         {isError && (
           <span className="err-chip" aria-label="command failed">
             <span className="err-chip-dot" />
-            failed
           </span>
         )}
         <span className="cmd-text">
@@ -1993,19 +1926,33 @@ function BashToolCard({ item }: { item: TimelineItem }) {
       </button>
       {open && (
         <div className="body">
-          <div className="cmd">
-            <span className="sigil">$</span>
-            {command}
+          <div className="cmd-row">
+            <div className="cmd" onWheel={scrollInlineOnWheel}>
+              <span className="sigil">$</span>
+              <span className="cmd-line">{command}</span>
+            </div>
+            <CopyButton text={command} label="Copy command" />
           </div>
           {output && (
-            <pre className="out">
-              <AnsiText text={output} />
-            </pre>
+            <div className="out-panel">
+              <CopyButton text={output} label="Copy output" />
+              <pre className="out">
+                <AnsiText text={output} />
+              </pre>
+            </div>
           )}
         </div>
       )}
     </div>
   );
+}
+
+function scrollInlineOnWheel(event: WheelEvent<HTMLDivElement>) {
+  const el = event.currentTarget;
+  if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+  if (el.scrollWidth <= el.clientWidth) return;
+  event.preventDefault();
+  el.scrollLeft += event.deltaY;
 }
 
 function EditToolCard({
@@ -2355,7 +2302,7 @@ function ApprovalButtons({
 // composer rejects obvious mistakes before paying the round-trip.
 const MAX_ATTACHMENT_FILES = 5;
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
-const ATTACHMENT_ONLY_PROMPT = "Please review the attached file.";
+const ATTACHMENT_ONLY_PROMPT = "(No text content.)";
 
 function attachmentImageExtension(type: string): string {
   switch (type) {
