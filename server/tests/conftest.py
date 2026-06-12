@@ -16,7 +16,7 @@ import pytest
 _PG_PREFIX = "postgresql"
 _TRUNCATE_SQL = (
     "TRUNCATE TABLE timeline_items, approvals, session_active_runs, "
-    "claude_transcript_cursors, sessions, "
+    "sessions, "
     "device_agent_settings, pairing_codes, connectors, users, instance_settings, "
     "agent_modes, agent_models, agent_efforts RESTART IDENTITY CASCADE"
 )

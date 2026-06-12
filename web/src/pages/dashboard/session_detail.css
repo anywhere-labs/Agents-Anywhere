@@ -429,13 +429,9 @@
 }
 
 /* Optimistic states for user messages. Pending = local-only, before the
- * backend/connector accepts the turn. Accepted = connector accepted the turn,
- * but the durable timeline item hasn't arrived yet. */
+ * backend/connector accepts the turn. */
 .kl-msg.user.pending {
   opacity: 0.42;
-}
-.kl-msg.user.accepted .meta {
-  color: var(--text-faint);
 }
 .kl-msg.user.failed {
   box-shadow: none;

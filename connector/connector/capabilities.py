@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import os
 import shutil
 import sys
@@ -10,8 +11,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from connector.claude.path_utils import projects_root
-from connector.claude.watcher import list_session_jsonls
 from connector.launch import LaunchTarget, launch_target, path_exists_for_launch
 from connector.codex.rpc import JsonRpcStdioClient, codex_candidate_paths
 
@@ -99,8 +98,7 @@ async def discover_codex_capability(
 async def discover_claude_capability(
     *, extra_candidate: str | None = None
 ) -> tuple[dict[str, Any], LaunchTarget | None]:
-    projects_dir = projects_root()
-    history = _check_claude_history(projects_dir)
+    history = _check_claude_history()
     candidates = _claude_candidate_paths()
     if extra_candidate:
         candidates = _dedupe_candidates(
@@ -121,7 +119,6 @@ async def discover_claude_capability(
     report: dict[str, Any] = {
         "history": history["status"],
         "execution": execution,
-        "projectsDir": str(projects_dir),
         "historyCheck": history,
         "checked": checked,
     }
@@ -203,20 +200,30 @@ async def _check_claude_candidate(candidate: dict[str, str] | LaunchTarget) -> d
     return {**base, "status": "ok", "version": version.get("stdout")}
 
 
-def _check_claude_history(projects_dir: Path) -> dict[str, Any]:
-    if not projects_dir.exists():
-        return {"status": "unavailable", "path": str(projects_dir), "reason": "directory not found"}
-    if not projects_dir.is_dir():
-        return {"status": "unavailable", "path": str(projects_dir), "reason": "not a directory"}
+def _check_claude_history() -> dict[str, Any]:
+    source = "claude-agent-sdk"
+    api = "list_sessions"
     try:
-        jsonls = list_session_jsonls(projects_dir)
-    except OSError as exc:
-        return {"status": "unavailable", "path": str(projects_dir), "reason": str(exc)}
+        sessions = _list_claude_sdk_sessions()
+    except Exception as exc:
+        return {
+            "status": "unavailable",
+            "source": source,
+            "api": api,
+            "reason": _exception_reason(exc),
+        }
     return {
-        "status": "ok" if jsonls else "ok_empty",
-        "path": str(projects_dir),
-        "sessionCount": len(jsonls),
+        "status": "ok" if sessions else "ok_empty",
+        "source": source,
+        "api": api,
+        "sessionCount": len(sessions),
     }
+
+
+def _list_claude_sdk_sessions() -> list[Any]:
+    sdk = importlib.import_module("claude_agent_sdk")
+    list_sessions = getattr(sdk, "list_sessions")
+    return list(list_sessions())
 
 
 async def _run_version(command: list[str]) -> dict[str, Any]:

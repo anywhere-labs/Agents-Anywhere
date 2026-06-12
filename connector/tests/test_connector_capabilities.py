@@ -30,12 +30,8 @@ fi
 exit 9
 """,
     )
-    projects = tmp_path / "projects"
-    (projects / "-repo").mkdir(parents=True)
-    (projects / "-repo" / "11111111-1111-1111-1111-111111111111.jsonl").write_text("{}\n", encoding="utf-8")
-
     monkeypatch.setenv("CLAUDE_BIN", str(claude_bin))
-    monkeypatch.setattr(capabilities, "projects_root", lambda: projects)
+    monkeypatch.setattr(capabilities, "_list_claude_sdk_sessions", lambda: [object()])
 
     report, selected = asyncio.run(capabilities.discover_claude_capability())
 
@@ -43,6 +39,8 @@ exit 9
     assert selected.path == str(claude_bin)
     assert report["history"] == "ok"
     assert report["execution"] == "ok"
+    assert report["historyCheck"]["source"] == "claude-agent-sdk"
+    assert report["historyCheck"]["api"] == "list_sessions"
     assert report["historyCheck"]["sessionCount"] == 1
     assert report["selected"]["version"] == "2.1.159 (Claude Code)"
 
@@ -206,10 +204,7 @@ if [ "$1" = "--help" ]; then echo "Usage: claude"; exit 0; fi
 exit 9
 """,
     )
-    projects = tmp_path / "projects"
-    projects.mkdir()
-
-    monkeypatch.setattr(capabilities, "projects_root", lambda: projects)
+    monkeypatch.setattr(capabilities, "_list_claude_sdk_sessions", lambda: [])
     monkeypatch.setattr(capabilities, "_claude_candidate_paths", lambda: [])
 
     report, selected = asyncio.run(
@@ -235,10 +230,7 @@ if [ "$1" = "--help" ]; then echo "Usage: claude"; exit 0; fi
 exit 9
 """,
     )
-    projects = tmp_path / "projects"
-    projects.mkdir()
-
-    monkeypatch.setattr(capabilities, "projects_root", lambda: projects)
+    monkeypatch.setattr(capabilities, "_list_claude_sdk_sessions", lambda: [])
     monkeypatch.setattr(
         capabilities,
         "_claude_candidate_paths",

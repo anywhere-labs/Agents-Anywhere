@@ -14,6 +14,7 @@ from loguru import logger
 from connector.attachments import attachment_target
 from connector.codex.reducer import CODEX_APPROVAL_METHODS, ReductionResult, TimelineReducer
 from connector.codex.rpc import JsonRpcStdioClient
+from connector.sync_state import SyncStateStore
 from connector.time import utc_now
 
 
@@ -63,6 +64,7 @@ class CodexAdapter:
     reducer: TimelineReducer | None = None
     notification_sink: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None
     attachment_downloader: AttachmentDownloader | None = None
+    sync_state_store: SyncStateStore | None = None
     _started: bool = False
     _loaded_thread_ids: set[str] = field(default_factory=set)
     _history_sync_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict)
@@ -86,6 +88,11 @@ class CodexAdapter:
         """
         self._existing_thread_sync_markers.clear()
         self._existing_thread_names.clear()
+
+    def forget_persisted_sync_state(self, connector_id: str) -> None:
+        self.forget_sync_state()
+        if self.sync_state_store is not None:
+            self.sync_state_store.delete_runtime("codex", connector_id)
 
     async def start(self) -> None:
         assert self.rpc is not None
@@ -207,7 +214,20 @@ class CodexAdapter:
                 continue
             sync_marker = _thread_sync_marker(thread_ref)
             current_name = _optional_string(thread_ref.get("name"))
-            if not force and sync_marker is not None and self._existing_thread_sync_markers.get(thread_id) == sync_marker:
+            persisted_state = (
+                self.sync_state_store.get("codex", connector_id, thread_id)
+                if self.sync_state_store is not None
+                else None
+            )
+            previous_marker = self._existing_thread_sync_markers.get(thread_id)
+            if previous_marker is None and persisted_state is not None:
+                previous_marker = _optional_string((persisted_state.fingerprint or {}).get("marker"))
+                if previous_marker is not None:
+                    self._existing_thread_sync_markers[thread_id] = previous_marker
+                previous_name = _optional_string((persisted_state.metadata or {}).get("name"))
+                if previous_name is not None:
+                    self._existing_thread_names[thread_id] = previous_name
+            if not force and sync_marker is not None and previous_marker == sync_marker:
                 # Codex may rename a thread without bumping updatedAt — diff
                 # the name independently and push a title-only update.
                 if self._existing_thread_names.get(thread_id) != current_name:
@@ -226,6 +246,7 @@ class CodexAdapter:
                     else:
                         notifications.append(rename_notification)
                     self._existing_thread_names[thread_id] = current_name
+                    self._persist_sync_state(connector_id, thread_id, sync_marker, current_name)
                 skipped_threads.append(thread_id)
                 continue
             session_id = stable_session_id(connector_id, thread_id)
@@ -270,6 +291,7 @@ class CodexAdapter:
                 skipped_threads.append(thread_id)
                 if sync_marker is not None:
                     self._existing_thread_sync_markers[thread_id] = sync_marker
+                    self._persist_sync_state(connector_id, thread_id, sync_marker, current_name)
                 continue
             if reduced.session_update is not None:
                 reduced.session_update["runtime"] = "codex"
@@ -285,6 +307,7 @@ class CodexAdapter:
             if sync_marker is not None:
                 self._existing_thread_sync_markers[thread_id] = sync_marker
             self._existing_thread_names[thread_id] = current_name
+            self._persist_sync_state(connector_id, thread_id, sync_marker, current_name)
             synced_threads.append(thread_id)
 
         elapsed_ms = (time.perf_counter() - started) * 1000
@@ -301,6 +324,23 @@ class CodexAdapter:
             "skippedThreads": skipped_threads,
             "backendNotifications": notifications,
         }
+
+    def _persist_sync_state(
+        self,
+        connector_id: str,
+        thread_id: str,
+        sync_marker: str | None,
+        current_name: str | None,
+    ) -> None:
+        if self.sync_state_store is None or sync_marker is None:
+            return
+        self.sync_state_store.set(
+            "codex",
+            connector_id,
+            thread_id,
+            fingerprint={"marker": sync_marker},
+            metadata={"name": current_name},
+        )
 
     async def _sync_changed_existing_thread(
         self,

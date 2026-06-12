@@ -265,8 +265,7 @@ function deriveOutcome(runtime: string, report: RuntimeReport): ScanOutcome {
   if (report.execution === "ok") return "ok";
   // For Claude, history-only is an acceptable signal too: even if the CLI is
   // missing we still surface the agent so the user can see its history. The
-  // backend marks history "ok_empty" when the projects directory exists but
-  // is empty.
+  // backend marks history "ok_empty" when the SDK session list is empty.
   if (
     runtime === "claude" &&
     (report.history === "ok" || report.history === "ok_empty") &&

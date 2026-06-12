@@ -59,7 +59,6 @@ from agent_server.core.models import (
 )
 from agent_server.infra.repositories import (
     ActiveRunRepository,
-    ClaudeTranscriptCursorRepository,
     InstanceSettingsRepository,
     RuntimeSettingsRepository,
 )
@@ -302,6 +301,8 @@ def _dedupe_legacy_history_items(items: list[TimelineItem]) -> list[TimelineItem
 
 
 def _timeline_item_unchanged(existing: TimelineItem, incoming: TimelineItemIn) -> bool:
+    if _timeline_source_client_message_id(existing) != _timeline_source_client_message_id(incoming):
+        return False
     return (
         existing.contentHash == incoming.contentHash
         and existing.revision == incoming.revision
@@ -310,6 +311,12 @@ def _timeline_item_unchanged(existing: TimelineItem, incoming: TimelineItemIn) -
 
 
 def _should_keep_existing_timeline_item(existing: TimelineItem, incoming: TimelineItemIn) -> bool:
+    existing_client_message_id = _timeline_source_client_message_id(existing)
+    incoming_client_message_id = _timeline_source_client_message_id(incoming)
+    if existing_client_message_id and not incoming_client_message_id:
+        return True
+    if incoming_client_message_id and not existing_client_message_id:
+        return False
     if _timeline_item_unchanged(existing, incoming):
         return True
     if existing.type != incoming.type:
@@ -319,6 +326,11 @@ def _should_keep_existing_timeline_item(existing: TimelineItem, incoming: Timeli
     if existing.type == "message":
         return _message_text_length(existing.content) > _message_text_length(incoming.content)
     return False
+
+
+def _timeline_source_client_message_id(item: TimelineItem | TimelineItemIn) -> str | None:
+    value = item.source.clientMessageId
+    return value if isinstance(value, str) and value else None
 
 
 def _content_completeness_score(content: Any) -> int:

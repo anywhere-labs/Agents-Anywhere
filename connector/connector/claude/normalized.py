@@ -17,6 +17,7 @@ class NormalizedClaudeEvent:
     toolName: str | None = None
     toolInput: Any = None
     toolResult: Any = None
+    toolResultIsError: bool | None = None
     timestamp: str | None = None
     clientMessageId: str | None = None
     attachments: list[dict[str, Any]] | None = None

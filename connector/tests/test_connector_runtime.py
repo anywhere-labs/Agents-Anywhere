@@ -692,7 +692,9 @@ async def _exercise_multi_adapter_routing() -> None:
     assert [c[0] for c in codex.calls] == ["turn.start"]
     assert [c[0] for c in claude.calls] == ["turn.start", "turn.interrupt"]
     assert codex.calls[0][1]["sessionId"] == "s1"
+    assert codex.calls[0][1]["connectorId"] == "conn_1"
     assert claude.calls[0][1]["sessionId"] == "s2"
+    assert claude.calls[0][1]["connectorId"] == "conn_1"
 
 
 async def _exercise_default_runtime_fallback() -> None:
@@ -710,6 +712,7 @@ async def _exercise_default_runtime_fallback() -> None:
     # No runtime field — must land on codex (back-compat with pre-Task-2 callers).
     await client.dispatch("turn.start", {"sessionId": "s1", "content": "hi"})
     assert [c[0] for c in codex.calls] == ["turn.start"]
+    assert codex.calls[0][1]["connectorId"] == "conn_1"
     assert claude.calls == []
 
 

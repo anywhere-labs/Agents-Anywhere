@@ -14,6 +14,7 @@ from connector.codex.adapter import (
 from connector.codex.history import read_timeline_history, read_tool_history
 from connector.codex.reducer import TimelineReducer
 from connector.codex.rpc import APP_SERVER_STREAM_LIMIT, JsonRpcStdioClient
+from connector.sync_state import SqliteSyncStateStore
 
 
 class FakeCodexRpc:
@@ -889,6 +890,10 @@ def test_adapter_discovers_existing_codex_threads() -> None:
     asyncio.run(_exercise_existing_thread_sync())
 
 
+def test_adapter_uses_persisted_sync_marker_after_restart(tmp_path) -> None:
+    asyncio.run(_exercise_persisted_existing_thread_sync(tmp_path))
+
+
 def test_adapter_uses_separate_scan_and_changed_thread_timeouts(monkeypatch) -> None:
     asyncio.run(_exercise_existing_thread_sync_timeouts(monkeypatch))
 
@@ -936,6 +941,24 @@ async def _exercise_existing_thread_sync() -> None:
     assert forced["threads"] == ["thr_existing"]
     assert forced["skippedThreads"] == []
     assert [notification["method"] for notification in sent_notifications[0]] == ["session.updated", "timeline.sync"]
+
+
+async def _exercise_persisted_existing_thread_sync(tmp_path) -> None:
+    store = SqliteSyncStateStore(tmp_path / "connector-state.sqlite3")
+    first_rpc = FakeCodexRpc()
+    first_adapter = CodexAdapter(rpc=first_rpc, sync_state_store=store)  # type: ignore[arg-type]
+
+    first = await first_adapter.sync_existing_sessions("conn_1")
+    assert first["threads"] == ["thr_existing"]
+    assert ("thread/read", {"threadId": "thr_existing", "includeTurns": True}) in first_rpc.requests
+
+    second_rpc = FakeCodexRpc()
+    second_adapter = CodexAdapter(rpc=second_rpc, sync_state_store=store)  # type: ignore[arg-type]
+
+    second = await second_adapter.sync_existing_sessions("conn_1")
+    assert second["threads"] == []
+    assert second["skippedThreads"] == ["thr_existing"]
+    assert ("thread/read", {"threadId": "thr_existing", "includeTurns": True}) not in second_rpc.requests
 
 
 async def _exercise_archived_thread_sync() -> None:

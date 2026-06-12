@@ -4,7 +4,6 @@ from agent_server.infra.repositories.active_runs_facade import ActiveRunReposito
 from agent_server.infra.repositories.agent_catalog import AgentCatalogRepositoryMixin
 from agent_server.infra.repositories.approvals import ApprovalRepositoryMixin
 from agent_server.infra.repositories.attachments import AttachmentRepositoryMixin
-from agent_server.infra.repositories.claude_transcripts import ClaudeTranscriptRepositoryMixin
 from agent_server.infra.repositories.connectors import ConnectorRepositoryMixin
 from agent_server.infra.repositories.device_agents import DeviceAgentsRepositoryMixin
 from agent_server.infra.repositories.instance_settings_facade import InstanceSettingsRepositoryMixin
@@ -29,7 +28,6 @@ class Store(
     ActiveRunRepositoryMixin,
     TimelineRepositoryMixin,
     ApprovalRepositoryMixin,
-    ClaudeTranscriptRepositoryMixin,
 ):
     def __init__(
         self,
@@ -60,7 +58,6 @@ class Store(
         self.instance_settings = InstanceSettingsRepository(engine)
         self.runtime_settings = RuntimeSettingsRepository(engine)
         self.active_runs = ActiveRunRepository(engine)
-        self.claude_transcript_cursors = ClaudeTranscriptCursorRepository(engine)
         self.attachments = AttachmentService(self, self.files)
         self.runtime_config = RuntimeConfigService(
             self.instance_settings,

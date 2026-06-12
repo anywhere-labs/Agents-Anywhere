@@ -15,12 +15,10 @@ from loguru import logger
 
 from connector.attachments import attachment_target
 from connector.adapter import NotificationSink
-from connector.claude.adapter import ClaudeAdapter
+from connector.claude.history_adapter import ClaudeHistoryAdapter
 from connector.claude.normalized import NormalizedClaudeEvent
 from connector.claude.normalizers import ClaudeLiveNormalizer
-from connector.claude.path_utils import encode_cwd, projects_root
-from connector.claude.timeline_reducer import ClaudeTimelineReducer
-from connector.claude.watcher import FileCursor
+from connector.claude.timeline_reducer import ClaudeTimelineReducer, is_task_event_tool_name
 from connector.launch import LaunchTarget, launch_target
 from connector.time import utc_now
 
@@ -30,10 +28,6 @@ AttachmentDownloader = Callable[[str, str], Awaitable[tuple[bytes, str, str]]]
 
 _MAX_STDERR_LINES = 80
 _MAX_STDERR_CHARS = 8000
-_TRANSCRIPT_CURSOR_STABLE_INTERVAL_SECONDS = 0.15
-_TRANSCRIPT_CURSOR_STABLE_POLLS = 3
-_TRANSCRIPT_CURSOR_MAX_WAIT_SECONDS = 3.0
-_TRANSCRIPT_SCANNER_QUARANTINE_SECONDS = 5.0
 _SECRET_RE = re.compile(
     r"(?i)(api[_-]?key|auth[_-]?token|authorization|bearer|token|password|secret)([=:\s]+)([^\s,;]+)"
 )
@@ -53,6 +47,7 @@ class _PendingSdkApproval:
 @dataclass(slots=True)
 class _SdkSessionRuntime:
     session_id: str
+    connector_id: str | None = None
     cwd: str | None = None
     external_session_id: str | None = None
     client: Any | None = None
@@ -71,7 +66,8 @@ class _SdkSessionRuntime:
     partial_message_uuid: str | None = None
     partial_text_blocks: dict[int, str] = field(default_factory=dict)
     live_stream_items: dict[str, dict[str, Any]] = field(default_factory=dict)
-    scanner_quarantine_until: float = 0.0
+    live_tool_items: dict[str, dict[str, Any]] = field(default_factory=dict)
+    ignored_task_tool_use_ids: set[str] = field(default_factory=set)
 
 
 @dataclass(slots=True)
@@ -80,7 +76,7 @@ class ClaudeSdkAdapter:
 
     notification_sink: NotificationSink = None
     sdk_module: Any | None = None
-    transcript_adapter: ClaudeAdapter = field(default_factory=ClaudeAdapter)
+    history_adapter: ClaudeHistoryAdapter = field(default_factory=ClaudeHistoryAdapter)
     attachment_downloader: AttachmentDownloader | None = None
     claude_target: LaunchTarget | None = None
     _sessions: dict[str, _SdkSessionRuntime] = field(default_factory=dict, init=False)
@@ -92,14 +88,15 @@ class ClaudeSdkAdapter:
     @claude_bin.setter
     def claude_bin(self, value: str | None) -> None:
         self.claude_target = launch_target("cli", value) if value else None
-        self.transcript_adapter.claude_bin = value
-        self.transcript_adapter.claude_target = self.claude_target
 
     def forget_sync_state(self) -> None:
-        self.transcript_adapter.forget_sync_state()
+        self.history_adapter.forget_sync_state()
 
-    def apply_transcript_cursors(self, cursors: list[dict[str, Any]]) -> None:
-        self.transcript_adapter.apply_transcript_cursors(cursors)
+    def forget_persisted_sync_state(self, connector_id: str) -> None:
+        self.history_adapter.forget_persisted_sync_state(connector_id)
+
+    def apply_history_sync_state(self, state: list[dict[str, Any]]) -> None:
+        self.history_adapter.apply_history_sync_state(state)
 
     async def create_session(self, params: dict[str, Any]) -> dict[str, Any]:
         session_id = (
@@ -114,8 +111,8 @@ class ClaudeSdkAdapter:
         }
 
     async def sync_session(self, params: dict[str, Any]) -> dict[str, Any]:
-        self.transcript_adapter.skip_live_session_ids = self._live_transcript_session_ids()
-        return await self.transcript_adapter.sync_session(params)
+        self._prepare_history_adapter()
+        return await self.history_adapter.sync_session(params)
 
     async def sync_existing_sessions(
         self,
@@ -125,11 +122,17 @@ class ClaudeSdkAdapter:
         force: bool = False,
         notification_sink: Callable[[list[dict[str, Any]]], Awaitable[None]] | None = None,
     ) -> dict[str, Any]:
-        self.transcript_adapter.skip_live_session_ids = self._live_transcript_session_ids()
-        return await self.transcript_adapter.sync_existing_sessions(
+        self._prepare_history_adapter()
+        skip_external_session_ids = {
+            runtime.external_session_id
+            for runtime in self._sessions.values()
+            if runtime.active_turn_id is not None and runtime.external_session_id is not None
+        }
+        return await self.history_adapter.sync_existing_sessions(
             connector_id,
             limit=limit,
             force=force,
+            skip_external_session_ids=skip_external_session_ids,
             notification_sink=notification_sink,
         )
 
@@ -137,6 +140,9 @@ class ClaudeSdkAdapter:
         session_id = _required(params, "sessionId")
         content = _required(params, "content")
         runtime = self._runtime_for(session_id, params)
+        connector_id = _optional_string(params.get("connectorId"))
+        if connector_id is not None:
+            runtime.connector_id = connector_id
         if runtime.lock.locked():
             raise ClaudeSdkAdapterError("Claude SDK turn already running for this session")
         await runtime.lock.acquire()
@@ -151,11 +157,12 @@ class ClaudeSdkAdapter:
         runtime.partial_message_uuid = None
         runtime.partial_text_blocks.clear()
         runtime.live_stream_items.clear()
-        runtime.scanner_quarantine_until = float("inf")
+        runtime.live_tool_items.clear()
+        runtime.ignored_task_tool_use_ids.clear()
         runtime.active_task = asyncio.create_task(
             self._drive_turn(runtime=runtime, params=params, content=content, turn_id=turn_id)
         )
-        self.transcript_adapter.skip_live_session_ids = self._live_transcript_session_ids()
+        self._prepare_history_adapter()
         runtime.active_task.add_done_callback(
             lambda _task: runtime.lock.release() if runtime.lock.locked() else None
         )
@@ -270,10 +277,8 @@ class ClaudeSdkAdapter:
                     },
                 )
         finally:
-            loop = asyncio.get_running_loop()
             if stream_finished:
-                await self._advance_transcript_cursor(runtime, last_event_key=turn_id)
-            runtime.scanner_quarantine_until = loop.time() + _TRANSCRIPT_SCANNER_QUARANTINE_SECONDS
+                await self._mark_history_consumed(runtime)
             if runtime.active_turn_id == turn_id:
                 runtime.active_turn_id = None
                 runtime.active_task = None
@@ -282,7 +287,7 @@ class ClaudeSdkAdapter:
                 runtime.current_attachments = None
                 runtime.emitted_user_message = False
             runtime.pending_approvals.clear()
-            self.transcript_adapter.skip_live_session_ids = self._live_transcript_session_ids()
+            self._prepare_history_adapter()
             await self._emit_session_update(runtime, status="idle")
 
     async def _receive_response(self, runtime: _SdkSessionRuntime, client: Any, turn_id: str) -> None:
@@ -297,7 +302,7 @@ class ClaudeSdkAdapter:
                 session_id = _optional_string(_extract_attr(message, "session_id", "sessionId"))
                 if session_id:
                     runtime.external_session_id = session_id
-                    self.transcript_adapter.skip_live_session_ids = self._live_transcript_session_ids()
+                    self._prepare_history_adapter()
                     await self._emit_session_update(runtime, status="running")
                 if runtime.external_session_id is None:
                     buffered_messages.append(message)
@@ -310,7 +315,7 @@ class ClaudeSdkAdapter:
                 session_id = _extract_attr(message, "session_id", "sessionId")
                 if isinstance(session_id, str) and session_id:
                     runtime.external_session_id = session_id
-                    self.transcript_adapter.skip_live_session_ids = self._live_transcript_session_ids()
+                    self._prepare_history_adapter()
                     await self._emit_session_update(runtime, status="running")
                 await self._emit_pending_user_message(runtime, turn_id)
                 for buffered in buffered_messages:
@@ -361,20 +366,18 @@ class ClaudeSdkAdapter:
             )
 
     async def _emit_sdk_message(self, runtime: _SdkSessionRuntime, turn_id: str, message: Any) -> bool:
-        partial_message_id = runtime.partial_message_id
-        _remember_assistant_message_identity(runtime, message)
-        override_message_id = (
-            partial_message_id or runtime.partial_message_id
-            if _message_role(message) == "assistant"
-            else None
-        )
+        role = _message_role(message)
         raw = _sdk_message_to_raw(
             message,
             runtime.external_session_id,
-            override_message_id=override_message_id,
         )
         if raw is not None:
-            return await self._emit_normalized(runtime.session_id, turn_id, raw)
+            return await self._emit_normalized(
+                runtime.session_id,
+                turn_id,
+                raw,
+                streaming=role == "assistant",
+            )
         return False
 
     async def _emit_stream_event(self, runtime: _SdkSessionRuntime, turn_id: str, message: Any) -> bool:
@@ -399,9 +402,11 @@ class ClaudeSdkAdapter:
     ) -> bool:
         reducer = ClaudeTimelineReducer()
         events = ClaudeLiveNormalizer().normalize([raw])
+        runtime = self._sessions.get(session_id)
+        if runtime is not None:
+            events = _filter_live_task_events(runtime, events)
         emitted = False
         for item in reducer.reduce(session_id=session_id, turn_id=turn_id, events=events):
-            runtime = self._sessions.get(session_id)
             dumped = dict(item)
             if runtime is not None:
                 if streaming and _is_streaming_assistant_message(dumped):
@@ -415,6 +420,11 @@ class ClaudeSdkAdapter:
                         dumped = prepared
                     else:
                         dumped["orderSeq"] = _next_order(runtime)
+                elif _is_tool_item(dumped):
+                    prepared = _prepare_live_tool_item(runtime, dumped)
+                    if prepared is None:
+                        continue
+                    dumped = prepared
                 else:
                     dumped["orderSeq"] = _next_order(runtime)
             await self._emit_item(session_id, dumped)
@@ -492,52 +502,54 @@ class ClaudeSdkAdapter:
             },
         )
 
-    async def _advance_transcript_cursor(
-        self,
-        runtime: _SdkSessionRuntime,
-        *,
-        last_event_key: str,
-    ) -> None:
-        if self.notification_sink is None or runtime.external_session_id is None:
-            return
-        transcript_path = _transcript_path_for(runtime, self.transcript_adapter._resolved_projects_dir())
-        if transcript_path is None:
-            return
-        stable_size = await _wait_for_stable_file_size(transcript_path)
-        if stable_size is None:
-            return
-        await self.notification_sink(
-            "claude.transcriptCursorAdvanced",
-            {
-                "sessionId": runtime.session_id,
-                "runtime": "claude",
-                "externalSessionId": runtime.external_session_id,
-                "transcriptPath": str(transcript_path),
-                "lastOffset": stable_size,
-                "lastEventKey": last_event_key,
-            },
-        )
-        cursor = self.transcript_adapter._cursors.setdefault(
-            transcript_path,
-            FileCursor(path=transcript_path),
-        )
-        cursor.refresh_stat()
-        cursor.offset = stable_size
-        self.transcript_adapter.mark_transcript_consumed(path=transcript_path, offset=stable_size)
-
-    def _live_transcript_session_ids(self) -> set[str]:
-        live: set[str] = set()
-        now = asyncio.get_running_loop().time()
-        for runtime in self._sessions.values():
-            is_active = (
-                runtime.active_task is not None
-                and not runtime.active_task.done()
+    async def _mark_history_consumed(self, runtime: _SdkSessionRuntime) -> None:
+        try:
+            self._prepare_history_adapter()
+            await self.history_adapter.mark_session_consumed(
+                connector_id=runtime.connector_id,
+                external_session_id=runtime.external_session_id,
+                cwd=runtime.cwd,
             )
-            if is_active or now < runtime.scanner_quarantine_until:
-                live.add(runtime.session_id)
-                if runtime.external_session_id:
-                    live.add(runtime.external_session_id)
-        return live
+        except Exception:
+            logger.exception(
+                "claude sdk history consumed marker failed session_id={} external_session_id={}",
+                runtime.session_id,
+                runtime.external_session_id,
+            )
+
+    async def _sync_current_history_snapshot(self, runtime: _SdkSessionRuntime) -> None:
+        if runtime.external_session_id is None:
+            return
+        try:
+            self._prepare_history_adapter()
+            result = await self.history_adapter.sync_session(
+                {
+                    "sessionId": runtime.session_id,
+                    "externalSessionId": runtime.external_session_id,
+                    "cwd": runtime.cwd,
+                    "pendingClientMessages": _pending_client_messages(runtime),
+                }
+            )
+        except Exception:
+            logger.exception(
+                "claude sdk history snapshot failed session_id={} external_session_id={}",
+                runtime.session_id,
+                runtime.external_session_id,
+            )
+            return
+        notifications = result.get("backendNotifications") if isinstance(result, dict) else None
+        if self.notification_sink is None or not isinstance(notifications, list):
+            return
+        for notification in notifications:
+            if not isinstance(notification, dict):
+                continue
+            method = notification.get("method")
+            params = notification.get("params")
+            if isinstance(method, str) and isinstance(params, dict):
+                await self.notification_sink(method, params)
+
+    def _prepare_history_adapter(self) -> None:
+        self.history_adapter.sdk_module = self.sdk_module
 
     def _client(self, runtime: _SdkSessionRuntime, params: dict[str, Any]) -> Any:
         sdk = self._load_sdk()
@@ -741,6 +753,17 @@ def _attachments_metadata(params: dict[str, Any]) -> list[dict[str, Any]] | None
     return metadata or None
 
 
+def _pending_client_messages(runtime: _SdkSessionRuntime) -> list[dict[str, Any]]:
+    if not runtime.current_client_message_id:
+        return []
+    message: dict[str, Any] = {"clientMessageId": runtime.current_client_message_id}
+    if runtime.current_content is not None:
+        message["text"] = runtime.current_content
+    if runtime.current_attachments:
+        message["attachments"] = runtime.current_attachments
+    return [message]
+
+
 def _record_stderr(runtime: _SdkSessionRuntime, line: str) -> None:
     cleaned = _redact(line.strip())
     if not cleaned:
@@ -749,6 +772,22 @@ def _record_stderr(runtime: _SdkSessionRuntime, line: str) -> None:
     if len(runtime.stderr_lines) > _MAX_STDERR_LINES:
         del runtime.stderr_lines[: len(runtime.stderr_lines) - _MAX_STDERR_LINES]
     logger.warning("claude sdk stderr session_id={} line={}", runtime.session_id, cleaned)
+
+
+def _filter_live_task_events(
+    runtime: _SdkSessionRuntime,
+    events: list[Any],
+) -> list[Any]:
+    out: list[Any] = []
+    for event in events:
+        tool_use_id = _optional_string(getattr(event, "toolUseId", None))
+        if tool_use_id and getattr(event, "toolResult", None) is None and is_task_event_tool_name(getattr(event, "toolName", None)):
+            runtime.ignored_task_tool_use_ids.add(tool_use_id)
+            continue
+        if tool_use_id and getattr(event, "toolResult", None) is not None and tool_use_id in runtime.ignored_task_tool_use_ids:
+            continue
+        out.append(event)
+    return out
 
 
 def _stderr_excerpt(lines: list[str]) -> str | None:
@@ -779,58 +818,48 @@ async def _maybe_await(method: Any) -> None:
         await result
 
 
-async def _wait_for_stable_file_size(path: Path) -> int | None:
-    deadline = asyncio.get_running_loop().time() + _TRANSCRIPT_CURSOR_MAX_WAIT_SECONDS
-    stable_seen = 0
-    last_signature: tuple[int, int] | None = None
-    last_size: int | None = None
-    while True:
-        try:
-            stat = path.stat()
-        except OSError:
-            return last_size
-        signature = (stat.st_size, stat.st_mtime_ns)
-        last_size = stat.st_size
-        if signature == last_signature:
-            stable_seen += 1
-        else:
-            stable_seen = 1
-            last_signature = signature
-        if stable_seen >= _TRANSCRIPT_CURSOR_STABLE_POLLS:
-            return stat.st_size
-        if asyncio.get_running_loop().time() >= deadline:
-            return stat.st_size
-        await asyncio.sleep(_TRANSCRIPT_CURSOR_STABLE_INTERVAL_SECONDS)
-
-
 def _sdk_message_to_raw(
     message: Any,
     fallback_session_id: str | None,
-    *,
-    override_message_id: str | None = None,
 ) -> dict[str, Any] | None:
     content = _extract_attr(message, "content")
     role = _message_role(message)
     if content is None and role is None:
         return None
-    message_id = (
-        override_message_id
-        or _optional_string(_extract_attr(message, "id", "message_id", "messageId"))
-        or _stable_message_id(message)
-    )
+    blocks = _blocks_to_dicts(content)
     session_id = (
         _optional_string(_extract_attr(message, "session_id", "sessionId"))
         or fallback_session_id
         or "unknown"
     )
+    message_id = _optional_string(_extract_attr(message, "message_id", "messageId"))
+    textless_blocks = _without_text_blocks(blocks)
+    if _has_text_blocks(blocks) and message_id is None:
+        if textless_blocks:
+            blocks = textless_blocks
+        else:
+            logger.warning(
+                "dropping Claude SDK text message without message_id role={} session_id={}",
+                role,
+                session_id,
+            )
+            return None
+    if not blocks:
+        logger.warning(
+            "dropping Claude SDK message with no reducible blocks role={} session_id={}",
+            role,
+            session_id,
+        )
+        return None
+    source_event_id = _optional_string(_extract_attr(message, "uuid")) or message_id or "unknown"
     return {
-        "uuid": message_id,
+        "uuid": source_event_id,
         "session_id": session_id,
         "timestamp": _optional_string(_extract_attr(message, "timestamp")) or utc_now(),
         "message": {
             "id": message_id,
             "role": role,
-            "content": _blocks_to_dicts(content),
+            "content": blocks,
         },
     }
 
@@ -839,7 +868,13 @@ def _result_message_to_raw(message: Any, fallback_session_id: str | None) -> dic
     text = _optional_string(_extract_attr(message, "result"))
     if not text:
         return None
-    message_id = _optional_string(_extract_attr(message, "uuid")) or _stable_message_id(message)
+    message_id = _optional_string(_extract_attr(message, "uuid"))
+    if message_id is None:
+        logger.warning(
+            "dropping Claude result text without uuid session_id={}",
+            _optional_string(_extract_attr(message, "session_id", "sessionId")) or fallback_session_id,
+        )
+        return None
     session_id = (
         _optional_string(_extract_attr(message, "session_id", "sessionId"))
         or fallback_session_id
@@ -864,9 +899,12 @@ def _stream_event_to_raw(runtime: _SdkSessionRuntime, turn_id: str, message: Any
     event_type = _optional_string(event.get("type"))
     if event_type == "message_start":
         payload = event.get("message")
+        runtime.partial_text_blocks.clear()
         if isinstance(payload, dict):
-            runtime.partial_message_id = _optional_string(payload.get("id")) or runtime.partial_message_id
-        runtime.partial_message_uuid = _optional_string(_extract_attr(message, "uuid")) or runtime.partial_message_uuid
+            runtime.partial_message_id = _optional_string(payload.get("id"))
+        else:
+            runtime.partial_message_id = None
+        runtime.partial_message_uuid = _optional_string(_extract_attr(message, "uuid"))
         return None
     if event_type == "content_block_start":
         index = _int(event.get("index"))
@@ -888,22 +926,14 @@ def _stream_event_to_raw(runtime: _SdkSessionRuntime, turn_id: str, message: Any
     return None
 
 
-def _remember_assistant_message_identity(runtime: _SdkSessionRuntime, message: Any) -> None:
-    if _message_role(message) != "assistant":
-        return
-    message_id = _optional_string(_extract_attr(message, "id", "message_id", "messageId"))
-    if message_id and runtime.partial_message_id is None:
-        runtime.partial_message_id = message_id
-    uuid = _optional_string(_extract_attr(message, "uuid"))
-    if uuid and runtime.partial_message_uuid is None:
-        runtime.partial_message_uuid = uuid
-
-
 def _partial_message_raw(runtime: _SdkSessionRuntime, turn_id: str, message: Any) -> dict[str, Any] | None:
     text = "".join(runtime.partial_text_blocks[index] for index in sorted(runtime.partial_text_blocks))
     if not text:
         return None
-    message_id = runtime.partial_message_id or f"{turn_id}:assistant"
+    message_id = runtime.partial_message_id
+    if message_id is None:
+        logger.warning("dropping Claude stream text without message_start id turn_id={}", turn_id)
+        return None
     return {
         "uuid": runtime.partial_message_uuid or message_id,
         "session_id": _optional_string(_extract_attr(message, "session_id", "sessionId")) or runtime.external_session_id or "unknown",
@@ -933,6 +963,10 @@ def _is_streaming_assistant_message(item: dict[str, Any]) -> bool:
         and item.get("role") == "assistant"
         and isinstance(item.get("id"), str)
     )
+
+
+def _is_tool_item(item: dict[str, Any]) -> bool:
+    return item.get("type") == "tool" and isinstance(item.get("id"), str)
 
 
 def _prepare_live_stream_item(
@@ -996,6 +1030,49 @@ def _prepare_live_stream_final_item(
     return finalized
 
 
+def _prepare_live_tool_item(
+    runtime: _SdkSessionRuntime,
+    item: dict[str, Any],
+) -> dict[str, Any] | None:
+    item_id = _optional_string(item.get("id"))
+    if item_id is None:
+        return item
+    existing = runtime.live_tool_items.get(item_id)
+    incoming_content = item.get("content") if isinstance(item.get("content"), dict) else {}
+    now = utc_now()
+    if existing is None:
+        prepared = dict(item)
+        prepared["orderSeq"] = _next_order(runtime)
+        prepared["revision"] = int(prepared.get("revision") or 1)
+        prepared["contentHash"] = _hash_content(prepared.get("content") if isinstance(prepared.get("content"), dict) else {})
+        prepared["createdAt"] = item.get("createdAt") or now
+        prepared["updatedAt"] = item.get("updatedAt") or now
+        if prepared.get("status") not in {"done", "failed", "interrupted", "cancelled"}:
+            prepared.pop("completedAt", None)
+        runtime.live_tool_items[item_id] = prepared
+        return prepared
+
+    merged_content = dict(existing.get("content") if isinstance(existing.get("content"), dict) else {})
+    merged_content.update(incoming_content)
+    content_hash = _hash_content(merged_content)
+    incoming_status = _optional_string(item.get("status")) or _optional_string(existing.get("status")) or "running"
+    if existing.get("contentHash") == content_hash and existing.get("status") == incoming_status:
+        return None
+    prepared = dict(existing)
+    prepared["content"] = merged_content
+    prepared["status"] = incoming_status
+    prepared["role"] = item.get("role") or existing.get("role")
+    prepared["revision"] = int(existing.get("revision") or 1) + 1
+    prepared["contentHash"] = content_hash
+    prepared["updatedAt"] = item.get("updatedAt") or now
+    if incoming_status in {"done", "failed", "interrupted", "cancelled"}:
+        prepared["completedAt"] = item.get("completedAt") or prepared["updatedAt"]
+    else:
+        prepared.pop("completedAt", None)
+    runtime.live_tool_items[item_id] = prepared
+    return prepared
+
+
 def _int(value: Any) -> int | None:
     return value if isinstance(value, int) else None
 
@@ -1011,7 +1088,9 @@ def _blocks_to_dicts(content: Any) -> list[dict[str, Any]]:
         if block_type is None:
             block_type = _block_type_from_class(block)
         if block_type == "text":
-            text = _optional_string(_extract_attr(block, "text")) or ""
+            text = _optional_string(_extract_attr(block, "text"))
+            if text is None or not text.strip():
+                continue
             blocks.append({"type": "text", "text": text})
         elif block_type == "tool_use":
             blocks.append(
@@ -1028,9 +1107,18 @@ def _blocks_to_dicts(content: Any) -> list[dict[str, Any]]:
                     "type": "tool_result",
                     "tool_use_id": _optional_string(_extract_attr(block, "tool_use_id", "toolUseId")) or "",
                     "content": _extract_attr(block, "content"),
+                    "is_error": _extract_attr(block, "is_error", "isError"),
                 }
             )
     return blocks
+
+
+def _has_text_blocks(blocks: list[dict[str, Any]]) -> bool:
+    return any(block.get("type") == "text" and isinstance(block.get("text"), str) for block in blocks)
+
+
+def _without_text_blocks(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [block for block in blocks if block.get("type") != "text"]
 
 
 def _role_from_class(value: Any) -> str | None:
@@ -1283,23 +1371,6 @@ def _attachment_name_from(att: Any) -> str | None:
     if isinstance(att, dict):
         candidate = att.get("name")
         if isinstance(candidate, str) and candidate:
-            return candidate
-    return None
-
-
-def _transcript_path_for(runtime: _SdkSessionRuntime, projects_dir: Path | None = None) -> Path | None:
-    if runtime.external_session_id is None:
-        return None
-    root = projects_dir or projects_root()
-    roots: list[Path] = []
-    if runtime.cwd:
-        roots.append(root / encode_cwd(runtime.cwd) / f"{runtime.external_session_id}.jsonl")
-    if root.is_dir():
-        for cwd_dir in root.iterdir():
-            if cwd_dir.is_dir():
-                roots.append(cwd_dir / f"{runtime.external_session_id}.jsonl")
-    for candidate in roots:
-        if candidate.is_file():
             return candidate
     return None
 

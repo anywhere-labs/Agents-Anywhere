@@ -46,7 +46,7 @@ def _normalize_raw(raw: dict[str, Any]) -> list[NormalizedClaudeEvent]:
         block_type = _string(block.get("type")) or "unknown"
         if block_type == "text":
             text = _string(block.get("text"))
-            if text is not None:
+            if text is not None and text.strip():
                 normalized.append(
                     NormalizedClaudeEvent(
                         claudeSessionId=claude_session_id,
@@ -85,6 +85,7 @@ def _normalize_raw(raw: dict[str, Any]) -> list[NormalizedClaudeEvent]:
                     blockType=block_type,
                     toolUseId=_string(block.get("tool_use_id")),
                     toolResult=block.get("content"),
+                    toolResultIsError=block.get("is_error") if isinstance(block.get("is_error"), bool) else None,
                     text=_string(block.get("content")),
                     timestamp=timestamp,
                 )

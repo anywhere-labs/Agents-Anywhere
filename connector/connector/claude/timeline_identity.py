@@ -8,17 +8,16 @@ from typing import Any
 class ClaudeTimelineIdentity:
     @staticmethod
     def message(*, session_id: str, claude_session_id: str, message_id: str) -> str:
-        return f"claude_msg_{_short(session_id, claude_session_id, message_id)}"
+        return f"claude_msg_{_short('message', claude_session_id, message_id)}"
 
     @staticmethod
     def tool_call(
         *,
         session_id: str,
         claude_session_id: str,
-        message_id: str,
         tool_use_id: str,
     ) -> str:
-        return f"claude_tool_{_short(session_id, claude_session_id, message_id, tool_use_id)}"
+        return f"claude_tool_{_short('tool', claude_session_id, tool_use_id)}"
 
     @staticmethod
     def tool_result(
@@ -27,7 +26,11 @@ class ClaudeTimelineIdentity:
         claude_session_id: str,
         tool_use_id: str,
     ) -> str:
-        return f"claude_tool_result_{_short(session_id, claude_session_id, tool_use_id)}"
+        return ClaudeTimelineIdentity.tool_call(
+            session_id=session_id,
+            claude_session_id=claude_session_id,
+            tool_use_id=tool_use_id,
+        )
 
     @staticmethod
     def derived(*values: Any) -> str:
