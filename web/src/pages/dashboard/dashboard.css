@@ -1602,6 +1602,61 @@
   padding-top: 4px;
 }
 
+.aa-qr-login-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-elev);
+}
+
+.aa-qr-login-card img {
+  display: block;
+  width: 132px;
+  height: 132px;
+  border-radius: 8px;
+  background: #fff;
+  padding: 8px;
+  flex-shrink: 0;
+}
+
+.aa-qr-login-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.aa-qr-login-copy .t {
+  color: var(--text);
+  font-weight: 600;
+  font-size: var(--fs-base);
+}
+
+.aa-qr-login-copy .s {
+  color: var(--text-mut);
+  font-size: var(--fs-sm);
+}
+
+.aa-qr-login-copy code {
+  align-self: flex-start;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-mid);
+  font-size: var(--fs-xs);
+}
+
+.aa-qr-login-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 4px;
+}
+
 .aa-reset-password-modal {
   width: 430px;
 }
@@ -2769,7 +2824,53 @@
 
 /* ─── Settings page ─────────────────────────────────────────────────────── */
 .aa-settings .aa-srv-inner {
-  max-width: 820px;
+  max-width: 980px;
+}
+
+.aa-settings-layout {
+  display: grid;
+  grid-template-columns: 188px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.aa-settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  position: sticky;
+  top: 18px;
+}
+
+.aa-settings-nav button {
+  appearance: none;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-mut);
+  height: 34px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--fs-sm);
+  text-align: left;
+}
+
+.aa-settings-nav button:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.aa-settings-nav button.on {
+  background: var(--bg-elev);
+  color: var(--text);
+}
+
+.aa-settings-main {
+  min-width: 0;
 }
 
 .aa-srv-card .body.aa-settings-appearance {
@@ -2864,8 +2965,32 @@
 }
 
 @media (max-width: 720px) {
+  .aa-settings-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .aa-settings-nav {
+    position: static;
+    flex-direction: row;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .aa-settings-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .aa-settings-nav button {
+    flex: 0 0 auto;
+  }
+
   .aa-theme-grid {
     grid-template-columns: 1fr;
+  }
+
+  .aa-qr-login-card {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 

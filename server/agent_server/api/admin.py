@@ -10,9 +10,6 @@ from agent_server.core.models import (
     AdminUserUpdateRequest,
     InstanceSettingsUpdateRequest,
     InstanceSettingsView,
-    OAuthClientCreateRequest,
-    OAuthClientListResponse,
-    OAuthClientView,
     UserView,
 )
 from agent_server.core.models import RuntimeName
@@ -53,33 +50,6 @@ async def update_settings(
         oauthRegistrationOpen=await db.is_oauth_registration_open(),
         oauth=await db.get_oauth_provider_public_config(),
     )
-
-
-# --- runtime config schema ---------------------------------------------------
-
-
-@router.get("/oauth/clients", response_model=OAuthClientListResponse)
-async def list_oauth_clients(db: Store = Depends(get_store)) -> OAuthClientListResponse:
-    return OAuthClientListResponse(clients=await db.list_oauth_clients(), serverTime=utc_now())
-
-
-@router.post("/oauth/clients", response_model=OAuthClientView, status_code=201)
-async def create_oauth_client(
-    payload: OAuthClientCreateRequest,
-    db: Store = Depends(get_store),
-) -> OAuthClientView:
-    try:
-        return await db.create_oauth_client(name=payload.name, redirect_uris=payload.redirectUris)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-
-@router.delete("/oauth/clients/{client_id}", status_code=204)
-async def delete_oauth_client(client_id: str, db: Store = Depends(get_store)) -> None:
-    try:
-        await db.delete_oauth_client(client_id)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="oauth client not found") from None
 
 
 # --- runtime config schema ---------------------------------------------------

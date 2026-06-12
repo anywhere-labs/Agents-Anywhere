@@ -1,7 +1,14 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import QRCode from "qrcode";
 import { Icons } from "../../components/Icons";
 import { Identicon } from "../../components/Identicon";
-import { ApiError, api, type AuthMe } from "../../lib/api";
+import {
+  ApiError,
+  api,
+  type AuthMe,
+  type MobileLoginQrResponse,
+  type MobileLoginStatusResponse,
+} from "../../lib/api";
 import { createPasswordVerifier } from "../../lib/passwordVerifier";
 import { passwordScore, STRENGTH_LABEL } from "../auth/password";
 
@@ -90,6 +97,12 @@ export function AccountPanel({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [qrConfirmOpen, setQrConfirmOpen] = useState(false);
+  const [qrLoading, setQrLoading] = useState(false);
+  const [qrError, setQrError] = useState<string | null>(null);
+  const [qrLogin, setQrLogin] = useState<MobileLoginQrResponse | null>(null);
+  const [qrStatus, setQrStatus] = useState<MobileLoginStatusResponse | null>(null);
+  const [qrImage, setQrImage] = useState<string | null>(null);
 
   useEffect(() => {
     setResetOpen(false);
@@ -99,7 +112,33 @@ export function AccountPanel({
     setError(null);
     setSuccess(false);
     setAvatarError(null);
+    setQrConfirmOpen(false);
+    setQrLogin(null);
+    setQrStatus(null);
+    setQrImage(null);
+    setQrError(null);
   }, [me.userId]);
+
+  useEffect(() => {
+    if (!qrLogin) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const status = await api.mobileLoginStatus(token, qrLogin.loginToken);
+        if (!cancelled) setQrStatus(status);
+      } catch (err) {
+        if (!cancelled && err instanceof ApiError && err.status !== 404) {
+          setQrError(err.detail);
+        }
+      }
+    };
+    void poll();
+    const timer = window.setInterval(poll, 1600);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [qrLogin, token]);
 
   useEffect(() => {
     if (!resetOpen || loading) return;
@@ -175,6 +214,48 @@ export function AccountPanel({
       else setAvatarError(err instanceof Error ? err.message : "clear failed");
     } finally {
       setAvatarUploading(false);
+    }
+  };
+
+  const generateQrLogin = async () => {
+    if (qrLoading) return;
+    setQrLoading(true);
+    setQrError(null);
+    try {
+      const qr = await api.createMobileLoginQr(token);
+      const image = await QRCode.toDataURL(JSON.stringify(qr.payload), {
+        errorCorrectionLevel: "M",
+        margin: 1,
+        width: 240,
+        color: {
+          dark: "#111111",
+          light: "#ffffff",
+        },
+      });
+      setQrLogin(qr);
+      setQrStatus(null);
+      setQrImage(image);
+      setQrConfirmOpen(false);
+    } catch (err) {
+      if (err instanceof ApiError) setQrError(err.detail);
+      else setQrError(err instanceof Error ? err.message : "failed to create QR code");
+    } finally {
+      setQrLoading(false);
+    }
+  };
+
+  const confirmQrLogin = async (approved: boolean) => {
+    if (!qrLogin || qrLoading) return;
+    setQrLoading(true);
+    setQrError(null);
+    try {
+      const status = await api.confirmMobileLogin(token, qrLogin.loginToken, approved);
+      setQrStatus(status);
+    } catch (err) {
+      if (err instanceof ApiError) setQrError(err.detail);
+      else setQrError(err instanceof Error ? err.message : "failed to confirm mobile sign-in");
+    } finally {
+      setQrLoading(false);
     }
   };
 
@@ -270,6 +351,95 @@ export function AccountPanel({
               Reset password
             </button>
           </div>
+
+          <div className="aa-acct-cp-row">
+            <div className="lbl">
+              <span className="t">Mobile sign-in</span>
+              <span className="s">Generate a short-lived QR code for your mobile client.</span>
+            </div>
+            <button
+              type="button"
+              className="aa-acct-btn primary"
+              onClick={() => {
+                setQrConfirmOpen(true);
+                setQrError(null);
+              }}
+            >
+              <Icons.QrCode size={13} />
+              Generate QR
+            </button>
+          </div>
+
+          {qrError && <div className="aa-acct-msg err">{qrError}</div>}
+
+          {qrLogin && qrImage && (
+            <div className="aa-qr-login-card">
+              <img src={qrImage} alt="Mobile sign-in QR code" />
+              <div className="aa-qr-login-copy">
+                <span className="t">Scan with Agents Anywhere mobile</span>
+                <span className="s">{mobileLoginStatusText(qrStatus)} · Expires {formatExpiry(qrLogin.expiresAt)}</span>
+                <code>{qrLogin.userId}</code>
+                {qrStatus?.status === "pending_web_confirm" && (
+                  <div className="aa-qr-login-actions">
+                    <button
+                      type="button"
+                      className="aa-acct-btn ghost"
+                      disabled={qrLoading}
+                      onClick={() => void confirmQrLogin(false)}
+                    >
+                      Reject
+                    </button>
+                    <button
+                      type="button"
+                      className="aa-acct-btn primary"
+                      disabled={qrLoading}
+                      onClick={() => void confirmQrLogin(true)}
+                    >
+                      {qrLoading && <span className="spin" />}
+                      Confirm sign-in
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {qrConfirmOpen && (
+            <div className="kl-modal-backdrop" onClick={() => !qrLoading && setQrConfirmOpen(false)}>
+              <div
+                className="kl-modal kl-confirm aa-reset-password-modal"
+                onClick={(e) => e.stopPropagation()}
+                role="alertdialog"
+                aria-modal="true"
+              >
+                <h3>Generate mobile sign-in QR?</h3>
+                <p>
+                  Anyone who scans this code before it expires can sign in as
+                  {` ${me.userId}`}. Only show it on a trusted screen and close
+                  it when you are done.
+                </p>
+                <div className="kl-modal-actions">
+                  <button
+                    type="button"
+                    className="kl-btn ghost"
+                    onClick={() => setQrConfirmOpen(false)}
+                    disabled={qrLoading}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="kl-btn danger"
+                    onClick={generateQrLogin}
+                    disabled={qrLoading}
+                  >
+                    {qrLoading && <span className="spin" />}
+                    Generate
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {resetOpen && (
             <div className="kl-modal-backdrop" onClick={() => !loading && setResetOpen(false)}>
@@ -388,4 +558,21 @@ export function AccountPanel({
           )}
         </div>
   );
+}
+
+function formatExpiry(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function mobileLoginStatusText(status: MobileLoginStatusResponse | null): string {
+  if (!status) return "Waiting for scan";
+  const device = status.deviceName ? ` from ${status.deviceName}` : "";
+  if (status.status === "pending_scan") return "Waiting for scan";
+  if (status.status === "pending_web_confirm") return `Scan received${device}. Confirm on this browser`;
+  if (status.status === "approved") return "Confirmed. Complete sign-in on mobile";
+  if (status.status === "rejected") return "Rejected";
+  if (status.status === "expired") return "Expired";
+  return "Used";
 }

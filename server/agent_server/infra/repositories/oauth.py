@@ -3,6 +3,10 @@ from __future__ import annotations
 from agent_server.infra.repositories.store_support import *
 
 
+FIRST_PARTY_OAUTH_CLIENT_ID = "agents-anywhere-mobile"
+FIRST_PARTY_OAUTH_REDIRECT_URI = "agents-anywhere://oauth/callback"
+
+
 class OAuthRepositoryMixin:
     async def list_oauth_clients(self) -> list[OAuthClientView]:
         async with self._engine.connect() as conn:
@@ -61,9 +65,13 @@ class OAuthRepositoryMixin:
         code_challenge: str,
         code_challenge_method: str,
     ) -> str:
-        client = await self.get_oauth_client(client_id)
         redirect_uri = _normalize_redirect_uri(redirect_uri)
-        if redirect_uri not in client.redirectUris:
+        if client_id == FIRST_PARTY_OAUTH_CLIENT_ID:
+            allowed_redirects = [FIRST_PARTY_OAUTH_REDIRECT_URI]
+        else:
+            client = await self.get_oauth_client(client_id)
+            allowed_redirects = client.redirectUris
+        if redirect_uri not in allowed_redirects:
             raise ValueError("redirect uri is not registered")
         if code_challenge_method != "S256":
             raise ValueError("code challenge method must be S256")
@@ -75,6 +83,22 @@ class OAuthRepositoryMixin:
         now = now_dt.isoformat().replace("+00:00", "Z")
         expires_at = (now_dt + timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
         async with self._engine.begin() as conn:
+            if client_id == FIRST_PARTY_OAUTH_CLIENT_ID:
+                existing_client = (
+                    await conn.execute(
+                        select(oauth_clients_t.c.id).where(oauth_clients_t.c.id == FIRST_PARTY_OAUTH_CLIENT_ID)
+                    )
+                ).first()
+                if existing_client is None:
+                    await conn.execute(
+                        insert(oauth_clients_t).values(
+                            id=FIRST_PARTY_OAUTH_CLIENT_ID,
+                            name="Agents Anywhere Mobile",
+                            redirect_uris_json=_json_dumps([FIRST_PARTY_OAUTH_REDIRECT_URI]),
+                            created_at=now,
+                            updated_at=now,
+                        )
+                    )
             await conn.execute(
                 insert(oauth_authorization_codes_t).values(
                     code_hash=_oauth_code_hash(code),

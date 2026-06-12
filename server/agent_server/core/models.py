@@ -299,6 +299,7 @@ class OAuthTokenResponse(BaseModel):
     token_type: str = "Bearer"
     expires_in: int
     scope: str = ""
+    refresh_token: str | None = None
 
 
 class OAuthMetadataResponse(BaseModel):
@@ -308,6 +309,51 @@ class OAuthMetadataResponse(BaseModel):
     response_types_supported: list[str]
     grant_types_supported: list[str]
     code_challenge_methods_supported: list[str]
+
+
+class MobileLoginQrCreateResponse(BaseModel):
+    userId: str
+    loginToken: str
+    expiresAt: str
+    payload: dict[str, Any]
+    serverTime: str
+
+
+class MobileLoginRequestRequest(BaseModel):
+    userId: str
+    loginToken: str
+    deviceName: str | None = None
+
+
+class MobileLoginStatusRequest(BaseModel):
+    loginToken: str
+
+
+class MobileLoginStatusResponse(BaseModel):
+    status: Literal["pending_scan", "pending_web_confirm", "approved", "rejected", "expired", "consumed"]
+    userId: str | None = None
+    deviceName: str | None = None
+    expiresAt: str | None = None
+    requestedAt: str | None = None
+    approvedAt: str | None = None
+    serverTime: str
+
+
+class MobileLoginConfirmRequest(BaseModel):
+    loginToken: str
+    approved: bool = True
+
+
+class MobileLoginExchangeRequest(BaseModel):
+    userId: str
+    loginToken: str
+
+
+class MobileLoginExchangeResponse(BaseModel):
+    auth: AuthResponse
+    refreshToken: str
+    expiresAt: str
+    serverTime: str
 
 
 class ConnectorAuthResponse(BaseModel):

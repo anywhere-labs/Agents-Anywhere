@@ -31,6 +31,7 @@ from agent_server.infra.db import (
     build_engine,
     connectors as connectors_t,
     init_db,
+    mobile_login_tokens as mobile_login_tokens_t,
     oauth_accounts as oauth_accounts_t,
     oauth_authorization_codes as oauth_authorization_codes_t,
     oauth_clients as oauth_clients_t,
@@ -281,6 +282,10 @@ def _user_from_row(row: Any) -> UserView:
         createdAt=row["created_at"],
         updatedAt=row["updated_at"],
     )
+
+
+def _mobile_login_token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 def _dedupe_legacy_history_items(items: list[TimelineItem]) -> list[TimelineItem]:

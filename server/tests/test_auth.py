@@ -731,38 +731,28 @@ def test_oauth_finalize_requires_oauth_registration_for_new_user(tmp_path):
     assert opened.json()["auth"]["userId"] == "oauthuser"
 
 
-def test_admin_can_create_and_list_oauth_clients(tmp_path):
+def test_admin_oauth_client_configuration_is_closed(tmp_path):
     client = make_client(tmp_path)
     token = admin_token(client)
-    created = client.post(
+    assert client.get("/admin/oauth/clients", headers=bearer(token)).status_code == 404
+    assert client.post(
         "/admin/oauth/clients",
         headers=bearer(token),
         json={"name": "Desktop App", "redirectUris": ["agents-anywhere://oauth/callback"]},
-    )
-    assert created.status_code == 201, created.text
-    body = created.json()
-    assert body["clientId"].startswith("client_")
-    assert body["redirectUris"] == ["agents-anywhere://oauth/callback"]
-    listed = client.get("/admin/oauth/clients", headers=bearer(token)).json()
-    assert [item["clientId"] for item in listed["clients"]] == [body["clientId"]]
+    ).status_code == 404
 
 
-def test_oauth_authorization_code_pkce_round_trip(tmp_path):
+def test_first_party_oauth_authorization_code_pkce_round_trip(tmp_path):
     client = make_client(tmp_path)
     token = admin_token(client)
-    oauth_client = client.post(
-        "/admin/oauth/clients",
-        headers=bearer(token),
-        json={"name": "CLI", "redirectUris": ["http://127.0.0.1:7777/callback"]},
-    ).json()
     verifier = "test-verifier-value"
     auth = client.get(
         "/oauth/authorize",
         headers=bearer(token),
         params={
             "response_type": "code",
-            "client_id": oauth_client["clientId"],
-            "redirect_uri": "http://127.0.0.1:7777/callback",
+            "client_id": "agents-anywhere-mobile",
+            "redirect_uri": "agents-anywhere://oauth/callback",
             "code_challenge": pkce_challenge(verifier),
             "code_challenge_method": "S256",
             "scope": "profile",
@@ -781,8 +771,8 @@ def test_oauth_authorization_code_pkce_round_trip(tmp_path):
         data={
             "grant_type": "authorization_code",
             "code": code,
-            "client_id": oauth_client["clientId"],
-            "redirect_uri": "http://127.0.0.1:7777/callback",
+            "client_id": "agents-anywhere-mobile",
+            "redirect_uri": "agents-anywhere://oauth/callback",
             "code_verifier": "wrong",
         },
     )
@@ -793,8 +783,8 @@ def test_oauth_authorization_code_pkce_round_trip(tmp_path):
         data={
             "grant_type": "authorization_code",
             "code": code,
-            "client_id": oauth_client["clientId"],
-            "redirect_uri": "http://127.0.0.1:7777/callback",
+            "client_id": "agents-anywhere-mobile",
+            "redirect_uri": "agents-anywhere://oauth/callback",
             "code_verifier": verifier,
         },
     )
@@ -810,9 +800,127 @@ def test_oauth_authorization_code_pkce_round_trip(tmp_path):
         data={
             "grant_type": "authorization_code",
             "code": code,
-            "client_id": oauth_client["clientId"],
-            "redirect_uri": "http://127.0.0.1:7777/callback",
+            "client_id": "agents-anywhere-mobile",
+            "redirect_uri": "agents-anywhere://oauth/callback",
             "code_verifier": verifier,
         },
     )
     assert reused.status_code == 400
+
+
+def test_oauth_authorize_rejects_unregistered_redirects(tmp_path):
+    client = make_client(tmp_path)
+    token = admin_token(client)
+    response = client.get(
+        "/oauth/authorize",
+        headers=bearer(token),
+        params={
+            "response_type": "code",
+            "client_id": "agents-anywhere-mobile",
+            "redirect_uri": "http://127.0.0.1:7777/callback",
+            "code_challenge": pkce_challenge("test-verifier-value"),
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 422
+
+
+# ---------- mobile QR login --------------------------------------------------
+
+
+def test_mobile_login_qr_requires_phone_request_and_web_confirm(tmp_path):
+    client = make_client(tmp_path)
+    token = admin_token(client)
+    qr = client.post("/auth/mobile-login/qr", headers=bearer(token))
+    assert qr.status_code == 200, qr.text
+    qr_body = qr.json()
+    assert qr_body["payload"]["type"] == "agents-anywhere.mobile-login"
+    assert qr_body["payload"]["userId"] == "user1"
+    assert qr_body["payload"]["loginToken"] == qr_body["loginToken"]
+    assert qr_body["payload"]["expiresAt"] == qr_body["expiresAt"]
+
+    premature = client.post(
+        "/auth/mobile-login/exchange",
+        json={"userId": "user1", "loginToken": qr_body["loginToken"]},
+    )
+    assert premature.status_code == 401
+
+    requested = client.post(
+        "/auth/mobile-login/request",
+        json={"userId": "user1", "loginToken": qr_body["loginToken"], "deviceName": "iPhone"},
+    )
+    assert requested.status_code == 200, requested.text
+    assert requested.json()["status"] == "pending_web_confirm"
+    assert requested.json()["deviceName"] == "iPhone"
+
+    status = client.post(
+        "/auth/mobile-login/status",
+        headers=bearer(token),
+        json={"loginToken": qr_body["loginToken"]},
+    )
+    assert status.status_code == 200, status.text
+    assert status.json()["status"] == "pending_web_confirm"
+
+    still_blocked = client.post(
+        "/auth/mobile-login/exchange",
+        json={"userId": "user1", "loginToken": qr_body["loginToken"]},
+    )
+    assert still_blocked.status_code == 401
+
+    confirmed = client.post(
+        "/auth/mobile-login/confirm",
+        headers=bearer(token),
+        json={"loginToken": qr_body["loginToken"], "approved": True},
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    assert confirmed.json()["status"] == "approved"
+
+    exchanged = client.post(
+        "/auth/mobile-login/exchange",
+        json={"userId": "user1", "loginToken": qr_body["loginToken"]},
+    )
+    assert exchanged.status_code == 200, exchanged.text
+    body = exchanged.json()
+    assert body["auth"]["userId"] == "user1"
+    assert body["auth"]["accessToken"]
+    assert body["refreshToken"]
+    assert client.get("/auth/me", headers=bearer(body["auth"]["accessToken"])).json()["userId"] == "user1"
+
+    replay = client.post(
+        "/auth/mobile-login/exchange",
+        json={"userId": "user1", "loginToken": qr_body["loginToken"]},
+    )
+    assert replay.status_code == 401
+
+
+def test_mobile_login_reject_flow_blocks_exchange(tmp_path):
+    client = make_client(tmp_path)
+    token = admin_token(client)
+    qr_body = client.post("/auth/mobile-login/qr", headers=bearer(token)).json()
+    client.post(
+        "/auth/mobile-login/request",
+        json={"userId": "user1", "loginToken": qr_body["loginToken"], "deviceName": "iPhone"},
+    )
+    rejected = client.post(
+        "/auth/mobile-login/confirm",
+        headers=bearer(token),
+        json={"loginToken": qr_body["loginToken"], "approved": False},
+    )
+    assert rejected.status_code == 200, rejected.text
+    assert rejected.json()["status"] == "rejected"
+    exchanged = client.post(
+        "/auth/mobile-login/exchange",
+        json={"userId": "user1", "loginToken": qr_body["loginToken"]},
+    )
+    assert exchanged.status_code == 401
+
+
+def test_mobile_login_exchange_rejects_user_mismatch(tmp_path):
+    client = make_client(tmp_path)
+    token = admin_token(client)
+    qr_body = client.post("/auth/mobile-login/qr", headers=bearer(token)).json()
+    exchanged = client.post(
+        "/auth/mobile-login/exchange",
+        json={"userId": "other", "loginToken": qr_body["loginToken"]},
+    )
+    assert exchanged.status_code == 401

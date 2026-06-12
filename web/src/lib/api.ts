@@ -67,19 +67,6 @@ export type OAuthProviderConfigUpdate = OAuthProviderConfig & {
   clientSecret?: string;
 };
 
-export type OAuthClient = {
-  clientId: string;
-  name: string;
-  redirectUris: string[];
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type OAuthClientListResponse = {
-  clients: OAuthClient[];
-  serverTime: string;
-};
-
 export type OAuthStartResponse = {
   authorizeUrl: string;
   serverTime: string;
@@ -87,6 +74,39 @@ export type OAuthStartResponse = {
 
 export type OAuthFinalizeResponse = {
   auth: AuthResponse;
+  serverTime: string;
+};
+
+export type MobileLoginQrResponse = {
+  userId: string;
+  loginToken: string;
+  expiresAt: string;
+  payload: {
+    type: "agents-anywhere.mobile-login";
+    version: number;
+    serverUrl: string;
+    userId: string;
+    loginToken: string;
+    expiresAt: string;
+  };
+  serverTime: string;
+};
+
+export type MobileLoginStatus =
+  | "pending_scan"
+  | "pending_web_confirm"
+  | "approved"
+  | "rejected"
+  | "expired"
+  | "consumed";
+
+export type MobileLoginStatusResponse = {
+  status: MobileLoginStatus;
+  userId: string | null;
+  deviceName: string | null;
+  expiresAt: string | null;
+  requestedAt: string | null;
+  approvedAt: string | null;
   serverTime: string;
 };
 
@@ -608,6 +628,24 @@ export const api = {
     ),
   clearAvatar: (token: string) =>
     request<AuthMe>("/auth/me/avatar", { method: "DELETE" }, token),
+  createMobileLoginQr: (token: string) =>
+    request<MobileLoginQrResponse>(
+      "/auth/mobile-login/qr",
+      { method: "POST", body: "{}" },
+      token,
+    ),
+  mobileLoginStatus: (token: string, loginToken: string) =>
+    request<MobileLoginStatusResponse>(
+      "/auth/mobile-login/status",
+      { method: "POST", body: JSON.stringify({ loginToken }) },
+      token,
+    ),
+  confirmMobileLogin: (token: string, loginToken: string, approved = true) =>
+    request<MobileLoginStatusResponse>(
+      "/auth/mobile-login/confirm",
+      { method: "POST", body: JSON.stringify({ loginToken, approved }) },
+      token,
+    ),
   listUsers: (token: string) =>
     request<AdminUserListResponse>("/admin/users", {}, token),
   createUser: (
@@ -664,20 +702,6 @@ export const api = {
     ),
   getServiceInfo: (token: string) =>
     request<ServiceInfo>("/admin/service", {}, token),
-  listOAuthClients: (token: string) =>
-    request<OAuthClientListResponse>("/admin/oauth/clients", {}, token),
-  createOAuthClient: (token: string, body: { name: string; redirectUris: string[] }) =>
-    request<OAuthClient>(
-      "/admin/oauth/clients",
-      { method: "POST", body: JSON.stringify(body) },
-      token,
-    ),
-  deleteOAuthClient: (token: string, clientId: string) =>
-    request<void>(
-      `/admin/oauth/clients/${encodeURIComponent(clientId)}`,
-      { method: "DELETE" },
-      token,
-    ),
   listConnectors: (token: string) =>
     request<ConnectorListResponse>("/connectors", {}, token),
   createConnector: (token: string, body: { name?: string } = {}) =>

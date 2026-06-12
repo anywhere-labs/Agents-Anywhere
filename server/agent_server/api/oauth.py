@@ -13,6 +13,8 @@ from agent_server.infra.repositories.facade import Store
 
 
 router = APIRouter(tags=["oauth"])
+FIRST_PARTY_CLIENT_ID = "agents-anywhere-mobile"
+FIRST_PARTY_REDIRECT_URI = "agents-anywhere://oauth/callback"
 
 
 @router.get("/.well-known/oauth-authorization-server", response_model=OAuthMetadataResponse)
@@ -42,6 +44,10 @@ async def oauth_authorize(
 ) -> RedirectResponse:
     if response_type != "code":
         raise HTTPException(status_code=422, detail="response_type must be code")
+    if client_id != FIRST_PARTY_CLIENT_ID:
+        raise HTTPException(status_code=404, detail="oauth client not found")
+    if redirect_uri != FIRST_PARTY_REDIRECT_URI:
+        raise HTTPException(status_code=422, detail="redirect uri is not allowed")
     try:
         code = await db.create_oauth_authorization_code(
             client_id=client_id,
@@ -72,6 +78,10 @@ async def oauth_token(
 ) -> OAuthTokenResponse:
     if grant_type != "authorization_code":
         raise HTTPException(status_code=422, detail="grant_type must be authorization_code")
+    if client_id != FIRST_PARTY_CLIENT_ID:
+        raise HTTPException(status_code=404, detail="oauth client not found")
+    if redirect_uri != FIRST_PARTY_REDIRECT_URI:
+        raise HTTPException(status_code=422, detail="redirect uri is not allowed")
     try:
         user, scope = await db.consume_oauth_authorization_code(
             code=code,
