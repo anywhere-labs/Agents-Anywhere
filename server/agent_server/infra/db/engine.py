@@ -49,13 +49,16 @@ def _infer_backend_from_url(url: str) -> str:
 
 def build_engine(*, backend: str | None = None, url: str | None = None, sqlite_path: str | Path | None = None) -> tuple[str, AsyncEngine]:
     resolved_backend, async_url = resolve_db_url(backend=backend, url=url, sqlite_path=sqlite_path)
-    # Async DB-API connections (aiosqlite, asyncpg) are bound to the event
-    # loop that opened them. FastAPI/Starlette's TestClient uses anyio to run
-    # each request in a fresh task/loop scope, so a pooled connection from a
-    # prior request will trigger "different loop" or "no active connection"
-    # errors when reused. NullPool opens a fresh connection per checkout,
-    # sidestepping the issue. Cost at our scale is negligible.
-    engine = create_async_engine(async_url, future=True, poolclass=NullPool)
+    engine_kwargs: dict[str, object] = {"future": True}
+    if resolved_backend == SQLITE_BACKEND:
+        # Async DB-API connections are bound to the event loop that opened
+        # them. FastAPI/Starlette's TestClient uses anyio to run requests in
+        # fresh loop scopes, so SQLite keeps NullPool to avoid reusing
+        # connections across loops. Postgres should use SQLAlchemy's default
+        # async pool; opening a new TCP connection per checkout is too costly
+        # for production request latency.
+        engine_kwargs["poolclass"] = NullPool
+    engine = create_async_engine(async_url, **engine_kwargs)
     if resolved_backend == SQLITE_BACKEND:
         _enable_sqlite_fk(engine)
     return resolved_backend, engine
