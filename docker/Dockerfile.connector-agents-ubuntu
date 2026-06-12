@@ -19,12 +19,22 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 WORKDIR /app
 
-RUN apt-get update \
+RUN if [ -n "$APT_MIRROR" ]; then \
+        mirror="${APT_MIRROR%/}"; \
+        bootstrap_mirror="$mirror"; \
+        case "$bootstrap_mirror" in https://*) bootstrap_mirror="http://${bootstrap_mirror#https://}" ;; esac; \
+        sed -i "s|http://archive.ubuntu.com/ubuntu|$bootstrap_mirror|g; s|http://security.ubuntu.com/ubuntu|$bootstrap_mirror|g" /etc/apt/sources.list.d/ubuntu.sources; \
+    fi \
+    && apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && if [ -n "$APT_MIRROR" ]; then \
         mirror="${APT_MIRROR%/}"; \
-        sed -i "s|http://archive.ubuntu.com/ubuntu|$mirror|g; s|http://security.ubuntu.com/ubuntu|$mirror|g" /etc/apt/sources.list.d/ubuntu.sources; \
+        bootstrap_mirror="$mirror"; \
+        case "$bootstrap_mirror" in https://*) bootstrap_mirror="http://${bootstrap_mirror#https://}" ;; esac; \
+        if [ "$bootstrap_mirror" != "$mirror" ]; then \
+            sed -i "s|$bootstrap_mirror|$mirror|g" /etc/apt/sources.list.d/ubuntu.sources; \
+        fi; \
     fi \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
