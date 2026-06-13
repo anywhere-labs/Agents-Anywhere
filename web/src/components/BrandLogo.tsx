@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
-import logoDarkMode from "../assets/brand/aa-logo-dark-mode.png";
-import logoLightMode from "../assets/brand/aa-logo-light-mode.png";
+import iconDarkMode from "../assets/brand/icon-light.svg";
+import iconLightMode from "../assets/brand/icon-dark.svg";
 
 type BrandLogoProps = {
   size?: number;
@@ -15,8 +15,8 @@ export function BrandLogo({ size = 24, padding = 0.14, className }: BrandLogoPro
   } as CSSProperties;
   return (
     <span className={["aa-logo", className].filter(Boolean).join(" ")} style={style} aria-hidden="true">
-      <img className="aa-logo-img aa-logo-dark-mode" src={logoDarkMode} alt="" draggable={false} />
-      <img className="aa-logo-img aa-logo-light-mode" src={logoLightMode} alt="" draggable={false} />
+      <img className="aa-logo-img aa-logo-dark-mode" src={iconDarkMode} alt="" draggable={false} />
+      <img className="aa-logo-img aa-logo-light-mode" src={iconLightMode} alt="" draggable={false} />
     </span>
   );
 }

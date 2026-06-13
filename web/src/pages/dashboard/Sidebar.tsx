@@ -1,8 +1,6 @@
 import { useState, type ReactNode } from "react";
-import { BrandLogo } from "../../components/BrandLogo";
 import { Icons } from "../../components/Icons";
 import { Identicon } from "../../components/Identicon";
-import { AAWord } from "../auth/AAWord";
 import type { AuthMe, ConnectorView, SessionView } from "../../lib/api";
 import { UserMenu } from "./UserMenu";
 import type { FilterState } from "./FilterMenu";
@@ -253,8 +251,7 @@ export function Sidebar({
       {!mini && (
         <div className="kl-sb-hd">
           <div className="brand">
-            <BrandLogo size={22} padding={0.08} />
-            <AAWord />
+            <span className="aa-word">Agents Anywhere</span>
           </div>
           <div className="acts">
             <button
