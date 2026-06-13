@@ -25,6 +25,7 @@ class JsonRpcStdioClient:
     def __init__(self, command: list[str] | None = None) -> None:
         self.command = command or _resolve_codex_command()
         self.process: asyncio.subprocess.Process | None = None
+        self._start_lock = asyncio.Lock()
         self._next_id = 1
         self._pending: dict[int | str, asyncio.Future[dict[str, Any]]] = {}
         self._server_request_ids: set[int | str] = set()
@@ -32,39 +33,40 @@ class JsonRpcStdioClient:
         self._initialized = False
 
     async def start(self, handler: NotificationHandler) -> None:
-        if self.process and self._initialized:
+        async with self._start_lock:
+            if self.process and self._initialized:
+                self._notification_handler = handler
+                return
+
             self._notification_handler = handler
-            return
+            if self.process is None:
+                logger.info("starting codex app-server command={}", self.command)
+                self.process = await asyncio.create_subprocess_exec(
+                    *self.command,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    limit=APP_SERVER_STREAM_LIMIT,
+                )
+                self._track_reader(asyncio.create_task(self._read_stdout(self.process)), "stdout")
+                self._track_reader(asyncio.create_task(self._read_stderr(self.process)), "stderr")
 
-        self._notification_handler = handler
-        if self.process is None:
-            logger.info("starting codex app-server command={}", self.command)
-            self.process = await asyncio.create_subprocess_exec(
-                *self.command,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                limit=APP_SERVER_STREAM_LIMIT,
+            await self.request(
+                "initialize",
+                {
+                    "clientInfo": {
+                        "name": "agent-server-connector",
+                        "title": "Agent Server Connector",
+                        "version": "0.1.0",
+                    },
+                    "capabilities": {
+                        "experimentalApi": True,
+                        "requestAttestation": False,
+                    },
+                },
             )
-            self._track_reader(asyncio.create_task(self._read_stdout()), "stdout")
-            self._track_reader(asyncio.create_task(self._read_stderr()), "stderr")
-
-        await self.request(
-            "initialize",
-            {
-                "clientInfo": {
-                    "name": "agent-server-connector",
-                    "title": "Agent Server Connector",
-                    "version": "0.1.0",
-                },
-                "capabilities": {
-                    "experimentalApi": True,
-                    "requestAttestation": False,
-                },
-            },
-        )
-        await self.notify("initialized")
-        self._initialized = True
+            await self.notify("initialized")
+            self._initialized = True
 
     async def request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         if not self.process or not self.process.stdin:
@@ -121,9 +123,9 @@ class JsonRpcStdioClient:
             self.process = None
             self._initialized = False
 
-    async def _read_stdout(self) -> None:
-        assert self.process and self.process.stdout
-        while line := await self.process.stdout.readline():
+    async def _read_stdout(self, process: asyncio.subprocess.Process) -> None:
+        assert process.stdout
+        while line := await process.stdout.readline():
             try:
                 payload = json.loads(line)
             except json.JSONDecodeError:
@@ -142,9 +144,9 @@ class JsonRpcStdioClient:
             if self._notification_handler is not None:
                 await self._notification_handler(payload)
 
-    async def _read_stderr(self) -> None:
-        assert self.process and self.process.stderr
-        while line := await self.process.stderr.readline():
+    async def _read_stderr(self, process: asyncio.subprocess.Process) -> None:
+        assert process.stderr
+        while line := await process.stderr.readline():
             logger.trace("codex app-server stderr: {}", line.decode(errors="replace").rstrip())
 
     def _track_reader(self, task: asyncio.Task[None], name: str) -> None:

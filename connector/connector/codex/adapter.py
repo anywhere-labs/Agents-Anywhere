@@ -92,6 +92,7 @@ class CodexAdapter:
     _history_sync_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict)
     _existing_thread_sync_markers: dict[str, str] = field(default_factory=dict)
     _existing_thread_names: dict[str, str | None] = field(default_factory=dict)
+    _start_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.rpc is None:
@@ -117,12 +118,13 @@ class CodexAdapter:
             self.sync_state_store.delete_runtime("codex", connector_id)
 
     async def start(self) -> None:
-        assert self.rpc is not None
-        await self.rpc.start(self.handle_notification)
-        if self._started:
-            return
-        await self._best_effort_bootstrap_reads()
-        self._started = True
+        async with self._start_lock:
+            assert self.rpc is not None
+            await self.rpc.start(self.handle_notification)
+            if self._started:
+                return
+            await self._best_effort_bootstrap_reads()
+            self._started = True
 
     async def create_session(self, params: dict[str, Any]) -> dict[str, Any]:
         await self.start()
@@ -929,6 +931,10 @@ def _unresumable_thread_failure_reason(error_text: str) -> str | None:
         return "archived"
     if "cannot resume" in normalized or "not resumable" in normalized or "unresumable" in normalized:
         return "unresumable"
+    if "failed to load configuration" in normalized and "model provider" in normalized:
+        return "missing_model_provider"
+    if "model provider" in normalized and "not found" in normalized:
+        return "missing_model_provider"
     return None
 
 

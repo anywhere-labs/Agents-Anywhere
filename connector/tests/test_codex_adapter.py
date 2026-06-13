@@ -130,6 +130,21 @@ class MissingRolloutResumeRpc(FakeCodexRpc):
         return {}
 
 
+class MissingModelProviderResumeRpc(FakeCodexRpc):
+    async def request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        self.requests.append((method, params))
+        if method == "thread/resume":
+            raise RuntimeError(
+                json.dumps(
+                    {
+                        "code": -32600,
+                        "message": "failed to load configuration: Model provider `codex` not found",
+                    }
+                )
+            )
+        return await super().request(method, params)
+
+
 def test_stdio_client_stream_limit_is_large_enough_for_codex_jsonl() -> None:
     assert APP_SERVER_STREAM_LIMIT >= 64 * 1024 * 1024
 
@@ -177,6 +192,54 @@ async def _exercise_stdio_client_includes_empty_params() -> None:
 
 def test_stdio_client_includes_empty_params_for_no_arg_messages() -> None:
     asyncio.run(_exercise_stdio_client_includes_empty_params())
+
+
+class EmptyAsyncReader:
+    async def readline(self) -> bytes:
+        return b""
+
+
+class StartableFakeProcess:
+    def __init__(self) -> None:
+        self.stdin = FakeStdin()
+        self.stdout = EmptyAsyncReader()
+        self.stderr = EmptyAsyncReader()
+
+
+async def _exercise_stdio_client_start_is_serialized(monkeypatch) -> None:
+    created: list[StartableFakeProcess] = []
+    initialize_seen = asyncio.Event()
+
+    async def fake_create_subprocess_exec(*_args: str, **_kwargs: Any) -> StartableFakeProcess:
+        await asyncio.sleep(0)
+        process = StartableFakeProcess()
+        created.append(process)
+        return process
+
+    async def complete_initialize_when_written() -> None:
+        client = task_client
+        while 1 not in client._pending:  # noqa: SLF001
+            await asyncio.sleep(0)
+        client._pending[1].set_result({})  # noqa: SLF001
+        initialize_seen.set()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    task_client = JsonRpcStdioClient(command=["codex"])
+
+    async def handler(_payload: dict[str, Any]) -> None:
+        return None
+
+    helper = asyncio.create_task(complete_initialize_when_written())
+    await asyncio.gather(task_client.start(handler), task_client.start(handler))
+    await helper
+
+    assert initialize_seen.is_set()
+    assert len(created) == 1
+    assert task_client._initialized is True  # noqa: SLF001
+
+
+def test_stdio_client_start_is_serialized(monkeypatch) -> None:
+    asyncio.run(_exercise_stdio_client_start_is_serialized(monkeypatch))
 
 
 def test_stdio_client_ignores_response_for_cancelled_request() -> None:
@@ -992,6 +1055,10 @@ def test_adapter_treats_archived_resume_failure_as_skipped() -> None:
     asyncio.run(_exercise_archived_resume_failure_sync())
 
 
+def test_adapter_treats_missing_model_provider_as_skipped_once() -> None:
+    asyncio.run(_exercise_missing_model_provider_thread_sync())
+
+
 async def _exercise_existing_thread_sync() -> None:
     rpc = FakeCodexRpc()
     adapter = CodexAdapter(rpc=rpc)  # type: ignore[arg-type]
@@ -1069,6 +1136,21 @@ async def _exercise_archived_resume_failure_sync() -> None:
     assert result["threads"] == []
     assert result["skippedThreads"] == ["thr_existing"]
     assert result["backendNotifications"] == []
+
+
+async def _exercise_missing_model_provider_thread_sync() -> None:
+    rpc = MissingModelProviderResumeRpc()
+    adapter = CodexAdapter(rpc=rpc)  # type: ignore[arg-type]
+
+    result = await adapter.sync_existing_sessions("conn_1")
+    replay = await adapter.sync_existing_sessions("conn_1")
+
+    assert result["threads"] == []
+    assert result["skippedThreads"] == ["thr_existing"]
+    assert result["backendNotifications"] == []
+    assert replay["threads"] == []
+    assert replay["skippedThreads"] == ["thr_existing"]
+    assert rpc.requests.count(("thread/resume", {"threadId": "thr_existing"})) == 1
 
 
 async def _exercise_existing_thread_sync_timeouts(monkeypatch) -> None:
