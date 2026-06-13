@@ -46,18 +46,27 @@ private struct ServerAddressView: View {
             onCancel: onCancel,
         ) {
             VStack(alignment: .leading, spacing: 16) {
-                TextField("Server Address", text: $serverText, prompt: Text("https://your-server.example.com"))
-                    .textInputAutocapitalization(.never)
-                    .keyboardType(.URL)
-                    .autocorrectionDisabled()
-                    .textContentType(.URL)
-                    .textFieldStyle(.roundedBorder)
-                    .controlSize(.large)
-                    .submitLabel(.continue)
-                    .onSubmit {
-                        guard canContinue else { return }
-                        Task { await checkServer() }
+                Form {
+                    Section {
+                        LabeledContent {
+                            TextField("example.com", text: $serverText)
+                                .multilineTextAlignment(.trailing)
+                                .textInputAutocapitalization(.never)
+                                .keyboardType(.URL)
+                                .autocorrectionDisabled()
+                                .textContentType(.URL)
+                                .submitLabel(.continue)
+                                .onSubmit {
+                                    guard canContinue else { return }
+                                    Task { await checkServer() }
+                                }
+                        } label: {
+                            Text("Server")
+                        }
                     }
+                }
+                .scrollContentBackground(.hidden)
+                .frame(minHeight: 92)
 
                 AuthPrimaryButton(
                     title: "Continue",
@@ -118,12 +127,23 @@ private struct PasswordLoginView: View {
             VStack(alignment: .leading, spacing: 18) {
                 Form {
                     Section {
-                        TextField("User ID", text: $userId)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .textContentType(.username)
-                        SecureField("Password", text: $password)
-                            .textContentType(.password)
+                        LabeledContent {
+                            TextField("User", text: $userId)
+                                .multilineTextAlignment(.trailing)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .textContentType(.username)
+                        } label: {
+                            Text("User ID")
+                        }
+
+                        LabeledContent {
+                            SecureField("Password", text: $password)
+                                .multilineTextAlignment(.trailing)
+                                .textContentType(.password)
+                        } label: {
+                            Text("Password")
+                        }
                     } footer: {
                         Text(serverURL.absoluteString)
                     }
