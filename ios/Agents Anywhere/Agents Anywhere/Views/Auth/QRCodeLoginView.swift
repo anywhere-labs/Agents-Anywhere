@@ -190,9 +190,11 @@ private struct QRWaitingStepView: View {
     let onCancel: () -> Void
     let onReady: () -> Void
 
-    @State private var isChecking = false
+    @State private var isPolling = true
+    @State private var isApproved = false
     @State private var statusText = "Waiting for confirmation"
     @State private var alertMessage: String?
+    @State private var pollingTask: Task<Void, Never>?
 
     var body: some View {
         AuthScreen(
@@ -212,15 +214,22 @@ private struct QRWaitingStepView: View {
                     .frame(maxWidth: .infinity)
 
                 AuthPrimaryButton(
-                    title: isChecking ? "Checking" : "Login Complete",
-                    isLoading: isChecking,
+                    title: "Login Complete",
+                    isLoading: isPolling,
+                    disabled: !isApproved,
                 ) {
-                    Task { await checkApproval() }
+                    onReady()
                 }
             }
             .padding(.vertical, 24)
         }
-        .alert("Login Not Confirmed", isPresented: Binding(
+        .onAppear {
+            startPolling()
+        }
+        .onDisappear {
+            stopPolling()
+        }
+        .alert("Login Status", isPresented: Binding(
             get: { alertMessage != nil },
             set: { if !$0 { alertMessage = nil } },
         )) {
@@ -230,29 +239,61 @@ private struct QRWaitingStepView: View {
         }
     }
 
-    private func checkApproval() async {
-        isChecking = true
-        defer { isChecking = false }
+    private func startPolling() {
+        stopPolling()
+        isPolling = true
+        isApproved = false
+        statusText = "Waiting for confirmation"
+        pollingTask = Task {
+            while !Task.isCancelled {
+                let shouldContinue = await pollApprovalOnce()
+                if !shouldContinue {
+                    return
+                }
+                try? await Task.sleep(for: .seconds(1.5))
+            }
+        }
+    }
+
+    private func stopPolling() {
+        pollingTask?.cancel()
+        pollingTask = nil
+    }
+
+    @MainActor
+    private func pollApprovalOnce() async -> Bool {
         guard let status = await appState.mobileLoginStatus(payload: payload) else {
+            isPolling = false
             alertMessage = appState.authError ?? "Could not check the login status."
-            return
+            return false
         }
 
         switch status.status {
         case "approved":
             statusText = "Login confirmed"
-            onReady()
+            isApproved = true
+            isPolling = false
+            return false
         case "pending_web_confirm":
-            statusText = "Still waiting for web confirmation"
-            alertMessage = "Confirm the login on the web console and try again."
+            statusText = "Waiting for confirmation"
+            isPolling = true
+            return true
         case "rejected":
+            isPolling = false
             alertMessage = "This login request was rejected."
+            return false
         case "expired":
+            isPolling = false
             alertMessage = "This login request expired. Scan a new QR code."
+            return false
         case "consumed":
+            isPolling = false
             alertMessage = "This login request has already been used."
+            return false
         default:
+            isPolling = false
             alertMessage = "Current login status: \(status.status)"
+            return false
         }
     }
 }
