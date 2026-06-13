@@ -2210,6 +2210,33 @@ def test_send_message_forwards_client_message_id_to_connector(tmp_path):
     assert params["clientMessageId"] == "opt_abc"
 
 
+def test_send_message_allows_error_session_and_marks_running(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+    asyncio.run(client.app.state.store.set_session_status(session_id, "error"))
+
+    response = client.post(
+        f"/sessions/{session_id}/messages",
+        headers=headers,
+        json={"content": "try again"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert fake_rpc.requests[-1][1] == "turn.start"
+    assert fake_rpc.requests[-1][2]["content"] == "try again"
+    session = asyncio.run(
+        client.app.state.store.get_session(
+            session_id,
+            user_id=ADMIN_USER,
+        ),
+    )
+    assert session.status == "running"
+
+
 def test_send_message_forwards_uploaded_attachment_metadata_to_connector(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, session_id, headers = create_connector_and_session(client)

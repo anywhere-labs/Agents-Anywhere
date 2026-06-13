@@ -45,6 +45,7 @@ import { makeRuntimeApi } from "./session-detail/runtime/runtimeApi";
 import { optionLabel, runtimeConfigFields } from "./RuntimeSettingsForm";
 import { RunModeGuide } from "./RunModeGuide";
 import { filterClaudeEffortField } from "../../lib/claudeRuntime";
+import { ConfirmModal } from "./ConfirmModal";
 import "./session-detail/runtime/runtime.css";
 import "./session_detail.css";
 
@@ -162,6 +163,9 @@ export function SessionDetailView({
   const [pendingRunModeSend, setPendingRunModeSend] = useState<PendingSend | null>(
     null,
   );
+  const [pendingErrorSend, setPendingErrorSend] = useState<PendingSend | null>(
+    null,
+  );
 
   // Reset timeline whenever the active session changes.
   useEffect(() => {
@@ -180,6 +184,7 @@ export function SessionDetailView({
     setRunModePromptOpen(false);
     setDefaultRunModeConfigured(session.runtime !== "claude");
     setPendingRunModeSend(null);
+    setPendingErrorSend(null);
   }, [sessionId]);
 
   useEffect(() => {
@@ -667,7 +672,7 @@ export function SessionDetailView({
     [token, sessionId, onUnauthorized],
   );
 
-  const handleSend = useCallback(
+  const sendWithRunModeGuard = useCallback(
     async (content: string, files: File[] = []) => {
       if (session.runtime === "claude" && !defaultRunModeConfigured) {
         setPendingRunModeSend({ content, files });
@@ -678,6 +683,24 @@ export function SessionDetailView({
     },
     [session.runtime, defaultRunModeConfigured, sendNow],
   );
+
+  const handleSend = useCallback(
+    async (content: string, files: File[] = []) => {
+      if (session.status === "error") {
+        setPendingErrorSend({ content, files });
+        return;
+      }
+      await sendWithRunModeGuard(content, files);
+    },
+    [session.status, sendWithRunModeGuard],
+  );
+
+  const confirmErrorSend = useCallback(async () => {
+    const pending = pendingErrorSend;
+    if (!pending) return;
+    setPendingErrorSend(null);
+    await sendWithRunModeGuard(pending.content, pending.files);
+  }, [pendingErrorSend, sendWithRunModeGuard]);
 
   const handleInterrupt = useCallback(async () => {
     if (interrupting) return;
@@ -1020,6 +1043,15 @@ export function SessionDetailView({
         <SessionRunModePreviewModal
           value={runtimeSettings?.runMode === "terminal" ? "terminal" : "chat"}
           onSelect={handleChooseDefaultRunMode}
+        />
+      )}
+      {pendingErrorSend && (
+        <ConfirmModal
+          title="Continue this errored session?"
+          body="This session has an error. Sending another message may produce unexpected results."
+          confirmLabel="Send anyway"
+          onCancel={() => setPendingErrorSend(null)}
+          onConfirm={confirmErrorSend}
         />
       )}
     </div>
@@ -2521,7 +2553,9 @@ function Composer({
 
   const connectorOnline = session.connectorStatus === "online";
   const canSend =
-    connectorOnline && session.takeover && session.status === "idle";
+    connectorOnline &&
+    session.takeover &&
+    (session.status === "idle" || session.status === "error");
 
   const placeholder = !session.takeover
     ? "Read-only — turn on Takeover to send messages"
@@ -2531,7 +2565,9 @@ function Composer({
         ? "Waiting for your approval above…"
         : isBusy
           ? "Send an interrupt or wait for the current turn to finish"
-          : "Reply, or interrupt with new instructions…";
+          : session.status === "error"
+            ? "This session has an error; sending will ask for confirmation"
+            : "Reply, or interrupt with new instructions…";
 
   const autosize = (el: HTMLTextAreaElement | null) => {
     if (!el) return;

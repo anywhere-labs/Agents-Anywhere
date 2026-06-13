@@ -23,6 +23,7 @@ import { PairDeviceModal } from "./PairDeviceModal";
 import { NewSessionPage } from "./NewSessionPage";
 import { SessionRowMenu } from "./SessionRowMenu";
 import { RenameSessionModal } from "./RenameSessionModal";
+import { ConfirmModal } from "./ConfirmModal";
 import {
   FILTER_DEFAULTS,
   FilterMenu,
@@ -45,6 +46,7 @@ type PairingState =
   | { credential?: ConnectorRevokeResponse | null; title?: string };
 const DASHBOARD_RETRY_SYNC_MS = 10000;
 const HOVER_CLOSE_DELAY_MS = 180;
+const ONBOARD_STORAGE_PREFIX = "agents-anywhere:onboarded:";
 
 function fresherSession(existing: SessionView | undefined, incoming: SessionView) {
   if (!existing) return incoming;
@@ -85,6 +87,26 @@ function mergeSessionPatches(
   );
 }
 
+function onboardStorageKey(userId: string): string {
+  return `${ONBOARD_STORAGE_PREFIX}${userId}`;
+}
+
+function readOnboarded(userId: string): boolean {
+  try {
+    return window.localStorage.getItem(onboardStorageKey(userId)) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function markOnboarded(userId: string) {
+  try {
+    window.localStorage.setItem(onboardStorageKey(userId), "true");
+  } catch {
+    // Ignore storage failures; the prompt is non-critical.
+  }
+}
+
 export function SessionsPage({
   token,
   initialMe,
@@ -110,6 +132,7 @@ export function SessionsPage({
   const [sessions, setSessions] = useState<SessionView[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(true);
   const [pairing, setPairing] = useState<PairingState>(false);
+  const [onboardPromptOpen, setOnboardPromptOpen] = useState(false);
 
   const [collapsed, setCollapsed] = useState(false);
   const [flyout, setFlyout] = useState(false);
@@ -129,6 +152,7 @@ export function SessionsPage({
 
   const flyoutTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const filterCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onboardPromptCheckedRef = useRef(false);
 
   // Refresh /auth/me when the page mounts so a returning session picks up any
   // role / avatar changes made elsewhere (admin edited us from Team, etc.).
@@ -151,10 +175,16 @@ export function SessionsPage({
     try {
       const res = await api.listConnectors(token);
       setConnectors(res.connectors);
+      if (res.connectors.length > 0) {
+        markOnboarded(me.userId);
+      } else if (!onboardPromptCheckedRef.current) {
+        onboardPromptCheckedRef.current = true;
+        if (!readOnboarded(me.userId)) setOnboardPromptOpen(true);
+      }
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) onSignOut();
     }
-  }, [token, onSignOut]);
+  }, [token, me.userId, onSignOut]);
 
   const refreshSessions = useCallback(async () => {
     try {
@@ -428,9 +458,21 @@ export function SessionsPage({
   }, [routeSessionId, markRead]);
 
   const handlePaired = (connector: ConnectorView) => {
+    markOnboarded(me.userId);
     setPairing(false);
     refreshConnectors();
     navigate(`/devices/${encodeURIComponent(connector.id)}`);
+  };
+
+  const dismissOnboardPrompt = () => {
+    markOnboarded(me.userId);
+    setOnboardPromptOpen(false);
+  };
+
+  const startOnboardPairing = () => {
+    markOnboarded(me.userId);
+    setOnboardPromptOpen(false);
+    setPairing({});
   };
 
   const handleSessionCreated = (session: SessionView) => {
@@ -723,6 +765,16 @@ export function SessionsPage({
             refreshConnectors();
           }}
           onPaired={handlePaired}
+        />
+      )}
+
+      {onboardPromptOpen && !pairing && (
+        <ConfirmModal
+          title="Add your first device?"
+          body="You don't have a device yet. Add one to connect this browser to a machine running your agents."
+          confirmLabel="Add device"
+          onCancel={dismissOnboardPrompt}
+          onConfirm={startOnboardPairing}
         />
       )}
 

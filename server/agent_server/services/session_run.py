@@ -147,7 +147,7 @@ class SessionRunService:
             raise SessionRunConflictError("session is read-only until takeover is enabled")
         if not self._manager.is_online(session.connectorId):
             raise SessionRunConflictError("connector is offline")
-        if session.status != "idle":
+        if session.status not in {"idle", "error"}:
             raise SessionRunConflictError(f"session is {session.status}")
         if session.runtime == "claude" and session.effectiveRunMode == "terminal":
             raise SessionRunConflictError("terminal_mode_uses_terminal")
