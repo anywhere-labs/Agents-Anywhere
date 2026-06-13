@@ -138,6 +138,7 @@ struct AuthPrimaryButton: View {
 
                 if isLoading {
                     ProgressView()
+                        .scaleEffect(0.82)
                         .tint(AppTheme.primaryControlForeground(colorScheme))
                 }
             }
