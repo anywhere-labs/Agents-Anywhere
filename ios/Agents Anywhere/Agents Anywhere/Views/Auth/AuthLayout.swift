@@ -127,17 +127,14 @@ struct AuthPrimaryButton: View {
 
     var body: some View {
         Button(action: action) {
-            Group {
+            ZStack {
+                normalLabel
+                    .opacity(isLoading ? 0 : 1)
+
                 if isLoading {
                     ProgressView()
+                        .controlSize(.small)
                         .tint(AppTheme.primaryControlForeground(colorScheme))
-                } else {
-                    HStack(spacing: 10) {
-                        if let systemImage {
-                            Image(systemName: systemImage)
-                        }
-                        Text(title)
-                    }
                 }
             }
             .frame(maxWidth: .infinity)
@@ -149,6 +146,15 @@ struct AuthPrimaryButton: View {
         .foregroundStyle(AppTheme.primaryControlForeground(colorScheme))
         .disabled(disabled || isLoading)
         .animation(.easeInOut(duration: 0.18), value: isLoading)
+    }
+
+    private var normalLabel: some View {
+        HStack(spacing: 10) {
+            if let systemImage {
+                Image(systemName: systemImage)
+            }
+            Text(title)
+        }
     }
 }
 
