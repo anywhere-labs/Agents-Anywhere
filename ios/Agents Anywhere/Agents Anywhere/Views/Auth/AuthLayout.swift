@@ -133,18 +133,16 @@ struct AuthPrimaryButton: View {
                         .tint(AppTheme.primaryControlForeground(colorScheme))
                 } else if let systemImage {
                     Image(systemName: systemImage)
-                        .font(.body.weight(.semibold))
                 }
                 Text(title)
-                    .font(.body.weight(.semibold))
             }
             .frame(maxWidth: .infinity)
         }
         .buttonStyle(.glassProminent)
         .buttonBorderShape(.capsule)
+        .controlSize(.large)
         .tint(AppTheme.primaryControlBackground(colorScheme))
         .foregroundStyle(AppTheme.primaryControlForeground(colorScheme))
-        .shadow(color: AppTheme.controlShadow(colorScheme), radius: 10, x: 0, y: 6)
         .disabled(disabled || isLoading)
         .animation(.easeInOut(duration: 0.18), value: isLoading)
     }
@@ -182,18 +180,16 @@ struct AuthGlassButton: View {
             HStack(spacing: 10) {
                 if let systemImage {
                     Image(systemName: systemImage)
-                        .font(.body.weight(.semibold))
                 }
                 if let title {
                     Text(title)
-                        .font(.body.weight(.semibold))
                 }
             }
             .frame(maxWidth: .infinity)
         }
         .buttonStyle(.glass)
         .buttonBorderShape(.capsule)
-        .shadow(color: AppTheme.controlShadow(colorScheme), radius: 8, x: 0, y: 5)
+        .controlSize(.large)
     }
 
     @Environment(\.colorScheme) private var colorScheme
