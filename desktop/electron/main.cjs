@@ -4,6 +4,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const MAX_LOG_LINES = 400;
+const APP_NAME = "Agents Anywhere Connector";
+
+app.setName(APP_NAME);
 
 let mainWindow = null;
 let tray = null;
@@ -43,10 +46,18 @@ function currentPromptIconPath() {
   return resolveLogoPath(nativeTheme.shouldUseDarkColors ? "prompt-dark.png" : "prompt-light.png");
 }
 
+function appIconPath() {
+  return resolveLogoPath("icon-light.png");
+}
+
 function currentPromptIcon(size) {
   const image = nativeImage.createFromPath(currentPromptIconPath());
   if (image.isEmpty()) return nativeImage.createEmpty();
   return size ? image.resize({ width: size, height: size }) : image;
+}
+
+function trayIcon() {
+  return currentPromptIcon(process.platform === "darwin" ? 18 : 16);
 }
 
 function readJson(filePath, fallback) {
@@ -367,7 +378,7 @@ function createMainWindow() {
     minHeight: 620,
     show: false,
     title: "Agents Anywhere Connector",
-    icon: currentPromptIconPath(),
+    icon: appIconPath(),
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -391,10 +402,13 @@ function createMainWindow() {
 
 function updateNativeIcons() {
   if (tray) {
-    tray.setImage(currentPromptIcon(16));
+    tray.setImage(trayIcon());
   }
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.setIcon(currentPromptIconPath());
+    mainWindow.setIcon(appIconPath());
+  }
+  if (process.platform === "darwin" && app.dock) {
+    app.dock.setIcon(appIconPath());
   }
 }
 
@@ -415,7 +429,7 @@ function updateTrayMenu() {
 }
 
 function createTray() {
-  tray = new Tray(currentPromptIcon(16));
+  tray = new Tray(trayIcon());
   tray.on("click", () => showWindow());
   updateTrayMenu();
 }
@@ -464,6 +478,7 @@ app.whenReady().then(() => {
   loadDesktopSettings();
   createTray();
   createMainWindow();
+  updateNativeIcons();
   appendLog(`Connector source: ${state.connectorDir}`);
   appendLog(`Connector config: ${state.configPath}`);
   if (state.startConnectorOnLaunch && fs.existsSync(state.configPath)) safeRun(startConnector);

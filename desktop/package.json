@@ -64,6 +64,7 @@
       "target": "nsis"
     },
     "mac": {
+      "icon": "build/icon.icns",
       "target": "dmg"
     },
     "linux": {
