@@ -1,0 +1,153 @@
+import Foundation
+
+enum APIClientError: LocalizedError {
+    case invalidServerURL
+    case invalidResponse
+    case server(status: Int, detail: String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidServerURL:
+            "Enter a valid server URL."
+        case .invalidResponse:
+            "The server returned an invalid response."
+        case let .server(_, detail):
+            detail
+        }
+    }
+}
+
+struct APIClient {
+    let serverURL: URL
+    var session: URLSession = .shared
+
+    init(serverURL: URL) {
+        self.serverURL = serverURL.normalizedServerURL()
+    }
+
+    func health() async throws -> HealthResponse {
+        try await request("/health")
+    }
+
+    func authConfig() async throws -> AuthConfig {
+        try await request("/auth/config")
+    }
+
+    func login(userId: String, password: String) async throws -> AuthResponse {
+        try await request(
+            "/auth/login",
+            method: "POST",
+            body: ["userId": userId, "password": password],
+        )
+    }
+
+    func me(token: String) async throws -> AuthMe {
+        try await request("/auth/me", token: token)
+    }
+
+    func requestMobileLogin(payload: MobileLoginPayload, deviceName: String) async throws -> MobileLoginStatusResponse {
+        try await request(
+            "/auth/mobile-login/request",
+            method: "POST",
+            body: MobileLoginRequest(
+                userId: payload.userId,
+                loginToken: payload.loginToken,
+                deviceName: deviceName,
+            ),
+        )
+    }
+
+    func mobileLoginStatus(payload: MobileLoginPayload) async throws -> MobileLoginStatusResponse {
+        try await request(
+            "/auth/mobile-login/status",
+            method: "POST",
+            body: MobileLoginStatusRequest(loginToken: payload.loginToken),
+        )
+    }
+
+    func exchangeMobileLogin(payload: MobileLoginPayload) async throws -> MobileLoginExchangeResponse {
+        try await request(
+            "/auth/mobile-login/exchange",
+            method: "POST",
+            body: MobileLoginExchangeRequest(
+                userId: payload.userId,
+                loginToken: payload.loginToken,
+            ),
+        )
+    }
+
+    func listConnectors(token: String) async throws -> ConnectorListResponse {
+        try await request("/connectors", token: token)
+    }
+
+    func listSessions(token: String) async throws -> SessionListResponse {
+        try await request("/sessions", token: token)
+    }
+
+    private func request<Response: Decodable>(
+        _ path: String,
+        method: String = "GET",
+        body: Encodable? = nil,
+        token: String? = nil,
+    ) async throws -> Response {
+        var url = serverURL
+        url.append(path: path.trimmingCharacters(in: CharacterSet(charactersIn: "/")))
+
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if let token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        if let body {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONEncoder().encode(AnyEncodable(body))
+        }
+
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw APIClientError.invalidResponse
+        }
+        guard 200..<300 ~= http.statusCode else {
+            let detail = (try? JSONDecoder().decode(APIErrorResponse.self, from: data).detail)
+                ?? HTTPURLResponse.localizedString(forStatusCode: http.statusCode)
+            throw APIClientError.server(status: http.statusCode, detail: detail)
+        }
+        return try JSONDecoder().decode(Response.self, from: data)
+    }
+}
+
+private struct AnyEncodable: Encodable {
+    private let encodeValue: (Encoder) throws -> Void
+
+    init(_ value: Encodable) {
+        self.encodeValue = value.encode
+    }
+
+    func encode(to encoder: Encoder) throws {
+        try encodeValue(encoder)
+    }
+}
+
+extension URL {
+    func normalizedServerURL() -> URL {
+        let components = URLComponents(url: self, resolvingAgainstBaseURL: false)
+        guard var normalized = components else { return self }
+        normalized.path = normalized.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        normalized.query = nil
+        normalized.fragment = nil
+        return normalized.url ?? self
+    }
+}
+
+extension URL {
+    static func agentsServer(from value: String) throws -> URL {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw APIClientError.invalidServerURL }
+        let withScheme = trimmed.contains("://") ? trimmed : "https://\(trimmed)"
+        guard let url = URL(string: withScheme), url.scheme != nil, url.host != nil else {
+            throw APIClientError.invalidServerURL
+        }
+        return url.normalizedServerURL()
+    }
+}

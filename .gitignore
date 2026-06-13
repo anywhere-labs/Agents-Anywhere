@@ -1,4 +1,6 @@
 .DS_Store
+xcuserdata/
+*.xcuserstate
 __pycache__/
 *.py[cod]
 .pytest_cache/
