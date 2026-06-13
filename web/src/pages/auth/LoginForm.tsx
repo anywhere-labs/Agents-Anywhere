@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { BrandLogo } from "../../components/BrandLogo";
 import { Icons } from "../../components/Icons";
 import { AAWord } from "./AAWord";
+import { AuthAppLogo } from "./AuthAppLogo";
 import type { AuthCredentials } from "../../lib/api";
 
 type LoginFormProps = {
@@ -36,9 +36,7 @@ export function LoginForm({
   return (
     <div className="aa-card">
       <div className="aa-hero">
-        <div className="mark-box">
-          <BrandLogo size={30} />
-        </div>
+        <AuthAppLogo />
         <h1>
           Sign in to <AAWord size="lg" />
         </h1>

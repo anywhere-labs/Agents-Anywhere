@@ -27,6 +27,16 @@
   color: var(--text);
 }
 
+.aa-top-word {
+  font-family: "Caveat", "Snell Roundhand", cursive;
+  font-size: 22px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0;
+  color: var(--text);
+  white-space: nowrap;
+}
+
 .aa-auth-top .right {
   display: flex;
   align-items: center;
@@ -69,27 +79,25 @@
   text-align: center;
 }
 
-.aa-hero .mark-box {
-  width: 46px;
-  height: 46px;
-  border-radius: 11px;
-  background: var(--bg-elev);
-  border: 1px solid var(--border);
-  display: flex;
+.aa-app-logo {
+  position: relative;
+  display: inline-flex;
+  width: var(--aa-app-logo-size);
+  height: calc(var(--aa-app-logo-size) * 0.75);
   align-items: center;
   justify-content: center;
-  position: relative;
+  flex: 0 0 auto;
+  color: var(--text);
 }
 
-.aa-hero .mark-box::after {
-  content: "";
-  position: absolute;
-  inset: -1px;
-  border-radius: 12px;
-  background: radial-gradient(60% 60% at 50% 40%, var(--accent-soft), transparent 70%);
-  pointer-events: none;
-  z-index: -1;
-  filter: blur(8px);
+.aa-app-logo-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.aa-app-logo-part {
+  fill: currentColor;
 }
 
 .aa-hero h1 {
@@ -98,6 +106,17 @@
   font-weight: 600;
   letter-spacing: 0;
   color: var(--text);
+}
+
+.aa-hero .aa-word {
+  font-family: "Caveat", "Snell Roundhand", cursive;
+  font-weight: 500;
+}
+
+.aa-hero h1 .aa-word {
+  display: inline-block;
+  font-size: 1.32em;
+  transform: translateY(0.03em);
 }
 
 .aa-hero p {

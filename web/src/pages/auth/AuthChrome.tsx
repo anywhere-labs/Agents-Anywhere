@@ -1,8 +1,6 @@
 import type { ReactNode } from "react";
-import { BrandLogo } from "../../components/BrandLogo";
 import { Icons } from "../../components/Icons";
 import type { Theme } from "../../lib/theme";
-import { AAWord } from "./AAWord";
 
 type AuthChromeProps = {
   theme: Theme;
@@ -21,8 +19,7 @@ export function AuthChrome({
     <div className="aa-auth">
       <div className="aa-auth-top">
         <div className="left">
-          <BrandLogo size={26} />
-          <AAWord />
+          <span className="aa-top-word">Agents Anywhere</span>
         </div>
         <div className="right">
           <a

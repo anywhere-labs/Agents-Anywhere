@@ -53,17 +53,22 @@
   align-items: center;
   gap: 7px;
   color: var(--text);
+  flex: 1 1 auto;
   min-width: 0;
 }
 
 .kl-sb-hd .brand .aa-word {
-  font-size: var(--fs-ui);
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-family: "Caveat", "Snell Roundhand", cursive;
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0;
+  white-space: nowrap;
 }
 
 .kl-sb-hd .acts {
   display: flex;
+  flex: 0 0 auto;
   gap: 0;
 }
 
@@ -378,7 +383,7 @@
 .kl-sess .title {
   flex: 1;
   font-size: var(--fs-ui);
-  color: var(--text-mid);
+  color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -391,7 +396,7 @@
 }
 
 .kl-sess.archived .title {
-  color: var(--text-mut);
+  color: var(--text);
 }
 
 .kl-sess.archived .dot {
@@ -3302,7 +3307,12 @@
 }
 
 .aa-srv-about .aa-word {
-  font-size: var(--fs-ui);
+  font-family: "Caveat", "Snell Roundhand", cursive;
+  font-size: 22px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0;
+  color: var(--text);
 }
 
 .aa-srv-about .links {

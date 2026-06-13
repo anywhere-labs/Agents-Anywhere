@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { BrandLogo } from "../../components/BrandLogo";
 import { Icons } from "../../components/Icons";
 import { AAWord } from "./AAWord";
+import { AuthAppLogo } from "./AuthAppLogo";
 import type { AuthCredentials } from "../../lib/api";
 import {
   STRENGTH_LABEL,
@@ -44,9 +44,7 @@ export function RegisterForm({
   return (
     <div className="aa-card">
       <div className="aa-hero">
-        <div className="mark-box">
-          <BrandLogo size={30} />
-        </div>
+        <AuthAppLogo />
         <h1>Create an account</h1>
         <p>
           You're joining a self-hosted <AAWord /> instance.
