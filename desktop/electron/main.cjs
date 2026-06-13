@@ -68,11 +68,17 @@ function resolveLogoPath(name) {
   return path.resolve(__dirname, "..", "..", "logo", name);
 }
 
+function resolveBuildAssetPath(name) {
+  if (app.isPackaged) return path.join(process.resourcesPath, "build", name);
+  return path.resolve(__dirname, "..", "build", name);
+}
+
 function currentPromptIconPath() {
   return resolveLogoPath(nativeTheme.shouldUseDarkColors ? "prompt-dark.png" : "prompt-light.png");
 }
 
 function appIconPath() {
+  if (process.platform === "darwin") return resolveBuildAssetPath("icon-mac-source.png");
   return resolveLogoPath("icon-light.png");
 }
 

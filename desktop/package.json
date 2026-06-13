@@ -40,6 +40,13 @@
     ],
     "extraResources": [
       {
+        "from": "build",
+        "to": "build",
+        "filter": [
+          "icon-mac-source.png"
+        ]
+      },
+      {
         "from": "../connector",
         "to": "connector",
         "filter": [
