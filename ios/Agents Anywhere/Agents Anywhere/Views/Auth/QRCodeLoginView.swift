@@ -33,7 +33,7 @@ struct QRCodeLoginView: View {
                 case let .complete(payload):
                     QRCompleteStepView(
                         payload: payload,
-                        onCancel: { dismiss() },
+                        onFinish: { dismiss() },
                     )
                 }
             }
@@ -190,8 +190,6 @@ private struct QRWaitingStepView: View {
     let onCancel: () -> Void
     let onReady: () -> Void
 
-    @State private var isPolling = true
-    @State private var isApproved = false
     @State private var statusText = "Waiting for confirmation"
     @State private var alertMessage: String?
     @State private var pollingTask: Task<Void, Never>?
@@ -213,13 +211,10 @@ private struct QRWaitingStepView: View {
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity)
 
-                AuthPrimaryButton(
-                    title: "Login Complete",
-                    isLoading: isPolling,
-                    disabled: !isApproved,
-                ) {
-                    onReady()
-                }
+                ProgressView()
+                    .controlSize(.large)
+                    .tint(AppTheme.primaryText(colorScheme))
+                    .padding(.top, 4)
             }
             .padding(.vertical, 24)
         }
@@ -241,8 +236,6 @@ private struct QRWaitingStepView: View {
 
     private func startPolling() {
         stopPolling()
-        isPolling = true
-        isApproved = false
         statusText = "Waiting for confirmation"
         pollingTask = Task {
             while !Task.isCancelled {
@@ -263,7 +256,6 @@ private struct QRWaitingStepView: View {
     @MainActor
     private func pollApprovalOnce() async -> Bool {
         guard let status = await appState.mobileLoginStatus(payload: payload) else {
-            isPolling = false
             alertMessage = appState.authError ?? "Could not check the login status."
             return false
         }
@@ -271,27 +263,21 @@ private struct QRWaitingStepView: View {
         switch status.status {
         case "approved":
             statusText = "Login confirmed"
-            isApproved = true
-            isPolling = false
+            onReady()
             return false
         case "pending_web_confirm":
             statusText = "Waiting for confirmation"
-            isPolling = true
             return true
         case "rejected":
-            isPolling = false
             alertMessage = "This login request was rejected."
             return false
         case "expired":
-            isPolling = false
             alertMessage = "This login request expired. Scan a new QR code."
             return false
         case "consumed":
-            isPolling = false
             alertMessage = "This login request has already been used."
             return false
         default:
-            isPolling = false
             alertMessage = "Current login status: \(status.status)"
             return false
         }
@@ -302,7 +288,7 @@ private struct QRCompleteStepView: View {
     @EnvironmentObject private var appState: AppState
 
     let payload: MobileLoginPayload
-    let onCancel: () -> Void
+    let onFinish: () -> Void
 
     @State private var isFinishing = false
     @State private var alertMessage: String?
@@ -311,7 +297,8 @@ private struct QRCompleteStepView: View {
         AuthScreen(
             title: "Confirm Login",
             subtitle: "The web console approved this iPhone.",
-            onCancel: onCancel,
+            showsCancel: false,
+            onCancel: {},
         ) {
             VStack(alignment: .leading, spacing: 22) {
                 Text("Tap confirm to finish signing in and open your workspace.")
@@ -335,6 +322,7 @@ private struct QRCompleteStepView: View {
         } message: {
             Text(alertMessage ?? "The login could not be completed.")
         }
+        .navigationBarBackButtonHidden(true)
     }
 
     private func finishLogin() async {
@@ -342,7 +330,7 @@ private struct QRCompleteStepView: View {
         defer { isFinishing = false }
         await appState.exchangeMobileLogin(payload: payload)
         if case .signedIn = appState.route {
-            onCancel()
+            onFinish()
         } else {
             alertMessage = appState.authError ?? "The login could not be completed."
         }

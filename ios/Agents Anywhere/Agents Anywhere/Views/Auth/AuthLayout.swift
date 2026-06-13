@@ -4,6 +4,7 @@ struct AuthScreen<Content: View>: View {
     let title: String
     let onCancel: () -> Void
     let subtitle: String?
+    let showsCancel: Bool
     @ViewBuilder let content: Content
 
     @Environment(\.colorScheme) private var colorScheme
@@ -11,11 +12,13 @@ struct AuthScreen<Content: View>: View {
     init(
         title: String,
         subtitle: String? = nil,
+        showsCancel: Bool = true,
         onCancel: @escaping () -> Void,
         @ViewBuilder content: () -> Content
     ) {
         self.title = title
         self.subtitle = subtitle
+        self.showsCancel = showsCancel
         self.onCancel = onCancel
         self.content = content()
     }
@@ -47,8 +50,10 @@ struct AuthScreen<Content: View>: View {
         }
         .background(AppTheme.appBackground(colorScheme))
         .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button("Cancel", action: onCancel)
+            if showsCancel {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", action: onCancel)
+                }
             }
         }
     }
@@ -133,7 +138,6 @@ struct AuthPrimaryButton: View {
 
                 if isLoading {
                     ProgressView()
-                        .controlSize(.small)
                         .tint(AppTheme.primaryControlForeground(colorScheme))
                 }
             }
