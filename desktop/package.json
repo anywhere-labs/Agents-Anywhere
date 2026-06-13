@@ -1,0 +1,70 @@
+{
+  "name": "agents-anywhere-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Desktop connector controller for Agents Anywhere",
+  "type": "module",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "start": "electron .",
+    "build": "tsc -b && vite build",
+    "pack": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder",
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.2",
+    "@types/react": "^19.2.15",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.2",
+    "electron": "^39.2.7",
+    "electron-builder": "^26.0.12",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.13"
+  },
+  "build": {
+    "appId": "dev.agentsanywhere.connector",
+    "productName": "Agents Anywhere Connector",
+    "files": [
+      "dist/**",
+      "electron/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../connector",
+        "to": "connector",
+        "filter": [
+          "**/*",
+          "!**/__pycache__/**",
+          "!**/.venv/**",
+          "!**/*.pyc"
+        ]
+      },
+      {
+        "from": "../logo",
+        "to": "logo",
+        "filter": [
+          "*.png"
+        ]
+      }
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "mac": {
+      "target": "dmg"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
+  }
+}
