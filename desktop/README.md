@@ -8,7 +8,11 @@ remains the primary session UI.
 
 ## Run
 
+Use Node.js 22 LTS. The desktop app currently tracks `package-lock.json`, so use
+`npm` for this package.
+
 ```bash
+nvm use
 npm install
 npm run dev
 ```

@@ -5,6 +5,9 @@
   "description": "Desktop connector controller for Agents Anywhere",
   "type": "module",
   "main": "electron/main.cjs",
+  "engines": {
+    "node": ">=22 <23"
+  },
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "start": "electron .",
