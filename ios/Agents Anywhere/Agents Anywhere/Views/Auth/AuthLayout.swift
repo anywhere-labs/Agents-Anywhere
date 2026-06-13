@@ -127,14 +127,18 @@ struct AuthPrimaryButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 10) {
+            Group {
                 if isLoading {
                     ProgressView()
                         .tint(AppTheme.primaryControlForeground(colorScheme))
-                } else if let systemImage {
-                    Image(systemName: systemImage)
+                } else {
+                    HStack(spacing: 10) {
+                        if let systemImage {
+                            Image(systemName: systemImage)
+                        }
+                        Text(title)
+                    }
                 }
-                Text(title)
             }
             .frame(maxWidth: .infinity)
         }
