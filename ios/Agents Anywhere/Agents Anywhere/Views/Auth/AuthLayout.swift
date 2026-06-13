@@ -65,7 +65,8 @@ struct AuthWelcomeLayout<Content: View>: View {
             content
             Spacer()
         }
-        .padding(28)
+        .padding(.horizontal, 28)
+        .padding(.vertical, 24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(AppTheme.appBackground(colorScheme))
     }
@@ -75,22 +76,22 @@ struct AuthBrandLockup: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 14) {
             Image(colorScheme == .dark ? "login-logo-dark-mode" : "login-logo-light-mode")
                 .resizable()
                 .scaledToFit()
-                .frame(width: 88, height: 88)
+                .frame(width: 76, height: 76)
                 .accessibilityHidden(true)
 
             VStack(spacing: 7) {
                 Text(title)
-                    .font(.system(size: 42, weight: .bold))
+                    .font(.system(size: 36, weight: .bold))
                     .foregroundStyle(AppTheme.primaryText(colorScheme))
                     .minimumScaleFactor(0.74)
                     .lineLimit(1)
 
                 Text("Connect this iPhone to your self-hosted workspace.")
-                    .font(.title3)
+                    .font(.body)
                     .foregroundStyle(AppTheme.secondaryText(colorScheme))
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
@@ -132,20 +133,18 @@ struct AuthPrimaryButton: View {
                         .tint(AppTheme.primaryControlForeground(colorScheme))
                 } else if let systemImage {
                     Image(systemName: systemImage)
-                        .font(.title3.weight(.semibold))
+                        .font(.body.weight(.semibold))
                 }
                 Text(title)
-                    .font(.title3.weight(.semibold))
+                    .font(.body.weight(.semibold))
             }
-            .frame(maxWidth: .infinity, minHeight: 58)
-            .padding(.horizontal, 22)
+            .frame(maxWidth: .infinity)
         }
         .buttonStyle(.glassProminent)
         .buttonBorderShape(.capsule)
-        .controlSize(.large)
         .tint(AppTheme.primaryControlBackground(colorScheme))
         .foregroundStyle(AppTheme.primaryControlForeground(colorScheme))
-        .shadow(color: AppTheme.controlShadow(colorScheme), radius: 18, x: 0, y: 10)
+        .shadow(color: AppTheme.controlShadow(colorScheme), radius: 10, x: 0, y: 6)
         .disabled(disabled || isLoading)
         .animation(.easeInOut(duration: 0.18), value: isLoading)
     }
@@ -183,20 +182,18 @@ struct AuthGlassButton: View {
             HStack(spacing: 10) {
                 if let systemImage {
                     Image(systemName: systemImage)
-                        .font(.title3.weight(.semibold))
+                        .font(.body.weight(.semibold))
                 }
                 if let title {
                     Text(title)
-                        .font(.title3.weight(.semibold))
+                        .font(.body.weight(.semibold))
                 }
             }
-            .frame(maxWidth: .infinity, minHeight: 58)
-            .padding(.horizontal, 22)
+            .frame(maxWidth: .infinity)
         }
         .buttonStyle(.glass)
         .buttonBorderShape(.capsule)
-        .controlSize(.large)
-        .shadow(color: AppTheme.controlShadow(colorScheme), radius: 14, x: 0, y: 8)
+        .shadow(color: AppTheme.controlShadow(colorScheme), radius: 8, x: 0, y: 5)
     }
 
     @Environment(\.colorScheme) private var colorScheme

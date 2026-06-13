@@ -19,14 +19,14 @@ struct ServiceEntryView: View {
                         showingQRCodeLogin = true
                     }
                 }
-                .frame(maxWidth: 360)
+                .frame(maxWidth: 340)
 
                 if let error = appState.authError {
                     Text(error)
                         .font(.footnote)
                         .foregroundStyle(.red)
                         .multilineTextAlignment(.center)
-                        .frame(maxWidth: 360)
+                        .frame(maxWidth: 340)
                 }
             }
             .navigationTitle("")
