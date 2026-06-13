@@ -1,6 +1,6 @@
 [project]
 name = "anywhere-cli"
-version = "0.1.1"
+version = "0.1.2"
 description = "Local runtime connector for Agents Anywhere"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -12,6 +12,7 @@ dependencies = [
     "ptyprocess>=0.7.0; sys_platform != 'win32'",
     "pydantic>=2.0.0",
     "pyte>=0.8.2",
+    "python-socks>=2.8.1",
     "pywinpty>=2.0.13; sys_platform == 'win32'",
     "websockets>=16.0",
 ]
