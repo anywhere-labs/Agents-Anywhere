@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct EnterServerView: View {
     @Environment(\.dismiss) private var dismiss
@@ -46,27 +47,17 @@ private struct ServerAddressView: View {
             onCancel: onCancel,
         ) {
             VStack(alignment: .leading, spacing: 16) {
-                Form {
-                    Section {
-                        LabeledContent {
-                            TextField("example.com", text: $serverText)
-                                .multilineTextAlignment(.trailing)
-                                .textInputAutocapitalization(.never)
-                                .keyboardType(.URL)
-                                .autocorrectionDisabled()
-                                .textContentType(.URL)
-                                .submitLabel(.continue)
-                                .onSubmit {
-                                    guard canContinue else { return }
-                                    Task { await checkServer() }
-                                }
-                        } label: {
-                            Text("Server")
-                        }
-                    }
-                }
-                .scrollContentBackground(.hidden)
-                .frame(minHeight: 92)
+                UnderlinedTextField(
+                    placeholder: "https://your-server.example.com",
+                    text: $serverText,
+                    keyboardType: .URL,
+                    textContentType: .URL,
+                    submitLabel: .continue,
+                    onSubmit: {
+                        guard canContinue else { return }
+                        Task { await checkServer() }
+                    },
+                )
 
                 AuthPrimaryButton(
                     title: "Continue",
@@ -125,31 +116,23 @@ private struct PasswordLoginView: View {
             onCancel: onCancel,
         ) {
             VStack(alignment: .leading, spacing: 18) {
-                Form {
-                    Section {
-                        LabeledContent {
-                            TextField("User", text: $userId)
-                                .multilineTextAlignment(.trailing)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
-                                .textContentType(.username)
-                        } label: {
-                            Text("User ID")
-                        }
+                VStack(spacing: 14) {
+                    UnderlinedTextField(
+                        placeholder: "User ID",
+                        text: $userId,
+                        textContentType: .username,
+                    )
 
-                        LabeledContent {
-                            SecureField("Password", text: $password)
-                                .multilineTextAlignment(.trailing)
-                                .textContentType(.password)
-                        } label: {
-                            Text("Password")
-                        }
-                    } footer: {
-                        Text(serverURL.absoluteString)
-                    }
+                    UnderlinedSecureField(
+                        placeholder: "Password",
+                        text: $password,
+                    )
                 }
-                .scrollContentBackground(.hidden)
-                .frame(minHeight: 150)
+
+                Text(serverURL.absoluteString)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
 
                 AuthPrimaryButton(
                     title: "Sign In",
@@ -191,4 +174,45 @@ private struct PasswordLoginView: View {
 #Preview {
     EnterServerView()
         .environmentObject(AppState())
+}
+
+private struct UnderlinedTextField: View {
+    let placeholder: String
+    @Binding var text: String
+    var keyboardType: UIKeyboardType = .default
+    var textContentType: UITextContentType? = nil
+    var submitLabel: SubmitLabel = .done
+    var onSubmit: () -> Void = {}
+
+    var body: some View {
+        TextField(placeholder, text: $text)
+            .textInputAutocapitalization(.never)
+            .keyboardType(keyboardType)
+            .autocorrectionDisabled()
+            .textContentType(textContentType)
+            .submitLabel(submitLabel)
+            .onSubmit(onSubmit)
+            .font(.title3)
+            .padding(.vertical, 11)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .overlay(alignment: .bottom) {
+                Divider()
+            }
+    }
+}
+
+private struct UnderlinedSecureField: View {
+    let placeholder: String
+    @Binding var text: String
+
+    var body: some View {
+        SecureField(placeholder, text: $text)
+            .textContentType(.password)
+            .font(.title3)
+            .padding(.vertical, 11)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .overlay(alignment: .bottom) {
+                Divider()
+            }
+    }
 }
