@@ -46,22 +46,18 @@ private struct ServerAddressView: View {
             onCancel: onCancel,
         ) {
             VStack(alignment: .leading, spacing: 16) {
-                Form {
-                    Section {
-                        TextField("Server Address", text: $serverText, prompt: Text("https://your-server.example.com"))
-                            .textInputAutocapitalization(.never)
-                            .keyboardType(.URL)
-                            .autocorrectionDisabled()
-                            .textContentType(.URL)
-                            .submitLabel(.continue)
-                            .onSubmit {
-                                guard canContinue else { return }
-                                Task { await checkServer() }
-                            }
+                TextField("Server Address", text: $serverText, prompt: Text("https://your-server.example.com"))
+                    .textInputAutocapitalization(.never)
+                    .keyboardType(.URL)
+                    .autocorrectionDisabled()
+                    .textContentType(.URL)
+                    .textFieldStyle(.roundedBorder)
+                    .controlSize(.large)
+                    .submitLabel(.continue)
+                    .onSubmit {
+                        guard canContinue else { return }
+                        Task { await checkServer() }
                     }
-                }
-                .scrollContentBackground(.hidden)
-                .frame(minHeight: 96, maxHeight: 132)
 
                 AuthPrimaryButton(
                     title: "Continue",
@@ -133,7 +129,7 @@ private struct PasswordLoginView: View {
                     }
                 }
                 .scrollContentBackground(.hidden)
-                .frame(minHeight: 170, maxHeight: 240)
+                .frame(minHeight: 150)
 
                 AuthPrimaryButton(
                     title: "Sign In",
