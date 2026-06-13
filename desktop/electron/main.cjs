@@ -28,6 +28,32 @@ const state = {
   startConnectorOnLaunch: true,
 };
 
+function defaultPathEntries() {
+  const entries = [];
+  if (process.env.PATH) entries.push(...process.env.PATH.split(path.delimiter));
+  if (process.platform === "darwin") {
+    entries.push(
+      path.join(app.getPath("home"), ".local", "bin"),
+      "/opt/homebrew/bin",
+      "/usr/local/bin",
+      "/usr/bin",
+      "/bin",
+      "/usr/sbin",
+      "/sbin",
+    );
+  }
+  return [...new Set(entries.filter(Boolean))];
+}
+
+function connectorEnv() {
+  return {
+    ...process.env,
+    PATH: defaultPathEntries().join(path.delimiter),
+    PYTHONUNBUFFERED: "1",
+    FORCE_COLOR: "0",
+  };
+}
+
 function userDataPath(name) {
   return path.join(app.getPath("userData"), name);
 }
@@ -187,7 +213,7 @@ function startConnector(runtimeConfig = null) {
   stopping = false;
   connectorProcess = spawn(state.uvCommand, args, {
     cwd: state.connectorDir,
-    env: { ...process.env, PYTHONUNBUFFERED: "1", FORCE_COLOR: "0" },
+    env: connectorEnv(),
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"],
   });
