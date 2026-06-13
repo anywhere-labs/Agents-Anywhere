@@ -79,27 +79,6 @@
   text-align: center;
 }
 
-.aa-app-logo {
-  position: relative;
-  display: inline-flex;
-  width: var(--aa-app-logo-size);
-  height: calc(var(--aa-app-logo-size) * 0.75);
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  color: var(--text);
-}
-
-.aa-app-logo-svg {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-
-.aa-app-logo-part {
-  fill: currentColor;
-}
-
 .aa-hero h1 {
   margin: 0;
   font-size: var(--fs-xl);

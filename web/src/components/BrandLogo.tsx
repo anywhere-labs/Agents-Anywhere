@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
-import iconDarkMode from "../assets/brand/icon-light.svg";
-import iconLightMode from "../assets/brand/icon-dark.svg";
+import iconDarkMode from "../assets/brand/aa-logo-dark-mode.png";
+import iconLightMode from "../assets/brand/aa-logo-light-mode.png";
 
 type BrandLogoProps = {
   size?: number;
