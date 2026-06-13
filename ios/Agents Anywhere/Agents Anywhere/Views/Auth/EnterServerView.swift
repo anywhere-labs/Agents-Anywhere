@@ -17,7 +17,6 @@ struct EnterServerView: View {
                 case let .credentials(url):
                     PasswordLoginView(
                         serverURL: url,
-                        onBack: { _ = path.popLast() },
                         onCancel: { dismiss() },
                     )
                 }
@@ -32,129 +31,143 @@ private enum EnterServerRoute: Hashable {
 
 private struct ServerAddressView: View {
     @EnvironmentObject private var appState: AppState
-    @Environment(\.colorScheme) private var colorScheme
 
     let onCancel: () -> Void
     let onServerReady: (URL) -> Void
 
     @State private var serverText = ""
+    @State private var isChecking = false
+    @State private var alertMessage: String?
 
     var body: some View {
         AuthScreen(
             title: "Enter Server",
-            showsBack: false,
-            onBack: nil,
+            subtitle: "Enter the server address you want to connect to.",
             onCancel: onCancel,
         ) {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("输入你要连接的服务器地址")
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(AppTheme.secondaryText(colorScheme))
-
-                TextField("https://your-server.example.com", text: $serverText)
-                    .textInputAutocapitalization(.never)
-                    .keyboardType(.URL)
-                    .autocorrectionDisabled()
-                    .authTextFieldStyle()
+            VStack(alignment: .leading, spacing: 16) {
+                Form {
+                    Section {
+                        TextField("Server Address", text: $serverText, prompt: Text("https://your-server.example.com"))
+                            .textInputAutocapitalization(.never)
+                            .keyboardType(.URL)
+                            .autocorrectionDisabled()
+                            .textContentType(.URL)
+                            .submitLabel(.continue)
+                            .onSubmit {
+                                guard canContinue else { return }
+                                Task { await checkServer() }
+                            }
+                    }
+                }
+                .scrollContentBackground(.hidden)
+                .frame(minHeight: 96, maxHeight: 132)
 
                 AuthPrimaryButton(
                     title: "Continue",
-                    disabled: appState.isWorking || serverText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                    isLoading: isChecking,
+                    disabled: !canContinue,
                 ) {
                     Task { await checkServer() }
                 }
 
-                Text("我们会先检查这个链接是否可用，然后再让你输入账号密码登录。")
+                Text("We will check that the server is available before asking for your account credentials.")
                     .font(.subheadline)
-                    .foregroundStyle(AppTheme.secondaryText(colorScheme))
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            if let error = appState.authError {
-                Text(error)
-                    .font(.footnote)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .overlay {
-            if appState.isWorking {
-                ProgressView()
-                    .controlSize(.large)
-            }
+        .alert("Server Unavailable", isPresented: Binding(
+            get: { alertMessage != nil },
+            set: { if !$0 { alertMessage = nil } },
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(alertMessage ?? "The server could not be reached.")
         }
     }
 
+    private var canContinue: Bool {
+        !isChecking && !serverText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     private func checkServer() async {
+        isChecking = true
+        defer { isChecking = false }
         if let url = await appState.checkServer(serverText) {
             onServerReady(url)
+        } else {
+            alertMessage = appState.authError ?? "The server could not be reached."
         }
     }
 }
 
 private struct PasswordLoginView: View {
     @EnvironmentObject private var appState: AppState
-    @Environment(\.colorScheme) private var colorScheme
 
     let serverURL: URL
-    let onBack: () -> Void
     let onCancel: () -> Void
 
     @State private var userId = ""
     @State private var password = ""
+    @State private var isSigningIn = false
+    @State private var alertMessage: String?
 
     var body: some View {
         AuthScreen(
             title: "Sign In",
-            showsBack: true,
-            onBack: onBack,
+            subtitle: "Use your Agents Anywhere account for this server.",
             onCancel: onCancel,
         ) {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("输入账号密码")
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(AppTheme.secondaryText(colorScheme))
-
-                Text(serverURL.absoluteString)
-                    .font(.subheadline)
-                    .foregroundStyle(AppTheme.secondaryText(colorScheme))
-                    .lineLimit(2)
-
-                TextField("User ID", text: $userId)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .authTextFieldStyle()
-
-                SecureField("Password", text: $password)
-                    .authTextFieldStyle()
+            VStack(alignment: .leading, spacing: 18) {
+                Form {
+                    Section {
+                        TextField("User ID", text: $userId)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .textContentType(.username)
+                        SecureField("Password", text: $password)
+                            .textContentType(.password)
+                    } footer: {
+                        Text(serverURL.absoluteString)
+                    }
+                }
+                .scrollContentBackground(.hidden)
+                .frame(minHeight: 170, maxHeight: 240)
 
                 AuthPrimaryButton(
                     title: "Sign In",
-                    disabled: appState.isWorking || userId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || password.isEmpty,
+                    isLoading: isSigningIn,
+                    disabled: !canSignIn,
                 ) {
                     Task { await signIn() }
                 }
             }
-
-            if let error = appState.authError {
-                Text(error)
-                    .font(.footnote)
-                    .foregroundStyle(.red)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
         }
-        .overlay {
-            if appState.isWorking {
-                ProgressView()
-                    .controlSize(.large)
-            }
+        .alert("Sign In Failed", isPresented: Binding(
+            get: { alertMessage != nil },
+            set: { if !$0 { alertMessage = nil } },
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(alertMessage ?? "Check your credentials and try again.")
         }
     }
 
+    private var canSignIn: Bool {
+        !isSigningIn
+            && !userId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !password.isEmpty
+    }
+
     private func signIn() async {
+        isSigningIn = true
+        defer { isSigningIn = false }
         await appState.login(serverURL: serverURL, userId: userId, password: password)
         if case .signedIn = appState.route {
             onCancel()
+        } else {
+            alertMessage = appState.authError ?? "Check your credentials and try again."
         }
     }
 }
@@ -163,4 +176,3 @@ private struct PasswordLoginView: View {
     EnterServerView()
         .environmentObject(AppState())
 }
-
