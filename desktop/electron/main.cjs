@@ -78,7 +78,9 @@ function currentPromptIconPath() {
 }
 
 function appIconPath() {
-  if (process.platform === "darwin") return resolveBuildAssetPath("icon-mac-source.png");
+  if (process.platform === "darwin" || process.platform === "win32") {
+    return resolveBuildAssetPath("icon-mac-source.png");
+  }
   return resolveLogoPath("icon-light.png");
 }
 
