@@ -160,6 +160,19 @@ struct APIClient {
         )
     }
 
+    func getConnectorAgentSettings(
+        token: String,
+        connectorId: String,
+        runtime: String,
+    ) async throws -> RuntimeSettingsResponse {
+        let connector = connectorId.urlPathComponentEncoded
+        let runtimeId = runtime.urlPathComponentEncoded
+        return try await request(
+            "/connectors/\(connector)/agents/\(runtimeId)/settings",
+            token: token,
+        )
+    }
+
     func getSessionRuntimeSettings(token: String, sessionId: String) async throws -> RuntimeSettingsResponse {
         let id = sessionId.urlPathComponentEncoded
         return try await request(

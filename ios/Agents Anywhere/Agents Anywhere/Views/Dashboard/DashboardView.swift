@@ -20,7 +20,8 @@ struct DashboardView: View {
             NewSessionSheet { session in
                 sessionToOpen = session
             }
-                .presentationDetents([.large])
+                .presentationDetents([.medium, .large])
+                .presentationBackgroundInteraction(.enabled(upThrough: .medium))
                 .presentationDragIndicator(.visible)
         }
     }
@@ -349,6 +350,9 @@ private struct NewSessionSheet: View {
     @State private var isPhotoPickerPresented = false
     @State private var isCameraPickerPresented = false
     @State private var isCameraUnavailable = false
+    @State private var runtimeSchema: RuntimeConfigSchema?
+    @State private var runtimeSettings: [String: JSONValue] = [:]
+    @State private var isLoadingRuntimeSettings = false
     @State private var isCreating = false
     @State private var errorMessage: String?
 
@@ -422,27 +426,102 @@ private struct NewSessionSheet: View {
         selectedWorkspacePath ?? homeWorkspacePath ?? (isResolvingHomeWorkspace ? "Resolving home..." : "Default workspace")
     }
 
+    private var runtimeFields: [RuntimeConfigField] {
+        runtimeConfigFields(schema: runtimeSchema, settings: .object(runtimeSettings))
+    }
+
+    private var modelField: RuntimeConfigField? {
+        runtimeFields.first { $0.key == "model" }
+    }
+
+    private var effortField: RuntimeConfigField? {
+        filterRuntimeEffortField(
+            runtime: selectedRuntimeValue,
+            field: runtimeFields.first { $0.key == "effort" },
+            model: runtimeSettings["model"],
+        )
+    }
+
+    private var runtimeSettingsPatchForCreate: [String: JSONValue] {
+        runtimeSettings.filter { key, _ in
+            key == "model" || key == "effort"
+        }
+    }
+
     private var messageInputActions: [MessageInputAction] {
-        var actions = [
+        [
+            MessageInputAction.menu(
+                title: "Attachments",
+                systemImage: "paperclip",
+                children: attachmentMenuActions,
+            ),
+            runtimeFieldMenuAction(title: "Model", systemImage: "cpu", field: modelField, key: "model"),
+            runtimeFieldMenuAction(title: "Effort", systemImage: "sparkles", field: effortField, key: "effort"),
+            MessageInputAction.menu(
+                title: "Permission",
+                systemImage: "shield",
+                children: NewSessionPermissionMode.allCases.map { mode in
+                    MessageInputAction(
+                        title: permissionMode == mode ? "\(mode.title) Access" : "Use \(mode.title) Access",
+                        systemImage: mode.systemImage,
+                    ) {
+                        permissionMode = mode
+                    }
+                },
+            ),
+        ]
+    }
+
+    private var attachmentMenuActions: [MessageInputAction] {
+        [
             MessageInputAction(title: "Photos", systemImage: "photo") {
                 isPhotoPickerPresented = true
             },
             MessageInputAction(title: "Camera", systemImage: "camera") {
                 openCamera()
             },
-            MessageInputAction(title: "Workspace", systemImage: "folder") {
-                isShowingWorkspaceSheet = true
-            },
         ]
-        actions.append(contentsOf: NewSessionPermissionMode.allCases.map { mode in
-            MessageInputAction(
-                title: permissionMode == mode ? "\(mode.title) Access" : "Use \(mode.title) Access",
-                systemImage: mode.systemImage,
+    }
+
+    private func runtimeFieldMenuAction(
+        title: String,
+        systemImage: String,
+        field: RuntimeConfigField?,
+        key: String
+    ) -> MessageInputAction {
+        MessageInputAction.menu(
+            title: title,
+            systemImage: systemImage,
+            isDisabled: field?.options?.isEmpty ?? true,
+            children: menuActions(for: field, selected: runtimeSettings[key]) { value in
+                runtimeSettings[key] = value
+            },
+            handler: {
+                loadRuntimeSettingsIfNeeded()
+            },
+        )
+    }
+
+    private func menuActions(
+        for field: RuntimeConfigField?,
+        selected: JSONValue?,
+        onSelect: @escaping (JSONValue) -> Void
+    ) -> [MessageInputAction] {
+        guard let options = field?.options, !options.isEmpty else {
+            return [
+                MessageInputAction(title: isLoadingRuntimeSettings ? "Loading" : "Unavailable", systemImage: "hourglass") {},
+            ]
+        }
+        let selectedValue = selected?.stringValue ?? options.first?.value.stringValue
+        return options.map { option in
+            let value = option.value.stringValue ?? option.label
+            return MessageInputAction(
+                title: option.label,
+                systemImage: selectedValue == value ? "checkmark" : "circle",
             ) {
-                permissionMode = mode
+                onSelect(option.value)
             }
-        })
-        return actions
+        }
     }
 
     private var canSubmit: Bool {
@@ -457,6 +536,7 @@ private struct NewSessionSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     header
+                    setupSteps
 
                     if availableConnectors.isEmpty {
                         ContentUnavailableView(
@@ -490,15 +570,19 @@ private struct NewSessionSheet: View {
             }
             .onAppear {
                 reconcileSelection()
+                loadRuntimeSettingsIfNeeded()
             }
             .onChange(of: appState.connectors) { _, _ in
                 reconcileSelection()
+                loadRuntimeSettingsIfNeeded()
             }
             .onChange(of: selectedConnectorId) { _, _ in
                 reconcileSelection()
+                loadRuntimeSettingsForSelection()
             }
             .onChange(of: selectedRuntime) { _, _ in
                 reconcileSelection()
+                loadRuntimeSettingsForSelection()
             }
             .sheet(isPresented: $isShowingWorkspaceSheet) {
                 WorkspacePickerSheet(
@@ -596,6 +680,68 @@ private struct NewSessionSheet: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    private var setupSteps: some View {
+        VStack(spacing: 10) {
+            setupStepCard(
+                number: "1",
+                title: "Choose runtime",
+                subtitle: selectedRuntimeChoice?.title ?? "Pick a device and agent",
+                systemImage: "terminal",
+            )
+            setupStepCard(
+                number: "2",
+                title: "Choose workspace",
+                subtitle: workspaceTitle,
+                systemImage: "folder",
+            )
+            setupStepCard(
+                number: "3",
+                title: "Configure details",
+                subtitle: "Use + for attachments, model, effort, and permissions",
+                systemImage: "slider.horizontal.3",
+            )
+        }
+    }
+
+    private func setupStepCard(
+        number: String,
+        title: String,
+        subtitle: String,
+        systemImage: String
+    ) -> some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(.primary.opacity(0.08))
+                Text(number)
+                    .font(.caption.weight(.bold))
+            }
+            .frame(width: 30, height: 30)
+
+            Image(systemName: systemImage)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 22)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .frame(minHeight: 58)
+        .background {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(.secondarySystemGroupedBackground))
+        }
+    }
+
     private var runtimeMenu: some View {
         Menu {
             ForEach(runtimeChoices) { choice in
@@ -663,6 +809,8 @@ private struct NewSessionSheet: View {
         guard let connector = selectedConnector else {
             selectedConnectorId = nil
             selectedRuntime = ""
+            runtimeSchema = nil
+            runtimeSettings = [:]
             return
         }
         selectedConnectorId = connector.id
@@ -676,6 +824,54 @@ private struct NewSessionSheet: View {
         homeWorkspacePath = nil
         selectedWorkspacePath = nil
         resolveHomeWorkspaceForSelection(connectorId: connector.id, runtime: selectedRuntimeValue)
+    }
+
+    private func loadRuntimeSettingsIfNeeded() {
+        guard runtimeSchema == nil || runtimeSettings.isEmpty else { return }
+        loadRuntimeSettingsForSelection()
+    }
+
+    private func loadRuntimeSettingsForSelection() {
+        guard let connector = selectedConnector,
+              !selectedRuntimeValue.isEmpty,
+              let api = appState.api,
+              let token = appState.accessToken()
+        else {
+            runtimeSchema = nil
+            runtimeSettings = [:]
+            return
+        }
+
+        let connectorId = connector.id
+        let runtime = selectedRuntimeValue
+        runtimeSchema = nil
+        runtimeSettings = [:]
+        isLoadingRuntimeSettings = true
+        Task {
+            do {
+                async let schemaResponse = api.getRuntimeConfigSchema(token: token, runtime: runtime)
+                async let settingsResponse = api.getConnectorAgentSettings(token: token, connectorId: connectorId, runtime: runtime)
+                let loadedSchema = try await schemaResponse
+                let loadedSettings = try await settingsResponse
+                await MainActor.run {
+                    guard selectedConnector?.id == connectorId, selectedRuntimeValue == runtime else { return }
+                    runtimeSchema = loadedSchema.schema
+                    if case let .object(object) = loadedSettings.runtimeSettings ?? loadedSettings.settings {
+                        runtimeSettings = object
+                    } else {
+                        runtimeSettings = [:]
+                    }
+                    isLoadingRuntimeSettings = false
+                }
+            } catch {
+                await MainActor.run {
+                    guard selectedConnector?.id == connectorId, selectedRuntimeValue == runtime else { return }
+                    runtimeSchema = nil
+                    runtimeSettings = [:]
+                    isLoadingRuntimeSettings = false
+                }
+            }
+        }
     }
 
     private func resolveHomeWorkspaceForSelection(connectorId: String, runtime: String) {
@@ -723,6 +919,14 @@ private struct NewSessionSheet: View {
                 sandbox: permissionMode.sandbox,
             )
             let takeover = try await api.enableTakeover(token: token, sessionId: created.session.id)
+            let runtimePatch = runtimeSettingsPatchForCreate
+            if !runtimePatch.isEmpty {
+                _ = try await api.patchSessionRuntimeSettings(
+                    token: token,
+                    sessionId: takeover.session.id,
+                    settings: runtimePatch,
+                )
+            }
             let uploads = pendingUploads
             let uploaded = uploads.isEmpty
                 ? []

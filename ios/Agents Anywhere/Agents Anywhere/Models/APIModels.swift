@@ -340,6 +340,21 @@ struct RuntimeConfigField: Decodable, Identifiable {
     let fields: [RuntimeConfigField]?
 
     var id: String { key }
+
+    func withOptions(_ nextOptions: [RuntimeConfigOption]) -> RuntimeConfigField {
+        RuntimeConfigField(
+            key: key,
+            label: label,
+            type: type,
+            description: description,
+            options: nextOptions,
+            runtimeOptionsSource: runtimeOptionsSource,
+            visibleWhen: visibleWhen,
+            allowSessionOverride: allowSessionOverride,
+            hidden: hidden,
+            fields: fields,
+        )
+    }
 }
 
 struct RuntimeConfigOption: Decodable, Identifiable {

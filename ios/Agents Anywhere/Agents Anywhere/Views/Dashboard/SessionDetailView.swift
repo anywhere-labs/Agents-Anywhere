@@ -221,6 +221,7 @@ struct SessionDetailView: View {
                 await markRead()
                 await loadState(replace: true)
                 lastEntryRefreshAt = Date()
+                Task { await loadRuntimeSettingsIfNeeded() }
                 startEventStream()
                 scrollToBottom(proxy, animated: false)
                 DispatchQueue.main.async {
@@ -365,7 +366,47 @@ struct SessionDetailView: View {
         return "Ready to go"
     }
 
+    private var runtimeFields: [RuntimeConfigField] {
+        runtimeConfigFields(schema: runtimeSchema, settings: runtimeSettings?.settings)
+    }
+
+    private var runtimeSettingsObject: [String: JSONValue] {
+        guard let settings = runtimeSettings?.settings,
+              case let .object(object) = settings
+        else { return [:] }
+        return object
+    }
+
+    private var permissionField: RuntimeConfigField? {
+        runtimeFields.first { $0.key == "permissionMode" }
+    }
+
+    private var modelField: RuntimeConfigField? {
+        runtimeFields.first { $0.key == "model" }
+    }
+
+    private var effortField: RuntimeConfigField? {
+        filterRuntimeEffortField(
+            runtime: session.runtime,
+            field: runtimeFields.first { $0.key == "effort" },
+            model: runtimeSettingsObject["model"],
+        )
+    }
+
     private var messageInputActions: [MessageInputAction] {
+        [
+            MessageInputAction.menu(
+                title: "Attachments",
+                systemImage: "paperclip",
+                children: attachmentMenuActions,
+            ),
+            runtimeFieldMenuAction(title: "Model", systemImage: "cpu", field: modelField, key: "model"),
+            runtimeFieldMenuAction(title: "Effort", systemImage: "sparkles", field: effortField, key: "effort"),
+            runtimeFieldMenuAction(title: "Permission", systemImage: "shield", field: permissionField, key: "permissionMode"),
+        ]
+    }
+
+    private var attachmentMenuActions: [MessageInputAction] {
         [
             MessageInputAction(title: "Photos", systemImage: "photo") {
                 isPhotoPickerPresented = true
@@ -373,18 +414,48 @@ struct SessionDetailView: View {
             MessageInputAction(title: "Camera", systemImage: "camera") {
                 openCamera()
             },
-            MessageInputAction(title: "Runtime", systemImage: "terminal") {
-                Task { await openRuntimeSettings() }
-            },
-            MessageInputAction.toggle(
-                title: "Takeover",
-                systemImage: "hand.raised",
-                isOn: session.takeover,
-                isDisabled: isApplyingTakeover || session.connectorStatus != "online",
-            ) {
-                requestTakeoverToggle()
-            },
         ]
+    }
+
+    private func runtimeFieldMenuAction(
+        title: String,
+        systemImage: String,
+        field: RuntimeConfigField?,
+        key: String
+    ) -> MessageInputAction {
+        MessageInputAction.menu(
+            title: title,
+            systemImage: systemImage,
+            isDisabled: field?.options?.isEmpty ?? true,
+            children: menuActions(for: field, selected: runtimeSettingsObject[key]) { value in
+                Task { await patchRuntimeSetting(key: key, value: value) }
+            },
+            handler: {
+                Task { await loadRuntimeSettingsIfNeeded() }
+            },
+        )
+    }
+
+    private func menuActions(
+        for field: RuntimeConfigField?,
+        selected: JSONValue?,
+        onSelect: @escaping (JSONValue) -> Void
+    ) -> [MessageInputAction] {
+        guard let options = field?.options, !options.isEmpty else {
+            return [
+                MessageInputAction(title: isLoadingRuntimeSettings ? "Loading" : "Unavailable", systemImage: "hourglass") {},
+            ]
+        }
+        let selectedValue = selected?.stringValue ?? options.first?.value.stringValue
+        return options.map { option in
+            let value = option.value.stringValue ?? option.label
+            return MessageInputAction(
+                title: option.label,
+                systemImage: selectedValue == value ? "checkmark" : "circle",
+            ) {
+                onSelect(option.value)
+            }
+        }
     }
 
     private var messageInputInterrupt: MessageInputInterrupt? {
@@ -465,6 +536,11 @@ struct SessionDetailView: View {
 
     private func openRuntimeSettings() async {
         isShowingRuntimeSettings = true
+        await loadRuntimeSettings()
+    }
+
+    private func loadRuntimeSettingsIfNeeded() async {
+        guard runtimeSchema == nil || runtimeSettings == nil else { return }
         await loadRuntimeSettings()
     }
 
@@ -1971,12 +2047,8 @@ private struct RuntimeSettingsSheet: View {
     }
 
     private var fields: [RuntimeConfigField] {
-        schema?.fields.filter { field in
-            field.hidden != true
-                && field.allowSessionOverride
-                && ["enum", "boolean"].contains(field.type)
-                && isVisible(field)
-        } ?? []
+        runtimeConfigFields(schema: schema, settings: response?.settings)
+            .filter { ["enum", "boolean"].contains($0.type) }
     }
 
     var body: some View {
@@ -2016,17 +2088,6 @@ private struct RuntimeSettingsSheet: View {
         }
     }
 
-    private func isVisible(_ field: RuntimeConfigField) -> Bool {
-        guard let visibleWhen = field.visibleWhen,
-              case let .object(conditions) = visibleWhen
-        else { return true }
-        for (key, expected) in conditions {
-            if settings[key] != expected {
-                return false
-            }
-        }
-        return true
-    }
 }
 
 private struct RuntimeSettingRow: View {
@@ -2117,10 +2178,63 @@ struct MessageInputSubmitContext {
     }
 }
 
+func runtimeConfigFields(schema: RuntimeConfigSchema?, settings: JSONValue?) -> [RuntimeConfigField] {
+    let settingsObject: [String: JSONValue]
+    if case let .object(object) = settings {
+        settingsObject = object
+    } else {
+        settingsObject = [:]
+    }
+    return schema?.fields.filter { field in
+        field.hidden != true &&
+            field.allowSessionOverride &&
+            runtimeConfigFieldIsVisible(field, settings: settingsObject)
+    } ?? []
+}
+
+func runtimeConfigFieldIsVisible(_ field: RuntimeConfigField, settings: [String: JSONValue]) -> Bool {
+    guard let visibleWhen = field.visibleWhen,
+          case let .object(conditions) = visibleWhen
+    else { return true }
+    for (key, expected) in conditions {
+        if settings[key] != expected {
+            return false
+        }
+    }
+    return true
+}
+
+func filterRuntimeEffortField(
+    runtime: String,
+    field: RuntimeConfigField?,
+    model: JSONValue?
+) -> RuntimeConfigField? {
+    guard let field else { return nil }
+    guard runtime == "claude", field.key == "effort" else { return field }
+    let allowed = claudeEffortValues(for: model?.stringValue)
+    guard !allowed.isEmpty else { return nil }
+    return field.withOptions(field.options?.filter { option in
+        guard let value = option.value.stringValue else { return false }
+        return allowed.contains(value)
+    } ?? [])
+}
+
+private func claudeEffortValues(for model: String?) -> Set<String> {
+    let key = model ?? ""
+    if key == "claude-haiku-4-5" {
+        return []
+    }
+    if key.hasPrefix("claude-opus-4-8") || key.hasPrefix("claude-opus-4-7") {
+        return ["low", "medium", "high", "xhigh", "max"]
+    }
+    return ["low", "medium", "high", "max"]
+}
+
 struct MessageInputAction: Identifiable {
     enum Kind {
         case button
         case toggle(isOn: Bool, isDisabled: Bool)
+        case menu(children: [MessageInputAction], isDisabled: Bool)
     }
 
     let id = UUID()
@@ -2155,6 +2269,21 @@ struct MessageInputAction: Identifiable {
         )
     }
 
+    static func menu(
+        title: String,
+        systemImage: String,
+        isDisabled: Bool = false,
+        children: [MessageInputAction],
+        handler: @escaping () -> Void = {},
+    ) -> MessageInputAction {
+        MessageInputAction(
+            title: title,
+            systemImage: systemImage,
+            kind: .menu(children: children, isDisabled: isDisabled),
+            handler: handler,
+        )
+    }
+
     private init(
         title: String,
         systemImage: String,
@@ -2171,6 +2300,45 @@ struct MessageInputAction: Identifiable {
 struct MessageInputInterrupt {
     var isRunning = false
     let handler: () -> Void
+}
+
+private struct MessageInputActionMenuContent: View {
+    let action: MessageInputAction
+
+    var body: some View {
+        switch action.kind {
+        case .button:
+            Button {
+                action.handler()
+            } label: {
+                Label(action.title, systemImage: action.systemImage)
+            }
+        case let .toggle(isOn, isDisabled):
+            Toggle(isOn: Binding(
+                get: { isOn },
+                set: { newValue in
+                    if newValue != isOn {
+                        action.handler()
+                    }
+                },
+            )) {
+                Label(action.title, systemImage: action.systemImage)
+            }
+            .disabled(isDisabled)
+        case let .menu(children, isDisabled):
+            Menu {
+                ForEach(children) { child in
+                    MessageInputActionMenuContent(action: child)
+                }
+            } label: {
+                Label(action.title, systemImage: action.systemImage)
+            }
+            .disabled(isDisabled)
+            .onAppear {
+                action.handler()
+            }
+        }
+    }
 }
 
 struct LiquidGlassMessageInputBar: View {
@@ -2282,26 +2450,7 @@ struct LiquidGlassMessageInputBar: View {
     private var plusGlassButton: some View {
         Menu {
             ForEach(actions) { action in
-                switch action.kind {
-                case .button:
-                    Button {
-                        action.handler()
-                    } label: {
-                        Label(action.title, systemImage: action.systemImage)
-                    }
-                case let .toggle(isOn, isDisabled):
-                    Toggle(isOn: Binding(
-                        get: { isOn },
-                        set: { newValue in
-                            if newValue != isOn {
-                                action.handler()
-                            }
-                        },
-                    )) {
-                        Label(action.title, systemImage: action.systemImage)
-                    }
-                    .disabled(isDisabled)
-                }
+                MessageInputActionMenuContent(action: action)
             }
         } label: {
             Image(systemName: "plus")
