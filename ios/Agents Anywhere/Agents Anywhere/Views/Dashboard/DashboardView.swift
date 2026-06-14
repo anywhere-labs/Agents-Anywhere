@@ -1,4 +1,8 @@
+import PhotosUI
 import SwiftUI
+import UIKit
+
+private let newSessionAttachmentOnlyPrompt = "Please review the attached file."
 
 struct DashboardView: View {
     @EnvironmentObject private var appState: AppState
@@ -299,6 +303,11 @@ private struct NewSessionSheet: View {
     @State private var isShowingWorkspaceSheet = false
     @State private var isShowingPathBrowser = false
     @State private var isResolvingHomeWorkspace = false
+    @State private var selectedPhotoItems: [PhotosPickerItem] = []
+    @State private var pendingUploads: [AttachmentUpload] = []
+    @State private var isPhotoPickerPresented = false
+    @State private var isCameraPickerPresented = false
+    @State private var isCameraUnavailable = false
     @State private var isCreating = false
     @State private var errorMessage: String?
 
@@ -374,6 +383,12 @@ private struct NewSessionSheet: View {
 
     private var messageInputActions: [MessageInputAction] {
         var actions = [
+            MessageInputAction(title: "Photos", systemImage: "photo") {
+                isPhotoPickerPresented = true
+            },
+            MessageInputAction(title: "Camera", systemImage: "camera") {
+                openCamera()
+            },
             MessageInputAction(title: "Workspace", systemImage: "folder") {
                 isShowingWorkspaceSheet = true
             },
@@ -393,15 +408,13 @@ private struct NewSessionSheet: View {
         selectedConnector != nil &&
             !selectedRuntimeValue.isEmpty &&
             !isCreating &&
-            !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            (!prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingUploads.isEmpty)
     }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    header
-
                     if availableConnectors.isEmpty {
                         ContentUnavailableView(
                             "No Online Agents",
@@ -424,14 +437,14 @@ private struct NewSessionSheet: View {
                 .padding(20)
                 .padding(.bottom, 90)
             }
-            .navigationTitle("New")
+            .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-                ToolbarItem(placement: .primaryAction) {
-                    runtimeMenu
+                    HStack(spacing: 14) {
+                        Button("Cancel") { dismiss() }
+                        runtimeMenu
+                    }
                 }
             }
             .onAppear {
@@ -479,32 +492,45 @@ private struct NewSessionSheet: View {
                 }
             }
             .safeAreaInset(edge: .bottom) {
-                LiquidGlassMessageInputBar(
-                    text: $prompt,
-                    isFocused: $isPromptFocused,
-                    isSending: isCreating,
-                    placeholder: selectedConnector == nil ? "No online agent" : "Message to agent",
-                    actions: messageInputActions,
-                    isSubmitEnabled: { _ in canSubmit },
-                    showsActionsButton: true,
-                    onSend: {
-                        Task { await createSession() }
-                    },
-                    onDismissKeyboard: {
-                        isPromptFocused = false
-                    },
-                )
+                VStack(spacing: 0) {
+                    if !pendingUploads.isEmpty {
+                        AttachmentStrip(uploads: pendingUploads) { upload in
+                            pendingUploads.removeAll { $0 == upload }
+                        }
+                    }
+                    LiquidGlassMessageInputBar(
+                        text: $prompt,
+                        isFocused: $isPromptFocused,
+                        isSending: isCreating,
+                        hasPendingAttachments: !pendingUploads.isEmpty,
+                        placeholder: selectedConnector == nil ? "No online agent" : "Message to agent",
+                        actions: messageInputActions,
+                        isSubmitEnabled: { _ in canSubmit },
+                        showsActionsButton: true,
+                        onSend: {
+                            Task { await createSession() }
+                        },
+                        onDismissKeyboard: {
+                            isPromptFocused = false
+                        },
+                    )
+                }
             }
-        }
-    }
-
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("What should the agent do?")
-                .font(.title.weight(.bold))
-            Text("Choose a workspace and send the first message.")
-                .font(.body)
-                .foregroundStyle(.secondary)
+            .photosPicker(isPresented: $isPhotoPickerPresented, selection: $selectedPhotoItems, maxSelectionCount: 4, matching: .images)
+            .onChange(of: selectedPhotoItems) { _, items in
+                Task { await importPhotos(items) }
+            }
+            .fullScreenCover(isPresented: $isCameraPickerPresented) {
+                CameraImagePicker { image in
+                    importCameraImage(image)
+                }
+                .ignoresSafeArea()
+            }
+            .alert("Camera", isPresented: $isCameraUnavailable) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("Camera capture is not available on this device.")
+            }
         }
     }
 
@@ -534,6 +560,7 @@ private struct NewSessionSheet: View {
                     .font(.caption.weight(.semibold))
             }
         }
+        .font(.body)
         .disabled(runtimeChoices.isEmpty || isCreating)
         .accessibilityLabel("Device and Agent")
     }
@@ -631,24 +658,66 @@ private struct NewSessionSheet: View {
                 token: token,
                 connectorId: connector.id,
                 runtime: selectedRuntimeValue,
-                title: text,
+                title: text.isEmpty ? nil : text,
                 cwd: selectedWorkspaceForCreate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : selectedWorkspaceForCreate,
                 approvalPolicy: permissionMode.approvalPolicy,
                 sandbox: permissionMode.sandbox,
             )
             let takeover = try await api.enableTakeover(token: token, sessionId: created.session.id)
+            let uploads = pendingUploads
+            let uploaded = uploads.isEmpty
+                ? []
+                : try await api.uploadSessionAttachments(token: token, sessionId: takeover.session.id, uploads: uploads).attachments
+            let sendContent = text.isEmpty && !uploaded.isEmpty ? newSessionAttachmentOnlyPrompt : text
             _ = try await api.sendSessionMessage(
                 token: token,
                 sessionId: takeover.session.id,
-                content: text,
+                content: sendContent,
+                attachments: uploaded.map { AttachmentRef(fileId: $0.fileId) },
                 clientMessageId: "new_\(UUID().uuidString)",
             )
             prompt = ""
+            pendingUploads = []
             await appState.refreshDashboard()
             onCreated(takeover.session)
             dismiss()
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func openCamera() {
+        if UIImagePickerController.isSourceTypeAvailable(.camera) {
+            isCameraPickerPresented = true
+        } else {
+            isCameraUnavailable = true
+        }
+    }
+
+    private func importCameraImage(_ image: UIImage) {
+        guard let data = image.jpegData(compressionQuality: 0.86) else { return }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        pendingUploads.append(AttachmentUpload(
+            name: "camera-\(formatter.string(from: Date())).jpg",
+            mediaType: "image/jpeg",
+            data: data,
+        ))
+    }
+
+    private func importPhotos(_ items: [PhotosPickerItem]) async {
+        defer { selectedPhotoItems = [] }
+        for item in items {
+            do {
+                guard let data = try await item.loadTransferable(type: Data.self) else { continue }
+                pendingUploads.append(AttachmentUpload(
+                    name: "photo-\(UUID().uuidString.prefix(8)).jpg",
+                    mediaType: "image/jpeg",
+                    data: data,
+                ))
+            } catch {
+                errorMessage = error.localizedDescription
+            }
         }
     }
 }
