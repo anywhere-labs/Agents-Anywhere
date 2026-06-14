@@ -177,18 +177,29 @@ private struct SessionsView: View {
             .frame(maxWidth: .infinity)
             .padding(.top, 80)
         } else {
-            VStack(spacing: 12) {
-                ForEach(filteredSessions) { session in
+            VStack(spacing: 0) {
+                ForEach(Array(filteredSessions.enumerated()), id: \.element.id) { index, session in
                     NavigationLink {
                         SessionDetailView(initialSession: session)
                     } label: {
-                        SessionCard(session: session)
+                        SessionRow(
+                            session: session,
+                            deviceName: deviceName(for: session),
+                            showsDivider: index < filteredSessions.count - 1,
+                        )
                     }
                     .buttonStyle(.plain)
                 }
             }
             .padding(.horizontal, 20)
         }
+    }
+
+    private func deviceName(for session: SessionSummary) -> String {
+        if let connector = appState.connectors.first(where: { $0.id == session.connectorId }) {
+            return connector.name
+        }
+        return session.connectorStatus.capitalized
     }
 }
 
@@ -436,58 +447,80 @@ private struct FilterPill: View {
     }
 }
 
-private struct SessionCard: View {
+private struct SessionRow: View {
     let session: SessionSummary
+    let deviceName: String
+    let showsDivider: Bool
 
     var body: some View {
-        HStack(spacing: 14) {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(.secondary.opacity(0.14))
-                .frame(width: 54, height: 54)
-                .overlay {
-                    Image(systemName: symbol)
-                        .font(.title3)
+        VStack(spacing: 0) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                VStack(alignment: .leading, spacing: 6) {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            title
+
+                            HStack(spacing: 6) {
+                                SessionMetadataPill(title: deviceName)
+                                SessionMetadataPill(title: session.runtime)
+                            }
+                        }
+
+                        title
+                    }
+
+                    Text(subtitle)
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
 
-            VStack(alignment: .leading, spacing: 5) {
-                Text(session.displayTitle)
-                    .font(.headline)
-                    .lineLimit(1)
+                Spacer(minLength: 8)
 
-                Text(subtitle)
-                    .font(.subheadline)
+                Text(session.statusLabel)
+                    .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background {
+                        Capsule(style: .continuous)
+                            .fill(.secondary.opacity(0.12))
+                    }
             }
+            .padding(.vertical, 13)
 
-            Spacer()
+            if showsDivider {
+                Divider()
+            }
+        }
+    }
 
-            Text(session.statusLabel)
-                .font(.caption.weight(.semibold))
-                .padding(.horizontal, 9)
-                .padding(.vertical, 5)
-                .background {
-                    Capsule(style: .continuous)
-                        .fill(.secondary.opacity(0.12))
-                }
-        }
-        .padding(14)
-        .background {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(.regularMaterial)
-        }
+    private var title: some View {
+        Text(session.displayTitle)
+            .font(.headline)
+            .lineLimit(1)
+            .layoutPriority(1)
     }
 
     private var subtitle: String {
-        let workspace = session.cwd ?? "No workspace"
-        return "\(workspace) · \(session.runtime) · \(session.connectorStatus)"
+        return session.cwd ?? "No workspace"
     }
+}
 
-    private var symbol: String {
-        session.runtime.localizedCaseInsensitiveContains("claude")
-            ? "sparkles.rectangle.stack.fill"
-            : "terminal.fill"
+private struct SessionMetadataPill: View {
+    let title: String
+
+    var body: some View {
+        Text(title)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background {
+                Capsule(style: .continuous)
+                    .fill(.secondary.opacity(0.10))
+            }
     }
 }
 
