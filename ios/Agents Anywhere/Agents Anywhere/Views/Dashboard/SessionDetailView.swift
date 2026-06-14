@@ -1003,6 +1003,7 @@ struct LiquidGlassMessageInputBar: View {
     @FocusState private var isFocused: Bool
 
     private let composerHeight: CGFloat = 50
+    private let composerCornerRadius: CGFloat = 25
     private let restingGap: CGFloat = 8
     private let glassInteractionSpacing: CGFloat = 4
 
@@ -1090,20 +1091,21 @@ struct LiquidGlassMessageInputBar: View {
                 ProgressView()
                     .scaleEffect(0.78)
                     .frame(width: 34, height: 34)
-            } else if canSend {
+            } else {
                 sendButton
-                    .transition(.scale.combined(with: .opacity))
             }
         }
         .padding(.leading, 17)
-        .padding(.trailing, canSend || isSending ? 8 : 17)
+        .padding(.trailing, 8)
         .frame(minHeight: composerHeight)
-        .composerGlassEffect(shape: Capsule())
+        .composerGlassEffect(shape: RoundedRectangle(cornerRadius: composerCornerRadius, style: .continuous))
     }
 
     private var sendButton: some View {
         Button {
-            onSend()
+            if canSend {
+                onSend()
+            }
         } label: {
             Image(systemName: "arrow.up")
                 .font(.system(size: 14, weight: .bold))
@@ -1111,10 +1113,11 @@ struct LiquidGlassMessageInputBar: View {
                 .frame(width: 34, height: 34)
                 .background {
                     Circle()
-                        .fill(.tint)
+                        .fill(.tint.opacity(canSend ? 1 : 0.35))
                 }
         }
         .buttonStyle(.plain)
+        .disabled(!canSend)
         .accessibilityLabel("Send")
     }
 }
