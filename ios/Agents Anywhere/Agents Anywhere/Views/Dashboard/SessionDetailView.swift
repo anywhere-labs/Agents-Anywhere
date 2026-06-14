@@ -19,6 +19,7 @@ struct SessionDetailView: View {
     @State private var isSending = false
     @State private var isInterrupting = false
     @State private var messageText = ""
+    @State private var isComposerFocused = false
     @State private var errorMessage: String?
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var pendingUploads: [AttachmentUpload] = []
@@ -180,6 +181,19 @@ struct SessionDetailView: View {
                 .padding(.bottom, pendingUploads.isEmpty ? 104 : 188)
             }
             .defaultScrollAnchor(.bottom)
+            .contentShape(Rectangle())
+            .simultaneousGesture(
+                TapGesture().onEnded {
+                    dismissComposerKeyboard()
+                },
+            )
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 12).onChanged { value in
+                    if value.translation.height > 8 {
+                        dismissComposerKeyboard()
+                    }
+                },
+            )
             .onChange(of: displayEntries.last?.id) { _, _ in
                 guard !displayEntries.isEmpty else { return }
                 if hasPositionedInitialScroll {
@@ -198,6 +212,17 @@ struct SessionDetailView: View {
                 }
                 if hasPositionedInitialScroll {
                     scrollToBottom(proxy, animated: true)
+                }
+            }
+            .onChange(of: isComposerFocused) { _, focused in
+                if focused {
+                    scrollToBottom(proxy, animated: true)
+                    DispatchQueue.main.async {
+                        scrollToBottom(proxy, animated: true)
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
+                        scrollToBottom(proxy, animated: true)
+                    }
                 }
             }
             .task {
@@ -245,6 +270,7 @@ struct SessionDetailView: View {
                 }
                 LiquidGlassMessageInputBar(
                     text: $messageText,
+                    isFocused: $isComposerFocused,
                     isSending: isSending,
                     isBusy: isBusy,
                     hasPendingAttachments: !pendingUploads.isEmpty,
@@ -257,6 +283,7 @@ struct SessionDetailView: View {
                     isTakeoverEnabled: session.takeover,
                     isTakeoverDisabled: isApplyingTakeover || session.connectorStatus != "online",
                     onToggleTakeover: { requestTakeoverToggle() },
+                    onDismissKeyboard: { dismissComposerKeyboard() },
                 )
             }
         }
@@ -337,6 +364,11 @@ struct SessionDetailView: View {
         } else {
             action()
         }
+    }
+
+    private func dismissComposerKeyboard() {
+        guard isComposerFocused else { return }
+        isComposerFocused = false
     }
 
     private func markRead() async {
@@ -1957,6 +1989,7 @@ private struct RuntimeSettingRow: View {
 
 struct LiquidGlassMessageInputBar: View {
     @Binding var text: String
+    @Binding var isFocused: Bool
 
     var isSending = false
     var isBusy = false
@@ -1970,6 +2003,9 @@ struct LiquidGlassMessageInputBar: View {
     var isTakeoverEnabled = false
     var isTakeoverDisabled = false
     var onToggleTakeover: () -> Void = {}
+    var onDismissKeyboard: () -> Void = {}
+
+    @FocusState private var textFieldFocused: Bool
 
     private let composerHeight: CGFloat = 50
     private let composerCornerRadius: CGFloat = 25
@@ -1992,12 +2028,28 @@ struct LiquidGlassMessageInputBar: View {
     }
 
     var body: some View {
-        composerRow
+        VStack(alignment: .trailing, spacing: 6) {
+            if isFocused {
+                dismissKeyboardButton
+            }
+            composerRow
+        }
         .padding(.horizontal, 12)
         .padding(.top, 8)
         .padding(.bottom, 2)
         .animation(.smooth(duration: 0.22), value: canSubmit)
         .animation(.smooth(duration: 0.22), value: showInterrupt)
+        .animation(.smooth(duration: 0.18), value: isFocused)
+        .onChange(of: textFieldFocused) { _, focused in
+            if isFocused != focused {
+                isFocused = focused
+            }
+        }
+        .onChange(of: isFocused) { _, focused in
+            if textFieldFocused != focused {
+                textFieldFocused = focused
+            }
+        }
     }
 
     private var composerRow: some View {
@@ -2045,12 +2097,30 @@ struct LiquidGlassMessageInputBar: View {
         .accessibilityLabel("More Content")
     }
 
+    private var dismissKeyboardButton: some View {
+        Button {
+            onDismissKeyboard()
+            textFieldFocused = false
+            isFocused = false
+        } label: {
+            Image(systemName: "chevron.down")
+                .font(.system(size: 16, weight: .semibold))
+                .frame(width: 36, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .accessibilityLabel("Dismiss Keyboard")
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+    }
+
     private var inputGlassField: some View {
         HStack(alignment: .bottom, spacing: 8) {
             TextField(inputPlaceholder, text: $text, axis: .vertical)
                 .lineLimit(1...5)
                 .textFieldStyle(.plain)
                 .frame(minHeight: 34, alignment: .center)
+                .focused($textFieldFocused)
                 .submitLabel(.send)
                 .onSubmit {
                     if canSubmit {
