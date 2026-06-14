@@ -87,11 +87,12 @@ private struct SessionsView: View {
     }
 
     var body: some View {
-        ScrollView {
+        ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 20) {
                 header
                 sessionList
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.bottom, 32)
         }
         .navigationBarTitleDisplayMode(.inline)
@@ -164,6 +165,7 @@ private struct SessionsView: View {
         }
         .padding(.horizontal, 20)
         .padding(.top, 24)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
@@ -192,6 +194,7 @@ private struct SessionsView: View {
                 }
             }
             .padding(.horizontal, 20)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -474,6 +477,7 @@ private struct SessionRow: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 Spacer(minLength: 8)
 
@@ -488,11 +492,13 @@ private struct SessionRow: View {
                     }
             }
             .padding(.vertical, 13)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             if showsDivider {
                 Divider()
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var title: some View {
@@ -515,6 +521,8 @@ private struct SessionMetadataPill: View {
             .font(.caption2.weight(.semibold))
             .foregroundStyle(.secondary)
             .lineLimit(1)
+            .truncationMode(.tail)
+            .frame(maxWidth: 110)
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
             .background {
