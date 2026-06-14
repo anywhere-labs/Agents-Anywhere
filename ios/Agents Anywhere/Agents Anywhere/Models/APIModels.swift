@@ -321,6 +321,17 @@ struct RpcResponsePayload: Decodable {
     let error: String?
 }
 
+enum ApprovalResolveStatus: String, Encodable {
+    case approved
+    case approvedForSession = "approved_for_session"
+    case rejected
+    case cancelled
+}
+
+struct ApprovalResolveRequest: Encodable {
+    let status: ApprovalResolveStatus
+}
+
 struct AttachmentRef: Encodable, Hashable {
     let fileId: String
 }

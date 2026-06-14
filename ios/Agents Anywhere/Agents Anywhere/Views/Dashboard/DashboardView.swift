@@ -348,7 +348,7 @@ private enum SessionFilter: String, Identifiable {
     var options: [String] {
         switch self {
         case .status:
-            ["All", "Running", "Idle", "Approval", "Error"]
+            ["All", "Running", "Idle", "Waiting", "Error"]
         case .runtime:
             ["Any Runtime", "Codex", "Claude Code"]
         case .device:

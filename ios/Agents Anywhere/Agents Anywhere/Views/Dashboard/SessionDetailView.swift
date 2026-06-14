@@ -28,6 +28,8 @@ struct SessionDetailView: View {
     @State private var isShowingDetails = false
     @State private var isShowingRuntimeSettings = false
     @State private var isApplyingTakeover = false
+    @State private var resolvingApprovalId: String?
+    @State private var resolvingApprovalStatus: ApprovalResolveStatus?
     @State private var takeoverIntent: TakeoverIntent?
     @State private var isConfirmingTakeoverBeforeSend = false
     @State private var runtimeSchema: RuntimeConfigSchema?
@@ -46,12 +48,20 @@ struct SessionDetailView: View {
     }
 
     private var displayEntries: [ChatEntry] {
+        let pendingApprovals = approvals.filter { $0.status == "pending" }
+        let approvalsByTarget = Dictionary(
+            pendingApprovals.compactMap { approval -> (String, Approval)? in
+                guard let targetItemId = approval.targetItemId else { return nil }
+                return (targetItemId, approval)
+            },
+            uniquingKeysWith: { first, _ in first },
+        )
         var entries = timelineItems.compactMap { item -> ChatEntry? in
             if item.type == "message", item.role == "user" || item.role == "assistant" {
                 return .message(item)
             }
             if item.type == "tool" {
-                return .tool(item)
+                return .tool(item, approvalsByTarget[item.id])
             }
             if item.type == "artifact" {
                 if item.kind == "diff" { return nil }
@@ -62,7 +72,7 @@ struct SessionDetailView: View {
             }
             return nil
         }
-        entries.append(contentsOf: approvals.filter { $0.status == "pending" }.map(ChatEntry.approval))
+        entries.append(contentsOf: pendingApprovals.filter { $0.targetItemId == nil }.map(ChatEntry.approval))
         return entries.sorted { lhs, rhs in
             lhs.sortKey < rhs.sortKey
         }
@@ -142,7 +152,16 @@ struct SessionDetailView: View {
                         .padding(.top, 80)
                     } else {
                         ForEach(displayEntries) { entry in
-                            ChatEntryView(entry: entry, api: appState.api, token: appState.accessToken())
+                            ChatEntryView(
+                                entry: entry,
+                                api: appState.api,
+                                token: appState.accessToken(),
+                                resolvingApprovalId: resolvingApprovalId,
+                                resolvingApprovalStatus: resolvingApprovalStatus,
+                                onResolveApproval: { approval, status in
+                                    Task { await resolveApproval(approval, status: status) }
+                                },
+                            )
                                 .id(entry.id)
                         }
 
@@ -600,6 +619,25 @@ struct SessionDetailView: View {
         }
     }
 
+    private func resolveApproval(_ approval: Approval, status: ApprovalResolveStatus) async {
+        guard resolvingApprovalId == nil, let api = appState.api, let token = appState.accessToken() else { return }
+        resolvingApprovalId = approval.id
+        resolvingApprovalStatus = status
+        defer {
+            resolvingApprovalId = nil
+            resolvingApprovalStatus = nil
+        }
+
+        do {
+            _ = try await api.resolveApproval(token: token, approvalId: approval.id, status: status)
+            approvals.removeAll { $0.id == approval.id }
+            errorMessage = nil
+            await loadState(replace: false)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     private func importPhotos(_ items: [PhotosPickerItem]) async {
         defer { selectedPhotoItems = [] }
         for item in items {
@@ -632,7 +670,7 @@ private enum TakeoverIntent {
 
 private enum ChatEntry: Identifiable {
     case message(TimelineItem)
-    case tool(TimelineItem)
+    case tool(TimelineItem, Approval?)
     case artifact(TimelineItem)
     case system(TimelineItem)
     case approval(Approval)
@@ -642,7 +680,7 @@ private enum ChatEntry: Identifiable {
         switch self {
         case let .message(item):
             return item.id
-        case let .tool(item):
+        case let .tool(item, _):
             return item.id
         case let .artifact(item):
             return item.id
@@ -659,7 +697,7 @@ private enum ChatEntry: Identifiable {
         switch self {
         case let .message(item):
             return item.orderSeq
-        case let .tool(item):
+        case let .tool(item, _):
             return item.orderSeq
         case let .artifact(item):
             return item.orderSeq
@@ -678,19 +716,33 @@ private struct ChatEntryView: View {
     let entry: ChatEntry
     let api: APIClient?
     let token: String?
+    let resolvingApprovalId: String?
+    let resolvingApprovalStatus: ApprovalResolveStatus?
+    let onResolveApproval: (Approval, ApprovalResolveStatus) -> Void
 
     var body: some View {
         switch entry {
         case let .message(item):
             MessageBubble(item: item, api: api, token: token)
-        case let .tool(item):
-            ToolCard(item: item)
+        case let .tool(item, approval):
+            ToolCard(
+                item: item,
+                approval: approval,
+                resolvingApprovalId: resolvingApprovalId,
+                resolvingApprovalStatus: resolvingApprovalStatus,
+                onResolveApproval: onResolveApproval,
+            )
         case let .artifact(item):
             ArtifactCard(item: item)
         case let .system(item):
             SystemCard(item: item)
         case let .approval(approval):
-            ApprovalSummary(approval: approval)
+            ApprovalSummary(
+                approval: approval,
+                resolvingApprovalId: resolvingApprovalId,
+                resolvingApprovalStatus: resolvingApprovalStatus,
+                onResolveApproval: onResolveApproval,
+            )
         case let .notice(kind, text):
             NoticeRow(kind: kind, text: text)
         }
@@ -699,21 +751,47 @@ private struct ChatEntryView: View {
 
 private struct ToolCard: View {
     let item: TimelineItem
+    let approval: Approval?
+    let resolvingApprovalId: String?
+    let resolvingApprovalStatus: ApprovalResolveStatus?
+    let onResolveApproval: (Approval, ApprovalResolveStatus) -> Void
 
     var body: some View {
         switch item.kind {
         case "command":
-            CommandToolCard(item: item)
+            CommandToolCard(
+                item: item,
+                approval: approval,
+                resolvingApprovalId: resolvingApprovalId,
+                resolvingApprovalStatus: resolvingApprovalStatus,
+                onResolveApproval: onResolveApproval,
+            )
         case "file_change":
-            EditToolCard(item: item)
+            EditToolCard(
+                item: item,
+                approval: approval,
+                resolvingApprovalId: resolvingApprovalId,
+                resolvingApprovalStatus: resolvingApprovalStatus,
+                onResolveApproval: onResolveApproval,
+            )
         case "mcp":
-            McpToolCard(item: item)
+            McpToolCard(
+                item: item,
+                approval: approval,
+                resolvingApprovalId: resolvingApprovalId,
+                resolvingApprovalStatus: resolvingApprovalStatus,
+                onResolveApproval: onResolveApproval,
+            )
         case "web_search":
             CompactToolCard(
                 icon: "globe",
                 badge: "Search",
                 title: item.webSearchTitle,
                 status: item.status,
+                approval: approval,
+                resolvingApprovalId: resolvingApprovalId,
+                resolvingApprovalStatus: resolvingApprovalStatus,
+                onResolveApproval: onResolveApproval,
             )
         default:
             CompactToolCard(
@@ -721,6 +799,10 @@ private struct ToolCard: View {
                 badge: item.kind == "generic" ? "Tool" : item.kind.capitalized,
                 title: item.shortTitle,
                 status: item.status,
+                approval: approval,
+                resolvingApprovalId: resolvingApprovalId,
+                resolvingApprovalStatus: resolvingApprovalStatus,
+                onResolveApproval: onResolveApproval,
             )
         }
     }
@@ -731,24 +813,36 @@ private struct CompactToolCard: View {
     let badge: String
     let title: String
     let status: String
+    var approval: Approval? = nil
+    var resolvingApprovalId: String? = nil
+    var resolvingApprovalStatus: ApprovalResolveStatus? = nil
+    var onResolveApproval: ((Approval, ApprovalResolveStatus) -> Void)? = nil
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: icon)
-                .font(.caption.weight(.semibold))
-                .frame(width: 24, height: 24)
-                .background {
-                    Circle()
-                        .fill(.secondary.opacity(0.12))
-                }
-            Text(badge)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-            Text(title)
-                .font(.subheadline)
-                .lineLimit(1)
-            Spacer(minLength: 8)
-            StatusPill(status: status)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.caption.weight(.semibold))
+                    .frame(width: 24, height: 24)
+                    .background {
+                        Circle()
+                            .fill(.secondary.opacity(0.12))
+                    }
+                Text(badge)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(title)
+                    .font(.subheadline)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                StatusPill(status: status)
+            }
+            ApprovalFooter(
+                approval: approval,
+                resolvingApprovalId: resolvingApprovalId,
+                resolvingApprovalStatus: resolvingApprovalStatus,
+                onResolveApproval: onResolveApproval,
+            )
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -761,8 +855,27 @@ private struct CompactToolCard: View {
 
 private struct CommandToolCard: View {
     let item: TimelineItem
+    let approval: Approval?
+    let resolvingApprovalId: String?
+    let resolvingApprovalStatus: ApprovalResolveStatus?
+    let onResolveApproval: (Approval, ApprovalResolveStatus) -> Void
 
-    @State private var isExpanded = false
+    @State private var isExpanded: Bool
+
+    init(
+        item: TimelineItem,
+        approval: Approval?,
+        resolvingApprovalId: String?,
+        resolvingApprovalStatus: ApprovalResolveStatus?,
+        onResolveApproval: @escaping (Approval, ApprovalResolveStatus) -> Void,
+    ) {
+        self.item = item
+        self.approval = approval
+        self.resolvingApprovalId = resolvingApprovalId
+        self.resolvingApprovalStatus = resolvingApprovalStatus
+        self.onResolveApproval = onResolveApproval
+        _isExpanded = State(initialValue: approval != nil)
+    }
 
     private var command: String { item.commandText ?? "command" }
     private var description: String { item.content["description"]?.stringValue ?? command }
@@ -779,6 +892,12 @@ private struct CommandToolCard: View {
                 if !output.isEmpty {
                     CodePanel(label: "output", code: output)
                 }
+                ApprovalFooter(
+                    approval: approval,
+                    resolvingApprovalId: resolvingApprovalId,
+                    resolvingApprovalStatus: resolvingApprovalStatus,
+                    onResolveApproval: onResolveApproval,
+                )
             }
             .padding(.top, 10)
         } label: {
@@ -798,6 +917,11 @@ private struct CommandToolCard: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(toolBackground)
         }
+        .onChange(of: approval?.id) { _, id in
+            if id != nil {
+                isExpanded = true
+            }
+        }
     }
 
     private var toolBackground: Color {
@@ -807,8 +931,27 @@ private struct CommandToolCard: View {
 
 private struct EditToolCard: View {
     let item: TimelineItem
+    let approval: Approval?
+    let resolvingApprovalId: String?
+    let resolvingApprovalStatus: ApprovalResolveStatus?
+    let onResolveApproval: (Approval, ApprovalResolveStatus) -> Void
 
-    @State private var isExpanded = false
+    @State private var isExpanded: Bool
+
+    init(
+        item: TimelineItem,
+        approval: Approval?,
+        resolvingApprovalId: String?,
+        resolvingApprovalStatus: ApprovalResolveStatus?,
+        onResolveApproval: @escaping (Approval, ApprovalResolveStatus) -> Void,
+    ) {
+        self.item = item
+        self.approval = approval
+        self.resolvingApprovalId = resolvingApprovalId
+        self.resolvingApprovalStatus = resolvingApprovalStatus
+        self.onResolveApproval = onResolveApproval
+        _isExpanded = State(initialValue: approval != nil)
+    }
 
     private var changes: [[String: JSONValue]] { item.changeObjects }
     private var filename: String {
@@ -841,6 +984,12 @@ private struct EditToolCard: View {
                         }
                     }
                 }
+                ApprovalFooter(
+                    approval: approval,
+                    resolvingApprovalId: resolvingApprovalId,
+                    resolvingApprovalStatus: resolvingApprovalStatus,
+                    onResolveApproval: onResolveApproval,
+                )
             }
             .padding(.top, 10)
         } label: {
@@ -860,6 +1009,11 @@ private struct EditToolCard: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(.secondary.opacity(0.08))
         }
+        .onChange(of: approval?.id) { _, id in
+            if id != nil {
+                isExpanded = true
+            }
+        }
     }
 
     private func fileChangeVerb(_ change: [String: JSONValue]) -> String {
@@ -876,8 +1030,27 @@ private struct EditToolCard: View {
 
 private struct McpToolCard: View {
     let item: TimelineItem
+    let approval: Approval?
+    let resolvingApprovalId: String?
+    let resolvingApprovalStatus: ApprovalResolveStatus?
+    let onResolveApproval: (Approval, ApprovalResolveStatus) -> Void
 
-    @State private var isExpanded = false
+    @State private var isExpanded: Bool
+
+    init(
+        item: TimelineItem,
+        approval: Approval?,
+        resolvingApprovalId: String?,
+        resolvingApprovalStatus: ApprovalResolveStatus?,
+        onResolveApproval: @escaping (Approval, ApprovalResolveStatus) -> Void,
+    ) {
+        self.item = item
+        self.approval = approval
+        self.resolvingApprovalId = resolvingApprovalId
+        self.resolvingApprovalStatus = resolvingApprovalStatus
+        self.onResolveApproval = onResolveApproval
+        _isExpanded = State(initialValue: approval != nil)
+    }
 
     private var server: String { item.content["server"]?.stringValue ?? "mcp" }
     private var tool: String { item.content["tool"]?.stringValue ?? "tool" }
@@ -897,6 +1070,12 @@ private struct McpToolCard: View {
                 if let resultText, !resultText.isEmpty {
                     CodePanel(label: item.isError ? "error" : "result", code: resultText)
                 }
+                ApprovalFooter(
+                    approval: approval,
+                    resolvingApprovalId: resolvingApprovalId,
+                    resolvingApprovalStatus: resolvingApprovalStatus,
+                    onResolveApproval: onResolveApproval,
+                )
             }
             .padding(.top, 10)
         } label: {
@@ -918,6 +1097,11 @@ private struct McpToolCard: View {
         .background {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(item.isError ? Color.red.opacity(0.10) : Color.secondary.opacity(0.08))
+        }
+        .onChange(of: approval?.id) { _, id in
+            if id != nil {
+                isExpanded = true
+            }
         }
     }
 }
@@ -962,7 +1146,7 @@ private struct StatusPill: View {
     let status: String
 
     var body: some View {
-        Text(status.capitalized)
+        Text(label)
             .font(.caption2.weight(.semibold))
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
@@ -973,9 +1157,18 @@ private struct StatusPill: View {
             .foregroundStyle(foreground)
     }
 
+    private var label: String {
+        switch status {
+        case "waiting_approval":
+            return "Waiting"
+        default:
+            return status.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+
     private var fill: Color {
         switch status {
-        case "running", "pending":
+        case "running", "pending", "waiting_approval":
             return Color.blue.opacity(0.16)
         case "failed", "interrupted":
             return Color.red.opacity(0.16)
@@ -986,7 +1179,7 @@ private struct StatusPill: View {
 
     private var foreground: Color {
         switch status {
-        case "running", "pending":
+        case "running", "pending", "waiting_approval":
             return .blue
         case "failed", "interrupted":
             return .red
@@ -1079,6 +1272,20 @@ private struct MarkdownText: View {
     var body: some View {
         Markdown(text)
             .markdownTheme(.gitHub)
+            .markdownBlockStyle(\.codeBlock) { configuration in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    configuration.label
+                        .fixedSize(horizontal: false, vertical: true)
+                        .markdownTextStyle {
+                            FontFamilyVariant(.monospaced)
+                            FontSize(.em(0.86))
+                        }
+                        .padding(12)
+                }
+                .background(Color(.systemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+            .background(Color(.systemBackground))
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -1289,9 +1496,12 @@ private struct AttachmentFileCard: View {
 
 private struct ApprovalSummary: View {
     let approval: Approval
+    let resolvingApprovalId: String?
+    let resolvingApprovalStatus: ApprovalResolveStatus?
+    let onResolveApproval: (Approval, ApprovalResolveStatus) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             Label("Approval Required", systemImage: "checkmark.shield")
                 .font(.subheadline.weight(.semibold))
             Text(approval.title)
@@ -1301,12 +1511,133 @@ private struct ApprovalSummary: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
+            ApprovalButtons(
+                approval: approval,
+                resolvingApprovalId: resolvingApprovalId,
+                resolvingApprovalStatus: resolvingApprovalStatus,
+                onResolveApproval: onResolveApproval,
+            )
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(.orange.opacity(0.14))
+        }
+    }
+}
+
+private struct ApprovalFooter: View {
+    let approval: Approval?
+    let resolvingApprovalId: String?
+    let resolvingApprovalStatus: ApprovalResolveStatus?
+    let onResolveApproval: ((Approval, ApprovalResolveStatus) -> Void)?
+
+    var body: some View {
+        if let approval, let onResolveApproval {
+            VStack(alignment: .leading, spacing: 8) {
+                Divider()
+                Label(approval.title, systemImage: "hand.raised")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                if let description = approval.description, !description.isEmpty {
+                    Text(description)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                ApprovalButtons(
+                    approval: approval,
+                    resolvingApprovalId: resolvingApprovalId,
+                    resolvingApprovalStatus: resolvingApprovalStatus,
+                    onResolveApproval: onResolveApproval,
+                )
+            }
+        }
+    }
+}
+
+private struct ApprovalButtons: View {
+    let approval: Approval
+    let resolvingApprovalId: String?
+    let resolvingApprovalStatus: ApprovalResolveStatus?
+    let onResolveApproval: (Approval, ApprovalResolveStatus) -> Void
+
+    private var isResolving: Bool {
+        resolvingApprovalId == approval.id
+    }
+
+    private var isDisabled: Bool {
+        resolvingApprovalId != nil
+    }
+
+    var body: some View {
+        if approval.status != "pending" {
+            Label(approval.status.replacingOccurrences(of: "_", with: " "), systemImage: "checkmark")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else {
+            VStack(spacing: 8) {
+                HStack(spacing: 8) {
+                    ApprovalActionButton(
+                        title: "Deny",
+                        isPrimary: false,
+                        isResolving: isResolving && resolvingApprovalStatus == .rejected,
+                    ) {
+                        onResolveApproval(approval, .rejected)
+                    }
+                    ApprovalActionButton(
+                        title: "Always Allow",
+                        isPrimary: false,
+                        isResolving: isResolving && resolvingApprovalStatus == .approvedForSession,
+                    ) {
+                        onResolveApproval(approval, .approvedForSession)
+                    }
+                }
+                ApprovalActionButton(
+                    title: "Allow Once",
+                    isPrimary: true,
+                    isResolving: isResolving && resolvingApprovalStatus == .approved,
+                ) {
+                    onResolveApproval(approval, .approved)
+                }
+            }
+            .disabled(isDisabled)
+        }
+    }
+}
+
+private struct ApprovalActionButton: View {
+    let title: String
+    let isPrimary: Bool
+    let isResolving: Bool
+    let action: () -> Void
+
+    var body: some View {
+        if isPrimary {
+            button
+                .buttonStyle(.borderedProminent)
+        } else {
+            button
+                .buttonStyle(.bordered)
+        }
+    }
+
+    private var button: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                if isResolving {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+                Text(title)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+            }
+            .font(.caption.weight(.semibold))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 9)
+            .padding(.horizontal, 10)
         }
     }
 }
@@ -2014,7 +2345,7 @@ extension SessionSummary {
         case "running":
             return "Running"
         case "waiting_approval":
-            return "Approval"
+            return "Waiting"
         case "error":
             return "Error"
         case "idle":

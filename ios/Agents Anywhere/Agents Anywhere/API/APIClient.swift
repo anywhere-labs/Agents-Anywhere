@@ -186,6 +186,16 @@ struct APIClient {
         )
     }
 
+    func resolveApproval(token: String, approvalId: String, status: ApprovalResolveStatus) async throws -> RpcResponsePayload {
+        let id = approvalId.urlPathComponentEncoded
+        return try await request(
+            "/approvals/\(id)/resolve",
+            method: "POST",
+            body: ApprovalResolveRequest(status: status),
+            token: token,
+        )
+    }
+
     func uploadSessionAttachments(
         token: String,
         sessionId: String,
