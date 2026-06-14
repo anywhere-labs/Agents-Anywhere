@@ -441,10 +441,10 @@ private struct NewSessionSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    HStack(spacing: 14) {
-                        Button("Cancel") { dismiss() }
-                        runtimeMenu
-                    }
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    runtimeMenu
                 }
             }
             .onAppear {
@@ -610,7 +610,7 @@ private struct NewSessionSheet: View {
             }
             .padding(.horizontal, 14)
             .frame(minHeight: 50)
-            .newSessionGlassEffect(shape: RoundedRectangle(cornerRadius: 25, style: .continuous))
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 25, style: .continuous))
         }
         .buttonStyle(.plain)
     }
@@ -884,19 +884,6 @@ private struct WorkspacePickerRow: View {
             }
         }
         .contentShape(Rectangle())
-    }
-}
-
-private extension View {
-    @ViewBuilder
-    func newSessionGlassEffect<S: Shape>(shape: S) -> some View {
-        if #available(iOS 26.0, *) {
-            self.glassEffect(.regular.interactive(), in: shape)
-        } else {
-            self.background {
-                shape.fill(.regularMaterial)
-            }
-        }
     }
 }
 

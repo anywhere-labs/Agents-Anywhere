@@ -2168,11 +2168,30 @@ struct LiquidGlassMessageInputBar: View {
 
     @FocusState private var editorFocused: Bool
     @State private var isKeyboardVisible = false
+    @State private var measuredEditorTextHeight: CGFloat = 0
 
     private let composerHeight: CGFloat = 50
     private let composerCornerRadius: CGFloat = 25
     private let composerVerticalPadding: CGFloat = 8
+    private let editorVerticalPadding: CGFloat = 8
+    private let maxEditorHeight: CGFloat = 116
     private let restingGap: CGFloat = 8
+
+    private var restingEditorHeight: CGFloat {
+        composerHeight - composerVerticalPadding * 2 - editorVerticalPadding * 2
+    }
+
+    private var editorHeight: CGFloat {
+        min(max(restingEditorHeight, measuredEditorTextHeight), maxEditorHeight)
+    }
+
+    private var editorMeasurementText: String {
+        guard !text.isEmpty else { return " " }
+        if text.hasSuffix("\n") || text.hasSuffix("\r") {
+            return text + " "
+        }
+        return text
+    }
 
     private var submitContext: MessageInputSubmitContext {
         MessageInputSubmitContext(
@@ -2221,6 +2240,9 @@ struct LiquidGlassMessageInputBar: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
             isKeyboardVisible = false
+        }
+        .onPreferenceChange(ComposerTextHeightPreferenceKey.self) { height in
+            measuredEditorTextHeight = height
         }
     }
 
@@ -2290,19 +2312,55 @@ struct LiquidGlassMessageInputBar: View {
 
     private var inputGlassField: some View {
         HStack(alignment: .bottom, spacing: 8) {
-            TextField(placeholder, text: $text, axis: .vertical)
-                .focused($editorFocused)
-                .textFieldStyle(.plain)
-                .font(.body)
-                .lineLimit(1...4)
-                .submitLabel(.send)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .onSubmit {
-                    if canPerformSubmit {
-                        onSend()
+            ZStack(alignment: .topLeading) {
+                TextEditor(text: $text)
+                    .focused($editorFocused)
+                    .scrollContentBackground(.hidden)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .frame(height: editorHeight)
+                    .padding(.vertical, editorVerticalPadding)
+                    .background(Color.clear)
+                    .background(alignment: .topLeading) {
+                        Text(editorMeasurementText)
+                            .font(.body)
+                            .lineLimit(nil)
+                            .padding(.horizontal, 5)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .opacity(0)
+                            .background {
+                                GeometryReader { proxy in
+                                    Color.clear.preference(
+                                        key: ComposerTextHeightPreferenceKey.self,
+                                        value: proxy.size.height,
+                                    )
+                                }
+                            }
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
                     }
-                }
+                    .overlay(alignment: .topLeading) {
+                        if text.isEmpty {
+                            Text(placeholder)
+                                .font(.body)
+                                .lineLimit(1)
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 8)
+                                .allowsHitTesting(false)
+                        }
+                    }
+                    .simultaneousGesture(
+                        TapGesture().onEnded {
+                            focusEditor()
+                        },
+                    )
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                focusEditor()
+            }
 
             if showInterrupt {
                 interruptButton
@@ -2386,6 +2444,14 @@ struct LiquidGlassMessageInputBar: View {
     }
 }
 
+private struct ComposerTextHeightPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 private extension View {
     func copyContextMenu(_ text: String) -> some View {
         contextMenu {
@@ -2400,7 +2466,12 @@ private extension View {
     @ViewBuilder
     func composerGlassEffect<S: Shape>(shape: S) -> some View {
         if #available(iOS 26.0, *) {
-            self.glassEffect(.regular.interactive(), in: shape)
+            self.background {
+                shape
+                    .fill(.clear)
+                    .glassEffect(.regular, in: shape)
+                    .allowsHitTesting(false)
+            }
         } else {
             self.background {
                 shape.fill(.regularMaterial)
