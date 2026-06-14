@@ -1288,6 +1288,11 @@ private struct MarkdownText: View {
                 }
                 .background(MarkdownCodeBlockBackground())
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(.secondary.opacity(0.18), lineWidth: 1)
+                }
+                .markdownMargin(top: 4, bottom: 12)
             }
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1300,7 +1305,7 @@ private struct MarkdownCodeBlockBackground: View {
     var body: some View {
         if #available(iOS 26.0, *) {
             shape
-                .fill(.clear)
+                .fill(.secondary.opacity(0.08))
                 .glassEffect(.regular, in: shape)
         } else {
             shape
