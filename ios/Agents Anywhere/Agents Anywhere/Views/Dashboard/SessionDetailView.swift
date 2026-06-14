@@ -26,6 +26,7 @@ struct SessionDetailView: View {
     @State private var isShowingDetails = false
     @State private var isShowingRuntimeSettings = false
     @State private var isApplyingTakeover = false
+    @State private var takeoverIntent: TakeoverIntent?
     @State private var isConfirmingTakeoverBeforeSend = false
     @State private var runtimeSchema: RuntimeConfigSchema?
     @State private var runtimeSettings: RuntimeSettingsResponse?
@@ -60,6 +61,46 @@ struct SessionDetailView: View {
 
     private var canSend: Bool {
         return !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingUploads.isEmpty
+    }
+
+    private var takeoverConfirmBinding: Binding<Bool> {
+        Binding(
+            get: { takeoverIntent != nil },
+            set: { isPresented in
+                if !isPresented, !isApplyingTakeover {
+                    takeoverIntent = nil
+                }
+            },
+        )
+    }
+
+    private var takeoverAlertTitle: String {
+        takeoverIntent == .disable ? "Disable Takeover?" : "Enable Takeover?"
+    }
+
+    private var takeoverAlertMessage: String {
+        if takeoverIntent == .disable {
+            return "Disabling takeover returns this session to read-only mode. Existing agent work keeps running unless you interrupt it first."
+        }
+        return "Takeover makes this session writable from this iPhone. Messages and interrupts will be sent to the remote agent."
+    }
+
+    private var takeoverConfirmTitle: String {
+        if isApplyingTakeover {
+            return "Applying..."
+        }
+        return takeoverIntent == .disable ? "Disable Takeover" : "Enable Takeover"
+    }
+
+    private var sessionTakeoverBinding: Binding<Bool> {
+        Binding(
+            get: { session.takeover },
+            set: { newValue in
+                if newValue != session.takeover {
+                    requestTakeoverToggle()
+                }
+            },
+        )
     }
 
     init(initialSession: SessionSummary) {
@@ -100,7 +141,7 @@ struct SessionDetailView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 14)
-                .padding(.bottom, pendingUploads.isEmpty ? 112 : 196)
+                .padding(.bottom, pendingUploads.isEmpty ? 104 : 188)
             }
             .defaultScrollAnchor(.bottom)
             .onChange(of: displayEntries.last?.id) { _, _ in
@@ -141,10 +182,8 @@ struct SessionDetailView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
-                    Button {
-                        Task { await applyTakeover() }
-                    } label: {
-                        Label(session.takeover ? "Disable Takeover" : "Takeover", systemImage: session.takeover ? "lock.open" : "hand.raised")
+                    Toggle(isOn: sessionTakeoverBinding) {
+                        Label("Takeover", systemImage: "hand.raised")
                     }
                     .disabled(isApplyingTakeover)
 
@@ -175,7 +214,7 @@ struct SessionDetailView: View {
                     onRuntime: { Task { await openRuntimeSettings() } },
                     isTakeoverEnabled: session.takeover,
                     isTakeoverDisabled: isApplyingTakeover || session.connectorStatus != "online",
-                    onToggleTakeover: { Task { await applyTakeover() } },
+                    onToggleTakeover: { requestTakeoverToggle() },
                 )
             }
         }
@@ -220,6 +259,17 @@ struct SessionDetailView: View {
             }
         } message: {
             Text("This session is read-only until takeover is enabled.")
+        }
+        .alert(takeoverAlertTitle, isPresented: takeoverConfirmBinding) {
+            Button("Cancel", role: .cancel) {
+                takeoverIntent = nil
+            }
+            Button(takeoverConfirmTitle) {
+                Task { await applyTakeover() }
+            }
+            .disabled(isApplyingTakeover)
+        } message: {
+            Text(takeoverAlertMessage)
         }
         .alert("Session Error", isPresented: Binding(
             get: { errorMessage != nil },
@@ -274,7 +324,10 @@ struct SessionDetailView: View {
     private func applyTakeover() async {
         guard !isApplyingTakeover, let api = appState.api, let token = appState.accessToken() else { return }
         isApplyingTakeover = true
-        defer { isApplyingTakeover = false }
+        defer {
+            isApplyingTakeover = false
+            takeoverIntent = nil
+        }
         do {
             let response = session.takeover
                 ? try await api.disableTakeover(token: token, sessionId: initialSession.id)
@@ -283,6 +336,11 @@ struct SessionDetailView: View {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func requestTakeoverToggle() {
+        guard !isApplyingTakeover else { return }
+        takeoverIntent = session.takeover ? .disable : .enable
     }
 
     private func openRuntimeSettings() async {
@@ -530,6 +588,11 @@ struct SessionDetailView: View {
             return itemsById.values.contains { $0.matchesOptimisticMessage(optimistic.id) }
         }
     }
+}
+
+private enum TakeoverIntent {
+    case enable
+    case disable
 }
 
 private enum ChatEntry: Identifiable {
@@ -1180,7 +1243,7 @@ struct LiquidGlassMessageInputBar: View {
         }
         .padding(.horizontal, 12)
         .padding(.top, 8)
-        .padding(.bottom, 8)
+        .padding(.bottom, 2)
         .animation(.smooth(duration: 0.22), value: canSend)
     }
 
@@ -1214,10 +1277,8 @@ struct LiquidGlassMessageInputBar: View {
                 Label("Runtime", systemImage: "terminal")
             }
 
-            Button {
-                onToggleTakeover()
-            } label: {
-                Label(isTakeoverEnabled ? "Disable Takeover" : "Takeover", systemImage: isTakeoverEnabled ? "lock.open" : "hand.raised")
+            Toggle(isOn: takeoverBinding) {
+                Label("Takeover", systemImage: "hand.raised")
             }
             .disabled(isTakeoverDisabled)
         } label: {
@@ -1282,6 +1343,17 @@ struct LiquidGlassMessageInputBar: View {
 
     private var inputPlaceholder: String {
         isTakeoverEnabled ? "Message to agent" : "Enable Takeover to send message"
+    }
+
+    private var takeoverBinding: Binding<Bool> {
+        Binding(
+            get: { isTakeoverEnabled },
+            set: { newValue in
+                if newValue != isTakeoverEnabled {
+                    onToggleTakeover()
+                }
+            },
+        )
     }
 }
 
