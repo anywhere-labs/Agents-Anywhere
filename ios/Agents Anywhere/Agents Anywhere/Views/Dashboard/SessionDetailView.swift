@@ -9,6 +9,7 @@ private let attachmentOnlyPrompt = "Please review the attached file."
 
 struct SessionDetailView: View {
     @EnvironmentObject private var appState: AppState
+    @Environment(\.scenePhase) private var scenePhase
 
     let initialSession: SessionSummary
 
@@ -40,6 +41,7 @@ struct SessionDetailView: View {
     @State private var isLoadingRuntimeSettings = false
     @State private var isPatchingRuntimeSettings = false
     @State private var hasPositionedInitialScroll = false
+    @State private var lastEntryRefreshAt: Date?
     @State private var sseTask: Task<Void, Never>?
     @State private var pollTask: Task<Void, Never>?
 
@@ -218,10 +220,19 @@ struct SessionDetailView: View {
             .task {
                 await markRead()
                 await loadState(replace: true)
+                lastEntryRefreshAt = Date()
                 startEventStream()
                 scrollToBottom(proxy, animated: false)
                 DispatchQueue.main.async {
                     scrollToBottom(proxy, animated: false)
+                }
+            }
+            .onAppear {
+                Task { await refreshOnEntry() }
+            }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active {
+                    Task { await refreshOnEntry() }
                 }
             }
             .onDisappear {
@@ -537,6 +548,16 @@ struct SessionDetailView: View {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func refreshOnEntry() async {
+        let now = Date()
+        if let lastEntryRefreshAt, now.timeIntervalSince(lastEntryRefreshAt) < 1.5 {
+            return
+        }
+        lastEntryRefreshAt = now
+        await loadState(replace: false)
+        await markRead()
     }
 
     private func startEventStream() {

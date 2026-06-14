@@ -34,6 +34,23 @@ private struct RootTabsView: View {
     @SceneStorage("selectedRootTab")
     private var selectedTab: String = "sessions"
     @State private var sessionPath: [SessionSummary] = []
+    @State private var previousTab: String = "sessions"
+
+    private var tabTransition: AnyTransition {
+        let edge: Edge = selectedTabSortOrder >= previousTabSortOrder ? .trailing : .leading
+        return .asymmetric(
+            insertion: .move(edge: edge).combined(with: .opacity),
+            removal: .move(edge: edge == .trailing ? .leading : .trailing).combined(with: .opacity),
+        )
+    }
+
+    private var selectedTabSortOrder: Int {
+        tabSortOrder(selectedTab)
+    }
+
+    private var previousTabSortOrder: Int {
+        tabSortOrder(previousTab)
+    }
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -44,6 +61,8 @@ private struct RootTabsView: View {
                             SessionDetailView(initialSession: session)
                         }
                 }
+                .id("sessions")
+                .transition(tabTransition)
             }
 
             Tab("Devices", systemImage: "desktopcomputer", value: "devices") {
@@ -51,6 +70,8 @@ private struct RootTabsView: View {
                     DevicesView()
                         .navigationTitle("Devices")
                 }
+                .id("devices")
+                .transition(tabTransition)
             }
 
             Tab("Me", systemImage: "person.crop.circle.fill", value: "me") {
@@ -58,13 +79,33 @@ private struct RootTabsView: View {
                     MeView()
                         .navigationTitle("Me")
                 }
+                .id("me")
+                .transition(tabTransition)
             }
+        }
+        .animation(.smooth(duration: 0.22), value: selectedTab)
+        .onChange(of: selectedTab) { oldValue, _ in
+            previousTab = oldValue
         }
         .onChange(of: sessionToOpen) { _, session in
             guard let session else { return }
+            previousTab = selectedTab
             selectedTab = "sessions"
             sessionPath = [session]
             sessionToOpen = nil
+        }
+    }
+
+    private func tabSortOrder(_ tab: String) -> Int {
+        switch tab {
+        case "sessions":
+            return 0
+        case "devices":
+            return 1
+        case "me":
+            return 2
+        default:
+            return 0
         }
     }
 }
