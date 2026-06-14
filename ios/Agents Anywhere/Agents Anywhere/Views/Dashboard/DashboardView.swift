@@ -272,6 +272,7 @@ private struct MeView: View {
 private struct NewSessionSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var prompt = ""
+    @State private var isPromptFocused = false
 
     var body: some View {
         NavigationStack {
@@ -315,10 +316,17 @@ private struct NewSessionSheet: View {
                 }
             }
             .safeAreaInset(edge: .bottom) {
-                LiquidGlassMessageInputBar(text: $prompt, onSend: {
-                    prompt = ""
-                    dismiss()
-                })
+                LiquidGlassMessageInputBar(
+                    text: $prompt,
+                    isFocused: $isPromptFocused,
+                    onSend: {
+                        prompt = ""
+                        dismiss()
+                    },
+                    onDismissKeyboard: {
+                        isPromptFocused = false
+                    },
+                )
             }
         }
     }
