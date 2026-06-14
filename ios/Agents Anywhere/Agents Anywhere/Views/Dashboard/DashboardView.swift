@@ -315,10 +315,10 @@ private struct NewSessionSheet: View {
                 }
             }
             .safeAreaInset(edge: .bottom) {
-                GlassMessageInputBar(text: $prompt, showsAttachmentButton: true) {
+                LiquidGlassMessageInputBar(text: $prompt, onSend: {
                     prompt = ""
                     dismiss()
-                }
+                })
             }
         }
     }

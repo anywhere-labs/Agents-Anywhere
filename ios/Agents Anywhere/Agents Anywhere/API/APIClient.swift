@@ -107,14 +107,67 @@ struct APIClient {
         )
     }
 
-    func sendSessionMessage(token: String, sessionId: String, content: String) async throws -> RpcResponsePayload {
+    func sendSessionMessage(
+        token: String,
+        sessionId: String,
+        content: String,
+        attachments: [AttachmentRef] = [],
+        clientMessageId: String? = nil,
+    ) async throws -> RpcResponsePayload {
         let id = sessionId.urlPathComponentEncoded
         return try await request(
             "/sessions/\(id)/messages",
             method: "POST",
-            body: MessageCreateRequest(content: content),
+            body: MessageCreateRequest(
+                content: content,
+                attachments: attachments.isEmpty ? nil : attachments,
+                clientMessageId: clientMessageId,
+            ),
             token: token,
         )
+    }
+
+    func uploadSessionAttachments(
+        token: String,
+        sessionId: String,
+        uploads: [AttachmentUpload],
+    ) async throws -> UserUploadResponse {
+        let id = sessionId.urlPathComponentEncoded
+        let boundary = "Boundary-\(UUID().uuidString)"
+        guard let url = URL(string: "/sessions/\(id)/attachments", relativeTo: serverURL)?.absoluteURL else {
+            throw APIClientError.invalidResponse
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.httpBody = uploads.multipartBody(boundary: boundary)
+
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw APIClientError.invalidResponse
+        }
+        guard 200..<300 ~= http.statusCode else {
+            let detail = (try? JSONDecoder().decode(APIErrorResponse.self, from: data).message)
+                ?? HTTPURLResponse.localizedString(forStatusCode: http.statusCode)
+            throw APIClientError.server(status: http.statusCode, detail: detail)
+        }
+        return try JSONDecoder().decode(UserUploadResponse.self, from: data)
+    }
+
+    func sessionEventsURL(token: String, sessionId: String) throws -> URL {
+        let id = sessionId.urlPathComponentEncoded
+        guard var components = URLComponents(
+            url: URL(string: "/sessions/\(id)/events", relativeTo: serverURL)?.absoluteURL ?? serverURL,
+            resolvingAgainstBaseURL: false,
+        ) else {
+            throw APIClientError.invalidResponse
+        }
+        components.queryItems = [URLQueryItem(name: "token", value: token)]
+        guard let url = components.url else { throw APIClientError.invalidResponse }
+        return url
     }
 
     private func request<Response: Decodable>(
@@ -164,6 +217,34 @@ private struct AnyEncodable: Encodable {
 }
 
 private struct EmptyBody: Encodable {}
+
+private extension Array where Element == AttachmentUpload {
+    func multipartBody(boundary: String) -> Data {
+        var data = Data()
+        for upload in self {
+            data.append("--\(boundary)\r\n")
+            data.append("Content-Disposition: form-data; name=\"files\"; filename=\"\(upload.name.escapedMultipartFilename)\"\r\n")
+            data.append("Content-Type: \(upload.mediaType)\r\n\r\n")
+            data.append(upload.data)
+            data.append("\r\n")
+        }
+        data.append("--\(boundary)--\r\n")
+        return data
+    }
+}
+
+private extension Data {
+    mutating func append(_ string: String) {
+        append(Data(string.utf8))
+    }
+}
+
+private extension String {
+    var escapedMultipartFilename: String {
+        replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+    }
+}
 
 extension URL {
     func normalizedServerURL() -> URL {

@@ -1,4 +1,10 @@
+import AVFoundation
+import Combine
+import PhotosUI
+import Speech
 import SwiftUI
+
+private let attachmentOnlyPrompt = "Please review the attached file."
 
 struct SessionDetailView: View {
     @EnvironmentObject private var appState: AppState
@@ -6,12 +12,38 @@ struct SessionDetailView: View {
     let initialSession: SessionSummary
 
     @State private var session: SessionSummary
-    @State private var items: [TimelineItem] = []
+    @State private var itemsById: [String: TimelineItem] = [:]
     @State private var approvals: [Approval] = []
-    @State private var isLoading = false
+    @State private var optimisticItems: [TimelineItem] = []
+    @State private var nextSeq = 0
+    @State private var isLoading = true
     @State private var isSending = false
     @State private var messageText = ""
     @State private var errorMessage: String?
+    @State private var selectedPhotoItems: [PhotosPickerItem] = []
+    @State private var pendingUploads: [AttachmentUpload] = []
+    @State private var isPhotoPickerPresented = false
+    @State private var sseTask: Task<Void, Never>?
+    @State private var pollTask: Task<Void, Never>?
+
+    private var timelineItems: [TimelineItem] {
+        let real = itemsById.values.sorted { lhs, rhs in
+            lhs.orderSeq == rhs.orderSeq ? lhs.updatedSeq < rhs.updatedSeq : lhs.orderSeq < rhs.orderSeq
+        }
+        return mergeOptimisticItems(real: real, optimistic: optimisticItems)
+    }
+
+    private var displayEntries: [ChatEntry] {
+        var entries = timelineItems.compactMap(ChatEntry.fromTimelineItem)
+        entries.append(contentsOf: approvals.filter { $0.status == "pending" }.map(ChatEntry.approval))
+        return entries.sorted { lhs, rhs in
+            lhs.sortKey < rhs.sortKey
+        }
+    }
+
+    private var canSend: Bool {
+        return !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingUploads.isEmpty
+    }
 
     init(initialSession: SessionSummary) {
         self.initialSession = initialSession
@@ -19,43 +51,65 @@ struct SessionDetailView: View {
     }
 
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 14) {
-                SessionDetailHeader(session: session)
-
-                if isLoading && items.isEmpty {
-                    ProgressView()
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 40)
-                } else if items.isEmpty && approvals.isEmpty {
-                    ContentUnavailableView(
-                        "No Activity Yet",
-                        systemImage: "text.bubble",
-                        description: Text("Messages and runtime events will appear here."),
-                    )
-                    .padding(.top, 60)
-                } else {
-                    ForEach(approvals.filter { $0.targetItemId == nil && $0.status == "pending" }) { approval in
-                        ApprovalCard(approval: approval)
-                    }
-
-                    ForEach(items) { item in
-                        TimelineRow(
-                            item: item,
-                            approval: approvals.first { $0.targetItemId == item.id && $0.status == "pending" },
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 18) {
+                    if isLoading && displayEntries.isEmpty {
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 60)
+                    } else if displayEntries.isEmpty {
+                        ContentUnavailableView(
+                            "No Messages Yet",
+                            systemImage: "bubble.left.and.bubble.right",
+                            description: Text("Messages from this session will appear here."),
                         )
+                        .padding(.top, 80)
+                    } else {
+                        ForEach(displayEntries) { entry in
+                            ChatEntryView(entry: entry)
+                                .id(entry.id)
+                        }
+
+                        if session.status == "running" {
+                            WorkingIndicator(runtime: session.runtime)
+                                .id("working")
+                        }
                     }
+
+                    Color.clear
+                        .frame(height: 1)
+                        .id("bottom")
                 }
+                .padding(.horizontal, 16)
+                .padding(.top, 14)
+                .padding(.bottom, pendingUploads.isEmpty ? 92 : 138)
             }
-            .padding(20)
-            .padding(.bottom, 90)
+            .defaultScrollAnchor(.bottom)
+            .onChange(of: displayEntries.last?.id) { _, _ in
+                scrollToBottom(proxy, animated: true)
+            }
+            .onChange(of: session.status) { _, _ in
+                scrollToBottom(proxy, animated: true)
+            }
+            .task {
+                await markRead()
+                await loadState(replace: true)
+                startEventStream()
+                startFallbackPoll()
+                scrollToBottom(proxy, animated: false)
+            }
+            .onDisappear {
+                sseTask?.cancel()
+                pollTask?.cancel()
+            }
         }
         .navigationTitle(session.displayTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
-                    Task { await loadState() }
+                    Task { await loadState(replace: true) }
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
@@ -63,9 +117,24 @@ struct SessionDetailView: View {
             }
         }
         .safeAreaInset(edge: .bottom) {
-            GlassMessageInputBar(text: $messageText, isSending: isSending) {
-                Task { await sendMessage() }
+            VStack(spacing: 0) {
+                if !pendingUploads.isEmpty {
+                    AttachmentStrip(uploads: pendingUploads) { upload in
+                        pendingUploads.removeAll { $0 == upload }
+                    }
+                }
+                LiquidGlassMessageInputBar(
+                    text: $messageText,
+                    isSending: isSending,
+                    hasPendingAttachments: !pendingUploads.isEmpty,
+                    onSend: { Task { await sendMessage() } },
+                    onPlus: { isPhotoPickerPresented = true },
+                )
             }
+        }
+        .photosPicker(isPresented: photoPickerBinding, selection: $selectedPhotoItems, maxSelectionCount: 4, matching: .images)
+        .onChange(of: selectedPhotoItems) { _, items in
+            Task { await importPhotos(items) }
         }
         .alert("Session Error", isPresented: Binding(
             get: { errorMessage != nil },
@@ -75,43 +144,21 @@ struct SessionDetailView: View {
         } message: {
             Text(errorMessage ?? "Something went wrong.")
         }
-        .task {
-            await markRead()
-            await loadState()
-        }
     }
 
-    private func loadState() async {
-        guard let api = appState.api, let token = appState.accessToken() else { return }
-        isLoading = true
-        defer { isLoading = false }
-        do {
-            var afterSeq = 0
-            var collected: [TimelineItem] = []
-            var latestApprovals: [Approval] = []
-            var latestSession = session
-            var hasMore = true
-            while hasMore {
-                let response = try await api.getSessionState(
-                    token: token,
-                    sessionId: initialSession.id,
-                    afterSeq: afterSeq,
-                    limit: 200,
-                )
-                collected.append(contentsOf: response.items)
-                latestApprovals = response.approvals
-                latestSession = response.session
-                hasMore = response.hasMore
-                guard let last = response.items.last, last.updatedSeq > afterSeq else {
-                    break
-                }
-                afterSeq = last.updatedSeq
-            }
-            session = latestSession
-            items = collected.sorted { $0.orderSeq < $1.orderSeq }
-            approvals = latestApprovals
-        } catch {
-            errorMessage = error.localizedDescription
+    private var photoPickerBinding: Binding<Bool> {
+        Binding(
+            get: { isPhotoPickerPresented },
+            set: { isPhotoPickerPresented = $0 },
+        )
+    }
+
+    private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool) {
+        let action = { proxy.scrollTo("bottom", anchor: .bottom) }
+        if animated {
+            withAnimation(.easeOut(duration: 0.22), action)
+        } else {
+            action()
         }
     }
 
@@ -120,198 +167,436 @@ struct SessionDetailView: View {
         _ = try? await api.markSessionRead(token: token, sessionId: initialSession.id)
     }
 
-    private func sendMessage() async {
-        let trimmed = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let api = appState.api, let token = appState.accessToken() else { return }
-        isSending = true
-        defer { isSending = false }
+    private func loadState(replace: Bool) async {
+        guard let api = appState.api, let token = appState.accessToken() else { return }
+        isLoading = true
+        defer { isLoading = false }
         do {
-            _ = try await api.sendSessionMessage(token: token, sessionId: initialSession.id, content: trimmed)
-            messageText = ""
-            await loadState()
+            var afterSeq = replace ? 0 : nextSeq
+            var collected: [TimelineItem] = []
+            var latestApprovals: [Approval]?
+            var latestSession: SessionSummary?
+            var latestNextSeq = nextSeq
+            var hasMore = true
+
+            while hasMore {
+                let response = try await api.getSessionState(
+                    token: token,
+                    sessionId: initialSession.id,
+                    afterSeq: afterSeq,
+                    limit: 500,
+                )
+                collected.append(contentsOf: response.items)
+                latestApprovals = response.approvals
+                latestSession = response.session
+                latestNextSeq = max(latestNextSeq, response.nextSeq)
+                hasMore = response.hasMore
+
+                guard let last = response.items.last, last.updatedSeq > afterSeq else {
+                    break
+                }
+                afterSeq = last.updatedSeq
+            }
+
+            applyDelta(
+                items: collected,
+                approvals: latestApprovals,
+                session: latestSession,
+                nextSeq: latestNextSeq,
+                replaceItems: replace,
+            )
         } catch {
             errorMessage = error.localizedDescription
         }
     }
-}
 
-private struct SessionDetailHeader: View {
-    let session: SessionSummary
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(session.displayTitle)
-                .font(.title2.weight(.bold))
-                .fixedSize(horizontal: false, vertical: true)
-
-            HStack(spacing: 8) {
-                Label(session.runtime, systemImage: session.runtimeIcon)
-                Text(session.connectorStatus)
-                Text(session.statusLabel)
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-
-            if let cwd = session.cwd {
-                Text(cwd)
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(2)
+    private func startEventStream() {
+        sseTask?.cancel()
+        guard let api = appState.api, let token = appState.accessToken() else { return }
+        sseTask = Task {
+            do {
+                let url = try api.sessionEventsURL(token: token, sessionId: initialSession.id)
+                let (bytes, _) = try await URLSession.shared.bytes(from: url)
+                for try await line in bytes.lines {
+                    guard !Task.isCancelled else { return }
+                    guard line.hasPrefix("data:") else { continue }
+                    let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+                    guard let data = payload.data(using: .utf8) else { continue }
+                    if let event = try? JSONDecoder().decode(SessionEventEnvelope.self, from: data) {
+                        await MainActor.run {
+                            if event.refetch == true {
+                                Task { await loadState(replace: true) }
+                            } else {
+                                applyDelta(
+                                    items: event.items ?? [],
+                                    approvals: event.approvals,
+                                    session: event.session,
+                                    nextSeq: event.nextSeq,
+                                    replaceItems: false,
+                                )
+                            }
+                        }
+                    }
+                }
+            } catch {
+                // Fallback polling keeps the session live when an environment
+                // buffers or rejects event streams.
             }
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(.regularMaterial)
+    }
+
+    private func startFallbackPoll() {
+        pollTask?.cancel()
+        pollTask = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(3))
+                guard !Task.isCancelled else { return }
+                await loadState(replace: false)
+            }
+        }
+    }
+
+    private func applyDelta(
+        items newItems: [TimelineItem],
+        approvals newApprovals: [Approval]?,
+        session newSession: SessionSummary?,
+        nextSeq newNextSeq: Int?,
+        replaceItems: Bool,
+    ) {
+        if replaceItems {
+            itemsById = [:]
+        }
+        for item in newItems {
+            let existing = itemsById[item.id]
+            if existing == nil || existing!.updatedSeq <= item.updatedSeq {
+                itemsById[item.id] = item
+            }
+        }
+        if let newApprovals {
+            approvals = newApprovals
+        }
+        if let newSession {
+            session = newSession
+        }
+        if let newNextSeq {
+            nextSeq = max(nextSeq, newNextSeq)
+        }
+        pruneOptimisticItems()
+    }
+
+    private func sendMessage() async {
+        guard canSend, let api = appState.api, let token = appState.accessToken() else { return }
+        let visibleText = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let uploads = pendingUploads
+        let tempId = "opt_\(UUID().uuidString)"
+        let now = ISO8601DateFormatter().string(from: Date())
+
+        isSending = true
+        do {
+            let uploaded = uploads.isEmpty
+                ? []
+                : try await api.uploadSessionAttachments(token: token, sessionId: initialSession.id, uploads: uploads).attachments
+            let sendContent = visibleText.isEmpty && !uploaded.isEmpty ? attachmentOnlyPrompt : visibleText
+            let optimistic = TimelineItem.optimisticUserMessage(
+                id: tempId,
+                sessionId: initialSession.id,
+                text: visibleText,
+                attachments: uploaded,
+                createdAt: now,
+            )
+            optimisticItems.append(optimistic)
+            messageText = ""
+            pendingUploads = []
+
+            _ = try await api.sendSessionMessage(
+                token: token,
+                sessionId: initialSession.id,
+                content: sendContent,
+                attachments: uploaded.map { AttachmentRef(fileId: $0.fileId) },
+                clientMessageId: tempId,
+            )
+
+            optimisticItems = optimisticItems.map {
+                $0.id == tempId ? $0.withStatus("running") : $0
+            }
+            errorMessage = nil
+        } catch {
+            optimisticItems = optimisticItems.map {
+                $0.id == tempId ? $0.withStatus("failed") : $0
+            }
+            errorMessage = error.localizedDescription
+        }
+        isSending = false
+    }
+
+    private func importPhotos(_ items: [PhotosPickerItem]) async {
+        defer { selectedPhotoItems = [] }
+        for item in items {
+            do {
+                guard let data = try await item.loadTransferable(type: Data.self) else { continue }
+                let upload = AttachmentUpload(
+                    name: "photo-\(UUID().uuidString.prefix(8)).jpg",
+                    mediaType: "image/jpeg",
+                    data: data,
+                )
+                pendingUploads.append(upload)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func pruneOptimisticItems() {
+        optimisticItems.removeAll { optimistic in
+            guard optimistic.status != "failed" else { return false }
+            return itemsById.values.contains { $0.matchesOptimisticMessage(optimistic.id) }
         }
     }
 }
 
-private struct TimelineRow: View {
+private enum ChatEntry: Identifiable {
+    case message(TimelineItem)
+    case approval(Approval)
+    case notice(String, String)
+
+    var id: String {
+        switch self {
+        case let .message(item):
+            return item.id
+        case let .approval(approval):
+            return approval.id
+        case let .notice(kind, text):
+            return "\(kind)-\(text)"
+        }
+    }
+
+    var sortKey: Int {
+        switch self {
+        case let .message(item):
+            return item.orderSeq
+        case let .approval(approval):
+            return approval.updatedSeq
+        case .notice:
+            return Int.max
+        }
+    }
+
+    static func fromTimelineItem(_ item: TimelineItem) -> ChatEntry? {
+        if item.type == "message", item.role == "user" || item.role == "assistant" {
+            return .message(item)
+        }
+        if item.type == "system", item.status == "failed" {
+            return .notice("Error", item.displayText ?? "Runtime error")
+        }
+        return nil
+    }
+}
+
+private struct ChatEntryView: View {
+    let entry: ChatEntry
+
+    var body: some View {
+        switch entry {
+        case let .message(item):
+            MessageBubble(item: item)
+        case let .approval(approval):
+            ApprovalSummary(approval: approval)
+        case let .notice(kind, text):
+            NoticeRow(kind: kind, text: text)
+        }
+    }
+}
+
+private struct MessageBubble: View {
     let item: TimelineItem
-    let approval: Approval?
+
+    private var isUser: Bool { return item.role == "user" }
+    private var text: String { return item.displayText ?? "" }
+    private var attachments: [UploadedAttachment] { return item.attachments }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: icon)
-                    .foregroundStyle(color)
-                Text(title)
-                    .font(.subheadline.weight(.semibold))
-                Spacer()
-                Text(item.status.capitalized)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+        HStack(alignment: .bottom) {
+            if isUser { Spacer(minLength: 48) }
+
+            VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
+                if !attachments.isEmpty {
+                    AttachmentPreviewGrid(attachments: attachments)
+                }
+                if !text.isEmpty {
+                    Text(text)
+                        .font(.body)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, isUser ? 14 : 0)
+                        .padding(.vertical, isUser ? 10 : 0)
+                        .background {
+                            if isUser {
+                                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                    .fill(.tint)
+                            }
+                        }
+                        .foregroundStyle(textColor)
+                }
+                if item.status == "pending" || item.status == "failed" {
+                    Text(item.status == "failed" ? "Failed to send" : "Sending...")
+                        .font(.caption2)
+                        .foregroundStyle(statusColor)
+                }
             }
+            .frame(maxWidth: isUser ? 300 : .infinity, alignment: isUser ? .trailing : .leading)
 
-            if let text = item.displayText, !text.isEmpty {
-                Text(text)
-                    .font(.body)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            if let approval {
-                ApprovalCard(approval: approval)
-            }
+            if !isUser { Spacer(minLength: 32) }
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(background)
-        }
+        .frame(maxWidth: .infinity)
     }
 
-    private var title: String {
-        if item.type == "message" {
-            return item.role?.capitalized ?? "Message"
-        }
-        if item.type == "tool" {
-            return item.content["function"]?.stringValue
-                ?? item.content["name"]?.stringValue
-                ?? item.content["tool"]?.stringValue
-                ?? "Tool"
-        }
-        if item.type == "system" {
-            return item.content["kind"]?.stringValue ?? "System"
-        }
-        return item.type
+    private var textColor: Color {
+        return isUser ? .white : .primary
     }
 
-    private var icon: String {
-        switch item.type {
-        case "message":
-            return item.role == "user" ? "person.fill" : "sparkles"
-        case "tool":
-            return "hammer"
-        case "system":
-            return "info.circle"
-        case "artifact":
-            return "doc.text"
-        default:
-            return "circle"
-        }
-    }
-
-    private var color: Color {
-        switch item.status {
-        case "failed":
-            return .red
-        case "waiting_approval":
-            return .orange
-        case "running":
-            return .green
-        default:
-            return .secondary
-        }
-    }
-
-    private var background: AnyShapeStyle {
-        item.role == "user" ? AnyShapeStyle(.thinMaterial) : AnyShapeStyle(.regularMaterial)
+    private var statusColor: Color {
+        return item.status == "failed" ? .red : .secondary
     }
 }
 
-private struct ApprovalCard: View {
+private struct AttachmentPreviewGrid: View {
+    let attachments: [UploadedAttachment]
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 6) {
+            ForEach(attachments) { attachment in
+                HStack(spacing: 6) {
+                    Image(systemName: attachment.mediaType.hasPrefix("image/") ? "photo" : "paperclip")
+                    Text(attachment.name)
+                        .lineLimit(1)
+                }
+                .font(.caption)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background {
+                    Capsule(style: .continuous)
+                        .fill(.secondary.opacity(0.12))
+                }
+            }
+        }
+    }
+}
+
+private struct ApprovalSummary: View {
     let approval: Approval
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Label("Approval Required", systemImage: "checkmark.shield")
-                    .font(.subheadline.weight(.semibold))
-                Spacer()
-                Text(approval.kind.replacingOccurrences(of: "_", with: " ").capitalized)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
+            Label("Approval Required", systemImage: "checkmark.shield")
+                .font(.subheadline.weight(.semibold))
             Text(approval.title)
                 .font(.headline)
-
             if let description = approval.description, !description.isEmpty {
                 Text(description)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(.orange.opacity(0.14))
         }
     }
 }
 
-struct GlassMessageInputBar: View {
+private struct NoticeRow: View {
+    let kind: String
+    let text: String
+
+    var body: some View {
+        Label {
+            Text(text)
+                .lineLimit(3)
+        } icon: {
+            Image(systemName: "exclamationmark.triangle")
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .padding(.vertical, 4)
+    }
+}
+
+private struct WorkingIndicator: View {
+    let runtime: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .scaleEffect(0.72)
+            Text("\(runtime) is working...")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct AttachmentStrip: View {
+    let uploads: [AttachmentUpload]
+    let onRemove: (AttachmentUpload) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(uploads, id: \.id) { upload in
+                    HStack(spacing: 6) {
+                        Image(systemName: upload.mediaType.hasPrefix("image/") ? "photo" : "paperclip")
+                        Text(upload.name)
+                            .lineLimit(1)
+                        Button {
+                            onRemove(upload)
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .font(.caption)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background {
+                        Capsule(style: .continuous)
+                            .fill(.regularMaterial)
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
+        }
+        .background(.bar)
+    }
+}
+
+struct LiquidGlassMessageInputBar: View {
     @Binding var text: String
+
     var isSending = false
-    var showsAttachmentButton = false
-    let onSend: () -> Void
+    var hasPendingAttachments = false
+    var onSend: () -> Void
+    var onPlus: () -> Void = {}
+
+    @FocusState private var isFocused: Bool
+    @StateObject private var speech = SpeechInputController()
 
     private var canSend: Bool {
-        !isSending && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return !isSending && (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || hasPendingAttachments)
     }
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 10) {
-            if showsAttachmentButton {
-                Button {
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.title3)
-                        .frame(width: 36, height: 36)
-                }
-                .buttonStyle(.borderless)
-            }
+            plusButton
 
             HStack(alignment: .bottom, spacing: 8) {
                 TextField("Message", text: $text, axis: .vertical)
                     .lineLimit(1...5)
                     .textFieldStyle(.plain)
+                    .focused($isFocused)
                     .submitLabel(.send)
                     .onSubmit {
                         if canSend {
@@ -322,42 +607,172 @@ struct GlassMessageInputBar: View {
                 Button {
                     if canSend {
                         onSend()
+                    } else {
+                        toggleDictation()
                     }
                 } label: {
-                    sendIcon
+                    if isSending {
+                        ProgressView()
+                            .scaleEffect(0.78)
+                            .frame(width: 30, height: 30)
+                    } else {
+                        Image(systemName: canSend ? "arrow.up.circle.fill" : speech.isRecording ? "stop.circle.fill" : "mic.fill")
+                            .font(.title2)
+                            .symbolRenderingMode(.hierarchical)
+                            .foregroundStyle(sendIconColor)
+                            .frame(width: 30, height: 30)
+                    }
                 }
                 .buttonStyle(.plain)
-                .disabled(!canSend && !isSending)
+                .accessibilityLabel(canSend ? "Send" : speech.isRecording ? "Stop Dictation" : "Voice Input")
             }
-            .padding(.leading, 14)
+            .padding(.leading, 15)
             .padding(.trailing, 8)
             .padding(.vertical, 8)
             .background {
-                Capsule(style: .continuous)
-                    .fill(.regularMaterial)
+                inputGlassBackground
             }
         }
         .padding(.horizontal, 12)
         .padding(.top, 8)
         .padding(.bottom, 8)
         .background(.bar)
+        .onChange(of: speech.transcript) { _, newValue in
+            text = newValue
+        }
+    }
+
+    private var plusButton: some View {
+        Menu {
+            Button {
+                onPlus()
+            } label: {
+                Label("Photos", systemImage: "photo")
+            }
+
+            Button {
+            } label: {
+                Label("Camera", systemImage: "camera")
+            }
+
+            Button {
+            } label: {
+                Label("Files", systemImage: "folder")
+            }
+
+            Button {
+            } label: {
+                Label("Runtime", systemImage: "terminal")
+            }
+        } label: {
+            Image(systemName: "plus")
+                .font(.title3)
+                .fontWeight(.medium)
+                .frame(width: 36, height: 36)
+        }
+        .buttonStyle(.glass)
+        .accessibilityLabel("More Content")
     }
 
     @ViewBuilder
-    private var sendIcon: some View {
-        if isSending {
-            ProgressView()
-                .scaleEffect(0.75)
-        } else if canSend {
-            Image(systemName: "arrow.up.circle.fill")
-                .font(.title2)
-                .foregroundStyle(.tint)
+    private var inputGlassBackground: some View {
+        if #available(iOS 26.0, *) {
+            Capsule(style: .continuous)
+                .fill(.clear)
+                .glassEffect(.regular, in: Capsule(style: .continuous))
         } else {
-            Image(systemName: "mic.fill")
-                .font(.title2)
-                .foregroundStyle(.secondary)
+            Capsule(style: .continuous)
+                .fill(.regularMaterial)
         }
     }
+
+    private func toggleDictation() {
+        isFocused = false
+        if speech.isRecording {
+            speech.stop()
+        } else {
+            speech.start()
+        }
+    }
+
+    private var sendIconColor: Color {
+        if canSend { return .accentColor }
+        if speech.isRecording { return .red }
+        return .secondary
+    }
+}
+
+@MainActor
+final class SpeechInputController: ObservableObject {
+    @Published var transcript = ""
+    @Published var isRecording = false
+
+    private let recognizer = SFSpeechRecognizer()
+    private let audioEngine = AVAudioEngine()
+    private var request: SFSpeechAudioBufferRecognitionRequest?
+    private var task: SFSpeechRecognitionTask?
+
+    func start() {
+        SFSpeechRecognizer.requestAuthorization { [weak self] status in
+            guard status == .authorized else { return }
+            Task { @MainActor in self?.startRecording() }
+        }
+    }
+
+    func stop() {
+        audioEngine.stop()
+        audioEngine.inputNode.removeTap(onBus: 0)
+        request?.endAudio()
+        task?.cancel()
+        request = nil
+        task = nil
+        isRecording = false
+    }
+
+    private func startRecording() {
+        stop()
+        let request = SFSpeechAudioBufferRecognitionRequest()
+        request.shouldReportPartialResults = true
+        self.request = request
+
+        let node = audioEngine.inputNode
+        let format = node.outputFormat(forBus: 0)
+        node.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak request] buffer, _ in
+            request?.append(buffer)
+        }
+
+        do {
+            #if os(iOS)
+            try AVAudioSession.sharedInstance().setCategory(.record, mode: .measurement, options: .duckOthers)
+            try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
+            #endif
+            audioEngine.prepare()
+            try audioEngine.start()
+            isRecording = true
+        } catch {
+            stop()
+            return
+        }
+
+        task = recognizer?.recognitionTask(with: request) { [weak self] result, error in
+            Task { @MainActor in
+                if let result {
+                    self?.transcript = result.bestTranscription.formattedString
+                }
+                if error != nil || result?.isFinal == true {
+                    self?.stop()
+                }
+            }
+        }
+    }
+}
+
+private struct SessionEventEnvelope: Decodable {
+    let items: [TimelineItem]?
+    let approvals: [Approval]?
+    let session: SessionSummary?
+    let nextSeq: Int?
+    let refetch: Bool?
 }
 
 extension SessionSummary {
@@ -455,7 +870,104 @@ private extension TimelineItem {
             ?? content["rawText"]?.stringValue
             ?? content["message"]?.stringValue
             ?? content["summary"]?.stringValue
-            ?? content["command"]?.stringValue
-            ?? content["cmd"]?.stringValue
     }
+
+    var attachments: [UploadedAttachment] {
+        guard case let .array(values) = content["attachments"] else { return [] }
+        return values.compactMap { value in
+            guard case let .object(object) = value,
+                  let fileId = object["fileId"]?.stringValue,
+                  let name = object["name"]?.stringValue,
+                  let mediaType = object["mediaType"]?.stringValue,
+                  let sizeString = object["size"]?.stringValue,
+                  let size = Int(Double(sizeString) ?? 0)
+            else { return nil }
+            return UploadedAttachment(
+                fileId: fileId,
+                sessionId: object["sessionId"]?.stringValue ?? sessionId,
+                name: name,
+                mediaType: mediaType,
+                size: size,
+                createdAt: object["createdAt"]?.stringValue ?? createdAt,
+                downloadUrl: object["downloadUrl"]?.stringValue,
+                platformOpenUrl: object["platformOpenUrl"]?.stringValue,
+            )
+        }
+    }
+
+    func matchesOptimisticMessage(_ optimisticId: String) -> Bool {
+        if source["clientMessageId"]?.stringValue == optimisticId {
+            return true
+        }
+        return false
+    }
+
+    static func optimisticUserMessage(
+        id: String,
+        sessionId: String,
+        text: String,
+        attachments: [UploadedAttachment],
+        createdAt: String,
+    ) -> TimelineItem {
+        let content: JSONValue
+        if attachments.isEmpty {
+            content = .object(["text": .string(text)])
+        } else {
+            content = .object([
+                "text": .string(text),
+                "attachments": .array(attachments.map { attachment in
+                    .object([
+                        "fileId": .string(attachment.fileId),
+                        "sessionId": .string(attachment.sessionId),
+                        "name": .string(attachment.name),
+                        "mediaType": .string(attachment.mediaType),
+                        "size": .number(Double(attachment.size)),
+                        "createdAt": .string(attachment.createdAt),
+                    ])
+                }),
+            ])
+        }
+        return TimelineItem(
+            id: id,
+            sessionId: sessionId,
+            turnId: nil,
+            type: "message",
+            status: "pending",
+            role: "user",
+            content: content,
+            source: .object(["clientMessageId": .string(id)]),
+            orderSeq: Int.max,
+            revision: 0,
+            contentHash: "",
+            updatedSeq: 0,
+            createdAt: createdAt,
+            updatedAt: createdAt,
+            completedAt: nil,
+        )
+    }
+
+    func withStatus(_ status: String) -> TimelineItem {
+        TimelineItem(
+            id: id,
+            sessionId: sessionId,
+            turnId: turnId,
+            type: type,
+            status: status,
+            role: role,
+            content: content,
+            source: source,
+            orderSeq: orderSeq,
+            revision: revision,
+            contentHash: contentHash,
+            updatedSeq: updatedSeq,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+            completedAt: completedAt,
+        )
+    }
+}
+
+private func mergeOptimisticItems(real: [TimelineItem], optimistic: [TimelineItem]) -> [TimelineItem] {
+    let realClientIds = Set(real.compactMap { $0.source["clientMessageId"]?.stringValue })
+    return real + optimistic.filter { !realClientIds.contains($0.id) }
 }

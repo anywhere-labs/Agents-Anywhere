@@ -265,8 +265,45 @@ struct RpcResponsePayload: Decodable {
     let error: String?
 }
 
+struct AttachmentRef: Encodable, Hashable {
+    let fileId: String
+}
+
+struct UploadedAttachment: Codable, Identifiable, Hashable {
+    let fileId: String
+    let sessionId: String
+    let name: String
+    let mediaType: String
+    let size: Int
+    let createdAt: String
+    let downloadUrl: String?
+    let platformOpenUrl: String?
+
+    var id: String { fileId }
+}
+
+struct UserUploadResponse: Decodable {
+    let attachments: [UploadedAttachment]
+    let serverTime: String
+}
+
+struct AttachmentUpload: Hashable {
+    let id = UUID()
+    let name: String
+    let mediaType: String
+    let data: Data
+}
+
 struct MessageCreateRequest: Encodable {
     let content: String
+    let attachments: [AttachmentRef]?
+    let clientMessageId: String?
+
+    init(content: String, attachments: [AttachmentRef]? = nil, clientMessageId: String? = nil) {
+        self.content = content
+        self.attachments = attachments
+        self.clientMessageId = clientMessageId
+    }
 }
 
 struct APIErrorResponse: Decodable {
