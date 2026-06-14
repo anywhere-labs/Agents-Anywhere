@@ -100,7 +100,7 @@ struct SessionDetailView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 14)
-                .padding(.bottom, pendingUploads.isEmpty ? 92 : 138)
+                .padding(.bottom, pendingUploads.isEmpty ? 126 : 172)
             }
             .defaultScrollAnchor(.bottom)
             .onChange(of: displayEntries.last?.id) { _, _ in
@@ -165,6 +165,13 @@ struct SessionDetailView: View {
                         pendingUploads.removeAll { $0 == upload }
                     }
                 }
+                SessionComposerControls(
+                    runtime: session.runtime,
+                    isTakeoverEnabled: session.takeover,
+                    isTakeoverDisabled: isApplyingTakeover || session.connectorStatus != "online",
+                    onRuntime: { Task { await openRuntimeSettings() } },
+                    onToggleTakeover: { Task { await applyTakeover() } },
+                )
                 LiquidGlassMessageInputBar(
                     text: $messageText,
                     isSending: isSending,
@@ -987,6 +994,46 @@ private struct RuntimeSettingRow: View {
     }
 }
 
+private struct SessionComposerControls: View {
+    let runtime: String
+    let isTakeoverEnabled: Bool
+    let isTakeoverDisabled: Bool
+    let onRuntime: () -> Void
+    let onToggleTakeover: () -> Void
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Button {
+                onRuntime()
+            } label: {
+                Label(runtime.capitalized, systemImage: "terminal")
+            }
+            .buttonStyle(.plain)
+
+            Toggle(isOn: takeoverBinding) {
+                Text("Takeover")
+            }
+            .toggleStyle(.switch)
+            .disabled(isTakeoverDisabled)
+        }
+        .font(.subheadline.weight(.semibold))
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 18)
+        .padding(.top, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var takeoverBinding: Binding<Bool> {
+        Binding(
+            get: { isTakeoverEnabled },
+            set: { newValue in
+                guard newValue != isTakeoverEnabled else { return }
+                onToggleTakeover()
+            },
+        )
+    }
+}
+
 struct LiquidGlassMessageInputBar: View {
     @Binding var text: String
 
@@ -1010,52 +1057,38 @@ struct LiquidGlassMessageInputBar: View {
         HStack(alignment: .bottom, spacing: 10) {
             plusButton
 
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 10) {
-                    Label(isTakeoverEnabled ? "Takeover" : "Read-only", systemImage: isTakeoverEnabled ? "lock.open" : "lock")
-                    Button {
-                        onRuntime()
-                    } label: {
-                        Label("Runtime", systemImage: "terminal")
-                    }
-                    .buttonStyle(.plain)
-                }
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-
-                HStack(alignment: .bottom, spacing: 8) {
-                    TextField("Message", text: $text, axis: .vertical)
-                        .lineLimit(1...5)
-                        .textFieldStyle(.plain)
-                        .focused($isFocused)
-                        .submitLabel(.send)
-                        .onSubmit {
-                            if canSend {
-                                onSend()
-                            }
-                        }
-
-                    Button {
+            HStack(alignment: .bottom, spacing: 8) {
+                TextField("Message", text: $text, axis: .vertical)
+                    .lineLimit(1...5)
+                    .textFieldStyle(.plain)
+                    .focused($isFocused)
+                    .submitLabel(.send)
+                    .onSubmit {
                         if canSend {
                             onSend()
                         }
-                    } label: {
-                        if isSending {
-                            ProgressView()
-                                .scaleEffect(0.78)
-                                .frame(width: 30, height: 30)
-                        } else {
-                            Image(systemName: "arrow.up.circle.fill")
-                                .font(.title2)
-                                .symbolRenderingMode(.hierarchical)
-                                .foregroundStyle(sendIconShapeStyle)
-                                .frame(width: 30, height: 30)
-                        }
                     }
-                    .buttonStyle(.plain)
-                    .disabled(!canSend)
-                    .accessibilityLabel("Send")
+
+                Button {
+                    if canSend {
+                        onSend()
+                    }
+                } label: {
+                    if isSending {
+                        ProgressView()
+                            .scaleEffect(0.78)
+                            .frame(width: 30, height: 30)
+                    } else {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.title2)
+                            .symbolRenderingMode(.hierarchical)
+                            .foregroundStyle(sendIconShapeStyle)
+                            .frame(width: 30, height: 30)
+                    }
                 }
+                .buttonStyle(.plain)
+                .disabled(!canSend)
+                .accessibilityLabel("Send")
             }
             .frame(minHeight: 44)
             .padding(.leading, 15)
