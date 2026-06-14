@@ -8,11 +8,11 @@ enum APIClientError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidServerURL:
-            "Enter a valid server URL."
+            return "Enter a valid server URL."
         case .invalidResponse:
-            "The server returned an invalid response."
+            return "The server returned an invalid response."
         case let .server(_, detail):
-            detail
+            return detail
         }
     }
 }
@@ -84,14 +84,48 @@ struct APIClient {
         try await request("/sessions", token: token)
     }
 
+    func markSessionRead(token: String, sessionId: String) async throws -> SessionResponse {
+        let id = sessionId.urlPathComponentEncoded
+        return try await request(
+            "/sessions/\(id)/read",
+            method: "POST",
+            body: EmptyBody(),
+            token: token,
+        )
+    }
+
+    func getSessionState(
+        token: String,
+        sessionId: String,
+        afterSeq: Int = 0,
+        limit: Int = 200,
+    ) async throws -> SessionStateResponse {
+        let id = sessionId.urlPathComponentEncoded
+        return try await request(
+            "/sessions/\(id)/state?afterSeq=\(afterSeq)&limit=\(limit)",
+            token: token,
+        )
+    }
+
+    func sendSessionMessage(token: String, sessionId: String, content: String) async throws -> RpcResponsePayload {
+        let id = sessionId.urlPathComponentEncoded
+        return try await request(
+            "/sessions/\(id)/messages",
+            method: "POST",
+            body: MessageCreateRequest(content: content),
+            token: token,
+        )
+    }
+
     private func request<Response: Decodable>(
         _ path: String,
         method: String = "GET",
         body: Encodable? = nil,
         token: String? = nil,
     ) async throws -> Response {
-        var url = serverURL
-        url.append(path: path.trimmingCharacters(in: CharacterSet(charactersIn: "/")))
+        guard let url = URL(string: path, relativeTo: serverURL)?.absoluteURL else {
+            throw APIClientError.invalidResponse
+        }
 
         var request = URLRequest(url: url)
         request.httpMethod = method
@@ -109,7 +143,7 @@ struct APIClient {
             throw APIClientError.invalidResponse
         }
         guard 200..<300 ~= http.statusCode else {
-            let detail = (try? JSONDecoder().decode(APIErrorResponse.self, from: data).detail)
+            let detail = (try? JSONDecoder().decode(APIErrorResponse.self, from: data).message)
                 ?? HTTPURLResponse.localizedString(forStatusCode: http.statusCode)
             throw APIClientError.server(status: http.statusCode, detail: detail)
         }
@@ -129,6 +163,8 @@ private struct AnyEncodable: Encodable {
     }
 }
 
+private struct EmptyBody: Encodable {}
+
 extension URL {
     func normalizedServerURL() -> URL {
         let components = URLComponents(url: self, resolvingAgainstBaseURL: false)
@@ -137,6 +173,12 @@ extension URL {
         normalized.query = nil
         normalized.fragment = nil
         return normalized.url ?? self
+    }
+}
+
+private extension String {
+    var urlPathComponentEncoded: String {
+        addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? self
     }
 }
 

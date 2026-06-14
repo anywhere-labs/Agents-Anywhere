@@ -118,6 +118,156 @@ struct SessionSummary: Decodable, Identifiable, Hashable {
     let updatedAt: String
 }
 
+enum JSONValue: Codable, Hashable {
+    case string(String)
+    case number(Double)
+    case bool(Bool)
+    case object([String: JSONValue])
+    case array([JSONValue])
+    case null
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() {
+            self = .null
+        } else if let value = try? container.decode(Bool.self) {
+            self = .bool(value)
+        } else if let value = try? container.decode(Double.self) {
+            self = .number(value)
+        } else if let value = try? container.decode(String.self) {
+            self = .string(value)
+        } else if let value = try? container.decode([JSONValue].self) {
+            self = .array(value)
+        } else {
+            self = .object(try container.decode([String: JSONValue].self))
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case let .string(value):
+            try container.encode(value)
+        case let .number(value):
+            try container.encode(value)
+        case let .bool(value):
+            try container.encode(value)
+        case let .object(value):
+            try container.encode(value)
+        case let .array(value):
+            try container.encode(value)
+        case .null:
+            try container.encodeNil()
+        }
+    }
+
+    var stringValue: String? {
+        switch self {
+        case let .string(value):
+            return value
+        case let .number(value):
+            return String(value)
+        case let .bool(value):
+            return String(value)
+        default:
+            return nil
+        }
+    }
+
+    var displayString: String {
+        switch self {
+        case let .string(value):
+            return value
+        case let .number(value):
+            return String(value)
+        case let .bool(value):
+            return String(value)
+        case let .array(value):
+            return value.map(\.displayString).joined(separator: ", ")
+        case let .object(value):
+            if let detail = value["detail"]?.displayString {
+                return detail
+            }
+            if let message = value["message"]?.displayString {
+                return message
+            }
+            return "Request failed"
+        case .null:
+            return "Request failed"
+        }
+    }
+
+    subscript(key: String) -> JSONValue? {
+        if case let .object(object) = self {
+            return object[key]
+        }
+        return nil
+    }
+}
+
+struct TimelineItem: Decodable, Identifiable, Hashable {
+    let id: String
+    let sessionId: String
+    let turnId: String?
+    let type: String
+    let status: String
+    let role: String?
+    let content: JSONValue
+    let source: JSONValue
+    let orderSeq: Int
+    let revision: Int
+    let contentHash: String
+    let updatedSeq: Int
+    let createdAt: String
+    let updatedAt: String
+    let completedAt: String?
+}
+
+struct Approval: Decodable, Identifiable, Hashable {
+    let id: String
+    let sessionId: String
+    let turnId: String?
+    let status: String
+    let kind: String
+    let targetItemId: String?
+    let title: String
+    let description: String?
+    let payload: JSONValue
+    let choices: [String]
+    let source: JSONValue
+    let updatedSeq: Int
+    let createdAt: String
+    let resolvedAt: String?
+}
+
+struct SessionStateResponse: Decodable {
+    let session: SessionSummary
+    let items: [TimelineItem]
+    let approvals: [Approval]
+    let nextSeq: Int
+    let hasMore: Bool
+    let serverTime: String
+}
+
+struct SessionResponse: Decodable {
+    let session: SessionSummary
+    let serverTime: String
+}
+
+struct RpcResponsePayload: Decodable {
+    let ok: Bool?
+    let result: JSONValue?
+    let error: String?
+}
+
+struct MessageCreateRequest: Encodable {
+    let content: String
+}
+
 struct APIErrorResponse: Decodable {
-    let detail: String
+    let detail: JSONValue
+
+    var message: String {
+        return detail.displayString
+    }
 }

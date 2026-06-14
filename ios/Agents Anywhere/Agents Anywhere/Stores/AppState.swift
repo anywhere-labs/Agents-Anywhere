@@ -34,6 +34,10 @@ final class AppState: ObservableObject {
         return APIClient(serverURL: serverURL)
     }
 
+    func accessToken() -> String? {
+        try? keychain.readString(account: tokenAccount)
+    }
+
     func restoreSession() async {
         route = .loading
         guard

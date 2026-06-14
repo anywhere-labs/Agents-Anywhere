@@ -179,7 +179,12 @@ private struct SessionsView: View {
         } else {
             VStack(spacing: 12) {
                 ForEach(filteredSessions) { session in
-                    SessionCard(session: session)
+                    NavigationLink {
+                        SessionDetailView(initialSession: session)
+                    } label: {
+                        SessionCard(session: session)
+                    }
+                    .buttonStyle(.plain)
                 }
             }
             .padding(.horizontal, 20)
@@ -296,7 +301,7 @@ private struct NewSessionSheet: View {
                 }
             }
             .safeAreaInset(edge: .bottom) {
-                GlassMessageInputBar(text: $prompt) {
+                GlassMessageInputBar(text: $prompt, showsAttachmentButton: true) {
                     prompt = ""
                     dismiss()
                 }
@@ -316,13 +321,13 @@ private enum SessionFilter: String, Identifiable {
     var title: String {
         switch self {
         case .status:
-            "Status"
+            return "Status"
         case .runtime:
-            "Runtime"
+            return "Runtime"
         case .device:
-            "Device"
+            return "Device"
         case .sort:
-            "Sort"
+            return "Sort"
         }
     }
 
@@ -493,12 +498,23 @@ private struct DeviceRow: View {
         Label {
             VStack(alignment: .leading, spacing: 3) {
                 Text(connector.name)
-                Text(connector.status.capitalized)
-                    .font(.caption)
-                    .foregroundStyle(connector.status == "online" ? .green : .secondary)
+                statusText
             }
         } icon: {
             Image(systemName: "desktopcomputer")
+        }
+    }
+
+    @ViewBuilder
+    private var statusText: some View {
+        if connector.status == "online" {
+            Text(connector.status.capitalized)
+                .font(.caption)
+                .foregroundStyle(.green)
+        } else {
+            Text(connector.status.capitalized)
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 }
@@ -543,98 +559,6 @@ private struct NewSessionOption: View {
             }
         }
         .buttonStyle(.plain)
-    }
-}
-
-private struct GlassMessageInputBar: View {
-    @Binding var text: String
-    let onSend: () -> Void
-
-    private var canSend: Bool {
-        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    var body: some View {
-        HStack(alignment: .bottom, spacing: 10) {
-            Button {
-            } label: {
-                Image(systemName: "plus")
-                    .font(.title3)
-                    .frame(width: 36, height: 36)
-            }
-            .buttonStyle(.borderless)
-
-            HStack(alignment: .bottom, spacing: 8) {
-                TextField("Message", text: $text, axis: .vertical)
-                    .lineLimit(1...5)
-                    .textFieldStyle(.plain)
-                    .submitLabel(.send)
-                    .onSubmit {
-                        if canSend {
-                            onSend()
-                        }
-                    }
-
-                Button {
-                    if canSend {
-                        onSend()
-                    }
-                } label: {
-                    sendIcon
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.leading, 14)
-            .padding(.trailing, 8)
-            .padding(.vertical, 8)
-            .background {
-                Capsule(style: .continuous)
-                    .fill(.regularMaterial)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.top, 8)
-        .padding(.bottom, 8)
-        .background(.bar)
-    }
-
-    @ViewBuilder
-    private var sendIcon: some View {
-        if canSend {
-            Image(systemName: "arrow.up.circle.fill")
-                .font(.title2)
-                .foregroundStyle(.tint)
-        } else {
-            Image(systemName: "mic.fill")
-                .font(.title2)
-                .foregroundStyle(.secondary)
-        }
-    }
-}
-
-private extension SessionSummary {
-    var displayTitle: String {
-        if let title, !title.isEmpty { return title }
-        return cwd ?? id
-    }
-
-    var sortKey: String {
-        sortAt ?? lastActivityAt ?? lastItemAt ?? updatedAt
-    }
-
-    var statusLabel: String {
-        switch status {
-        case "running":
-            "Running"
-        case "waiting_approval":
-            "Approval"
-        case "error":
-            "Error"
-        case "idle":
-            "Idle"
-        default:
-            status.capitalized
-        }
     }
 }
 
