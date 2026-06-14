@@ -132,16 +132,15 @@ struct AuthPrimaryButton: View {
 
     var body: some View {
         Button(action: action) {
-            ZStack {
-                normalLabel
-                    .opacity(isLoading ? 0 : 1)
-
-                if isLoading {
-                    ProgressView()
-                        .scaleEffect(0.82)
-                        .tint(AppTheme.primaryControlForeground(colorScheme))
+            normalLabel
+                .opacity(isLoading ? 0 : 1)
+                .overlay {
+                    if isLoading {
+                        ProgressView()
+                            .scaleEffect(0.75)
+                            .tint(AppTheme.primaryControlForeground(colorScheme))
+                    }
                 }
-            }
             .frame(maxWidth: .infinity)
         }
         .buttonStyle(.glassProminent)

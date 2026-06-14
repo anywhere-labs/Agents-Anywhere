@@ -33,7 +33,7 @@ struct QRCodeLoginView: View {
                 case let .complete(payload):
                     QRCompleteStepView(
                         payload: payload,
-                        onFinish: { dismiss() },
+                        onCancel: { dismiss() },
                     )
                 }
             }
@@ -288,7 +288,7 @@ private struct QRCompleteStepView: View {
     @EnvironmentObject private var appState: AppState
 
     let payload: MobileLoginPayload
-    let onFinish: () -> Void
+    let onCancel: () -> Void
 
     @State private var isFinishing = false
     @State private var alertMessage: String?
@@ -297,8 +297,7 @@ private struct QRCompleteStepView: View {
         AuthScreen(
             title: "Confirm Login",
             subtitle: "The web console approved this iPhone.",
-            showsCancel: false,
-            onCancel: {},
+            onCancel: onCancel,
         ) {
             VStack(alignment: .leading, spacing: 22) {
                 Text("Tap confirm to finish signing in and open your workspace.")
@@ -330,7 +329,7 @@ private struct QRCompleteStepView: View {
         defer { isFinishing = false }
         await appState.exchangeMobileLogin(payload: payload)
         if case .signedIn = appState.route {
-            onFinish()
+            onCancel()
         } else {
             alertMessage = appState.authError ?? "The login could not be completed."
         }
