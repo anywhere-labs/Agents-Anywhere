@@ -4,15 +4,18 @@ struct DashboardView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.colorScheme) private var colorScheme
     @State private var mode: DashboardMode = .main
-    @SceneStorage("dashboard.selectedTab") private var selectedTab = DashboardTab.sessions.rawValue
 
     var body: some View {
         Group {
             switch mode {
             case .main:
-                mainTabs
-            case .composing:
-                ComposeSessionView {
+                MainDashboardTabs {
+                    withAnimation(.snappy) {
+                        mode = .newSession
+                    }
+                }
+            case .newSession:
+                NewSessionView {
                     withAnimation(.snappy) {
                         mode = .main
                     }
@@ -24,12 +27,27 @@ struct DashboardView: View {
             await appState.refreshDashboard()
         }
     }
+}
 
-    private var waitingApprovalCount: Int {
-        appState.sessions.filter { $0.status == "waiting_approval" }.count
-    }
+private enum DashboardMode {
+    case main
+    case newSession
+}
 
-    private var mainTabs: some View {
+private enum DashboardTab: String {
+    case sessions
+    case devices
+    case me
+    case newSession
+}
+
+private struct MainDashboardTabs: View {
+    @EnvironmentObject private var appState: AppState
+    @SceneStorage("dashboard.selectedTab") private var selectedTab = DashboardTab.sessions.rawValue
+
+    let onNewSession: () -> Void
+
+    var body: some View {
         TabView(selection: $selectedTab) {
             Tab("Sessions", systemImage: "text.bubble", value: DashboardTab.sessions.rawValue) {
                 SessionsTabView()
@@ -43,43 +61,31 @@ struct DashboardView: View {
             Tab("Me", systemImage: "person.crop.circle", value: DashboardTab.me.rawValue) {
                 MeTabView()
             }
+
+            Tab("New", systemImage: "plus", value: DashboardTab.newSession.rawValue, role: .search) {
+                Color.clear
+            }
         }
-        .tabViewBottomAccessory {
-            NewSessionAccessoryButton {
-                withAnimation(.snappy) {
-                    mode = .composing
-                }
+        .onChange(of: selectedTab) { _, tab in
+            if tab == DashboardTab.newSession.rawValue {
+                selectedTab = DashboardTab.sessions.rawValue
+                onNewSession()
             }
         }
     }
-}
 
-private enum DashboardMode {
-    case main
-    case composing
-}
-
-private enum DashboardTab: String {
-    case sessions
-    case devices
-    case me
+    private var waitingApprovalCount: Int {
+        appState.sessions.filter { $0.status == "waiting_approval" }.count
+    }
 }
 
 private struct SessionsTabView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.colorScheme) private var colorScheme
-
-    @State private var searchText = ""
     @State private var selectedFilter: SessionFilter?
 
     private var filteredSessions: [SessionSummary] {
         appState.sessions.filter { session in
-            let matchesSearch = searchText.isEmpty
-                || session.displayTitle.localizedCaseInsensitiveContains(searchText)
-                || session.runtime.localizedCaseInsensitiveContains(searchText)
-                || session.connectorId.localizedCaseInsensitiveContains(searchText)
-                || (session.cwd?.localizedCaseInsensitiveContains(searchText) ?? false)
-            guard matchesSearch else { return false }
             guard let selectedFilter else { return true }
             return selectedFilter.matches(session)
         }
@@ -95,18 +101,15 @@ private struct SessionsTabView: View {
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                content
-            }
-            .background(AppTheme.appBackground(colorScheme))
-            .navigationTitle("Sessions")
-            .searchable(text: $searchText, prompt: "Search sessions")
-            .safeAreaInset(edge: .top) {
-                FilterBar(selectedFilter: $selectedFilter)
-            }
-            .refreshable {
-                await appState.refreshDashboard()
-            }
+            content
+                .background(AppTheme.appBackground(colorScheme))
+                .navigationTitle("Sessions")
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    FilterBar(selectedFilter: $selectedFilter)
+                }
+                .refreshable {
+                    await appState.refreshDashboard()
+                }
         }
     }
 
@@ -114,11 +117,11 @@ private struct SessionsTabView: View {
     private var content: some View {
         if filteredSessions.isEmpty {
             DashboardEmptyState(
-                systemImage: searchText.isEmpty ? "text.bubble" : "magnifyingglass",
-                title: searchText.isEmpty ? "No Sessions" : "No Matches",
-                message: searchText.isEmpty
-                    ? "Start a session from the web console, then monitor it here."
-                    : "Try a different title, runtime, workspace, or device.",
+                systemImage: "text.bubble",
+                title: "No Sessions",
+                message: selectedFilter == nil
+                    ? "Create a new session from the tab bar, then monitor it here."
+                    : "No sessions match this filter.",
             )
         } else {
             List {
@@ -138,7 +141,6 @@ private struct SessionsTabView: View {
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
-            .contentMargins(.bottom, 36, for: .scrollContent)
         }
     }
 }
@@ -148,17 +150,22 @@ private struct FilterBar: View {
     @State private var activeSheet: FilterKind?
 
     var body: some View {
-        VStack(spacing: 0) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    filterButton(.agent)
-                    filterButton(.device)
-                    filterButton(.workspace)
-                    filterButton(.status)
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                filterButton(.agent)
+                filterButton(.device)
+                filterButton(.workspace)
+                filterButton(.status)
+                if selectedFilter != nil {
+                    Button("Clear") {
+                        selectedFilter = nil
+                    }
+                    .buttonStyle(.glass)
+                    .buttonBorderShape(.capsule)
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 8)
             }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 10)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.bar)
@@ -177,11 +184,9 @@ private struct FilterBar: View {
                 Image(systemName: "chevron.down")
                     .font(.caption2)
             }
-            .frame(minHeight: 28)
         }
         .buttonStyle(.glass)
         .buttonBorderShape(.capsule)
-        .controlSize(.regular)
     }
 
     private func label(for kind: FilterKind) -> String {
@@ -384,22 +389,6 @@ private struct StatusMark: View {
     }
 }
 
-private struct NewSessionAccessoryButton: View {
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Label("New Session", systemImage: "square.and.pencil")
-                .font(.headline)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-        }
-        .buttonStyle(.glassProminent)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 6)
-    }
-}
-
 private struct DevicesTabView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.colorScheme) private var colorScheme
@@ -486,7 +475,7 @@ private struct MeTabView: View {
     }
 }
 
-private struct ComposeSessionView: View {
+private struct NewSessionView: View {
     let onCancel: () -> Void
 
     @State private var messageText = ""
@@ -500,7 +489,7 @@ private struct ComposeSessionView: View {
                 }
 
                 Section("Context") {
-                    Text("Use the message field below to draft the first instruction for a new session. Device, workspace, and runtime selection can connect to the full create-session API next.")
+                    Text("Use the message field below to draft the first instruction. Device, workspace, and runtime selection can connect to the full create-session API next.")
                         .foregroundStyle(.secondary)
                 }
             }
