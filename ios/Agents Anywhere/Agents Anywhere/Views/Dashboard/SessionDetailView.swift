@@ -1076,7 +1076,7 @@ struct LiquidGlassMessageInputBar: View {
 
     private var inputGlassField: some View {
         HStack(alignment: .bottom, spacing: 8) {
-            TextField("Message", text: $text, axis: .vertical)
+            TextField(inputPlaceholder, text: $text, axis: .vertical)
                 .lineLimit(1...5)
                 .textFieldStyle(.plain)
                 .frame(minHeight: 34, alignment: .center)
@@ -1121,6 +1121,10 @@ struct LiquidGlassMessageInputBar: View {
         .buttonStyle(.plain)
         .disabled(!canSend)
         .accessibilityLabel("Send")
+    }
+
+    private var inputPlaceholder: String {
+        isTakeoverEnabled ? "Message to agent" : "Enable Takeover to send message"
     }
 }
 
