@@ -96,12 +96,12 @@
 			);
 			mainGroup = 000000000000000000000001;
 			minimizedProjectReferenceProxies = 1;
-			preferredProjectObjectVersion = 90;
-			productRefGroup = 000000000000000000000020 /* Products */;
-			projectDirPath = "";
 			packageReferences = (
 				000000000000000300000000 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */,
 			);
+			preferredProjectObjectVersion = 90;
+			productRefGroup = 000000000000000000000020 /* Products */;
+			projectDirPath = "";
 			projectRoot = "";
 			targets = (
 				000000000000000100000000 /* Agents Anywhere */,

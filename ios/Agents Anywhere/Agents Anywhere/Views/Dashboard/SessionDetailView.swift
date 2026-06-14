@@ -1,6 +1,7 @@
 import Combine
-import PhotosUI
 import MarkdownUI
+import PhotosUI
+import QuickLook
 import SwiftUI
 import UIKit
 
@@ -41,7 +42,6 @@ struct SessionDetailView: View {
     @State private var hasPositionedInitialScroll = false
     @State private var sseTask: Task<Void, Never>?
     @State private var pollTask: Task<Void, Never>?
-    @StateObject private var keyboard = KeyboardHeightObserver()
 
     private var timelineItems: [TimelineItem] {
         let real = itemsById.values.sorted { lhs, rhs in
@@ -215,32 +215,10 @@ struct SessionDetailView: View {
                     scrollToBottom(proxy, animated: true)
                 }
             }
-            .onChange(of: isComposerFocused) { _, focused in
-                if focused {
-                    scrollToBottom(proxy, animated: true)
-                    DispatchQueue.main.async {
-                        scrollToBottom(proxy, animated: true)
-                    }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
-                        scrollToBottom(proxy, animated: true)
-                    }
-                }
-            }
-            .onChange(of: keyboard.height) { _, height in
-                guard height > 0, isComposerFocused else { return }
-                scrollToBottom(proxy, animated: true)
-                DispatchQueue.main.async {
-                    scrollToBottom(proxy, animated: true)
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + keyboard.animationDuration) {
-                    scrollToBottom(proxy, animated: true)
-                }
-            }
             .task {
                 await markRead()
                 await loadState(replace: true)
                 startEventStream()
-                startFallbackPoll()
                 scrollToBottom(proxy, animated: false)
                 DispatchQueue.main.async {
                     scrollToBottom(proxy, animated: false)
@@ -371,9 +349,9 @@ struct SessionDetailView: View {
             return "Send an interrupt or wait"
         }
         if !session.takeover {
-            return "Enable Takeover to send message"
+            return "Takeover off"
         }
-        return "Message to agent"
+        return "Ready to go"
     }
 
     private var messageInputActions: [MessageInputAction] {
@@ -514,8 +492,14 @@ struct SessionDetailView: View {
 
     private func loadState(replace: Bool) async {
         guard let api = appState.api, let token = appState.accessToken() else { return }
-        isLoading = true
-        defer { isLoading = false }
+        if replace {
+            isLoading = true
+        }
+        defer {
+            if replace {
+                isLoading = false
+            }
+        }
         do {
             var afterSeq = replace ? 0 : nextSeq
             var collected: [TimelineItem] = []
@@ -557,6 +541,7 @@ struct SessionDetailView: View {
 
     private func startEventStream() {
         sseTask?.cancel()
+        pollTask?.cancel()
         guard let api = appState.api, let token = appState.accessToken() else { return }
         sseTask = Task {
             do {
@@ -584,8 +569,13 @@ struct SessionDetailView: View {
                     }
                 }
             } catch {
-                // Fallback polling keeps the session live when an environment
+                // The fallback below keeps the session live when an environment
                 // buffers or rejects event streams.
+            }
+
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                startFallbackPoll()
             }
         }
     }
@@ -594,7 +584,7 @@ struct SessionDetailView: View {
         pollTask?.cancel()
         pollTask = Task {
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(3))
+                try? await Task.sleep(for: .seconds(10))
                 guard !Task.isCancelled else { return }
                 await loadState(replace: false)
             }
@@ -613,14 +603,14 @@ struct SessionDetailView: View {
         }
         for item in newItems {
             let existing = itemsById[item.id]
-            if existing == nil || existing!.updatedSeq <= item.updatedSeq {
+            if existing != item, existing == nil || existing!.updatedSeq <= item.updatedSeq {
                 itemsById[item.id] = item
             }
         }
-        if let newApprovals {
+        if let newApprovals, approvals != newApprovals {
             approvals = newApprovals
         }
-        if let newSession {
+        if let newSession, session != newSession {
             session = newSession
         }
         if let newNextSeq {
@@ -1286,7 +1276,10 @@ private struct MessageBubble: View {
     @State private var isExpanded = false
 
     private var isUser: Bool { return item.role == "user" }
-    private var text: String { return item.displayText ?? "" }
+    private var text: String {
+        let value = item.displayText ?? ""
+        return isUser ? value.trimmingCharacters(in: .whitespacesAndNewlines) : value
+    }
     private var attachments: [UploadedAttachment] { return item.attachments }
 
     var body: some View {
@@ -1340,6 +1333,7 @@ private struct MessageBubble: View {
                     .fill(Color(.sRGB, white: 0.18, opacity: 1))
             }
             .foregroundStyle(.white)
+            .copyContextMenu(text)
         } else {
             MarkdownText(text: text)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1385,6 +1379,7 @@ private struct MarkdownText: View {
             }
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .copyContextMenu(text)
     }
 }
 
@@ -1486,15 +1481,56 @@ private struct AttachmentPreviewGrid: View {
     let api: APIClient?
     let token: String?
 
+    @State private var previewURL: URL?
+    @State private var previewingAttachmentId: String?
+    @State private var previewError: String?
+
     var body: some View {
         VStack(alignment: .trailing, spacing: 6) {
             ForEach(attachments) { attachment in
                 if attachment.isImage {
-                    RemoteAttachmentImage(attachment: attachment, api: api, token: token)
+                    RemoteAttachmentImage(attachment: attachment, api: api, token: token) {
+                        openPreview(for: attachment)
+                    }
                 } else {
-                    AttachmentFileCard(attachment: attachment, api: api, token: token)
+                    AttachmentFileCard(
+                        attachment: attachment,
+                        isPreviewing: previewingAttachmentId == attachment.id,
+                    ) {
+                        openPreview(for: attachment)
+                    }
                 }
             }
+        }
+        .quickLookPreview($previewURL)
+        .alert("Preview Unavailable", isPresented: Binding(
+            get: { previewError != nil },
+            set: { if !$0 { previewError = nil } },
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(previewError ?? "Unable to open this attachment.")
+        }
+    }
+
+    private func openPreview(for attachment: UploadedAttachment) {
+        Task {
+            await preparePreview(for: attachment)
+        }
+    }
+
+    private func preparePreview(for attachment: UploadedAttachment) async {
+        guard previewingAttachmentId == nil else { return }
+        guard let api, let token else {
+            previewError = "Attachment preview is not available while offline."
+            return
+        }
+        previewingAttachmentId = attachment.id
+        defer { previewingAttachmentId = nil }
+        do {
+            previewURL = try await AttachmentDataCache.shared.localFileURL(for: attachment, api: api, token: token)
+        } catch {
+            previewError = error.localizedDescription
         }
     }
 }
@@ -1503,6 +1539,7 @@ private struct RemoteAttachmentImage: View {
     let attachment: UploadedAttachment
     let api: APIClient?
     let token: String?
+    let onPreview: () -> Void
 
     @State private var image: UIImage?
     @State private var isLoading = false
@@ -1528,6 +1565,12 @@ private struct RemoteAttachmentImage: View {
         }
         .frame(width: 220, height: 160)
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .onTapGesture {
+            onPreview()
+        }
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel("Preview \(attachment.name)")
         .task(id: attachment.fileId) {
             await load()
         }
@@ -1548,14 +1591,12 @@ private struct RemoteAttachmentImage: View {
 
 private struct AttachmentFileCard: View {
     let attachment: UploadedAttachment
-    let api: APIClient?
-    let token: String?
-
-    @State private var isDownloading = false
+    let isPreviewing: Bool
+    let onPreview: () -> Void
 
     var body: some View {
         Button {
-            Task { await downloadIfNeeded() }
+            onPreview()
         } label: {
             HStack(spacing: 10) {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -1580,11 +1621,11 @@ private struct AttachmentFileCard: View {
 
                 Spacer(minLength: 8)
 
-                if isDownloading {
+                if isPreviewing {
                     ProgressView()
                         .scaleEffect(0.72)
                 } else {
-                    Image(systemName: "arrow.down.circle")
+                    Image(systemName: "eye")
                         .foregroundStyle(.secondary)
                 }
             }
@@ -1596,13 +1637,7 @@ private struct AttachmentFileCard: View {
             }
         }
         .buttonStyle(.plain)
-    }
-
-    private func downloadIfNeeded() async {
-        guard !isDownloading, let api, let token else { return }
-        isDownloading = true
-        defer { isDownloading = false }
-        _ = try? await AttachmentDataCache.shared.data(for: attachment, api: api, token: token)
+        .accessibilityLabel("Preview \(attachment.name)")
     }
 }
 
@@ -2132,10 +2167,31 @@ struct LiquidGlassMessageInputBar: View {
     var onDismissKeyboard: () -> Void = {}
 
     @FocusState private var editorFocused: Bool
+    @State private var isKeyboardVisible = false
+    @State private var measuredEditorTextHeight: CGFloat = 0
 
     private let composerHeight: CGFloat = 50
     private let composerCornerRadius: CGFloat = 25
+    private let composerVerticalPadding: CGFloat = 8
+    private let editorVerticalPadding: CGFloat = 8
+    private let maxEditorHeight: CGFloat = 116
     private let restingGap: CGFloat = 8
+
+    private var restingEditorHeight: CGFloat {
+        composerHeight - composerVerticalPadding * 2 - editorVerticalPadding * 2
+    }
+
+    private var editorHeight: CGFloat {
+        min(max(restingEditorHeight, measuredEditorTextHeight), maxEditorHeight)
+    }
+
+    private var editorMeasurementText: String {
+        guard !text.isEmpty else { return " " }
+        if text.hasSuffix("\n") || text.hasSuffix("\r") {
+            return text + " "
+        }
+        return text
+    }
 
     private var submitContext: MessageInputSubmitContext {
         MessageInputSubmitContext(
@@ -2158,7 +2214,7 @@ struct LiquidGlassMessageInputBar: View {
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 6) {
-            if isFocused {
+            if isFocused && isKeyboardVisible {
                 dismissKeyboardButton
             }
             composerRow
@@ -2178,6 +2234,15 @@ struct LiquidGlassMessageInputBar: View {
             if editorFocused != focused {
                 editorFocused = focused
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+            isKeyboardVisible = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            isKeyboardVisible = false
+        }
+        .onPreferenceChange(ComposerTextHeightPreferenceKey.self) { height in
+            measuredEditorTextHeight = height
         }
     }
 
@@ -2253,18 +2318,44 @@ struct LiquidGlassMessageInputBar: View {
                     .scrollContentBackground(.hidden)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
-                    .frame(minHeight: 24, maxHeight: 116)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.vertical, 2)
+                    .frame(height: editorHeight)
+                    .padding(.vertical, editorVerticalPadding)
                     .background(Color.clear)
-
-                if text.isEmpty {
-                    Text(placeholder)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 10)
-                        .allowsHitTesting(false)
-                }
+                    .background(alignment: .topLeading) {
+                        Text(editorMeasurementText)
+                            .font(.body)
+                            .lineLimit(nil)
+                            .padding(.horizontal, 5)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .opacity(0)
+                            .background {
+                                GeometryReader { proxy in
+                                    Color.clear.preference(
+                                        key: ComposerTextHeightPreferenceKey.self,
+                                        value: proxy.size.height,
+                                    )
+                                }
+                            }
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                    }
+                    .overlay(alignment: .topLeading) {
+                        if text.isEmpty {
+                            Text(placeholder)
+                                .font(.body)
+                                .lineLimit(1)
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 8)
+                                .allowsHitTesting(false)
+                        }
+                    }
+                    .simultaneousGesture(
+                        TapGesture().onEnded {
+                            focusEditor()
+                        },
+                    )
             }
             .contentShape(Rectangle())
             .onTapGesture {
@@ -2283,7 +2374,7 @@ struct LiquidGlassMessageInputBar: View {
         }
         .padding(.leading, 17)
         .padding(.trailing, 8)
-        .padding(.vertical, 8)
+        .padding(.vertical, composerVerticalPadding)
         .frame(minHeight: composerHeight)
         .composerGlassEffect(shape: RoundedRectangle(cornerRadius: composerCornerRadius, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: composerCornerRadius, style: .continuous))
@@ -2345,6 +2436,7 @@ struct LiquidGlassMessageInputBar: View {
     }
 
     private func focusEditor() {
+        editorFocused = true
         isFocused = true
         DispatchQueue.main.async {
             editorFocused = true
@@ -2352,7 +2444,25 @@ struct LiquidGlassMessageInputBar: View {
     }
 }
 
+private struct ComposerTextHeightPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 private extension View {
+    func copyContextMenu(_ text: String) -> some View {
+        contextMenu {
+            Button {
+                UIPasteboard.general.string = text
+            } label: {
+                Label("Copy", systemImage: "doc.on.doc")
+            }
+        }
+    }
+
     @ViewBuilder
     func composerGlassEffect<S: Shape>(shape: S) -> some View {
         if #available(iOS 26.0, *) {
@@ -2367,71 +2477,6 @@ private extension View {
                 shape.fill(.regularMaterial)
             }
         }
-    }
-}
-
-@MainActor
-private final class KeyboardHeightObserver: ObservableObject {
-    @Published private(set) var height: CGFloat = 0
-    @Published private(set) var animationDuration: TimeInterval = 0.28
-
-    private var willChangeObserver: NSObjectProtocol?
-    private var willHideObserver: NSObjectProtocol?
-
-    init() {
-        willChangeObserver = NotificationCenter.default.addObserver(
-            forName: UIResponder.keyboardWillChangeFrameNotification,
-            object: nil,
-            queue: .main,
-        ) { [weak self] notification in
-            Task { @MainActor in
-                self?.update(from: notification)
-            }
-        }
-        willHideObserver = NotificationCenter.default.addObserver(
-            forName: UIResponder.keyboardWillHideNotification,
-            object: nil,
-            queue: .main,
-        ) { [weak self] notification in
-            Task { @MainActor in
-                self?.hide(from: notification)
-            }
-        }
-    }
-
-    deinit {
-        if let willChangeObserver {
-            NotificationCenter.default.removeObserver(willChangeObserver)
-        }
-        if let willHideObserver {
-            NotificationCenter.default.removeObserver(willHideObserver)
-        }
-    }
-
-    private func update(from notification: Notification) {
-        animationDuration = notification.keyboardAnimationDuration
-        guard let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect,
-              let window = UIApplication.shared.connectedScenes
-                  .compactMap({ $0 as? UIWindowScene })
-                  .flatMap(\.windows)
-                  .first(where: \.isKeyWindow)
-        else {
-            return
-        }
-
-        let overlap = max(0, window.bounds.maxY - frame.minY - window.safeAreaInsets.bottom)
-        height = overlap
-    }
-
-    private func hide(from notification: Notification) {
-        animationDuration = notification.keyboardAnimationDuration
-        height = 0
-    }
-}
-
-private extension Notification {
-    var keyboardAnimationDuration: TimeInterval {
-        userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? TimeInterval ?? 0.28
     }
 }
 
@@ -2455,6 +2500,15 @@ private actor AttachmentDataCache {
         return data
     }
 
+    func localFileURL(for attachment: UploadedAttachment, api: APIClient, token: String) async throws -> URL {
+        let data = try await data(for: attachment, api: api, token: token)
+        let url = previewFileURL(for: attachment)
+        if !FileManager.default.fileExists(atPath: url.path) {
+            try data.write(to: url, options: [.atomic])
+        }
+        return url
+    }
+
     private func cacheKey(for attachment: UploadedAttachment) -> String {
         "\(attachment.sessionId)-\(attachment.fileId)"
     }
@@ -2463,7 +2517,27 @@ private actor AttachmentDataCache {
         let root = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("AttachmentCache", isDirectory: true)
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        return root.appendingPathComponent(key.safeCacheFilename)
+        return root.appendingPathComponent(safeCacheFilename(for: key))
+    }
+
+    private func previewFileURL(for attachment: UploadedAttachment) -> URL {
+        let root = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("AttachmentPreview", isDirectory: true)
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let source = URL(fileURLWithPath: attachment.name)
+        let safeStem = safeCacheFilename(for: source.deletingPathExtension().lastPathComponent)
+        let stem = safeStem.isEmpty ? "attachment" : safeStem
+        let key = safeCacheFilename(for: cacheKey(for: attachment))
+        let baseURL = root.appendingPathComponent("\(key)-\(stem)")
+        let pathExtension = source.pathExtension
+        return pathExtension.isEmpty ? baseURL : baseURL.appendingPathExtension(pathExtension)
+    }
+
+    private func safeCacheFilename(for key: String) -> String {
+        key.components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: "-")
     }
 }
 
@@ -2508,14 +2582,6 @@ private extension AttachmentUpload {
 private extension Int {
     var formattedByteCount: String {
         ByteCountFormatter.string(fromByteCount: Int64(self), countStyle: .file)
-    }
-}
-
-private extension String {
-    var safeCacheFilename: String {
-        components(separatedBy: CharacterSet.alphanumerics.inverted)
-            .filter { !$0.isEmpty }
-            .joined(separator: "-")
     }
 }
 
