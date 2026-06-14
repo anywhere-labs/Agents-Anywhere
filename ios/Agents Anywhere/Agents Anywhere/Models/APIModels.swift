@@ -261,7 +261,6 @@ struct SessionResponse: Decodable {
 
 struct TakeoverResponse: Decodable {
     let session: SessionSummary
-    let serverTime: String
 }
 
 struct RpcResponsePayload: Decodable {
