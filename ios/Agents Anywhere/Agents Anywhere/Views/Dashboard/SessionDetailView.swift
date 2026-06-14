@@ -34,7 +34,7 @@ struct SessionDetailView: View {
     }
 
     private var displayEntries: [ChatEntry] {
-        var entries = timelineItems.compactMap { item in
+        var entries = timelineItems.compactMap { item -> ChatEntry? in
             if item.type == "message", item.role == "user" || item.role == "assistant" {
                 return .message(item)
             }
@@ -777,7 +777,9 @@ private extension AVAudioNode {
         block: @escaping AVAudioNodeTapBlock,
     ) throws {
         if #available(iOS 27.0, macOS 27.0, tvOS 27.0, watchOS 27.0, *) {
-            try installTap(onBus: bus, bufferSize: bufferSize, format: format, block: block)
+            try installAudioTap(onBus: bus, bufferSize: bufferSize, format: format) { buffer, when in
+                block(AVAudioPCMBuffer(copying: buffer), when)
+            }
         } else {
             installTap(onBus: bus, bufferSize: bufferSize, format: format, block: block)
         }
