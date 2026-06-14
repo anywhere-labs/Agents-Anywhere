@@ -1964,12 +1964,9 @@ struct LiquidGlassMessageInputBar: View {
     var isTakeoverDisabled = false
     var onToggleTakeover: () -> Void = {}
 
-    @FocusState private var isFocused: Bool
-
     private let composerHeight: CGFloat = 50
     private let composerCornerRadius: CGFloat = 25
     private let restingGap: CGFloat = 8
-    private let glassInteractionSpacing: CGFloat = 4
 
     private var canSend: Bool {
         return hasComposedContent && canSendMessage && !isBusy
@@ -1988,15 +1985,7 @@ struct LiquidGlassMessageInputBar: View {
     }
 
     var body: some View {
-        Group {
-            if #available(iOS 26.0, *) {
-                GlassEffectContainer(spacing: glassInteractionSpacing) {
-                    composerRow
-                }
-            } else {
-                composerRow
-            }
-        }
+        composerRow
         .padding(.horizontal, 12)
         .padding(.top, 8)
         .padding(.bottom, 2)
@@ -2055,7 +2044,6 @@ struct LiquidGlassMessageInputBar: View {
                 .lineLimit(1...5)
                 .textFieldStyle(.plain)
                 .frame(minHeight: 34, alignment: .center)
-                .focused($isFocused)
                 .submitLabel(.send)
                 .onSubmit {
                     if canSubmit {
@@ -2151,7 +2139,12 @@ private extension View {
     @ViewBuilder
     func composerGlassEffect<S: Shape>(shape: S) -> some View {
         if #available(iOS 26.0, *) {
-            self.glassEffect(.regular.interactive(), in: shape)
+            self.background {
+                shape
+                    .fill(.clear)
+                    .glassEffect(.regular, in: shape)
+                    .allowsHitTesting(false)
+            }
         } else {
             self.background {
                 shape.fill(.regularMaterial)
