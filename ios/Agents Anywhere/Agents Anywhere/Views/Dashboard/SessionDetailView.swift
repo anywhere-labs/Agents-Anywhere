@@ -545,7 +545,7 @@ private struct MessageBubble: View {
             }
             .foregroundStyle(.white)
         } else {
-            MarkdownText(text)
+            MarkdownText(text: text)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
