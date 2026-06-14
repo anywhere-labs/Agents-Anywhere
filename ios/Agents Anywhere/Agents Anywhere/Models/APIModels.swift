@@ -110,12 +110,17 @@ struct SessionSummary: Decodable, Identifiable, Hashable {
     let archived: Bool
     let pinned: Bool
     let unread: Bool
+    let lastReadSeq: Int
+    let lastSyncedAt: String?
+    let sourceObservedAt: String?
     let lastActivityAt: String?
     let lastItemAt: String?
+    let lastItemOrderSeq: Int?
     let sortAt: String?
     let updatedSeq: Int
-    let createdAt: String
-    let updatedAt: String
+    let effectiveRunMode: String?
+    let runtimeSettings: JSONValue?
+    let runtimeSettingsOverride: JSONValue?
 }
 
 enum JSONValue: Codable, Hashable {

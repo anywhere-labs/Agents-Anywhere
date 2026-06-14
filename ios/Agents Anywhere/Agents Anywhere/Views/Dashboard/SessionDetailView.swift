@@ -371,7 +371,22 @@ extension SessionSummary {
     }
 
     var sortKey: String {
-        sortAt ?? lastActivityAt ?? lastItemAt ?? updatedAt
+        return sortAt ?? lastActivityAt ?? lastItemAt ?? ""
+    }
+
+    func isMoreRecent(than other: SessionSummary) -> Bool {
+        let sortComparison = sortKey.compare(other.sortKey)
+        if sortComparison != .orderedSame {
+            return sortComparison == .orderedDescending
+        }
+
+        let orderSeq = lastItemOrderSeq ?? -1
+        let otherOrderSeq = other.lastItemOrderSeq ?? -1
+        if orderSeq != otherOrderSeq {
+            return orderSeq > otherOrderSeq
+        }
+
+        return updatedSeq > other.updatedSeq
     }
 
     var statusLabel: String {

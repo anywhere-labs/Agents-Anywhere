@@ -177,13 +177,17 @@ final class AppState: ObservableObject {
     func refreshDashboard() async {
         guard let api, let token = try? keychain.readString(account: tokenAccount) else { return }
         dashboardError = nil
+
         do {
-            async let connectorResult = api.listConnectors(token: token)
-            async let sessionResult = api.listSessions(token: token)
-            let connectorResponse = try await connectorResult
-            let sessionResponse = try await sessionResult
-            connectors = connectorResponse.connectors
+            let sessionResponse = try await api.listSessions(token: token)
             sessions = sessionResponse.sessions
+        } catch {
+            dashboardError = error.localizedDescription
+        }
+
+        do {
+            let connectorResponse = try await api.listConnectors(token: token)
+            connectors = connectorResponse.connectors
         } catch {
             dashboardError = error.localizedDescription
         }

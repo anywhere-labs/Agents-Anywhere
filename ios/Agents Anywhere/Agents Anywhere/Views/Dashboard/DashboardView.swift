@@ -76,13 +76,13 @@ private struct SessionsView: View {
     private var sortedSessions: [SessionSummary] {
         switch selectedSort {
         case "Oldest":
-            appState.sessions.sorted { $0.sortKey < $1.sortKey }
+            appState.sessions.sorted { $1.isMoreRecent(than: $0) }
         case "Name":
             appState.sessions.sorted { $0.displayTitle.localizedCaseInsensitiveCompare($1.displayTitle) == .orderedAscending }
         case "Status":
             appState.sessions.sorted { $0.status.localizedCaseInsensitiveCompare($1.status) == .orderedAscending }
         default:
-            appState.sessions.sorted { $0.sortKey > $1.sortKey }
+            appState.sessions.sorted { $0.isMoreRecent(than: $1) }
         }
     }
 
@@ -385,13 +385,13 @@ private struct FilterSheet: View {
     private func isSelected(_ option: String) -> Bool {
         switch filter {
         case .status:
-            selectedStatus == option
+            return selectedStatus == option
         case .runtime:
-            selectedRuntime == option
+            return selectedRuntime == option
         case .device:
-            selectedDevice == option
+            return selectedDevice == option
         case .sort:
-            selectedSort == option
+            return selectedSort == option
         }
     }
 
