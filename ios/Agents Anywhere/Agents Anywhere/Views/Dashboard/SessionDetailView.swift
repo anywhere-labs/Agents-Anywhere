@@ -521,7 +521,7 @@ struct SessionDetailView: View {
     }
 
     private func performSendMessage() async {
-        guard canSend, let api = appState.api, let token = appState.accessToken() else { return }
+        guard canSend, session.takeover, let api = appState.api, let token = appState.accessToken() else { return }
         let visibleText = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
         let uploads = pendingUploads
         let tempId = "opt_\(UUID().uuidString)"
@@ -1228,7 +1228,15 @@ struct LiquidGlassMessageInputBar: View {
     private let glassInteractionSpacing: CGFloat = 4
 
     private var canSend: Bool {
-        return !isSending && (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || hasPendingAttachments)
+        return hasComposedContent && isTakeoverEnabled
+    }
+
+    private var hasComposedContent: Bool {
+        return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || hasPendingAttachments
+    }
+
+    private var canSubmit: Bool {
+        return canSend && !isSending
     }
 
     var body: some View {
@@ -1244,7 +1252,7 @@ struct LiquidGlassMessageInputBar: View {
         .padding(.horizontal, 12)
         .padding(.top, 8)
         .padding(.bottom, 2)
-        .animation(.smooth(duration: 0.22), value: canSend)
+        .animation(.smooth(duration: 0.22), value: canSubmit)
     }
 
     private var composerRow: some View {
@@ -1301,7 +1309,7 @@ struct LiquidGlassMessageInputBar: View {
                 .focused($isFocused)
                 .submitLabel(.send)
                 .onSubmit {
-                    if canSend {
+                    if canSubmit {
                         onSend()
                     }
                 }
@@ -1329,16 +1337,24 @@ struct LiquidGlassMessageInputBar: View {
         } label: {
             Image(systemName: "arrow.up")
                 .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(.white)
+                .foregroundStyle(sendIconColor)
                 .frame(width: 34, height: 34)
                 .background {
                     Circle()
-                        .fill(.tint.opacity(canSend ? 1 : 0.35))
+                        .fill(sendBackgroundColor)
                 }
         }
         .buttonStyle(.plain)
-        .disabled(!canSend)
+        .disabled(!canSubmit)
         .accessibilityLabel("Send")
+    }
+
+    private var sendBackgroundColor: Color {
+        canSend ? Color.primary : Color.secondary.opacity(0.18)
+    }
+
+    private var sendIconColor: Color {
+        canSend ? Color(.systemBackground) : Color.secondary
     }
 
     private var inputPlaceholder: String {
