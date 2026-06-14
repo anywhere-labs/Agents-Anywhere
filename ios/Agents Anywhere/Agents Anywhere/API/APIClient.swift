@@ -176,6 +176,16 @@ struct APIClient {
         )
     }
 
+    func interruptSession(token: String, sessionId: String) async throws -> RpcResponsePayload {
+        let id = sessionId.urlPathComponentEncoded
+        return try await request(
+            "/sessions/\(id)/interrupt",
+            method: "POST",
+            body: EmptyBody(),
+            token: token,
+        )
+    }
+
     func uploadSessionAttachments(
         token: String,
         sessionId: String,

@@ -16,6 +16,7 @@ struct SessionDetailView: View {
     @State private var nextSeq = 0
     @State private var isLoading = true
     @State private var isSending = false
+    @State private var isInterrupting = false
     @State private var messageText = ""
     @State private var errorMessage: String?
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
@@ -61,6 +62,14 @@ struct SessionDetailView: View {
 
     private var canSend: Bool {
         return !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingUploads.isEmpty
+    }
+
+    private var serverBusy: Bool {
+        session.status == "running" || session.status == "waiting_approval"
+    }
+
+    private var isBusy: Bool {
+        serverBusy && !isInterrupting
     }
 
     private var takeoverConfirmBinding: Binding<Bool> {
@@ -157,6 +166,9 @@ struct SessionDetailView: View {
                 }
             }
             .onChange(of: session.status) { _, _ in
+                if isInterrupting && !serverBusy {
+                    isInterrupting = false
+                }
                 if hasPositionedInitialScroll {
                     scrollToBottom(proxy, animated: true)
                 }
@@ -207,8 +219,11 @@ struct SessionDetailView: View {
                 LiquidGlassMessageInputBar(
                     text: $messageText,
                     isSending: isSending,
+                    isBusy: isBusy,
                     hasPendingAttachments: !pendingUploads.isEmpty,
+                    canSendMessage: session.connectorStatus == "online" && session.takeover && (session.status == "idle" || session.status == "error"),
                     onSend: { Task { await sendMessage() } },
+                    onInterrupt: { Task { await interruptSession() } },
                     onPlus: { isPhotoPickerPresented = true },
                     onCamera: { openCamera() },
                     onRuntime: { Task { await openRuntimeSettings() } },
@@ -563,6 +578,18 @@ struct SessionDetailView: View {
             errorMessage = error.localizedDescription
         }
         isSending = false
+    }
+
+    private func interruptSession() async {
+        guard !isInterrupting, let api = appState.api, let token = appState.accessToken() else { return }
+        isInterrupting = true
+        do {
+            _ = try await api.interruptSession(token: token, sessionId: initialSession.id)
+            errorMessage = nil
+        } catch {
+            isInterrupting = false
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func importPhotos(_ items: [PhotosPickerItem]) async {
@@ -1211,8 +1238,11 @@ struct LiquidGlassMessageInputBar: View {
     @Binding var text: String
 
     var isSending = false
+    var isBusy = false
     var hasPendingAttachments = false
+    var canSendMessage = false
     var onSend: () -> Void
+    var onInterrupt: () -> Void = {}
     var onPlus: () -> Void = {}
     var onCamera: () -> Void = {}
     var onRuntime: () -> Void = {}
@@ -1228,7 +1258,7 @@ struct LiquidGlassMessageInputBar: View {
     private let glassInteractionSpacing: CGFloat = 4
 
     private var canSend: Bool {
-        return hasComposedContent && isTakeoverEnabled
+        return hasComposedContent && canSendMessage && !isBusy
     }
 
     private var hasComposedContent: Bool {
@@ -1237,6 +1267,10 @@ struct LiquidGlassMessageInputBar: View {
 
     private var canSubmit: Bool {
         return canSend && !isSending
+    }
+
+    private var showInterrupt: Bool {
+        isBusy && !hasComposedContent
     }
 
     var body: some View {
@@ -1253,6 +1287,7 @@ struct LiquidGlassMessageInputBar: View {
         .padding(.top, 8)
         .padding(.bottom, 2)
         .animation(.smooth(duration: 0.22), value: canSubmit)
+        .animation(.smooth(duration: 0.22), value: showInterrupt)
     }
 
     private var composerRow: some View {
@@ -1314,7 +1349,9 @@ struct LiquidGlassMessageInputBar: View {
                     }
                 }
 
-            if isSending {
+            if showInterrupt {
+                interruptButton
+            } else if isSending {
                 ProgressView()
                     .scaleEffect(0.78)
                     .frame(width: 34, height: 34)
@@ -1331,7 +1368,7 @@ struct LiquidGlassMessageInputBar: View {
 
     private var sendButton: some View {
         Button {
-            if canSend {
+            if canSubmit {
                 onSend()
             }
         } label: {
@@ -1349,6 +1386,23 @@ struct LiquidGlassMessageInputBar: View {
         .accessibilityLabel("Send")
     }
 
+    private var interruptButton: some View {
+        Button {
+            onInterrupt()
+        } label: {
+            Image(systemName: "stop.fill")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(Color.white)
+                .frame(width: 34, height: 34)
+                .background {
+                    Circle()
+                        .fill(Color.red)
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Interrupt")
+    }
+
     private var sendBackgroundColor: Color {
         canSend ? Color.primary : Color.secondary.opacity(0.18)
     }
@@ -1358,7 +1412,13 @@ struct LiquidGlassMessageInputBar: View {
     }
 
     private var inputPlaceholder: String {
-        isTakeoverEnabled ? "Message to agent" : "Enable Takeover to send message"
+        if !isTakeoverEnabled {
+            return "Enable Takeover to send message"
+        }
+        if isBusy {
+            return "Send an interrupt or wait"
+        }
+        return "Message to agent"
     }
 
     private var takeoverBinding: Binding<Bool> {
