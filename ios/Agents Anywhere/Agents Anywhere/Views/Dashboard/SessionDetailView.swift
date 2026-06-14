@@ -1001,7 +1001,6 @@ struct LiquidGlassMessageInputBar: View {
     var onToggleTakeover: () -> Void = {}
 
     @FocusState private var isFocused: Bool
-    @State private var isMenuExpanded = false
 
     private let composerHeight: CGFloat = 50
     private let restingGap: CGFloat = 8
@@ -1012,12 +1011,7 @@ struct LiquidGlassMessageInputBar: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if isMenuExpanded {
-                expandedMenu
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
-            }
-
+        Group {
             if #available(iOS 26.0, *) {
                 GlassEffectContainer(spacing: glassInteractionSpacing) {
                     composerRow
@@ -1029,7 +1023,6 @@ struct LiquidGlassMessageInputBar: View {
         .padding(.horizontal, 12)
         .padding(.top, 8)
         .padding(.bottom, 8)
-        .animation(.bouncy(duration: 0.35), value: isMenuExpanded)
         .animation(.smooth(duration: 0.22), value: canSend)
     }
 
@@ -1044,17 +1037,40 @@ struct LiquidGlassMessageInputBar: View {
     }
 
     private var plusGlassButton: some View {
-        Button {
-            toggleMenu()
+        Menu {
+            Button {
+                onPlus()
+            } label: {
+                Label("Photos", systemImage: "photo")
+            }
+
+            Button {
+                onCamera()
+            } label: {
+                Label("Camera", systemImage: "camera")
+            }
+
+            Button {
+                onRuntime()
+            } label: {
+                Label("Runtime", systemImage: "terminal")
+            }
+
+            Button {
+                onToggleTakeover()
+            } label: {
+                Label(isTakeoverEnabled ? "Disable Takeover" : "Takeover", systemImage: isTakeoverEnabled ? "lock.open" : "hand.raised")
+            }
+            .disabled(isTakeoverDisabled)
         } label: {
-            Image(systemName: isMenuExpanded ? "xmark" : "plus")
+            Image(systemName: "plus")
                 .font(.system(size: 18, weight: .semibold))
                 .frame(width: composerHeight, height: composerHeight)
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .composerGlassEffect(shape: Circle())
-        .accessibilityLabel(isMenuExpanded ? "Close Menu" : "More Content")
+        .accessibilityLabel("More Content")
     }
 
     private var inputGlassField: some View {
@@ -1066,7 +1082,7 @@ struct LiquidGlassMessageInputBar: View {
                 .submitLabel(.send)
                 .onSubmit {
                     if canSend {
-                        sendAndCollapse()
+                        onSend()
                     }
                 }
 
@@ -1087,7 +1103,7 @@ struct LiquidGlassMessageInputBar: View {
 
     private var sendButton: some View {
         Button {
-            sendAndCollapse()
+            onSend()
         } label: {
             Image(systemName: "arrow.up")
                 .font(.system(size: 14, weight: .bold))
@@ -1100,77 +1116,6 @@ struct LiquidGlassMessageInputBar: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Send")
-    }
-
-    private var expandedMenu: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            menuButton(icon: "photo", title: "Photos", action: onPlus)
-            menuButton(icon: "camera", title: "Camera", action: onCamera)
-            menuButton(icon: "terminal", title: "Runtime", action: onRuntime)
-            takeoverMenuButton
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .composerGlassEffect(shape: RoundedRectangle(cornerRadius: 22, style: .continuous))
-    }
-
-    private func menuButton(icon: String, title: String, action: @escaping () -> Void) -> some View {
-        Button {
-            action()
-            collapseMenu()
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: icon)
-                    .font(.system(size: 15, weight: .semibold))
-                Text(title)
-                    .font(.caption)
-            }
-            .frame(height: 34)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 10)
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var takeoverMenuButton: some View {
-        Button {
-            if !isTakeoverDisabled {
-                onToggleTakeover()
-                collapseMenu()
-            }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: isTakeoverEnabled ? "lock.open" : "lock")
-                    .font(.system(size: 15, weight: .semibold))
-                Text("Takeover")
-                    .font(.caption)
-            }
-            .frame(height: 34)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 10)
-            .opacity(isTakeoverDisabled ? 0.42 : 1)
-        }
-        .buttonStyle(.plain)
-        .disabled(isTakeoverDisabled)
-    }
-
-    private func toggleMenu() {
-        isFocused = true
-        withAnimation(.bouncy(duration: 0.35)) {
-            isMenuExpanded.toggle()
-        }
-    }
-
-    private func collapseMenu() {
-        withAnimation(.smooth(duration: 0.22)) {
-            isMenuExpanded = false
-        }
-    }
-
-    private func sendAndCollapse() {
-        guard canSend else { return }
-        onSend()
-        collapseMenu()
     }
 }
 
