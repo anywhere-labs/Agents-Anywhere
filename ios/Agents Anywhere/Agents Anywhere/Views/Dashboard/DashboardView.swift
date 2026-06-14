@@ -112,6 +112,7 @@ private struct RootTabsView: View {
 }
 
 private struct SessionsView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var appState: AppState
 
     let onNewSession: () -> Void
@@ -162,6 +163,14 @@ private struct SessionsView: View {
                 Button(action: onNewSession) {
                     Image(systemName: "plus")
                 }
+            }
+        }
+        .onAppear {
+            Task { await appState.refreshDashboardIfStale() }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                Task { await appState.refreshDashboardIfStale() }
             }
         }
         .refreshable {

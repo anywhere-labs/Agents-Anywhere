@@ -29,6 +29,7 @@ final class AppState: ObservableObject {
     private let keychain = KeychainStore()
     private let serverDefaultsKey = "agentsAnywhere.serverURL"
     private let tokenAccount = "accessToken"
+    private var lastDashboardRefreshAt: Date?
 
     init() {
         Task { await restoreSession() }
@@ -179,13 +180,27 @@ final class AppState: ObservableObject {
         }
     }
 
+    func refreshDashboardIfStale(minimumInterval: TimeInterval = 1.5) async {
+        if isDashboardLoading { return }
+        if let lastDashboardRefreshAt,
+           Date().timeIntervalSince(lastDashboardRefreshAt) < minimumInterval
+        {
+            return
+        }
+        await refreshDashboard()
+    }
+
     func refreshDashboard() async {
         guard let api, let token = try? keychain.readString(account: tokenAccount) else { return }
+        if isDashboardLoading { return }
         dashboardError = nil
         sessionsError = nil
         connectorsError = nil
         isDashboardLoading = true
-        defer { isDashboardLoading = false }
+        defer {
+            isDashboardLoading = false
+            lastDashboardRefreshAt = Date()
+        }
 
         do {
             let sessionResponse = try await api.listSessions(token: token)
@@ -213,6 +228,7 @@ final class AppState: ObservableObject {
         isDashboardLoading = false
         hasLoadedConnectors = false
         hasLoadedSessions = false
+        lastDashboardRefreshAt = nil
         dashboardError = nil
         sessionsError = nil
         connectorsError = nil
