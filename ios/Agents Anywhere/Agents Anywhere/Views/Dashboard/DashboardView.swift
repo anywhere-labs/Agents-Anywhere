@@ -2,343 +2,631 @@ import SwiftUI
 
 struct DashboardView: View {
     @EnvironmentObject private var appState: AppState
-    @Environment(\.colorScheme) private var colorScheme
-    @State private var mode: DashboardMode = .main
+    @State private var isShowingNewSession = false
 
     var body: some View {
-        Group {
-            switch mode {
-            case .main:
-                MainDashboardTabs {
-                    withAnimation(.snappy) {
-                        mode = .newSession
+        RootTabsView {
+            isShowingNewSession = true
+        }
+        .task {
+            await appState.refreshDashboard()
+        }
+        .sheet(isPresented: $isShowingNewSession) {
+            NewSessionSheet()
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+    }
+}
+
+private struct RootTabsView: View {
+    let onNewSession: () -> Void
+
+    @SceneStorage("selectedRootTab")
+    private var selectedTab: String = "sessions"
+
+    var body: some View {
+        TabView(selection: $selectedTab) {
+            Tab("Sessions", systemImage: "rectangle.stack.fill", value: "sessions") {
+                NavigationStack {
+                    SessionsView()
+                }
+            }
+
+            Tab("Devices", systemImage: "desktopcomputer", value: "devices") {
+                NavigationStack {
+                    DevicesView()
+                        .navigationTitle("Devices")
+                }
+            }
+
+            Tab("Me", systemImage: "person.crop.circle.fill", value: "me") {
+                NavigationStack {
+                    MeView()
+                        .navigationTitle("Me")
+                }
+            }
+        }
+        .tabViewBottomAccessory {
+            NewAccessoryButton(action: onNewSession)
+        }
+    }
+}
+
+private struct SessionsView: View {
+    @EnvironmentObject private var appState: AppState
+
+    @State private var activeFilter: SessionFilter?
+    @State private var selectedStatus = "All"
+    @State private var selectedRuntime = "Any Runtime"
+    @State private var selectedDevice = "Any Device"
+    @State private var selectedSort = "Recent"
+
+    private var filteredSessions: [SessionSummary] {
+        sortedSessions.filter { session in
+            let matchesStatus = selectedStatus == "All" || session.statusLabel == selectedStatus
+            let matchesRuntime = selectedRuntime == "Any Runtime"
+                || session.runtime.localizedCaseInsensitiveContains(selectedRuntime)
+            let matchesDevice = selectedDevice == "Any Device"
+                || session.connectorStatus.localizedCaseInsensitiveContains(selectedDevice)
+                || session.connectorId.localizedCaseInsensitiveContains(selectedDevice)
+            return matchesStatus && matchesRuntime && matchesDevice
+        }
+    }
+
+    private var sortedSessions: [SessionSummary] {
+        switch selectedSort {
+        case "Oldest":
+            appState.sessions.sorted { $0.sortKey < $1.sortKey }
+        case "Name":
+            appState.sessions.sorted { $0.displayTitle.localizedCaseInsensitiveCompare($1.displayTitle) == .orderedAscending }
+        case "Status":
+            appState.sessions.sorted { $0.status.localizedCaseInsensitiveCompare($1.status) == .orderedAscending }
+        default:
+            appState.sessions.sorted { $0.sortKey > $1.sortKey }
+        }
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                header
+                sessionList
+            }
+            .padding(.bottom, 32)
+        }
+        .navigationBarTitleDisplayMode(.inline)
+        .refreshable {
+            await appState.refreshDashboard()
+        }
+        .sheet(item: $activeFilter) { filter in
+            FilterSheet(
+                filter: filter,
+                selectedStatus: $selectedStatus,
+                selectedRuntime: $selectedRuntime,
+                selectedDevice: $selectedDevice,
+                selectedSort: $selectedSort,
+            )
+            .presentationDetents([.height(320), .medium])
+            .presentationDragIndicator(.visible)
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Sessions")
+                .font(.largeTitle.weight(.bold))
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    FilterPill(
+                        title: "Status",
+                        value: selectedStatus,
+                        systemImage: "circle.grid.2x2.fill",
+                    ) {
+                        activeFilter = .status
+                    }
+
+                    FilterPill(
+                        title: "Runtime",
+                        value: selectedRuntime,
+                        systemImage: "terminal.fill",
+                    ) {
+                        activeFilter = .runtime
+                    }
+
+                    FilterPill(
+                        title: "Device",
+                        value: selectedDevice,
+                        systemImage: "laptopcomputer",
+                    ) {
+                        activeFilter = .device
+                    }
+
+                    FilterPill(
+                        title: "Sort",
+                        value: selectedSort,
+                        systemImage: "arrow.up.arrow.down",
+                    ) {
+                        activeFilter = .sort
                     }
                 }
-            case .newSession:
-                NewSessionView {
-                    withAnimation(.snappy) {
-                        mode = .main
+                .padding(.horizontal, 20)
+                .padding(.vertical, 4)
+            }
+            .padding(.horizontal, -20)
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 24)
+    }
+
+    @ViewBuilder
+    private var sessionList: some View {
+        if filteredSessions.isEmpty {
+            ContentUnavailableView(
+                "No Sessions",
+                systemImage: "rectangle.stack",
+                description: Text("Start a session from the web console, then monitor it here."),
+            )
+            .frame(maxWidth: .infinity)
+            .padding(.top, 80)
+        } else {
+            VStack(spacing: 12) {
+                ForEach(filteredSessions) { session in
+                    SessionCard(session: session)
+                }
+            }
+            .padding(.horizontal, 20)
+        }
+    }
+}
+
+private struct DevicesView: View {
+    @EnvironmentObject private var appState: AppState
+
+    var body: some View {
+        List {
+            if appState.connectors.isEmpty {
+                ContentUnavailableView(
+                    "No Devices",
+                    systemImage: "desktopcomputer",
+                    description: Text("Pair a connector from the web console to see it here."),
+                )
+            } else {
+                Section("Devices") {
+                    ForEach(appState.connectors) { connector in
+                        DeviceRow(connector: connector)
                     }
                 }
             }
         }
-        .tint(AppTheme.primaryText(colorScheme))
-        .task {
+        .refreshable {
             await appState.refreshDashboard()
         }
     }
 }
 
-private enum DashboardMode {
-    case main
-    case newSession
-}
-
-private enum DashboardTab: String {
-    case sessions
-    case devices
-    case me
-    case newSession
-}
-
-private struct MainDashboardTabs: View {
+private struct MeView: View {
     @EnvironmentObject private var appState: AppState
-    @SceneStorage("dashboard.selectedTab") private var selectedTab = DashboardTab.sessions.rawValue
-
-    let onNewSession: () -> Void
 
     var body: some View {
-        TabView(selection: $selectedTab) {
-            Tab("Sessions", systemImage: "text.bubble", value: DashboardTab.sessions.rawValue) {
-                SessionsTabView()
-            }
-            .badge(waitingApprovalCount)
+        List {
+            Section {
+                HStack(spacing: 14) {
+                    Image(systemName: "person.crop.circle.fill")
+                        .font(.system(size: 48))
+                        .foregroundStyle(.secondary)
 
-            Tab("Devices", systemImage: "desktopcomputer", value: DashboardTab.devices.rawValue) {
-                DevicesTabView()
-            }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(appState.me?.userId ?? "")
+                            .font(.headline)
 
-            Tab("Me", systemImage: "person.crop.circle", value: DashboardTab.me.rawValue) {
-                MeTabView()
-            }
-
-            Tab("New", systemImage: "plus", value: DashboardTab.newSession.rawValue, role: .search) {
-                Color.clear
-            }
-        }
-        .onChange(of: selectedTab) { _, tab in
-            if tab == DashboardTab.newSession.rawValue {
-                selectedTab = DashboardTab.sessions.rawValue
-                onNewSession()
-            }
-        }
-    }
-
-    private var waitingApprovalCount: Int {
-        appState.sessions.filter { $0.status == "waiting_approval" }.count
-    }
-}
-
-private struct SessionsTabView: View {
-    @EnvironmentObject private var appState: AppState
-    @Environment(\.colorScheme) private var colorScheme
-    @State private var selectedFilter: SessionFilter?
-
-    private var filteredSessions: [SessionSummary] {
-        appState.sessions.filter { session in
-            guard let selectedFilter else { return true }
-            return selectedFilter.matches(session)
-        }
-    }
-
-    private var pinnedSessions: [SessionSummary] {
-        filteredSessions.filter(\.pinned)
-    }
-
-    private var recentSessions: [SessionSummary] {
-        filteredSessions.filter { !$0.pinned }
-    }
-
-    var body: some View {
-        NavigationStack {
-            content
-                .background(AppTheme.appBackground(colorScheme))
-                .navigationTitle("Sessions")
-                .safeAreaInset(edge: .top, spacing: 0) {
-                    FilterBar(selectedFilter: $selectedFilter)
-                }
-                .refreshable {
-                    await appState.refreshDashboard()
-                }
-        }
-    }
-
-    @ViewBuilder
-    private var content: some View {
-        if filteredSessions.isEmpty {
-            DashboardEmptyState(
-                systemImage: "text.bubble",
-                title: "No Sessions",
-                message: selectedFilter == nil
-                    ? "Create a new session from the tab bar, then monitor it here."
-                    : "No sessions match this filter.",
-            )
-        } else {
-            List {
-                if !pinnedSessions.isEmpty {
-                    Section("Pinned") {
-                        ForEach(pinnedSessions) { session in
-                            SessionListRow(session: session)
-                        }
+                        Text(appState.me?.role.rawValue.capitalized ?? "")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
                     }
                 }
+                .padding(.vertical, 8)
+            }
 
-                Section(pinnedSessions.isEmpty ? "Sessions" : "Recent") {
-                    ForEach(recentSessions) { session in
-                        SessionListRow(session: session)
-                    }
+            Section("Server") {
+                Text(appState.serverURL?.absoluteString ?? "")
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+            }
+
+            Section {
+                Button("Sign Out", role: .destructive) {
+                    appState.signOut()
                 }
             }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
         }
     }
 }
 
-private struct FilterBar: View {
-    @Binding var selectedFilter: SessionFilter?
-    @State private var activeSheet: FilterKind?
-
-    var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                filterButton(.agent)
-                filterButton(.device)
-                filterButton(.workspace)
-                filterButton(.status)
-                if selectedFilter != nil {
-                    Button("Clear") {
-                        selectedFilter = nil
-                    }
-                    .buttonStyle(.glass)
-                    .buttonBorderShape(.capsule)
-                }
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 10)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.bar)
-        .sheet(item: $activeSheet) { kind in
-            FilterSheet(kind: kind, selectedFilter: $selectedFilter)
-                .presentationDetents([.medium, .large])
-        }
-    }
-
-    private func filterButton(_ kind: FilterKind) -> some View {
-        Button {
-            activeSheet = kind
-        } label: {
-            HStack(spacing: 6) {
-                Text(label(for: kind))
-                Image(systemName: "chevron.down")
-                    .font(.caption2)
-            }
-        }
-        .buttonStyle(.glass)
-        .buttonBorderShape(.capsule)
-    }
-
-    private func label(for kind: FilterKind) -> String {
-        if selectedFilter?.kind == kind, let value = selectedFilter?.value {
-            return value
-        }
-        return kind.defaultLabel
-    }
-}
-
-private struct FilterSheet: View {
-    let kind: FilterKind
-    @Binding var selectedFilter: SessionFilter?
+private struct NewSessionSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @State private var prompt = ""
 
     var body: some View {
         NavigationStack {
-            List {
-                Button("All \(kind.defaultLabel.lowercased())") {
-                    selectedFilter = nil
-                    dismiss()
-                }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    Text("Create a new session")
+                        .font(.title.weight(.bold))
 
-                ForEach(kind.options, id: \.self) { value in
-                    Button {
-                        selectedFilter = SessionFilter(kind: kind, value: value)
-                        dismiss()
-                    } label: {
-                        HStack {
-                            Text(value)
-                            Spacer()
-                            if selectedFilter == SessionFilter(kind: kind, value: value) {
-                                Image(systemName: "checkmark")
-                            }
-                        }
+                    Text("Describe what you want the agent to do. Runtime and device selection will be added to this native flow next.")
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+
+                    VStack(spacing: 12) {
+                        NewSessionOption(
+                            title: "Start from scratch",
+                            subtitle: "Create an empty agent session",
+                            systemImage: "plus.square.on.square",
+                        )
+
+                        NewSessionOption(
+                            title: "Use current device",
+                            subtitle: "Run locally on a paired connector",
+                            systemImage: "laptopcomputer.and.iphone",
+                        )
+
+                        NewSessionOption(
+                            title: "Cloud runtime",
+                            subtitle: "Create a hosted session",
+                            systemImage: "cloud.fill",
+                        )
                     }
                 }
+                .padding(20)
+                .padding(.bottom, 90)
             }
-            .navigationTitle(kind.defaultLabel)
+            .navigationTitle("New")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
+                    Button("Cancel") { dismiss() }
+                }
+            }
+            .safeAreaInset(edge: .bottom) {
+                GlassMessageInputBar(text: $prompt) {
+                    prompt = ""
+                    dismiss()
                 }
             }
         }
     }
 }
 
-private enum FilterKind: String, Identifiable {
-    case agent
-    case device
-    case workspace
+private enum SessionFilter: String, Identifiable {
     case status
+    case runtime
+    case device
+    case sort
 
     var id: String { rawValue }
 
-    var defaultLabel: String {
+    var title: String {
         switch self {
-        case .agent:
-            "All agents"
-        case .device:
-            "All devices"
-        case .workspace:
-            "All workspaces"
         case .status:
-            "All status"
+            "Status"
+        case .runtime:
+            "Runtime"
+        case .device:
+            "Device"
+        case .sort:
+            "Sort"
         }
     }
 
     var options: [String] {
         switch self {
-        case .agent:
-            ["Codex", "Claude Code"]
-        case .device:
-            ["online", "offline"]
-        case .workspace:
-            ["home", "work"]
         case .status:
-            ["idle", "running", "waiting_approval", "error"]
+            ["All", "Running", "Idle", "Approval", "Error"]
+        case .runtime:
+            ["Any Runtime", "Codex", "Claude Code"]
+        case .device:
+            ["Any Device", "online", "offline"]
+        case .sort:
+            ["Recent", "Oldest", "Name", "Status"]
         }
     }
 }
 
-private struct SessionFilter: Equatable {
-    let kind: FilterKind
+private struct FilterSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let filter: SessionFilter
+
+    @Binding var selectedStatus: String
+    @Binding var selectedRuntime: String
+    @Binding var selectedDevice: String
+    @Binding var selectedSort: String
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(filter.options, id: \.self) { option in
+                    Button {
+                        setSelection(option)
+                        dismiss()
+                    } label: {
+                        HStack {
+                            Text(option)
+                                .foregroundStyle(.primary)
+
+                            Spacer()
+
+                            if isSelected(option) {
+                                Image(systemName: "checkmark")
+                                    .fontWeight(.semibold)
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle(filter.title)
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+
+    private func isSelected(_ option: String) -> Bool {
+        switch filter {
+        case .status:
+            selectedStatus == option
+        case .runtime:
+            selectedRuntime == option
+        case .device:
+            selectedDevice == option
+        case .sort:
+            selectedSort == option
+        }
+    }
+
+    private func setSelection(_ option: String) {
+        switch filter {
+        case .status:
+            selectedStatus = option
+        case .runtime:
+            selectedRuntime = option
+        case .device:
+            selectedDevice = option
+        case .sort:
+            selectedSort = option
+        }
+    }
+}
+
+private struct NewAccessoryButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        HStack {
+            Spacer()
+
+            Button(action: action) {
+                Label("New", systemImage: "plus")
+                    .font(.headline)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 10)
+            }
+            .buttonStyle(.glass)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+    }
+}
+
+private struct FilterPill: View {
+    let title: String
     let value: String
+    let systemImage: String
+    let action: () -> Void
 
-    func matches(_ session: SessionSummary) -> Bool {
-        switch kind {
-        case .agent:
-            session.runtime.localizedCaseInsensitiveContains(value)
-        case .device:
-            session.connectorStatus.localizedCaseInsensitiveContains(value)
-        case .workspace:
-            session.cwd?.localizedCaseInsensitiveContains(value) ?? false
-        case .status:
-            session.status == value
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 7) {
+                Image(systemName: systemImage)
+                Text(value)
+                Image(systemName: "chevron.down")
+                    .font(.caption2.weight(.bold))
+            }
+            .font(.subheadline.weight(.medium))
+            .padding(.horizontal, 13)
+            .padding(.vertical, 9)
+            .background {
+                Capsule(style: .continuous)
+                    .fill(.regularMaterial)
+            }
         }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(title): \(value)")
     }
 }
 
-private struct SessionListRow: View {
+private struct SessionCard: View {
     let session: SessionSummary
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            StatusMark(status: session.status)
-                .padding(.top, 5)
-
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(session.displayTitle)
-                        .font(.headline)
-                        .lineLimit(2)
-                    if session.unread {
-                        Circle()
-                            .fill(.blue)
-                            .frame(width: 7, height: 7)
-                    }
-                    Spacer(minLength: 8)
-                    Text(statusLabel)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(statusColor)
+        HStack(spacing: 14) {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(.secondary.opacity(0.14))
+                .frame(width: 54, height: 54)
+                .overlay {
+                    Image(systemName: symbol)
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
                 }
 
-                if let cwd = session.cwd, !cwd.isEmpty {
-                    Text(cwd)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(session.displayTitle)
+                    .font(.headline)
+                    .lineLimit(1)
+
+                Text(subtitle)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            Text(session.statusLabel)
+                .font(.caption.weight(.semibold))
+                .padding(.horizontal, 9)
+                .padding(.vertical, 5)
+                .background {
+                    Capsule(style: .continuous)
+                        .fill(.secondary.opacity(0.12))
+                }
+        }
+        .padding(14)
+        .background {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(.regularMaterial)
+        }
+    }
+
+    private var subtitle: String {
+        let workspace = session.cwd ?? "No workspace"
+        return "\(workspace) · \(session.runtime) · \(session.connectorStatus)"
+    }
+
+    private var symbol: String {
+        session.runtime.localizedCaseInsensitiveContains("claude")
+            ? "sparkles.rectangle.stack.fill"
+            : "terminal.fill"
+    }
+}
+
+private struct DeviceRow: View {
+    let connector: ConnectorSummary
+
+    var body: some View {
+        Label {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(connector.name)
+                Text(connector.status.capitalized)
+                    .font(.caption)
+                    .foregroundStyle(connector.status == "online" ? .green : .secondary)
+            }
+        } icon: {
+            Image(systemName: "desktopcomputer")
+        }
+    }
+}
+
+private struct NewSessionOption: View {
+    let title: String
+    let subtitle: String
+    let systemImage: String
+
+    var body: some View {
+        Button {
+        } label: {
+            HStack(spacing: 14) {
+                Image(systemName: systemImage)
+                    .font(.title3)
+                    .frame(width: 36, height: 36)
+                    .background {
+                        Circle()
+                            .fill(.secondary.opacity(0.14))
+                    }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+
+                    Text(subtitle)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
                 }
 
-                HStack(spacing: 8) {
-                    Label(session.runtime, systemImage: runtimeIcon)
-                    Text(session.connectorStatus)
-                    if session.takeover {
-                        Text("Takeover")
-                    }
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(14)
+            .background {
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(.regularMaterial)
             }
         }
-        .padding(.vertical, 10)
+        .buttonStyle(.plain)
+    }
+}
+
+private struct GlassMessageInputBar: View {
+    @Binding var text: String
+    let onSend: () -> Void
+
+    private var canSend: Bool {
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    private var runtimeIcon: String {
-        session.runtime.localizedCaseInsensitiveContains("claude") ? "sparkles" : "terminal"
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 10) {
+            Button {
+            } label: {
+                Image(systemName: "plus")
+                    .font(.title3)
+                    .frame(width: 36, height: 36)
+            }
+            .buttonStyle(.borderless)
+
+            HStack(alignment: .bottom, spacing: 8) {
+                TextField("Message", text: $text, axis: .vertical)
+                    .lineLimit(1...5)
+                    .textFieldStyle(.plain)
+                    .submitLabel(.send)
+                    .onSubmit {
+                        if canSend {
+                            onSend()
+                        }
+                    }
+
+                Button {
+                    if canSend {
+                        onSend()
+                    }
+                } label: {
+                    Image(systemName: canSend ? "arrow.up.circle.fill" : "mic.fill")
+                        .font(.title2)
+                        .foregroundStyle(canSend ? .tint : .secondary)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.leading, 14)
+            .padding(.trailing, 8)
+            .padding(.vertical, 8)
+            .background {
+                Capsule(style: .continuous)
+                    .fill(.regularMaterial)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+        .padding(.bottom, 8)
+        .background(.bar)
+    }
+}
+
+private extension SessionSummary {
+    var displayTitle: String {
+        if let title, !title.isEmpty { return title }
+        return cwd ?? id
     }
 
-    private var statusLabel: String {
-        switch session.status {
+    var sortKey: String {
+        sortAt ?? lastActivityAt ?? lastItemAt ?? updatedAt
+    }
+
+    var statusLabel: String {
+        switch status {
         case "running":
             "Running"
         case "waiting_approval":
@@ -348,234 +636,8 @@ private struct SessionListRow: View {
         case "idle":
             "Idle"
         default:
-            session.status
+            status.capitalized
         }
-    }
-
-    private var statusColor: Color {
-        switch session.status {
-        case "running":
-            .green
-        case "waiting_approval":
-            .orange
-        case "error":
-            .red
-        default:
-            .secondary
-        }
-    }
-}
-
-private struct StatusMark: View {
-    let status: String
-
-    var body: some View {
-        Circle()
-            .fill(color)
-            .frame(width: 10, height: 10)
-    }
-
-    private var color: Color {
-        switch status {
-        case "running":
-            .green
-        case "waiting_approval":
-            .orange
-        case "error":
-            .red
-        default:
-            .secondary.opacity(0.55)
-        }
-    }
-}
-
-private struct DevicesTabView: View {
-    @EnvironmentObject private var appState: AppState
-    @Environment(\.colorScheme) private var colorScheme
-
-    var body: some View {
-        NavigationStack {
-            Group {
-                if appState.connectors.isEmpty {
-                    DashboardEmptyState(
-                        systemImage: "desktopcomputer",
-                        title: "No Devices",
-                        message: "Pair a connector from the web console to see it here.",
-                    )
-                } else {
-                    List(appState.connectors) { connector in
-                        DeviceRow(connector: connector)
-                    }
-                    .listStyle(.plain)
-                    .scrollContentBackground(.hidden)
-                }
-            }
-            .background(AppTheme.appBackground(colorScheme))
-            .navigationTitle("Devices")
-            .refreshable {
-                await appState.refreshDashboard()
-            }
-        }
-    }
-}
-
-private struct DeviceRow: View {
-    let connector: ConnectorSummary
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "desktopcomputer")
-                .font(.title3)
-                .frame(width: 34, height: 34)
-
-            VStack(alignment: .leading, spacing: 5) {
-                Text(connector.name)
-                    .font(.headline)
-                Text(connector.id)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-
-            Spacer()
-
-            Text(connector.status.capitalized)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(connector.status == "online" ? .green : .secondary)
-        }
-        .padding(.vertical, 10)
-    }
-}
-
-private struct MeTabView: View {
-    @EnvironmentObject private var appState: AppState
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section("Account") {
-                    LabeledContent("User", value: appState.me?.userId ?? "")
-                    LabeledContent("Role", value: appState.me?.role.rawValue.capitalized ?? "")
-                }
-
-                Section("Server") {
-                    Text(appState.serverURL?.absoluteString ?? "")
-                        .foregroundStyle(.secondary)
-                        .lineLimit(3)
-                }
-
-                Section {
-                    Button("Sign Out", role: .destructive) {
-                        appState.signOut()
-                    }
-                }
-            }
-            .navigationTitle("Me")
-        }
-    }
-}
-
-private struct NewSessionView: View {
-    let onCancel: () -> Void
-
-    @State private var messageText = ""
-
-    var body: some View {
-        NavigationStack {
-            List {
-                Section("Runtime") {
-                    Label("Choose a connected device and agent runtime", systemImage: "desktopcomputer")
-                        .foregroundStyle(.secondary)
-                }
-
-                Section("Context") {
-                    Text("Use the message field below to draft the first instruction. Device, workspace, and runtime selection can connect to the full create-session API next.")
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .navigationTitle("New Session")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel", action: onCancel)
-                }
-            }
-            .safeAreaInset(edge: .bottom) {
-                SessionMessageInputBar(text: $messageText)
-            }
-        }
-    }
-}
-
-private struct SessionMessageInputBar: View {
-    @Binding var text: String
-
-    private var canSend: Bool {
-        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    var body: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            Button {
-            } label: {
-                Image(systemName: "plus")
-                    .font(.title3)
-                    .frame(width: 34, height: 34)
-            }
-            .buttonStyle(.borderless)
-
-            HStack(alignment: .bottom, spacing: 8) {
-                TextField("Message", text: $text, axis: .vertical)
-                    .lineLimit(1...5)
-                    .textFieldStyle(.plain)
-
-                Button {
-                    send()
-                } label: {
-                    Image(systemName: canSend ? "arrow.up.circle.fill" : "mic.fill")
-                        .font(.title2)
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.leading, 14)
-            .padding(.trailing, 8)
-            .padding(.vertical, 7)
-            .background {
-                Capsule(style: .continuous)
-                    .fill(.regularMaterial)
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.top, 8)
-        .padding(.bottom, 6)
-        .background(.bar)
-    }
-
-    private func send() {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        text = ""
-    }
-}
-
-private struct DashboardEmptyState: View {
-    let systemImage: String
-    let title: String
-    let message: String
-
-    var body: some View {
-        ContentUnavailableView(
-            title,
-            systemImage: systemImage,
-            description: Text(message),
-        )
-    }
-}
-
-private extension SessionSummary {
-    var displayTitle: String {
-        if let title, !title.isEmpty { return title }
-        return cwd ?? id
     }
 }
 
