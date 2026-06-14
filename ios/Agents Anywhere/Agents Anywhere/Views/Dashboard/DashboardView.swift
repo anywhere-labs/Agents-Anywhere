@@ -29,7 +29,7 @@ private struct RootTabsView: View {
         TabView(selection: $selectedTab) {
             Tab("Sessions", systemImage: "rectangle.stack.fill", value: "sessions") {
                 NavigationStack {
-                    SessionsView()
+                    SessionsView(onNewSession: onNewSession)
                 }
             }
 
@@ -47,14 +47,13 @@ private struct RootTabsView: View {
                 }
             }
         }
-        .tabViewBottomAccessory {
-            NewAccessoryButton(action: onNewSession)
-        }
     }
 }
 
 private struct SessionsView: View {
     @EnvironmentObject private var appState: AppState
+
+    let onNewSession: () -> Void
 
     @State private var activeFilter: SessionFilter?
     @State private var selectedStatus = "All"
@@ -96,6 +95,13 @@ private struct SessionsView: View {
             .padding(.bottom, 32)
         }
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(action: onNewSession) {
+                    Image(systemName: "plus")
+                }
+            }
+        }
         .refreshable {
             await appState.refreshDashboard()
         }
@@ -395,26 +401,6 @@ private struct FilterSheet: View {
         case .sort:
             selectedSort = option
         }
-    }
-}
-
-private struct NewAccessoryButton: View {
-    let action: () -> Void
-
-    var body: some View {
-        HStack {
-            Spacer()
-
-            Button(action: action) {
-                Label("New", systemImage: "plus")
-                    .font(.headline)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 10)
-            }
-            .buttonStyle(.glass)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 6)
     }
 }
 
