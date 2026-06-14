@@ -1,3 +1,4 @@
+import Combine
 import PhotosUI
 import MarkdownUI
 import SwiftUI
@@ -40,6 +41,7 @@ struct SessionDetailView: View {
     @State private var hasPositionedInitialScroll = false
     @State private var sseTask: Task<Void, Never>?
     @State private var pollTask: Task<Void, Never>?
+    @StateObject private var keyboard = KeyboardHeightObserver()
 
     private var timelineItems: [TimelineItem] {
         let real = itemsById.values.sorted { lhs, rhs in
@@ -178,7 +180,6 @@ struct SessionDetailView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 14)
-                .padding(.bottom, pendingUploads.isEmpty ? 104 : 188)
             }
             .defaultScrollAnchor(.bottom)
             .contentShape(Rectangle())
@@ -223,6 +224,16 @@ struct SessionDetailView: View {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
                         scrollToBottom(proxy, animated: true)
                     }
+                }
+            }
+            .onChange(of: keyboard.height) { _, height in
+                guard height > 0, isComposerFocused else { return }
+                scrollToBottom(proxy, animated: true)
+                DispatchQueue.main.async {
+                    scrollToBottom(proxy, animated: true)
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + keyboard.animationDuration) {
+                    scrollToBottom(proxy, animated: true)
                 }
             }
             .task {
@@ -272,17 +283,12 @@ struct SessionDetailView: View {
                     text: $messageText,
                     isFocused: $isComposerFocused,
                     isSending: isSending,
-                    isBusy: isBusy,
                     hasPendingAttachments: !pendingUploads.isEmpty,
-                    canSendMessage: session.connectorStatus == "online" && session.takeover && (session.status == "idle" || session.status == "error"),
+                    placeholder: messageInputPlaceholder,
+                    actions: messageInputActions,
+                    isSubmitEnabled: canSubmitMessage,
                     onSend: { Task { await sendMessage() } },
-                    onInterrupt: { Task { await interruptSession() } },
-                    onPlus: { isPhotoPickerPresented = true },
-                    onCamera: { openCamera() },
-                    onRuntime: { Task { await openRuntimeSettings() } },
-                    isTakeoverEnabled: session.takeover,
-                    isTakeoverDisabled: isApplyingTakeover || session.connectorStatus != "online",
-                    onToggleTakeover: { requestTakeoverToggle() },
+                    interrupt: messageInputInterrupt,
                     onDismissKeyboard: { dismissComposerKeyboard() },
                 )
             }
@@ -355,6 +361,57 @@ struct SessionDetailView: View {
             get: { isPhotoPickerPresented },
             set: { isPhotoPickerPresented = $0 },
         )
+    }
+
+    private var messageInputPlaceholder: String {
+        if session.connectorStatus != "online" {
+            return "Device is offline"
+        }
+        if isBusy {
+            return "Send an interrupt or wait"
+        }
+        if !session.takeover {
+            return "Enable Takeover to send message"
+        }
+        return "Message to agent"
+    }
+
+    private var messageInputActions: [MessageInputAction] {
+        [
+            MessageInputAction(title: "Photos", systemImage: "photo") {
+                isPhotoPickerPresented = true
+            },
+            MessageInputAction(title: "Camera", systemImage: "camera") {
+                openCamera()
+            },
+            MessageInputAction(title: "Runtime", systemImage: "terminal") {
+                Task { await openRuntimeSettings() }
+            },
+            MessageInputAction.toggle(
+                title: "Takeover",
+                systemImage: "hand.raised",
+                isOn: session.takeover,
+                isDisabled: isApplyingTakeover || session.connectorStatus != "online",
+            ) {
+                requestTakeoverToggle()
+            },
+        ]
+    }
+
+    private var messageInputInterrupt: MessageInputInterrupt? {
+        guard isBusy else { return nil }
+        return MessageInputInterrupt(isRunning: isInterrupting) {
+            Task { await interruptSession() }
+        }
+    }
+
+    private func canSubmitMessage(_ context: MessageInputSubmitContext) -> Bool {
+        guard context.hasContent else { return false }
+        guard !isSending, !isApplyingTakeover else { return false }
+        guard session.connectorStatus == "online" else { return false }
+        if isBusy { return false }
+        if !session.takeover { return true }
+        return session.status == "idle" || session.status == "error"
     }
 
     private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool) {
@@ -1987,44 +2044,116 @@ private struct RuntimeSettingRow: View {
     }
 }
 
+struct MessageInputSubmitContext {
+    let text: String
+    let hasPendingAttachments: Bool
+
+    var trimmedText: String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var hasText: Bool {
+        !trimmedText.isEmpty
+    }
+
+    var hasContent: Bool {
+        hasText || hasPendingAttachments
+    }
+}
+
+struct MessageInputAction: Identifiable {
+    enum Kind {
+        case button
+        case toggle(isOn: Bool, isDisabled: Bool)
+    }
+
+    let id = UUID()
+    let title: String
+    let systemImage: String
+    let kind: Kind
+    let handler: () -> Void
+
+    init(
+        title: String,
+        systemImage: String,
+        handler: @escaping () -> Void
+    ) {
+        self.title = title
+        self.systemImage = systemImage
+        self.kind = .button
+        self.handler = handler
+    }
+
+    static func toggle(
+        title: String,
+        systemImage: String,
+        isOn: Bool,
+        isDisabled: Bool = false,
+        handler: @escaping () -> Void
+    ) -> MessageInputAction {
+        MessageInputAction(
+            title: title,
+            systemImage: systemImage,
+            kind: .toggle(isOn: isOn, isDisabled: isDisabled),
+            handler: handler,
+        )
+    }
+
+    private init(
+        title: String,
+        systemImage: String,
+        kind: Kind,
+        handler: @escaping () -> Void
+    ) {
+        self.title = title
+        self.systemImage = systemImage
+        self.kind = kind
+        self.handler = handler
+    }
+}
+
+struct MessageInputInterrupt {
+    var isRunning = false
+    let handler: () -> Void
+}
+
 struct LiquidGlassMessageInputBar: View {
     @Binding var text: String
     @Binding var isFocused: Bool
 
     var isSending = false
-    var isBusy = false
     var hasPendingAttachments = false
-    var canSendMessage = false
+    var placeholder = "Message"
+    var actions: [MessageInputAction] = []
+    var isSubmitEnabled: (MessageInputSubmitContext) -> Bool = { $0.hasText }
+    var showsActionsButton = true
     var onSend: () -> Void
-    var onInterrupt: () -> Void = {}
-    var onPlus: () -> Void = {}
-    var onCamera: () -> Void = {}
-    var onRuntime: () -> Void = {}
-    var isTakeoverEnabled = false
-    var isTakeoverDisabled = false
-    var onToggleTakeover: () -> Void = {}
+    var interrupt: MessageInputInterrupt?
     var onDismissKeyboard: () -> Void = {}
 
-    @FocusState private var textFieldFocused: Bool
+    @FocusState private var editorFocused: Bool
 
     private let composerHeight: CGFloat = 50
     private let composerCornerRadius: CGFloat = 25
     private let restingGap: CGFloat = 8
 
+    private var submitContext: MessageInputSubmitContext {
+        MessageInputSubmitContext(
+            text: text,
+            hasPendingAttachments: hasPendingAttachments,
+        )
+    }
+
     private var canSend: Bool {
-        return hasComposedContent && canSendMessage && !isBusy
+        isSubmitEnabled(submitContext)
     }
 
-    private var hasComposedContent: Bool {
-        return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || hasPendingAttachments
-    }
-
-    private var canSubmit: Bool {
+    private var canPerformSubmit: Bool {
         return canSend && !isSending
     }
 
     private var showInterrupt: Bool {
-        isBusy && !hasComposedContent
+        interrupt != nil
     }
 
     var body: some View {
@@ -2037,25 +2166,27 @@ struct LiquidGlassMessageInputBar: View {
         .padding(.horizontal, 12)
         .padding(.top, 8)
         .padding(.bottom, 2)
-        .animation(.smooth(duration: 0.22), value: canSubmit)
+        .animation(.smooth(duration: 0.22), value: canPerformSubmit)
         .animation(.smooth(duration: 0.22), value: showInterrupt)
         .animation(.smooth(duration: 0.18), value: isFocused)
-        .onChange(of: textFieldFocused) { _, focused in
+        .onChange(of: editorFocused) { _, focused in
             if isFocused != focused {
                 isFocused = focused
             }
         }
         .onChange(of: isFocused) { _, focused in
-            if textFieldFocused != focused {
-                textFieldFocused = focused
+            if editorFocused != focused {
+                editorFocused = focused
             }
         }
     }
 
     private var composerRow: some View {
         HStack(alignment: .bottom, spacing: restingGap) {
-            plusGlassButton
-                .zIndex(2)
+            if showsActionsButton {
+                plusGlassButton
+                    .zIndex(2)
+            }
 
             inputGlassField
                 .zIndex(1)
@@ -2064,28 +2195,28 @@ struct LiquidGlassMessageInputBar: View {
 
     private var plusGlassButton: some View {
         Menu {
-            Button {
-                onPlus()
-            } label: {
-                Label("Photos", systemImage: "photo")
+            ForEach(actions) { action in
+                switch action.kind {
+                case .button:
+                    Button {
+                        action.handler()
+                    } label: {
+                        Label(action.title, systemImage: action.systemImage)
+                    }
+                case let .toggle(isOn, isDisabled):
+                    Toggle(isOn: Binding(
+                        get: { isOn },
+                        set: { newValue in
+                            if newValue != isOn {
+                                action.handler()
+                            }
+                        },
+                    )) {
+                        Label(action.title, systemImage: action.systemImage)
+                    }
+                    .disabled(isDisabled)
+                }
             }
-
-            Button {
-                onCamera()
-            } label: {
-                Label("Camera", systemImage: "camera")
-            }
-
-            Button {
-                onRuntime()
-            } label: {
-                Label("Runtime", systemImage: "terminal")
-            }
-
-            Toggle(isOn: takeoverBinding) {
-                Label("Takeover", systemImage: "hand.raised")
-            }
-            .disabled(isTakeoverDisabled)
         } label: {
             Image(systemName: "plus")
                 .font(.system(size: 18, weight: .semibold))
@@ -2100,7 +2231,7 @@ struct LiquidGlassMessageInputBar: View {
     private var dismissKeyboardButton: some View {
         Button {
             onDismissKeyboard()
-            textFieldFocused = false
+            editorFocused = false
             isFocused = false
         } label: {
             Image(systemName: "chevron.down")
@@ -2116,17 +2247,29 @@ struct LiquidGlassMessageInputBar: View {
 
     private var inputGlassField: some View {
         HStack(alignment: .bottom, spacing: 8) {
-            TextField(inputPlaceholder, text: $text, axis: .vertical)
-                .lineLimit(1...5)
-                .textFieldStyle(.plain)
-                .frame(minHeight: 34, alignment: .center)
-                .focused($textFieldFocused)
-                .submitLabel(.send)
-                .onSubmit {
-                    if canSubmit {
-                        onSend()
-                    }
+            ZStack(alignment: .topLeading) {
+                TextEditor(text: $text)
+                    .focused($editorFocused)
+                    .scrollContentBackground(.hidden)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .frame(minHeight: 24, maxHeight: 116)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.vertical, 2)
+                    .background(Color.clear)
+
+                if text.isEmpty {
+                    Text(placeholder)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 10)
+                        .allowsHitTesting(false)
                 }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                focusEditor()
+            }
 
             if showInterrupt {
                 interruptButton
@@ -2143,11 +2286,15 @@ struct LiquidGlassMessageInputBar: View {
         .padding(.vertical, 8)
         .frame(minHeight: composerHeight)
         .composerGlassEffect(shape: RoundedRectangle(cornerRadius: composerCornerRadius, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: composerCornerRadius, style: .continuous))
+        .onTapGesture {
+            focusEditor()
+        }
     }
 
     private var sendButton: some View {
         Button {
-            if canSubmit {
+            if canPerformSubmit {
                 onSend()
             }
         } label: {
@@ -2161,24 +2308,31 @@ struct LiquidGlassMessageInputBar: View {
                 }
         }
         .buttonStyle(.plain)
-        .disabled(!canSubmit)
+        .disabled(!canPerformSubmit)
         .accessibilityLabel("Send")
     }
 
     private var interruptButton: some View {
         Button {
-            onInterrupt()
+            interrupt?.handler()
         } label: {
-            Image(systemName: "stop.fill")
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(Color.white)
-                .frame(width: 34, height: 34)
-                .background {
-                    Circle()
-                        .fill(Color.red)
-                }
+            if interrupt?.isRunning == true {
+                ProgressView()
+                    .scaleEffect(0.78)
+                    .frame(width: 34, height: 34)
+            } else {
+                Image(systemName: "stop.fill")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(Color.white)
+                    .frame(width: 34, height: 34)
+                    .background {
+                        Circle()
+                            .fill(Color.red)
+                    }
+            }
         }
         .buttonStyle(.plain)
+        .disabled(interrupt?.isRunning == true)
         .accessibilityLabel("Interrupt")
     }
 
@@ -2190,25 +2344,11 @@ struct LiquidGlassMessageInputBar: View {
         canSend ? Color(.systemBackground) : Color.secondary
     }
 
-    private var inputPlaceholder: String {
-        if !isTakeoverEnabled {
-            return "Enable Takeover to send message"
+    private func focusEditor() {
+        isFocused = true
+        DispatchQueue.main.async {
+            editorFocused = true
         }
-        if isBusy {
-            return "Send an interrupt or wait"
-        }
-        return "Message to agent"
-    }
-
-    private var takeoverBinding: Binding<Bool> {
-        Binding(
-            get: { isTakeoverEnabled },
-            set: { newValue in
-                if newValue != isTakeoverEnabled {
-                    onToggleTakeover()
-                }
-            },
-        )
     }
 }
 
@@ -2227,6 +2367,71 @@ private extension View {
                 shape.fill(.regularMaterial)
             }
         }
+    }
+}
+
+@MainActor
+private final class KeyboardHeightObserver: ObservableObject {
+    @Published private(set) var height: CGFloat = 0
+    @Published private(set) var animationDuration: TimeInterval = 0.28
+
+    private var willChangeObserver: NSObjectProtocol?
+    private var willHideObserver: NSObjectProtocol?
+
+    init() {
+        willChangeObserver = NotificationCenter.default.addObserver(
+            forName: UIResponder.keyboardWillChangeFrameNotification,
+            object: nil,
+            queue: .main,
+        ) { [weak self] notification in
+            Task { @MainActor in
+                self?.update(from: notification)
+            }
+        }
+        willHideObserver = NotificationCenter.default.addObserver(
+            forName: UIResponder.keyboardWillHideNotification,
+            object: nil,
+            queue: .main,
+        ) { [weak self] notification in
+            Task { @MainActor in
+                self?.hide(from: notification)
+            }
+        }
+    }
+
+    deinit {
+        if let willChangeObserver {
+            NotificationCenter.default.removeObserver(willChangeObserver)
+        }
+        if let willHideObserver {
+            NotificationCenter.default.removeObserver(willHideObserver)
+        }
+    }
+
+    private func update(from notification: Notification) {
+        animationDuration = notification.keyboardAnimationDuration
+        guard let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect,
+              let window = UIApplication.shared.connectedScenes
+                  .compactMap({ $0 as? UIWindowScene })
+                  .flatMap(\.windows)
+                  .first(where: \.isKeyWindow)
+        else {
+            return
+        }
+
+        let overlap = max(0, window.bounds.maxY - frame.minY - window.safeAreaInsets.bottom)
+        height = overlap
+    }
+
+    private func hide(from notification: Notification) {
+        animationDuration = notification.keyboardAnimationDuration
+        height = 0
+    }
+}
+
+private extension Notification {
+    var keyboardAnimationDuration: TimeInterval {
+        userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? TimeInterval ?? 0.28
     }
 }
 

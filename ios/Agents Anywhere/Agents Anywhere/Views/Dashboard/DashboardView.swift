@@ -319,6 +319,9 @@ private struct NewSessionSheet: View {
                 LiquidGlassMessageInputBar(
                     text: $prompt,
                     isFocused: $isPromptFocused,
+                    placeholder: "Message to agent",
+                    isSubmitEnabled: { context in context.hasText },
+                    showsActionsButton: false,
                     onSend: {
                         prompt = ""
                         dismiss()
