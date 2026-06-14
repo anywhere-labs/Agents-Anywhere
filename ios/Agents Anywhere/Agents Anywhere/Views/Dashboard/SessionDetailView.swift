@@ -34,7 +34,15 @@ struct SessionDetailView: View {
     }
 
     private var displayEntries: [ChatEntry] {
-        var entries = timelineItems.compactMap(chatEntry)
+        var entries = timelineItems.compactMap { item in
+            if item.type == "message", item.role == "user" || item.role == "assistant" {
+                return .message(item)
+            }
+            if item.type == "system", item.status == "failed" {
+                return .notice("Error", item.displayText ?? "Runtime error")
+            }
+            return nil
+        }
         entries.append(contentsOf: approvals.filter { $0.status == "pending" }.map(ChatEntry.approval))
         return entries.sorted { lhs, rhs in
             lhs.sortKey < rhs.sortKey
@@ -381,16 +389,6 @@ private enum ChatEntry: Identifiable {
         }
     }
 
-}
-
-nonisolated private func chatEntry(from item: TimelineItem) -> ChatEntry? {
-    if item.type == "message", item.role == "user" || item.role == "assistant" {
-        return .message(item)
-    }
-    if item.type == "system", item.status == "failed" {
-        return .notice("Error", item.displayText ?? "Runtime error")
-    }
-    return nil
 }
 
 private struct ChatEntryView: View {
@@ -884,7 +882,7 @@ extension SessionSummary {
 }
 
 private extension TimelineItem {
-    nonisolated var displayText: String? {
+    var displayText: String? {
         content["text"]?.stringValue
             ?? content["rawText"]?.stringValue
             ?? content["message"]?.stringValue
@@ -897,10 +895,9 @@ private extension TimelineItem {
             guard case let .object(object) = value,
                   let fileId = object["fileId"]?.stringValue,
                   let name = object["name"]?.stringValue,
-                  let mediaType = object["mediaType"]?.stringValue,
-                  let sizeString = object["size"]?.stringValue,
-                  let size = Int(Double(sizeString) ?? 0)
+                  let mediaType = object["mediaType"]?.stringValue
             else { return nil }
+            let size = object["size"]?.intValue ?? 0
             return UploadedAttachment(
                 fileId: fileId,
                 sessionId: object["sessionId"]?.stringValue ?? sessionId,
@@ -989,4 +986,17 @@ private extension TimelineItem {
 private func mergeOptimisticItems(real: [TimelineItem], optimistic: [TimelineItem]) -> [TimelineItem] {
     let realClientIds = Set(real.compactMap { $0.source["clientMessageId"]?.stringValue })
     return real + optimistic.filter { !realClientIds.contains($0.id) }
+}
+
+private extension JSONValue {
+    var intValue: Int? {
+        switch self {
+        case let .number(value):
+            return Int(value)
+        case let .string(value):
+            return Int(value) ?? Double(value).map(Int.init)
+        default:
+            return nil
+        }
+    }
 }
