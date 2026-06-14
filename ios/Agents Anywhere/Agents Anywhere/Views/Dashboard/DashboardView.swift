@@ -524,7 +524,7 @@ private struct SessionMetadataPill: View {
             .foregroundStyle(.secondary)
             .lineLimit(1)
             .truncationMode(.tail)
-            .frame(width: 86)
+            .frame(maxWidth: 120)
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
             .background {
