@@ -1601,7 +1601,7 @@ private struct ApprovalButtons: View {
                 .foregroundStyle(.secondary)
         } else {
             VStack(spacing: 8) {
-                HStack(spacing: 8) {
+                HStack(spacing: 6) {
                     AppGlassButton(
                         "Deny",
                         role: .destructive,
@@ -1627,6 +1627,8 @@ private struct ApprovalButtons: View {
                     onResolveApproval(approval, .approved)
                 }
             }
+            .padding(.horizontal, 4)
+            .padding(.vertical, 2)
         }
     }
 }
