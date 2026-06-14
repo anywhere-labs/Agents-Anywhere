@@ -594,9 +594,7 @@ private struct GlassMessageInputBar: View {
                         onSend()
                     }
                 } label: {
-                    Image(systemName: canSend ? "arrow.up.circle.fill" : "mic.fill")
-                        .font(.title2)
-                        .foregroundStyle(canSend ? .tint : .secondary)
+                    sendIcon
                 }
                 .buttonStyle(.plain)
             }
@@ -612,6 +610,19 @@ private struct GlassMessageInputBar: View {
         .padding(.top, 8)
         .padding(.bottom, 8)
         .background(.bar)
+    }
+
+    @ViewBuilder
+    private var sendIcon: some View {
+        if canSend {
+            Image(systemName: "arrow.up.circle.fill")
+                .font(.title2)
+                .foregroundStyle(.tint)
+        } else {
+            Image(systemName: "mic.fill")
+                .font(.title2)
+                .foregroundStyle(.secondary)
+        }
     }
 }
 
