@@ -1053,16 +1053,7 @@ struct LiquidGlassMessageInputBar: View {
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .background {
-            if #available(iOS 26.0, *) {
-                Circle()
-                    .fill(.clear)
-                    .glassEffect(.regular.interactive(), in: Circle())
-            } else {
-                Circle()
-                    .fill(.regularMaterial)
-            }
-        }
+        .composerGlassEffect(shape: Circle())
         .accessibilityLabel(isMenuExpanded ? "Close Menu" : "More Content")
     }
 
@@ -1091,16 +1082,7 @@ struct LiquidGlassMessageInputBar: View {
         .padding(.leading, 17)
         .padding(.trailing, canSend || isSending ? 8 : 17)
         .frame(minHeight: composerHeight)
-        .background {
-            if #available(iOS 26.0, *) {
-                Capsule()
-                    .fill(.clear)
-                    .glassEffect(.regular.interactive(), in: Capsule())
-            } else {
-                Capsule()
-                    .fill(.regularMaterial)
-            }
-        }
+        .composerGlassEffect(shape: Capsule())
     }
 
     private var sendButton: some View {
@@ -1121,7 +1103,7 @@ struct LiquidGlassMessageInputBar: View {
     }
 
     private var expandedMenu: some View {
-        HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             menuButton(icon: "photo", title: "Photos", action: onPlus)
             menuButton(icon: "camera", title: "Camera", action: onCamera)
             menuButton(icon: "terminal", title: "Runtime", action: onRuntime)
@@ -1129,16 +1111,7 @@ struct LiquidGlassMessageInputBar: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background {
-            if #available(iOS 26.0, *) {
-                Capsule()
-                    .fill(.clear)
-                    .glassEffect(.regular.interactive(), in: Capsule())
-            } else {
-                Capsule()
-                    .fill(.regularMaterial)
-            }
-        }
+        .composerGlassEffect(shape: RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 
     private func menuButton(icon: String, title: String, action: @escaping () -> Void) -> some View {
@@ -1153,6 +1126,7 @@ struct LiquidGlassMessageInputBar: View {
                     .font(.caption)
             }
             .frame(height: 34)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 10)
         }
         .buttonStyle(.plain)
@@ -1172,6 +1146,7 @@ struct LiquidGlassMessageInputBar: View {
                     .font(.caption)
             }
             .frame(height: 34)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 10)
             .opacity(isTakeoverDisabled ? 0.42 : 1)
         }
@@ -1196,6 +1171,19 @@ struct LiquidGlassMessageInputBar: View {
         guard canSend else { return }
         onSend()
         collapseMenu()
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func composerGlassEffect<S: Shape>(shape: S) -> some View {
+        if #available(iOS 26.0, *) {
+            self.glassEffect(.regular.interactive(), in: shape)
+        } else {
+            self.background {
+                shape.fill(.regularMaterial)
+            }
+        }
     }
 }
 
