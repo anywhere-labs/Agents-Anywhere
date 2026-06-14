@@ -92,6 +92,35 @@ final class AppState: ObservableObject {
         }
     }
 
+    func verifyPasswordLogin(serverURL: URL, userId: String, password: String) async -> AuthResponse? {
+        authError = nil
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            let client = APIClient(serverURL: serverURL)
+            return try await client.login(userId: userId, password: password)
+        } catch {
+            authError = error.localizedDescription
+            return nil
+        }
+    }
+
+    func completePasswordLogin(serverURL: URL, auth: AuthResponse) async {
+        authError = nil
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            let client = APIClient(serverURL: serverURL)
+            try saveSession(serverURL: serverURL, token: auth.accessToken)
+            self.serverURL = serverURL
+            me = try await client.me(token: auth.accessToken)
+            route = .signedIn
+            await refreshDashboard()
+        } catch {
+            authError = error.localizedDescription
+        }
+    }
+
     func requestMobileLogin(payload: MobileLoginPayload) async -> Bool {
         authError = nil
         isWorking = true

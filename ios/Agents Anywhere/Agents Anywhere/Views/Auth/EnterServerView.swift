@@ -19,6 +19,15 @@ struct EnterServerView: View {
                     PasswordLoginView(
                         serverURL: url,
                         onCancel: { dismiss() },
+                        onVerified: { auth in
+                            path.append(.confirmPasswordLogin(url, auth))
+                        },
+                    )
+                case let .confirmPasswordLogin(url, auth):
+                    PasswordLoginConfirmView(
+                        serverURL: url,
+                        auth: auth,
+                        onCancel: { dismiss() },
                     )
                 }
             }
@@ -28,6 +37,7 @@ struct EnterServerView: View {
 
 private enum EnterServerRoute: Hashable {
     case credentials(URL)
+    case confirmPasswordLogin(URL, AuthResponse)
 }
 
 private struct ServerAddressView: View {
@@ -103,6 +113,7 @@ private struct PasswordLoginView: View {
 
     let serverURL: URL
     let onCancel: () -> Void
+    let onVerified: (AuthResponse) -> Void
 
     @State private var userId = ""
     @State private var password = ""
@@ -162,11 +173,72 @@ private struct PasswordLoginView: View {
     private func signIn() async {
         isSigningIn = true
         defer { isSigningIn = false }
-        await appState.login(serverURL: serverURL, userId: userId, password: password)
+        if let auth = await appState.verifyPasswordLogin(
+            serverURL: serverURL,
+            userId: userId.trimmingCharacters(in: .whitespacesAndNewlines),
+            password: password,
+        ) {
+            onVerified(auth)
+        } else {
+            alertMessage = appState.authError ?? "Check your credentials and try again."
+        }
+    }
+}
+
+private struct PasswordLoginConfirmView: View {
+    @EnvironmentObject private var appState: AppState
+
+    let serverURL: URL
+    let auth: AuthResponse
+    let onCancel: () -> Void
+
+    @State private var isFinishing = false
+    @State private var alertMessage: String?
+
+    var body: some View {
+        AuthScreen(
+            title: "Confirm Login",
+            subtitle: "Password verified for \(auth.userId).",
+            onCancel: onCancel,
+        ) {
+            VStack(alignment: .leading, spacing: 22) {
+                Text("Tap confirm to finish signing in and open your workspace.")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text(serverURL.absoluteString)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+
+                AuthPrimaryButton(
+                    title: "Confirm Login",
+                    isLoading: isFinishing,
+                ) {
+                    Task { await finishLogin() }
+                }
+            }
+        }
+        .alert("Login Failed", isPresented: Binding(
+            get: { alertMessage != nil },
+            set: { if !$0 { alertMessage = nil } },
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(alertMessage ?? "The login could not be completed.")
+        }
+        .navigationBarBackButtonHidden(true)
+    }
+
+    private func finishLogin() async {
+        isFinishing = true
+        defer { isFinishing = false }
+        await appState.completePasswordLogin(serverURL: serverURL, auth: auth)
         if case .signedIn = appState.route {
             onCancel()
         } else {
-            alertMessage = appState.authError ?? "Check your credentials and try again."
+            alertMessage = appState.authError ?? "The login could not be completed."
         }
     }
 }

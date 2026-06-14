@@ -1,6 +1,6 @@
 import Foundation
 
-enum UserRole: String, Codable {
+enum UserRole: String, Codable, Hashable {
     case admin
     case member
 }
@@ -15,7 +15,7 @@ struct AuthConfig: Decodable {
     let serverTime: String
 }
 
-struct AuthResponse: Codable {
+struct AuthResponse: Codable, Hashable {
     let userId: String
     let role: UserRole
     let accessToken: String
