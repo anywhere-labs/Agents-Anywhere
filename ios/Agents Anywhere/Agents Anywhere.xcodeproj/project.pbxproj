@@ -258,9 +258,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSCameraUsageDescription = "Scan a one-time Agents Anywhere mobile login QR code.";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Dictate messages in Agents Anywhere sessions.";
-				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Convert dictated speech into session messages.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Scan login QR codes and attach camera photos to sessions.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -299,9 +297,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSCameraUsageDescription = "Scan a one-time Agents Anywhere mobile login QR code.";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Dictate messages in Agents Anywhere sessions.";
-				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Convert dictated speech into session messages.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Scan login QR codes and attach camera photos to sessions.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;

@@ -259,6 +259,11 @@ struct SessionResponse: Decodable {
     let serverTime: String
 }
 
+struct TakeoverResponse: Decodable {
+    let session: SessionSummary
+    let serverTime: String
+}
+
 struct RpcResponsePayload: Decodable {
     let ok: Bool?
     let result: JSONValue?

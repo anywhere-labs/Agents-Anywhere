@@ -1,8 +1,6 @@
-import AVFoundation
-import Combine
 import PhotosUI
-import Speech
 import SwiftUI
+import UIKit
 
 private let attachmentOnlyPrompt = "Please review the attached file."
 
@@ -23,6 +21,11 @@ struct SessionDetailView: View {
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var pendingUploads: [AttachmentUpload] = []
     @State private var isPhotoPickerPresented = false
+    @State private var isCameraPickerPresented = false
+    @State private var isCameraUnavailable = false
+    @State private var isShowingDetails = false
+    @State private var isApplyingTakeover = false
+    @State private var hasPositionedInitialScroll = false
     @State private var sseTask: Task<Void, Never>?
     @State private var pollTask: Task<Void, Never>?
 
@@ -95,10 +98,21 @@ struct SessionDetailView: View {
             }
             .defaultScrollAnchor(.bottom)
             .onChange(of: displayEntries.last?.id) { _, _ in
-                scrollToBottom(proxy, animated: true)
+                guard !displayEntries.isEmpty else { return }
+                if hasPositionedInitialScroll {
+                    scrollToBottom(proxy, animated: true)
+                } else {
+                    hasPositionedInitialScroll = true
+                    scrollToBottom(proxy, animated: false)
+                    DispatchQueue.main.async {
+                        scrollToBottom(proxy, animated: false)
+                    }
+                }
             }
             .onChange(of: session.status) { _, _ in
-                scrollToBottom(proxy, animated: true)
+                if hasPositionedInitialScroll {
+                    scrollToBottom(proxy, animated: true)
+                }
             }
             .task {
                 await markRead()
@@ -106,6 +120,9 @@ struct SessionDetailView: View {
                 startEventStream()
                 startFallbackPoll()
                 scrollToBottom(proxy, animated: false)
+                DispatchQueue.main.async {
+                    scrollToBottom(proxy, animated: false)
+                }
             }
             .onDisappear {
                 sseTask?.cancel()
@@ -114,14 +131,25 @@ struct SessionDetailView: View {
         }
         .navigationTitle(session.displayTitle)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .tabBar)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    Task { await loadState(replace: true) }
+                Menu {
+                    Button {
+                        Task { await applyTakeover() }
+                    } label: {
+                        Label(session.takeover ? "Disable Takeover" : "Takeover", systemImage: session.takeover ? "lock.open" : "hand.raised")
+                    }
+                    .disabled(isApplyingTakeover)
+
+                    Button {
+                        isShowingDetails = true
+                    } label: {
+                        Label("Details", systemImage: "info.circle")
+                    }
                 } label: {
-                    Image(systemName: "arrow.clockwise")
+                    Image(systemName: "ellipsis")
                 }
-                .disabled(isLoading)
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -137,12 +165,29 @@ struct SessionDetailView: View {
                     hasPendingAttachments: !pendingUploads.isEmpty,
                     onSend: { Task { await sendMessage() } },
                     onPlus: { isPhotoPickerPresented = true },
+                    onCamera: { openCamera() },
                 )
             }
+            .padding(.bottom, 8)
         }
         .photosPicker(isPresented: photoPickerBinding, selection: $selectedPhotoItems, maxSelectionCount: 4, matching: .images)
         .onChange(of: selectedPhotoItems) { _, items in
             Task { await importPhotos(items) }
+        }
+        .sheet(isPresented: $isCameraPickerPresented) {
+            CameraImagePicker { image in
+                importCameraImage(image)
+            }
+        }
+        .sheet(isPresented: $isShowingDetails) {
+            SessionDetailsSheet(session: session)
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
+        }
+        .alert("Camera", isPresented: $isCameraUnavailable) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Camera capture is not available on this device.")
         }
         .alert("Session Error", isPresented: Binding(
             get: { errorMessage != nil },
@@ -173,6 +218,39 @@ struct SessionDetailView: View {
     private func markRead() async {
         guard initialSession.unread, let api = appState.api, let token = appState.accessToken() else { return }
         _ = try? await api.markSessionRead(token: token, sessionId: initialSession.id)
+    }
+
+    private func openCamera() {
+        if UIImagePickerController.isSourceTypeAvailable(.camera) {
+            isCameraPickerPresented = true
+        } else {
+            isCameraUnavailable = true
+        }
+    }
+
+    private func importCameraImage(_ image: UIImage) {
+        guard let data = image.jpegData(compressionQuality: 0.86) else { return }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        pendingUploads.append(AttachmentUpload(
+            name: "camera-\(formatter.string(from: Date())).jpg",
+            mediaType: "image/jpeg",
+            data: data,
+        ))
+    }
+
+    private func applyTakeover() async {
+        guard !isApplyingTakeover, let api = appState.api, let token = appState.accessToken() else { return }
+        isApplyingTakeover = true
+        defer { isApplyingTakeover = false }
+        do {
+            let response = session.takeover
+                ? try await api.disableTakeover(token: token, sessionId: initialSession.id)
+                : try await api.enableTakeover(token: token, sessionId: initialSession.id)
+            session = response.session
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func loadState(replace: Bool) async {
@@ -409,6 +487,8 @@ private struct ChatEntryView: View {
 private struct MessageBubble: View {
     let item: TimelineItem
 
+    @State private var isExpanded = false
+
     private var isUser: Bool { return item.role == "user" }
     private var text: String { return item.displayText ?? "" }
     private var attachments: [UploadedAttachment] { return item.attachments }
@@ -422,19 +502,7 @@ private struct MessageBubble: View {
                     AttachmentPreviewGrid(attachments: attachments)
                 }
                 if !text.isEmpty {
-                    Text(text)
-                        .font(.body)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.horizontal, isUser ? 14 : 0)
-                        .padding(.vertical, isUser ? 10 : 0)
-                        .background {
-                            if isUser {
-                                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                    .fill(.tint)
-                            }
-                        }
-                        .foregroundStyle(textColor)
+                    messageTextView
                 }
                 if item.status == "pending" || item.status == "failed" {
                     Text(item.status == "failed" ? "Failed to send" : "Sending...")
@@ -444,17 +512,68 @@ private struct MessageBubble: View {
             }
             .frame(maxWidth: isUser ? 300 : .infinity, alignment: isUser ? .trailing : .leading)
 
-            if !isUser { Spacer(minLength: 32) }
         }
         .frame(maxWidth: .infinity)
     }
 
-    private var textColor: Color {
-        return isUser ? .white : .primary
+    @ViewBuilder
+    private var messageTextView: some View {
+        if isUser {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(text)
+                    .font(.body)
+                    .lineLimit(isExpanded ? nil : 10)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if shouldCollapse {
+                    Button(isExpanded ? "Show Less" : "Show More") {
+                        withAnimation(.snappy(duration: 0.2)) {
+                            isExpanded.toggle()
+                        }
+                    }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.78))
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color(.sRGB, white: 0.18, opacity: 1))
+            }
+            .foregroundStyle(.white)
+        } else {
+            MarkdownText(text)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var shouldCollapse: Bool {
+        text.components(separatedBy: .newlines).count > 10 || text.count > 700
     }
 
     private var statusColor: Color {
         return item.status == "failed" ? .red : .secondary
+    }
+}
+
+private struct MarkdownText: View {
+    let text: String
+
+    var body: some View {
+        Text(attributed)
+            .font(.body)
+            .foregroundStyle(.primary)
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var attributed: AttributedString {
+        (try? AttributedString(markdown: text))
+            ?? AttributedString(text)
     }
 }
 
@@ -568,7 +687,66 @@ private struct AttachmentStrip: View {
             .padding(.horizontal, 12)
             .padding(.top, 8)
         }
-        .background(.bar)
+    }
+}
+
+private struct SessionDetailsSheet: View {
+    let session: SessionSummary
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Session") {
+                    DetailRow("Title", session.displayTitle)
+                    DetailRow("Status", session.status.capitalized)
+                    DetailRow("Takeover", session.takeover ? "Enabled" : "Disabled")
+                    if let cwd = session.cwd, !cwd.isEmpty {
+                        DetailRow("Directory", cwd)
+                    }
+                }
+
+                Section("Runtime") {
+                    DetailRow("Agent", session.runtime)
+                    DetailRow("Connector", session.connectorId)
+                    DetailRow("Connector Status", session.connectorStatus.capitalized)
+                    if let runMode = session.effectiveRunMode, !runMode.isEmpty {
+                        DetailRow("Run Mode", runMode)
+                    }
+                }
+
+                Section("Activity") {
+                    if let lastActivityAt = session.lastActivityAt {
+                        DetailRow("Last Activity", lastActivityAt)
+                    }
+                    if let lastSyncedAt = session.lastSyncedAt {
+                        DetailRow("Last Synced", lastSyncedAt)
+                    }
+                    DetailRow("Updated Seq", "\(session.updatedSeq)")
+                }
+            }
+            .navigationTitle("Details")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+}
+
+private struct DetailRow: View {
+    let title: String
+    let value: String
+
+    init(_ title: String, _ value: String) {
+        self.title = title
+        self.value = value
+    }
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 16)
+            Text(value)
+                .multilineTextAlignment(.trailing)
+        }
     }
 }
 
@@ -579,9 +757,9 @@ struct LiquidGlassMessageInputBar: View {
     var hasPendingAttachments = false
     var onSend: () -> Void
     var onPlus: () -> Void = {}
+    var onCamera: () -> Void = {}
 
     @FocusState private var isFocused: Bool
-    @StateObject private var speech = SpeechInputController()
 
     private var canSend: Bool {
         return !isSending && (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || hasPendingAttachments)
@@ -606,8 +784,6 @@ struct LiquidGlassMessageInputBar: View {
                 Button {
                     if canSend {
                         onSend()
-                    } else {
-                        toggleDictation()
                     }
                 } label: {
                     if isSending {
@@ -615,7 +791,7 @@ struct LiquidGlassMessageInputBar: View {
                             .scaleEffect(0.78)
                             .frame(width: 30, height: 30)
                     } else {
-                        Image(systemName: canSend ? "arrow.up.circle.fill" : speech.isRecording ? "stop.circle.fill" : "mic.fill")
+                        Image(systemName: "arrow.up.circle.fill")
                             .font(.title2)
                             .symbolRenderingMode(.hierarchical)
                             .foregroundStyle(sendIconShapeStyle)
@@ -623,7 +799,8 @@ struct LiquidGlassMessageInputBar: View {
                     }
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(canSend ? "Send" : speech.isRecording ? "Stop Dictation" : "Voice Input")
+                .disabled(!canSend)
+                .accessibilityLabel("Send")
             }
             .padding(.leading, 15)
             .padding(.trailing, 8)
@@ -635,10 +812,6 @@ struct LiquidGlassMessageInputBar: View {
         .padding(.horizontal, 12)
         .padding(.top, 8)
         .padding(.bottom, 8)
-        .background(.bar)
-        .onChange(of: speech.transcript) { _, newValue in
-            text = newValue
-        }
     }
 
     private var plusButton: some View {
@@ -650,26 +823,18 @@ struct LiquidGlassMessageInputBar: View {
             }
 
             Button {
+                onCamera()
             } label: {
                 Label("Camera", systemImage: "camera")
-            }
-
-            Button {
-            } label: {
-                Label("Files", systemImage: "folder")
-            }
-
-            Button {
-            } label: {
-                Label("Runtime", systemImage: "terminal")
             }
         } label: {
             Image(systemName: "plus")
                 .font(.title3)
                 .fontWeight(.medium)
-                .frame(width: 36, height: 36)
+                .frame(width: 38, height: 38)
+                .contentShape(Circle())
         }
-        .buttonStyle(.glass)
+        .buttonStyle(CircularGlassButtonStyle())
         .accessibilityLabel("More Content")
     }
 
@@ -685,103 +850,68 @@ struct LiquidGlassMessageInputBar: View {
         }
     }
 
-    private func toggleDictation() {
-        isFocused = false
-        if speech.isRecording {
-            speech.stop()
-        } else {
-            speech.start()
-        }
-    }
-
     private var sendIconShapeStyle: AnyShapeStyle {
         if canSend {
             return AnyShapeStyle(.tint)
-        }
-        if speech.isRecording {
-            return AnyShapeStyle(Color.red)
         }
         return AnyShapeStyle(.secondary)
     }
 }
 
-@MainActor
-final class SpeechInputController: ObservableObject {
-    @Published var transcript = ""
-    @Published var isRecording = false
-
-    private let recognizer = SFSpeechRecognizer()
-    private let audioEngine = AVAudioEngine()
-    private var request: SFSpeechAudioBufferRecognitionRequest?
-    private var task: SFSpeechRecognitionTask?
-
-    func start() {
-        SFSpeechRecognizer.requestAuthorization { [weak self] status in
-            guard status == .authorized else { return }
-            Task { @MainActor in self?.startRecording() }
-        }
-    }
-
-    func stop() {
-        audioEngine.stop()
-        audioEngine.inputNode.removeTap(onBus: 0)
-        request?.endAudio()
-        task?.cancel()
-        request = nil
-        task = nil
-        isRecording = false
-    }
-
-    private func startRecording() {
-        stop()
-        let request = SFSpeechAudioBufferRecognitionRequest()
-        request.shouldReportPartialResults = true
-        self.request = request
-
-        do {
-            #if os(iOS)
-            try AVAudioSession.sharedInstance().setCategory(.record, mode: .measurement, options: .duckOthers)
-            try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
-            #endif
-            let node = audioEngine.inputNode
-            let format = node.outputFormat(forBus: 0)
-            try node.installSpeechTap(onBus: 0, bufferSize: 1024, format: format) { [weak request] buffer, _ in
-                request?.append(buffer)
-            }
-            audioEngine.prepare()
-            try audioEngine.start()
-            isRecording = true
-        } catch {
-            stop()
-            return
-        }
-
-        task = recognizer?.recognitionTask(with: request) { [weak self] result, error in
-            Task { @MainActor in
-                if let result {
-                    self?.transcript = result.bestTranscription.formattedString
-                }
-                if error != nil || result?.isFinal == true {
-                    self?.stop()
+private struct CircularGlassButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background {
+                if #available(iOS 26.0, *) {
+                    Circle()
+                        .fill(.clear)
+                        .glassEffect(.regular, in: Circle())
+                } else {
+                    Circle()
+                        .fill(.regularMaterial)
                 }
             }
-        }
+            .scaleEffect(configuration.isPressed ? 0.94 : 1)
     }
 }
 
-private extension AVAudioNode {
-    func installSpeechTap(
-        onBus bus: AVAudioNodeBus,
-        bufferSize: AVAudioFrameCount,
-        format: AVAudioFormat?,
-        block: @escaping AVAudioNodeTapBlock,
-    ) throws {
-        if #available(iOS 27.0, macOS 27.0, tvOS 27.0, watchOS 27.0, *) {
-            try installAudioTap(onBus: bus, bufferSize: bufferSize, format: format) { buffer, when in
-                block(AVAudioPCMBuffer(copying: buffer), when)
+private struct CameraImagePicker: UIViewControllerRepresentable {
+    @Environment(\.dismiss) private var dismiss
+
+    let onImage: (UIImage) -> Void
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let controller = UIImagePickerController()
+        controller.sourceType = .camera
+        controller.delegate = context.coordinator
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    final class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
+        private let parent: CameraImagePicker
+
+        init(parent: CameraImagePicker) {
+            self.parent = parent
+        }
+
+        func imagePickerController(
+            _ picker: UIImagePickerController,
+            didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any],
+        ) {
+            if let image = info[.originalImage] as? UIImage {
+                parent.onImage(image)
             }
-        } else {
-            installTap(onBus: bus, bufferSize: bufferSize, format: format, block: block)
+            parent.dismiss()
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            parent.dismiss()
         }
     }
 }

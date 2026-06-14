@@ -94,6 +94,25 @@ struct APIClient {
         )
     }
 
+    func enableTakeover(token: String, sessionId: String) async throws -> TakeoverResponse {
+        let id = sessionId.urlPathComponentEncoded
+        return try await request(
+            "/sessions/\(id)/takeover",
+            method: "POST",
+            body: EmptyBody(),
+            token: token,
+        )
+    }
+
+    func disableTakeover(token: String, sessionId: String) async throws -> TakeoverResponse {
+        let id = sessionId.urlPathComponentEncoded
+        return try await request(
+            "/sessions/\(id)/takeover",
+            method: "DELETE",
+            token: token,
+        )
+    }
+
     func getSessionState(
         token: String,
         sessionId: String,
