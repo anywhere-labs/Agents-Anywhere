@@ -1271,7 +1271,11 @@ private struct MarkdownText: View {
 
     var body: some View {
         Markdown(text)
-            .markdownTheme(.gitHub)
+            .markdownTheme(.basic)
+            .markdownTextStyle(\.code) {
+                FontFamilyVariant(.monospaced)
+                FontSize(.em(0.94))
+            }
             .markdownBlockStyle(\.codeBlock) { configuration in
                 ScrollView(.horizontal, showsIndicators: false) {
                     configuration.label
@@ -1282,10 +1286,9 @@ private struct MarkdownText: View {
                         }
                         .padding(12)
                 }
-                .background(Color(.systemBackground))
+                .background(Color.clear)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
-            .background(Color(.systemBackground))
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -1579,65 +1582,31 @@ private struct ApprovalButtons: View {
         } else {
             VStack(spacing: 8) {
                 HStack(spacing: 8) {
-                    ApprovalActionButton(
-                        title: "Deny",
-                        isPrimary: false,
-                        isResolving: isResolving && resolvingApprovalStatus == .rejected,
+                    AppGlassButton(
+                        "Deny",
+                        role: .destructive,
+                        isLoading: isResolving && resolvingApprovalStatus == .rejected,
+                        disabled: isDisabled,
                     ) {
                         onResolveApproval(approval, .rejected)
                     }
-                    ApprovalActionButton(
-                        title: "Always Allow",
-                        isPrimary: false,
-                        isResolving: isResolving && resolvingApprovalStatus == .approvedForSession,
+                    AppGlassButton(
+                        "Always Allow",
+                        isLoading: isResolving && resolvingApprovalStatus == .approvedForSession,
+                        disabled: isDisabled,
                     ) {
                         onResolveApproval(approval, .approvedForSession)
                     }
                 }
-                ApprovalActionButton(
-                    title: "Allow Once",
-                    isPrimary: true,
-                    isResolving: isResolving && resolvingApprovalStatus == .approved,
+                AppGlassButton(
+                    "Allow Once",
+                    style: .prominent,
+                    isLoading: isResolving && resolvingApprovalStatus == .approved,
+                    disabled: isDisabled,
                 ) {
                     onResolveApproval(approval, .approved)
                 }
             }
-            .disabled(isDisabled)
-        }
-    }
-}
-
-private struct ApprovalActionButton: View {
-    let title: String
-    let isPrimary: Bool
-    let isResolving: Bool
-    let action: () -> Void
-
-    var body: some View {
-        if isPrimary {
-            button
-                .buttonStyle(.borderedProminent)
-        } else {
-            button
-                .buttonStyle(.bordered)
-        }
-    }
-
-    private var button: some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                if isResolving {
-                    ProgressView()
-                        .controlSize(.small)
-                }
-                Text(title)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.85)
-            }
-            .font(.caption.weight(.semibold))
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 9)
-            .padding(.horizontal, 10)
         }
     }
 }

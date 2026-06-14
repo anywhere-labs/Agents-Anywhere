@@ -114,8 +114,6 @@ struct AuthPrimaryButton: View {
     let disabled: Bool
     let action: () -> Void
 
-    @Environment(\.colorScheme) private var colorScheme
-
     init(
         title: String,
         systemImage: String? = nil,
@@ -131,34 +129,14 @@ struct AuthPrimaryButton: View {
     }
 
     var body: some View {
-        Button(action: action) {
-            normalLabel
-                .opacity(isLoading ? 0 : 1)
-                .overlay {
-                    if isLoading {
-                        ProgressView()
-                            .scaleEffect(0.75)
-                            .tint(AppTheme.primaryControlForeground(colorScheme))
-                    }
-                }
-            .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.glassProminent)
-        .buttonBorderShape(.capsule)
-        .controlSize(.large)
-        .tint(AppTheme.primaryControlBackground(colorScheme))
-        .foregroundStyle(AppTheme.primaryControlForeground(colorScheme))
-        .disabled(disabled || isLoading)
-        .animation(.easeInOut(duration: 0.18), value: isLoading)
-    }
-
-    private var normalLabel: some View {
-        HStack(spacing: 10) {
-            if let systemImage {
-                Image(systemName: systemImage)
-            }
-            Text(title)
-        }
+        AppGlassButton(
+            title,
+            systemImage: systemImage,
+            style: .prominent,
+            isLoading: isLoading,
+            disabled: disabled,
+            action: action,
+        )
     }
 }
 
@@ -190,23 +168,22 @@ struct AuthGlassButton: View {
     }
 
     var body: some View {
-        Button(role: role, action: action) {
-            HStack(spacing: 10) {
-                if let systemImage {
-                    Image(systemName: systemImage)
-                }
-                if let title {
-                    Text(title)
-                }
-            }
-            .frame(maxWidth: .infinity)
+        if let title {
+            AppGlassButton(
+                title,
+                systemImage: systemImage,
+                role: role,
+                action: action,
+            )
+        } else if let systemImage {
+            AppGlassButton(
+                systemImage: systemImage,
+                role: role,
+                action: action,
+            )
         }
-        .buttonStyle(.glass)
-        .buttonBorderShape(.capsule)
-        .controlSize(.large)
     }
 
-    @Environment(\.colorScheme) private var colorScheme
 }
 
 struct LoginSummaryView: View {
