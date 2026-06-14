@@ -519,18 +519,21 @@ private struct SessionMetadataPill: View {
     let title: String
 
     var body: some View {
-        Text(title)
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-            .truncationMode(.tail)
-            .frame(maxWidth: 120)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background {
-                Capsule(style: .continuous)
-                    .fill(.secondary.opacity(0.10))
-            }
+        HStack(spacing: 0) {
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: 120, alignment: .leading)
+        }
+        .fixedSize(horizontal: true, vertical: false)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background {
+            Capsule(style: .continuous)
+                .fill(.secondary.opacity(0.10))
+        }
     }
 }
 
