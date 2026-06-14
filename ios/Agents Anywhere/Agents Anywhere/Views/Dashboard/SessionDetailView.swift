@@ -84,7 +84,7 @@ struct SessionDetailView: View {
                         .padding(.top, 80)
                     } else {
                         ForEach(displayEntries) { entry in
-                            ChatEntryView(entry: entry)
+                            ChatEntryView(entry: entry, api: appState.api, token: appState.accessToken())
                                 .id(entry.id)
                         }
 
@@ -100,7 +100,7 @@ struct SessionDetailView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 14)
-                .padding(.bottom, pendingUploads.isEmpty ? 112 : 158)
+                .padding(.bottom, pendingUploads.isEmpty ? 112 : 196)
             }
             .defaultScrollAnchor(.bottom)
             .onChange(of: displayEntries.last?.id) { _, _ in
@@ -563,11 +563,13 @@ private enum ChatEntry: Identifiable {
 
 private struct ChatEntryView: View {
     let entry: ChatEntry
+    let api: APIClient?
+    let token: String?
 
     var body: some View {
         switch entry {
         case let .message(item):
-            MessageBubble(item: item)
+            MessageBubble(item: item, api: api, token: token)
         case let .approval(approval):
             ApprovalSummary(approval: approval)
         case let .notice(kind, text):
@@ -578,6 +580,8 @@ private struct ChatEntryView: View {
 
 private struct MessageBubble: View {
     let item: TimelineItem
+    let api: APIClient?
+    let token: String?
 
     @State private var isExpanded = false
 
@@ -591,7 +595,7 @@ private struct MessageBubble: View {
 
             VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
                 if !attachments.isEmpty {
-                    AttachmentPreviewGrid(attachments: attachments)
+                    AttachmentPreviewGrid(attachments: attachments, api: api, token: token)
                 }
                 if !text.isEmpty {
                     messageTextView
@@ -671,24 +675,126 @@ private struct MarkdownText: View {
 
 private struct AttachmentPreviewGrid: View {
     let attachments: [UploadedAttachment]
+    let api: APIClient?
+    let token: String?
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 6) {
             ForEach(attachments) { attachment in
-                HStack(spacing: 6) {
-                    Image(systemName: attachment.mediaType.hasPrefix("image/") ? "photo" : "paperclip")
-                    Text(attachment.name)
-                        .lineLimit(1)
-                }
-                .font(.caption)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background {
-                    Capsule(style: .continuous)
-                        .fill(.secondary.opacity(0.12))
+                if attachment.isImage {
+                    RemoteAttachmentImage(attachment: attachment, api: api, token: token)
+                } else {
+                    AttachmentFileCard(attachment: attachment, api: api, token: token)
                 }
             }
         }
+    }
+}
+
+private struct RemoteAttachmentImage: View {
+    let attachment: UploadedAttachment
+    let api: APIClient?
+    let token: String?
+
+    @State private var image: UIImage?
+    @State private var isLoading = false
+
+    var body: some View {
+        ZStack {
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(.secondary.opacity(0.12))
+                    .overlay {
+                        if isLoading {
+                            ProgressView()
+                        } else {
+                            Image(systemName: "photo")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+            }
+        }
+        .frame(width: 220, height: 160)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .task(id: attachment.fileId) {
+            await load()
+        }
+    }
+
+    private func load() async {
+        guard image == nil, !isLoading, let api, let token else { return }
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            let data = try await AttachmentDataCache.shared.data(for: attachment, api: api, token: token)
+            image = UIImage(data: data)
+        } catch {
+            image = nil
+        }
+    }
+}
+
+private struct AttachmentFileCard: View {
+    let attachment: UploadedAttachment
+    let api: APIClient?
+    let token: String?
+
+    @State private var isDownloading = false
+
+    var body: some View {
+        Button {
+            Task { await downloadIfNeeded() }
+        } label: {
+            HStack(spacing: 10) {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(.secondary.opacity(0.14))
+                    .frame(width: 38, height: 38)
+                    .overlay {
+                        Image(systemName: attachment.fileIcon)
+                            .font(.headline)
+                            .foregroundStyle(.secondary)
+                    }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(attachment.name)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    Text(attachment.detailText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 8)
+
+                if isDownloading {
+                    ProgressView()
+                        .scaleEffect(0.72)
+                } else {
+                    Image(systemName: "arrow.down.circle")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(10)
+            .frame(width: 260)
+            .background {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(.secondary.opacity(0.10))
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func downloadIfNeeded() async {
+        guard !isDownloading, let api, let token else { return }
+        isDownloading = true
+        defer { isDownloading = false }
+        _ = try? await AttachmentDataCache.shared.data(for: attachment, api: api, token: token)
     }
 }
 
@@ -754,30 +860,81 @@ private struct AttachmentStrip: View {
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
                 ForEach(uploads, id: \.id) { upload in
-                    HStack(spacing: 6) {
-                        Image(systemName: upload.mediaType.hasPrefix("image/") ? "photo" : "paperclip")
-                        Text(upload.name)
-                            .lineLimit(1)
+                    ZStack(alignment: .topTrailing) {
+                        PendingAttachmentCard(upload: upload)
+
                         Button {
                             onRemove(upload)
                         } label: {
                             Image(systemName: "xmark.circle.fill")
+                                .font(.title3)
+                                .symbolRenderingMode(.hierarchical)
+                                .foregroundStyle(.secondary)
+                                .background {
+                                    Circle()
+                                        .fill(.background)
+                                }
                         }
                         .buttonStyle(.plain)
-                    }
-                    .font(.caption)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background {
-                        Capsule(style: .continuous)
-                            .fill(.regularMaterial)
+                        .offset(x: 6, y: -6)
                     }
                 }
             }
             .padding(.horizontal, 12)
-            .padding(.top, 8)
+            .padding(.top, 10)
+            .padding(.bottom, 2)
+        }
+    }
+}
+
+private struct PendingAttachmentCard: View {
+    let upload: AttachmentUpload
+
+    var body: some View {
+        if upload.isImage, let image = UIImage(data: upload.data) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 86, height: 86)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay(alignment: .bottomLeading) {
+                    Text(upload.name)
+                        .font(.caption2.weight(.semibold))
+                        .lineLimit(1)
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 5)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(.black.opacity(0.42))
+                }
+        } else {
+            HStack(spacing: 9) {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(.secondary.opacity(0.14))
+                    .frame(width: 36, height: 36)
+                    .overlay {
+                        Image(systemName: upload.fileIcon)
+                            .foregroundStyle(.secondary)
+                    }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(upload.name)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    Text(upload.detailText)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(10)
+            .frame(width: 210, height: 64, alignment: .leading)
+            .background {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(.regularMaterial)
+            }
         }
     }
 }
@@ -1141,6 +1298,90 @@ private extension View {
     }
 }
 
+private actor AttachmentDataCache {
+    static let shared = AttachmentDataCache()
+
+    private var memory: [String: Data] = [:]
+
+    func data(for attachment: UploadedAttachment, api: APIClient, token: String) async throws -> Data {
+        let key = cacheKey(for: attachment)
+        if let data = memory[key] {
+            return data
+        }
+        if let data = try? Data(contentsOf: fileURL(for: key)) {
+            memory[key] = data
+            return data
+        }
+        let data = try await api.downloadAttachment(token: token, sessionId: attachment.sessionId, attachment: attachment)
+        memory[key] = data
+        try? data.write(to: fileURL(for: key), options: [.atomic])
+        return data
+    }
+
+    private func cacheKey(for attachment: UploadedAttachment) -> String {
+        "\(attachment.sessionId)-\(attachment.fileId)"
+    }
+
+    private func fileURL(for key: String) -> URL {
+        let root = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("AttachmentCache", isDirectory: true)
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        return root.appendingPathComponent(key.safeCacheFilename)
+    }
+}
+
+private extension UploadedAttachment {
+    var isImage: Bool {
+        mediaType.hasPrefix("image/")
+    }
+
+    var fileIcon: String {
+        if mediaType.hasPrefix("text/") { return "doc.text" }
+        if mediaType == "application/pdf" { return "doc.richtext" }
+        if mediaType.hasPrefix("video/") { return "film" }
+        if mediaType.hasPrefix("audio/") { return "waveform" }
+        return "doc"
+    }
+
+    var detailText: String {
+        let type = mediaType.isEmpty ? "File" : mediaType
+        return "\(type) · \(size.formattedByteCount)"
+    }
+}
+
+private extension AttachmentUpload {
+    var isImage: Bool {
+        mediaType.hasPrefix("image/")
+    }
+
+    var fileIcon: String {
+        if mediaType.hasPrefix("text/") { return "doc.text" }
+        if mediaType == "application/pdf" { return "doc.richtext" }
+        if mediaType.hasPrefix("video/") { return "film" }
+        if mediaType.hasPrefix("audio/") { return "waveform" }
+        return "doc"
+    }
+
+    var detailText: String {
+        let type = mediaType.isEmpty ? "File" : mediaType
+        return "\(type) · \(data.count.formattedByteCount)"
+    }
+}
+
+private extension Int {
+    var formattedByteCount: String {
+        ByteCountFormatter.string(fromByteCount: Int64(self), countStyle: .file)
+    }
+}
+
+private extension String {
+    var safeCacheFilename: String {
+        components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: "-")
+    }
+}
+
 private struct CameraImagePicker: UIViewControllerRepresentable {
     @Environment(\.dismiss) private var dismiss
 
@@ -1334,6 +1575,7 @@ private extension TimelineItem {
                 size: size,
                 createdAt: object["createdAt"]?.stringValue ?? createdAt,
                 downloadUrl: object["downloadUrl"]?.stringValue,
+                openUrl: object["openUrl"]?.stringValue,
                 platformOpenUrl: object["platformOpenUrl"]?.stringValue,
             )
         }
@@ -1367,6 +1609,9 @@ private extension TimelineItem {
                         "mediaType": .string(attachment.mediaType),
                         "size": .number(Double(attachment.size)),
                         "createdAt": .string(attachment.createdAt),
+                        "downloadUrl": attachment.downloadUrl.map(JSONValue.string) ?? .null,
+                        "openUrl": attachment.openUrl.map(JSONValue.string) ?? .null,
+                        "platformOpenUrl": attachment.platformOpenUrl.map(JSONValue.string) ?? .null,
                     ])
                 }),
             ])

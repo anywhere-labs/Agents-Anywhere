@@ -206,6 +206,88 @@ struct APIClient {
         return try JSONDecoder().decode(UserUploadResponse.self, from: data)
     }
 
+    func downloadAttachment(
+        token: String,
+        sessionId: String,
+        attachment: UploadedAttachment,
+    ) async throws -> Data {
+        let url = try attachmentOpenURL(token: token, sessionId: sessionId, attachment: attachment)
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw APIClientError.invalidResponse
+        }
+        guard 200..<300 ~= http.statusCode else {
+            let detail = (try? JSONDecoder().decode(APIErrorResponse.self, from: data).message)
+                ?? HTTPURLResponse.localizedString(forStatusCode: http.statusCode)
+            throw APIClientError.server(status: http.statusCode, detail: detail)
+        }
+        return data
+    }
+
+    func attachmentOpenURL(
+        token: String,
+        sessionId: String,
+        attachment: UploadedAttachment,
+    ) throws -> URL {
+        if let openUrl = attachment.resolvedOpenUrl,
+           var components = URLComponents(url: URL(string: openUrl, relativeTo: serverURL)?.absoluteURL ?? serverURL, resolvingAgainstBaseURL: false)
+        {
+            if components.queryItems?.contains(where: { $0.name == "token" }) != true {
+                var queryItems = components.queryItems ?? []
+                queryItems.append(URLQueryItem(name: "token", value: token))
+                components.queryItems = queryItems
+            }
+            if let url = components.url {
+                return url
+            }
+        }
+
+        let sid = sessionId.urlPathComponentEncoded
+        let fid = attachment.fileId.urlPathComponentEncoded
+        guard var components = URLComponents(
+            url: URL(string: "/sessions/\(sid)/attachments/\(fid)/open", relativeTo: serverURL)?.absoluteURL ?? serverURL,
+            resolvingAgainstBaseURL: false,
+        ) else {
+            throw APIClientError.invalidResponse
+        }
+        components.queryItems = [URLQueryItem(name: "token", value: token)]
+        guard let url = components.url else { throw APIClientError.invalidResponse }
+        return url
+    }
+
+    func attachmentMetadataURL(
+        token: String,
+        sessionId: String,
+        attachment: UploadedAttachment,
+    ) throws -> URL {
+        if let downloadUrl = attachment.downloadUrl,
+           var components = URLComponents(url: URL(string: downloadUrl, relativeTo: serverURL)?.absoluteURL ?? serverURL, resolvingAgainstBaseURL: false)
+        {
+            if components.queryItems?.contains(where: { $0.name == "token" }) != true {
+                var queryItems = components.queryItems ?? []
+                queryItems.append(URLQueryItem(name: "token", value: token))
+                components.queryItems = queryItems
+            }
+            if let url = components.url {
+                return url
+            }
+        }
+
+        let sid = sessionId.urlPathComponentEncoded
+        let fid = attachment.fileId.urlPathComponentEncoded
+        guard var components = URLComponents(
+            url: URL(string: "/sessions/\(sid)/attachments/\(fid)", relativeTo: serverURL)?.absoluteURL ?? serverURL,
+            resolvingAgainstBaseURL: false,
+        ) else {
+            throw APIClientError.invalidResponse
+        }
+        components.queryItems = [URLQueryItem(name: "token", value: token)]
+        guard let url = components.url else { throw APIClientError.invalidResponse }
+        return url
+    }
+
     func sessionEventsURL(token: String, sessionId: String) throws -> URL {
         let id = sessionId.urlPathComponentEncoded
         guard var components = URLComponents(

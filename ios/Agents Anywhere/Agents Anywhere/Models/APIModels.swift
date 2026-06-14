@@ -333,9 +333,61 @@ struct UploadedAttachment: Codable, Identifiable, Hashable {
     let size: Int
     let createdAt: String
     let downloadUrl: String?
+    let openUrl: String?
     let platformOpenUrl: String?
 
     var id: String { fileId }
+
+    var resolvedOpenUrl: String? {
+        openUrl ?? platformOpenUrl
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case fileId
+        case sessionId
+        case name
+        case mediaType
+        case size
+        case createdAt
+        case downloadUrl
+        case openUrl
+        case platformOpenUrl
+    }
+
+    init(
+        fileId: String,
+        sessionId: String,
+        name: String,
+        mediaType: String,
+        size: Int,
+        createdAt: String,
+        downloadUrl: String?,
+        openUrl: String? = nil,
+        platformOpenUrl: String? = nil,
+    ) {
+        self.fileId = fileId
+        self.sessionId = sessionId
+        self.name = name
+        self.mediaType = mediaType
+        self.size = size
+        self.createdAt = createdAt
+        self.downloadUrl = downloadUrl
+        self.openUrl = openUrl
+        self.platformOpenUrl = platformOpenUrl
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        fileId = try container.decode(String.self, forKey: .fileId)
+        sessionId = try container.decode(String.self, forKey: .sessionId)
+        name = try container.decode(String.self, forKey: .name)
+        mediaType = try container.decode(String.self, forKey: .mediaType)
+        size = try container.decode(Int.self, forKey: .size)
+        createdAt = try container.decode(String.self, forKey: .createdAt)
+        downloadUrl = try container.decodeIfPresent(String.self, forKey: .downloadUrl)
+        openUrl = try container.decodeIfPresent(String.self, forKey: .openUrl)
+        platformOpenUrl = try container.decodeIfPresent(String.self, forKey: .platformOpenUrl)
+    }
 }
 
 struct UserUploadResponse: Decodable {
