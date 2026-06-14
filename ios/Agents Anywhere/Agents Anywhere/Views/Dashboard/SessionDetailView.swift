@@ -40,6 +40,7 @@ struct SessionDetailView: View {
     @State private var runtimeSettings: RuntimeSettingsResponse?
     @State private var isLoadingRuntimeSettings = false
     @State private var isPatchingRuntimeSettings = false
+    @State private var attachmentPreviewURL: URL?
     @State private var hasPositionedInitialScroll = false
     @State private var lastEntryRefreshAt: Date?
     @State private var sseTask: Task<Void, Never>?
@@ -166,6 +167,9 @@ struct SessionDetailView: View {
                                 onResolveApproval: { approval, status in
                                     Task { await resolveApproval(approval, status: status) }
                                 },
+                                onPreviewAttachment: { url in
+                                    attachmentPreviewURL = url
+                                },
                             )
                                 .id(entry.id)
                         }
@@ -282,6 +286,7 @@ struct SessionDetailView: View {
                 )
             }
         }
+        .quickLookPreview($attachmentPreviewURL)
         .photosPicker(isPresented: photoPickerBinding, selection: $selectedPhotoItems, maxSelectionCount: 4, matching: .images)
         .onChange(of: selectedPhotoItems) { _, items in
             Task { await importPhotos(items) }
@@ -894,11 +899,12 @@ private struct ChatEntryView: View {
     let resolvingApprovalId: String?
     let resolvingApprovalStatus: ApprovalResolveStatus?
     let onResolveApproval: (Approval, ApprovalResolveStatus) -> Void
+    let onPreviewAttachment: (URL) -> Void
 
     var body: some View {
         switch entry {
         case let .message(item):
-            MessageBubble(item: item, api: api, token: token)
+            MessageBubble(item: item, api: api, token: token, onPreviewAttachment: onPreviewAttachment)
         case let .tool(item, approval):
             ToolCard(
                 item: item,
@@ -1368,6 +1374,7 @@ private struct MessageBubble: View {
     let item: TimelineItem
     let api: APIClient?
     let token: String?
+    let onPreviewAttachment: (URL) -> Void
 
     @State private var isExpanded = false
 
@@ -1384,7 +1391,12 @@ private struct MessageBubble: View {
 
             VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
                 if !attachments.isEmpty {
-                    AttachmentPreviewGrid(attachments: attachments, api: api, token: token)
+                    AttachmentPreviewGrid(
+                        attachments: attachments,
+                        api: api,
+                        token: token,
+                        onPreviewReady: onPreviewAttachment,
+                    )
                 }
                 if !text.isEmpty {
                     messageTextView
@@ -1576,8 +1588,8 @@ private struct AttachmentPreviewGrid: View {
     let attachments: [UploadedAttachment]
     let api: APIClient?
     let token: String?
+    let onPreviewReady: (URL) -> Void
 
-    @State private var previewURL: URL?
     @State private var previewingAttachmentId: String?
     @State private var previewError: String?
 
@@ -1598,7 +1610,6 @@ private struct AttachmentPreviewGrid: View {
                 }
             }
         }
-        .quickLookPreview($previewURL)
         .alert("Preview Unavailable", isPresented: Binding(
             get: { previewError != nil },
             set: { if !$0 { previewError = nil } },
@@ -1624,7 +1635,8 @@ private struct AttachmentPreviewGrid: View {
         previewingAttachmentId = attachment.id
         defer { previewingAttachmentId = nil }
         do {
-            previewURL = try await AttachmentDataCache.shared.localFileURL(for: attachment, api: api, token: token)
+            let url = try await AttachmentDataCache.shared.localFileURL(for: attachment, api: api, token: token)
+            onPreviewReady(url)
         } catch {
             previewError = error.localizedDescription
         }
