@@ -168,16 +168,16 @@ struct SessionDetailView: View {
                     onCamera: { openCamera() },
                 )
             }
-            .padding(.bottom, 8)
         }
         .photosPicker(isPresented: photoPickerBinding, selection: $selectedPhotoItems, maxSelectionCount: 4, matching: .images)
         .onChange(of: selectedPhotoItems) { _, items in
             Task { await importPhotos(items) }
         }
-        .sheet(isPresented: $isCameraPickerPresented) {
+        .fullScreenCover(isPresented: $isCameraPickerPresented) {
             CameraImagePicker { image in
                 importCameraImage(image)
             }
+            .ignoresSafeArea()
         }
         .sheet(isPresented: $isShowingDetails) {
             SessionDetailsSheet(session: session)
@@ -802,9 +802,9 @@ struct LiquidGlassMessageInputBar: View {
                 .disabled(!canSend)
                 .accessibilityLabel("Send")
             }
+            .frame(minHeight: 44)
             .padding(.leading, 15)
             .padding(.trailing, 8)
-            .padding(.vertical, 8)
             .background {
                 inputGlassBackground
             }
@@ -831,7 +831,7 @@ struct LiquidGlassMessageInputBar: View {
             Image(systemName: "plus")
                 .font(.title3)
                 .fontWeight(.medium)
-                .frame(width: 38, height: 38)
+                .frame(width: 44, height: 44)
                 .contentShape(Circle())
         }
         .buttonStyle(CircularGlassButtonStyle())
@@ -884,6 +884,8 @@ private struct CameraImagePicker: UIViewControllerRepresentable {
         let controller = UIImagePickerController()
         controller.sourceType = .camera
         controller.delegate = context.coordinator
+        controller.modalPresentationStyle = .fullScreen
+        controller.view.backgroundColor = .black
         return controller
     }
 
