@@ -293,8 +293,12 @@ private struct NewSessionSheet: View {
     @State private var selectedConnectorId: String?
     @State private var selectedRuntime = ""
     @State private var permissionMode: NewSessionPermissionMode = .ask
-    @State private var workspacePath = "~"
-    @State private var isShowingFileBrowser = false
+    @State private var homeWorkspacePath: String?
+    @State private var selectedWorkspacePath: String?
+    @State private var resolvedWorkspaceSelectionKey: String?
+    @State private var isShowingWorkspaceSheet = false
+    @State private var isShowingPathBrowser = false
+    @State private var isResolvingHomeWorkspace = false
     @State private var isCreating = false
     @State private var errorMessage: String?
 
@@ -338,6 +342,44 @@ private struct NewSessionSheet: View {
             .map { $0 }
     }
 
+    private var runtimeChoices: [NewSessionRuntimeChoice] {
+        availableConnectors.flatMap { connector in
+            connector.attachedRuntimeNames.map { runtime in
+                NewSessionRuntimeChoice(connector: connector, runtime: runtime)
+            }
+        }
+    }
+
+    private var selectedRuntimeChoice: NewSessionRuntimeChoice? {
+        if let selectedConnectorId,
+           !selectedRuntime.isEmpty,
+           let choice = runtimeChoices.first(where: { $0.connector.id == selectedConnectorId && $0.runtime == selectedRuntime })
+        {
+            return choice
+        }
+        return runtimeChoices.first
+    }
+
+    private var selectedWorkspaceForCreate: String {
+        selectedWorkspacePath ?? homeWorkspacePath ?? "~"
+    }
+
+    private var workspaceTitle: String {
+        selectedWorkspacePath.map(workspaceDisplayName) ?? "Home directory"
+    }
+
+    private var workspaceSubtitle: String {
+        selectedWorkspacePath ?? homeWorkspacePath ?? (isResolvingHomeWorkspace ? "Resolving home..." : "Default workspace")
+    }
+
+    private var messageInputActions: [MessageInputAction] {
+        [
+            MessageInputAction(title: "Workspace", systemImage: "folder") {
+                isShowingWorkspaceSheet = true
+            },
+        ]
+    }
+
     private var canSubmit: Bool {
         selectedConnector != nil &&
             !selectedRuntimeValue.isEmpty &&
@@ -360,7 +402,6 @@ private struct NewSessionSheet: View {
                         .frame(maxWidth: .infinity)
                         .padding(.top, 48)
                     } else {
-                        deviceSection
                         workspaceSection
                         permissionSection
                     }
@@ -381,6 +422,9 @@ private struct NewSessionSheet: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
+                ToolbarItem(placement: .primaryAction) {
+                    runtimeMenu
+                }
             }
             .onAppear {
                 reconcileSelection()
@@ -391,7 +435,24 @@ private struct NewSessionSheet: View {
             .onChange(of: selectedConnectorId) { _, _ in
                 reconcileSelection()
             }
-            .sheet(isPresented: $isShowingFileBrowser) {
+            .onChange(of: selectedRuntime) { _, _ in
+                reconcileSelection()
+            }
+            .sheet(isPresented: $isShowingWorkspaceSheet) {
+                WorkspacePickerSheet(
+                    homeWorkspacePath: homeWorkspacePath,
+                    selectedWorkspacePath: $selectedWorkspacePath,
+                    recentWorkspaces: recentWorkspaces,
+                    isResolvingHomeWorkspace: isResolvingHomeWorkspace,
+                    onChoosePath: {
+                        isShowingWorkspaceSheet = false
+                        isShowingPathBrowser = true
+                    },
+                )
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+            }
+            .sheet(isPresented: $isShowingPathBrowser) {
                 if let api = appState.api,
                    let token = appState.accessToken(),
                    let connector = selectedConnector
@@ -401,9 +462,9 @@ private struct NewSessionSheet: View {
                         token: token,
                         connector: connector,
                         mode: .pickDirectory,
-                        initialPath: workspacePath,
+                        initialPath: selectedWorkspaceForCreate,
                     ) { selection in
-                        workspacePath = selection.path
+                        selectedWorkspacePath = selection.path
                     }
                     .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
@@ -415,8 +476,9 @@ private struct NewSessionSheet: View {
                     isFocused: $isPromptFocused,
                     isSending: isCreating,
                     placeholder: selectedConnector == nil ? "No online agent" : "Message to agent",
+                    actions: messageInputActions,
                     isSubmitEnabled: { _ in canSubmit },
-                    showsActionsButton: false,
+                    showsActionsButton: true,
                     onSend: {
                         Task { await createSession() }
                     },
@@ -432,37 +494,40 @@ private struct NewSessionSheet: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("What should the agent do?")
                 .font(.title.weight(.bold))
-            Text("Choose a device, workspace, and permission mode. Sending starts the session and delivers the first message.")
+            Text("Choose a workspace and send the first message.")
                 .font(.body)
                 .foregroundStyle(.secondary)
         }
     }
 
-    private var deviceSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SectionLabel("Device & Agent")
-
-            Picker("Device", selection: Binding(
-                get: { selectedConnector?.id ?? "" },
-                set: { selectedConnectorId = $0 },
-            )) {
-                ForEach(availableConnectors) { connector in
-                    Text(connector.name).tag(connector.id)
+    private var runtimeMenu: some View {
+        Menu {
+            ForEach(runtimeChoices) { choice in
+                Button {
+                    selectedConnectorId = choice.connector.id
+                    selectedRuntime = choice.runtime
+                } label: {
+                    Label {
+                        VStack(alignment: .leading) {
+                            Text(choice.title)
+                            Text(choice.subtitle)
+                        }
+                    } icon: {
+                        Image(systemName: runtimeIcon(choice.runtime))
+                    }
                 }
             }
-            .pickerStyle(.menu)
-
-            Picker("Agent", selection: Binding(
-                get: { selectedRuntimeValue },
-                set: { selectedRuntime = $0 },
-            )) {
-                ForEach(availableRuntimes, id: \.self) { runtime in
-                    Label(runtimeDisplayName(runtime), systemImage: runtimeIcon(runtime))
-                        .tag(runtime)
-                }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: runtimeIcon(selectedRuntimeValue))
+                Text(selectedRuntimeChoice?.shortTitle ?? "Agent")
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.caption.weight(.semibold))
             }
-            .pickerStyle(.segmented)
         }
+        .disabled(runtimeChoices.isEmpty || isCreating)
+        .accessibilityLabel("Device and Agent")
     }
 
     private var workspaceSection: some View {
@@ -470,46 +535,33 @@ private struct NewSessionSheet: View {
             SectionLabel("Workspace")
 
             Button {
-                isShowingFileBrowser = true
+                isShowingWorkspaceSheet = true
             } label: {
                 HStack(spacing: 12) {
                     Image(systemName: "folder")
                         .foregroundStyle(.secondary)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(workspaceDisplayName(workspacePath))
+                        Text(workspaceTitle)
                             .foregroundStyle(.primary)
-                        Text(workspacePath)
+                        Text(workspaceSubtitle)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
                     Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.tertiary)
+                    if isResolvingHomeWorkspace {
+                        ProgressView()
+                            .scaleEffect(0.75)
+                    } else {
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                    }
                 }
                 .padding(14)
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             }
             .buttonStyle(.plain)
-
-            if !recentWorkspaces.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(recentWorkspaces, id: \.self) { cwd in
-                            Button {
-                                workspacePath = cwd
-                            } label: {
-                                Label(workspaceDisplayName(cwd), systemImage: "clock")
-                                    .font(.caption.weight(.medium))
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                        }
-                    }
-                    .padding(.vertical, 2)
-                }
-            }
         }
     }
 
@@ -541,8 +593,33 @@ private struct NewSessionSheet: View {
         if !runtimes.contains(selectedRuntime) {
             selectedRuntime = runtimes.first ?? ""
         }
-        if workspacePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            workspacePath = recentWorkspaces.first ?? "~"
+        let selectionKey = "\(connector.id):\(selectedRuntimeValue)"
+        guard resolvedWorkspaceSelectionKey != selectionKey else { return }
+        resolvedWorkspaceSelectionKey = selectionKey
+        homeWorkspacePath = nil
+        selectedWorkspacePath = nil
+        resolveHomeWorkspaceForSelection(connectorId: connector.id, runtime: selectedRuntimeValue)
+    }
+
+    private func resolveHomeWorkspaceForSelection(connectorId: String, runtime: String) {
+        guard let api = appState.api,
+              let token = appState.accessToken()
+        else { return }
+        isResolvingHomeWorkspace = true
+        Task {
+            let resolved: String?
+            do {
+                let response = try await api.connectorFsList(token: token, connectorId: connectorId, root: "~")
+                let path = response.result.path.trimmingCharacters(in: .whitespacesAndNewlines)
+                resolved = path.isEmpty || path == "~" ? nil : path
+            } catch {
+                resolved = nil
+            }
+            await MainActor.run {
+                guard selectedConnector?.id == connectorId, selectedRuntimeValue == runtime else { return }
+                homeWorkspacePath = resolved
+                isResolvingHomeWorkspace = false
+            }
         }
     }
 
@@ -564,7 +641,7 @@ private struct NewSessionSheet: View {
                 connectorId: connector.id,
                 runtime: selectedRuntimeValue,
                 title: text,
-                cwd: workspacePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : workspacePath,
+                cwd: selectedWorkspaceForCreate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : selectedWorkspaceForCreate,
                 approvalPolicy: permissionMode.approvalPolicy,
                 sandbox: permissionMode.sandbox,
             )
@@ -596,6 +673,142 @@ private struct SectionLabel: View {
         Text(title.uppercased())
             .font(.caption.weight(.semibold))
             .foregroundStyle(.secondary)
+    }
+}
+
+private struct NewSessionRuntimeChoice: Identifiable, Hashable {
+    let connector: ConnectorSummary
+    let runtime: String
+
+    var id: String {
+        "\(connector.id):\(runtime)"
+    }
+
+    var title: String {
+        "\(connector.name) / \(runtimeDisplayName(runtime))"
+    }
+
+    var shortTitle: String {
+        "\(connector.name) / \(runtimeDisplayName(runtime))"
+    }
+
+    var subtitle: String {
+        runtime
+    }
+}
+
+private struct WorkspacePickerSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let homeWorkspacePath: String?
+    @Binding var selectedWorkspacePath: String?
+    let recentWorkspaces: [String]
+    let isResolvingHomeWorkspace: Bool
+    let onChoosePath: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Button {
+                        selectedWorkspacePath = nil
+                        dismiss()
+                    } label: {
+                        WorkspacePickerRow(
+                            title: "Home directory",
+                            subtitle: homeWorkspacePath ?? (isResolvingHomeWorkspace ? "Resolving home..." : "Default workspace"),
+                            systemImage: "house",
+                            isSelected: selectedWorkspacePath == nil,
+                            showsProgress: isResolvingHomeWorkspace,
+                        )
+                    }
+                } header: {
+                    Text("Default")
+                }
+
+                Section {
+                    Button {
+                        dismiss()
+                        onChoosePath()
+                    } label: {
+                        WorkspacePickerRow(
+                            title: "Choose path",
+                            subtitle: "Browse this device",
+                            systemImage: "folder.badge.plus",
+                            isSelected: false,
+                        )
+                    }
+
+                    if recentWorkspaces.isEmpty {
+                        ContentUnavailableView(
+                            "No Recent Workspaces",
+                            systemImage: "clock",
+                            description: Text("Recent workspaces appear after sessions are created."),
+                        )
+                    } else {
+                        ForEach(recentWorkspaces, id: \.self) { path in
+                            Button {
+                                selectedWorkspacePath = path
+                                dismiss()
+                            } label: {
+                                WorkspacePickerRow(
+                                    title: workspaceDisplayName(path),
+                                    subtitle: path,
+                                    systemImage: "folder",
+                                    isSelected: selectedWorkspacePath == path,
+                                )
+                            }
+                        }
+                    }
+                } header: {
+                    Text("Recent Workspaces")
+                }
+            }
+            .navigationTitle("Workspace")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+private struct WorkspacePickerRow: View {
+    let title: String
+    let subtitle: String
+    let systemImage: String
+    let isSelected: Bool
+    var showsProgress = false
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: systemImage)
+                .foregroundStyle(.secondary)
+                .frame(width: 22)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .foregroundStyle(.primary)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            if showsProgress {
+                ProgressView()
+                    .scaleEffect(0.75)
+            } else if isSelected {
+                Image(systemName: "checkmark")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.tint)
+            }
+        }
+        .contentShape(Rectangle())
     }
 }
 

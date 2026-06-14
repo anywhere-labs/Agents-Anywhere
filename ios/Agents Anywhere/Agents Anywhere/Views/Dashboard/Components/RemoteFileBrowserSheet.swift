@@ -22,7 +22,6 @@ struct RemoteFileBrowserSheet: View {
     let onSelect: (RemoteFileSelection) -> Void
 
     @State private var currentPath: String
-    @State private var manualPath: String
     @State private var entries: [FsEntry] = []
     @State private var isLoading = false
     @State private var errorMessage: String?
@@ -44,7 +43,6 @@ struct RemoteFileBrowserSheet: View {
         self.onSelect = onSelect
         let path = initialPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "~" : initialPath
         _currentPath = State(initialValue: path)
-        _manualPath = State(initialValue: path)
     }
 
     private var sortedEntries: [FsEntry] {
@@ -81,11 +79,8 @@ struct RemoteFileBrowserSheet: View {
         NavigationStack {
             List {
                 Section {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text(connector.name)
-                            .font(.headline)
-                        pathInput
-                    }
+                    Text(connector.name)
+                        .font(.headline)
                     .padding(.vertical, 4)
                 }
 
@@ -182,35 +177,8 @@ struct RemoteFileBrowserSheet: View {
         }
     }
 
-    private var pathInput: some View {
-        HStack(spacing: 8) {
-            TextField("Path", text: $manualPath)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .font(.system(.body, design: .monospaced))
-                .padding(.horizontal, 12)
-                .frame(height: 42)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .onSubmit {
-                    Task { await load(path: manualPath) }
-                }
-
-            Button {
-                Task { await load(path: manualPath) }
-            } label: {
-                Image(systemName: "arrow.right")
-                    .frame(width: 42, height: 42)
-            }
-            .buttonStyle(.glass)
-            .disabled(isLoading || manualPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        }
-    }
-
     private func handleEntryTap(_ entry: FsEntry) {
         if entry.isDirectory {
-            if mode == .pickDirectory {
-                selectedEntry = entry
-            }
             Task { await load(path: entry.path) }
             return
         }
@@ -237,7 +205,6 @@ struct RemoteFileBrowserSheet: View {
                 root: target,
             )
             currentPath = response.result.path
-            manualPath = response.result.path
             entries = response.result.entries
             selectedEntry = nil
         } catch {
