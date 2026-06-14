@@ -1286,7 +1286,17 @@ private struct MarkdownText: View {
                         }
                         .padding(12)
                 }
-                .background(Color.clear)
+                .background {
+                    let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    if #available(iOS 26.0, *) {
+                        shape
+                            .fill(.clear)
+                            .glassEffect(.regular, in: shape)
+                    } else {
+                        shape
+                            .fill(.regularMaterial)
+                    }
+                }
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
             .textSelection(.enabled)

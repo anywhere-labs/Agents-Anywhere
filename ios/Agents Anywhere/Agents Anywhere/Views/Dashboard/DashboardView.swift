@@ -190,7 +190,7 @@ private struct SessionsView: View {
                             showsDivider: index < filteredSessions.count - 1,
                         )
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(SessionRowButtonStyle())
                 }
             }
             .padding(.horizontal, 20)
@@ -495,6 +495,7 @@ private struct SessionRow: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
     }
 
     private var title: some View {
@@ -522,6 +523,18 @@ private struct SessionRow: View {
             return AnyShapeStyle(.primary)
         }
         return AnyShapeStyle(Color.gray.opacity(0.55))
+    }
+}
+
+private struct SessionRowButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(configuration.isPressed ? Color.secondary.opacity(0.14) : Color.clear)
+            }
+            .scaleEffect(configuration.isPressed ? 0.985 : 1)
+            .animation(.snappy(duration: 0.16), value: configuration.isPressed)
     }
 }
 
