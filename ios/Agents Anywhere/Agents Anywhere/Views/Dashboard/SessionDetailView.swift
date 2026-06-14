@@ -1,4 +1,5 @@
 import PhotosUI
+import MarkdownUI
 import SwiftUI
 import UIKit
 
@@ -49,8 +50,15 @@ struct SessionDetailView: View {
             if item.type == "message", item.role == "user" || item.role == "assistant" {
                 return .message(item)
             }
-            if item.type == "system", item.status == "failed" {
-                return .notice("Error", item.displayText ?? "Runtime error")
+            if item.type == "tool" {
+                return .tool(item)
+            }
+            if item.type == "artifact" {
+                if item.kind == "diff" { return nil }
+                return .artifact(item)
+            }
+            if item.type == "system" {
+                return .system(item)
             }
             return nil
         }
@@ -624,12 +632,21 @@ private enum TakeoverIntent {
 
 private enum ChatEntry: Identifiable {
     case message(TimelineItem)
+    case tool(TimelineItem)
+    case artifact(TimelineItem)
+    case system(TimelineItem)
     case approval(Approval)
     case notice(String, String)
 
     var id: String {
         switch self {
         case let .message(item):
+            return item.id
+        case let .tool(item):
+            return item.id
+        case let .artifact(item):
+            return item.id
+        case let .system(item):
             return item.id
         case let .approval(approval):
             return approval.id
@@ -641,6 +658,12 @@ private enum ChatEntry: Identifiable {
     var sortKey: Int {
         switch self {
         case let .message(item):
+            return item.orderSeq
+        case let .tool(item):
+            return item.orderSeq
+        case let .artifact(item):
+            return item.orderSeq
+        case let .system(item):
             return item.orderSeq
         case let .approval(approval):
             return approval.updatedSeq
@@ -660,10 +683,315 @@ private struct ChatEntryView: View {
         switch entry {
         case let .message(item):
             MessageBubble(item: item, api: api, token: token)
+        case let .tool(item):
+            ToolCard(item: item)
+        case let .artifact(item):
+            ArtifactCard(item: item)
+        case let .system(item):
+            SystemCard(item: item)
         case let .approval(approval):
             ApprovalSummary(approval: approval)
         case let .notice(kind, text):
             NoticeRow(kind: kind, text: text)
+        }
+    }
+}
+
+private struct ToolCard: View {
+    let item: TimelineItem
+
+    var body: some View {
+        switch item.kind {
+        case "command":
+            CommandToolCard(item: item)
+        case "file_change":
+            EditToolCard(item: item)
+        case "mcp":
+            McpToolCard(item: item)
+        case "web_search":
+            CompactToolCard(
+                icon: "globe",
+                badge: "Search",
+                title: item.webSearchTitle,
+                status: item.status,
+            )
+        default:
+            CompactToolCard(
+                icon: "wrench.and.screwdriver",
+                badge: item.kind == "generic" ? "Tool" : item.kind.capitalized,
+                title: item.shortTitle,
+                status: item.status,
+            )
+        }
+    }
+}
+
+private struct CompactToolCard: View {
+    let icon: String
+    let badge: String
+    let title: String
+    let status: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.caption.weight(.semibold))
+                .frame(width: 24, height: 24)
+                .background {
+                    Circle()
+                        .fill(.secondary.opacity(0.12))
+                }
+            Text(badge)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(title)
+                .font(.subheadline)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            StatusPill(status: status)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(.secondary.opacity(0.08))
+        }
+    }
+}
+
+private struct CommandToolCard: View {
+    let item: TimelineItem
+
+    @State private var isExpanded = false
+
+    private var command: String { item.commandText ?? "command" }
+    private var description: String { item.content["description"]?.stringValue ?? command }
+    private var output: String {
+        item.content["outputPreview"]?.stringValue
+            ?? item.content["outputText"]?.stringValue
+            ?? ""
+    }
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $isExpanded) {
+            VStack(alignment: .leading, spacing: 10) {
+                CodePanel(label: "command", code: command, leadingText: "$")
+                if !output.isEmpty {
+                    CodePanel(label: "output", code: output)
+                }
+            }
+            .padding(.top, 10)
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "terminal")
+                Text("Ran")
+                    .foregroundStyle(.secondary)
+                Text(description)
+                    .fontWeight(.semibold)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                StatusPill(status: item.status)
+            }
+        }
+        .padding(12)
+        .background {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(toolBackground)
+        }
+    }
+
+    private var toolBackground: Color {
+        item.isError ? Color.red.opacity(0.10) : Color.secondary.opacity(0.08)
+    }
+}
+
+private struct EditToolCard: View {
+    let item: TimelineItem
+
+    @State private var isExpanded = false
+
+    private var changes: [[String: JSONValue]] { item.changeObjects }
+    private var filename: String {
+        guard let path = changes.first?["path"]?.stringValue else { return "files" }
+        return URL(fileURLWithPath: path).lastPathComponent
+    }
+    private var headVerb: String {
+        let verbs = changes.map(fileChangeVerb)
+        return verbs.first(where: { $0 == "Added" })
+            ?? verbs.first(where: { $0 == "Deleted" })
+            ?? verbs.first
+            ?? "Edited"
+    }
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $isExpanded) {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(Array(changes.enumerated()), id: \.offset) { _, change in
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 8) {
+                            Text(fileChangeVerb(change))
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            Text(change["path"]?.stringValue ?? "unknown path")
+                                .font(.caption)
+                                .lineLimit(1)
+                        }
+                        if let diff = change["diff"]?.stringValue, !diff.isEmpty {
+                            DiffPanel(diff: diff, added: fileChangeVerb(change) == "Added")
+                        }
+                    }
+                }
+            }
+            .padding(.top, 10)
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "doc.text")
+                Text(headVerb)
+                    .foregroundStyle(.secondary)
+                Text(filename)
+                    .fontWeight(.semibold)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                StatusPill(status: item.status)
+            }
+        }
+        .padding(12)
+        .background {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(.secondary.opacity(0.08))
+        }
+    }
+
+    private func fileChangeVerb(_ change: [String: JSONValue]) -> String {
+        guard case let .object(kind)? = change["kind"] else { return "Changed" }
+        let type = kind["type"]?.stringValue
+        if type == "add" { return "Added" }
+        if type == "delete" { return "Deleted" }
+        if type == "update" {
+            return kind["move_path"]?.stringValue == nil ? "Edited" : "Renamed"
+        }
+        return "Changed"
+    }
+}
+
+private struct McpToolCard: View {
+    let item: TimelineItem
+
+    @State private var isExpanded = false
+
+    private var server: String { item.content["server"]?.stringValue ?? "mcp" }
+    private var tool: String { item.content["tool"]?.stringValue ?? "tool" }
+    private var argumentsText: String? { item.content["arguments"]?.prettyPrinted }
+    private var resultText: String? {
+        item.content["result"]?.prettyPrinted
+            ?? item.content["outputText"]?.stringValue
+            ?? item.content["text"]?.stringValue
+    }
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $isExpanded) {
+            VStack(alignment: .leading, spacing: 10) {
+                if let argumentsText, !argumentsText.isEmpty {
+                    CodePanel(label: "arguments", code: argumentsText)
+                }
+                if let resultText, !resultText.isEmpty {
+                    CodePanel(label: item.isError ? "error" : "result", code: resultText)
+                }
+            }
+            .padding(.top, 10)
+        } label: {
+            HStack(spacing: 8) {
+                Text("MCP")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(server)
+                    .fontWeight(.semibold)
+                Text("·")
+                    .foregroundStyle(.tertiary)
+                Text(tool)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                StatusPill(status: item.status)
+            }
+        }
+        .padding(12)
+        .background {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(item.isError ? Color.red.opacity(0.10) : Color.secondary.opacity(0.08))
+        }
+    }
+}
+
+private struct ArtifactCard: View {
+    let item: TimelineItem
+
+    var body: some View {
+        CompactToolCard(
+            icon: "shippingbox",
+            badge: item.kind.isEmpty ? "Artifact" : item.kind.capitalized,
+            title: item.displayText ?? item.status,
+            status: item.status,
+        )
+    }
+}
+
+private struct SystemCard: View {
+    let item: TimelineItem
+
+    var body: some View {
+        if item.kind == "reasoning" {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Reasoning", systemImage: "sparkles")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(item.reasoningText.isEmpty ? "Reasoning" : item.reasoningText)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.vertical, 6)
+        } else if item.kind == "error" || item.status == "failed" {
+            NoticeRow(kind: "Error", text: item.displayText ?? "Runtime error")
+        } else {
+            NoticeRow(kind: item.kind.capitalized, text: item.displayText ?? item.kind)
+        }
+    }
+}
+
+private struct StatusPill: View {
+    let status: String
+
+    var body: some View {
+        Text(status.capitalized)
+            .font(.caption2.weight(.semibold))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background {
+                Capsule(style: .continuous)
+                    .fill(fill)
+            }
+            .foregroundStyle(foreground)
+    }
+
+    private var fill: Color {
+        switch status {
+        case "running", "pending":
+            return Color.blue.opacity(0.16)
+        case "failed", "interrupted":
+            return Color.red.opacity(0.16)
+        default:
+            return Color.secondary.opacity(0.12)
+        }
+    }
+
+    private var foreground: Color {
+        switch status {
+        case "running", "pending":
+            return .blue
+        case "failed", "interrupted":
+            return .red
+        default:
+            return .secondary
         }
     }
 }
@@ -749,17 +1077,88 @@ private struct MarkdownText: View {
     let text: String
 
     var body: some View {
-        Text(attributed)
-            .font(.body)
-            .foregroundStyle(.primary)
+        Markdown(text)
+            .markdownTheme(.gitHub)
             .textSelection(.enabled)
-            .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
+}
 
-    private var attributed: AttributedString {
-        (try? AttributedString(markdown: text))
-            ?? AttributedString(text)
+private struct CodePanel: View {
+    let label: String
+    let code: String
+    var leadingText: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(label)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .top, spacing: 8) {
+                    if let leadingText {
+                        Text(leadingText)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(code)
+                        .textSelection(.enabled)
+                }
+                .font(.system(.caption, design: .monospaced))
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(.secondary.opacity(0.10))
+        }
+    }
+}
+
+private struct DiffPanel: View {
+    let diff: String
+    let added: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                Text(line.isEmpty ? " " : line)
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(lineForeground(line))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 2)
+                    .background(lineBackground(line))
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(.secondary.opacity(0.10), lineWidth: 1)
+        }
+    }
+
+    private var lines: [String] {
+        diff
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\n"))
+            .components(separatedBy: .newlines)
+            .filter { !$0.hasPrefix("--- ") && !$0.hasPrefix("+++ ") && !$0.hasPrefix("diff --git") && !$0.hasPrefix("index ") }
+    }
+
+    private func lineBackground(_ line: String) -> Color {
+        if added || line.hasPrefix("+") { return Color.green.opacity(0.14) }
+        if line.hasPrefix("-") { return Color.red.opacity(0.14) }
+        if line.hasPrefix("@@") { return Color.blue.opacity(0.12) }
+        return Color.secondary.opacity(0.06)
+    }
+
+    private func lineForeground(_ line: String) -> Color {
+        if added || line.hasPrefix("+") { return .green }
+        if line.hasPrefix("-") { return .red }
+        if line.hasPrefix("@@") { return .blue }
+        return .primary
     }
 }
 
@@ -1699,11 +2098,71 @@ extension SessionSummary {
 }
 
 private extension TimelineItem {
+    var kind: String {
+        content["kind"]?.stringValue ?? ""
+    }
+
     var displayText: String? {
         content["text"]?.stringValue
             ?? content["rawText"]?.stringValue
             ?? content["message"]?.stringValue
             ?? content["summary"]?.stringValue
+    }
+
+    var commandText: String? {
+        switch content["command"] {
+        case let .string(value):
+            return value
+        case let .array(values):
+            return values.compactMap(\.stringValue).joined(separator: " ")
+        default:
+            return nil
+        }
+    }
+
+    var shortTitle: String {
+        if let tool = content["tool"]?.stringValue { return tool }
+        if let commandText { return commandText.truncatedMiddle(maxLength: 50) }
+        if let displayText { return displayText.truncatedMiddle(maxLength: 50) }
+        return kind.isEmpty ? "tool" : kind
+    }
+
+    var webSearchTitle: String {
+        if let query = content["query"]?.stringValue, !query.isEmpty {
+            return query
+        }
+        if case let .object(action)? = content["action"],
+           let url = action["url"]?.stringValue,
+           !url.isEmpty
+        {
+            return url
+        }
+        return "Searched web"
+    }
+
+    var isError: Bool {
+        status == "failed" || status == "interrupted" || content["error"]?.stringValue != nil
+    }
+
+    var changeObjects: [[String: JSONValue]] {
+        guard case let .array(values) = content["changes"] else { return [] }
+        return values.compactMap { value in
+            guard case let .object(object) = value else { return nil }
+            return object
+        }
+    }
+
+    var reasoningText: String {
+        if case let .array(values) = content["summaries"] {
+            let summaries = values.compactMap { value -> String? in
+                guard case let .object(object) = value else { return nil }
+                return object["text"]?.stringValue
+            }
+            if !summaries.isEmpty {
+                return summaries.joined(separator: "\n\n")
+            }
+        }
+        return content["rawText"]?.stringValue ?? content["text"]?.stringValue ?? ""
     }
 
     var attachments: [UploadedAttachment] {
@@ -1819,5 +2278,24 @@ private extension JSONValue {
         default:
             return nil
         }
+    }
+
+    var prettyPrinted: String? {
+        guard let data = try? JSONEncoder().encode(self) else { return stringValue }
+        if let object = try? JSONSerialization.jsonObject(with: data),
+           let pretty = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]),
+           let string = String(data: pretty, encoding: .utf8)
+        {
+            return string
+        }
+        return String(data: data, encoding: .utf8)
+    }
+}
+
+private extension String {
+    func truncatedMiddle(maxLength: Int) -> String {
+        guard count > maxLength, maxLength > 8 else { return self }
+        let head = prefix(maxLength - 4)
+        return "\(head)..."
     }
 }
