@@ -300,6 +300,11 @@ private struct QRCompleteStepView: View {
             onCancel: onCancel,
         ) {
             VStack(alignment: .leading, spacing: 22) {
+                LoginSummaryView(
+                    server: payload.webUrl,
+                    userId: payload.userId,
+                )
+
                 AuthPrimaryButton(
                     title: "Go to Dashboard",
                     isLoading: isFinishing,

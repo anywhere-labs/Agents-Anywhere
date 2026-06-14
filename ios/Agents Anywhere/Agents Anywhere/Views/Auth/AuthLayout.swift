@@ -208,3 +208,29 @@ struct AuthGlassButton: View {
 
     @Environment(\.colorScheme) private var colorScheme
 }
+
+struct LoginSummaryView: View {
+    let server: String
+    let userId: String
+
+    var body: some View {
+        VStack(spacing: 12) {
+            summaryRow("Server", server)
+            Divider()
+            summaryRow("User", userId)
+        }
+        .font(.body)
+        .padding(.vertical, 4)
+    }
+
+    private func summaryRow(_ title: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 16) {
+            Text(title)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 12)
+            Text(value)
+                .multilineTextAlignment(.trailing)
+                .lineLimit(2)
+        }
+    }
+}

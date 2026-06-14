@@ -202,10 +202,10 @@ private struct PasswordLoginConfirmView: View {
             onCancel: onCancel,
         ) {
             VStack(alignment: .leading, spacing: 22) {
-                Text(serverURL.absoluteString)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                LoginSummaryView(
+                    server: serverURL.absoluteString,
+                    userId: auth.userId,
+                )
 
                 AuthPrimaryButton(
                     title: "Go to Dashboard",
