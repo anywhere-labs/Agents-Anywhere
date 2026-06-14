@@ -1286,21 +1286,26 @@ private struct MarkdownText: View {
                         }
                         .padding(12)
                 }
-                .background {
-                    let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    if #available(iOS 26.0, *) {
-                        shape
-                            .fill(.clear)
-                            .glassEffect(.regular, in: shape)
-                    } else {
-                        shape
-                            .fill(.regularMaterial)
-                    }
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .background(MarkdownCodeBlockBackground())
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct MarkdownCodeBlockBackground: View {
+    private let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+
+    var body: some View {
+        if #available(iOS 26.0, *) {
+            shape
+                .fill(.clear)
+                .glassEffect(.regular, in: shape)
+        } else {
+            shape
+                .fill(.regularMaterial)
+        }
     }
 }
 
