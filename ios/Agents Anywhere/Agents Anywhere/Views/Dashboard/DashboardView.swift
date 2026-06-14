@@ -373,11 +373,20 @@ private struct NewSessionSheet: View {
     }
 
     private var messageInputActions: [MessageInputAction] {
-        [
+        var actions = [
             MessageInputAction(title: "Workspace", systemImage: "folder") {
                 isShowingWorkspaceSheet = true
             },
         ]
+        actions.append(contentsOf: NewSessionPermissionMode.allCases.map { mode in
+            MessageInputAction(
+                title: permissionMode == mode ? "\(mode.title) Access" : "Use \(mode.title) Access",
+                systemImage: mode.systemImage,
+            ) {
+                permissionMode = mode
+            }
+        })
+        return actions
     }
 
     private var canSubmit: Bool {
@@ -403,7 +412,6 @@ private struct NewSessionSheet: View {
                         .padding(.top, 48)
                     } else {
                         workspaceSection
-                        permissionSection
                     }
 
                     if let errorMessage {
@@ -562,23 +570,6 @@ private struct NewSessionSheet: View {
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             }
             .buttonStyle(.plain)
-        }
-    }
-
-    private var permissionSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SectionLabel("Permission")
-
-            Picker("Permission", selection: $permissionMode) {
-                ForEach(NewSessionPermissionMode.allCases) { mode in
-                    Text(mode.title).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-
-            Text(permissionMode.description)
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 
@@ -838,6 +829,17 @@ private enum NewSessionPermissionMode: String, CaseIterable, Identifiable {
             return "No approval prompts; full filesystem and command access."
         case .read:
             return "Read-only sandbox with approval required for writes."
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .ask:
+            return "questionmark.circle"
+        case .full:
+            return "bolt.circle"
+        case .read:
+            return "lock.circle"
         }
     }
 
