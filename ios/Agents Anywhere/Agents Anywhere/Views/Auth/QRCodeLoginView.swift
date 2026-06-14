@@ -295,18 +295,13 @@ private struct QRCompleteStepView: View {
 
     var body: some View {
         AuthScreen(
-            title: "Confirm Login",
-            subtitle: "The web console approved this iPhone.",
+            title: "Login Success",
+            subtitle: "The web console approved this iPhone. Go to your dashboard to continue.",
             onCancel: onCancel,
         ) {
             VStack(alignment: .leading, spacing: 22) {
-                Text("Tap confirm to finish signing in and open your workspace.")
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
                 AuthPrimaryButton(
-                    title: "Confirm Login",
+                    title: "Go to Dashboard",
                     isLoading: isFinishing,
                 ) {
                     Task { await finishLogin() }

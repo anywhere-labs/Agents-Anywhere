@@ -197,23 +197,18 @@ private struct PasswordLoginConfirmView: View {
 
     var body: some View {
         AuthScreen(
-            title: "Confirm Login",
-            subtitle: "Password verified for \(auth.userId).",
+            title: "Login Success",
+            subtitle: "Password verified for \(auth.userId). Go to your dashboard to continue.",
             onCancel: onCancel,
         ) {
             VStack(alignment: .leading, spacing: 22) {
-                Text("Tap confirm to finish signing in and open your workspace.")
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
                 Text(serverURL.absoluteString)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
 
                 AuthPrimaryButton(
-                    title: "Confirm Login",
+                    title: "Go to Dashboard",
                     isLoading: isFinishing,
                 ) {
                     Task { await finishLogin() }
