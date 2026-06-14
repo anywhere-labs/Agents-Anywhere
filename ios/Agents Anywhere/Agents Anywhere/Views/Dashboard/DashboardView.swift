@@ -610,7 +610,7 @@ private struct NewSessionSheet: View {
             }
             .padding(.horizontal, 14)
             .frame(minHeight: 50)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 25, style: .continuous))
+            .newSessionGlassEffect(shape: RoundedRectangle(cornerRadius: 25, style: .continuous))
         }
         .buttonStyle(.plain)
     }
@@ -884,6 +884,19 @@ private struct WorkspacePickerRow: View {
             }
         }
         .contentShape(Rectangle())
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func newSessionGlassEffect<S: Shape>(shape: S) -> some View {
+        if #available(iOS 26.0, *) {
+            self.glassEffect(.regular.interactive(), in: shape)
+        } else {
+            self.background {
+                shape.fill(.regularMaterial)
+            }
+        }
     }
 }
 

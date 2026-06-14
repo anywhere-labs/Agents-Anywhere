@@ -2466,12 +2466,7 @@ private extension View {
     @ViewBuilder
     func composerGlassEffect<S: Shape>(shape: S) -> some View {
         if #available(iOS 26.0, *) {
-            self.background {
-                shape
-                    .fill(.clear)
-                    .glassEffect(.regular, in: shape)
-                    .allowsHitTesting(false)
-            }
+            self.glassEffect(.regular.interactive(), in: shape)
         } else {
             self.background {
                 shape.fill(.regularMaterial)
