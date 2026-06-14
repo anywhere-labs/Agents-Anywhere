@@ -100,7 +100,7 @@ struct SessionDetailView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 14)
-                .padding(.bottom, pendingUploads.isEmpty ? 126 : 172)
+                .padding(.bottom, pendingUploads.isEmpty ? 112 : 158)
             }
             .defaultScrollAnchor(.bottom)
             .onChange(of: displayEntries.last?.id) { _, _ in
@@ -165,13 +165,6 @@ struct SessionDetailView: View {
                         pendingUploads.removeAll { $0 == upload }
                     }
                 }
-                SessionComposerControls(
-                    runtime: session.runtime,
-                    isTakeoverEnabled: session.takeover,
-                    isTakeoverDisabled: isApplyingTakeover || session.connectorStatus != "online",
-                    onRuntime: { Task { await openRuntimeSettings() } },
-                    onToggleTakeover: { Task { await applyTakeover() } },
-                )
                 LiquidGlassMessageInputBar(
                     text: $messageText,
                     isSending: isSending,
@@ -994,46 +987,6 @@ private struct RuntimeSettingRow: View {
     }
 }
 
-private struct SessionComposerControls: View {
-    let runtime: String
-    let isTakeoverEnabled: Bool
-    let isTakeoverDisabled: Bool
-    let onRuntime: () -> Void
-    let onToggleTakeover: () -> Void
-
-    var body: some View {
-        HStack(spacing: 14) {
-            Button {
-                onRuntime()
-            } label: {
-                Label(runtime.capitalized, systemImage: "terminal")
-            }
-            .buttonStyle(.plain)
-
-            Toggle(isOn: takeoverBinding) {
-                Text("Takeover")
-            }
-            .toggleStyle(.switch)
-            .disabled(isTakeoverDisabled)
-        }
-        .font(.subheadline.weight(.semibold))
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 18)
-        .padding(.top, 8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var takeoverBinding: Binding<Bool> {
-        Binding(
-            get: { isTakeoverEnabled },
-            set: { newValue in
-                guard newValue != isTakeoverEnabled else { return }
-                onToggleTakeover()
-            },
-        )
-    }
-}
-
 struct LiquidGlassMessageInputBar: View {
     @Binding var text: String
 
@@ -1048,139 +1001,201 @@ struct LiquidGlassMessageInputBar: View {
     var onToggleTakeover: () -> Void = {}
 
     @FocusState private var isFocused: Bool
+    @State private var isMenuExpanded = false
+
+    private let composerHeight: CGFloat = 50
+    private let restingGap: CGFloat = 8
+    private let glassInteractionSpacing: CGFloat = 4
 
     private var canSend: Bool {
         return !isSending && (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || hasPendingAttachments)
     }
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 10) {
-            plusButton
-
-            HStack(alignment: .bottom, spacing: 8) {
-                TextField("Message", text: $text, axis: .vertical)
-                    .lineLimit(1...5)
-                    .textFieldStyle(.plain)
-                    .focused($isFocused)
-                    .submitLabel(.send)
-                    .onSubmit {
-                        if canSend {
-                            onSend()
-                        }
-                    }
-
-                Button {
-                    if canSend {
-                        onSend()
-                    }
-                } label: {
-                    if isSending {
-                        ProgressView()
-                            .scaleEffect(0.78)
-                            .frame(width: 30, height: 30)
-                    } else {
-                        Image(systemName: "arrow.up.circle.fill")
-                            .font(.title2)
-                            .symbolRenderingMode(.hierarchical)
-                            .foregroundStyle(sendIconShapeStyle)
-                            .frame(width: 30, height: 30)
-                    }
-                }
-                .buttonStyle(.plain)
-                .disabled(!canSend)
-                .accessibilityLabel("Send")
+        VStack(alignment: .leading, spacing: 10) {
+            if isMenuExpanded {
+                expandedMenu
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
-            .frame(minHeight: 44)
-            .padding(.leading, 15)
-            .padding(.trailing, 8)
-            .background {
-                inputGlassBackground
+
+            if #available(iOS 26.0, *) {
+                GlassEffectContainer(spacing: glassInteractionSpacing) {
+                    composerRow
+                }
+            } else {
+                composerRow
             }
         }
         .padding(.horizontal, 12)
         .padding(.top, 8)
         .padding(.bottom, 8)
+        .animation(.bouncy(duration: 0.35), value: isMenuExpanded)
+        .animation(.smooth(duration: 0.22), value: canSend)
     }
 
-    private var plusButton: some View {
-        Menu {
-            Button {
-                onPlus()
-            } label: {
-                Label("Photos", systemImage: "photo")
-            }
+    private var composerRow: some View {
+        HStack(alignment: .bottom, spacing: restingGap) {
+            plusGlassButton
+                .zIndex(2)
 
-            Button {
-                onCamera()
-            } label: {
-                Label("Camera", systemImage: "camera")
-            }
+            inputGlassField
+                .zIndex(1)
+        }
+    }
 
-            Button {
-                onRuntime()
-            } label: {
-                Label("Runtime", systemImage: "terminal")
-            }
-
-            Toggle(isOn: takeoverBinding) {
-                Label("Takeover", systemImage: "hand.raised")
-            }
-            .disabled(isTakeoverDisabled)
+    private var plusGlassButton: some View {
+        Button {
+            toggleMenu()
         } label: {
-            Image(systemName: "plus")
-                .font(.title3)
-                .fontWeight(.medium)
-                .frame(width: 44, height: 44)
+            Image(systemName: isMenuExpanded ? "xmark" : "plus")
+                .font(.system(size: 18, weight: .semibold))
+                .frame(width: composerHeight, height: composerHeight)
                 .contentShape(Circle())
         }
-        .buttonStyle(CircularGlassButtonStyle())
-        .accessibilityLabel("More Content")
-    }
-
-    @ViewBuilder
-    private var inputGlassBackground: some View {
-        if #available(iOS 26.0, *) {
-            Capsule(style: .continuous)
-                .fill(.clear)
-                .glassEffect(.regular, in: Capsule(style: .continuous))
-        } else {
-            Capsule(style: .continuous)
-                .fill(.regularMaterial)
-        }
-    }
-
-    private var sendIconShapeStyle: AnyShapeStyle {
-        if canSend {
-            return AnyShapeStyle(.tint)
-        }
-        return AnyShapeStyle(.secondary)
-    }
-
-    private var takeoverBinding: Binding<Bool> {
-        Binding(
-            get: { isTakeoverEnabled },
-            set: { newValue in
-                guard newValue != isTakeoverEnabled else { return }
-                onToggleTakeover()
-            },
-        )
-    }
-}
-
-private struct CircularGlassButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .background {
-                if #available(iOS 26.0, *) {
-                    Circle()
-                        .fill(.clear)
-                        .glassEffect(.regular, in: Circle())
-                } else {
-                    Circle()
-                        .fill(.regularMaterial)
-                }
+        .buttonStyle(.plain)
+        .background {
+            if #available(iOS 26.0, *) {
+                Circle()
+                    .fill(.clear)
+                    .glassEffect(.regular.interactive(), in: Circle())
+            } else {
+                Circle()
+                    .fill(.regularMaterial)
             }
-            .scaleEffect(configuration.isPressed ? 0.94 : 1)
+        }
+        .accessibilityLabel(isMenuExpanded ? "Close Menu" : "More Content")
+    }
+
+    private var inputGlassField: some View {
+        HStack(alignment: .bottom, spacing: 8) {
+            TextField("Message", text: $text, axis: .vertical)
+                .lineLimit(1...5)
+                .textFieldStyle(.plain)
+                .focused($isFocused)
+                .submitLabel(.send)
+                .onSubmit {
+                    if canSend {
+                        sendAndCollapse()
+                    }
+                }
+
+            if isSending {
+                ProgressView()
+                    .scaleEffect(0.78)
+                    .frame(width: 34, height: 34)
+            } else if canSend {
+                sendButton
+                    .transition(.scale.combined(with: .opacity))
+            }
+        }
+        .padding(.leading, 17)
+        .padding(.trailing, canSend || isSending ? 8 : 17)
+        .frame(minHeight: composerHeight)
+        .background {
+            if #available(iOS 26.0, *) {
+                Capsule()
+                    .fill(.clear)
+                    .glassEffect(.regular.interactive(), in: Capsule())
+            } else {
+                Capsule()
+                    .fill(.regularMaterial)
+            }
+        }
+    }
+
+    private var sendButton: some View {
+        Button {
+            sendAndCollapse()
+        } label: {
+            Image(systemName: "arrow.up")
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 34, height: 34)
+                .background {
+                    Circle()
+                        .fill(.tint)
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Send")
+    }
+
+    private var expandedMenu: some View {
+        HStack(spacing: 8) {
+            menuButton(icon: "photo", title: "Photos", action: onPlus)
+            menuButton(icon: "camera", title: "Camera", action: onCamera)
+            menuButton(icon: "terminal", title: "Runtime", action: onRuntime)
+            takeoverMenuButton
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background {
+            if #available(iOS 26.0, *) {
+                Capsule()
+                    .fill(.clear)
+                    .glassEffect(.regular.interactive(), in: Capsule())
+            } else {
+                Capsule()
+                    .fill(.regularMaterial)
+            }
+        }
+    }
+
+    private func menuButton(icon: String, title: String, action: @escaping () -> Void) -> some View {
+        Button {
+            action()
+            collapseMenu()
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: icon)
+                    .font(.system(size: 15, weight: .semibold))
+                Text(title)
+                    .font(.caption)
+            }
+            .frame(height: 34)
+            .padding(.horizontal, 10)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var takeoverMenuButton: some View {
+        Button {
+            if !isTakeoverDisabled {
+                onToggleTakeover()
+                collapseMenu()
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: isTakeoverEnabled ? "lock.open" : "lock")
+                    .font(.system(size: 15, weight: .semibold))
+                Text("Takeover")
+                    .font(.caption)
+            }
+            .frame(height: 34)
+            .padding(.horizontal, 10)
+            .opacity(isTakeoverDisabled ? 0.42 : 1)
+        }
+        .buttonStyle(.plain)
+        .disabled(isTakeoverDisabled)
+    }
+
+    private func toggleMenu() {
+        isFocused = true
+        withAnimation(.bouncy(duration: 0.35)) {
+            isMenuExpanded.toggle()
+        }
+    }
+
+    private func collapseMenu() {
+        withAnimation(.smooth(duration: 0.22)) {
+            isMenuExpanded = false
+        }
+    }
+
+    private func sendAndCollapse() {
+        guard canSend else { return }
+        onSend()
+        collapseMenu()
     }
 }
 
