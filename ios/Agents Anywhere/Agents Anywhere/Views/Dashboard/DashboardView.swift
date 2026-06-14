@@ -481,15 +481,11 @@ private struct SessionRow: View {
 
                 Spacer(minLength: 8)
 
-                Text(session.statusLabel)
-                    .font(.caption.weight(.semibold))
+                Text(session.displayTime)
+                    .font(.caption)
                     .foregroundStyle(.secondary)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 5)
-                    .background {
-                        Capsule(style: .continuous)
-                            .fill(.secondary.opacity(0.12))
-                    }
+                    .monospacedDigit()
+                    .lineLimit(1)
             }
             .padding(.vertical, 13)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -502,10 +498,16 @@ private struct SessionRow: View {
     }
 
     private var title: some View {
-        Text(session.displayTitle)
-            .font(.headline)
-            .lineLimit(1)
-            .layoutPriority(1)
+        HStack(spacing: 6) {
+            Circle()
+                .fill(session.unread ? .green : .clear)
+                .frame(width: 8, height: 8)
+
+            Text(session.displayTitle)
+                .font(.headline)
+                .lineLimit(1)
+        }
+        .layoutPriority(1)
     }
 
     private var subtitle: String {
@@ -522,7 +524,7 @@ private struct SessionMetadataPill: View {
             .foregroundStyle(.secondary)
             .lineLimit(1)
             .truncationMode(.tail)
-            .frame(maxWidth: 110)
+            .frame(width: 86)
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
             .background {

@@ -403,6 +403,50 @@ extension SessionSummary {
             return status.capitalized
         }
     }
+
+    var displayTime: String {
+        guard let date = activityDate else { return "" }
+        let interval = Date().timeIntervalSince(date)
+        if interval < 60 {
+            return "now"
+        }
+        if interval < 60 * 60 {
+            return "\(Int(interval / 60))m"
+        }
+        if interval < 60 * 60 * 24 {
+            return "\(Int(interval / 3_600))h"
+        }
+        if interval < 60 * 60 * 24 * 7 {
+            return "\(Int(interval / 86_400))d"
+        }
+        return Self.shortDateFormatter.string(from: date)
+    }
+
+    private var activityDate: Date? {
+        let value = lastActivityAt ?? lastItemAt ?? sortAt
+        guard let value else { return nil }
+        return Self.isoDateFormatter.date(from: value)
+            ?? Self.fractionalISODateFormatter.date(from: value)
+    }
+
+    private static let isoDateFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+
+    private static let fractionalISODateFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    private static let shortDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        formatter.timeStyle = .none
+        return formatter
+    }()
 }
 
 private extension TimelineItem {
