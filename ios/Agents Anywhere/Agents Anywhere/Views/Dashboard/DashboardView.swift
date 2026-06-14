@@ -231,7 +231,13 @@ private struct SessionsView: View {
 
     @ViewBuilder
     private var sessionList: some View {
-        if filteredSessions.isEmpty {
+        if !appState.hasLoadedSessions, let sessionsError = appState.sessionsError {
+            DashboardErrorView(message: sessionsError)
+                .padding(.top, 80)
+        } else if !appState.hasLoadedSessions {
+            DashboardLoadingView()
+                .padding(.top, 80)
+        } else if filteredSessions.isEmpty {
             ContentUnavailableView(
                 "No Sessions",
                 systemImage: "rectangle.stack",
@@ -270,7 +276,13 @@ private struct DevicesView: View {
 
     var body: some View {
         List {
-            if appState.connectors.isEmpty {
+            if !appState.hasLoadedConnectors, let connectorsError = appState.connectorsError {
+                DashboardErrorView(message: connectorsError)
+                    .listRowSeparator(.hidden)
+            } else if !appState.hasLoadedConnectors {
+                DashboardLoadingView()
+                    .listRowSeparator(.hidden)
+            } else if appState.connectors.isEmpty {
                 ContentUnavailableView(
                     "No Devices",
                     systemImage: "desktopcomputer",
@@ -295,28 +307,36 @@ private struct MeView: View {
 
     var body: some View {
         List {
-            Section {
-                HStack(spacing: 14) {
-                    Image(systemName: "person.crop.circle.fill")
-                        .font(.system(size: 48))
-                        .foregroundStyle(.secondary)
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(appState.me?.userId ?? "")
-                            .font(.headline)
-
-                        Text(appState.me?.role.rawValue.capitalized ?? "")
-                            .font(.subheadline)
+            if appState.me == nil, let authError = appState.authError {
+                DashboardErrorView(message: authError)
+                    .listRowSeparator(.hidden)
+            } else if appState.me == nil {
+                DashboardLoadingView()
+                    .listRowSeparator(.hidden)
+            } else {
+                Section {
+                    HStack(spacing: 14) {
+                        Image(systemName: "person.crop.circle.fill")
+                            .font(.system(size: 48))
                             .foregroundStyle(.secondary)
-                    }
-                }
-                .padding(.vertical, 8)
-            }
 
-            Section("Server") {
-                Text(appState.serverURL?.absoluteString ?? "")
-                    .foregroundStyle(.secondary)
-                    .lineLimit(3)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(appState.me?.userId ?? "")
+                                .font(.headline)
+
+                            Text(appState.me?.role.rawValue.capitalized ?? "")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.vertical, 8)
+                }
+
+                Section("Server") {
+                    Text(appState.serverURL?.absoluteString ?? "")
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                }
             }
 
             Section {
@@ -325,6 +345,31 @@ private struct MeView: View {
                 }
             }
         }
+    }
+}
+
+private struct DashboardLoadingView: View {
+    var body: some View {
+        VStack(spacing: 10) {
+            ProgressView()
+            Text("Loading")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, minHeight: 140, alignment: .center)
+    }
+}
+
+private struct DashboardErrorView: View {
+    let message: String
+
+    var body: some View {
+        ContentUnavailableView(
+            "Unable to Load",
+            systemImage: "exclamationmark.triangle",
+            description: Text(message),
+        )
+        .frame(maxWidth: .infinity, minHeight: 140)
     }
 }
 
@@ -538,7 +583,13 @@ private struct NewSessionSheet: View {
                     header
                     setupSteps
 
-                    if availableConnectors.isEmpty {
+                    if !appState.hasLoadedConnectors, let connectorsError = appState.connectorsError {
+                        DashboardErrorView(message: connectorsError)
+                            .padding(.top, 48)
+                    } else if !appState.hasLoadedConnectors {
+                        DashboardLoadingView()
+                            .padding(.top, 48)
+                    } else if availableConnectors.isEmpty {
                         ContentUnavailableView(
                             "No Online Agents",
                             systemImage: "desktopcomputer.trianglebadge.exclamationmark",

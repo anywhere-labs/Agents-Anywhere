@@ -17,8 +17,13 @@ final class AppState: ObservableObject {
     @Published private(set) var me: AuthMe?
     @Published private(set) var connectors: [ConnectorSummary] = []
     @Published private(set) var sessions: [SessionSummary] = []
+    @Published private(set) var isDashboardLoading = false
+    @Published private(set) var hasLoadedConnectors = false
+    @Published private(set) var hasLoadedSessions = false
     @Published var authError: String?
     @Published var dashboardError: String?
+    @Published var sessionsError: String?
+    @Published var connectorsError: String?
     @Published var isWorking = false
 
     private let keychain = KeychainStore()
@@ -177,20 +182,27 @@ final class AppState: ObservableObject {
     func refreshDashboard() async {
         guard let api, let token = try? keychain.readString(account: tokenAccount) else { return }
         dashboardError = nil
+        sessionsError = nil
+        connectorsError = nil
+        isDashboardLoading = true
+        defer { isDashboardLoading = false }
 
         do {
             let sessionResponse = try await api.listSessions(token: token)
             sessions = sessionResponse.sessions
+            hasLoadedSessions = true
         } catch {
-            dashboardError = error.localizedDescription
+            sessionsError = error.localizedDescription
         }
 
         do {
             let connectorResponse = try await api.listConnectors(token: token)
             connectors = connectorResponse.connectors
+            hasLoadedConnectors = true
         } catch {
-            dashboardError = error.localizedDescription
+            connectorsError = error.localizedDescription
         }
+        dashboardError = sessionsError ?? connectorsError
     }
 
     func signOut() {
@@ -198,6 +210,12 @@ final class AppState: ObservableObject {
         me = nil
         connectors = []
         sessions = []
+        isDashboardLoading = false
+        hasLoadedConnectors = false
+        hasLoadedSessions = false
+        dashboardError = nil
+        sessionsError = nil
+        connectorsError = nil
         route = .signedOut
     }
 
