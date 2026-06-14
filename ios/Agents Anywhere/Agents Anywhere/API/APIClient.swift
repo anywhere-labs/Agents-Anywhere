@@ -113,6 +113,36 @@ struct APIClient {
         )
     }
 
+    func getRuntimeConfigSchema(token: String, runtime: String) async throws -> RuntimeConfigSchemaResponse {
+        let id = runtime.urlPathComponentEncoded
+        return try await request(
+            "/agents/\(id)/config-schema",
+            token: token,
+        )
+    }
+
+    func getSessionRuntimeSettings(token: String, sessionId: String) async throws -> RuntimeSettingsResponse {
+        let id = sessionId.urlPathComponentEncoded
+        return try await request(
+            "/sessions/\(id)/runtime-settings",
+            token: token,
+        )
+    }
+
+    func patchSessionRuntimeSettings(
+        token: String,
+        sessionId: String,
+        settings: [String: JSONValue],
+    ) async throws -> RuntimeSettingsResponse {
+        let id = sessionId.urlPathComponentEncoded
+        return try await request(
+            "/sessions/\(id)/runtime-settings",
+            method: "PATCH",
+            body: RuntimeSettingsPatchRequest(settings: settings),
+            token: token,
+        )
+    }
+
     func getSessionState(
         token: String,
         sessionId: String,

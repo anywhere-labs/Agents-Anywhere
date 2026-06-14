@@ -24,8 +24,13 @@ struct SessionDetailView: View {
     @State private var isCameraPickerPresented = false
     @State private var isCameraUnavailable = false
     @State private var isShowingDetails = false
+    @State private var isShowingRuntimeSettings = false
     @State private var isApplyingTakeover = false
     @State private var isConfirmingTakeoverBeforeSend = false
+    @State private var runtimeSchema: RuntimeConfigSchema?
+    @State private var runtimeSettings: RuntimeSettingsResponse?
+    @State private var isLoadingRuntimeSettings = false
+    @State private var isPatchingRuntimeSettings = false
     @State private var hasPositionedInitialScroll = false
     @State private var sseTask: Task<Void, Never>?
     @State private var pollTask: Task<Void, Never>?
@@ -167,6 +172,10 @@ struct SessionDetailView: View {
                     onSend: { Task { await sendMessage() } },
                     onPlus: { isPhotoPickerPresented = true },
                     onCamera: { openCamera() },
+                    onRuntime: { Task { await openRuntimeSettings() } },
+                    isTakeoverEnabled: session.takeover,
+                    isTakeoverDisabled: isApplyingTakeover || session.connectorStatus != "online",
+                    onToggleTakeover: { Task { await applyTakeover() } },
                 )
             }
         }
@@ -184,6 +193,20 @@ struct SessionDetailView: View {
             SessionDetailsSheet(session: session)
                 .presentationDetents([.medium])
                 .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $isShowingRuntimeSettings) {
+            RuntimeSettingsSheet(
+                session: session,
+                schema: runtimeSchema,
+                response: runtimeSettings,
+                isLoading: isLoadingRuntimeSettings,
+                isPatching: isPatchingRuntimeSettings,
+                onPatch: { key, value in
+                    Task { await patchRuntimeSetting(key: key, value: value) }
+                },
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
         .alert("Camera", isPresented: $isCameraUnavailable) {
             Button("OK", role: .cancel) {}
@@ -257,6 +280,44 @@ struct SessionDetailView: View {
                 ? try await api.disableTakeover(token: token, sessionId: initialSession.id)
                 : try await api.enableTakeover(token: token, sessionId: initialSession.id)
             session = response.session
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func openRuntimeSettings() async {
+        isShowingRuntimeSettings = true
+        await loadRuntimeSettings()
+    }
+
+    private func loadRuntimeSettings() async {
+        guard let api = appState.api, let token = appState.accessToken() else { return }
+        isLoadingRuntimeSettings = true
+        defer { isLoadingRuntimeSettings = false }
+        do {
+            async let schemaResponse = api.getRuntimeConfigSchema(token: token, runtime: session.runtime)
+            async let settingsResponse = api.getSessionRuntimeSettings(token: token, sessionId: initialSession.id)
+            let loadedSchema = try await schemaResponse
+            let loadedSettings = try await settingsResponse
+            runtimeSchema = loadedSchema.schema
+            runtimeSettings = loadedSettings
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func patchRuntimeSetting(key: String, value: JSONValue) async {
+        guard let api = appState.api, let token = appState.accessToken() else { return }
+        isPatchingRuntimeSettings = true
+        defer { isPatchingRuntimeSettings = false }
+        do {
+            let response = try await api.patchSessionRuntimeSettings(
+                token: token,
+                sessionId: initialSession.id,
+                settings: [key: value],
+            )
+            runtimeSettings = response
+            session = session.updatingRuntimeSettings(from: response)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -781,6 +842,151 @@ private struct DetailRow: View {
     }
 }
 
+private struct RuntimeSettingsSheet: View {
+    let session: SessionSummary
+    let schema: RuntimeConfigSchema?
+    let response: RuntimeSettingsResponse?
+    let isLoading: Bool
+    let isPatching: Bool
+    let onPatch: (String, JSONValue) -> Void
+
+    private var settings: [String: JSONValue] {
+        guard let settingsValue = response?.settings,
+              case let .object(object) = settingsValue
+        else { return [:] }
+        return object
+    }
+
+    private var fields: [RuntimeConfigField] {
+        schema?.fields.filter { field in
+            field.hidden != true
+                && field.allowSessionOverride
+                && ["enum", "boolean"].contains(field.type)
+                && isVisible(field)
+        } ?? []
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if isLoading && response == nil {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, alignment: .center)
+                } else if fields.isEmpty {
+                    ContentUnavailableView(
+                        "No Runtime Settings",
+                        systemImage: "slider.horizontal.3",
+                        description: Text("This agent does not expose session-level settings."),
+                    )
+                } else {
+                    Section {
+                        ForEach(fields) { field in
+                            RuntimeSettingRow(
+                                field: field,
+                                value: settings[field.key],
+                                isDisabled: isPatching,
+                                onPatch: onPatch,
+                            )
+                        }
+                    } footer: {
+                        if isPatching {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                Text("Saving")
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("\(session.runtime.capitalized) Runtime")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+
+    private func isVisible(_ field: RuntimeConfigField) -> Bool {
+        guard let visibleWhen = field.visibleWhen,
+              case let .object(conditions) = visibleWhen
+        else { return true }
+        for (key, expected) in conditions {
+            if settings[key] != expected {
+                return false
+            }
+        }
+        return true
+    }
+}
+
+private struct RuntimeSettingRow: View {
+    let field: RuntimeConfigField
+    let value: JSONValue?
+    let isDisabled: Bool
+    let onPatch: (String, JSONValue) -> Void
+
+    var body: some View {
+        if field.type == "boolean" {
+            Toggle(isOn: booleanBinding) {
+                label
+            }
+            .disabled(isDisabled)
+        } else {
+            Picker(selection: selectionBinding) {
+                ForEach(field.options ?? []) { option in
+                    Text(option.label)
+                        .tag(option.value.stringValue ?? option.label)
+                }
+            } label: {
+                label
+            }
+            .disabled(isDisabled)
+        }
+    }
+
+    private var label: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(field.label)
+            if let description = field.description, !description.isEmpty {
+                Text(description)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var selectionBinding: Binding<String> {
+        Binding(
+            get: {
+                value?.stringValue ?? firstOptionValue
+            },
+            set: { newValue in
+                guard newValue != value?.stringValue else { return }
+                onPatch(field.key, optionValue(for: newValue))
+            },
+        )
+    }
+
+    private var booleanBinding: Binding<Bool> {
+        Binding(
+            get: {
+                if case let .bool(current) = value {
+                    return current
+                }
+                return false
+            },
+            set: { newValue in
+                onPatch(field.key, .bool(newValue))
+            },
+        )
+    }
+
+    private var firstOptionValue: String {
+        field.options?.first?.value.stringValue ?? ""
+    }
+
+    private func optionValue(for selected: String) -> JSONValue {
+        field.options?.first { ($0.value.stringValue ?? $0.label) == selected }?.value ?? .string(selected)
+    }
+}
+
 struct LiquidGlassMessageInputBar: View {
     @Binding var text: String
 
@@ -789,6 +995,10 @@ struct LiquidGlassMessageInputBar: View {
     var onSend: () -> Void
     var onPlus: () -> Void = {}
     var onCamera: () -> Void = {}
+    var onRuntime: () -> Void = {}
+    var isTakeoverEnabled = false
+    var isTakeoverDisabled = false
+    var onToggleTakeover: () -> Void = {}
 
     @FocusState private var isFocused: Bool
 
@@ -800,38 +1010,52 @@ struct LiquidGlassMessageInputBar: View {
         HStack(alignment: .bottom, spacing: 10) {
             plusButton
 
-            HStack(alignment: .bottom, spacing: 8) {
-                TextField("Message", text: $text, axis: .vertical)
-                    .lineLimit(1...5)
-                    .textFieldStyle(.plain)
-                    .focused($isFocused)
-                    .submitLabel(.send)
-                    .onSubmit {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 10) {
+                    Label(isTakeoverEnabled ? "Takeover" : "Read-only", systemImage: isTakeoverEnabled ? "lock.open" : "lock")
+                    Button {
+                        onRuntime()
+                    } label: {
+                        Label("Runtime", systemImage: "terminal")
+                    }
+                    .buttonStyle(.plain)
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+                HStack(alignment: .bottom, spacing: 8) {
+                    TextField("Message", text: $text, axis: .vertical)
+                        .lineLimit(1...5)
+                        .textFieldStyle(.plain)
+                        .focused($isFocused)
+                        .submitLabel(.send)
+                        .onSubmit {
+                            if canSend {
+                                onSend()
+                            }
+                        }
+
+                    Button {
                         if canSend {
                             onSend()
                         }
+                    } label: {
+                        if isSending {
+                            ProgressView()
+                                .scaleEffect(0.78)
+                                .frame(width: 30, height: 30)
+                        } else {
+                            Image(systemName: "arrow.up.circle.fill")
+                                .font(.title2)
+                                .symbolRenderingMode(.hierarchical)
+                                .foregroundStyle(sendIconShapeStyle)
+                                .frame(width: 30, height: 30)
+                        }
                     }
-
-                Button {
-                    if canSend {
-                        onSend()
-                    }
-                } label: {
-                    if isSending {
-                        ProgressView()
-                            .scaleEffect(0.78)
-                            .frame(width: 30, height: 30)
-                    } else {
-                        Image(systemName: "arrow.up.circle.fill")
-                            .font(.title2)
-                            .symbolRenderingMode(.hierarchical)
-                            .foregroundStyle(sendIconShapeStyle)
-                            .frame(width: 30, height: 30)
-                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canSend)
+                    .accessibilityLabel("Send")
                 }
-                .buttonStyle(.plain)
-                .disabled(!canSend)
-                .accessibilityLabel("Send")
             }
             .frame(minHeight: 44)
             .padding(.leading, 15)
@@ -858,6 +1082,17 @@ struct LiquidGlassMessageInputBar: View {
             } label: {
                 Label("Camera", systemImage: "camera")
             }
+
+            Button {
+                onRuntime()
+            } label: {
+                Label("Runtime", systemImage: "terminal")
+            }
+
+            Toggle(isOn: takeoverBinding) {
+                Label("Takeover", systemImage: "hand.raised")
+            }
+            .disabled(isTakeoverDisabled)
         } label: {
             Image(systemName: "plus")
                 .font(.title3)
@@ -886,6 +1121,16 @@ struct LiquidGlassMessageInputBar: View {
             return AnyShapeStyle(.tint)
         }
         return AnyShapeStyle(.secondary)
+    }
+
+    private var takeoverBinding: Binding<Bool> {
+        Binding(
+            get: { isTakeoverEnabled },
+            set: { newValue in
+                guard newValue != isTakeoverEnabled else { return }
+                onToggleTakeover()
+            },
+        )
     }
 }
 
@@ -1017,6 +1262,34 @@ extension SessionSummary {
             return "\(Int(interval / 86_400))d"
         }
         return Self.shortDateFormatter.string(from: date)
+    }
+
+    func updatingRuntimeSettings(from response: RuntimeSettingsResponse) -> SessionSummary {
+        SessionSummary(
+            id: id,
+            connectorId: connectorId,
+            runtime: runtime,
+            externalSessionId: externalSessionId,
+            title: title,
+            cwd: cwd,
+            status: status,
+            connectorStatus: connectorStatus,
+            takeover: takeover,
+            archived: archived,
+            pinned: pinned,
+            unread: unread,
+            lastReadSeq: lastReadSeq,
+            lastSyncedAt: lastSyncedAt,
+            sourceObservedAt: sourceObservedAt,
+            lastActivityAt: lastActivityAt,
+            lastItemAt: lastItemAt,
+            lastItemOrderSeq: lastItemOrderSeq,
+            sortAt: sortAt,
+            updatedSeq: updatedSeq,
+            effectiveRunMode: response.effectiveRunMode ?? effectiveRunMode,
+            runtimeSettings: response.runtimeSettings ?? response.settings,
+            runtimeSettingsOverride: response.runtimeSettingsOverride,
+        )
     }
 
     private var activityDate: Date? {

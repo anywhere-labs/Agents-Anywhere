@@ -263,6 +263,58 @@ struct TakeoverResponse: Decodable {
     let session: SessionSummary
 }
 
+struct RuntimeSettingsResponse: Decodable {
+    let connectorId: String?
+    let sessionId: String?
+    let runtime: String
+    let settings: JSONValue
+    let runtimeSettings: JSONValue?
+    let runtimeSettingsOverride: JSONValue?
+    let effectiveRunMode: String?
+    let defaultRunModeConfigured: Bool
+    let schemaVersion: Int
+    let serverTime: String
+}
+
+struct RuntimeSettingsPatchRequest: Encodable {
+    let settings: [String: JSONValue]
+}
+
+struct RuntimeConfigSchemaResponse: Decodable {
+    let runtime: String
+    let schema: RuntimeConfigSchema
+    let serverTime: String
+}
+
+struct RuntimeConfigSchema: Decodable {
+    let runtime: String
+    let schemaVersion: Int
+    let fields: [RuntimeConfigField]
+}
+
+struct RuntimeConfigField: Decodable, Identifiable {
+    let key: String
+    let label: String
+    let type: String
+    let description: String?
+    let options: [RuntimeConfigOption]?
+    let runtimeOptionsSource: String?
+    let visibleWhen: JSONValue?
+    let allowSessionOverride: Bool
+    let hidden: Bool?
+    let fields: [RuntimeConfigField]?
+
+    var id: String { key }
+}
+
+struct RuntimeConfigOption: Decodable, Identifiable {
+    let value: JSONValue
+    let label: String
+    let description: String?
+
+    var id: String { value.stringValue ?? label }
+}
+
 struct RpcResponsePayload: Decodable {
     let ok: Bool?
     let result: JSONValue?
