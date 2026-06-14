@@ -34,7 +34,7 @@ struct SessionDetailView: View {
     }
 
     private var displayEntries: [ChatEntry] {
-        var entries = timelineItems.compactMap(ChatEntry.fromTimelineItem)
+        var entries = timelineItems.compactMap(chatEntry)
         entries.append(contentsOf: approvals.filter { $0.status == "pending" }.map(ChatEntry.approval))
         return entries.sorted { lhs, rhs in
             lhs.sortKey < rhs.sortKey
@@ -381,15 +381,16 @@ private enum ChatEntry: Identifiable {
         }
     }
 
-    static func fromTimelineItem(_ item: TimelineItem) -> ChatEntry? {
-        if item.type == "message", item.role == "user" || item.role == "assistant" {
-            return .message(item)
-        }
-        if item.type == "system", item.status == "failed" {
-            return .notice("Error", item.displayText ?? "Runtime error")
-        }
-        return nil
+}
+
+nonisolated private func chatEntry(from item: TimelineItem) -> ChatEntry? {
+    if item.type == "message", item.role == "user" || item.role == "assistant" {
+        return .message(item)
     }
+    if item.type == "system", item.status == "failed" {
+        return .notice("Error", item.displayText ?? "Runtime error")
+    }
+    return nil
 }
 
 private struct ChatEntryView: View {
@@ -619,7 +620,7 @@ struct LiquidGlassMessageInputBar: View {
                         Image(systemName: canSend ? "arrow.up.circle.fill" : speech.isRecording ? "stop.circle.fill" : "mic.fill")
                             .font(.title2)
                             .symbolRenderingMode(.hierarchical)
-                            .foregroundStyle(sendIconColor)
+                            .foregroundStyle(sendIconShapeStyle)
                             .frame(width: 30, height: 30)
                     }
                 }
@@ -695,10 +696,14 @@ struct LiquidGlassMessageInputBar: View {
         }
     }
 
-    private var sendIconColor: Color {
-        if canSend { return .accentColor }
-        if speech.isRecording { return .red }
-        return .secondary
+    private var sendIconShapeStyle: AnyShapeStyle {
+        if canSend {
+            return AnyShapeStyle(.tint)
+        }
+        if speech.isRecording {
+            return AnyShapeStyle(Color.red)
+        }
+        return AnyShapeStyle(.secondary)
     }
 }
 
@@ -735,17 +740,16 @@ final class SpeechInputController: ObservableObject {
         request.shouldReportPartialResults = true
         self.request = request
 
-        let node = audioEngine.inputNode
-        let format = node.outputFormat(forBus: 0)
-        node.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak request] buffer, _ in
-            request?.append(buffer)
-        }
-
         do {
             #if os(iOS)
             try AVAudioSession.sharedInstance().setCategory(.record, mode: .measurement, options: .duckOthers)
             try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
             #endif
+            let node = audioEngine.inputNode
+            let format = node.outputFormat(forBus: 0)
+            try node.installSpeechTap(onBus: 0, bufferSize: 1024, format: format) { [weak request] buffer, _ in
+                request?.append(buffer)
+            }
             audioEngine.prepare()
             try audioEngine.start()
             isRecording = true
@@ -763,6 +767,21 @@ final class SpeechInputController: ObservableObject {
                     self?.stop()
                 }
             }
+        }
+    }
+}
+
+private extension AVAudioNode {
+    func installSpeechTap(
+        onBus bus: AVAudioNodeBus,
+        bufferSize: AVAudioFrameCount,
+        format: AVAudioFormat?,
+        block: @escaping AVAudioNodeTapBlock,
+    ) throws {
+        if #available(iOS 27.0, macOS 27.0, tvOS 27.0, watchOS 27.0, *) {
+            try installTap(onBus: bus, bufferSize: bufferSize, format: format, block: block)
+        } else {
+            installTap(onBus: bus, bufferSize: bufferSize, format: format, block: block)
         }
     }
 }
@@ -865,7 +884,7 @@ extension SessionSummary {
 }
 
 private extension TimelineItem {
-    var displayText: String? {
+    nonisolated var displayText: String? {
         content["text"]?.stringValue
             ?? content["rawText"]?.stringValue
             ?? content["message"]?.stringValue
