@@ -1079,6 +1079,7 @@ struct LiquidGlassMessageInputBar: View {
             TextField("Message", text: $text, axis: .vertical)
                 .lineLimit(1...5)
                 .textFieldStyle(.plain)
+                .frame(minHeight: 34, alignment: .center)
                 .focused($isFocused)
                 .submitLabel(.send)
                 .onSubmit {
@@ -1097,6 +1098,7 @@ struct LiquidGlassMessageInputBar: View {
         }
         .padding(.leading, 17)
         .padding(.trailing, 8)
+        .padding(.vertical, 8)
         .frame(minHeight: composerHeight)
         .composerGlassEffect(shape: RoundedRectangle(cornerRadius: composerCornerRadius, style: .continuous))
     }
