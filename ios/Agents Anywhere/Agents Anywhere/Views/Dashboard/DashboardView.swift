@@ -487,7 +487,7 @@ private struct SessionRow: View {
                     .monospacedDigit()
                     .lineLimit(1)
             }
-            .padding(.vertical, 13)
+            .padding(.vertical, 16)
             .frame(maxWidth: .infinity, alignment: .leading)
 
             if showsDivider {
@@ -500,7 +500,7 @@ private struct SessionRow: View {
     private var title: some View {
         HStack(spacing: 6) {
             Circle()
-                .fill(session.unread ? .green : .clear)
+                .fill(statusDotStyle)
                 .frame(width: 8, height: 8)
 
             Text(session.displayTitle)
@@ -512,6 +512,16 @@ private struct SessionRow: View {
 
     private var subtitle: String {
         return session.cwd ?? "No workspace"
+    }
+
+    private var statusDotStyle: AnyShapeStyle {
+        if session.status == "waiting_approval" {
+            return AnyShapeStyle(Color.blue)
+        }
+        if session.connectorStatus == "online" {
+            return AnyShapeStyle(.primary)
+        }
+        return AnyShapeStyle(Color.gray.opacity(0.55))
     }
 }
 
