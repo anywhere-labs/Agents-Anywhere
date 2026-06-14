@@ -4,6 +4,7 @@ struct DashboardView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.colorScheme) private var colorScheme
     @State private var mode: DashboardMode = .main
+    @SceneStorage("dashboard.selectedTab") private var selectedTab = DashboardTab.sessions.rawValue
 
     var body: some View {
         Group {
@@ -29,25 +30,22 @@ struct DashboardView: View {
     }
 
     private var mainTabs: some View {
-        TabView {
-            SessionsTabView()
-                .tabItem {
-                    Label("Sessions", systemImage: "text.bubble")
-                }
-                .badge(waitingApprovalCount)
+        TabView(selection: $selectedTab) {
+            Tab("Sessions", systemImage: "text.bubble", value: DashboardTab.sessions.rawValue) {
+                SessionsTabView()
+            }
+            .badge(waitingApprovalCount)
 
-            DevicesTabView()
-                .tabItem {
-                    Label("Devices", systemImage: "desktopcomputer")
-                }
+            Tab("Devices", systemImage: "desktopcomputer", value: DashboardTab.devices.rawValue) {
+                DevicesTabView()
+            }
 
-            MeTabView()
-                .tabItem {
-                    Label("Me", systemImage: "person.crop.circle")
-                }
+            Tab("Me", systemImage: "person.crop.circle", value: DashboardTab.me.rawValue) {
+                MeTabView()
+            }
         }
-        .safeAreaInset(edge: .bottom) {
-            NewSessionBottomButton {
+        .tabViewBottomAccessory {
+            NewSessionAccessoryButton {
                 withAnimation(.snappy) {
                     mode = .composing
                 }
@@ -59,6 +57,12 @@ struct DashboardView: View {
 private enum DashboardMode {
     case main
     case composing
+}
+
+private enum DashboardTab: String {
+    case sessions
+    case devices
+    case me
 }
 
 private struct SessionsTabView: View {
@@ -91,13 +95,14 @@ private struct SessionsTabView: View {
 
     var body: some View {
         NavigationStack {
-            content
+            ZStack {
+                content
+            }
             .background(AppTheme.appBackground(colorScheme))
             .navigationTitle("Sessions")
             .searchable(text: $searchText, prompt: "Search sessions")
             .safeAreaInset(edge: .top) {
                 FilterBar(selectedFilter: $selectedFilter)
-                    .background(AppTheme.appBackground(colorScheme))
             }
             .refreshable {
                 await appState.refreshDashboard()
@@ -133,7 +138,7 @@ private struct SessionsTabView: View {
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
-            .contentMargins(.bottom, 76, for: .scrollContent)
+            .contentMargins(.bottom, 36, for: .scrollContent)
         }
     }
 }
@@ -143,19 +148,20 @@ private struct FilterBar: View {
     @State private var activeSheet: FilterKind?
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                filterButton(.agent)
-                filterButton(.device)
-                filterButton(.workspace)
-                filterButton(.status)
+        VStack(spacing: 0) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    filterButton(.agent)
+                    filterButton(.device)
+                    filterButton(.workspace)
+                    filterButton(.status)
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 8)
             }
-            .padding(.horizontal, 22)
-            .padding(.top, 4)
-            .padding(.bottom, 10)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .scrollClipDisabled()
+        .background(.bar)
         .sheet(item: $activeSheet) { kind in
             FilterSheet(kind: kind, selectedFilter: $selectedFilter)
                 .presentationDetents([.medium, .large])
@@ -378,7 +384,7 @@ private struct StatusMark: View {
     }
 }
 
-private struct NewSessionBottomButton: View {
+private struct NewSessionAccessoryButton: View {
     let action: () -> Void
 
     var body: some View {
@@ -389,11 +395,8 @@ private struct NewSessionBottomButton: View {
                 .padding(.vertical, 10)
         }
         .buttonStyle(.glassProminent)
-        .buttonBorderShape(.capsule)
         .padding(.horizontal, 16)
-        .padding(.top, 6)
-        .padding(.bottom, 4)
-        .background(.bar)
+        .padding(.vertical, 6)
     }
 }
 
@@ -486,19 +489,19 @@ private struct MeTabView: View {
 private struct ComposeSessionView: View {
     let onCancel: () -> Void
 
-    @State private var prompt = ""
+    @State private var messageText = ""
 
     var body: some View {
         NavigationStack {
             List {
-                Section("Context") {
-                    Text("Choose a device, runtime, and workspace from the web console for now. The native create flow will connect to the same session API once those selectors are available here.")
+                Section("Runtime") {
+                    Label("Choose a connected device and agent runtime", systemImage: "desktopcomputer")
                         .foregroundStyle(.secondary)
                 }
 
-                Section("Draft") {
-                    Text(prompt.isEmpty ? "Type your first instruction below." : prompt)
-                        .foregroundStyle(prompt.isEmpty ? .secondary : .primary)
+                Section("Context") {
+                    Text("Use the message field below to draft the first instruction for a new session. Device, workspace, and runtime selection can connect to the full create-session API next.")
+                        .foregroundStyle(.secondary)
                 }
             }
             .navigationTitle("New Session")
@@ -509,13 +512,13 @@ private struct ComposeSessionView: View {
                 }
             }
             .safeAreaInset(edge: .bottom) {
-                SessionPromptInputBar(text: $prompt)
+                SessionMessageInputBar(text: $messageText)
             }
         }
     }
 }
 
-private struct SessionPromptInputBar: View {
+private struct SessionMessageInputBar: View {
     @Binding var text: String
 
     private var canSend: Bool {
@@ -538,9 +541,7 @@ private struct SessionPromptInputBar: View {
                     .textFieldStyle(.plain)
 
                 Button {
-                    if canSend {
-                        text = ""
-                    }
+                    send()
                 } label: {
                     Image(systemName: canSend ? "arrow.up.circle.fill" : "mic.fill")
                         .font(.title2)
@@ -559,6 +560,12 @@ private struct SessionPromptInputBar: View {
         .padding(.top, 8)
         .padding(.bottom, 6)
         .background(.bar)
+    }
+
+    private func send() {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        text = ""
     }
 }
 
