@@ -88,8 +88,29 @@ struct ConnectorSummary: Decodable, Identifiable, Hashable {
     let name: String
     let status: String
     let lastSeenAt: String?
+    let runtimeCapabilities: DeviceAgentsState?
     let createdAt: String
     let updatedAt: String
+
+    var attachedRuntimeNames: [String] {
+        runtimeCapabilities?.attached.keys.sorted() ?? []
+    }
+
+    var canStartSession: Bool {
+        status == "online" && !attachedRuntimeNames.isEmpty
+    }
+}
+
+struct DeviceAgentsState: Decodable, Hashable {
+    let version: Int?
+    let lastDiscoveredAt: String?
+    let attached: [String: AttachedAgentView]
+    let disabled: [String]?
+}
+
+struct AttachedAgentView: Decodable, Hashable {
+    let report: [String: JSONValue]?
+    let attachedAt: String?
 }
 
 struct SessionListResponse: Decodable {
@@ -259,6 +280,20 @@ struct SessionResponse: Decodable {
     let serverTime: String
 }
 
+struct SessionCreateRequest: Encodable {
+    let connectorId: String
+    let runtime: String
+    let title: String?
+    let cwd: String?
+    let approvalPolicy: String?
+    let sandbox: String?
+}
+
+struct SessionCreateResponse: Decodable {
+    let session: SessionSummary
+    let connectorResult: JSONValue?
+}
+
 struct TakeoverResponse: Decodable {
     let session: SessionSummary
 }
@@ -315,10 +350,38 @@ struct RuntimeConfigOption: Decodable, Identifiable {
     var id: String { value.stringValue ?? label }
 }
 
+struct RpcResponse<Result: Decodable>: Decodable {
+    let ok: Bool?
+    let result: Result
+    let error: String?
+}
+
 struct RpcResponsePayload: Decodable {
     let ok: Bool?
     let result: JSONValue?
     let error: String?
+}
+
+struct FsListRequest: Encodable {
+    let root: String
+    let path: String
+}
+
+struct FsListResult: Decodable, Hashable {
+    let path: String
+    let entries: [FsEntry]
+    let truncated: Bool?
+}
+
+struct FsEntry: Decodable, Identifiable, Hashable {
+    let name: String
+    let path: String
+    let type: String
+    let size: Int?
+
+    var id: String { path }
+    var isDirectory: Bool { type == "directory" }
+    var isFile: Bool { type == "file" }
 }
 
 enum ApprovalResolveStatus: String, Encodable {

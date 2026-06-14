@@ -84,6 +84,45 @@ struct APIClient {
         try await request("/sessions", token: token)
     }
 
+    func createSession(
+        token: String,
+        connectorId: String,
+        runtime: String,
+        title: String?,
+        cwd: String?,
+        approvalPolicy: String?,
+        sandbox: String?,
+    ) async throws -> SessionCreateResponse {
+        try await request(
+            "/sessions",
+            method: "POST",
+            body: SessionCreateRequest(
+                connectorId: connectorId,
+                runtime: runtime,
+                title: title,
+                cwd: cwd,
+                approvalPolicy: approvalPolicy,
+                sandbox: sandbox,
+            ),
+            token: token,
+        )
+    }
+
+    func connectorFsList(
+        token: String,
+        connectorId: String,
+        root: String,
+        path: String = ".",
+    ) async throws -> RpcResponse<FsListResult> {
+        let id = connectorId.urlPathComponentEncoded
+        return try await request(
+            "/connectors/\(id)/fs/list",
+            method: "POST",
+            body: FsListRequest(root: root, path: path),
+            token: token,
+        )
+    }
+
     func markSessionRead(token: String, sessionId: String) async throws -> SessionResponse {
         let id = sessionId.urlPathComponentEncoded
         return try await request(

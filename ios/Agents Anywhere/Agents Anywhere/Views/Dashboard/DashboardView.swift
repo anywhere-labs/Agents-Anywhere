@@ -3,33 +3,42 @@ import SwiftUI
 struct DashboardView: View {
     @EnvironmentObject private var appState: AppState
     @State private var isShowingNewSession = false
+    @State private var sessionToOpen: SessionSummary?
 
     var body: some View {
-        RootTabsView {
+        RootTabsView(sessionToOpen: $sessionToOpen) {
             isShowingNewSession = true
         }
         .task {
             await appState.refreshDashboard()
         }
         .sheet(isPresented: $isShowingNewSession) {
-            NewSessionSheet()
-                .presentationDetents([.medium, .large])
+            NewSessionSheet { session in
+                sessionToOpen = session
+            }
+                .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
         }
     }
 }
 
 private struct RootTabsView: View {
+    @Binding var sessionToOpen: SessionSummary?
+
     let onNewSession: () -> Void
 
     @SceneStorage("selectedRootTab")
     private var selectedTab: String = "sessions"
+    @State private var sessionPath: [SessionSummary] = []
 
     var body: some View {
         TabView(selection: $selectedTab) {
             Tab("Sessions", systemImage: "rectangle.stack.fill", value: "sessions") {
-                NavigationStack {
+                NavigationStack(path: $sessionPath) {
                     SessionsView(onNewSession: onNewSession)
+                        .navigationDestination(for: SessionSummary.self) { session in
+                            SessionDetailView(initialSession: session)
+                        }
                 }
             }
 
@@ -46,6 +55,12 @@ private struct RootTabsView: View {
                         .navigationTitle("Me")
                 }
             }
+        }
+        .onChange(of: sessionToOpen) { _, session in
+            guard let session else { return }
+            selectedTab = "sessions"
+            sessionPath = [session]
+            sessionToOpen = nil
         }
     }
 }
@@ -181,9 +196,7 @@ private struct SessionsView: View {
         } else {
             VStack(spacing: 0) {
                 ForEach(Array(filteredSessions.enumerated()), id: \.element.id) { index, session in
-                    NavigationLink {
-                        SessionDetailView(initialSession: session)
-                    } label: {
+                    NavigationLink(value: session) {
                         SessionRow(
                             session: session,
                             deviceName: deviceName(for: session),
@@ -271,38 +284,92 @@ private struct MeView: View {
 
 private struct NewSessionSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var appState: AppState
+
+    let onCreated: (SessionSummary) -> Void
+
     @State private var prompt = ""
     @State private var isPromptFocused = false
+    @State private var selectedConnectorId: String?
+    @State private var selectedRuntime = ""
+    @State private var permissionMode: NewSessionPermissionMode = .ask
+    @State private var workspacePath = "~"
+    @State private var isShowingFileBrowser = false
+    @State private var isCreating = false
+    @State private var errorMessage: String?
+
+    private var availableConnectors: [ConnectorSummary] {
+        appState.connectors.filter(\.canStartSession)
+    }
+
+    private var selectedConnector: ConnectorSummary? {
+        if let selectedConnectorId,
+           let connector = availableConnectors.first(where: { $0.id == selectedConnectorId })
+        {
+            return connector
+        }
+        return availableConnectors.first
+    }
+
+    private var availableRuntimes: [String] {
+        selectedConnector?.attachedRuntimeNames ?? []
+    }
+
+    private var selectedRuntimeValue: String {
+        if availableRuntimes.contains(selectedRuntime) {
+            return selectedRuntime
+        }
+        return availableRuntimes.first ?? ""
+    }
+
+    private var recentWorkspaces: [String] {
+        guard let connectorId = selectedConnector?.id else { return [] }
+        var seen = Set<String>()
+        return appState.sessions
+            .filter { $0.connectorId == connectorId && ($0.cwd?.isEmpty == false) }
+            .sorted { $0.isMoreRecent(than: $1) }
+            .compactMap(\.cwd)
+            .filter { cwd in
+                guard !seen.contains(cwd) else { return false }
+                seen.insert(cwd)
+                return true
+            }
+            .prefix(8)
+            .map { $0 }
+    }
+
+    private var canSubmit: Bool {
+        selectedConnector != nil &&
+            !selectedRuntimeValue.isEmpty &&
+            !isCreating &&
+            !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    Text("Create a new session")
-                        .font(.title.weight(.bold))
+                    header
 
-                    Text("Describe what you want the agent to do. Runtime and device selection will be added to this native flow next.")
-                        .font(.body)
-                        .foregroundStyle(.secondary)
-
-                    VStack(spacing: 12) {
-                        NewSessionOption(
-                            title: "Start from scratch",
-                            subtitle: "Create an empty agent session",
-                            systemImage: "plus.square.on.square",
+                    if availableConnectors.isEmpty {
+                        ContentUnavailableView(
+                            "No Online Agents",
+                            systemImage: "desktopcomputer.trianglebadge.exclamationmark",
+                            description: Text("Pair an online connector and attach an agent before starting a session."),
                         )
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 48)
+                    } else {
+                        deviceSection
+                        workspaceSection
+                        permissionSection
+                    }
 
-                        NewSessionOption(
-                            title: "Use current device",
-                            subtitle: "Run locally on a paired connector",
-                            systemImage: "laptopcomputer.and.iphone",
-                        )
-
-                        NewSessionOption(
-                            title: "Cloud runtime",
-                            subtitle: "Create a hosted session",
-                            systemImage: "cloud.fill",
-                        )
+                    if let errorMessage {
+                        Label(errorMessage, systemImage: "exclamationmark.triangle")
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                            .padding(.horizontal, 2)
                     }
                 }
                 .padding(20)
@@ -315,16 +382,43 @@ private struct NewSessionSheet: View {
                     Button("Cancel") { dismiss() }
                 }
             }
+            .onAppear {
+                reconcileSelection()
+            }
+            .onChange(of: appState.connectors) { _, _ in
+                reconcileSelection()
+            }
+            .onChange(of: selectedConnectorId) { _, _ in
+                reconcileSelection()
+            }
+            .sheet(isPresented: $isShowingFileBrowser) {
+                if let api = appState.api,
+                   let token = appState.accessToken(),
+                   let connector = selectedConnector
+                {
+                    RemoteFileBrowserSheet(
+                        api: api,
+                        token: token,
+                        connector: connector,
+                        mode: .pickDirectory,
+                        initialPath: workspacePath,
+                    ) { selection in
+                        workspacePath = selection.path
+                    }
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
+                }
+            }
             .safeAreaInset(edge: .bottom) {
                 LiquidGlassMessageInputBar(
                     text: $prompt,
                     isFocused: $isPromptFocused,
-                    placeholder: "Message to agent",
-                    isSubmitEnabled: { context in context.hasText },
+                    isSending: isCreating,
+                    placeholder: selectedConnector == nil ? "No online agent" : "Message to agent",
+                    isSubmitEnabled: { _ in canSubmit },
                     showsActionsButton: false,
                     onSend: {
-                        prompt = ""
-                        dismiss()
+                        Task { await createSession() }
                     },
                     onDismissKeyboard: {
                         isPromptFocused = false
@@ -333,6 +427,250 @@ private struct NewSessionSheet: View {
             }
         }
     }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("What should the agent do?")
+                .font(.title.weight(.bold))
+            Text("Choose a device, workspace, and permission mode. Sending starts the session and delivers the first message.")
+                .font(.body)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var deviceSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionLabel("Device & Agent")
+
+            Picker("Device", selection: Binding(
+                get: { selectedConnector?.id ?? "" },
+                set: { selectedConnectorId = $0 },
+            )) {
+                ForEach(availableConnectors) { connector in
+                    Text(connector.name).tag(connector.id)
+                }
+            }
+            .pickerStyle(.menu)
+
+            Picker("Agent", selection: Binding(
+                get: { selectedRuntimeValue },
+                set: { selectedRuntime = $0 },
+            )) {
+                ForEach(availableRuntimes, id: \.self) { runtime in
+                    Label(runtimeDisplayName(runtime), systemImage: runtimeIcon(runtime))
+                        .tag(runtime)
+                }
+            }
+            .pickerStyle(.segmented)
+        }
+    }
+
+    private var workspaceSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionLabel("Workspace")
+
+            Button {
+                isShowingFileBrowser = true
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "folder")
+                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(workspaceDisplayName(workspacePath))
+                            .foregroundStyle(.primary)
+                        Text(workspacePath)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(14)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            }
+            .buttonStyle(.plain)
+
+            if !recentWorkspaces.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(recentWorkspaces, id: \.self) { cwd in
+                            Button {
+                                workspacePath = cwd
+                            } label: {
+                                Label(workspaceDisplayName(cwd), systemImage: "clock")
+                                    .font(.caption.weight(.medium))
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+        }
+    }
+
+    private var permissionSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionLabel("Permission")
+
+            Picker("Permission", selection: $permissionMode) {
+                ForEach(NewSessionPermissionMode.allCases) { mode in
+                    Text(mode.title).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            Text(permissionMode.description)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func reconcileSelection() {
+        guard let connector = selectedConnector else {
+            selectedConnectorId = nil
+            selectedRuntime = ""
+            return
+        }
+        selectedConnectorId = connector.id
+        let runtimes = connector.attachedRuntimeNames
+        if !runtimes.contains(selectedRuntime) {
+            selectedRuntime = runtimes.first ?? ""
+        }
+        if workspacePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            workspacePath = recentWorkspaces.first ?? "~"
+        }
+    }
+
+    private func createSession() async {
+        guard canSubmit,
+              let api = appState.api,
+              let token = appState.accessToken(),
+              let connector = selectedConnector
+        else { return }
+
+        let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        isCreating = true
+        errorMessage = nil
+        defer { isCreating = false }
+
+        do {
+            let created = try await api.createSession(
+                token: token,
+                connectorId: connector.id,
+                runtime: selectedRuntimeValue,
+                title: text,
+                cwd: workspacePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : workspacePath,
+                approvalPolicy: permissionMode.approvalPolicy,
+                sandbox: permissionMode.sandbox,
+            )
+            let takeover = try await api.enableTakeover(token: token, sessionId: created.session.id)
+            _ = try await api.sendSessionMessage(
+                token: token,
+                sessionId: takeover.session.id,
+                content: text,
+                clientMessageId: "new_\(UUID().uuidString)",
+            )
+            prompt = ""
+            await appState.refreshDashboard()
+            onCreated(takeover.session)
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
+private struct SectionLabel: View {
+    let title: String
+
+    init(_ title: String) {
+        self.title = title
+    }
+
+    var body: some View {
+        Text(title.uppercased())
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+    }
+}
+
+private enum NewSessionPermissionMode: String, CaseIterable, Identifiable {
+    case ask
+    case full
+    case read
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .ask:
+            return "Ask"
+        case .full:
+            return "Full"
+        case .read:
+            return "Read"
+        }
+    }
+
+    var description: String {
+        switch self {
+        case .ask:
+            return "The agent asks before sensitive actions."
+        case .full:
+            return "No approval prompts; full filesystem and command access."
+        case .read:
+            return "Read-only sandbox with approval required for writes."
+        }
+    }
+
+    var approvalPolicy: String? {
+        switch self {
+        case .ask:
+            return nil
+        case .full:
+            return "never"
+        case .read:
+            return "on-request"
+        }
+    }
+
+    var sandbox: String? {
+        switch self {
+        case .ask:
+            return nil
+        case .full:
+            return "danger-full-access"
+        case .read:
+            return "read-only"
+        }
+    }
+}
+
+private func runtimeDisplayName(_ runtime: String) -> String {
+    if runtime.localizedCaseInsensitiveContains("claude") {
+        return "Claude"
+    }
+    if runtime.localizedCaseInsensitiveContains("codex") {
+        return "Codex"
+    }
+    return runtime.capitalized
+}
+
+private func runtimeIcon(_ runtime: String) -> String {
+    runtime.localizedCaseInsensitiveContains("claude") ? "sparkles" : "terminal"
+}
+
+private func workspaceDisplayName(_ path: String) -> String {
+    let trimmed = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    if trimmed.isEmpty || trimmed == "~" {
+        return path
+    }
+    return trimmed.split(separator: "/").last.map(String.init) ?? path
 }
 
 private enum SessionFilter: String, Identifiable {
@@ -599,48 +937,6 @@ private struct DeviceRow: View {
     }
 }
 
-private struct NewSessionOption: View {
-    let title: String
-    let subtitle: String
-    let systemImage: String
-
-    var body: some View {
-        Button {
-        } label: {
-            HStack(spacing: 14) {
-                Image(systemName: systemImage)
-                    .font(.title3)
-                    .frame(width: 36, height: 36)
-                    .background {
-                        Circle()
-                            .fill(.secondary.opacity(0.14))
-                    }
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title)
-                        .font(.headline)
-                        .foregroundStyle(.primary)
-
-                    Text(subtitle)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(14)
-            .background {
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(.regularMaterial)
-            }
-        }
-        .buttonStyle(.plain)
-    }
-}
 
 #Preview {
     DashboardView()
