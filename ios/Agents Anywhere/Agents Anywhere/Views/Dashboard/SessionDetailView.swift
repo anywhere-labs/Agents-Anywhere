@@ -25,6 +25,7 @@ struct SessionDetailView: View {
     @State private var isCameraUnavailable = false
     @State private var isShowingDetails = false
     @State private var isApplyingTakeover = false
+    @State private var isConfirmingTakeoverBeforeSend = false
     @State private var hasPositionedInitialScroll = false
     @State private var sseTask: Task<Void, Never>?
     @State private var pollTask: Task<Void, Never>?
@@ -188,6 +189,14 @@ struct SessionDetailView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text("Camera capture is not available on this device.")
+        }
+        .alert("Enable Takeover?", isPresented: $isConfirmingTakeoverBeforeSend) {
+            Button("Cancel", role: .cancel) {}
+            Button("Enable and Send") {
+                Task { await enableTakeoverAndSend() }
+            }
+        } message: {
+            Text("This session is read-only until takeover is enabled.")
         }
         .alert("Session Error", isPresented: Binding(
             get: { errorMessage != nil },
@@ -371,6 +380,28 @@ struct SessionDetailView: View {
     }
 
     private func sendMessage() async {
+        guard canSend else { return }
+        if !session.takeover {
+            isConfirmingTakeoverBeforeSend = true
+            return
+        }
+        await performSendMessage()
+    }
+
+    private func enableTakeoverAndSend() async {
+        guard canSend, let api = appState.api, let token = appState.accessToken() else { return }
+        isApplyingTakeover = true
+        defer { isApplyingTakeover = false }
+        do {
+            let response = try await api.enableTakeover(token: token, sessionId: initialSession.id)
+            session = response.session
+            await performSendMessage()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func performSendMessage() async {
         guard canSend, let api = appState.api, let token = appState.accessToken() else { return }
         let visibleText = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
         let uploads = pendingUploads
