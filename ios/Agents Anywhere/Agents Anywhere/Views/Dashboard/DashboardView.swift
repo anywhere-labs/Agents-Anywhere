@@ -546,10 +546,13 @@ private struct NewSessionSheet: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("What should the agent do?")
                 .font(.title.weight(.bold))
+                .multilineTextAlignment(.leading)
             Text("Choose a workspace and send the first message.")
                 .font(.body)
                 .foregroundStyle(.secondary)
+                .multilineTextAlignment(.leading)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var runtimeMenu: some View {
