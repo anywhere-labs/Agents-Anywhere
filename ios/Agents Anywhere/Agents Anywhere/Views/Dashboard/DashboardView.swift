@@ -618,13 +618,6 @@ private struct NewSessionSheet: View {
             }
             .safeAreaInset(edge: .bottom) {
                 VStack(spacing: 8) {
-                    if availableConnectors.isEmpty {
-                        EmptyView()
-                    } else {
-                        workspaceButton
-                            .padding(.horizontal, 12)
-                    }
-
                     if !pendingUploads.isEmpty {
                         AttachmentStrip(uploads: pendingUploads) { upload in
                             pendingUploads.removeAll { $0 == upload }
@@ -642,9 +635,6 @@ private struct NewSessionSheet: View {
                         showsActionsButton: true,
                         onSend: {
                             Task { await createSession() }
-                        },
-                        onDismissKeyboard: {
-                            isPromptFocused = false
                         },
                     )
                 }
@@ -693,11 +683,14 @@ private struct NewSessionSheet: View {
                 title: "Choose workspace",
                 subtitle: workspaceTitle,
                 systemImage: "folder",
+                action: {
+                    isShowingWorkspaceSheet = true
+                },
             )
             setupStepCard(
                 number: "3",
                 title: "Configure details",
-                subtitle: "Use + for attachments, model, effort, and permissions",
+                subtitle: "Press + to set more",
                 systemImage: "slider.horizontal.3",
             )
         }
@@ -707,39 +700,58 @@ private struct NewSessionSheet: View {
         number: String,
         title: String,
         subtitle: String,
-        systemImage: String
+        systemImage: String,
+        action: (() -> Void)? = nil,
     ) -> some View {
-        HStack(spacing: 12) {
-            ZStack {
-                Circle()
-                    .fill(.primary.opacity(0.08))
-                Text(number)
-                    .font(.caption.weight(.bold))
-            }
-            .frame(width: 30, height: 30)
+        Button {
+            action?()
+        } label: {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(.primary.opacity(0.08))
+                    Text(number)
+                        .font(.caption.weight(.bold))
+                }
+                .frame(width: 30, height: 30)
 
-            Image(systemName: systemImage)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 22)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.subheadline.weight(.semibold))
-                Text(subtitle)
-                    .font(.caption)
+                Image(systemName: systemImage)
+                    .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
+                    .frame(width: 22)
 
-            Spacer(minLength: 0)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 0)
+
+                if action != nil {
+                    if isResolvingHomeWorkspace {
+                        ProgressView()
+                            .scaleEffect(0.75)
+                    } else {
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+            }
+            .padding(.horizontal, 14)
+            .frame(minHeight: 58)
+            .background {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color(.secondarySystemGroupedBackground))
+            }
         }
-        .padding(.horizontal, 14)
-        .frame(minHeight: 58)
-        .background {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color(.secondarySystemGroupedBackground))
-        }
+        .buttonStyle(.plain)
+        .disabled(action == nil)
     }
 
     private var runtimeMenu: some View {
@@ -770,39 +782,6 @@ private struct NewSessionSheet: View {
         }
         .disabled(runtimeChoices.isEmpty || isCreating)
         .accessibilityLabel("Device and Agent")
-    }
-
-    private var workspaceButton: some View {
-        Button {
-            isShowingWorkspaceSheet = true
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "folder")
-                    .foregroundStyle(.secondary)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(workspaceTitle)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(.primary)
-                    Text(workspaceSubtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                Spacer()
-                if isResolvingHomeWorkspace {
-                    ProgressView()
-                        .scaleEffect(0.75)
-                } else {
-                    Image(systemName: "chevron.right")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.tertiary)
-                }
-            }
-            .padding(.horizontal, 14)
-            .frame(minHeight: 50)
-            .newSessionGlassEffect(shape: RoundedRectangle(cornerRadius: 25, style: .continuous))
-        }
-        .buttonStyle(.plain)
     }
 
     private func reconcileSelection() {
@@ -1132,19 +1111,6 @@ private struct WorkspacePickerRow: View {
             }
         }
         .contentShape(Rectangle())
-    }
-}
-
-private extension View {
-    @ViewBuilder
-    func newSessionGlassEffect<S: Shape>(shape: S) -> some View {
-        if #available(iOS 26.0, *) {
-            self.glassEffect(.regular.interactive(), in: shape)
-        } else {
-            self.background {
-                shape.fill(.regularMaterial)
-            }
-        }
     }
 }
 

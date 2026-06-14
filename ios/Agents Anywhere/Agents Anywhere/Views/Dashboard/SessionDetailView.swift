@@ -279,7 +279,6 @@ struct SessionDetailView: View {
                     isSubmitEnabled: canSubmitMessage,
                     onSend: { Task { await sendMessage() } },
                     interrupt: messageInputInterrupt,
-                    onDismissKeyboard: { dismissComposerKeyboard() },
                 )
             }
         }
@@ -2353,10 +2352,8 @@ struct LiquidGlassMessageInputBar: View {
     var showsActionsButton = true
     var onSend: () -> Void
     var interrupt: MessageInputInterrupt?
-    var onDismissKeyboard: () -> Void = {}
 
     @FocusState private var editorFocused: Bool
-    @State private var isKeyboardVisible = false
     @State private var measuredEditorTextHeight: CGFloat = 0
 
     private let composerHeight: CGFloat = 50
@@ -2402,12 +2399,7 @@ struct LiquidGlassMessageInputBar: View {
     }
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 6) {
-            if isFocused && isKeyboardVisible {
-                dismissKeyboardButton
-            }
-            composerRow
-        }
+        composerRow
         .padding(.horizontal, 12)
         .padding(.top, 8)
         .padding(.bottom, 2)
@@ -2423,12 +2415,6 @@ struct LiquidGlassMessageInputBar: View {
             if editorFocused != focused {
                 editorFocused = focused
             }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
-            isKeyboardVisible = true
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
-            isKeyboardVisible = false
         }
         .onPreferenceChange(ComposerTextHeightPreferenceKey.self) { height in
             measuredEditorTextHeight = height
@@ -2461,23 +2447,6 @@ struct LiquidGlassMessageInputBar: View {
         .buttonStyle(.plain)
         .composerGlassEffect(shape: Circle())
         .accessibilityLabel("More Content")
-    }
-
-    private var dismissKeyboardButton: some View {
-        Button {
-            onDismissKeyboard()
-            editorFocused = false
-            isFocused = false
-        } label: {
-            Image(systemName: "chevron.down")
-                .font(.system(size: 16, weight: .semibold))
-                .frame(width: 36, height: 28)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
-        .accessibilityLabel("Dismiss Keyboard")
-        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 
     private var inputGlassField: some View {
