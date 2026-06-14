@@ -383,7 +383,6 @@ private struct NewSessionSheet: View {
     @State private var isPromptFocused = false
     @State private var selectedConnectorId: String?
     @State private var selectedRuntime = ""
-    @State private var permissionMode: NewSessionPermissionMode = .ask
     @State private var homeWorkspacePath: String?
     @State private var selectedWorkspacePath: String?
     @State private var resolvedWorkspaceSelectionKey: String?
@@ -479,6 +478,10 @@ private struct NewSessionSheet: View {
         runtimeFields.first { $0.key == "model" }
     }
 
+    private var permissionField: RuntimeConfigField? {
+        runtimeFields.first { $0.key == "permissionMode" }
+    }
+
     private var effortField: RuntimeConfigField? {
         filterRuntimeEffortField(
             runtime: selectedRuntimeValue,
@@ -489,7 +492,7 @@ private struct NewSessionSheet: View {
 
     private var runtimeSettingsPatchForCreate: [String: JSONValue] {
         runtimeSettings.filter { key, _ in
-            key == "model" || key == "effort"
+            key == "model" || key == "effort" || key == "permissionMode"
         }
     }
 
@@ -502,18 +505,7 @@ private struct NewSessionSheet: View {
             ),
             runtimeFieldMenuAction(title: "Model", systemImage: "cpu", field: modelField, key: "model"),
             runtimeFieldMenuAction(title: "Effort", systemImage: "sparkles", field: effortField, key: "effort"),
-            MessageInputAction.menu(
-                title: "Permission",
-                systemImage: "shield",
-                children: NewSessionPermissionMode.allCases.map { mode in
-                    MessageInputAction(
-                        title: permissionMode == mode ? "\(mode.title) Access" : "Use \(mode.title) Access",
-                        systemImage: mode.systemImage,
-                    ) {
-                        permissionMode = mode
-                    }
-                },
-            ),
+            runtimeFieldMenuAction(title: "Permission", systemImage: "shield", field: permissionField, key: "permissionMode"),
         ]
     }
 
@@ -945,8 +937,8 @@ private struct NewSessionSheet: View {
                 runtime: selectedRuntimeValue,
                 title: text.isEmpty ? nil : text,
                 cwd: selectedWorkspaceForCreate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : selectedWorkspaceForCreate,
-                approvalPolicy: permissionMode.approvalPolicy,
-                sandbox: permissionMode.sandbox,
+                approvalPolicy: nil,
+                sandbox: nil,
             )
             let takeover = try await api.enableTakeover(token: token, sessionId: created.session.id)
             let runtimePatch = runtimeSettingsPatchForCreate
@@ -1162,69 +1154,6 @@ private struct WorkspacePickerRow: View {
             }
         }
         .contentShape(Rectangle())
-    }
-}
-
-private enum NewSessionPermissionMode: String, CaseIterable, Identifiable {
-    case ask
-    case full
-    case read
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .ask:
-            return "Ask"
-        case .full:
-            return "Full"
-        case .read:
-            return "Read"
-        }
-    }
-
-    var description: String {
-        switch self {
-        case .ask:
-            return "The agent asks before sensitive actions."
-        case .full:
-            return "No approval prompts; full filesystem and command access."
-        case .read:
-            return "Read-only sandbox with approval required for writes."
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .ask:
-            return "questionmark.circle"
-        case .full:
-            return "bolt.circle"
-        case .read:
-            return "lock.circle"
-        }
-    }
-
-    var approvalPolicy: String? {
-        switch self {
-        case .ask:
-            return nil
-        case .full:
-            return "never"
-        case .read:
-            return "on-request"
-        }
-    }
-
-    var sandbox: String? {
-        switch self {
-        case .ask:
-            return nil
-        case .full:
-            return "danger-full-access"
-        case .read:
-            return "read-only"
-        }
     }
 }
 
