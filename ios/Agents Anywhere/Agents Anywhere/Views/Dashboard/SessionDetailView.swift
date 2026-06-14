@@ -1789,7 +1789,7 @@ private struct WorkingIndicator: View {
     }
 }
 
-struct AttachmentStrip: View {
+private struct AttachmentStrip: View {
     let uploads: [AttachmentUpload]
     let onRemove: (AttachmentUpload) -> Void
 
@@ -1824,7 +1824,7 @@ struct AttachmentStrip: View {
     }
 }
 
-struct PendingAttachmentCard: View {
+private struct PendingAttachmentCard: View {
     let upload: AttachmentUpload
 
     var body: some View {
@@ -2560,7 +2560,7 @@ private extension UploadedAttachment {
     }
 }
 
-extension AttachmentUpload {
+private extension AttachmentUpload {
     var isImage: Bool {
         mediaType.hasPrefix("image/")
     }
@@ -2579,13 +2579,13 @@ extension AttachmentUpload {
     }
 }
 
-extension Int {
+private extension Int {
     var formattedByteCount: String {
         ByteCountFormatter.string(fromByteCount: Int64(self), countStyle: .file)
     }
 }
 
-struct CameraImagePicker: UIViewControllerRepresentable {
+private struct CameraImagePicker: UIViewControllerRepresentable {
     @Environment(\.dismiss) private var dismiss
 
     let onImage: (UIImage) -> Void
