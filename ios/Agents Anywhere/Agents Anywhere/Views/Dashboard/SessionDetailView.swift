@@ -1462,11 +1462,17 @@ private struct MarkdownText: View {
 
     var body: some View {
         Markdown(text)
-            .markdownTheme(.basic)
+            .markdownTheme(.cleanGitHub)
+
+            // Inline code uses a monospace face without per-token highlighting.
             .markdownTextStyle(\.code) {
                 FontFamilyVariant(.monospaced)
                 FontSize(.em(0.94))
+                ForegroundColor(Color.primary)
+                BackgroundColor(Color(.secondarySystemBackground))
             }
+
+            // Code blocks get one container background.
             .markdownBlockStyle(\.codeBlock) { configuration in
                 ScrollView(.horizontal, showsIndicators: false) {
                     configuration.label
@@ -1474,6 +1480,10 @@ private struct MarkdownText: View {
                         .markdownTextStyle {
                             FontFamilyVariant(.monospaced)
                             FontSize(.em(0.86))
+                            ForegroundColor(Color.primary)
+
+                            // Keep token backgrounds consistent inside the block.
+                            BackgroundColor(Color(.secondarySystemBackground))
                         }
                         .padding(12)
                 }
@@ -1481,28 +1491,38 @@ private struct MarkdownText: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .overlay {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(.secondary.opacity(0.18), lineWidth: 1)
+                        .stroke(.secondary.opacity(0.16), lineWidth: 1)
                 }
                 .markdownMargin(top: 4, bottom: 12)
             }
+
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
             .copyContextMenu(text)
     }
 }
 
+private extension Theme {
+    static let cleanGitHub = Theme.gitHub
+        .text {
+            ForegroundColor(Color.primary)
+            BackgroundColor(nil)
+            FontSize(16)
+        }
+        .code {
+            FontFamilyVariant(.monospaced)
+            FontSize(.em(0.94))
+            ForegroundColor(Color.primary)
+            BackgroundColor(nil)
+        }
+}
+
 private struct MarkdownCodeBlockBackground: View {
     private let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
 
     var body: some View {
-        if #available(iOS 26.0, *) {
-            shape
-                .fill(.secondary.opacity(0.08))
-                .glassEffect(.regular, in: shape)
-        } else {
-            shape
-                .fill(.regularMaterial)
-        }
+        shape
+            .fill(Color(.secondarySystemBackground))
     }
 }
 
