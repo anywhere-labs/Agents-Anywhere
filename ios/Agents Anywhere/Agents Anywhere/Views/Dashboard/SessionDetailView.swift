@@ -299,7 +299,7 @@ struct SessionDetailView: View {
         }
         .sheet(isPresented: $isShowingDetails) {
             SessionDetailsSheet(session: session)
-                .presentationDetents([.medium])
+                .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $isShowingRuntimeSettings) {
