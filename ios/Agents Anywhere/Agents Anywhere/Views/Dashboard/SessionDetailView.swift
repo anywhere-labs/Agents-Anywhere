@@ -1537,7 +1537,7 @@ private struct CodePanel: View {
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .textCase(.uppercase)
-            ScrollView(.horizontal, showsIndicators: false) {
+            ScrollView([.horizontal, .vertical], showsIndicators: true) {
                 HStack(alignment: .top, spacing: 8) {
                     if let leadingText {
                         Text(leadingText)
@@ -1549,6 +1549,7 @@ private struct CodePanel: View {
                 .font(.system(.caption, design: .monospaced))
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .frame(maxHeight: TimelineCodeBlockMetrics.maxHeight)
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1564,17 +1565,22 @@ private struct DiffPanel: View {
     let added: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                Text(line.isEmpty ? " " : line)
-                    .font(.system(.caption2, design: .monospaced))
-                    .foregroundStyle(lineForeground(line))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 2)
-                    .background(lineBackground(line))
+        ScrollView([.horizontal, .vertical], showsIndicators: true) {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                    Text(line.isEmpty ? " " : line)
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(lineForeground(line))
+                        .fixedSize(horizontal: true, vertical: false)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 2)
+                        .background(lineBackground(line))
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .frame(maxHeight: TimelineCodeBlockMetrics.maxHeight)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -1602,6 +1608,10 @@ private struct DiffPanel: View {
         if line.hasPrefix("@@") { return .blue }
         return .primary
     }
+}
+
+private enum TimelineCodeBlockMetrics {
+    static let maxHeight: CGFloat = 260
 }
 
 private struct AttachmentPreviewGrid: View {
