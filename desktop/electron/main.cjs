@@ -11,6 +11,7 @@ app.setName(APP_NAME);
 let mainWindow = null;
 let tray = null;
 let connectorProcess = null;
+let connectorProcessGroupPid = null;
 let stopping = false;
 let logs = [];
 let pairingAbort = null;
@@ -222,9 +223,11 @@ function startConnector(runtimeConfig = null) {
   connectorProcess = spawn(state.uvCommand, args, {
     cwd: state.connectorDir,
     env: connectorEnv(),
+    detached: process.platform !== "win32",
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"],
   });
+  connectorProcessGroupPid = process.platform === "win32" ? null : connectorProcess.pid;
 
   setStatus("starting", { pid: connectorProcess.pid, exitCode: null, authFailed: false });
   const handleOutput = (chunk) => {
@@ -239,12 +242,14 @@ function startConnector(runtimeConfig = null) {
   connectorProcess.on("error", (error) => {
     appendLog(`Failed to start connector: ${error.message}`);
     connectorProcess = null;
+    connectorProcessGroupPid = null;
     setStatus("error", { pid: null, exitCode: null });
   });
   connectorProcess.on("spawn", () => setStatus("running", { pid: connectorProcess.pid, exitCode: null }));
   connectorProcess.on("exit", (code, signal) => {
     appendLog(`Connector exited${signal ? ` by ${signal}` : ""} with code ${code ?? "null"}`);
     connectorProcess = null;
+    connectorProcessGroupPid = null;
     setStatus(state.authFailed ? "expired credential" : stopping ? "stopped" : "exited", { pid: null, exitCode: code });
     stopping = false;
   });
@@ -261,7 +266,13 @@ function stopConnector() {
   if (process.platform === "win32") {
     spawn("taskkill.exe", ["/pid", String(connectorProcess.pid), "/t", "/f"], { windowsHide: true });
   } else {
-    connectorProcess.kill("SIGTERM");
+    const pid = connectorProcessGroupPid || connectorProcess.pid;
+    try {
+      process.kill(-pid, "SIGTERM");
+    } catch (error) {
+      appendLog(`Failed to stop connector process group: ${error.message || error}`);
+      connectorProcess.kill("SIGTERM");
+    }
   }
   return publicState();
 }
@@ -523,4 +534,5 @@ app.on("activate", () => showWindow());
 app.on("window-all-closed", (event) => event.preventDefault());
 app.on("before-quit", () => {
   app.isQuitting = true;
+  if (connectorProcess) stopConnector();
 });
