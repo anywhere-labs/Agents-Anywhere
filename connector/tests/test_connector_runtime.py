@@ -15,6 +15,7 @@ from connector.runtime import (
     ConnectorConfig,
     _coalesce_timeline_item_upserts,
 )
+from connector.codex.adapter import CodexAdapter
 from connector.local.terminal import TerminalBackend
 
 
@@ -73,6 +74,15 @@ class FakeAdapter:
     async def resolve_approval(self, params: dict[str, Any]) -> dict[str, Any]:
         self.calls.append(("approval.resolve", params))
         return {"resolved": True}
+
+
+class FakeCodexRpc:
+    def __init__(self, command: list[str]) -> None:
+        self.command = command
+        self.closed = False
+
+    async def close(self) -> None:
+        self.closed = True
 
 
 class FakeWebSocket:
@@ -211,6 +221,10 @@ def test_preferences_push_sends_only_on_change() -> None:
 
 def test_runtime_discovers_capabilities_and_reuses_selected_bins(monkeypatch) -> None:
     asyncio.run(_exercise_capability_discovery(monkeypatch))
+
+
+def test_runtime_keeps_running_codex_rpc_when_discovered_command_is_unchanged() -> None:
+    asyncio.run(_exercise_codex_rewire_keeps_unchanged_running_rpc())
 
 
 def test_existing_sync_skips_unavailable_runtime() -> None:
@@ -818,6 +832,28 @@ async def _exercise_capability_discovery(monkeypatch) -> None:
     await client._discover_and_publish_capabilities()
 
     assert pushed == [("connector.capabilitiesUpdated", report)]
+
+
+async def _exercise_codex_rewire_keeps_unchanged_running_rpc() -> None:
+    command = ["/tmp/codex", "app-server", "--listen", "stdio://"]
+    rpc = FakeCodexRpc(command)
+    codex = CodexAdapter(rpc=rpc)  # type: ignore[arg-type]
+    codex._started = True
+    client = BackendRpcClient(
+        ConnectorConfig(
+            server_url="http://127.0.0.1:8000",
+            connector_id="conn_1",
+            connector_token="token",
+            sync_existing_on_connect=False,
+        ),
+        adapters={"codex": codex, "claude": FakeAdapter()},
+    )
+
+    await client._rewire_codex("/tmp/codex")
+
+    assert codex.rpc is rpc
+    assert not rpc.closed
+    assert codex._started is True
 
 
 async def _exercise_existing_sync_skips_unavailable_runtime() -> None:

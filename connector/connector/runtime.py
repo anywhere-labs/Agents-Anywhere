@@ -552,12 +552,19 @@ class BackendRpcClient:
         codex = self.adapters.get("codex")
         if not isinstance(codex, CodexAdapter):
             return
+        command = target.command(["app-server", "--listen", "stdio://"])
+        if (
+            codex.rpc is not None
+            and codex.rpc.command == command
+            and getattr(codex, "_started", False)
+        ):
+            return
         if codex.rpc is not None:
             try:
                 await codex.rpc.close()
             except Exception:
                 logger.exception("closing previous codex app-server failed")
-        codex.rpc = JsonRpcStdioClient(command=target.command(["app-server", "--listen", "stdio://"]))
+        codex.rpc = JsonRpcStdioClient(command=command)
         codex._started = False
 
     def _rewire_claude(self, claude_target: LaunchTarget | str | None) -> None:
