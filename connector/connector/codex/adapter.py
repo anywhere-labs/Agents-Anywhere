@@ -396,22 +396,12 @@ class CodexAdapter:
         except RuntimeError as exc:
             if _unresumable_thread_failure_reason(str(exc)) != "deleted":
                 raise
-            logger.warning(
-                "codex thread rollout missing; creating replacement thread session_id={} old_thread_id={} error={}",
-                session_id,
-                thread_id,
-                exc,
+            thread_id, backend_notifications = await self._replace_missing_thread_for_turn(
+                params,
+                session_id=session_id,
+                old_thread_id=thread_id,
+                error=exc,
             )
-            replacement = await self._create_replacement_thread(params)
-            thread_id = replacement["externalSessionId"]
-            self.reducer.bind_session(session_id, thread_id)
-            backend_notifications = replacement["backendNotifications"]
-            for notification in backend_notifications:
-                if notification.get("method") == "session.updated":
-                    notification.get("params", {}).pop("status", None)
-            for notification in backend_notifications:
-                if self.notification_sink is not None:
-                    await self.notification_sink(notification["method"], notification["params"])
 
         attachments = params.get("attachments") or []
         cwd = _optional_string(params.get("cwd"))
@@ -433,18 +423,39 @@ class CodexAdapter:
                 text=text_content,
                 attachments=timeline_attachments,
             )
-        result = await self.rpc.request(
-            "turn/start",
-            {
-                "threadId": thread_id,
-                "input": input_items,
-                "approvalPolicy": params.get("approvalPolicy"),
-                "sandboxPolicy": params.get("sandboxPolicy"),
-                "model": params.get("model"),
-                "effort": params.get("effort"),
-                "approvalsReviewer": params.get("approvalsReviewer"),
-            },
-        )
+        turn_params = {
+            "threadId": thread_id,
+            "input": input_items,
+            "approvalPolicy": params.get("approvalPolicy"),
+            "sandboxPolicy": params.get("sandboxPolicy"),
+            "model": params.get("model"),
+            "effort": params.get("effort"),
+            "approvalsReviewer": params.get("approvalsReviewer"),
+        }
+        try:
+            result = await self.rpc.request("turn/start", turn_params)
+        except RuntimeError as exc:
+            recovered = await self._recover_missing_thread_for_turn_start(
+                params,
+                session_id=session_id,
+                thread_id=thread_id,
+                error=exc,
+            )
+            if recovered is None:
+                raise
+            thread_id, extra_notifications = recovered
+            backend_notifications.extend(extra_notifications)
+            self.reducer.bind_session(session_id, thread_id)
+            turn_params["threadId"] = thread_id
+            if client_message_id:
+                self.reducer.register_client_message(
+                    session_id=session_id,
+                    thread_id=thread_id,
+                    client_message_id=client_message_id,
+                    text=text_content,
+                    attachments=timeline_attachments,
+                )
+            result = await self.rpc.request("turn/start", turn_params)
         turn_id = _turn_id_from_result(result)
         if client_message_id and turn_id:
             self.reducer.register_client_message(
@@ -624,6 +635,62 @@ class CodexAdapter:
                 "ephemeral": params.get("ephemeral", False),
             }
         )
+
+    async def _recover_missing_thread_for_turn_start(
+        self,
+        params: dict[str, Any],
+        *,
+        session_id: str,
+        thread_id: str,
+        error: RuntimeError,
+    ) -> tuple[str, list[dict[str, Any]]] | None:
+        if _unresumable_thread_failure_reason(str(error)) != "deleted":
+            return None
+        logger.warning(
+            "codex turn/start target thread missing; forcing resume before retry session_id={} thread_id={} error={}",
+            session_id,
+            thread_id,
+            error,
+        )
+        self._loaded_thread_ids.discard(thread_id)
+        try:
+            await self._ensure_thread_loaded(thread_id, force=True)
+        except RuntimeError as resume_error:
+            if _unresumable_thread_failure_reason(str(resume_error)) != "deleted":
+                raise
+            return await self._replace_missing_thread_for_turn(
+                params,
+                session_id=session_id,
+                old_thread_id=thread_id,
+                error=resume_error,
+            )
+        return thread_id, []
+
+    async def _replace_missing_thread_for_turn(
+        self,
+        params: dict[str, Any],
+        *,
+        session_id: str,
+        old_thread_id: str,
+        error: RuntimeError,
+    ) -> tuple[str, list[dict[str, Any]]]:
+        logger.warning(
+            "codex thread rollout missing; creating replacement thread session_id={} old_thread_id={} error={}",
+            session_id,
+            old_thread_id,
+            error,
+        )
+        replacement = await self._create_replacement_thread(params)
+        thread_id = replacement["externalSessionId"]
+        self.reducer.bind_session(session_id, thread_id)
+        backend_notifications = replacement["backendNotifications"]
+        for notification in backend_notifications:
+            if notification.get("method") == "session.updated":
+                notification.get("params", {}).pop("status", None)
+        for notification in backend_notifications:
+            if self.notification_sink is not None:
+                await self.notification_sink(notification["method"], notification["params"])
+        return thread_id, backend_notifications
 
     async def _best_effort_bootstrap_reads(self) -> None:
         assert self.rpc is not None
@@ -925,6 +992,7 @@ def _unresumable_thread_failure_reason(error_text: str) -> str | None:
         "thread not found" in normalized
         or "session not found" in normalized
         or "no rollout found" in normalized
+        or "id not found" in normalized
     ):
         return "deleted"
     if "archived" in normalized:

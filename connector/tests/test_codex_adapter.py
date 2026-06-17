@@ -130,6 +130,44 @@ class MissingRolloutResumeRpc(FakeCodexRpc):
         return {}
 
 
+class UnloadedThreadStartRpc(FakeCodexRpc):
+    def __init__(self) -> None:
+        super().__init__()
+        self.turn_start_attempts = 0
+
+    async def request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        self.requests.append((method, params))
+        if method == "thread/resume":
+            return {"thread": {"id": (params or {}).get("threadId"), "status": {"type": "loaded"}}}
+        if method == "turn/start":
+            self.turn_start_attempts += 1
+            if self.turn_start_attempts == 1:
+                raise RuntimeError(json.dumps({"code": -32600, "message": "id not found"}))
+            return {"turn": {"id": "turn_2", "status": "inProgress"}}
+        return {}
+
+
+class MissingAfterUnloadedThreadStartRpc(FakeCodexRpc):
+    async def request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        self.requests.append((method, params))
+        if method == "thread/resume":
+            raise RuntimeError(
+                json.dumps(
+                    {
+                        "code": -32600,
+                        "message": "no rollout found for thread id thr_stale",
+                    }
+                )
+            )
+        if method == "thread/start":
+            return {"thread": {"id": "thr_replacement", "status": {"type": "loaded"}}}
+        if method == "turn/start":
+            if (params or {}).get("threadId") == "thr_stale":
+                raise RuntimeError(json.dumps({"code": -32600, "message": "id not found"}))
+            return {"turn": {"id": "turn_2", "status": "inProgress"}}
+        return {}
+
+
 class MissingModelProviderResumeRpc(FakeCodexRpc):
     async def request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         self.requests.append((method, params))
@@ -810,6 +848,14 @@ def test_adapter_replaces_missing_rollout_before_starting_turn() -> None:
     asyncio.run(_exercise_missing_rollout_replacement())
 
 
+def test_adapter_recovers_when_loaded_codex_thread_was_unloaded_before_turn_start() -> None:
+    asyncio.run(_exercise_unloaded_thread_turn_start_recovery())
+
+
+def test_adapter_replaces_thread_when_unloaded_codex_thread_rollout_is_missing() -> None:
+    asyncio.run(_exercise_unloaded_thread_missing_rollout_replacement())
+
+
 async def _exercise_adapter() -> None:
     notifications: list[tuple[str, dict[str, Any]]] = []
 
@@ -885,6 +931,91 @@ async def _exercise_missing_rollout_replacement() -> None:
             "approvalsReviewer": None,
         },
     )
+    assert notifications == [
+        (
+            "session.updated",
+            {
+                "sessionId": "sess_1",
+                "runtime": "codex",
+                "externalSessionId": "thr_replacement",
+                "cwd": "/repo",
+            },
+        )
+    ]
+
+
+async def _exercise_unloaded_thread_turn_start_recovery() -> None:
+    rpc = UnloadedThreadStartRpc()
+    adapter = CodexAdapter(rpc=rpc)  # type: ignore[arg-type]
+    adapter.reducer.bind_session("sess_1", "thr_1")
+    adapter._loaded_thread_ids.add("thr_1")
+
+    turn = await adapter.start_turn(
+        {
+            "sessionId": "sess_1",
+            "externalSessionId": "thr_1",
+            "content": "continue",
+        }
+    )
+
+    assert turn["turnId"] == "turn_2"
+    assert turn["externalSessionId"] == "thr_1"
+    assert rpc.requests == [
+        ("account/read", None),
+        ("model/list", None),
+        ("thread/loaded/list", None),
+        (
+            "turn/start",
+            {
+                "threadId": "thr_1",
+                "input": [{"type": "text", "text": "continue", "text_elements": []}],
+                "approvalPolicy": None,
+                "sandboxPolicy": None,
+                "model": None,
+                "effort": None,
+                "approvalsReviewer": None,
+            },
+        ),
+        ("thread/resume", {"threadId": "thr_1"}),
+        (
+            "turn/start",
+            {
+                "threadId": "thr_1",
+                "input": [{"type": "text", "text": "continue", "text_elements": []}],
+                "approvalPolicy": None,
+                "sandboxPolicy": None,
+                "model": None,
+                "effort": None,
+                "approvalsReviewer": None,
+            },
+        ),
+    ]
+
+
+async def _exercise_unloaded_thread_missing_rollout_replacement() -> None:
+    notifications: list[tuple[str, dict[str, Any]]] = []
+
+    async def sink(method: str, params: dict[str, Any]) -> None:
+        notifications.append((method, params))
+
+    rpc = MissingAfterUnloadedThreadStartRpc()
+    adapter = CodexAdapter(rpc=rpc, notification_sink=sink)  # type: ignore[arg-type]
+    adapter.reducer.bind_session("sess_1", "thr_stale")
+    adapter._loaded_thread_ids.add("thr_stale")
+
+    turn = await adapter.start_turn(
+        {
+            "sessionId": "sess_1",
+            "externalSessionId": "thr_stale",
+            "content": "continue",
+            "cwd": "/repo",
+        }
+    )
+
+    assert turn["turnId"] == "turn_2"
+    assert turn["externalSessionId"] == "thr_replacement"
+    assert ("thread/resume", {"threadId": "thr_stale"}) in rpc.requests
+    assert rpc.requests[-1][1]["threadId"] == "thr_replacement"
     assert notifications == [
         (
             "session.updated",
