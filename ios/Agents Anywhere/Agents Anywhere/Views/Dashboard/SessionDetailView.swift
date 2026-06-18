@@ -2397,6 +2397,7 @@ struct LiquidGlassMessageInputBar: View {
 
     @FocusState private var editorFocused: Bool
     @State private var measuredEditorTextHeight: CGFloat = 0
+    @Environment(\.colorScheme) private var colorScheme
 
     private let composerHeight: CGFloat = 50
     private let composerCornerRadius: CGFloat = 25
@@ -2609,11 +2610,11 @@ struct LiquidGlassMessageInputBar: View {
     }
 
     private var sendBackgroundColor: Color {
-        canSend ? Color.primary : Color.secondary.opacity(0.18)
+        AppTheme.primaryControlBackground(colorScheme)
     }
 
     private var sendIconColor: Color {
-        canSend ? Color(.systemBackground) : Color.secondary
+        AppTheme.primaryControlForeground(colorScheme)
     }
 
     private func focusEditor() {
