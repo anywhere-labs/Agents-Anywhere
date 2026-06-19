@@ -9,13 +9,13 @@ const buttonVariants = cva(
     variants: {
       variant: {
         normal:
-          "border border-[var(--border-md)] bg-[var(--bg-elev)] text-[var(--text)] hover:border-[var(--border-lg)] hover:bg-[var(--bg-hover)]",
+          "border border-[var(--border-md)] bg-[var(--bg-panel)] text-[var(--text-mid)] hover:border-[var(--border-lg)] hover:text-[var(--text)]",
         emphasis:
-          "border border-transparent bg-[var(--accent)] text-[var(--accent-ink)] hover:opacity-90",
+          "border border-transparent bg-[var(--emphasis-bg)] text-[var(--emphasis-ink)] font-semibold hover:opacity-90",
         default:
-          "border border-[var(--border-md)] bg-[var(--bg-elev)] text-[var(--text)] hover:border-[var(--border-lg)] hover:bg-[var(--bg-hover)]",
+          "border border-[var(--border-md)] bg-[var(--bg-panel)] text-[var(--text-mid)] hover:border-[var(--border-lg)] hover:text-[var(--text)]",
         primary:
-          "border border-transparent bg-[var(--accent)] text-[var(--accent-ink)] hover:opacity-90",
+          "border border-transparent bg-[var(--emphasis-bg)] text-[var(--emphasis-ink)] font-semibold hover:opacity-90",
         ghost:
           "border border-transparent bg-transparent text-[var(--text-mid)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]",
         destructive:

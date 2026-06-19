@@ -26,7 +26,7 @@
       "description": "Fresh install. The account you create here becomes the instance admin.",
       "setupHint": "Copy the setup-token from the server log to continue.",
       "submit": "Create admin & continue",
-      "title": "Welcome to Agents Anywhere",
+      "titlePrefix": "Welcome to",
       "tokenPlaceholder": "Paste the token from the server log",
       "userPlaceholder": "e.g. admin"
     },
@@ -45,9 +45,9 @@
       "forgot": "Forgot your password? Ask your instance admin to reset it.",
       "newHere": "New here?",
       "oauth": "Sign in with {provider}",
-      "passwordPlaceholder": "Password",
+      "passwordPlaceholder": "••••••••",
       "submit": "Sign in",
-      "title": "Sign in to Agents Anywhere",
+      "titlePrefix": "Sign in to",
       "userPlaceholder": "enter your username"
     },
     "passwordStrength": {
@@ -74,7 +74,8 @@
     },
     "register": {
       "confirmPlaceholder": "Repeat password",
-      "description": "You're joining a self-hosted Agents Anywhere instance.",
+      "descriptionPrefix": "You're joining a self-hosted",
+      "descriptionSuffix": "instance.",
       "haveAccount": "Already have an account?",
       "passwordMismatch": "Passwords don't match",
       "passwordPlaceholder": "At least 8 characters",

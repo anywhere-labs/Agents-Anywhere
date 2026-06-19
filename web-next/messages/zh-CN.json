@@ -26,7 +26,7 @@
       "description": "全新安装。这里创建的账号会成为实例管理员。",
       "setupHint": "从服务器日志复制 setup-token 后继续。",
       "submit": "创建管理员并继续",
-      "title": "欢迎使用 Agents Anywhere",
+      "titlePrefix": "欢迎使用",
       "tokenPlaceholder": "粘贴服务器日志里的 token",
       "userPlaceholder": "例如 admin"
     },
@@ -45,9 +45,9 @@
       "forgot": "忘记密码？请联系实例管理员重置。",
       "newHere": "第一次使用？",
       "oauth": "使用 {provider} 登录",
-      "passwordPlaceholder": "密码",
+      "passwordPlaceholder": "••••••••",
       "submit": "登录",
-      "title": "登录 Agents Anywhere",
+      "titlePrefix": "登录",
       "userPlaceholder": "输入用户名"
     },
     "passwordStrength": {
@@ -74,7 +74,8 @@
     },
     "register": {
       "confirmPlaceholder": "再次输入密码",
-      "description": "你正在加入一个自托管的 Agents Anywhere 实例。",
+      "descriptionPrefix": "你正在加入一个自托管的",
+      "descriptionSuffix": "实例。",
       "haveAccount": "已有账号？",
       "passwordMismatch": "两次输入的密码不一致",
       "passwordPlaceholder": "至少 8 个字符",

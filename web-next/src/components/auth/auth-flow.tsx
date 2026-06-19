@@ -1,8 +1,7 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
-import { useLocale, useTranslations } from "next-intl";
+import { useTranslations } from "next-intl";
 import { useRouter } from "@/i18n/routing";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,6 +13,7 @@ import {
 import {
   AuthShell,
   ThemeSegment,
+  AuthCard,
   type ThemeMode
 } from "@/components/layout";
 import {
@@ -45,7 +45,6 @@ export interface AuthFlowProps {
 
 export function AuthFlow({ initialMode }: AuthFlowProps) {
   const t = useTranslations("auth");
-  const locale = useLocale();
   const router = useRouter();
   const [theme, setTheme] = React.useState<ThemeMode>("dark");
   const [config, setConfig] = React.useState<AuthConfig | null>(null);
@@ -187,12 +186,12 @@ export function AuthFlow({ initialMode }: AuthFlowProps) {
       >
         GitHub
       </a>
-      <Link
-        href={`/${locale}`}
+      <a
+        href="#docs"
         className="text-[var(--fs-sm)] text-[var(--text-mut)] no-underline hover:text-[var(--text)]"
       >
-        {t("preview.home")}
-      </Link>
+        Docs
+      </a>
       <ThemeSegment
         value={theme}
         onValueChange={setTheme}
@@ -296,7 +295,7 @@ function OAuthFinalizeForm({
   const [confirmExisting, setConfirmExisting] = React.useState(mode === "needs_password");
 
   return (
-    <div className="flex w-[400px] max-w-full flex-col gap-[22px]">
+    <AuthCard>
       <div className="flex flex-col items-center gap-3.5 text-center">
         <h1 className="m-0 text-[var(--fs-xl)] font-semibold leading-tight text-[var(--text)]">
           {confirmExisting ? t("oauth.confirmTitle") : t("oauth.createTitle")}
@@ -373,6 +372,6 @@ function OAuthFinalizeForm({
           {t("oauth.back")}
         </Button>
       </form>
-    </div>
+    </AuthCard>
   );
 }

@@ -11,6 +11,7 @@ import {
   TextInput
 } from "@/components/common";
 import { AuthCard } from "@/components/layout";
+import { BrandWord } from "@/components/layout/brand";
 import { PasswordStrength } from "@/components/auth/password-strength";
 import { USER_ID_RE, passwordScore } from "@/components/auth/password";
 import type { AuthCredentials } from "@/features/auth";
@@ -41,7 +42,14 @@ export function LoginForm({
 
   return (
     <AuthCard>
-      <AuthHero title={t("login.title")} description={t("login.description")} />
+      <AuthHero
+        title={
+          <>
+            {t("login.titlePrefix")} <BrandWord className="inline-block translate-y-[0.03em] text-[1.32em]" />
+          </>
+        }
+        description={t("login.description")}
+      />
       {error ? <AuthError>{error}</AuthError> : null}
       <form
         className="flex flex-col gap-3.5"
@@ -85,11 +93,9 @@ export function LoginForm({
           </IconInput>
         </FormField>
 
-        <Button type="submit" variant="emphasis" className="h-10" disabled={!ready}>
-          {loading ? <Spinner /> : null}
+        <SubmitButton disabled={!ready} loading={loading}>
           {t("login.submit")}
-          {!loading ? <span className="font-mono text-[var(--fs-xs)]">↵</span> : null}
-        </Button>
+        </SubmitButton>
       </form>
 
       {onOAuth ? (
@@ -105,7 +111,7 @@ export function LoginForm({
             {t("login.newHere")}{" "}
             <button
               type="button"
-              className="text-[var(--text)] underline decoration-[var(--border-lg)] underline-offset-2 hover:decoration-[var(--text)]"
+              className="border-0 border-b border-[var(--border-md)] bg-transparent p-0 pb-px font-inherit text-[var(--text)] hover:border-[var(--accent)] hover:text-[var(--accent)]"
               onClick={onSwitchToRegister}
             >
               {t("login.createAccount")}
@@ -151,7 +157,14 @@ export function RegisterForm({
 
   return (
     <AuthCard>
-      <AuthHero title={t("register.title")} description={t("register.description")} />
+      <AuthHero
+        title={t("register.title")}
+        description={
+          <>
+            {t("register.descriptionPrefix")} <BrandWord className="inline-block text-[var(--fs-lg)]" /> {t("register.descriptionSuffix")}
+          </>
+        }
+      />
       {error ? <AuthError>{error}</AuthError> : null}
       <form
         className="flex flex-col gap-3.5"
@@ -197,18 +210,16 @@ export function RegisterForm({
           mismatch={mismatch}
         />
 
-        <Button type="submit" variant="emphasis" className="h-10" disabled={!ready}>
-          {loading ? <Spinner /> : null}
+        <SubmitButton disabled={!ready} loading={loading}>
           {t("register.submit")}
-          {!loading ? <span className="font-mono text-[var(--fs-xs)]">↵</span> : null}
-        </Button>
+        </SubmitButton>
       </form>
 
       <div className="text-center text-[var(--fs-sm)] text-[var(--text-mut)]">
         {t("register.haveAccount")}{" "}
         <button
           type="button"
-          className="text-[var(--text)] underline decoration-[var(--border-lg)] underline-offset-2 hover:decoration-[var(--text)]"
+          className="border-0 border-b border-[var(--border-md)] bg-transparent p-0 pb-px font-inherit text-[var(--text)] hover:border-[var(--accent)] hover:text-[var(--accent)]"
           onClick={onSwitchToLogin}
         >
           {t("register.signIn")}
@@ -260,7 +271,14 @@ export function BootstrapForm({
 
   return (
     <AuthCard>
-      <AuthHero title={t("bootstrap.title")} description={t("bootstrap.description")} />
+      <AuthHero
+        title={
+          <>
+            {t("bootstrap.titlePrefix")} <BrandWord className="inline-block translate-y-[0.03em] text-[1.32em]" />
+          </>
+        }
+        description={t("bootstrap.description")}
+      />
       <InlineAlert tone={remaining.expired ? "danger" : "neutral"}>
         <div className="flex items-start gap-2">
           <Shield className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
@@ -334,11 +352,9 @@ export function BootstrapForm({
           confirmLabel={t("fields.confirm")}
         />
 
-        <Button type="submit" variant="emphasis" className="h-10" disabled={!ready}>
-          {loading ? <Spinner /> : null}
+        <SubmitButton disabled={!ready} loading={loading}>
           {t("bootstrap.submit")}
-          {!loading ? <span className="font-mono text-[var(--fs-xs)]">↵</span> : null}
-        </Button>
+        </SubmitButton>
       </form>
     </AuthCard>
   );
@@ -459,7 +475,35 @@ function PasswordCreateFields({
 
 function Spinner() {
   return (
-    <span className="size-3 animate-[klaw-spin_0.7s_linear_infinite] rounded-full border border-current border-t-transparent" />
+    <span className="size-3.5 animate-[klaw-spin_0.6s_linear_infinite] rounded-full border-[1.5px] border-current border-t-transparent" />
+  );
+}
+
+function SubmitButton({
+  children,
+  loading,
+  disabled
+}: {
+  children: React.ReactNode;
+  loading: boolean;
+  disabled: boolean;
+}) {
+  return (
+    <Button
+      type="submit"
+      variant="emphasis"
+      className="h-10 w-full text-[var(--fs-ui)] font-semibold"
+      disabled={disabled}
+    >
+      {loading ? (
+        <Spinner />
+      ) : (
+        <>
+          {children}
+          <span className="font-mono text-[var(--fs-xs)] opacity-50">↵</span>
+        </>
+      )}
+    </Button>
   );
 }
 

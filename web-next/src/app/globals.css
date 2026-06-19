@@ -46,6 +46,8 @@
   --accent: rgba(255, 255, 255, 0.92);
   --accent-soft: rgba(255, 255, 255, 0.10);
   --accent-ink: #0a0a0b;
+  --emphasis-bg: #ffffff;
+  --emphasis-ink: #0a0a0b;
   --info: oklch(0.74 0.14 235);
   --info-soft: oklch(0.74 0.14 235 / 0.14);
   --agent-claude: oklch(0.74 0.13 50);
@@ -94,6 +96,8 @@
   --accent: rgba(0, 0, 0, 0.92);
   --accent-soft: rgba(0, 0, 0, 0.08);
   --accent-ink: #fff;
+  --emphasis-bg: #0a0a0b;
+  --emphasis-ink: #ffffff;
   --shadow-pop:
     0 24px 60px -20px rgba(0, 0, 0, 0.18),
     0 8px 24px -8px rgba(0, 0, 0, 0.10);

@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
 import { BrandWord } from "@/components/layout/brand";
-import { Pill } from "@/components/common";
 
 export interface AuthShellProps {
   children: ReactNode;
@@ -26,10 +25,10 @@ export function AuthShell({ children, actions, serverUrl }: AuthShellProps) {
 
       {serverUrl ? (
         <footer className="pointer-events-none fixed inset-x-0 bottom-0 flex items-center justify-between px-6 py-[18px] text-[var(--fs-xs)] text-[var(--text-mut)]">
-          <Pill mono className="pointer-events-auto">
-            <span className="size-1.5 rounded-full bg-[oklch(0.72_0.14_152)]" />
+          <span className="pointer-events-auto inline-flex items-center gap-[7px] rounded-full border border-[var(--border)] bg-[var(--bg-panel)] px-2.5 py-[5px] font-mono text-[var(--fs-xs)] text-[var(--text-mut)]">
+            <span className="size-[5px] rounded-full bg-[oklch(0.72_0.14_152)] shadow-[0_0_6px_oklch(0.72_0.14_152_/_0.6)] animate-[klaw-pulse_2.2s_ease-in-out_infinite]" />
             <code>{serverUrl}</code>
-          </Pill>
+          </span>
         </footer>
       ) : null}
     </main>
