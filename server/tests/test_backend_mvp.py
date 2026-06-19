@@ -209,6 +209,15 @@ def test_platform_session_create_uses_connector_returned_session_id(tmp_path):
         async def request(self, requested_connector_id: str, method: str, params: dict[str, Any], *, timeout: float = 30) -> dict[str, str]:
             self.requests.append((method, params))
             assert requested_connector_id == connector_id
+            await app.state.store.upsert_connector_session(
+                connector_id=connector_id,
+                session_id="sess_codex_created",
+                runtime="codex",
+                external_session_id="thr_created",
+                title=None,
+                cwd="/repo",
+                status="idle",
+            )
             return {"sessionId": "sess_codex_created", "externalSessionId": "thr_created"}
 
     fake_rpc = FakeCreateRpc()
@@ -239,6 +248,7 @@ def test_platform_session_create_uses_connector_returned_session_id(tmp_path):
         )
     ]
     assert response.json()["session"]["id"] == "sess_codex_created"
+    assert response.json()["session"]["title"] == "New Codex session"
     listed = client.get("/sessions", headers=headers).json()["sessions"]
     assert [session["id"] for session in listed if session["externalSessionId"] == "thr_created"] == ["sess_codex_created"]
 

@@ -83,6 +83,7 @@ public final class RemoteTerminalView extends View {
 
     /** If non-zero, this is the last unicode code point received if that was a combining character. */
     int mCombiningAccent;
+    private boolean mImeComposing;
 
     /**
      * The current AutoFill type returned for {@link View#getAutofillType()} by {@link #getAutofillType()}.
@@ -149,6 +150,7 @@ public final class RemoteTerminalView extends View {
             @Override
             public boolean onUp(MotionEvent event) {
                 mScrollRemainder = 0.0f;
+                mClient.verticalScrollChanged(false);
                 if (mEmulator != null && mEmulator.isMouseTrackingActive() && !event.isFromSource(InputDevice.SOURCE_MOUSE) && !isSelectingText() && !scrolledWithFinger) {
                     // Quick event processing when mouse tracking is active - do not wait for check of double tapping
                     // for zooming.
@@ -187,6 +189,9 @@ public final class RemoteTerminalView extends View {
                     sendMouseEventCode(e, TerminalEmulator.MOUSE_LEFT_BUTTON_MOVED, true);
                 } else {
                     scrolledWithFinger = true;
+                    if (Math.abs(distanceY) > Math.abs(distanceX) * 1.25f) {
+                        mClient.verticalScrollChanged(true);
+                    }
                     distanceY += mScrollRemainder;
                     int deltaRows = (int) (distanceY / mRenderer.mFontLineSpacing);
                     mScrollRemainder = distanceY - deltaRows * mRenderer.mFontLineSpacing;
@@ -330,14 +335,7 @@ public final class RemoteTerminalView extends View {
                 // https://cs.android.com/android/platform/superproject/+/android-11.0.0_r40:packages/inputmethods/LatinIME/java/src/com/android/inputmethod/latin/InputAttributes.java;l=79
                 outAttrs.inputType = InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS;
             } else {
-                // Using InputType.NULL is the most correct input type and avoids issues with other hacks.
-                //
-                // Previous keyboard issues:
-                // https://github.com/termux/termux-packages/issues/25
-                // https://github.com/termux/termux-app/issues/87.
-                // https://github.com/termux/termux-app/issues/126.
-                // https://github.com/termux/termux-app/issues/137 (japanese chars and TYPE_NULL).
-                outAttrs.inputType = InputType.TYPE_NULL;
+                outAttrs.inputType = InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_NORMAL;
             }
         } else {
             // Corresponds to android:inputType="text"
@@ -355,11 +353,17 @@ public final class RemoteTerminalView extends View {
             public boolean finishComposingText() {
                 logIme("finishComposingText len=" + getEditable().length());
                 if (TERMINAL_VIEW_KEY_LOGGING_ENABLED) mClient.logInfo(LOG_TAG, "IME: finishComposingText()");
+                mImeComposing = false;
                 super.finishComposingText();
-
-                sendTextToTerminal(getEditable());
                 getEditable().clear();
                 return true;
+            }
+
+            @Override
+            public boolean setComposingText(CharSequence text, int newCursorPosition) {
+                logIme("setComposingText len=" + (text == null ? 0 : text.length()) + " cursor=" + newCursorPosition);
+                mImeComposing = text != null && text.length() > 0;
+                return super.setComposingText(text, newCursorPosition);
             }
 
             @Override
@@ -368,6 +372,7 @@ public final class RemoteTerminalView extends View {
                 if (TERMINAL_VIEW_KEY_LOGGING_ENABLED) {
                     mClient.logInfo(LOG_TAG, "IME: commitText(\"" + text + "\", " + newCursorPosition + ")");
                 }
+                mImeComposing = false;
                 super.commitText(text, newCursorPosition);
 
                 if (mEmulator == null) return true;
@@ -383,6 +388,9 @@ public final class RemoteTerminalView extends View {
                 logIme("deleteSurroundingText left=" + leftLength + " right=" + rightLength);
                 if (TERMINAL_VIEW_KEY_LOGGING_ENABLED) {
                     mClient.logInfo(LOG_TAG, "IME: deleteSurroundingText(" + leftLength + ", " + rightLength + ")");
+                }
+                if (mImeComposing) {
+                    return super.deleteSurroundingText(leftLength, rightLength);
                 }
                 // The stock Samsung keyboard with 'Auto check spelling' enabled sends leftLength > 1.
                 KeyEvent deleteKey = new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL);
@@ -619,6 +627,9 @@ public final class RemoteTerminalView extends View {
     public boolean onTouchEvent(MotionEvent event) {
         if (mEmulator == null) return true;
         final int action = event.getAction();
+        if (action == MotionEvent.ACTION_CANCEL) {
+            mClient.verticalScrollChanged(false);
+        }
 
         if (isSelectingText()) {
             updateFloatingToolbarVisibility(event);
@@ -787,6 +798,7 @@ public final class RemoteTerminalView extends View {
         if (TERMINAL_VIEW_KEY_LOGGING_ENABLED)
             mClient.logInfo(LOG_TAG, "onKeyDown(keyCode=" + keyCode + ", isSystem()=" + event.isSystem() + ", event=" + event + ")");
         if (mEmulator == null) return true;
+        if (mImeComposing && event.getDeviceId() <= KEY_EVENT_SOURCE_SOFT_KEYBOARD) return true;
         if (isSelectingText()) {
             stopTextSelectionMode();
         }

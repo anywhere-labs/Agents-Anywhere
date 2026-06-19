@@ -1,8 +1,13 @@
 package com.agentsanywhere.app.ui.screens.sessions
 
-import androidx.compose.foundation.Image
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,6 +33,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -42,12 +48,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -56,7 +63,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.agentsanywhere.app.R
 import com.agentsanywhere.app.feature.sessions.NewSessionAgent
 import com.agentsanywhere.app.feature.sessions.NewSessionDirectory
 import com.agentsanywhere.app.feature.sessions.NewSessionPathEntry
@@ -76,6 +82,15 @@ import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.ScreenScaffold
 import com.agentsanywhere.app.ui.designsystem.SearchGlyph
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
+import com.composables.icons.lucide.Bot
+import com.composables.icons.lucide.ChevronDown
+import com.composables.icons.lucide.ChevronRight
+import com.composables.icons.lucide.ChevronUp
+import com.composables.icons.lucide.Folder
+import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.Monitor
+import com.composables.icons.lucide.Pencil
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
@@ -108,6 +123,9 @@ fun NewSessionScreen(
     var createError by remember { mutableStateOf<String?>(null) }
     var creating by remember { mutableStateOf(false) }
     var sheet by remember { mutableStateOf<NewSessionSheet?>(null) }
+    var workspaceListExpanded by rememberSaveable { mutableStateOf(true) }
+
+    BackHandler { navigate(AppDestination.Sessions) }
 
     LaunchedEffect(devices) {
         if (devices.none { it.id == selectedDeviceId }) {
@@ -227,11 +245,7 @@ fun NewSessionScreen(
                     RuntimeSelectPill(
                         label = "Device",
                         value = selectedDevice?.name ?: "No device",
-                        iconRes = if (darkMode) {
-                            R.drawable.ic_new_session_device_white
-                        } else {
-                            R.drawable.ic_new_session_device_black
-                        },
+                        icon = Lucide.Monitor,
                         darkMode = darkMode,
                         modifier = Modifier.weight(1f),
                         onClick = { sheet = NewSessionSheet.Device },
@@ -239,11 +253,7 @@ fun NewSessionScreen(
                     RuntimeSelectPill(
                         label = "Agent",
                         value = selectedAgent?.label ?: "No agent",
-                        iconRes = if (darkMode) {
-                            R.drawable.ic_new_session_agent_white
-                        } else {
-                            R.drawable.ic_new_session_agent_black
-                        },
+                        icon = Lucide.Bot,
                         darkMode = darkMode,
                         modifier = Modifier.weight(1f),
                         onClick = { sheet = NewSessionSheet.Agent },
@@ -268,6 +278,7 @@ fun NewSessionScreen(
                         onUseCurrent = {
                             selectedWorkspacePath = currentPath
                             choosePath = false
+                            workspaceListExpanded = false
                         },
                         onOpenEntry = { entry ->
                             scope.launch { loadDirectory(root = entry.path) }
@@ -278,11 +289,15 @@ fun NewSessionScreen(
                         selectedTitle = selectedWorkspaceTitle,
                         selectedDetail = selectedWorkspaceDetail,
                         workspaces = workspaces,
-                        selectedPath = selectedWorkspacePath,
+                        expanded = workspaceListExpanded,
                         darkMode = darkMode,
                         modifier = Modifier.weight(1f),
                         onChoosePath = { choosePath = true },
-                        onSelectWorkspace = { selectedWorkspacePath = it.path },
+                        onToggleExpanded = { workspaceListExpanded = !workspaceListExpanded },
+                        onSelectWorkspace = {
+                            selectedWorkspacePath = it.path
+                            workspaceListExpanded = false
+                        },
                     )
                 }
             }
@@ -314,7 +329,6 @@ fun NewSessionScreen(
                     enabled = canStart,
                     onClick = ::startSession,
                 )
-                HomeIndicatorLine(darkMode = darkMode)
             }
         }
     }
@@ -425,15 +439,10 @@ private fun NewSessionHeader(
             if (editing) {
                 CheckGlyph(color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF333333))
             } else {
-                Image(
-                    painter = painterResource(
-                        if (darkMode) {
-                            R.drawable.ic_new_session_edit_white
-                        } else {
-                            R.drawable.ic_new_session_edit_black
-                        },
-                    ),
+                Icon(
+                    imageVector = Lucide.Pencil,
                     contentDescription = null,
+                    tint = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF555555),
                     modifier = Modifier.size(18.dp),
                 )
             }
@@ -464,7 +473,7 @@ private fun HeaderCircleButton(
 private fun RuntimeSelectPill(
     label: String,
     value: String,
-    iconRes: Int,
+    icon: ImageVector,
     darkMode: Boolean,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
@@ -473,6 +482,7 @@ private fun RuntimeSelectPill(
     val surface = if (darkMode) Color(0xFF18181B) else Color(0xFFFBFBFB)
     val titleColor = if (darkMode) Color(0xFFFAFAFA) else Color(0xFF2B2B2B)
     val labelColor = if (darkMode) Color(0xFF71717A) else Color(0xFFAAAAAA)
+    val iconColor = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF777777)
 
     Row(
         modifier = modifier
@@ -486,10 +496,11 @@ private fun RuntimeSelectPill(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(9.dp),
     ) {
-        Image(
-            painter = painterResource(iconRes),
+        Icon(
+            imageVector = icon,
             contentDescription = null,
-            modifier = Modifier.size(27.dp),
+            tint = iconColor,
+            modifier = Modifier.size(18.dp),
         )
         Column(modifier = Modifier.weight(1f)) {
             Text(
@@ -519,10 +530,11 @@ private fun WorkspaceSection(
     selectedTitle: String,
     selectedDetail: String,
     workspaces: List<com.agentsanywhere.app.feature.sessions.NewSessionWorkspace>,
-    selectedPath: String,
+    expanded: Boolean,
     darkMode: Boolean,
     modifier: Modifier,
     onChoosePath: () -> Unit,
+    onToggleExpanded: () -> Unit,
     onSelectWorkspace: (com.agentsanywhere.app.feature.sessions.NewSessionWorkspace) -> Unit,
 ) {
     Column(
@@ -557,21 +569,24 @@ private fun WorkspaceSection(
         WorkspaceTrigger(
             title = selectedTitle,
             detail = selectedDetail,
+            expanded = expanded,
             darkMode = darkMode,
+            onToggleExpanded = onToggleExpanded,
         )
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-        ) {
-            items(workspaces, key = { it.path }) { workspace ->
-                WorkspaceRow(
-                    title = workspace.title,
-                    detail = if (workspace.home) "Default workspace" else workspace.detail,
-                    selected = workspace.path == selectedPath,
-                    darkMode = darkMode,
-                    onClick = { onSelectWorkspace(workspace) },
-                )
+        if (expanded) {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+            ) {
+                items(workspaces, key = { it.path }) { workspace ->
+                    WorkspaceRow(
+                        title = workspace.title,
+                        detail = workspace.detail,
+                        darkMode = darkMode,
+                        onClick = { onSelectWorkspace(workspace) },
+                    )
+                }
             }
         }
     }
@@ -581,7 +596,9 @@ private fun WorkspaceSection(
 private fun WorkspaceTrigger(
     title: String,
     detail: String,
+    expanded: Boolean,
     darkMode: Boolean,
+    onToggleExpanded: () -> Unit,
 ) {
     Row(
         modifier = Modifier
@@ -594,37 +611,54 @@ private fun WorkspaceTrigger(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Image(
-            painter = painterResource(
-                if (darkMode) {
-                    R.drawable.ic_new_session_workspace_title_white
-                } else {
-                    R.drawable.ic_new_session_workspace_title_black
-                },
-            ),
+        Icon(
+            imageVector = Lucide.Folder,
             contentDescription = null,
-            modifier = Modifier.size(29.dp),
+            tint = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF555555),
+            modifier = Modifier.size(20.dp),
         )
-        Text(
-            text = title,
-            color = LocalAAColors.current.ink,
-            fontSize = 16.sp,
-            fontWeight = FontWeight.ExtraBold,
-            lineHeight = 20.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Text(
-            text = detail,
+        Column(
             modifier = Modifier.weight(1f),
-            color = if (darkMode) Color(0xFF71717A) else Color(0xFF8A8A8A),
-            fontSize = 14.sp,
-            fontWeight = FontWeight.SemiBold,
-            lineHeight = 18.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        DownGlyph(color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF555555))
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text(
+                text = title,
+                color = LocalAAColors.current.ink,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.ExtraBold,
+                lineHeight = 20.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = detail,
+                color = if (darkMode) Color(0xFF71717A) else Color(0xFF8A8A8A),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                lineHeight = 16.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(CircleShape)
+                .background(if (darkMode) Color.White.copy(alpha = 0.04f) else Color.Black.copy(alpha = 0.04f))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onToggleExpanded,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = if (expanded) Lucide.ChevronUp else Lucide.ChevronDown,
+                contentDescription = null,
+                tint = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF555555),
+                modifier = Modifier.size(18.dp),
+            )
+        }
     }
 }
 
@@ -632,50 +666,87 @@ private fun WorkspaceTrigger(
 private fun WorkspaceRow(
     title: String,
     detail: String,
-    selected: Boolean,
     darkMode: Boolean,
     onClick: () -> Unit,
 ) {
+    val feedbackScope = rememberCoroutineScope()
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    var flash by remember { mutableStateOf(false) }
+    val active = pressed || flash
+    val rowShape = RoundedCornerShape(16.dp)
+    val pressedSurface = if (darkMode) Color(0xFF18181B) else Color(0xFFEDEBE6)
+    val shadowColor = if (darkMode) Color(0x77000000) else Color(0x30000000)
+    val elevation by animateDpAsState(
+        targetValue = if (active) 14.dp else 0.dp,
+        label = "new-session-workspace-row-elevation",
+    )
+    val surfaceAlpha by animateFloatAsState(
+        targetValue = if (active) 1f else 0f,
+        label = "new-session-workspace-row-surface-alpha",
+    )
+    val titleColor = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF4A4A4A)
+    val detailColor = if (darkMode) Color(0xFF71717A) else Color(0xFF888888)
+    val iconColor = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF777777)
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(58.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .noRippleClickable(onClick = onClick)
+            .shadow(
+                elevation = elevation,
+                shape = rowShape,
+                clip = false,
+                ambientColor = shadowColor,
+                spotColor = shadowColor,
+            )
+            .clip(rowShape)
+            .background(pressedSurface.copy(alpha = surfaceAlpha))
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+            ) {
+                flash = true
+                feedbackScope.launch {
+                    delay(160)
+                    onClick()
+                    flash = false
+                }
+            }
             .padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Image(
-            painter = painterResource(
-                if (darkMode) {
-                    R.drawable.ic_new_session_workspace_row_white
-                } else {
-                    R.drawable.ic_new_session_workspace_row_black
-                },
-            ),
+        Icon(
+            imageVector = Lucide.Folder,
             contentDescription = null,
-            modifier = Modifier.size(26.dp),
+            tint = iconColor,
+            modifier = Modifier.size(20.dp),
         )
-        Text(
-            text = title,
-            color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF4A4A4A),
-            fontSize = 16.sp,
-            fontWeight = FontWeight.SemiBold,
-            lineHeight = 20.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+        Column(
             modifier = Modifier.weight(1f),
-        )
-        Text(
-            text = detail,
-            color = if (selected) LocalAAColors.current.ink else if (darkMode) Color(0xFF71717A) else Color(0xFF888888),
-            fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold,
-            lineHeight = 16.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text(
+                text = title,
+                color = titleColor,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                lineHeight = 20.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = detail,
+                color = detailColor,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                lineHeight = 16.sp,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.StartEllipsis,
+            )
+        }
     }
 }
 
@@ -692,6 +763,7 @@ private fun ChoosePathSection(
     onUseCurrent: () -> Unit,
     onOpenEntry: (NewSessionPathEntry) -> Unit,
 ) {
+    val parent = parentPath(currentPath)
     Column(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -740,11 +812,18 @@ private fun ChoosePathSection(
                     error != null -> item {
                         PathMessage(error, darkMode)
                     }
-                    entries.isEmpty() -> item {
-                        PathMessage("This directory is empty.", darkMode)
-                    }
-                    else -> items(entries, key = { it.path }) { entry ->
-                        PathRow(entry = entry, darkMode = darkMode, onClick = { onOpenEntry(entry) })
+                    else -> {
+                        if (parent.isNotBlank()) {
+                            item(key = "$currentPath/..") {
+                                PathRow(name = "..", icon = Lucide.Folder, darkMode = darkMode, onClick = onParent)
+                            }
+                        }
+                        if (entries.isEmpty()) {
+                            item { PathMessage("This directory is empty.", darkMode) }
+                        }
+                        items(entries, key = { it.path }) { entry ->
+                            PathRow(name = entry.name, icon = Lucide.Folder, darkMode = darkMode, onClick = { onOpenEntry(entry) })
+                        }
                     }
                 }
             }
@@ -770,35 +849,22 @@ private fun CurrentDirectoryBar(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Image(
-            painter = painterResource(
-                if (darkMode) {
-                    R.drawable.ic_new_session_workspace_title_white
-                } else {
-                    R.drawable.ic_new_session_workspace_title_black
-                },
-            ),
+        Icon(
+            imageVector = Lucide.Folder,
             contentDescription = null,
-            modifier = Modifier.size(29.dp),
-        )
-        Text(
-            text = pathTitle(currentPath),
-            color = LocalAAColors.current.ink,
-            fontSize = 16.sp,
-            fontWeight = FontWeight.ExtraBold,
-            lineHeight = 20.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+            tint = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF555555),
+            modifier = Modifier.size(20.dp),
         )
         Text(
             text = currentPath,
             modifier = Modifier.weight(1f),
-            color = if (darkMode) Color(0xFF71717A) else Color(0xFF8A8A8A),
-            fontSize = 14.sp,
-            fontWeight = FontWeight.SemiBold,
-            lineHeight = 18.sp,
+            color = LocalAAColors.current.ink,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.ExtraBold,
+            lineHeight = 20.sp,
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+            softWrap = false,
+            overflow = TextOverflow.MiddleEllipsis,
         )
         CircleMiniButton(darkMode = darkMode, onClick = onParent) {
             BackGlyph(color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF777777))
@@ -815,7 +881,8 @@ private fun CurrentDirectoryBar(
 
 @Composable
 private fun PathRow(
-    entry: NewSessionPathEntry,
+    name: String,
+    icon: ImageVector,
     darkMode: Boolean,
     onClick: () -> Unit,
 ) {
@@ -829,35 +896,27 @@ private fun PathRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Image(
-            painter = painterResource(
-                if (darkMode) {
-                    R.drawable.ic_new_session_workspace_row_white
-                } else {
-                    R.drawable.ic_new_session_workspace_row_black
-                },
-            ),
+        Icon(
+            imageVector = icon,
             contentDescription = null,
-            modifier = Modifier.size(26.dp),
+            tint = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF777777),
+            modifier = Modifier.size(20.dp),
         )
         Text(
-            text = entry.name,
+            text = name,
             color = LocalAAColors.current.ink,
-            fontSize = 16.sp,
+            fontSize = 15.sp,
             fontWeight = FontWeight.SemiBold,
             lineHeight = 20.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
-        Text(
-            text = entry.path,
-            color = if (darkMode) Color(0xFF71717A) else Color(0xFF888888),
-            fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold,
-            lineHeight = 16.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+        Icon(
+            imageVector = Lucide.ChevronRight,
+            contentDescription = null,
+            tint = if (darkMode) Color(0xFF71717A) else Color(0xFFA8A6A0),
+            modifier = Modifier.size(20.dp),
         )
     }
 }
@@ -955,24 +1014,6 @@ private fun StartChatButton(
     }
 }
 
-@Composable
-private fun HomeIndicatorLine(darkMode: Boolean) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(16.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Box(
-            modifier = Modifier
-                .width(134.dp)
-                .height(5.dp)
-                .clip(CircleShape)
-                .background(if (darkMode) Color(0xFF3F3F46) else Color(0xFFC7C7C7)),
-        )
-    }
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DevicePickerSheet(
@@ -993,11 +1034,7 @@ private fun DevicePickerSheet(
                         subtitle = device.subtitle,
                         selected = device.id == selectedDeviceId,
                         darkMode = darkMode,
-                        iconRes = if (darkMode) {
-                            R.drawable.ic_new_session_device_white
-                        } else {
-                            R.drawable.ic_new_session_device_black
-                        },
+                        icon = Lucide.Monitor,
                         onClick = { onSelect(device) },
                     )
                 }
@@ -1026,11 +1063,7 @@ private fun AgentPickerSheet(
                         subtitle = agent.runtime,
                         selected = agent.runtime == selectedRuntime,
                         darkMode = darkMode,
-                        iconRes = if (darkMode) {
-                            R.drawable.ic_new_session_agent_white
-                        } else {
-                            R.drawable.ic_new_session_agent_black
-                        },
+                        icon = Lucide.Bot,
                         onClick = { onSelect(agent) },
                     )
                 }
@@ -1091,7 +1124,7 @@ private fun SheetChoiceRow(
     subtitle: String,
     selected: Boolean,
     darkMode: Boolean,
-    iconRes: Int,
+    icon: ImageVector,
     onClick: () -> Unit,
 ) {
     Row(
@@ -1104,10 +1137,11 @@ private fun SheetChoiceRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Image(
-            painter = painterResource(iconRes),
+        Icon(
+            imageVector = icon,
             contentDescription = null,
-            modifier = Modifier.size(26.dp),
+            tint = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF777777),
+            modifier = Modifier.size(20.dp),
         )
         Column(modifier = Modifier.weight(1f)) {
             Text(

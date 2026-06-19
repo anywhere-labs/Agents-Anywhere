@@ -40,6 +40,8 @@ public interface RemoteTerminalViewClient {
 
     void copyModeChanged(boolean copyMode);
 
+    void verticalScrollChanged(boolean active);
+
 
 
     boolean onKeyDown(int keyCode, KeyEvent e, RemoteTerminalController session);

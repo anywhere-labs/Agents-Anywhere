@@ -18,10 +18,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -107,6 +109,7 @@ internal fun SessionAgentFilesScreen(
     controller: SessionDetailController,
     terminalController: RemoteTerminalController,
     darkMode: Boolean,
+    onTerminalVerticalDragChange: (Boolean) -> Unit = {},
     onBack: () -> Unit,
 ) {
     val colors = LocalAAColors.current
@@ -124,6 +127,10 @@ internal fun SessionAgentFilesScreen(
     var searchResult by remember(session?.id) { mutableStateOf(SoraFileSearchResult()) }
     var pushView by remember(session?.id) { mutableStateOf(PushView.Files) }
     val searchController = remember(selectedFile?.path) { SoraFileSearchController() }
+
+    DisposableEffect(Unit) {
+        onDispose { onTerminalVerticalDragChange(false) }
+    }
 
     fun load(path: String) {
         val current = session
@@ -203,6 +210,7 @@ internal fun SessionAgentFilesScreen(
                 session = session,
                 terminalController = terminalController,
                 darkMode = darkMode,
+                onVerticalDragChange = onTerminalVerticalDragChange,
                 modifier = Modifier.weight(1f),
             )
         } else {
@@ -263,15 +271,18 @@ private fun TerminalContent(
     session: AgentSession?,
     terminalController: RemoteTerminalController,
     darkMode: Boolean,
+    onVerticalDragChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val terminalState by terminalController.state.collectAsState()
+    val modifierState by terminalController.modifierState.collectAsState()
     val density = LocalDensity.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val imeBottomPx = WindowInsets.ime.getBottom(density)
     val imeBottom = with(density) { imeBottomPx.toDp() }
     val shortcutsVisible = imeBottomPx > 0
+    val terminalBottomInset = 24.dp + if (shortcutsVisible) imeBottom + 88.dp else 0.dp
     val background = if (darkMode) Color(0xFF09090B) else Color(0xFFFEFDFB)
     val statusText = when (terminalState.status) {
         RemoteTerminalStatus.Idle -> null
@@ -290,8 +301,8 @@ private fun TerminalContent(
         terminalController.ensureStarted(current)
     }
 
-    val terminalClient = remember(terminalController) {
-        remoteTerminalViewClient(terminalController)
+    val terminalClient = remember(terminalController, onVerticalDragChange) {
+        remoteTerminalViewClient(terminalController, onVerticalDragChange)
     }
     val terminalView = remember(terminalController, context) {
         RemoteTerminalView(context, null).apply {
@@ -336,39 +347,49 @@ private fun TerminalContent(
             .clipToBounds()
             .background(background),
     ) {
-        AndroidView(
-            factory = { terminalView },
-            update = {
-                it.setRemoteTerminalViewClient(terminalClient)
-                it.attachSession(terminalController)
-                applyTerminalColors(terminalController, darkMode)
-                it.invalidate()
-            },
-            modifier = Modifier.fillMaxSize(),
-        )
-        if (statusText != null) {
-            Text(
-                text = statusText,
-                color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF6F706A),
-                fontSize = 12.sp,
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.SemiBold,
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(start = 16.dp, end = 16.dp, bottom = terminalBottomInset),
+        ) {
+            if (statusText != null) {
+                Text(
+                    text = statusText,
+                    color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF6F706A),
+                    fontSize = 12.sp,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                        .then(
+                            if (canReconnect && session != null) {
+                                Modifier.noRippleClickable {
+                                    scope.launch { terminalController.restart(session) }
+                                }
+                            } else {
+                                Modifier
+                            },
+                        ),
+                )
+            }
+            AndroidView(
+                factory = { terminalView },
+                update = {
+                    it.setRemoteTerminalViewClient(terminalClient)
+                    it.attachSession(terminalController)
+                    applyTerminalColors(terminalController, darkMode)
+                    it.invalidate()
+                },
                 modifier = Modifier
-                    .padding(14.dp)
-                    .then(
-                        if (canReconnect && session != null) {
-                            Modifier.noRippleClickable {
-                                scope.launch { terminalController.restart(session) }
-                            }
-                        } else {
-                            Modifier
-                        },
-                    ),
+                    .fillMaxWidth()
+                    .weight(1f),
             )
         }
         if (shortcutsVisible) {
             TerminalShortcutDeck(
                 darkMode = darkMode,
+                ctrlLatched = modifierState.ctrl,
+                altLatched = modifierState.alt,
                 onShortcut = terminalController::sendShortcut,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -387,6 +408,7 @@ private fun applyTerminalColors(controller: RemoteTerminalController, darkMode: 
 
 private fun remoteTerminalViewClient(
     controller: RemoteTerminalController,
+    onVerticalDragChange: (Boolean) -> Unit,
 ) = object : RemoteTerminalViewClient {
     override fun onScale(scale: Float): Float = scale
 
@@ -397,6 +419,7 @@ private fun remoteTerminalViewClient(
     override fun shouldUseCtrlSpaceWorkaround(): Boolean = false
     override fun isTerminalViewSelected(): Boolean = true
     override fun copyModeChanged(copyMode: Boolean) = Unit
+    override fun verticalScrollChanged(active: Boolean) = onVerticalDragChange(active)
     override fun onKeyDown(keyCode: Int, e: KeyEvent?, session: RemoteTerminalController?): Boolean = false
     override fun onKeyUp(keyCode: Int, e: KeyEvent?): Boolean = false
     override fun onLongPress(event: MotionEvent?): Boolean = true
@@ -418,17 +441,17 @@ private fun remoteTerminalViewClient(
 @Composable
 private fun TerminalShortcutDeck(
     darkMode: Boolean,
+    ctrlLatched: Boolean,
+    altLatched: Boolean,
     onShortcut: (TerminalShortcut) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val background = if (darkMode) Color(0xFF18181B) else Color(0xFFFBFBFA)
-    val border = if (darkMode) Color(0xFF27272A) else Color(0xFFE3E2DE)
+    val background = if (darkMode) Color(0xFF09090B) else Color(0xFFFEFDFB)
     Column(
         modifier = modifier
             .fillMaxWidth()
             .height(88.dp)
             .background(background)
-            .border(1.dp, border)
             .padding(horizontal = 14.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
@@ -443,6 +466,8 @@ private fun TerminalShortcutDeck(
                 TerminalShortcut.PageUp,
             ),
             darkMode = darkMode,
+            ctrlLatched = ctrlLatched,
+            altLatched = altLatched,
             onShortcut = onShortcut,
             modifier = Modifier.weight(1f),
         )
@@ -457,6 +482,8 @@ private fun TerminalShortcutDeck(
                 TerminalShortcut.PageDown,
             ),
             darkMode = darkMode,
+            ctrlLatched = ctrlLatched,
+            altLatched = altLatched,
             onShortcut = onShortcut,
             modifier = Modifier.weight(1f),
         )
@@ -467,30 +494,40 @@ private fun TerminalShortcutDeck(
 private fun TerminalShortcutRow(
     shortcuts: List<TerminalShortcut>,
     darkMode: Boolean,
+    ctrlLatched: Boolean,
+    altLatched: Boolean,
     onShortcut: (TerminalShortcut) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val haptic = LocalHapticFeedback.current
     val text = if (darkMode) Color(0xFFFAFAFA) else Color(0xFF151515)
+    val activeText = if (darkMode) Color(0xFF67E8F9) else Color(0xFF0891B2)
+    val activeBackground = if (darkMode) Color(0x1A67E8F9) else Color(0x1A0891B2)
     Row(
         modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         shortcuts.forEach { shortcut ->
+            val active = (shortcut == TerminalShortcut.Ctrl && ctrlLatched) ||
+                (shortcut == TerminalShortcut.Alt && altLatched)
             Box(
                 modifier = Modifier
                     .height(34.dp)
                     .weight(1f)
                     .clip(RoundedCornerShape(8.dp))
-                    .noRippleClickable { onShortcut(shortcut) },
+                    .background(if (active) activeBackground else Color.Transparent)
+                    .noRippleClickable {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onShortcut(shortcut)
+                    },
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
                     text = shortcut.label,
-                    color = text,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    letterSpacing = 1.sp,
+                    color = if (active) activeText else text,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
                     maxLines = 1,
                 )
             }
@@ -1000,7 +1037,13 @@ private fun PushSwitcher(
     val selected = if (darkMode) Color(0xFF27272A) else Color.White
     val selectedText = if (darkMode) Color(0xFFFAFAFA) else Color(0xFF242521)
     val muted = if (darkMode) Color(0xFF71717A) else Color(0xFF8B8983)
-    Row(
+    val tabWidth = 92.dp
+    val gap = 4.dp
+    val indicatorOffset by animateDpAsState(
+        targetValue = if (view == PushView.Files) 0.dp else tabWidth + gap,
+        label = "session-files-switcher-indicator",
+    )
+    Box(
         modifier = Modifier
             .width(196.dp)
             .height(42.dp)
@@ -1008,45 +1051,49 @@ private fun PushSwitcher(
             .background(background)
             .border(1.dp, if (darkMode) Color(0xFF27272A) else Color.Transparent, CircleShape)
             .padding(4.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-        verticalAlignment = Alignment.CenterVertically,
     ) {
+        Box(
+            modifier = Modifier
+                .offset(x = indicatorOffset)
+                .width(tabWidth)
+                .fillMaxHeight()
+                .shadow(
+                    6.dp,
+                    CircleShape,
+                    ambientColor = if (darkMode) Color(0x66000000) else Color(0x22000000),
+                    spotColor = if (darkMode) Color(0x66000000) else Color(0x22000000),
+                )
+                .clip(CircleShape)
+                .background(selected),
+        )
+        Row(
+            modifier = Modifier.fillMaxSize(),
+            horizontalArrangement = Arrangement.spacedBy(gap),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
         val filesSelected = view == PushView.Files
         SwitcherTab(
             label = "Files",
             icon = Lucide.Folder,
-            background = if (filesSelected) selected else Color.Transparent,
+            background = Color.Transparent,
             content = if (filesSelected) selectedText else muted,
             onClick = { onSelectView(PushView.Files) },
             modifier = Modifier
                 .weight(1f)
-                .fillMaxSize()
-                .then(
-                    if (darkMode && filesSelected) {
-                        Modifier.shadow(6.dp, CircleShape, ambientColor = Color(0x66000000), spotColor = Color(0x66000000))
-                    } else {
-                        Modifier
-                    },
-                ),
+                .fillMaxSize(),
         )
         val terminalSelected = view == PushView.Terminal
         SwitcherTab(
             label = "Terminal",
             icon = Lucide.Terminal,
-            background = if (terminalSelected) selected else Color.Transparent,
+            background = Color.Transparent,
             content = if (terminalSelected) selectedText else muted,
             onClick = { onSelectView(PushView.Terminal) },
             modifier = Modifier
                 .weight(1f)
-                .fillMaxSize()
-                .then(
-                    if (darkMode && terminalSelected) {
-                        Modifier.shadow(6.dp, CircleShape, ambientColor = Color(0x66000000), spotColor = Color(0x66000000))
-                    } else {
-                        Modifier
-                    },
-                ),
+                .fillMaxSize(),
         )
+        }
     }
 }
 

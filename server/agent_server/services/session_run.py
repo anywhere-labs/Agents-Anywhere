@@ -108,27 +108,25 @@ class SessionRunService:
             raise SessionRunUpstreamError("connector did not return a session id")
         if payload.runtime != "claude" and not isinstance(external_session_id, str):
             raise SessionRunUpstreamError("connector did not return an external session id")
-        try:
-            if isinstance(external_session_id, str):
-                canonical_session_id = await self._store.resolve_connector_session_id(
+        if isinstance(external_session_id, str):
+            try:
+                session_id = await self._store.resolve_connector_session_id(
                     connector_id=payload.connectorId,
                     session_id=session_id,
                     external_session_id=external_session_id,
                 )
-            else:
-                canonical_session_id = session_id
-            session = await self._store.get_session(canonical_session_id, user_id=user_id)
-        except KeyError:
-            session = await self._store.upsert_connector_session(
-                connector_id=payload.connectorId,
-                session_id=session_id,
-                runtime=payload.runtime,
-                external_session_id=external_session_id,
-                title=payload.title,
-                cwd=payload.cwd,
-                status="idle",
-                last_synced_at=utc_now(),
-            )
+            except KeyError:
+                pass
+        session = await self._store.upsert_connector_session(
+            connector_id=payload.connectorId,
+            session_id=session_id,
+            runtime=payload.runtime,
+            external_session_id=external_session_id,
+            title=payload.title,
+            cwd=payload.cwd,
+            status="idle",
+            last_synced_at=utc_now(),
+        )
         return {"session": session, "connectorResult": connector_result}
 
     async def send_message(
