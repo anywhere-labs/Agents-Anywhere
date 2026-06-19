@@ -1,0 +1,15 @@
+{
+  "app": {
+    "name": "Agents Anywhere"
+  },
+  "home": {
+    "title": "web-next refactor baseline",
+    "subtitle": "This package is the Next.js, shadcn, Tailwind, and i18n rewrite target. Visual parity with the current web package is mandatory."
+  },
+  "common": {
+    "cancel": "Cancel",
+    "continue": "Continue",
+    "loading": "Loading...",
+    "save": "Save"
+  }
+}

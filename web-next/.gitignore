@@ -1,0 +1,9 @@
+node_modules
+.next
+out
+*.log
+.DS_Store
+.yarn/install-state.gz
+.yarn/cache
+.pnp.*
+tsconfig.tsbuildinfo

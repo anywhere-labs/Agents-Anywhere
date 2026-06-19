@@ -1,0 +1,15 @@
+{
+  "app": {
+    "name": "Agents Anywhere"
+  },
+  "home": {
+    "title": "web-next 重构基线",
+    "subtitle": "这个包是 Next.js、shadcn、Tailwind 和 i18n 的重写目标。必须和当前 web 包保持视觉完全一致。"
+  },
+  "common": {
+    "cancel": "取消",
+    "continue": "继续",
+    "loading": "加载中...",
+    "save": "保存"
+  }
+}

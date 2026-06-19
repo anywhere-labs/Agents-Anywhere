@@ -1,0 +1,192 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--aa-sans);
+  --font-mono: var(--aa-mono);
+  --color-background: var(--bg);
+  --color-foreground: var(--text);
+  --color-card: var(--bg-panel);
+  --color-card-foreground: var(--text);
+  --color-popover: var(--bg-panel);
+  --color-popover-foreground: var(--text);
+  --color-primary: var(--accent);
+  --color-primary-foreground: var(--accent-ink);
+  --color-secondary: var(--bg-elev);
+  --color-secondary-foreground: var(--text);
+  --color-muted: var(--bg-elev);
+  --color-muted-foreground: var(--text-mut);
+  --color-accent: var(--bg-hover);
+  --color-accent-foreground: var(--text);
+  --color-destructive: oklch(0.72 0.16 25);
+  --color-destructive-foreground: #fff;
+  --color-border: var(--border);
+  --color-input: var(--border-md);
+  --color-ring: var(--accent);
+  --radius-sm: var(--r-sm);
+  --radius-md: var(--r);
+  --radius-lg: var(--r-md);
+  --radius-xl: var(--r-lg);
+}
+
+:root {
+  color-scheme: dark;
+  --bg: #0a0a0b;
+  --bg-panel: #0e0e10;
+  --bg-elev: #161618;
+  --bg-hover: rgba(255, 255, 255, 0.035);
+  --bg-active: rgba(255, 255, 255, 0.06);
+  --bg-input: rgba(255, 255, 255, 0.04);
+  --border: rgba(255, 255, 255, 0.06);
+  --border-md: rgba(255, 255, 255, 0.09);
+  --border-lg: rgba(255, 255, 255, 0.14);
+  --text: rgba(255, 255, 255, 0.92);
+  --text-mid: rgba(255, 255, 255, 0.65);
+  --text-mut: rgba(255, 255, 255, 0.45);
+  --text-faint: rgba(255, 255, 255, 0.28);
+  --accent: oklch(0.80 0.13 78);
+  --accent-soft: oklch(0.80 0.13 78 / 0.14);
+  --accent-ink: #18120a;
+  --info: oklch(0.74 0.14 235);
+  --info-soft: oklch(0.74 0.14 235 / 0.14);
+  --agent-claude: oklch(0.74 0.13 50);
+  --agent-codex: oklch(0.74 0.14 152);
+  --agent-opencode: oklch(0.72 0.13 232);
+  --agent-cursor: oklch(0.70 0.15 295);
+  --r-sm: 6px;
+  --r: 8px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --shadow-pop:
+    0 24px 60px -20px rgba(0, 0, 0, 0.7),
+    0 8px 24px -8px rgba(0, 0, 0, 0.5);
+  --aa-sans: "Geist", ui-sans-serif, -apple-system, system-ui, sans-serif;
+  --aa-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --aa-serif: "Instrument Serif", "Times New Roman", Cambria, serif;
+  --fs-micro: 9.5px;
+  --fs-2xs: 10.5px;
+  --fs-xs: 11.5px;
+  --fs-sm: 12.5px;
+  --fs-ui: 13.5px;
+  --fs-base: 14.5px;
+  --fs-md: 15.5px;
+  --fs-lg: 18px;
+  --fs-xl: 22px;
+  --fs-2xl: 34px;
+  --fs-3xl: 44px;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --bg: #fafaf9;
+  --bg-panel: #ffffff;
+  --bg-elev: #f4f4f2;
+  --bg-hover: rgba(0, 0, 0, 0.035);
+  --bg-active: rgba(0, 0, 0, 0.06);
+  --bg-input: rgba(0, 0, 0, 0.03);
+  --border: rgba(0, 0, 0, 0.07);
+  --border-md: rgba(0, 0, 0, 0.10);
+  --border-lg: rgba(0, 0, 0, 0.18);
+  --text: rgba(0, 0, 0, 0.92);
+  --text-mid: rgba(0, 0, 0, 0.60);
+  --text-mut: rgba(0, 0, 0, 0.45);
+  --text-faint: rgba(0, 0, 0, 0.28);
+  --accent-ink: #fff;
+  --shadow-pop:
+    0 24px 60px -20px rgba(0, 0, 0, 0.18),
+    0 8px 24px -8px rgba(0, 0, 0, 0.10);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--aa-sans);
+  font-size: var(--fs-base);
+  line-height: 1.5;
+  letter-spacing: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--border-md);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--border-lg);
+  background-clip: content-box;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+.mono {
+  font-family: var(--aa-mono);
+  font-feature-settings: "ss01", "ss02", "calt", "liga";
+}
+
+.serif {
+  font-family: var(--aa-serif);
+  letter-spacing: 0;
+}
+
+@keyframes klaw-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes klaw-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes klaw-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.55;
+    transform: scale(0.85);
+  }
+}
