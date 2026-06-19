@@ -66,6 +66,7 @@ import com.agentsanywhere.app.feature.sessiondetail.SessionDetailState
 import com.agentsanywhere.app.feature.sessiondetail.SessionStreamEvent
 import com.agentsanywhere.app.feature.sessiondetail.TimelineApproval
 import com.agentsanywhere.app.feature.sessiondetail.RemoteTerminalController
+import com.agentsanywhere.app.feature.sessiondetail.RemoteTerminalForegroundService
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentSession
 import com.agentsanywhere.app.model.SessionStatus
@@ -112,6 +113,7 @@ fun SessionDetailScreen(
     var previewImage by remember(sessionId) { mutableStateOf<AttachmentPreview?>(null) }
     var showCamera by remember(sessionId) { mutableStateOf(false) }
     var showRuntimeSettings by remember(sessionId) { mutableStateOf(false) }
+    var terminalVerticalDragActive by remember(sessionId) { mutableStateOf(false) }
     var composerHeightPx by remember { mutableStateOf(0) }
     var readOnlyComposerTapCount by remember(sessionId) { mutableStateOf(0) }
     val refetchInFlight = remember(sessionId) { AtomicBoolean(false) }
@@ -501,6 +503,17 @@ fun SessionDetailScreen(
         }
     }
 
+    DisposableEffect(context, sessionId) {
+        if (sessionId != null) {
+            RemoteTerminalForegroundService.start(context)
+        }
+        onDispose {
+            if (sessionId != null) {
+                RemoteTerminalForegroundService.stop(context)
+            }
+        }
+    }
+
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
@@ -631,6 +644,7 @@ fun SessionDetailScreen(
                 .weight(1f)
                 .fillMaxWidth(),
             beyondViewportPageCount = 1,
+            userScrollEnabled = !terminalVerticalDragActive,
         ) {
             page ->
             if (page == 0) {
@@ -737,6 +751,7 @@ fun SessionDetailScreen(
                     controller = controller,
                     terminalController = remoteTerminal,
                     darkMode = darkMode,
+                    onTerminalVerticalDragChange = { terminalVerticalDragActive = it },
                     onBack = { scope.launch { pagerState.animateScrollToPage(0) } },
                 )
             }

@@ -34,6 +34,7 @@ class RemoteTerminalController(
     private val sessionController: SessionDetailController,
 ) : TerminalSessionClient {
     val state = MutableStateFlow(RemoteTerminalState())
+    val modifierState = MutableStateFlow(TerminalModifierState())
     val redraws = MutableSharedFlow<Unit>(extraBufferCapacity = 64)
     var onRedraw: (() -> Unit)? = null
     val emulator = TerminalEmulator(
@@ -146,15 +147,13 @@ class RemoteTerminalController(
             altLatched -> "\u001b$text"
             else -> text
         }
-        ctrlLatched = false
-        altLatched = false
+        setLatched(ctrl = false, alt = false)
         sendBytes(data.toByteArray(Charsets.UTF_8))
     }
 
     fun sendRawText(text: String) {
         if (text.isEmpty()) return
-        ctrlLatched = false
-        altLatched = false
+        setLatched(ctrl = false, alt = false)
         sendBytes(text.toByteArray(Charsets.UTF_8))
     }
 
@@ -163,16 +162,15 @@ class RemoteTerminalController(
         val control = controlDown || ctrlLatched
         val alt = altDown || altLatched
         val mappedCodePoint = if (control) controlCodePoint(codePoint) else codePoint
-        ctrlLatched = false
-        altLatched = false
+        setLatched(ctrl = false, alt = false)
         val text = codePointString(mappedCodePoint)
         sendBytes((if (alt) "\u001b$text" else text).toByteArray(Charsets.UTF_8))
     }
 
     fun sendShortcut(shortcut: TerminalShortcut) {
         when (shortcut) {
-            TerminalShortcut.Ctrl -> ctrlLatched = true
-            TerminalShortcut.Alt -> altLatched = true
+            TerminalShortcut.Ctrl -> setLatched(ctrl = !ctrlLatched)
+            TerminalShortcut.Alt -> setLatched(alt = !altLatched)
             TerminalShortcut.Slash -> sendCodePoint('/'.code, controlDown = false, altDown = false)
             TerminalShortcut.Dash -> sendCodePoint('-'.code, controlDown = false, altDown = false)
             TerminalShortcut.Tab -> sendRawText("\t")
@@ -182,6 +180,7 @@ class RemoteTerminalController(
     }
 
     suspend fun restart(session: AgentSession) {
+        clearLocalScreen()
         close()
         ensureStarted(session)
     }
@@ -198,6 +197,7 @@ class RemoteTerminalController(
         streamUrl = null
         reconnectScheduled = false
         reconnectAttempts = 0
+        setLatched(ctrl = false, alt = false)
         synchronized(pendingInputLock) {
             pendingInput.clear()
         }
@@ -382,8 +382,7 @@ class RemoteTerminalController(
         var keyMod = 0
         if (ctrlLatched) keyMod = keyMod or KeyHandler.KEYMOD_CTRL
         if (altLatched) keyMod = keyMod or KeyHandler.KEYMOD_ALT
-        ctrlLatched = false
-        altLatched = false
+        setLatched(ctrl = false, alt = false)
         KeyHandler.getCode(
             keyCode,
             keyMod,
@@ -409,6 +408,20 @@ class RemoteTerminalController(
     }
 
     private fun codePointString(codePoint: Int): String = String(Character.toChars(codePoint))
+
+    private fun clearLocalScreen() {
+        val data = "\u001b[H\u001b[2J\u001b[3J".toByteArray(Charsets.UTF_8)
+        main.post {
+            emulator.append(data, data.size)
+            emitRedraw()
+        }
+    }
+
+    private fun setLatched(ctrl: Boolean = ctrlLatched, alt: Boolean = altLatched) {
+        ctrlLatched = ctrl
+        altLatched = alt
+        modifierState.value = TerminalModifierState(ctrl = ctrl, alt = alt)
+    }
 
     private fun emitRedraw() {
         redraws.tryEmit(Unit)
@@ -446,6 +459,11 @@ class RemoteTerminalController(
 data class RemoteTerminalState(
     val status: RemoteTerminalStatus = RemoteTerminalStatus.Idle,
     val message: String? = null,
+)
+
+data class TerminalModifierState(
+    val ctrl: Boolean = false,
+    val alt: Boolean = false,
 )
 
 enum class RemoteTerminalStatus {
