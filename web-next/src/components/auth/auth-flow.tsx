@@ -54,10 +54,15 @@ export function AuthFlow({ initialMode }: AuthFlowProps) {
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [oauthPending, setOauthPending] = React.useState<OAuthPending | null>(null);
+  const [serverUrl, setServerUrl] = React.useState<string | undefined>(undefined);
 
   React.useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
+
+  React.useEffect(() => {
+    setServerUrl(window.location.origin);
+  }, []);
 
   React.useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -197,8 +202,6 @@ export function AuthFlow({ initialMode }: AuthFlowProps) {
       />
     </>
   );
-
-  const serverUrl = typeof window === "undefined" ? undefined : window.location.origin;
 
   if (!config && !configError) {
     return (

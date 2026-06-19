@@ -51,7 +51,7 @@ export function BrandWord({
   return (
     <span
       className={cn(
-        "whitespace-nowrap font-['Caveat','Snell_Roundhand',cursive] text-[22px] font-medium leading-none tracking-normal text-[var(--text)]",
+        "aa-brand-word whitespace-nowrap text-[22px] text-[var(--text)]",
         className,
       )}
     >
