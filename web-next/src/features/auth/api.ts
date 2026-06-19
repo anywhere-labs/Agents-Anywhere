@@ -80,11 +80,11 @@ export class AuthApi {
   async finalizeOAuth(payload: OAuthFinalizePayload): Promise<OAuthFinalizeResponse> {
     let body = payload;
     if (payload.password) {
+      const { password: _password, ...rest } = payload;
       if (payload.setPassword) {
         body = {
-          ...payload,
-          ...(await createPasswordVerifier(payload.password)),
-          password: undefined
+          ...rest,
+          ...(await createPasswordVerifier(payload.password))
         };
       } else {
         const userId = payload.userId;
@@ -92,9 +92,8 @@ export class AuthApi {
           throw new Error("OAuth password confirmation requires a user ID.");
         }
         body = {
-          ...payload,
-          passwordVerifier: await this.loginPasswordVerifier(userId, payload.password),
-          password: undefined
+          ...rest,
+          passwordVerifier: await this.loginPasswordVerifier(userId, payload.password)
         };
       }
     }

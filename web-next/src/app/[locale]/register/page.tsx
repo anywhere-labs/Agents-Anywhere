@@ -1,5 +1,5 @@
-import { AuthPreview } from "@/components/auth";
+import { AuthFlow } from "@/components/auth";
 
 export default function RegisterPage() {
-  return <AuthPreview mode="register" />;
+  return <AuthFlow initialMode="register" />;
 }

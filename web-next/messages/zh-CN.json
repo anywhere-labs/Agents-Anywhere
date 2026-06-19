@@ -17,6 +17,11 @@
       "hidePassword": "隐藏密码",
       "showPassword": "显示密码"
     },
+    "errors": {
+      "config": "无法连接服务器。{detail}",
+      "generic": "操作失败。",
+      "oauth": "OAuth 登录失败。"
+    },
     "bootstrap": {
       "description": "全新安装。这里创建的账号会成为实例管理员。",
       "setupHint": "从服务器日志复制 setup-token 后继续。",
@@ -52,6 +57,18 @@
       "3": "良好",
       "4": "强"
     },
+    "oauth": {
+      "back": "返回登录",
+      "confirmDescription": "输入本地账号密码来绑定这个 OAuth 身份。",
+      "confirmTitle": "确认密码",
+      "createDescription": "为这个 OAuth 身份创建一个本地账号。",
+      "createSubmit": "创建并登录",
+      "createTitle": "选择用户 ID",
+      "linkSubmit": "绑定并登录",
+      "setLocalPassword": "为这个账号设置本地密码",
+      "useAnotherUser": "不，使用其他用户 ID",
+      "useMatchedAccount": "是，绑定 {userId}"
+    },
     "preview": {
       "home": "首页"
     },
@@ -71,6 +88,9 @@
       "dark": "深色模式",
       "label": "颜色主题",
       "light": "浅色模式"
+    },
+    "status": {
+      "connecting": "连接中"
     }
   }
 }

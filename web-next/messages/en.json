@@ -17,6 +17,11 @@
       "hidePassword": "Hide password",
       "showPassword": "Show password"
     },
+    "errors": {
+      "config": "Couldn't reach the server. {detail}",
+      "generic": "Something went wrong.",
+      "oauth": "OAuth sign-in failed."
+    },
     "bootstrap": {
       "description": "Fresh install. The account you create here becomes the instance admin.",
       "setupHint": "Copy the setup-token from the server log to continue.",
@@ -52,6 +57,18 @@
       "3": "Good",
       "4": "Strong"
     },
+    "oauth": {
+      "back": "Back to sign in",
+      "confirmDescription": "Enter the local account password to link this OAuth identity.",
+      "confirmTitle": "Confirm your password",
+      "createDescription": "Create a local account for this OAuth identity.",
+      "createSubmit": "Create and sign in",
+      "createTitle": "Choose your user ID",
+      "linkSubmit": "Link and sign in",
+      "setLocalPassword": "Set a local password for this account",
+      "useAnotherUser": "No, use another user ID",
+      "useMatchedAccount": "Yes, link {userId}"
+    },
     "preview": {
       "home": "Home"
     },
@@ -71,6 +88,9 @@
       "dark": "Dark mode",
       "label": "Color theme",
       "light": "Light mode"
+    },
+    "status": {
+      "connecting": "Connecting"
     }
   }
 }

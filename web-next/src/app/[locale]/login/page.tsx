@@ -1,5 +1,5 @@
-import { AuthPreview } from "@/components/auth";
+import { AuthFlow } from "@/components/auth";
 
 export default function LoginPage() {
-  return <AuthPreview mode="login" />;
+  return <AuthFlow initialMode="login" />;
 }

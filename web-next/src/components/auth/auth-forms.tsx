@@ -13,12 +13,7 @@ import {
 import { AuthCard } from "@/components/layout";
 import { PasswordStrength } from "@/components/auth/password-strength";
 import { USER_ID_RE, passwordScore } from "@/components/auth/password";
-
-export type AuthCredentials = {
-  userId: string;
-  password: string;
-  setupToken?: string;
-};
+import type { AuthCredentials } from "@/features/auth";
 
 export interface LoginFormProps {
   loading?: boolean;
