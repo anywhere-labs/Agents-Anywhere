@@ -1,0 +1,22 @@
+VS Code TextMate grammar source
+
+Source commit:
+https://github.com/microsoft/vscode/tree/4f2ff19ecacffa0aa4874db4d63ed4e899d98431/extensions
+
+Copied on 2026-06-16 from the VS Code extensions/*/syntaxes folders.
+License: MIT, see https://github.com/microsoft/vscode/blob/4f2ff19ecacffa0aa4874db4d63ed4e899d98431/LICENSE.txt
+
+Files copied into textmate/grammars:
+c.json, cpp.json, csharp.json, css.json, dart.json, docker.json, go.json,
+groovy.json, html.json, ini.json, java.json, javascript.json, jsx.json,
+json.json, lua.json, markdown.json, php.json, python.json, r.json, ruby.json,
+rust.json, scss.json, shellscript.json, sql.json, swift.json, typescript.json,
+tsx.json, xml.json, yaml.json.
+
+Kept from the previous grammar bundle because this VS Code commit does not
+include matching built-in grammar files: dotenv.json, kotlin.json, sass.json,
+toml.json.
+
+Sora compatibility tweaks:
+go.json and xml.json remove non-numeric fields from capture maps because Sora's
+TM4E parser expects capture maps to contain only numeric capture rules.
