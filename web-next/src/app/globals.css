@@ -59,10 +59,10 @@
   --shadow-pop:
     0 24px 60px -20px rgba(0, 0, 0, 0.7),
     0 8px 24px -8px rgba(0, 0, 0, 0.5);
-  --aa-sans: var(--font-geist), "Geist", ui-sans-serif, -apple-system, system-ui, sans-serif;
-  --aa-mono: var(--font-geist-mono), "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
-  --aa-serif: var(--font-instrument-serif), "Instrument Serif", "Times New Roman", Cambria, serif;
-  --aa-brand: var(--font-caveat), "Caveat", "Snell Roundhand", cursive;
+  --aa-sans: var(--font-geist, "Geist"), ui-sans-serif, -apple-system, system-ui, sans-serif;
+  --aa-mono: var(--font-geist-mono, "Geist Mono"), ui-monospace, "SF Mono", Menlo, monospace;
+  --aa-serif: var(--font-instrument-serif, "Instrument Serif"), "Times New Roman", Cambria, serif;
+  --aa-brand: var(--font-caveat, "Caveat"), "Snell Roundhand", cursive;
   --fs-micro: 9.5px;
   --fs-2xs: 10.5px;
   --fs-xs: 11.5px;

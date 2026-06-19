@@ -27,7 +27,7 @@ export class ApiClient {
   constructor(options: ApiClientOptions = {}) {
     this.baseUrl = options.baseUrl ?? "";
     this.getToken = options.getToken;
-    this.fetcher = options.fetcher ?? fetch;
+    this.fetcher = options.fetcher ?? ((input, init) => fetch(input, init));
   }
 
   get<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
