@@ -43,9 +43,9 @@
   --text-mid: rgba(255, 255, 255, 0.65);
   --text-mut: rgba(255, 255, 255, 0.45);
   --text-faint: rgba(255, 255, 255, 0.28);
-  --accent: oklch(0.80 0.13 78);
-  --accent-soft: oklch(0.80 0.13 78 / 0.14);
-  --accent-ink: #18120a;
+  --accent: rgba(255, 255, 255, 0.92);
+  --accent-soft: rgba(255, 255, 255, 0.10);
+  --accent-ink: #0a0a0b;
   --info: oklch(0.74 0.14 235);
   --info-soft: oklch(0.74 0.14 235 / 0.14);
   --agent-claude: oklch(0.74 0.13 50);
@@ -90,6 +90,8 @@
   --text-mid: rgba(0, 0, 0, 0.60);
   --text-mut: rgba(0, 0, 0, 0.45);
   --text-faint: rgba(0, 0, 0, 0.28);
+  --accent: rgba(0, 0, 0, 0.92);
+  --accent-soft: rgba(0, 0, 0, 0.08);
   --accent-ink: #fff;
   --shadow-pop:
     0 24px 60px -20px rgba(0, 0, 0, 0.18),

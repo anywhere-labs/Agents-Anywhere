@@ -15,6 +15,8 @@ explicitly approves a visual change.
 - Keep the current dark and light themes.
 - Keep the current type scale, density, border radii, shadows, scrollbars,
   hover states, focus states, loading states, and animation timing.
+- Replace the old yellow emphasis color with a monochrome black/white emphasis
+  system. This is an approved visual direction change for `web-next`.
 - Keep current page layouts and information hierarchy before improving code.
 - Do not introduce a generic SaaS design system look.
 - Do not use new decorative gradients, oversized cards, new brand surfaces, or
@@ -272,8 +274,10 @@ or Tailwind utilities must preserve these visual families:
 
 Required shared button variants:
 
-- `primary`: current accent-filled call to action.
-- `default`: elevated neutral action.
+- `emphasis`: black/white filled call to action.
+- `normal`: elevated neutral action.
+- `primary`: compatibility alias for `emphasis` during migration.
+- `default`: compatibility alias for `normal` during migration.
 - `ghost`: transparent icon/text action.
 - `danger`: destructive action.
 - `icon`: fixed square icon button.

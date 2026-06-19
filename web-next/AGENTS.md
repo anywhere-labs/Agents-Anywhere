@@ -24,6 +24,9 @@ explicitly approves a design change.
 - Reuse the current design tokens from `web/src/styles/tokens.css`.
 - Preserve current dark/light colors, typography scale, border radii, shadows,
   scrollbar styling, spacing density, and interaction timing.
+- The former yellow accent is intentionally being removed in `web-next`.
+  Emphasis actions and selected states should use a monochrome black/white
+  treatment through `--accent`, `--accent-soft`, and `--accent-ink`.
 - Recreate existing page layouts before improving internals.
 - Do not introduce a new visual theme, larger marketing-style layout, gradient
   decoration, oversized cards, or generic SaaS template styling.

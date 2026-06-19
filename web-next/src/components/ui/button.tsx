@@ -8,24 +8,34 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
+        normal:
+          "border border-[var(--border-md)] bg-[var(--bg-elev)] text-[var(--text)] hover:border-[var(--border-lg)] hover:bg-[var(--bg-hover)]",
+        emphasis:
+          "border border-transparent bg-[var(--accent)] text-[var(--accent-ink)] hover:opacity-90",
         default:
           "border border-[var(--border-md)] bg-[var(--bg-elev)] text-[var(--text)] hover:border-[var(--border-lg)] hover:bg-[var(--bg-hover)]",
         primary:
-          "border border-transparent bg-[var(--accent)] text-[var(--accent-ink)] hover:brightness-105",
+          "border border-transparent bg-[var(--accent)] text-[var(--accent-ink)] hover:opacity-90",
         ghost:
           "border border-transparent bg-transparent text-[var(--text-mid)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]",
         destructive:
-          "border border-transparent bg-[oklch(0.72_0.16_25)] text-white hover:brightness-105"
+          "border border-transparent bg-[oklch(0.72_0.16_25)] text-white hover:brightness-105",
+        danger:
+          "border border-transparent bg-[oklch(0.72_0.16_25)] text-white hover:brightness-105",
+        rowAction:
+          "border border-transparent bg-transparent text-[var(--text-mut)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)] data-[state=open]:bg-[var(--bg-active)] data-[state=open]:text-[var(--text)]"
       },
       size: {
         default: "h-9 px-3",
         sm: "h-8 px-2.5 text-[var(--fs-sm)]",
         lg: "h-10 px-4",
-        icon: "size-8 p-0"
+        icon: "size-8 p-0",
+        iconSm: "size-[30px] p-0 rounded-[7px]",
+        rowAction: "size-7 p-0 rounded-md"
       }
     },
     defaultVariants: {
-      variant: "default",
+      variant: "normal",
       size: "default"
     }
   }
