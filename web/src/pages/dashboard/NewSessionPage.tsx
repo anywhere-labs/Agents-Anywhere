@@ -87,6 +87,12 @@ const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 const COMPOSER_MENU_MARGIN = 8;
 const COMPOSER_MENU_GAP = 8;
 const ATTACHMENT_ONLY_PROMPT = "(No text content.)";
+const LAST_SELECTION_STORAGE_KEY = "aa.newSession.lastSelection.v1";
+
+type LastNewSessionSelection = {
+  connectorId: string;
+  runtime: string;
+};
 
 export function NewSessionPage({
   token,
@@ -104,12 +110,26 @@ export function NewSessionPage({
       ),
     [connectors],
   );
+  const [lastSelection, setLastSelection] = useState<LastNewSessionSelection | null>(
+    () => loadLastNewSessionSelection(),
+  );
   const initialConnector =
-    online.find((c) => c.id === preferredConnectorId) ?? online[0] ?? null;
+    online.find((c) => c.id === preferredConnectorId) ??
+    online.find((c) => c.id === lastSelection?.connectorId) ??
+    online[0] ??
+    null;
+  const initialRuntimes = initialConnector ? attachedRuntimes(initialConnector) : [];
+  const initialRuntime =
+    initialRuntimes.find((item) => item.runtime === lastSelection?.runtime)?.runtime ??
+    initialRuntimes[0]?.runtime ??
+    "codex";
   const [connectorId, setConnectorId] = useState(initialConnector?.id ?? "");
   const connector = online.find((c) => c.id === connectorId) ?? initialConnector;
-  const runtimes = connector ? attachedRuntimes(connector) : [];
-  const [runtime, setRuntime] = useState(runtimes[0]?.runtime ?? "codex");
+  const runtimes = useMemo(
+    () => (connector ? attachedRuntimes(connector) : []),
+    [connector],
+  );
+  const [runtime, setRuntime] = useState(initialRuntime);
   const [permissionMode, setPermissionMode] = useState<PermissionKey>("ask");
   const [prompt, setPrompt] = useState("");
   const [workspaceCwd, setWorkspaceCwd] = useState<string | null>(initialCwd || null);
@@ -279,9 +299,24 @@ export function NewSessionPage({
     if (!connector) return;
     const rs = attachedRuntimes(connector);
     setRuntime((prev) =>
-      rs.some((r) => r.runtime === prev) ? prev : rs[0]?.runtime || "codex",
+      rs.some((r) => r.runtime === prev)
+        ? prev
+        : rs.find((r) => r.runtime === lastSelection?.runtime)?.runtime ||
+          rs[0]?.runtime ||
+          "codex",
     );
-  }, [connector]);
+  }, [connector, lastSelection?.runtime]);
+
+  useEffect(() => {
+    if (!connector || !runtimes.some((item) => item.runtime === runtime)) return;
+    const selection = { connectorId: connector.id, runtime };
+    saveLastNewSessionSelection(selection);
+    setLastSelection((prev) =>
+      prev?.connectorId === selection.connectorId && prev.runtime === selection.runtime
+        ? prev
+        : selection,
+    );
+  }, [connector, runtime, runtimes]);
 
   useEffect(() => {
     if (!connector || !runtime) {
@@ -510,6 +545,13 @@ export function NewSessionPage({
           .slice(2, 8)}`;
         await api.sendSessionMessage(token, sessionId, text, attachmentRefs, clientMessageId);
       }
+      const selection = { connectorId: connector.id, runtime };
+      saveLastNewSessionSelection(selection);
+      setLastSelection((prev) =>
+        prev?.connectorId === selection.connectorId && prev.runtime === selection.runtime
+          ? prev
+          : selection,
+      );
       onCreated(takeover.session);
     } catch (err: unknown) {
       setCreateError(
@@ -935,6 +977,29 @@ function attachedRuntimes(connector: ConnectorView) {
       healthy: reportIsHealthy(agent.report),
     }))
     .sort((a, b) => a.runtime.localeCompare(b.runtime));
+}
+
+function loadLastNewSessionSelection(): LastNewSessionSelection | null {
+  try {
+    const raw = localStorage.getItem(LAST_SELECTION_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<LastNewSessionSelection>;
+    if (typeof parsed.connectorId !== "string" || typeof parsed.runtime !== "string") {
+      return null;
+    }
+    if (!parsed.connectorId || !parsed.runtime) return null;
+    return { connectorId: parsed.connectorId, runtime: parsed.runtime };
+  } catch {
+    return null;
+  }
+}
+
+function saveLastNewSessionSelection(selection: LastNewSessionSelection) {
+  try {
+    localStorage.setItem(LAST_SELECTION_STORAGE_KEY, JSON.stringify(selection));
+  } catch {
+    // Browser storage can be unavailable or full; selection persistence is optional.
+  }
 }
 
 function NewPermissionMenu({
