@@ -164,6 +164,78 @@ select {
   letter-spacing: 0;
 }
 
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+.aa-logo {
+  position: relative;
+  display: inline-flex;
+  width: var(--aa-logo-size);
+  height: var(--aa-logo-size);
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.aa-logo-img {
+  position: absolute;
+  inset: var(--aa-logo-padding);
+  width: calc(100% - var(--aa-logo-padding) * 2);
+  height: calc(100% - var(--aa-logo-padding) * 2);
+  object-fit: contain;
+  user-select: none;
+  pointer-events: none;
+}
+
+.aa-logo-light-mode {
+  display: none;
+}
+
+[data-theme="light"] .aa-logo-dark-mode {
+  display: none;
+}
+
+[data-theme="light"] .aa-logo-light-mode {
+  display: block;
+}
+
+.theme-seg {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-panel);
+  height: 26px;
+}
+
+.theme-seg button {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 20px;
+  border: 0;
+  background: transparent;
+  color: var(--text-mut);
+  border-radius: 999px;
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.15s, color 0.15s;
+}
+
+.theme-seg button:hover {
+  color: var(--text);
+}
+
+.theme-seg button.on {
+  background: var(--bg-elev);
+  color: var(--text);
+  box-shadow: 0 0 0 1px var(--border) inset;
+}
+
 @keyframes klaw-spin {
   to {
     transform: rotate(360deg);
