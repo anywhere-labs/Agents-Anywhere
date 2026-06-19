@@ -183,6 +183,10 @@ Target abstraction:
 
 - `components/common/StatusBadge`
 - `components/common/RuntimeBadge`
+- `components/common/Pill`
+- `components/common/Chip`
+- `components/common/Tag`
+- `components/common/CountBadge`
 - `components/common/DeviceStatus`
 - `components/common/RoleBadge`
 - `components/common/ActivityTime`
@@ -194,6 +198,19 @@ Implementation rule:
   `--agent-claude`, `--agent-codex`, `--agent-opencode`, `--agent-cursor`.
 - Badge height, radius, dot size, mono font usage, and background/border
   treatment must match the old UI.
+- Do not use a status badge for every small rounded label. Split these small
+  components by meaning so pages stay consistent:
+  - `StatusBadge`: state with a semantic status, usually with a dot or
+    destructive/success treatment.
+  - `RuntimeBadge`: runtime identity, always mapped to runtime colors.
+  - `Pill`: passive compact label such as a workspace, device, model, or mode.
+  - `Chip`: removable or interactive compact item, such as an attachment,
+    selected filter, selected workspace, or composer option.
+  - `Tag`: low-emphasis categorical label in tables or metadata rows.
+  - `CountBadge`: numeric count attached to tabs, filters, or nav sections.
+- Existing examples to preserve visually include `.kl-chip`,
+  `.kl-session-runtime-chip`, `.aa-team-role`, `.aa-team-status`,
+  `.aa-team-you`, sidebar attention dots, and filter count labels.
 
 ### Page Files Are Too Broad
 
@@ -268,6 +285,42 @@ Rules:
 - Do not use text-only rounded pills when a common icon action exists.
 - Use lucide icons where possible, mapped to the existing icon choices.
 - Disabled states must keep the current muted text and no-hover behavior.
+
+### Pills, Chips, Tags, and Badges
+
+These components are related but should not be collapsed into a single generic
+`Badge` API. The current UI uses compact rounded metadata in many places, and
+the meaning matters for consistent behavior.
+
+Required components:
+
+- `Pill`: passive inline metadata. Examples: workspace path, device short name,
+  model name, permission mode, database name.
+- `Chip`: interactive or removable compact item. Examples: attachment chip,
+  active filter chip, selected option in a composer, file preview item.
+- `Tag`: categorical table/list label with lower emphasis. Examples: role
+  marker, "You", archived label, OAuth provider kind.
+- `StatusBadge`: status with state semantics. Examples: online/offline,
+  active/disabled, waiting approval, healthy/unhealthy.
+- `RuntimeBadge`: runtime identity with runtime color. Examples: Codex, Claude,
+  openCode, Cursor.
+- `CountBadge`: numeric count. Examples: role filter counts, section counts,
+  notification/unread counts.
+
+Visual requirements:
+
+- Compact labels should generally use 20-24px height, 5-8px horizontal padding,
+  5-6px radius, and `--fs-xs` or `--fs-sm`.
+- Technical metadata should use `var(--mono)` where the old UI uses mono,
+  especially session chips and paths.
+- Passive pills use `--bg-elev` plus `--border`.
+- Interactive chips use the same base style but add hover and focus states.
+- Runtime badges use a 5px dot and the matching runtime token.
+- Status badges should expose `tone` variants such as `neutral`, `info`,
+  `success`, `warning`, and `danger`, but those variants must map to the old
+  color language.
+- Counts should be visually quiet: current filter counts use muted/faint text,
+  not loud notification styling.
 
 ### Layout Surfaces
 
@@ -643,6 +696,10 @@ The first component batch should be built before migrating full pages:
 | `InlineAlert` | common | all error/success messages |
 | `StatusBadge` | common | device, team, service, sessions |
 | `RuntimeBadge` | common | device, session header, composer |
+| `Pill` | common | workspace paths, device/model labels, metadata chips |
+| `Chip` | common | attachments, selected filters, composer selections |
+| `Tag` | common | table/list categories such as role, self, archived |
+| `CountBadge` | common | filter counts, nav counts, unread counts |
 | `SurfaceCard` | common | settings, service, empty states |
 | `EmptyState` | common | session list, tables, workspace/device pages |
 | `SkeletonRow` | common | sidebar, tables, timelines |
