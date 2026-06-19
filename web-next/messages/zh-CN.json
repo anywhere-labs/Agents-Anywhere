@@ -11,5 +11,66 @@
     "continue": "继续",
     "loading": "加载中...",
     "save": "保存"
+  },
+  "auth": {
+    "actions": {
+      "hidePassword": "隐藏密码",
+      "showPassword": "显示密码"
+    },
+    "bootstrap": {
+      "description": "全新安装。这里创建的账号会成为实例管理员。",
+      "setupHint": "从服务器日志复制 setup-token 后继续。",
+      "submit": "创建管理员并继续",
+      "title": "欢迎使用 Agents Anywhere",
+      "tokenPlaceholder": "粘贴服务器日志里的 token",
+      "userPlaceholder": "例如 admin"
+    },
+    "fields": {
+      "adminPassword": "管理员密码",
+      "adminUserId": "管理员用户 ID",
+      "confirm": "确认",
+      "confirmPassword": "确认密码",
+      "password": "密码",
+      "setupToken": "Setup token",
+      "userId": "用户 ID"
+    },
+    "login": {
+      "createAccount": "创建账号",
+      "description": "使用实例管理员提供给你的凭据登录。",
+      "forgot": "忘记密码？请联系实例管理员重置。",
+      "newHere": "第一次使用？",
+      "oauth": "使用 {provider} 登录",
+      "passwordPlaceholder": "密码",
+      "submit": "登录",
+      "title": "登录 Agents Anywhere",
+      "userPlaceholder": "输入用户名"
+    },
+    "passwordStrength": {
+      "0": "太短",
+      "1": "较弱",
+      "2": "一般",
+      "3": "良好",
+      "4": "强"
+    },
+    "preview": {
+      "home": "首页"
+    },
+    "register": {
+      "confirmPlaceholder": "再次输入密码",
+      "description": "你正在加入一个自托管的 Agents Anywhere 实例。",
+      "haveAccount": "已有账号？",
+      "passwordMismatch": "两次输入的密码不一致",
+      "passwordPlaceholder": "至少 8 个字符",
+      "signIn": "登录",
+      "submit": "创建账号",
+      "title": "创建账号",
+      "userHint": "3-32 个字符 · a-z 0-9 _ -",
+      "userOk": "可用"
+    },
+    "theme": {
+      "dark": "深色模式",
+      "label": "颜色主题",
+      "light": "浅色模式"
+    }
   }
 }

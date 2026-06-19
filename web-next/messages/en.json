@@ -11,5 +11,66 @@
     "continue": "Continue",
     "loading": "Loading...",
     "save": "Save"
+  },
+  "auth": {
+    "actions": {
+      "hidePassword": "Hide password",
+      "showPassword": "Show password"
+    },
+    "bootstrap": {
+      "description": "Fresh install. The account you create here becomes the instance admin.",
+      "setupHint": "Copy the setup-token from the server log to continue.",
+      "submit": "Create admin & continue",
+      "title": "Welcome to Agents Anywhere",
+      "tokenPlaceholder": "Paste the token from the server log",
+      "userPlaceholder": "e.g. admin"
+    },
+    "fields": {
+      "adminPassword": "Admin password",
+      "adminUserId": "Admin user ID",
+      "confirm": "Confirm",
+      "confirmPassword": "Confirm password",
+      "password": "Password",
+      "setupToken": "Setup token",
+      "userId": "User ID"
+    },
+    "login": {
+      "createAccount": "Create an account",
+      "description": "Use the credentials your instance admin gave you.",
+      "forgot": "Forgot your password? Ask your instance admin to reset it.",
+      "newHere": "New here?",
+      "oauth": "Sign in with {provider}",
+      "passwordPlaceholder": "Password",
+      "submit": "Sign in",
+      "title": "Sign in to Agents Anywhere",
+      "userPlaceholder": "enter your username"
+    },
+    "passwordStrength": {
+      "0": "Too short",
+      "1": "Weak",
+      "2": "Fair",
+      "3": "Good",
+      "4": "Strong"
+    },
+    "preview": {
+      "home": "Home"
+    },
+    "register": {
+      "confirmPlaceholder": "Repeat password",
+      "description": "You're joining a self-hosted Agents Anywhere instance.",
+      "haveAccount": "Already have an account?",
+      "passwordMismatch": "Passwords don't match",
+      "passwordPlaceholder": "At least 8 characters",
+      "signIn": "Sign in",
+      "submit": "Create account",
+      "title": "Create an account",
+      "userHint": "3-32 chars · a-z 0-9 _ -",
+      "userOk": "looks good"
+    },
+    "theme": {
+      "dark": "Dark mode",
+      "label": "Color theme",
+      "light": "Light mode"
+    }
   }
 }
