@@ -793,6 +793,20 @@ src/features/runtime/api.ts
 src/features/admin/api.ts
 ```
 
+API rules:
+
+- `src/lib/api` owns transport concerns only: URL building, query params,
+  headers, token injection, JSON parsing, 204 handling, network failures, and
+  normalized `ApiError`.
+- Domain folders own business payloads and multi-step operations. For example,
+  auth login derives the password verifier before calling `/auth/login`; pages
+  should not know that detail.
+- API functions should return typed DTOs from `features/*/types.ts`.
+- Complex API flows should be class or hook methods with names that describe
+  product intent, not raw endpoints.
+- UI code should use `errorMessage` or `ApiError.kind` rather than parsing
+  backend payloads directly.
+
 Stateful flows should live in hooks:
 
 - `useAuthSession`
