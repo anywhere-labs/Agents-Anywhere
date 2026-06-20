@@ -52,7 +52,7 @@ export function FormField({
 }
 
 const inputVariants = cva(
-  "w-full border border-[var(--border-md)] bg-[var(--input-bg)] px-3 text-[length:var(--fs-base)] text-[color:var(--text)] outline-none transition-colors [-webkit-text-fill-color:var(--text)] placeholder:font-mono placeholder:text-[length:var(--fs-ui)] placeholder:text-[color:var(--text-faint)] hover:border-[var(--border-lg)] focus:border-[var(--accent)] focus:bg-[var(--bg-panel)] autofill:shadow-[0_0_0_1000px_var(--input-bg)_inset] focus:autofill:shadow-[0_0_0_1000px_var(--bg-panel)_inset] disabled:cursor-not-allowed disabled:opacity-55",
+  "w-full border border-[var(--border-md)] bg-[var(--input-bg)] px-3 text-[length:var(--fs-base)] text-[color:var(--text)] outline-none transition-colors placeholder:font-mono placeholder:text-[length:var(--fs-ui)] placeholder:text-[color:var(--text-faint)] hover:border-[var(--border-lg)] focus:border-[var(--accent)] focus:bg-[var(--bg-panel)] autofill:shadow-[0_0_0_1000px_var(--input-bg)_inset] autofill:[-webkit-text-fill-color:var(--text)] focus:autofill:shadow-[0_0_0_1000px_var(--bg-panel)_inset] focus:autofill:[-webkit-text-fill-color:var(--text)] disabled:cursor-not-allowed disabled:opacity-55",
   {
     variants: {
       size: {
