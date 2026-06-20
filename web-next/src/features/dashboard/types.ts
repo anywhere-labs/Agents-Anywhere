@@ -88,6 +88,31 @@ export type SessionListResponse = {
   serverTime: string;
 };
 
+export type SessionResponse = {
+  session: SessionView;
+  serverTime: string;
+};
+
+export type SessionCreateRequest = {
+  connectorId: string;
+  runtime: string;
+  title?: string;
+  cwd?: string;
+  approvalPolicy?: string;
+  sandbox?: string;
+};
+
+export type SessionCreateResponse = {
+  session: SessionView;
+  connectorResult: unknown;
+};
+
+export type SessionPatchRequest = {
+  title?: string;
+  pinned?: boolean;
+  archived?: boolean;
+};
+
 export type DashboardState = {
   me: AuthMe;
   connectors: ConnectorView[];

@@ -14,21 +14,35 @@
   },
   "dashboard": {
     "actions": {
+      "archive": "归档",
       "collapse": "折叠侧栏",
+      "expand": "展开侧栏",
+      "filter": "过滤最近会话",
       "newSession": "新会话",
+      "pairDevice": "配对设备",
+      "pin": "置顶",
       "refresh": "刷新",
       "retry": "重试",
       "search": "搜索",
-      "signOut": "退出登录"
+      "sessionOptions": "会话选项",
+      "signOut": "退出登录",
+      "unarchive": "取消归档",
+      "unpin": "取消置顶"
+    },
+    "account": {
+      "menu": "账号菜单"
     },
     "empty": {
       "noDevices": "还没有配对设备",
       "noDevicesDescription": "Agents Anywhere 需要一个在线连接器，才能创建或恢复会话。",
       "noDevicesTitle": "先配对一个设备",
+      "noOnlineDevice": "没有可用的在线设备或 Agent。",
       "noPinned": "没有置顶会话",
-      "noSessions": "没有最近会话",
+      "noSessions": "还没有会话",
       "noSessionsDescription": "准备好以后，可以从在线设备发起一个会话。",
+      "noSessionsMatch": "没有会话匹配过滤条件",
       "noSessionsTitle": "还没有会话",
+      "pairDevice": "点击 <here>这里</here> 配对设备",
       "title": "会话"
     },
     "errors": {
@@ -36,8 +50,36 @@
       "title": "无法加载主界面"
     },
     "nav": {
+      "service": "服务",
       "settings": "设置",
       "team": "团队"
+    },
+    "filters": {
+      "active": "活跃",
+      "all": "全部",
+      "archived": "已归档"
+    },
+    "new": {
+      "askApproval": "请求确认",
+      "attach": "添加附件",
+      "createSession": "创建会话",
+      "creating": "正在创建会话...",
+      "defaultWorkspace": "默认工作目录",
+      "device": "设备",
+      "deviceAndAgent": "设备和 Agent",
+      "fullAccess": "完全访问",
+      "homeDirectory": "Home 目录",
+      "permissionMode": "权限模式",
+      "placeholder": "描述任务...",
+      "readOnly": "只读"
+    },
+    "pair": {
+      "description": "完整的配对弹窗会在下一步迁移。这个入口先对齐当前 dashboard 流程。",
+      "title": "配对设备"
+    },
+    "placeholder": {
+      "description": "这个页面属于主界面迁移，后续会继续搬过来。",
+      "sessionDetail": "会话详情是下一个迁移目标。"
     },
     "roles": {
       "admin": "管理员",
@@ -56,6 +98,8 @@
       "none": "无",
       "overview": "会话概览",
       "runtime": "运行时",
+      "unread": "未读更新",
+      "untitled": "未命名会话",
       "updated": "更新时间",
       "workspace": "工作目录"
     },

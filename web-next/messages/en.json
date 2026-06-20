@@ -14,30 +14,72 @@
   },
   "dashboard": {
     "actions": {
+      "archive": "Archive",
       "collapse": "Collapse sidebar",
+      "expand": "Expand sidebar",
+      "filter": "Filter recents",
       "newSession": "New session",
+      "pairDevice": "Pair device",
+      "pin": "Pin",
       "refresh": "Refresh",
       "retry": "Retry",
       "search": "Search",
-      "signOut": "Sign out"
+      "sessionOptions": "Session options",
+      "signOut": "Sign out",
+      "unarchive": "Unarchive",
+      "unpin": "Unpin"
+    },
+    "account": {
+      "menu": "Account menu"
     },
     "empty": {
       "noDevices": "No devices paired",
       "noDevicesDescription": "Agents Anywhere needs an online connector before it can create or resume sessions.",
       "noDevicesTitle": "Pair a device to start",
+      "noOnlineDevice": "No online device with an agent is available.",
       "noPinned": "No pinned sessions",
-      "noSessions": "No recent sessions",
+      "noSessions": "No sessions yet",
       "noSessionsDescription": "Start a session from an online device when you are ready.",
+      "noSessionsMatch": "no sessions match filter",
       "noSessionsTitle": "No sessions yet",
+      "pairDevice": "Click <here>here</here> to pair a device",
       "title": "Sessions"
     },
     "errors": {
       "loadFailed": "Couldn't load dashboard.",
       "title": "Couldn't load dashboard"
     },
+    "filters": {
+      "active": "Active",
+      "all": "All",
+      "archived": "Archived"
+    },
     "nav": {
+      "service": "Service",
       "settings": "Settings",
       "team": "Team"
+    },
+    "new": {
+      "askApproval": "Ask approval",
+      "attach": "Attach files",
+      "createSession": "Create session",
+      "creating": "Creating session...",
+      "defaultWorkspace": "Default workspace",
+      "device": "Device",
+      "deviceAndAgent": "Device and agent",
+      "fullAccess": "Full access",
+      "homeDirectory": "Home directory",
+      "permissionMode": "Permission mode",
+      "placeholder": "Describe the task...",
+      "readOnly": "Read only"
+    },
+    "pair": {
+      "description": "The full pairing modal will be migrated next. This entry point matches the current dashboard flow.",
+      "title": "Pair a device"
+    },
+    "placeholder": {
+      "description": "This page is part of the dashboard migration and will be moved next.",
+      "sessionDetail": "Session detail is the next migration target."
     },
     "roles": {
       "admin": "Admin",
@@ -56,6 +98,8 @@
       "none": "None",
       "overview": "Session overview",
       "runtime": "Runtime",
+      "unread": "Unread updates",
+      "untitled": "Untitled session",
       "updated": "Updated",
       "workspace": "Workspace"
     },

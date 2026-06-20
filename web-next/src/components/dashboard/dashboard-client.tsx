@@ -2,36 +2,33 @@
 
 import * as React from "react";
 import {
+  Check,
   ChevronDown,
+  ChevronUp,
+  Filter,
+  Folder,
+  Hand,
+  Laptop,
   LogOut,
-  Monitor,
+  MoreHorizontal,
   PanelLeft,
+  Paperclip,
   Plus,
-  RefreshCcw,
   Search,
+  Send,
   Settings,
   Users
 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import {
+  ActionMenu,
+  AppDialog,
   ConfirmDialog,
-  EmptyState,
   Identicon,
-  LoadingState,
-  RuntimeBadge,
-  StatusBadge,
-  Tag
+  LoadingState
 } from "@/components/common";
-import {
-  AppShell,
-  BrandWord,
-  DetailHeader,
-  MainPanel,
-  SidebarShell,
-  ThemeSegment,
-  type ThemeMode
-} from "@/components/layout";
+import { BrandWord, type ThemeMode } from "@/components/layout";
 import { IconButton } from "@/components/common/icon-button";
 import { errorMessage } from "@/lib/api";
 import {
@@ -53,39 +50,88 @@ type DashboardAuthState =
   | { kind: "auth" }
   | { kind: "ready"; session: StoredSession; me: AuthMe };
 
+type DashboardRoute =
+  | { kind: "new" }
+  | { kind: "session"; id: string }
+  | { kind: "device"; id: string; workspace?: boolean }
+  | { kind: "team" }
+  | { kind: "service" }
+  | { kind: "settings" };
+
+type OpenSections = {
+  devices: boolean;
+  pinned: boolean;
+  recents: boolean;
+};
+
+type FilterState = {
+  status: "active" | "archived" | "all";
+};
+
+const DASHBOARD_RETRY_SYNC_MS = 10000;
+const HOVER_CLOSE_DELAY_MS = 180;
+const NEW_SESSION_TITLES = [
+  "What should we build next?",
+  "Where should the agent start?",
+  "What should we work on?",
+  "Give the agent a task.",
+  "Start from a workspace.",
+  "What needs attention?",
+  "Send work to the right device."
+] as const;
+
 export function DashboardClient() {
   const t = useTranslations("dashboard");
   const common = useTranslations("common");
-  const [theme, setTheme] = React.useState<ThemeMode>("dark");
+  const [theme] = React.useState<ThemeMode>("dark");
   const [authState, setAuthState] = React.useState<DashboardAuthState>(() => {
     const session = loadStoredSession();
     return session ? { kind: "checking" } : { kind: "auth" };
   });
+  const [me, setMe] = React.useState<AuthMe | null>(null);
   const [connectors, setConnectors] = React.useState<ConnectorView[]>([]);
   const [sessions, setSessions] = React.useState<SessionView[]>([]);
-  const [loading, setLoading] = React.useState(true);
-  const [error, setError] = React.useState<string | null>(null);
-  const [selectedId, setSelectedId] = React.useState<string | null>(null);
+  const [sessionsLoading, setSessionsLoading] = React.useState(true);
+  const [route, setRoute] = React.useState<DashboardRoute>(() => readRoute());
   const [collapsed, setCollapsed] = React.useState(false);
+  const [flyout, setFlyout] = React.useState(false);
+  const [openSections, setOpenSections] = React.useState<OpenSections>({
+    devices: true,
+    pinned: true,
+    recents: true
+  });
+  const [filters, setFilters] = React.useState<FilterState>({ status: "active" });
   const [signOutOpen, setSignOutOpen] = React.useState(false);
+  const [pairDialogOpen, setPairDialogOpen] = React.useState(false);
+  const [dashboardError, setDashboardError] = React.useState<string | null>(null);
+  const flyoutTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const session = authState.kind === "ready" ? authState.session : null;
 
   React.useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
 
   React.useEffect(() => {
+    const onHashChange = () => setRoute(readRoute());
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
+
+  React.useEffect(() => {
     if (authState.kind !== "checking") return;
-    const session = loadStoredSession();
-    if (!session) {
+    const stored = loadStoredSession();
+    if (!stored) {
       setAuthState({ kind: "auth" });
       return;
     }
 
     let cancelled = false;
     authApi
-      .me(session.accessToken)
-      .then((me) => {
-        if (!cancelled) setAuthState({ kind: "ready", session, me });
+      .me(stored.accessToken)
+      .then((nextMe) => {
+        if (cancelled) return;
+        setMe(nextMe);
+        setAuthState({ kind: "ready", session: stored, me: nextMe });
       })
       .catch(() => {
         if (cancelled) return;
@@ -98,12 +144,30 @@ export function DashboardClient() {
     };
   }, [authState.kind]);
 
-  const session = authState.kind === "ready" ? authState.session : null;
+  React.useEffect(() => {
+    if (authState.kind !== "auth") return;
+    window.location.replace(`/${document.documentElement.lang || "en"}/login`);
+  }, [authState.kind]);
+
+  React.useEffect(() => {
+    if (!session) return;
+    let cancelled = false;
+    authApi
+      .me(session.accessToken)
+      .then((fresh) => {
+        if (!cancelled) setMe(fresh);
+      })
+      .catch(() => {
+        if (!cancelled) signOut();
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.accessToken]);
 
   const refreshDashboard = React.useCallback(async () => {
     if (!session) return;
-    setLoading(true);
-    setError(null);
+    setDashboardError(null);
     try {
       const [connectorResult, sessionResult] = await Promise.all([
         dashboardApi.listConnectors(session.accessToken),
@@ -111,16 +175,10 @@ export function DashboardClient() {
       ]);
       setConnectors(sortConnectors(connectorResult.connectors));
       setSessions(sortSessions(sessionResult.sessions));
-      setSelectedId((current) => {
-        if (current && sessionResult.sessions.some((item) => item.id === current)) {
-          return current;
-        }
-        return sessionResult.sessions[0]?.id ?? null;
-      });
     } catch (err) {
-      setError(errorMessage(err, t("errors.loadFailed")));
+      setDashboardError(errorMessage(err, t("errors.loadFailed")));
     } finally {
-      setLoading(false);
+      setSessionsLoading(false);
     }
   }, [session, t]);
 
@@ -129,26 +187,80 @@ export function DashboardClient() {
   }, [refreshDashboard]);
 
   React.useEffect(() => {
-    if (authState.kind !== "auth") return;
-    window.location.replace(`/${document.documentElement.lang || "en"}/login`);
-  }, [authState.kind]);
+    if (!session) return;
+    let closed = false;
+    let eventSource: EventSource | null = null;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
-  const selectedSession =
-    selectedId != null
-      ? sessions.find((item) => item.id === selectedId) ?? null
-      : null;
+    const scheduleRefresh = (delay = 0) => {
+      if (closed) return;
+      if (retryTimer) clearTimeout(retryTimer);
+      retryTimer = setTimeout(() => {
+        retryTimer = null;
+        void refreshDashboard();
+      }, delay);
+    };
+
+    try {
+      eventSource = new EventSource(dashboardApi.dashboardEventsUrl(session.accessToken));
+      eventSource.onmessage = () => scheduleRefresh(0);
+      eventSource.onerror = () => scheduleRefresh(DASHBOARD_RETRY_SYNC_MS);
+    } catch {
+      scheduleRefresh(DASHBOARD_RETRY_SYNC_MS);
+    }
+
+    return () => {
+      closed = true;
+      eventSource?.close();
+      if (retryTimer) clearTimeout(retryTimer);
+    };
+  }, [session, refreshDashboard]);
 
   if (authState.kind === "checking") {
     return (
-      <main className="flex h-screen w-screen items-center justify-center bg-[var(--bg)]">
+      <main className="aa-dash-boot">
         <LoadingState label={t("status.restoring")} />
       </main>
     );
   }
 
-  if (authState.kind === "auth") {
+  if (authState.kind === "auth" || !session || !me) {
     return null;
   }
+
+  const visibleConnectors = sortConnectors(connectors);
+  const visibleSessions = sessions.filter((item) => {
+    if (filters.status === "active") return !item.archived;
+    if (filters.status === "archived") return item.archived;
+    return true;
+  });
+  const activeSession = route.kind === "session"
+    ? sessions.find((item) => item.id === route.id) ?? null
+    : null;
+  const activeDevice = route.kind === "device"
+    ? visibleConnectors.find((item) => item.id === route.id) ?? null
+    : null;
+  const canStartSession = visibleConnectors.some(
+    (connector) =>
+      connector.status === "online" &&
+      Object.keys(connector.runtimeCapabilities.attached).length > 0,
+  );
+
+  const navigate = (nextRoute: DashboardRoute) => {
+    writeRoute(nextRoute);
+    setRoute(nextRoute);
+    setFlyout(false);
+  };
+
+  const showFlyout = () => {
+    if (!canStartSession && sessions.length === 0) return;
+    if (flyoutTimer.current) clearTimeout(flyoutTimer.current);
+    setFlyout(true);
+  };
+  const hideFlyout = () => {
+    if (flyoutTimer.current) clearTimeout(flyoutTimer.current);
+    flyoutTimer.current = setTimeout(() => setFlyout(false), HOVER_CLOSE_DELAY_MS);
+  };
 
   const signOut = () => {
     clearStoredSession();
@@ -156,38 +268,124 @@ export function DashboardClient() {
     window.location.replace(`/${document.documentElement.lang || "en"}/login`);
   };
 
+  const toggleSection = (key: keyof OpenSections) => {
+    setOpenSections((current) => ({ ...current, [key]: !current[key] }));
+  };
+
+  const patchSession = (id: string, patch: { pinned?: boolean; archived?: boolean }) => {
+    setSessions((current) =>
+      current.map((item) => (item.id === id ? { ...item, ...patch } : item)),
+    );
+    dashboardApi.patchSession(session.accessToken, id, patch).then(
+      (result) => {
+        setSessions((current) => mergeSessionPatches(current, [result.session]));
+      },
+      () => void refreshDashboard(),
+    );
+  };
+
+  const markRead = (id: string) => {
+    setSessions((current) =>
+      current.map((item) =>
+        item.id === id && item.unread
+          ? { ...item, unread: false, lastReadSeq: item.updatedSeq }
+          : item,
+      ),
+    );
+    dashboardApi.markSessionRead(session.accessToken, id).then(
+      (result) => setSessions((current) => mergeSessionPatches(current, [result.session])),
+      () => void refreshDashboard(),
+    );
+  };
+
+  const createSession = async (body: {
+    connectorId: string;
+    runtime: string;
+    title?: string;
+    cwd?: string;
+    approvalPolicy?: string;
+    sandbox?: string;
+  }) => {
+    const created = await dashboardApi.createSession(session.accessToken, body);
+    setSessions((current) => sortSessions([created.session, ...current.filter((item) => item.id !== created.session.id)]));
+    navigate({ kind: "session", id: created.session.id });
+  };
+
+  const sidebar = (
+    <DashboardSidebar
+      me={me}
+      connectors={visibleConnectors}
+      sessions={visibleSessions}
+      sessionsLoading={sessionsLoading}
+      activeRoute={route}
+      canStartSession={canStartSession}
+      openSections={openSections}
+      filters={filters}
+      onSetFilters={setFilters}
+      onToggleSection={toggleSection}
+      onToggleCollapse={() => setCollapsed(true)}
+      onNewSession={() => navigate({ kind: "new" })}
+      onNewDevice={() => setPairDialogOpen(true)}
+      onPickDevice={(id) => navigate({ kind: "device", id })}
+      onPickSession={(id) => {
+        markRead(id);
+        navigate({ kind: "session", id });
+      }}
+      onPatchSession={patchSession}
+      onOpenSettings={() => navigate({ kind: "settings" })}
+      onOpenTeam={() => navigate({ kind: "team" })}
+      onOpenService={() => navigate({ kind: "service" })}
+      onSignOut={() => setSignOutOpen(true)}
+    />
+  );
+
   return (
     <>
-      <AppShell
-        collapsed={collapsed}
-        sidebar={
-          <DashboardSidebar
-            me={authState.me}
-            theme={theme}
-            collapsed={collapsed}
-            connectors={connectors}
-            sessions={sessions}
-            loading={loading}
-            selectedId={selectedId}
-            onSelectSession={setSelectedId}
-            onToggleCollapse={() => setCollapsed((next) => !next)}
-            onRefresh={() => void refreshDashboard()}
-            onSignOut={() => setSignOutOpen(true)}
-            onThemeChange={setTheme}
-          />
-        }
-      >
-        <MainPanel>
+      <div className={cn("aa-dash-app", collapsed && "no-sb")}>
+        {!collapsed ? sidebar : null}
+        <div className="aa-dash-main">
+          {collapsed ? (
+            <div
+              className="aa-dash-collapsed-zone"
+              onMouseEnter={showFlyout}
+              onMouseLeave={hideFlyout}
+            >
+              <IconButton
+                label={t("actions.expand")}
+                size="sm"
+                onClick={() => {
+                  setCollapsed(false);
+                  setFlyout(false);
+                }}
+              >
+                <PanelLeft aria-hidden="true" />
+              </IconButton>
+            </div>
+          ) : null}
           <DashboardMain
-            loading={loading}
-            error={error}
+            route={route}
+            connectors={visibleConnectors}
             sessions={sessions}
-            connectors={connectors}
-            selectedSession={selectedSession}
-            onRefresh={() => void refreshDashboard()}
+            activeSession={activeSession}
+            activeDevice={activeDevice}
+            loading={sessionsLoading}
+            error={dashboardError}
+            onNewDevice={() => setPairDialogOpen(true)}
+            onCreateSession={createSession}
+            onNavigate={navigate}
           />
-        </MainPanel>
-      </AppShell>
+        </div>
+      </div>
+
+      {collapsed && flyout ? (
+        <div
+          className="aa-dash-sb-flyout"
+          onMouseEnter={showFlyout}
+          onMouseLeave={hideFlyout}
+        >
+          {sidebar}
+        </div>
+      ) : null}
 
       <ConfirmDialog
         open={signOutOpen}
@@ -198,442 +396,748 @@ export function DashboardClient() {
         cancelLabel={common("cancel")}
         onConfirm={signOut}
       />
+
+      <AppDialog
+        open={pairDialogOpen}
+        onOpenChange={setPairDialogOpen}
+        title={t("pair.title")}
+        description={t("pair.description")}
+        size="sm"
+        footer={
+          <Button type="button" variant="emphasis" onClick={() => setPairDialogOpen(false)}>
+            {common("continue")}
+          </Button>
+        }
+      />
     </>
   );
 }
 
 type DashboardSidebarProps = {
   me: AuthMe;
-  theme: ThemeMode;
-  collapsed: boolean;
   connectors: ConnectorView[];
   sessions: SessionView[];
-  loading: boolean;
-  selectedId: string | null;
-  onSelectSession: (id: string) => void;
+  sessionsLoading: boolean;
+  activeRoute: DashboardRoute;
+  canStartSession: boolean;
+  openSections: OpenSections;
+  filters: FilterState;
+  onSetFilters: (filters: FilterState) => void;
+  onToggleSection: (key: keyof OpenSections) => void;
   onToggleCollapse: () => void;
-  onRefresh: () => void;
+  onNewSession: () => void;
+  onNewDevice: () => void;
+  onPickDevice: (id: string) => void;
+  onPickSession: (id: string) => void;
+  onPatchSession: (id: string, patch: { pinned?: boolean; archived?: boolean }) => void;
+  onOpenSettings: () => void;
+  onOpenTeam: () => void;
+  onOpenService: () => void;
   onSignOut: () => void;
-  onThemeChange: (theme: ThemeMode) => void;
 };
 
 function DashboardSidebar({
   me,
-  theme,
-  collapsed,
   connectors,
   sessions,
-  loading,
-  selectedId,
-  onSelectSession,
+  sessionsLoading,
+  activeRoute,
+  canStartSession,
+  openSections,
+  filters,
+  onSetFilters,
+  onToggleSection,
   onToggleCollapse,
-  onRefresh,
-  onSignOut,
-  onThemeChange
+  onNewSession,
+  onNewDevice,
+  onPickDevice,
+  onPickSession,
+  onPatchSession,
+  onOpenSettings,
+  onOpenTeam,
+  onOpenService,
+  onSignOut
 }: DashboardSidebarProps) {
   const t = useTranslations("dashboard");
-  const pinned = sessions.filter((session) => session.pinned && !session.archived);
-  const recents = sessions.filter((session) => !session.pinned && !session.archived);
+  const [userMenuOpen, setUserMenuOpen] = React.useState(false);
+  const pinned = sessions.filter((item) => item.pinned);
+  const recents = sessions.filter((item) => !item.pinned);
+  const noSessionsAtAll = sessions.length === 0;
 
   return (
-    <SidebarShell
-      mini={collapsed}
-      header={
-        <div className="flex h-full items-center justify-between gap-1">
-          {!collapsed ? <BrandWord className="text-[length:20px]" /> : null}
-          <div className="ml-auto flex items-center">
-            <IconButton label={t("actions.search")} size="sm" disabled>
-              <Search aria-hidden="true" />
-            </IconButton>
-            <IconButton label={t("actions.collapse")} size="sm" onClick={onToggleCollapse}>
-              <PanelLeft aria-hidden="true" />
-            </IconButton>
-          </div>
+    <aside className="aa-dash-sb">
+      <div className="aa-dash-sb-hd">
+        <div className="brand">
+          <BrandWord className="text-[length:20px]" />
         </div>
-      }
-      footer={
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            className="flex min-w-0 flex-1 items-center gap-2 rounded-[var(--r)] border-0 bg-transparent p-1 text-left hover:bg-[var(--bg-hover)]"
-          >
-            {me.avatar ? (
-              <img
-                src={me.avatar}
-                alt=""
-                className="size-[30px] shrink-0 rounded-full object-cover"
-              />
-            ) : (
-              <Identicon id={me.userId} size={30} />
-            )}
-            {!collapsed ? (
-              <span className="min-w-0 flex-1">
-                <span className="block overflow-hidden text-ellipsis whitespace-nowrap text-[length:var(--fs-ui)] font-medium text-[color:var(--text)]">
-                  {me.userId}
-                </span>
-                <span className="block text-[length:var(--fs-xs)] text-[color:var(--text-mut)]">
-                  {me.role === "admin" ? t("roles.admin") : t("roles.member")}
-                </span>
-              </span>
-            ) : null}
-          </button>
-          {!collapsed ? (
-            <ThemeSegment
-              value={theme}
-              onValueChange={onThemeChange}
-              label={t("theme.label")}
-              lightLabel={t("theme.light")}
-              darkLabel={t("theme.dark")}
-            />
-          ) : null}
+        <div className="acts">
+          <IconButton label={t("actions.search")} size="sm" disabled className="opacity-40">
+            <Search aria-hidden="true" />
+          </IconButton>
+          <IconButton label={t("actions.collapse")} size="sm" onClick={onToggleCollapse}>
+            <PanelLeft aria-hidden="true" />
+          </IconButton>
         </div>
-      }
-    >
-      <div className="px-2 pb-2">
-        <Button
-          type="button"
-          variant="ghost"
-          className="h-[34px] w-full justify-start px-3 text-[length:var(--fs-ui)] font-medium text-[color:var(--text)]"
-          disabled={connectors.length === 0}
-        >
-          <Plus aria-hidden="true" />
-          {!collapsed ? (
-            <>
-              <span>{t("actions.newSession")}</span>
-              <span className="ml-auto font-mono text-[length:var(--fs-2xs)] text-[color:var(--text-faint)]">
-                ⌘N
-              </span>
-            </>
-          ) : null}
-        </Button>
       </div>
 
-      {!collapsed ? (
-        <div className="min-h-0">
-          <SidebarSection title={t("sections.devices")} action={onRefresh}>
-            {connectors.length === 0 ? (
-              <SidebarEmpty>{t("empty.noDevices")}</SidebarEmpty>
-            ) : (
-              connectors.map((connector) => (
-                <DeviceRow key={connector.id} connector={connector} />
-              ))
-            )}
-          </SidebarSection>
+      <button
+        type="button"
+        className="aa-dash-sb-new"
+        title={canStartSession ? t("actions.newSession") : t("empty.noOnlineDevice")}
+        onClick={onNewSession}
+      >
+        <Plus aria-hidden="true" />
+        <span>{t("actions.newSession")}</span>
+        <span className="shortcut">⌘N</span>
+      </button>
 
-          <SidebarSection title={t("sections.pinned")}>
-            {loading ? (
-              <SidebarSkeleton />
-            ) : pinned.length === 0 ? (
-              <SidebarEmpty>{t("empty.noPinned")}</SidebarEmpty>
-            ) : (
-              pinned.map((session) => (
+      <div className="aa-dash-sb-scroll">
+        <SidebarSection
+          label={t("sections.devices")}
+          open={openSections.devices}
+          onToggle={() => onToggleSection("devices")}
+          action={
+            <button type="button" className="act" title={t("actions.pairDevice")} onClick={(event) => {
+              event.stopPropagation();
+              onNewDevice();
+            }}>
+              <Plus aria-hidden="true" />
+            </button>
+          }
+        >
+          {connectors.length === 0 ? (
+            <button type="button" className="aa-dash-sb-empty clickable" onClick={onNewDevice}>
+              {t.rich("empty.pairDevice", {
+                here: (chunks) => <span className="here">{chunks}</span>
+              })}
+            </button>
+          ) : (
+            connectors.map((connector) => (
+              <button
+                type="button"
+                key={connector.id}
+                className={cn(
+                  "aa-dash-dev",
+                  connector.status,
+                  activeRoute.kind === "device" && activeRoute.id === connector.id && "active",
+                )}
+                onClick={() => onPickDevice(connector.id)}
+              >
+                <span className="status" />
+                <span className="name">{connector.name}</span>
+              </button>
+            ))
+          )}
+        </SidebarSection>
+
+        {pinned.length > 0 ? (
+          <SidebarSection
+            label={t("sections.pinned")}
+            open={openSections.pinned}
+            onToggle={() => onToggleSection("pinned")}
+          >
+            <div className="aa-dash-sess-list">
+              {pinned.map((item) => (
                 <SessionRow
-                  key={session.id}
-                  session={session}
-                  active={session.id === selectedId}
-                  onSelect={onSelectSession}
+                  key={item.id}
+                  session={item}
+                  active={activeRoute.kind === "session" && activeRoute.id === item.id}
+                  onPick={onPickSession}
+                  onPatch={onPatchSession}
                 />
-              ))
-            )}
+              ))}
+            </div>
           </SidebarSection>
+        ) : null}
 
-          <SidebarSection title={t("sections.recents")}>
-            {loading ? (
-              <SidebarSkeleton />
-            ) : recents.length === 0 ? (
-              <SidebarEmpty>{t("empty.noSessions")}</SidebarEmpty>
-            ) : (
-              recents.map((session) => (
+        <SidebarSection
+          label={t("sections.recents")}
+          open={openSections.recents}
+          onToggle={() => onToggleSection("recents")}
+          action={
+            !noSessionsAtAll ? (
+              <ActionMenu
+                label={t("actions.filter")}
+                items={[
+                  {
+                    id: "active",
+                    label: t("filters.active"),
+                    icon: filters.status === "active" ? <Check /> : undefined,
+                    onSelect: () => onSetFilters({ status: "active" })
+                  },
+                  {
+                    id: "archived",
+                    label: t("filters.archived"),
+                    icon: filters.status === "archived" ? <Check /> : undefined,
+                    onSelect: () => onSetFilters({ status: "archived" })
+                  },
+                  {
+                    id: "all",
+                    label: t("filters.all"),
+                    icon: filters.status === "all" ? <Check /> : undefined,
+                    onSelect: () => onSetFilters({ status: "all" })
+                  }
+                ]}
+              >
+                <button
+                  type="button"
+                  className={cn("act", filters.status !== "active" && "has-filter")}
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <Filter aria-hidden="true" />
+                </button>
+              </ActionMenu>
+            ) : null
+          }
+        >
+          {noSessionsAtAll && sessionsLoading ? (
+            <SessionSkeletons />
+          ) : noSessionsAtAll ? (
+            <div className="aa-dash-sb-empty">{t("empty.noSessions")}</div>
+          ) : recents.length === 0 ? (
+            <div className="aa-dash-sb-empty mono">{t("empty.noSessionsMatch")}</div>
+          ) : (
+            <div className="aa-dash-sess-list">
+              {recents.map((item) => (
                 <SessionRow
-                  key={session.id}
-                  session={session}
-                  active={session.id === selectedId}
-                  onSelect={onSelectSession}
+                  key={item.id}
+                  session={item}
+                  active={activeRoute.kind === "session" && activeRoute.id === item.id}
+                  onPick={onPickSession}
+                  onPatch={onPatchSession}
                 />
-              ))
-            )}
-          </SidebarSection>
+              ))}
+            </div>
+          )}
+        </SidebarSection>
+      </div>
 
-          <div className="mt-3 border-t border-[var(--border)] px-2 pt-2">
-            <SidebarAction icon={<Users aria-hidden="true" />} label={t("nav.team")} disabled />
-            <SidebarAction icon={<Settings aria-hidden="true" />} label={t("nav.settings")} disabled />
-            <SidebarAction icon={<LogOut aria-hidden="true" />} label={t("actions.signOut")} onClick={onSignOut} />
+      <div className="aa-dash-sb-foot">
+        <button
+          type="button"
+          className="user-btn"
+          onClick={() => setUserMenuOpen((open) => !open)}
+          title={t("account.menu")}
+        >
+          {me.avatar ? (
+            <img className="avatar-img" src={me.avatar} alt="" />
+          ) : (
+            <Identicon id={me.userId} size={30} />
+          )}
+          <span className="who">
+            <span className="name">{me.userId}</span>
+            <span className="role">{me.role === "admin" ? t("roles.admin") : t("roles.member")}</span>
+          </span>
+          <ChevronUp className="caret" aria-hidden="true" />
+        </button>
+
+        {userMenuOpen ? (
+          <div className="aa-dash-user-menu">
+            <div className="head">
+              {me.avatar ? (
+                <img className="avatar-img" src={me.avatar} alt="" />
+              ) : (
+                <Identicon id={me.userId} size={32} />
+              )}
+              <span className="who">
+                <span className="id">{me.userId}</span>
+                <span className="role">{me.role === "admin" ? t("roles.admin") : t("roles.member")}</span>
+              </span>
+            </div>
+            <MenuButton icon={<Settings />} label={t("nav.settings")} onClick={onOpenSettings} />
+            {me.role === "admin" ? (
+              <>
+                <MenuButton icon={<Users />} label={t("nav.team")} onClick={onOpenTeam} />
+                <MenuButton icon={<Settings />} label={t("nav.service")} onClick={onOpenService} />
+              </>
+            ) : null}
+            <div className="sep" />
+            <MenuButton icon={<LogOut />} label={t("actions.signOut")} onClick={onSignOut} />
           </div>
-        </div>
-      ) : null}
-    </SidebarShell>
+        ) : null}
+      </div>
+    </aside>
   );
 }
 
 function SidebarSection({
-  title,
+  label,
+  open,
   action,
-  children
+  children,
+  onToggle
 }: {
-  title: React.ReactNode;
-  action?: () => void;
+  label: React.ReactNode;
+  open: boolean;
+  action?: React.ReactNode;
   children: React.ReactNode;
+  onToggle: () => void;
 }) {
   return (
-    <section>
-      <div className="mx-0.5 flex items-center gap-1.5 px-3 pb-1 pt-3.5">
-        <ChevronDown className="size-3 text-[color:var(--text-faint)]" aria-hidden="true" />
-        <h2 className="m-0 text-[length:var(--fs-xs)] font-medium text-[color:var(--text-faint)]">
-          {title}
-        </h2>
-        {action ? (
-          <button
-            type="button"
-            className="ml-auto inline-flex size-5 items-center justify-center rounded-[5px] border-0 bg-transparent p-0 text-[color:var(--text-mut)] hover:bg-[var(--bg-hover)] hover:text-[color:var(--text)]"
-            onClick={action}
-          >
-            <RefreshCcw className="size-3" aria-hidden="true" />
-          </button>
-        ) : null}
+    <>
+      <div className="aa-dash-sb-section" onClick={onToggle}>
+        <span className={cn("chev", !open && "closed")}>
+          <ChevronDown aria-hidden="true" />
+        </span>
+        <h4>{label}</h4>
+        {action ? <div className="section-actions">{action}</div> : null}
       </div>
-      {children}
-    </section>
-  );
-}
-
-function SidebarEmpty({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="mx-2 mb-1 rounded-md px-2 py-1.5 text-[length:var(--fs-xs)] leading-[1.3] text-[color:var(--text-mut)]">
-      {children}
-    </div>
-  );
-}
-
-function SidebarSkeleton() {
-  return (
-    <div className="flex flex-col px-2">
-      {[0, 1, 2].map((item) => (
-        <div key={item} className="mb-px flex h-8 items-center gap-2 rounded-[7px] px-2">
-          <span className="size-1.5 rounded-full bg-[var(--bg-elev)]" />
-          <span className="h-3 rounded bg-[var(--bg-elev)]" style={{ width: `${58 + item * 12}%` }} />
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function DeviceRow({ connector }: { connector: ConnectorView }) {
-  return (
-    <div className="mx-2 mb-px flex h-8 items-center gap-2 rounded-[7px] px-2 text-[length:var(--fs-ui)] text-[color:var(--text-mid)] hover:bg-[var(--bg-hover)]">
-      <span
-        className={cn(
-          "size-1.5 rounded-full",
-          connector.status === "online" ? "bg-[oklch(0.72_0.14_152)]" : "bg-[var(--text-faint)]",
-        )}
-      />
-      <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
-        {connector.name}
-      </span>
-    </div>
+      {open ? children : null}
+    </>
   );
 }
 
 function SessionRow({
   session,
   active,
-  onSelect
+  onPick,
+  onPatch
 }: {
   session: SessionView;
   active: boolean;
-  onSelect: (id: string) => void;
+  onPick: (id: string) => void;
+  onPatch: (id: string, patch: { pinned?: boolean; archived?: boolean }) => void;
 }) {
+  const t = useTranslations("dashboard");
   const waiting = session.status === "waiting_approval";
   const attention = waiting || session.unread;
   return (
-    <button
-      type="button"
+    <div
       className={cn(
-        "mx-2 mb-px flex h-8 w-[calc(100%-16px)] items-center gap-2 rounded-[7px] border-0 bg-transparent px-2 text-left hover:bg-[var(--bg-hover)]",
-        active && "bg-[var(--bg-active)]",
+        "aa-dash-sess",
+        active && "active",
+        attention && "attention",
+        waiting && "waiting",
+        session.archived && "archived",
       )}
-      onClick={() => onSelect(session.id)}
+      onClick={() => onPick(session.id)}
     >
-      <span
-        className={cn(
-          "size-1.5 shrink-0 rounded-full border border-[var(--text-faint)]",
-          attention && "border-transparent bg-[var(--accent)]",
-          waiting && "bg-[var(--info)]",
-        )}
-      />
-      <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[length:var(--fs-ui)] text-[color:var(--text)]">
-        {session.title || "Untitled session"}
-      </span>
-    </button>
+      <span className="dot" title={waiting ? t("sessionStatus.waiting_approval") : session.unread ? t("session.unread") : t("sessionStatus.idle")} />
+      <span className="title">{session.title || t("session.untitled")}</span>
+      <ActionMenu
+        label={t("actions.sessionOptions")}
+        items={[
+          {
+            id: "pin",
+            label: session.pinned ? t("actions.unpin") : t("actions.pin"),
+            onSelect: () => onPatch(session.id, { pinned: !session.pinned })
+          },
+          {
+            id: "archive",
+            label: session.archived ? t("actions.unarchive") : t("actions.archive"),
+            destructive: !session.archived,
+            onSelect: () => onPatch(session.id, { archived: !session.archived })
+          }
+        ]}
+      >
+        <button
+          type="button"
+          className="more"
+          title={t("actions.sessionOptions")}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <MoreHorizontal aria-hidden="true" />
+        </button>
+      </ActionMenu>
+    </div>
   );
 }
 
-function SidebarAction({
+function SessionSkeletons() {
+  return (
+    <div className="aa-dash-sess-list">
+      {[0, 1, 2, 3, 4, 5].map((item) => (
+        <div key={item} className="aa-dash-sess skeleton">
+          <span className="skel dot-skel" />
+          <span className="skel title-skel" style={{ width: `${55 + ((item * 11) % 30)}%` }} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MenuButton({
   icon,
   label,
-  onClick,
-  disabled = false
+  onClick
 }: {
   icon: React.ReactNode;
   label: React.ReactNode;
-  onClick?: () => void;
-  disabled?: boolean;
+  onClick: () => void;
 }) {
   return (
-    <button
-      type="button"
-      className="mb-px flex h-8 w-full items-center gap-2 rounded-[7px] border-0 bg-transparent px-2 text-left text-[length:var(--fs-ui)] text-[color:var(--text-mid)] hover:bg-[var(--bg-hover)] hover:text-[color:var(--text)] disabled:cursor-not-allowed disabled:opacity-45"
-      onClick={onClick}
-      disabled={disabled}
-    >
-      <span className="[&_svg]:size-4">{icon}</span>
-      <span>{label}</span>
+    <button type="button" className="item" onClick={onClick}>
+      <span className="[&_svg]:size-3.5">{icon}</span>
+      {label}
     </button>
   );
 }
 
-type DashboardMainProps = {
-  loading: boolean;
-  error: string | null;
-  sessions: SessionView[];
-  connectors: ConnectorView[];
-  selectedSession: SessionView | null;
-  onRefresh: () => void;
-};
-
 function DashboardMain({
+  route,
+  connectors,
+  sessions,
+  activeSession,
+  activeDevice,
   loading,
   error,
-  sessions,
-  connectors,
-  selectedSession,
-  onRefresh
-}: DashboardMainProps) {
+  onNewDevice,
+  onCreateSession,
+  onNavigate
+}: {
+  route: DashboardRoute;
+  connectors: ConnectorView[];
+  sessions: SessionView[];
+  activeSession: SessionView | null;
+  activeDevice: ConnectorView | null;
+  loading: boolean;
+  error: string | null;
+  onNewDevice: () => void;
+  onCreateSession: (body: {
+    connectorId: string;
+    runtime: string;
+    title?: string;
+    cwd?: string;
+    approvalPolicy?: string;
+    sandbox?: string;
+  }) => Promise<void>;
+  onNavigate: (route: DashboardRoute) => void;
+}) {
   const t = useTranslations("dashboard");
 
-  if (loading && sessions.length === 0) {
-    return <LoadingState className="h-full" label={t("status.loadingDashboard")} />;
+  if (route.kind === "session" && activeSession) {
+    return <SessionPlaceholder session={activeSession} />;
   }
-
-  if (error) {
-    return (
-      <div className="flex h-full items-center justify-center p-6">
-        <EmptyState
-          title={t("errors.title")}
-          description={error}
-          action={
-            <Button type="button" variant="emphasis" onClick={onRefresh}>
-              <RefreshCcw aria-hidden="true" />
-              {t("actions.retry")}
-            </Button>
-          }
-        />
-      </div>
-    );
+  if (route.kind === "device" && activeDevice) {
+    return <DevicePlaceholder device={activeDevice} sessions={sessions} onNewSession={() => onNavigate({ kind: "new" })} />;
   }
-
-  if (!selectedSession) {
-    return (
-      <div className="flex h-full flex-col bg-[var(--bg)]">
-        <DetailHeader
-          title={t("empty.title")}
-          actions={
-            <Button type="button" variant="normal" size="sm" onClick={onRefresh}>
-              <RefreshCcw aria-hidden="true" />
-              {t("actions.refresh")}
-            </Button>
-          }
-        />
-        <div className="flex min-h-0 flex-1 items-center justify-center p-6">
-          <EmptyState
-            title={connectors.length === 0 ? t("empty.noDevicesTitle") : t("empty.noSessionsTitle")}
-            description={connectors.length === 0 ? t("empty.noDevicesDescription") : t("empty.noSessionsDescription")}
-            action={
-              <Button type="button" variant="emphasis" disabled={connectors.length === 0}>
-                <Plus aria-hidden="true" />
-                {t("actions.newSession")}
-              </Button>
-            }
-          />
-        </div>
-      </div>
-    );
+  if (route.kind === "team" || route.kind === "service" || route.kind === "settings") {
+    return <SimplePage title={t(`nav.${route.kind}`)} description={t("placeholder.description")} />;
   }
 
   return (
-    <div className="flex h-full flex-col bg-[var(--bg)]">
-      <DetailHeader
-        title={selectedSession.title || "Untitled session"}
-        chips={
-          <>
-            <RuntimeBadge runtime={selectedSession.runtime} />
-            <StatusBadge tone={statusTone(selectedSession.status)}>
-              {t(`sessionStatus.${selectedSession.status}`)}
-            </StatusBadge>
-            {selectedSession.cwd ? <Tag>{workspaceLabel(selectedSession.cwd)}</Tag> : null}
-          </>
-        }
-        actions={
-          <Button type="button" variant="normal" size="sm" onClick={onRefresh}>
-            <RefreshCcw aria-hidden="true" />
-            {t("actions.refresh")}
-          </Button>
-        }
-      />
-      <div className="min-h-0 flex-1 overflow-auto p-5">
-        <div className="grid max-w-5xl gap-4 lg:grid-cols-[minmax(0,1.25fr)_minmax(280px,0.75fr)]">
-          <section className="rounded-[var(--r)] border border-[var(--border)] bg-[var(--bg-panel)] p-4">
-            <div className="mb-4 flex items-center gap-2">
-              <Monitor className="size-4 text-[color:var(--text-mut)]" aria-hidden="true" />
-              <h2 className="m-0 text-[length:var(--fs-md)] font-semibold text-[color:var(--text)]">
-                {t("session.overview")}
-              </h2>
-            </div>
-            <dl className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-3 text-[length:var(--fs-sm)]">
-              <Meta label={t("session.runtime")} value={selectedSession.runtime} mono />
-              <Meta label={t("session.device")} value={connectorName(connectors, selectedSession.connectorId)} />
-              <Meta label={t("session.workspace")} value={selectedSession.cwd ?? t("session.none")} mono />
-              <Meta label={t("session.external")} value={selectedSession.externalSessionId ?? t("session.none")} mono />
-              <Meta label={t("session.updated")} value={formatDate(selectedSession.sortAt ?? selectedSession.lastActivityAt)} />
-            </dl>
-          </section>
+    <NewSessionHome
+      connectors={connectors}
+      sessions={sessions}
+      loading={loading}
+      error={error}
+      onNewDevice={onNewDevice}
+      onCreateSession={onCreateSession}
+    />
+  );
+}
 
-          <section className="rounded-[var(--r)] border border-[var(--border)] bg-[var(--bg-panel)] p-4">
-            <h2 className="m-0 text-[length:var(--fs-md)] font-semibold text-[color:var(--text)]">
-              {t("session.next")}
-            </h2>
-            <p className="m-0 mt-2 text-[length:var(--fs-sm)] leading-5 text-[color:var(--text-mut)]">
-              {t("session.nextDescription")}
-            </p>
-          </section>
+function NewSessionHome({
+  connectors,
+  sessions,
+  loading,
+  error,
+  onNewDevice,
+  onCreateSession
+}: {
+  connectors: ConnectorView[];
+  sessions: SessionView[];
+  loading: boolean;
+  error: string | null;
+  onNewDevice: () => void;
+  onCreateSession: (body: {
+    connectorId: string;
+    runtime: string;
+    title?: string;
+    cwd?: string;
+    approvalPolicy?: string;
+    sandbox?: string;
+  }) => Promise<void>;
+}) {
+  const t = useTranslations("dashboard");
+  const [titleIndex, setTitleIndex] = React.useState(0);
+  const [typedTitle, setTypedTitle] = React.useState("");
+  const [prompt, setPrompt] = React.useState("");
+  const [creating, setCreating] = React.useState(false);
+  const online = React.useMemo(
+    () =>
+      connectors.filter(
+        (connector) =>
+          connector.status === "online" &&
+          Object.keys(connector.runtimeCapabilities.attached).length > 0,
+      ),
+    [connectors],
+  );
+  const [connectorId, setConnectorId] = React.useState("");
+  const connector = online.find((item) => item.id === connectorId) ?? online[0] ?? null;
+  const runtimes = connector ? attachedRuntimes(connector) : [];
+  const [runtime, setRuntime] = React.useState("");
+  const selectedRuntime = runtimes.includes(runtime) ? runtime : runtimes[0] ?? "";
+  const canCreate = Boolean(connector && selectedRuntime && prompt.trim() && !creating);
+
+  React.useEffect(() => {
+    if (!connector && online[0]) setConnectorId(online[0].id);
+  }, [connector, online]);
+
+  React.useEffect(() => {
+    if (!selectedRuntime && runtimes[0]) setRuntime(runtimes[0]);
+  }, [runtimes, selectedRuntime]);
+
+  React.useEffect(() => {
+    if (creating) return;
+    const title = NEW_SESSION_TITLES[titleIndex % NEW_SESSION_TITLES.length] ?? NEW_SESSION_TITLES[0];
+    let cancelled = false;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const write = (count: number) => {
+      if (cancelled) return;
+      setTypedTitle(title.slice(0, count));
+      if (count < title.length) {
+        timeout = setTimeout(() => write(count + 1), 58);
+        return;
+      }
+      timeout = setTimeout(() => {
+        if (!cancelled) setTitleIndex((index) => (index + 1) % NEW_SESSION_TITLES.length);
+      }, 15000);
+    };
+    write(0);
+    return () => {
+      cancelled = true;
+      if (timeout) clearTimeout(timeout);
+    };
+  }, [creating, titleIndex]);
+
+  const create = async () => {
+    if (!canCreate || !connector) return;
+    setCreating(true);
+    try {
+      await onCreateSession({
+        connectorId: connector.id,
+        runtime: selectedRuntime,
+        title: prompt.trim(),
+        cwd: defaultWorkspace(sessions, connector.id) ?? undefined
+      });
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  return (
+    <div className="aa-new-page">
+      <div className="aa-new-center">
+        <h1 className="aa-new-title" aria-live="polite">
+          <span>{creating ? t("new.creating") : typedTitle}</span>
+          <span className="cursor" aria-hidden="true" />
+        </h1>
+
+        <div className="aa-comp aa-new-composer">
+          <textarea
+            value={prompt}
+            onChange={(event) => setPrompt(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing) return;
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                void create();
+              }
+            }}
+            placeholder={t("new.placeholder")}
+            rows={1}
+          />
+          <div className="aa-comp-row">
+            <button type="button" className="aa-comp-sel" title={t("new.attach")} disabled>
+              <Paperclip aria-hidden="true" />
+            </button>
+            <ActionMenu
+              label={t("new.permissionMode")}
+              items={[
+                { id: "ask", label: t("new.askApproval"), icon: <Check /> },
+                { id: "full", label: t("new.fullAccess") },
+                { id: "read", label: t("new.readOnly") }
+              ]}
+            >
+              <button type="button" className="aa-comp-sel">
+                <Hand aria-hidden="true" />
+                {t("new.askApproval")}
+                <ChevronDown aria-hidden="true" />
+              </button>
+            </ActionMenu>
+            <ActionMenu
+              label={t("new.deviceAndAgent")}
+              items={
+                online.length === 0
+                  ? [{ id: "none", label: t("empty.noOnlineDevice"), disabled: true }]
+                  : online.flatMap((device) =>
+                      attachedRuntimes(device).map((item) => ({
+                        id: `${device.id}:${item}`,
+                        label: `${device.name} / ${runtimeLabel(item)}`,
+                        icon: device.id === connector?.id && item === selectedRuntime ? <Check /> : undefined,
+                        onSelect: () => {
+                          setConnectorId(device.id);
+                          setRuntime(item);
+                        }
+                      })),
+                    )
+              }
+            >
+              <button type="button" className="aa-comp-sel">
+                <Laptop aria-hidden="true" />
+                {connector?.name || t("new.device")}
+                {selectedRuntime ? (
+                  <>
+                    <span className="dotsep" />
+                    <span className="agent-dot" aria-hidden="true" />
+                    {runtimeLabel(selectedRuntime)}
+                  </>
+                ) : null}
+                <ChevronDown aria-hidden="true" />
+              </button>
+            </ActionMenu>
+            <span className="sep" />
+            <button
+              type="button"
+              className="aa-send"
+              disabled={!canCreate}
+              title={t("new.createSession")}
+              onClick={() => void create()}
+            >
+              {creating ? "…" : <Send aria-hidden="true" />}
+            </button>
+          </div>
         </div>
+
+        <div className="aa-new-workspace">
+          <button type="button" className="aa-new-workspace-trigger" disabled={!connector}>
+            <Folder aria-hidden="true" />
+            <span>{t("new.homeDirectory")}</span>
+            <em>{defaultWorkspace(sessions, connector?.id ?? "") ?? t("new.defaultWorkspace")}</em>
+            <ChevronDown aria-hidden="true" />
+          </button>
+        </div>
+
+        {error ? <div className="aa-new-error">{error}</div> : null}
+        {!connector && !loading ? (
+          <div className="aa-new-empty">
+            <span>{t("empty.noOnlineDevice")}</span>
+            <Button type="button" variant="ghost" size="sm" onClick={onNewDevice}>
+              <Plus aria-hidden="true" />
+              {t("actions.pairDevice")}
+            </Button>
+          </div>
+        ) : null}
       </div>
     </div>
   );
 }
 
-function Meta({
-  label,
-  value,
-  mono = false
+function SessionPlaceholder({ session }: { session: SessionView }) {
+  const t = useTranslations("dashboard");
+  return (
+    <div className="aa-detail-page">
+      <header className="aa-detail-hd">
+        <h1>{session.title || t("session.untitled")}</h1>
+        <div className="chips">
+          <span>{runtimeLabel(session.runtime)}</span>
+          <span>{t(`sessionStatus.${session.status}`)}</span>
+          {session.cwd ? <span>{workspaceKey(session.cwd)}</span> : null}
+        </div>
+      </header>
+      <div className="aa-detail-empty">{t("placeholder.sessionDetail")}</div>
+    </div>
+  );
+}
+
+function DevicePlaceholder({
+  device,
+  sessions,
+  onNewSession
 }: {
-  label: React.ReactNode;
-  value: React.ReactNode;
-  mono?: boolean;
+  device: ConnectorView;
+  sessions: SessionView[];
+  onNewSession: () => void;
+}) {
+  const t = useTranslations("dashboard");
+  const deviceSessions = sessions.filter((item) => item.connectorId === device.id);
+  return (
+    <div className="aa-detail-page">
+      <header className="aa-detail-hd">
+        <h1>{device.name}</h1>
+        <div className="chips">
+          <span>{device.status}</span>
+          <span>{Object.keys(device.runtimeCapabilities.attached).map(runtimeLabel).join(", ") || t("session.none")}</span>
+        </div>
+      </header>
+      <div className="aa-device-grid">
+        <section>
+          <h2>{t("sections.recents")}</h2>
+          {deviceSessions.length === 0 ? (
+            <p>{t("empty.noSessions")}</p>
+          ) : (
+            deviceSessions.slice(0, 8).map((item) => (
+              <div key={item.id} className="aa-device-row">
+                <span>{item.title || t("session.untitled")}</span>
+                <em>{item.cwd ? workspaceKey(item.cwd) : t("session.none")}</em>
+              </div>
+            ))
+          )}
+        </section>
+        <section>
+          <h2>{t("session.workspace")}</h2>
+          <Button type="button" variant="emphasis" onClick={onNewSession}>
+            <Plus aria-hidden="true" />
+            {t("actions.newSession")}
+          </Button>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function SimplePage({
+  title,
+  description
+}: {
+  title: React.ReactNode;
+  description: React.ReactNode;
 }) {
   return (
-    <>
-      <dt className="text-[color:var(--text-mut)]">{label}</dt>
-      <dd className={cn("m-0 min-w-0 text-[color:var(--text-mid)]", mono && "font-mono")}>
-        {value}
-      </dd>
-    </>
+    <div className="aa-detail-page">
+      <header className="aa-detail-hd">
+        <h1>{title}</h1>
+      </header>
+      <div className="aa-detail-empty">{description}</div>
+    </div>
   );
+}
+
+function readRoute(): DashboardRoute {
+  if (typeof window === "undefined") return { kind: "new" };
+  const hash = window.location.hash.replace(/^#/, "") || "/";
+  const path = hash.startsWith("/") ? hash : `/${hash}`;
+  const parts = path.split("?")[0]!.split("/").filter(Boolean);
+  if (parts[0] === "sessions" && parts[1]) return { kind: "session", id: decodeURIComponent(parts[1]) };
+  if (parts[0] === "devices" && parts[1]) {
+    return { kind: "device", id: decodeURIComponent(parts[1]), workspace: parts[2] === "workspaces" };
+  }
+  if (parts[0] === "team") return { kind: "team" };
+  if (parts[0] === "service") return { kind: "service" };
+  if (parts[0] === "settings") return { kind: "settings" };
+  return { kind: "new" };
+}
+
+function writeRoute(route: DashboardRoute) {
+  const path =
+    route.kind === "new"
+      ? "/"
+      : route.kind === "session"
+        ? `/sessions/${encodeURIComponent(route.id)}`
+        : route.kind === "device"
+          ? `/devices/${encodeURIComponent(route.id)}${route.workspace ? "/workspaces" : ""}`
+          : `/${route.kind}`;
+  if (window.location.hash === `#${path}`) return;
+  window.location.hash = path;
 }
 
 function sortConnectors(connectors: ConnectorView[]): ConnectorView[] {
   return [...connectors].sort((a, b) => {
-    if (a.status !== b.status) return a.status === "online" ? -1 : 1;
-    return a.name.localeCompare(b.name);
+    const at = a.createdAt || "";
+    const bt = b.createdAt || "";
+    if (at !== bt) return at < bt ? -1 : 1;
+    return a.id.localeCompare(b.id);
   });
 }
 
@@ -647,32 +1151,30 @@ function sortSessions(sessions: SessionView[]): SessionView[] {
   });
 }
 
-function connectorName(connectors: ConnectorView[], connectorId: string): string {
-  return connectors.find((connector) => connector.id === connectorId)?.name ?? shortId(connectorId);
+function mergeSessionPatches(existing: SessionView[], incoming: SessionView[]): SessionView[] {
+  const byId = new Map(incoming.map((item) => [item.id, item]));
+  return sortSessions(existing.map((item) => byId.get(item.id) ?? item));
 }
 
-function shortId(value: string): string {
-  return value.length > 10 ? `${value.slice(0, 6)}…${value.slice(-4)}` : value;
+function attachedRuntimes(connector: ConnectorView): string[] {
+  return Object.keys(connector.runtimeCapabilities.attached).sort();
 }
 
-function workspaceLabel(cwd: string): string {
+function runtimeLabel(runtime: string): string {
+  if (runtime === "codex") return "Codex";
+  if (runtime === "claude") return "Claude";
+  if (runtime === "opencode") return "OpenCode";
+  if (runtime === "cursor") return "Cursor";
+  return runtime.slice(0, 1).toUpperCase() + runtime.slice(1);
+}
+
+function workspaceKey(cwd: string | null): string {
+  if (!cwd) return "(none)";
   const trimmed = cwd.replace(/\/+$/, "");
-  return trimmed.split("/").filter(Boolean).pop() || "/";
+  const last = trimmed.split("/").filter(Boolean).pop();
+  return last || "/";
 }
 
-function statusTone(status: SessionView["status"]): "neutral" | "info" | "success" | "warning" | "danger" {
-  if (status === "running") return "success";
-  if (status === "waiting_approval") return "info";
-  if (status === "error") return "danger";
-  return "neutral";
-}
-
-function formatDate(value: string | null): string {
-  if (!value) return "—";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short"
-  }).format(date);
+function defaultWorkspace(sessions: SessionView[], connectorId: string): string | null {
+  return sessions.find((item) => item.connectorId === connectorId && item.cwd)?.cwd ?? null;
 }
