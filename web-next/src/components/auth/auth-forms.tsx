@@ -369,10 +369,10 @@ function AuthHero({
 }) {
   return (
     <div className="flex flex-col items-center gap-3.5 text-center">
-      <h1 className="m-0 text-[var(--fs-xl)] font-semibold leading-tight tracking-normal text-[var(--text)]">
+      <h1 className="m-0 text-[length:var(--fs-xl)] font-semibold leading-tight tracking-normal text-[color:var(--text)]">
         {title}
       </h1>
-      <p className="m-0 max-w-[34ch] text-[var(--fs-ui)] text-[var(--text-mut)]">
+      <p className="m-0 max-w-[34ch] text-wrap text-[length:var(--fs-ui)] leading-normal text-[color:var(--text-mut)]">
         {description}
       </p>
     </div>

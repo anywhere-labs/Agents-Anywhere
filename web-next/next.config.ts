@@ -6,6 +6,7 @@ const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
 const apiTarget = process.env.AGENTS_ANYWHERE_API ?? "http://127.0.0.1:8000";
 
 const nextConfig: NextConfig = {
+  devIndicators: false,
   async rewrites() {
     return [
       "/auth/:path*",
