@@ -36,6 +36,7 @@
   --bg-hover: rgba(255, 255, 255, 0.035);
   --bg-active: rgba(255, 255, 255, 0.06);
   --bg-input: rgba(255, 255, 255, 0.04);
+  --input-bg: var(--bg-input);
   --border: rgba(255, 255, 255, 0.06);
   --border-md: rgba(255, 255, 255, 0.09);
   --border-lg: rgba(255, 255, 255, 0.14);
@@ -86,6 +87,7 @@
   --bg-hover: rgba(0, 0, 0, 0.035);
   --bg-active: rgba(0, 0, 0, 0.06);
   --bg-input: rgba(0, 0, 0, 0.03);
+  --input-bg: var(--bg-input);
   --border: rgba(0, 0, 0, 0.07);
   --border-md: rgba(0, 0, 0, 0.10);
   --border-lg: rgba(0, 0, 0, 0.18);
