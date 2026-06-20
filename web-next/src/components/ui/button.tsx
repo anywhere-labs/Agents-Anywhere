@@ -4,30 +4,30 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-[var(--r)] text-[var(--fs-ui)] font-medium transition-colors disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]",
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-[var(--r)] font-medium text-[length:var(--fs-ui)] transition-colors disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]",
   {
     variants: {
       variant: {
         normal:
-          "border border-[var(--border-md)] bg-[var(--bg-panel)] text-[var(--text-mid)] hover:border-[var(--border-lg)] hover:text-[var(--text)]",
+          "border border-[var(--border-md)] bg-[var(--bg-panel)] text-[color:var(--text-mid)] hover:border-[var(--border-lg)] hover:text-[color:var(--text)]",
         emphasis:
-          "border border-transparent bg-[var(--emphasis-bg)] text-[var(--emphasis-ink)] font-semibold hover:opacity-90",
+          "border border-transparent bg-[var(--emphasis-bg)] font-semibold text-[color:var(--emphasis-ink)] hover:opacity-90",
         default:
-          "border border-[var(--border-md)] bg-[var(--bg-panel)] text-[var(--text-mid)] hover:border-[var(--border-lg)] hover:text-[var(--text)]",
+          "border border-[var(--border-md)] bg-[var(--bg-panel)] text-[color:var(--text-mid)] hover:border-[var(--border-lg)] hover:text-[color:var(--text)]",
         primary:
-          "border border-transparent bg-[var(--emphasis-bg)] text-[var(--emphasis-ink)] font-semibold hover:opacity-90",
+          "border border-transparent bg-[var(--emphasis-bg)] font-semibold text-[color:var(--emphasis-ink)] hover:opacity-90",
         ghost:
-          "border border-transparent bg-transparent text-[var(--text-mid)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]",
+          "border border-transparent bg-transparent text-[color:var(--text-mid)] hover:bg-[var(--bg-hover)] hover:text-[color:var(--text)]",
         destructive:
           "border border-transparent bg-[oklch(0.72_0.16_25)] text-white hover:brightness-105",
         danger:
           "border border-transparent bg-[oklch(0.72_0.16_25)] text-white hover:brightness-105",
         rowAction:
-          "border border-transparent bg-transparent text-[var(--text-mut)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)] data-[state=open]:bg-[var(--bg-active)] data-[state=open]:text-[var(--text)]"
+          "border border-transparent bg-transparent text-[color:var(--text-mut)] hover:bg-[var(--bg-hover)] hover:text-[color:var(--text)] data-[state=open]:bg-[var(--bg-active)] data-[state=open]:text-[color:var(--text)]"
       },
       size: {
         default: "h-9 px-3",
-        sm: "h-8 px-2.5 text-[var(--fs-sm)]",
+        sm: "h-8 px-2.5 text-[length:var(--fs-sm)]",
         lg: "h-10 px-4",
         icon: "size-8 p-0",
         iconSm: "size-[30px] p-0 rounded-[7px]",
