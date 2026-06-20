@@ -161,7 +161,7 @@ export function RegisterForm({
         title={t("register.title")}
         description={
           <>
-            {t("register.descriptionPrefix")} <BrandWord className="inline-block text-[var(--fs-lg)]" /> {t("register.descriptionSuffix")}
+            {t("register.descriptionPrefix")} <BrandWord className="inline-block text-[length:var(--fs-lg)]" /> {t("register.descriptionSuffix")}
           </>
         }
       />
@@ -492,7 +492,7 @@ function SubmitButton({
     <Button
       type="submit"
       variant="emphasis"
-      className="h-10 w-full text-[var(--fs-ui)] font-semibold"
+      className="h-10 w-full text-[length:var(--fs-ui)] font-semibold"
       disabled={disabled}
     >
       {loading ? (
@@ -500,7 +500,7 @@ function SubmitButton({
       ) : (
         <>
           {children}
-          <span className="font-mono text-[var(--fs-xs)] opacity-50">↵</span>
+          <span className="font-mono text-[length:var(--fs-xs)] opacity-50">↵</span>
         </>
       )}
     </Button>
