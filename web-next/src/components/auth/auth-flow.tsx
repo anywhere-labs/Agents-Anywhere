@@ -6,6 +6,7 @@ import { useRouter } from "@/i18n/routing";
 import { Button } from "@/components/ui/button";
 import {
   FormField,
+  Identicon,
   InlineAlert,
   PasswordField,
   TextInput
@@ -292,31 +293,67 @@ function OAuthFinalizeForm({
   const [userId, setUserId] = React.useState(initialUserId);
   const [password, setPassword] = React.useState("");
   const [setLocalPassword, setSetLocalPassword] = React.useState(false);
-  const [confirmExisting, setConfirmExisting] = React.useState(mode === "needs_password");
+  const [choice, setChoice] = React.useState<"ask" | "yes" | "no">(
+    mode === "needs_password" ? "ask" : "no",
+  );
+  const needsPassword = mode === "needs_password";
+  const confirmExisting = needsPassword && choice === "yes";
+
+  if (needsPassword && choice === "ask") {
+    return (
+      <AuthCard>
+        <OAuthHero
+          avatarId={initialUserId}
+          avatarSize={56}
+          title={t("oauth.matchTitle")}
+          description={
+            <>
+              {t("oauth.matchDescriptionPrefix")}{" "}
+              <strong className="font-mono font-medium text-[color:var(--text)]">
+                {initialUserId}
+              </strong>
+              .
+            </>
+          }
+        />
+
+        {error ? <InlineAlert tone="danger">{error}</InlineAlert> : null}
+
+        <div className="flex flex-col gap-3">
+          <Button
+            type="button"
+            variant="emphasis"
+            className="h-10 w-full text-[length:var(--fs-ui)]"
+            onClick={() => setChoice("yes")}
+          >
+            {t("oauth.useMatchedAccount")}
+          </Button>
+          <Button
+            type="button"
+            variant="normal"
+            className="h-10 w-full text-[length:var(--fs-ui)]"
+            onClick={() => setChoice("no")}
+          >
+            {t("oauth.useAnotherUser")}
+          </Button>
+          <Button type="button" variant="ghost" onClick={onCancel}>
+            {t("oauth.back")}
+          </Button>
+        </div>
+      </AuthCard>
+    );
+  }
 
   return (
     <AuthCard>
-      <div className="flex flex-col items-center gap-3.5 text-center">
-        <h1 className="m-0 text-[var(--fs-xl)] font-semibold leading-tight text-[var(--text)]">
-          {confirmExisting ? t("oauth.confirmTitle") : t("oauth.createTitle")}
-        </h1>
-        <p className="m-0 max-w-[34ch] text-[var(--fs-ui)] text-[var(--text-mut)]">
-          {confirmExisting ? t("oauth.confirmDescription") : t("oauth.createDescription")}
-        </p>
-      </div>
+      <OAuthHero
+        avatarId={userId}
+        avatarSize={50}
+        title={confirmExisting ? t("oauth.confirmTitle") : t("oauth.createTitle")}
+        description={confirmExisting ? t("oauth.confirmDescription") : t("oauth.createDescription")}
+      />
 
       {error ? <InlineAlert tone="danger">{error}</InlineAlert> : null}
-
-      {mode === "needs_password" && confirmExisting ? (
-        <div className="grid gap-2">
-          <Button type="button" variant="emphasis" onClick={() => setConfirmExisting(true)}>
-            {t("oauth.useMatchedAccount", { userId: initialUserId })}
-          </Button>
-          <Button type="button" variant="normal" onClick={() => setConfirmExisting(false)}>
-            {t("oauth.useAnotherUser")}
-          </Button>
-        </div>
-      ) : null}
 
       <form
         className="flex flex-col gap-3.5"
@@ -362,16 +399,45 @@ function OAuthFinalizeForm({
           </label>
         )}
 
-        <Button type="submit" variant="emphasis" className="h-10" disabled={loading}>
+        <Button
+          type="submit"
+          variant="emphasis"
+          className="h-10 w-full text-[length:var(--fs-ui)]"
+          disabled={loading}
+        >
           {loading ? (
-            <span className="size-3 animate-[klaw-spin_0.7s_linear_infinite] rounded-full border border-current border-t-transparent" />
+            <span className="size-3.5 animate-[klaw-spin_0.6s_linear_infinite] rounded-full border-[1.5px] border-current border-t-transparent" />
           ) : null}
           {confirmExisting ? t("oauth.linkSubmit") : t("oauth.createSubmit")}
         </Button>
-        <Button type="button" variant="ghost" onClick={onCancel}>
+        <Button type="button" variant="normal" className="h-10" onClick={onCancel}>
           {t("oauth.back")}
         </Button>
       </form>
     </AuthCard>
+  );
+}
+
+function OAuthHero({
+  avatarId,
+  avatarSize,
+  title,
+  description
+}: {
+  avatarId: string;
+  avatarSize: number;
+  title: React.ReactNode;
+  description: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col items-center gap-3.5 text-center">
+      <Identicon id={avatarId} size={avatarSize} />
+      <h1 className="m-0 text-[length:var(--fs-xl)] font-semibold leading-tight tracking-normal text-[color:var(--text)]">
+        {title}
+      </h1>
+      <p className="m-0 max-w-[34ch] text-wrap text-[length:var(--fs-ui)] leading-normal text-[color:var(--text-mut)]">
+        {description}
+      </p>
+    </div>
   );
 }

@@ -2,6 +2,7 @@ export * from "./action-menu";
 export * from "./dialog";
 export * from "./empty-state";
 export * from "./form";
+export * from "./identicon";
 export * from "./icon-button";
 export * from "./metadata";
 export * from "./popover";

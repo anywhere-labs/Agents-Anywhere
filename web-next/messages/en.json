@@ -64,10 +64,12 @@
       "createDescription": "Create a local account for this OAuth identity.",
       "createSubmit": "Create and sign in",
       "createTitle": "Choose your user ID",
+      "matchDescriptionPrefix": "OAuth matched the local account",
+      "matchTitle": "Is this your account?",
       "linkSubmit": "Link and sign in",
       "setLocalPassword": "Set a local password for this account",
-      "useAnotherUser": "No, use another user ID",
-      "useMatchedAccount": "Yes, link {userId}"
+      "useAnotherUser": "It's not me",
+      "useMatchedAccount": "Yes, link this account"
     },
     "preview": {
       "home": "Home"

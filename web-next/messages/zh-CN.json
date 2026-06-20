@@ -64,10 +64,12 @@
       "createDescription": "为这个 OAuth 身份创建一个本地账号。",
       "createSubmit": "创建并登录",
       "createTitle": "选择用户 ID",
+      "matchDescriptionPrefix": "OAuth 匹配到了本地账号",
+      "matchTitle": "这是你的账号吗？",
       "linkSubmit": "绑定并登录",
       "setLocalPassword": "为这个账号设置本地密码",
-      "useAnotherUser": "不，使用其他用户 ID",
-      "useMatchedAccount": "是，绑定 {userId}"
+      "useAnotherUser": "这不是我",
+      "useMatchedAccount": "是，绑定这个账号"
     },
     "preview": {
       "home": "首页"
