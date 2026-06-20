@@ -12,6 +12,74 @@
     "loading": "加载中...",
     "save": "保存"
   },
+  "dashboard": {
+    "actions": {
+      "collapse": "折叠侧栏",
+      "newSession": "新会话",
+      "refresh": "刷新",
+      "retry": "重试",
+      "search": "搜索",
+      "signOut": "退出登录"
+    },
+    "empty": {
+      "noDevices": "还没有配对设备",
+      "noDevicesDescription": "Agents Anywhere 需要一个在线连接器，才能创建或恢复会话。",
+      "noDevicesTitle": "先配对一个设备",
+      "noPinned": "没有置顶会话",
+      "noSessions": "没有最近会话",
+      "noSessionsDescription": "准备好以后，可以从在线设备发起一个会话。",
+      "noSessionsTitle": "还没有会话",
+      "title": "会话"
+    },
+    "errors": {
+      "loadFailed": "无法加载主界面。",
+      "title": "无法加载主界面"
+    },
+    "nav": {
+      "settings": "设置",
+      "team": "团队"
+    },
+    "roles": {
+      "admin": "管理员",
+      "member": "成员"
+    },
+    "sections": {
+      "devices": "设备",
+      "pinned": "置顶",
+      "recents": "最近"
+    },
+    "session": {
+      "device": "设备",
+      "external": "外部 ID",
+      "next": "下一步迁移",
+      "nextDescription": "主界面外壳稳定后，会继续把会话时间线、输入区、运行时面板、审批和附件迁移到这个区域。",
+      "none": "无",
+      "overview": "会话概览",
+      "runtime": "运行时",
+      "updated": "更新时间",
+      "workspace": "工作目录"
+    },
+    "sessionStatus": {
+      "error": "错误",
+      "idle": "空闲",
+      "running": "运行中",
+      "waiting_approval": "等待确认"
+    },
+    "signOut": {
+      "confirm": "退出登录",
+      "description": "这会清除本地会话，并返回登录页。",
+      "title": "退出登录？"
+    },
+    "status": {
+      "loadingDashboard": "正在加载主界面",
+      "restoring": "正在恢复会话"
+    },
+    "theme": {
+      "dark": "深色模式",
+      "label": "颜色主题",
+      "light": "浅色模式"
+    }
+  },
   "auth": {
     "actions": {
       "hidePassword": "隐藏密码",

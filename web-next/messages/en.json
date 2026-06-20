@@ -12,6 +12,74 @@
     "loading": "Loading...",
     "save": "Save"
   },
+  "dashboard": {
+    "actions": {
+      "collapse": "Collapse sidebar",
+      "newSession": "New session",
+      "refresh": "Refresh",
+      "retry": "Retry",
+      "search": "Search",
+      "signOut": "Sign out"
+    },
+    "empty": {
+      "noDevices": "No devices paired",
+      "noDevicesDescription": "Agents Anywhere needs an online connector before it can create or resume sessions.",
+      "noDevicesTitle": "Pair a device to start",
+      "noPinned": "No pinned sessions",
+      "noSessions": "No recent sessions",
+      "noSessionsDescription": "Start a session from an online device when you are ready.",
+      "noSessionsTitle": "No sessions yet",
+      "title": "Sessions"
+    },
+    "errors": {
+      "loadFailed": "Couldn't load dashboard.",
+      "title": "Couldn't load dashboard"
+    },
+    "nav": {
+      "settings": "Settings",
+      "team": "Team"
+    },
+    "roles": {
+      "admin": "Admin",
+      "member": "Member"
+    },
+    "sections": {
+      "devices": "Devices",
+      "pinned": "Pinned",
+      "recents": "Recents"
+    },
+    "session": {
+      "device": "Device",
+      "external": "External ID",
+      "next": "Next migration step",
+      "nextDescription": "The session detail timeline, composer, runtime panes, approvals, and attachments will be moved into this panel after the dashboard shell is stable.",
+      "none": "None",
+      "overview": "Session overview",
+      "runtime": "Runtime",
+      "updated": "Updated",
+      "workspace": "Workspace"
+    },
+    "sessionStatus": {
+      "error": "Error",
+      "idle": "Idle",
+      "running": "Running",
+      "waiting_approval": "Waiting for approval"
+    },
+    "signOut": {
+      "confirm": "Sign out",
+      "description": "This clears the local session and returns you to sign in.",
+      "title": "Sign out?"
+    },
+    "status": {
+      "loadingDashboard": "Loading dashboard",
+      "restoring": "Restoring session"
+    },
+    "theme": {
+      "dark": "Dark mode",
+      "label": "Color theme",
+      "light": "Light mode"
+    }
+  },
   "auth": {
     "actions": {
       "hidePassword": "Hide password",
