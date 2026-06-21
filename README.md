@@ -1,14 +1,26 @@
 <div align="center">
 
+<img src="logo/ios-dark%20Exports/ios-dark-iOS-Dark-1024@1x.png" alt="Agents Anywhere logo" width="104" height="104">
+
 # Agents Anywhere
 
 <h3>Remote control plane for Claude Code, Codex, and more coding agents.</h3>
 
 Run agents on your own laptop, remote devbox, or cloud sandbox. Control sessions, approvals, files, terminals, and runtime state from one self-hostable web workspace.
 
+![Python](https://img.shields.io/badge/Python-3.12+-3776AB)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.136+-009688)
+![Connector](https://img.shields.io/badge/anywhere--cli-0.1.3-111111)
+![Next.js](https://img.shields.io/badge/Next.js-16.2-000000)
+![Node](https://img.shields.io/badge/Node.js-22-5FA04E)
+![Yarn](https://img.shields.io/badge/Yarn-4.6-2C8EBB)
+![Docker](https://img.shields.io/badge/Docker-ready-2496ED)
+
 [Docker Quickstart](#quickstart-run-the-full-app-with-docker) · [Pair Connector](#pair-and-start-the-connector) · [Self-host](#self-host-production-style-deployment) · [简体中文](README.zh-CN.md)
 
 ![Agents Anywhere session workspace](docs/screenshots/hero.png)
+
+> Screenshots are taken from a fast-moving product surface. UI details may change quickly; use the running app as the source of truth.
 
 Watch long-running sessions, approve actions, inspect files, and open a terminal without moving the agent out of its original machine. To run the current open-source stack, start with [Docker Quickstart](#quickstart-run-the-full-app-with-docker).
 
@@ -49,18 +61,22 @@ Agents Anywhere turns those long-running tasks into a workspace you can reopen a
 
 ![Unified control plane](docs/screenshots/control-plane.png)
 
+> This screenshot reflects the product direction at the time it was captured. Agents Anywhere is iterating quickly, so the actual UI may differ.
+
 Devices and sessions are collected in one workspace, so you can switch across machines, runtimes, and tasks.
 
 **Mobile: sessions and devices**
 
 ![Mobile sessions and devices](docs/screenshots/mobile.png)
 
+> This screenshot reflects the product direction at the time it was captured. Agents Anywhere is iterating quickly, so the actual UI may differ.
+
 Native mobile clients are in development. Today, you can also use the Web console from a mobile browser for status checks, device management, and lightweight approvals.
 
 ## Current Capabilities
 
 - **Unified session workspace.** Create, inspect, pin, archive, mark read, take over, and manage sessions.
-- **Codex / Claude runtime integration.** The Connector discovers local Codex and Claude runtimes and reports capabilities.
+- **Codex-first runtime integration.** The Connector discovers local Codex and Claude runtimes and reports capabilities. Codex is the best-supported adapter today; Claude has basic support and is still being expanded.
 - **Approvals and sync.** Supports interrupt, sync, approval resolution, and timeline polling/SSE.
 - **Local file access.** Browse workspaces, read/write files, upload content, and download content through an online Connector.
 - **Remote shell and terminal.** Run one-shot shell commands, shell tasks, and interactive terminals.
@@ -68,31 +84,41 @@ Native mobile clients are in development. Today, you can also use the Web consol
 - **Self-hosted backend.** The FastAPI backend supports SQLite for local development and PostgreSQL for production-style deployments.
 - **Web console.** React + Vite frontend for auth, devices, workspaces, runtime settings, team/admin management, and session detail.
 
-## Supported Agents
+## Supported Agents And Runtimes
 
 Agents Anywhere does not replace your agent. It runs next to an existing runtime through the Connector:
 
-| Agent | Vendor | Current status |
-| --- | --- | --- |
-| Claude Code | Anthropic | Integrated in current code |
-| Codex | OpenAI | Integrated in current code |
-| Cursor | Anysphere | Planned |
-| OpenCode | SST | Planned |
-| Gemini CLI | Google | Planned |
+![Codex](https://img.shields.io/badge/Codex-best%20supported-111111)
+![Claude](https://img.shields.io/badge/Claude-basic%20support-666666)
+![More agents](https://img.shields.io/badge/more%20agents-coming%20soon-lightgrey)
+
+| Runtime | Vendor | Current status | Notes |
+| --- | --- | --- | --- |
+| Codex | OpenAI | Best supported today | Most core capabilities are supported, including runtime discovery, session sync, timeline updates, approvals, interrupt/takeover, filesystem access, shell tasks, interactive terminals, and runtime settings. Some vendor-specific or advanced auxiliary features are still being polished. |
+| Claude Code | Anthropic | Basic support | The current code supports discovery and the basic session/control flow. Deeper parity with Codex, richer history/timeline handling, and advanced runtime behavior are still being improved. |
+| Cursor | Anysphere | Coming soon | Not yet available as a usable adapter. |
+| OpenCode | SST | Coming soon | Not yet available as a usable adapter. |
+| Gemini CLI | Google | Coming soon | Not yet available as a usable adapter. |
 
 Connector adapters are extensible. New runtimes should reuse the existing session, timeline, approval, filesystem, and terminal capabilities where possible.
 
-## Supported Platforms
+## Supported Client Platforms
 
-| Platform | Current status |
-| --- | --- |
-| Web | Primary client today; supports modern desktop and mobile browsers |
-| iOS | Native client in development |
-| Android | Native client in development |
-| macOS | Native desktop client in development |
-| Windows | Native desktop client in development |
+![Web](https://img.shields.io/badge/Web-primary%20client-111111)
+![iOS](https://img.shields.io/badge/iOS-in%20development-lightgrey)
+![Android](https://img.shields.io/badge/Android-in%20development-lightgrey)
+![Desktop](https://img.shields.io/badge/Desktop-coming%20soon-lightgrey)
 
-This repository currently includes the Web frontend, FastAPI backend, and Connector CLI. Native client code will land in the public repository or separate packages once the implementations are ready.
+| Platform / surface | Current status | Notes |
+| --- | --- | --- |
+| Web console | Primary supported client | Desktop browsers are the main target today. Mobile browsers are usable for status checks, approvals, device management, and lightweight session control. |
+| Connector CLI | Primary runtime bridge | Runs on the machine that owns the workspace and local agent runtime. Platform behavior depends on the local shell, filesystem, and installed Codex / Claude toolchain. |
+| iOS | Native client in development | The native client is being built for mobile session/device workflows and lightweight control. |
+| Android | Native client in development | The native client is being built for mobile session/device workflows and lightweight control. |
+| macOS desktop | Coming soon | Native desktop packaging is planned after the Web and Connector flows stabilize. |
+| Windows desktop | Coming soon | Native desktop packaging is planned after the Web and Connector flows stabilize. |
+
+This repository currently includes the Web frontends, FastAPI backend, Connector CLI, and native mobile work in progress. The Web console remains the reference client while native clients mature.
 
 Want to run it now? Jump to [Docker Quickstart](#quickstart-run-the-full-app-with-docker). If you want to connect your own machine, continue to [Pair And Start The Connector](#pair-and-start-the-connector).
 
@@ -114,7 +140,7 @@ Official remote control is usually tied to each vendor's subscription account an
 Yes. Use SQLite for local development, a production-style single-container SQLite deployment, or PostgreSQL compose. See [docker/README.md](docker/README.md).
 
 **Which agents are supported today?**
-The current code focuses on Codex and Claude. Other runtimes can be added by implementing Connector adapters.
+The current code focuses on Codex and Claude. Codex is the most complete adapter today. Claude supports the basic flow and is still being expanded. Other runtimes are coming soon and can be added by implementing Connector adapters.
 
 ## Technical Guide And Self-Hosting
 
@@ -122,24 +148,23 @@ The sections above describe the product: Agents Anywhere solves the problem of a
 
 ## Architecture
 
-```text
-┌────────────────────┐        HTTP / WebSocket        ┌────────────────────┐
-│     Web Client     │  ───────────────────────────▶  │   FastAPI Server   │
-│  browser console   │  ◀───────────────────────────  │ auth / sessions /  │
-└────────────────────┘                                │ RPC broker / files │
-                                                      └─────────┬──────────┘
-                                                                │
-                                                       connector WebSocket
-                                                                │
-                                                      ┌─────────▼──────────┐
-                                                      │     Connector      │
-                                                      │ local daemon + CLI │
-                                                      └─────────┬──────────┘
-                                                                │
-                                                      ┌─────────▼──────────┐
-                                                      │ Codex / Claude     │
-                                                      │ local workspace    │
-                                                      └────────────────────┘
+```mermaid
+flowchart LR
+    Web["Web Console<br/>browser client"]
+    Server["FastAPI Server<br/>auth / sessions / RPC broker / files"]
+    Connector["Connector<br/>local daemon + CLI"]
+    Runtime["Local Agent Runtime<br/>Codex / Claude today<br/>more coming soon"]
+    Workspace["Local Workspace<br/>files / shell / terminal"]
+
+    Web <-->|HTTP / WebSocket| Server
+    Server <-->|Connector WebSocket| Connector
+    Connector <-->|runtime adapter| Runtime
+    Connector <-->|local permissions| Workspace
+
+    classDef primary fill:#111,stroke:#555,color:#fff;
+    classDef local fill:#f5f5f5,stroke:#aaa,color:#111;
+    class Web,Server primary;
+    class Connector,Runtime,Workspace local;
 ```
 
 Repository layout:
