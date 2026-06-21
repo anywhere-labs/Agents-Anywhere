@@ -58,6 +58,55 @@ export type OAuthFinalizeResponse = {
   serverTime: string;
 };
 
+export type OAuthProviderConfig = {
+  enabled: boolean;
+  provider: string;
+  label: string;
+  authorizeUrl: string;
+  tokenUrl: string;
+  userInfoUrl: string;
+  clientId: string;
+  scopes: string;
+  usernameClaim: string;
+  subjectClaim: string;
+  emailClaim: string;
+  nameClaim: string;
+};
+
+export type OAuthProviderConfigUpdate = OAuthProviderConfig & {
+  clientSecret?: string;
+};
+
+export type AdminUser = {
+  userId: string;
+  role: UserRole;
+  disabled: boolean;
+  avatar: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AdminUserListResponse = {
+  users: AdminUser[];
+  serverTime: string;
+};
+
+export type InstanceSettings = {
+  registrationOpen: boolean;
+  oauthRegistrationOpen: boolean;
+  oauth: OAuthProviderConfig | null;
+};
+
+export type ServiceInfo = {
+  endpoint: string;
+  version: string;
+  database: string;
+  databasePath: string | null;
+  startedAt: string;
+  uptimeSeconds: number;
+  serverTime: string;
+};
+
 export type StoredSession = {
   accessToken: string;
   userId: string;

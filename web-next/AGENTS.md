@@ -1,9 +1,10 @@
 # web-next Refactor Agent Guide
 
 This package is the Next.js rewrite target for the existing `web/` frontend.
-Every change in this package must preserve the product behavior and visual
-language of the current React/Vite implementation while improving engineering
-structure.
+Every change in this package must preserve the product behavior and business
+flows of the current React/Vite implementation while improving engineering
+structure. The local shadcn demo under `_reference/demo-shadcn` is now the
+primary implementation baseline for the rewrite.
 
 ## Goal
 
@@ -14,24 +15,38 @@ Build a replacement web frontend with:
 - Componentized UI primitives and business components instead of repeated local
   modal, menu, form, and page-layout implementations.
 - A migration path where the old `web/` package can keep running until
-  `web-next/` reaches parity.
+  `web-next/` reaches functional parity.
 
-## Non-Negotiable Visual Parity
+## Design Direction
 
-The refactor must look exactly like the current `web/` UI unless a later task
-explicitly approves a design change.
+The refactor no longer needs to look exactly like the current `web/` UI. The
+new target is the shadcn/Radix implementation demonstrated in
+`_reference/demo-shadcn`, wired to the real Agents Anywhere API, i18n, auth, and
+session/runtime behavior.
 
-- Reuse the current design tokens from `web/src/styles/tokens.css`.
-- Preserve current dark/light colors, typography scale, border radii, shadows,
-  scrollbar styling, spacing density, and interaction timing.
+- Prefer existing shadcn primitives before creating local UI shells:
+  `Sidebar`, `DropdownMenu`, `Dialog`, `AlertDialog`, `Popover`, `Command`,
+  `Select`, `Tabs`, `Table`, `Card`, `Avatar`, `Badge`, `ScrollArea`,
+  `ResizablePanelGroup`, `Sheet`, `Tooltip`, `Button`, `Input`, and `Textarea`.
+- Treat the demo's `components/ui/*` as an acceptable shadcn component set for
+  this package. Reuse those components unless there is a clear incompatibility
+  with our installed dependency versions or accessibility requirements.
+- Treat demo business components as migration baselines:
+  `AppSidebar`, `TaskComposer`, `SessionView`, `WorkspacePicker`,
+  `PairDeviceDialog`, `FloatingWindow`, `CascadingSelector`, `AttachmentInput`,
+  `PanelHeader`, `FilesPanel`, `TerminalPanel`, `PreviewPanel`, and the
+  settings/team/service/device pages.
+- Use the old `web/` frontend as the source for product behavior, business
+  states, route coverage, and backend contracts, not as a strict visual target.
+- Replace demo mock data with real domain APIs and typed mock adapters; do not
+  redesign the UI from scratch while doing that wiring.
 - The former yellow accent is intentionally being removed in `web-next`.
-  Emphasis actions and selected states should use a monochrome black/white
-  treatment through `--accent`, `--accent-soft`, and `--accent-ink`.
-- Recreate existing page layouts before improving internals.
-- Do not introduce a new visual theme, larger marketing-style layout, gradient
-  decoration, oversized cards, or generic SaaS template styling.
-- When porting a page, compare it against the old `web/` page at desktop and
-  mobile widths. Any visible difference must be intentional and documented.
+  Emphasis actions should use shadcn semantic tokens such as `primary`,
+  `secondary`, `muted`, `accent`, and `destructive`.
+- Keep the app utilitarian and workflow-focused. Do not turn core product pages
+  into marketing pages or decorative dashboards.
+- When old behavior conflicts with shadcn conventions, prefer shadcn behavior
+  unless the product flow would break.
 
 ## Package Boundaries
 
@@ -51,7 +66,7 @@ Use this structure:
 ```text
 src/app/[locale]/        App Router pages and layouts
 src/components/ui/       shadcn-compatible primitives
-src/components/common/   project-wide composed UI
+src/components/common/   project-wide composed UI built on shadcn
 src/components/layout/   app shell, sidebar, headers
 src/components/auth/     auth-specific UI
 src/components/session/  session list, timeline, composer
@@ -71,7 +86,7 @@ and mutation flows belong in hooks or domain modules.
 Before or while porting pages, replace repeated one-off UI with shared
 components:
 
-- `AppDialog` and `ConfirmDialog` for all modal shells and confirmation flows.
+- `Dialog`/`AlertDialog` wrappers for all modal shells and confirmation flows.
 - `WizardDialog` for multi-step flows such as pairing a device.
 - `DropdownActionMenu`, `PopoverSelect`, and `Combobox` for all anchored menus.
 - `PageHeader`, `SettingsShell`, `SettingsCard`, `KeyValueList`, `SettingRow`.
@@ -83,7 +98,9 @@ components:
 
 Use shadcn/Radix primitives for accessibility and behavior. Do not hand-roll
 outside-click listeners, Escape handling, popover positioning, or focus traps
-when a Radix primitive fits.
+when a Radix primitive fits. Existing custom components should be reduced to
+business composition over shadcn primitives. Prefer adapting the demo component
+to real data over keeping parallel hand-written implementations.
 
 ## i18n Rules
 
@@ -98,15 +115,15 @@ when a Radix primitive fits.
 
 ## Migration Order
 
-1. Establish app shell, tokens, shadcn primitives, and i18n.
-2. Port auth pages.
-3. Port dashboard shell, sidebar, session list, filters, and row menus.
-4. Port new-session composer and workspace picker.
-5. Port device page, pair-device flow, add-agent flow, and workspace page.
-6. Port settings, account, team, and service pages.
-7. Port session detail, timeline, approvals, runtime settings, files,
+1. Promote the demo shadcn component set and app shell into `src`.
+2. Wire auth pages to real auth APIs and i18n.
+3. Wire dashboard shell, sidebar, session list, filters, and row menus.
+4. Wire new-session composer and workspace picker.
+5. Wire device page, pair-device flow, add-agent flow, and workspace page.
+6. Wire settings, account, team, and service pages.
+7. Wire session detail, timeline, approvals, runtime settings, files,
    terminal, and file preview.
-8. Run parity checks and replace production references only after approval.
+8. Run functional checks and replace production references only after approval.
 
 ## Verification
 
@@ -114,14 +131,15 @@ For each migrated page:
 
 - Run `yarn typecheck`.
 - Run `yarn build` when the page is intended to compile end-to-end.
-- Compare against the old `web/` UI with screenshots at common desktop and
-  mobile widths.
+- Compare business behavior against the old `web/` UI when needed.
+- Compare composition and interaction patterns against `_reference/demo-shadcn`.
 - Verify light and dark themes.
 - Verify English and Chinese locales.
 - Verify keyboard navigation for dialogs, menus, popovers, and forms.
 
 ## Current Baseline
 
-The initial package intentionally contains only the framework skeleton, design
-tokens, i18n setup, and a minimal placeholder page. Do not treat the placeholder
-as product UI. Replace it page by page with parity implementations from `web/`.
+The package now contains a shadcn demo baseline under `_reference/demo-shadcn`.
+The demo can replace large parts of the current rewrite direction. Move or adapt
+demo components into `src` deliberately, then connect them to real APIs, i18n,
+and backend state.

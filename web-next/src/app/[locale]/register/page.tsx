@@ -1,5 +1,5 @@
-import { AuthFlow } from "@/components/auth";
+import { AuthRouter } from "@/components/auth/auth-router";
 
 export default function RegisterPage() {
-  return <AuthFlow initialMode="register" />;
+  return <AuthRouter />;
 }

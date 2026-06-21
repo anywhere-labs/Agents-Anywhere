@@ -47,7 +47,9 @@ class TerminalConflictError(TerminalServiceError):
 def _label_for(req: TerminalCreateRequest, default_count: int) -> str:
     if req.label and req.label.strip():
         return req.label.strip()
-    return "zsh" if default_count == 0 else f"zsh {default_count + 1}"
+    shell = (req.shell or "").strip().replace("\\", "/").rstrip("/")
+    base = shell.rsplit("/", 1)[-1] if shell else "Shell"
+    return base if default_count == 0 else f"{base} {default_count + 1}"
 
 
 def _primary_claude_terminal(terminals: list[Terminal]) -> Terminal | None:

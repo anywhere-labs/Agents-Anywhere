@@ -1,5 +1,5 @@
-import { DashboardClient } from "@/components/dashboard";
+import { AuthRouter } from "@/components/auth/auth-router";
 
 export default function HomePage() {
-  return <DashboardClient />;
+  return <AuthRouter />;
 }

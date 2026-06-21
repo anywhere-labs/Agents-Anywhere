@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import "../globals.css";
 import { routing } from "@/i18n/routing";
+import { ThemeProvider } from "@/components/theme-provider";
 
 const sans = Geist({
   subsets: ["latin"],
@@ -57,9 +58,9 @@ export default async function LocaleLayout({
 
   return (
     <html lang={locale} suppressHydrationWarning>
-      <body className={`${sans.variable} ${mono.variable} ${serif.variable} ${brand.variable}`}>
+      <body className={`${sans.variable} ${mono.variable} ${serif.variable} ${brand.variable} antialiased`}>
         <NextIntlClientProvider messages={messages}>
-          {children}
+          <ThemeProvider defaultTheme="dark">{children}</ThemeProvider>
         </NextIntlClientProvider>
       </body>
     </html>

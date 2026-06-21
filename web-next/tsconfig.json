@@ -43,6 +43,7 @@
   ],
   "exclude": [
     "node_modules",
-    "_deprecated"
+    "_deprecated",
+    "_reference"
   ]
 }

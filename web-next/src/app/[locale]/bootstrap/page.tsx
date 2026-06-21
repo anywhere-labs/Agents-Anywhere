@@ -1,5 +1,5 @@
-import { AuthFlow } from "@/components/auth";
+import { AuthRouter } from "@/components/auth/auth-router";
 
 export default function BootstrapPage() {
-  return <AuthFlow initialMode="bootstrap" />;
+  return <AuthRouter />;
 }

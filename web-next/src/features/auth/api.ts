@@ -4,14 +4,20 @@ import {
   derivePasswordVerifier
 } from "@/features/auth/password-verifier";
 import type {
+  AdminUser,
+  AdminUserListResponse,
   AuthConfig,
   AuthCredentials,
   AuthMe,
   AuthPasswordSaltResponse,
   AuthResponse,
+  InstanceSettings,
+  OAuthProviderConfigUpdate,
   OAuthFinalizePayload,
   OAuthFinalizeResponse,
-  OAuthStartResponse
+  OAuthStartResponse,
+  ServiceInfo,
+  UserRole
 } from "@/features/auth/types";
 
 export class AuthApi {
@@ -107,6 +113,88 @@ export class AuthApi {
 
   me(token?: string | null): Promise<AuthMe> {
     return this.client.get<AuthMe>("/auth/me", { token });
+  }
+
+  listUsers(token: string): Promise<AdminUserListResponse> {
+    return this.client.get<AdminUserListResponse>("/admin/users", { token });
+  }
+
+  async createUser(
+    token: string,
+    body: {
+      userId: string;
+      role: UserRole;
+      password?: string;
+      passwordVerifier?: string;
+      passwordSalt?: string;
+    },
+  ): Promise<AdminUser> {
+    const verifier =
+      body.passwordVerifier && body.passwordSalt
+        ? { passwordVerifier: body.passwordVerifier, passwordSalt: body.passwordSalt }
+        : body.password
+          ? await createPasswordVerifier(body.password)
+          : {};
+    return this.client.post<AdminUser>(
+      "/admin/users",
+      {
+        userId: normalizeUserId(body.userId),
+        role: body.role,
+        ...verifier,
+      },
+      { token },
+    );
+  }
+
+  async updateUser(
+    token: string,
+    userId: string,
+    body: {
+      role?: UserRole;
+      disabled?: boolean;
+      password?: string;
+      passwordVerifier?: string;
+      passwordSalt?: string;
+    },
+  ): Promise<AdminUser> {
+    const verifier =
+      body.passwordVerifier && body.passwordSalt
+        ? { passwordVerifier: body.passwordVerifier, passwordSalt: body.passwordSalt }
+        : body.password
+          ? await createPasswordVerifier(body.password)
+          : {};
+    return this.client.patch<AdminUser>(
+      `/admin/users/${encodeURIComponent(userId)}`,
+      {
+        ...(body.role ? { role: body.role } : {}),
+        ...(typeof body.disabled === "boolean" ? { disabled: body.disabled } : {}),
+        ...verifier,
+      },
+      { token },
+    );
+  }
+
+  deleteUser(token: string, userId: string): Promise<void> {
+    return this.client.delete<void>(`/admin/users/${encodeURIComponent(userId)}`, { token });
+  }
+
+  getSettings(token: string): Promise<InstanceSettings> {
+    return this.client.get<InstanceSettings>("/admin/settings", { token });
+  }
+
+  updateSettings(
+    token: string,
+    body: {
+      registrationOpen?: boolean;
+      oauthRegistrationOpen?: boolean;
+      oauth?: OAuthProviderConfigUpdate;
+    },
+  ): Promise<InstanceSettings> {
+    return this.client.patch<InstanceSettings>("/admin/settings", body, { token });
+  }
+
+  getServiceInfo(token: string): Promise<ServiceInfo> {
+    return this.client.get<ServiceInfo>("/admin/service", { token });
   }
 
   private async loginPasswordVerifier(userId: string, password: string): Promise<string> {
