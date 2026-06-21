@@ -18,9 +18,6 @@ enum class AppDestination(val title: String) {
     DeviceDetail("Device Detail"),
     Profile("Profile"),
     SessionDetail("Session"),
-    RuntimeFiles("Files"),
-    RuntimeTerminal("Terminal"),
-    CodePreview("Code Preview"),
 }
 
 enum class AppTab(
@@ -35,10 +32,7 @@ enum class AppTab(
 fun AppDestination.selectedTab(): AppTab? = when (this) {
     AppDestination.Sessions,
     AppDestination.NewSession,
-    AppDestination.SessionDetail,
-    AppDestination.RuntimeFiles,
-    AppDestination.RuntimeTerminal,
-    AppDestination.CodePreview -> AppTab.Sessions
+    AppDestination.SessionDetail -> AppTab.Sessions
 
     AppDestination.Devices,
     AppDestination.DeviceDetail -> AppTab.Devices
