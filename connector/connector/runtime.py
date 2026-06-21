@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -243,7 +244,10 @@ class BackendRpcClient:
         logger.info("connecting backend websocket {}", ws_url)
         async with websockets.connect(
             ws_url,
-            additional_headers={"Authorization": f"Bearer {access_token}"},
+            additional_headers={
+                "Authorization": f"Bearer {access_token}",
+                "X-Device-OS": _device_os(),
+            },
             proxy=None if _is_loopback_url(self.config.server_url) else True,
         ) as ws:
             self._ws = ws
@@ -990,6 +994,14 @@ def _is_loopback_url(url: str) -> bool:
     parsed = urlparse(url)
     host = (parsed.hostname or "").lower()
     return host in {"127.0.0.1", "localhost", "::1"}
+
+
+def _device_os() -> str:
+    if sys.platform == "darwin":
+        return "macos"
+    if sys.platform == "win32":
+        return "windows"
+    return "linux"
 
 
 def _preferences_signature(prefs: dict[str, Any]) -> tuple[tuple[str, Any], ...]:

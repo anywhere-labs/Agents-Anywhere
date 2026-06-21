@@ -15,6 +15,7 @@ enum class AppDestination(val title: String) {
     Sessions("Sessions"),
     NewSession("New Session"),
     Devices("Devices"),
+    DeviceDetail("Device Detail"),
     Profile("Profile"),
     SessionDetail("Session"),
     RuntimeFiles("Files"),
@@ -39,7 +40,8 @@ fun AppDestination.selectedTab(): AppTab? = when (this) {
     AppDestination.RuntimeTerminal,
     AppDestination.CodePreview -> AppTab.Sessions
 
-    AppDestination.Devices -> AppTab.Devices
+    AppDestination.Devices,
+    AppDestination.DeviceDetail -> AppTab.Devices
     AppDestination.Profile -> AppTab.Profile
     else -> null
 }

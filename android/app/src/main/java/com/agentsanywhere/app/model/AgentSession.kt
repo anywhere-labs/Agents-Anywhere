@@ -36,9 +36,12 @@ enum class SessionStatus {
 data class AgentDevice(
     val id: String,
     val name: String,
+    val deviceOs: String? = null,
     val subtitle: String,
     val online: Boolean,
     val attachedRuntimes: List<String> = emptyList(),
+    val lastSeenAt: String? = null,
+    val createdAt: String? = null,
 )
 
 data class RemoteFile(

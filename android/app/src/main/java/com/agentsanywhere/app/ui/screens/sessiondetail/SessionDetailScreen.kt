@@ -676,6 +676,7 @@ fun SessionDetailScreen(
                             sessionId == null -> EmptyDetailMessage("Open a session from the list.")
                             state.isLoading && state.messages.isEmpty() -> SessionDetailLoadingState(darkMode = darkMode)
                             state.errorMessage != null && state.messages.isEmpty() -> EmptyDetailMessage(state.errorMessage.orEmpty())
+                            state.messages.isEmpty() -> SessionWelcomeMessage(darkMode = darkMode)
                             else -> MessageList(
                                 messages = state.messages,
                                 darkMode = darkMode,

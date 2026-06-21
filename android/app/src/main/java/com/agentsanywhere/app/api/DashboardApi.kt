@@ -87,6 +87,7 @@ class DashboardApi(
         return RemoteConnector(
             id = getString("id"),
             name = optString("name", "Device").ifBlank { "Device" },
+            deviceOs = optNullableString("deviceOs"),
             status = optString("status", "offline"),
             lastSeenAt = optNullableString("lastSeenAt"),
             attachedRuntimes = attached,

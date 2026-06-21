@@ -50,6 +50,7 @@ import com.agentsanywhere.app.ui.screens.auth.PasswordLoginScreen
 import com.agentsanywhere.app.ui.screens.auth.QrLoginScreen
 import com.agentsanywhere.app.ui.screens.auth.QrWaitingScreen
 import com.agentsanywhere.app.ui.screens.auth.ServerSetupScreen
+import com.agentsanywhere.app.ui.screens.devices.DeviceDetailPlaceholderScreen
 import com.agentsanywhere.app.ui.screens.runtime.CodePreviewScreen
 import com.agentsanywhere.app.ui.screens.runtime.RuntimeFilesScreen
 import com.agentsanywhere.app.ui.screens.runtime.RuntimeTerminalScreen
@@ -163,7 +164,7 @@ fun AgentsAnywhereApp(
                 showInitialLoading = true,
                 showRefreshIndicator = false,
             )
-            delay(30_000)
+            delay(5_000)
         }
     }
 
@@ -435,6 +436,7 @@ private fun AgentsAnywhereNavHost(
                 AppDestination.RuntimeFiles -> RuntimeFilesScreen(navigate)
                 AppDestination.RuntimeTerminal -> RuntimeTerminalScreen(navigate)
                 AppDestination.CodePreview -> CodePreviewScreen(navigate)
+                AppDestination.DeviceDetail -> DeviceDetailPlaceholderScreen(navigate)
                 AppDestination.Devices,
                 AppDestination.Profile -> Unit
             }

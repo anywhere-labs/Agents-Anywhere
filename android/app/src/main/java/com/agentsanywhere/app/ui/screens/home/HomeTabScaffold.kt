@@ -107,7 +107,12 @@ fun HomeTabsScreen(
                         pagerUserScrollEnabled = !active
                     },
                 )
-                AppTab.Devices -> DevicesScreen(navigate = navigate)
+                AppTab.Devices -> DevicesScreen(
+                    navigate = navigate,
+                    state = sessionsState,
+                    isRefreshing = isRefreshingSessions,
+                    onRefresh = onRefreshSessions,
+                )
                 AppTab.Profile -> ProfileScreen(navigate = navigate)
             }
         }

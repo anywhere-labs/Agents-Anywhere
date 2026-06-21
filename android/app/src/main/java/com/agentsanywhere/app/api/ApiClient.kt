@@ -77,6 +77,7 @@ class ApiClient {
             readTimeout = 35_000
             setRequestProperty("Accept", "text/event-stream")
             setRequestProperty("Cache-Control", "no-cache")
+            setRequestProperty("ngrok-skip-browser-warning", "true")
         }
         try {
             val responseCode = connection.responseCode
@@ -131,6 +132,7 @@ class ApiClient {
                 doOutput = true
                 setRequestProperty("Accept", "application/json")
                 setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+                setRequestProperty("ngrok-skip-browser-warning", "true")
                 if (!authorizationToken.isNullOrBlank()) {
                     setRequestProperty("Authorization", "Bearer $authorizationToken")
                 }
@@ -185,6 +187,7 @@ class ApiClient {
                 readTimeout = 15_000
                 doOutput = bodyText != null
                 setRequestProperty("Accept", "application/json")
+                setRequestProperty("ngrok-skip-browser-warning", "true")
                 if (bodyText != null) {
                     setRequestProperty("Content-Type", "application/json")
                 }

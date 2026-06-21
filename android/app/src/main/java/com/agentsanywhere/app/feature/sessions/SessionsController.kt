@@ -265,9 +265,12 @@ class SessionsController(
         return AgentDevice(
             id = id,
             name = name,
+            deviceOs = deviceOs,
             subtitle = subtitle,
             online = status == "online",
             attachedRuntimes = attachedRuntimes,
+            lastSeenAt = lastSeenAt,
+            createdAt = createdAt,
         )
     }
 

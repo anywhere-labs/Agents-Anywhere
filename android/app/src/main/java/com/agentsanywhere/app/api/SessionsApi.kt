@@ -359,6 +359,7 @@ class SessionsApi(
         return RemoteConnector(
             id = getString("id"),
             name = optString("name", "Device").ifBlank { "Device" },
+            deviceOs = optNullableString("deviceOs"),
             status = optString("status", "offline"),
             lastSeenAt = optNullableString("lastSeenAt"),
             attachedRuntimes = attached,
@@ -629,6 +630,7 @@ data class RemoteRuntimeSettings(
 data class RemoteConnector(
     val id: String,
     val name: String,
+    val deviceOs: String?,
     val status: String,
     val lastSeenAt: String?,
     val attachedRuntimes: List<String>,
