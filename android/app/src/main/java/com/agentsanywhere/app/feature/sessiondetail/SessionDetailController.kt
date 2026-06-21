@@ -1,6 +1,7 @@
 package com.agentsanywhere.app.feature.sessiondetail
 
 import com.agentsanywhere.app.api.ApiException
+import com.agentsanywhere.app.api.ConnectorsApi
 import com.agentsanywhere.app.api.RemoteApproval
 import com.agentsanywhere.app.api.RemoteRuntimeConfigField
 import com.agentsanywhere.app.api.RemoteRuntimeConfigOption
@@ -32,7 +33,8 @@ import java.net.URLEncoder
 import kotlin.math.max
 
 class SessionDetailController(
-    private val api: SessionsApi,
+    private val sessionsApi: SessionsApi,
+    private val connectorsApi: ConnectorsApi,
     private val sessionStore: AuthSessionStore,
 ) {
     suspend fun load(
@@ -50,7 +52,7 @@ class SessionDetailController(
                 var afterSeq = 0
                 var hasMore = true
                 while (hasMore) {
-                    val page = api.getSessionState(
+                    val page = sessionsApi.getSessionState(
                         serverUrl = auth.serverUrl,
                         authorizationToken = auth.accessToken,
                         sessionId = sessionId,
@@ -97,7 +99,7 @@ class SessionDetailController(
         val job = launch(Dispatchers.IO) {
             while (isActive) {
                 try {
-                    api.streamSessionEvents(
+                    sessionsApi.streamSessionEvents(
                         serverUrl = auth.serverUrl,
                         authorizationToken = auth.accessToken,
                         sessionId = sessionId,
@@ -136,14 +138,14 @@ class SessionDetailController(
                 } else if (attachments.isEmpty()) {
                     emptyList()
                 } else {
-                    api.uploadSessionAttachments(
+                    sessionsApi.uploadSessionAttachments(
                         serverUrl = auth.serverUrl,
                         authorizationToken = auth.accessToken,
                         sessionId = sessionId,
                         files = attachments,
                     ).map { it.toTimelineAttachment() }
                 }
-                api.sendSessionMessage(
+                sessionsApi.sendSessionMessage(
                     serverUrl = auth.serverUrl,
                     authorizationToken = auth.accessToken,
                     sessionId = sessionId,
@@ -167,7 +169,7 @@ class SessionDetailController(
         return withContext(Dispatchers.IO) {
             runCatching {
                 val auth = authSession()
-                api.uploadSessionAttachments(
+                sessionsApi.uploadSessionAttachments(
                     serverUrl = auth.serverUrl,
                     authorizationToken = auth.accessToken,
                     sessionId = sessionId,
@@ -186,9 +188,9 @@ class SessionDetailController(
             runCatching {
                 val auth = authSession()
                 val session = if (enabled) {
-                    api.enableTakeover(auth.serverUrl, auth.accessToken, sessionId)
+                    sessionsApi.enableTakeover(auth.serverUrl, auth.accessToken, sessionId)
                 } else {
-                    api.disableTakeover(auth.serverUrl, auth.accessToken, sessionId)
+                    sessionsApi.disableTakeover(auth.serverUrl, auth.accessToken, sessionId)
                 }
                 session.toAgentSession(devices.associateBy { it.id })
             }
@@ -202,12 +204,12 @@ class SessionDetailController(
         return withContext(Dispatchers.IO) {
             runCatching {
                 val auth = authSession()
-                val schema = api.getRuntimeConfigSchema(
+                val schema = sessionsApi.getRuntimeConfigSchema(
                     serverUrl = auth.serverUrl,
                     authorizationToken = auth.accessToken,
                     runtime = runtime,
                 )
-                val settings = api.getSessionRuntimeSettings(
+                val settings = sessionsApi.getSessionRuntimeSettings(
                     serverUrl = auth.serverUrl,
                     authorizationToken = auth.accessToken,
                     sessionId = sessionId,
@@ -225,7 +227,7 @@ class SessionDetailController(
         return withContext(Dispatchers.IO) {
             runCatching {
                 val auth = authSession()
-                val directory = api.listConnectorFiles(
+                val directory = connectorsApi.listConnectorFiles(
                     serverUrl = auth.serverUrl,
                     authorizationToken = auth.accessToken,
                     connectorId = connectorId,
@@ -261,7 +263,7 @@ class SessionDetailController(
         return withContext(Dispatchers.IO) {
             runCatching {
                 val auth = authSession()
-                val file = api.readConnectorTextFile(
+                val file = connectorsApi.readConnectorTextFile(
                     serverUrl = auth.serverUrl,
                     authorizationToken = auth.accessToken,
                     connectorId = connectorId,
@@ -296,7 +298,7 @@ class SessionDetailController(
                 val root = session.cwd?.takeIf { it.isNotBlank() }
                     ?: throw IllegalStateException("This session has no workspace.")
                 val auth = authSession()
-                val terminal = api.createConnectorTerminal(
+                val terminal = connectorsApi.createConnectorTerminal(
                     serverUrl = auth.serverUrl,
                     authorizationToken = auth.accessToken,
                     connectorId = session.connectorId,
@@ -326,7 +328,7 @@ class SessionDetailController(
         return withContext(Dispatchers.IO) {
             runCatching {
                 val auth = authSession()
-                api.closeConnectorTerminal(
+                connectorsApi.closeConnectorTerminal(
                     serverUrl = auth.serverUrl,
                     authorizationToken = auth.accessToken,
                     connectorId = connectorId,
@@ -344,7 +346,7 @@ class SessionDetailController(
         return withContext(Dispatchers.IO) {
             runCatching {
                 val auth = authSession()
-                val settings = api.patchSessionRuntimeSettings(
+                val settings = sessionsApi.patchSessionRuntimeSettings(
                     serverUrl = auth.serverUrl,
                     authorizationToken = auth.accessToken,
                     sessionId = sessionId,
@@ -365,7 +367,7 @@ class SessionDetailController(
         return runCatching {
             val auth = authSession()
             AttachmentImageRequest(
-                url = api.attachmentOpenUrl(
+                url = sessionsApi.attachmentOpenUrl(
                     serverUrl = auth.serverUrl,
                     sessionId = sessionId,
                     fileId = attachment.fileId,
@@ -380,7 +382,7 @@ class SessionDetailController(
         return withContext(Dispatchers.IO) {
             runCatching {
                 val auth = authSession()
-                api.interruptSession(auth.serverUrl, auth.accessToken, sessionId)
+                sessionsApi.interruptSession(auth.serverUrl, auth.accessToken, sessionId)
                 Unit
             }
         }
@@ -390,7 +392,7 @@ class SessionDetailController(
         return withContext(Dispatchers.IO) {
             runCatching {
                 val auth = authSession()
-                api.resolveApproval(auth.serverUrl, auth.accessToken, approvalId, status)
+                sessionsApi.resolveApproval(auth.serverUrl, auth.accessToken, approvalId, status)
                 Unit
             }
         }

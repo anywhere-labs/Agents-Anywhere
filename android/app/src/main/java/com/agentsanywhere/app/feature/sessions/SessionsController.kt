@@ -1,6 +1,7 @@
 package com.agentsanywhere.app.feature.sessions
 
 import com.agentsanywhere.app.api.ApiException
+import com.agentsanywhere.app.api.ConnectorsApi
 import com.agentsanywhere.app.api.SessionsApi
 import com.agentsanywhere.app.api.RemoteConnector
 import com.agentsanywhere.app.api.RemoteSession
@@ -15,7 +16,8 @@ import java.time.Instant
 import java.time.format.DateTimeParseException
 
 class SessionsController(
-    private val api: SessionsApi,
+    private val sessionsApi: SessionsApi,
+    private val connectorsApi: ConnectorsApi,
     private val sessionStore: AuthSessionStore,
 ) {
     suspend fun loadSessions(): Result<SessionsState> {
@@ -27,11 +29,11 @@ class SessionsController(
 
         return withContext(Dispatchers.IO) {
             runCatching {
-                val sessions = api.listSessions(
+                val sessions = sessionsApi.listSessions(
                     serverUrl = serverUrl,
                     authorizationToken = accessToken,
                 )
-                val connectors = api.listConnectors(
+                val connectors = connectorsApi.listConnectors(
                     serverUrl = serverUrl,
                     authorizationToken = accessToken,
                 )
@@ -57,6 +59,134 @@ class SessionsController(
         )
     }
 
+    suspend fun renameDevice(
+        connectorId: String,
+        name: String,
+    ): Result<AgentDevice> {
+        val serverUrl = sessionStore.readServerUrl()
+        val accessToken = sessionStore.readAccessToken()
+        if (serverUrl.isBlank() || accessToken.isBlank()) {
+            return Result.failure(IllegalStateException("Sign in again to rename this device."))
+        }
+
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                connectorsApi.updateConnector(
+                    serverUrl = serverUrl,
+                    authorizationToken = accessToken,
+                    connectorId = connectorId,
+                    name = name,
+                ).toAgentDevice()
+            }.recoverCatching { error ->
+                if (error is ApiException) throw error
+                throw IllegalStateException(error.message ?: "Could not rename device.", error)
+            }
+        }
+    }
+
+    suspend fun deleteDevice(connectorId: String): Result<Unit> {
+        val serverUrl = sessionStore.readServerUrl()
+        val accessToken = sessionStore.readAccessToken()
+        if (serverUrl.isBlank() || accessToken.isBlank()) {
+            return Result.failure(IllegalStateException("Sign in again to delete this device."))
+        }
+
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                connectorsApi.deleteConnector(
+                    serverUrl = serverUrl,
+                    authorizationToken = accessToken,
+                    connectorId = connectorId,
+                )
+            }.recoverCatching { error ->
+                if (error is ApiException) throw error
+                throw IllegalStateException(error.message ?: "Could not delete device.", error)
+            }
+        }
+    }
+
+    suspend fun prepareDeviceSetup(connectorId: String): Result<DeviceSetupCredential> {
+        val serverUrl = sessionStore.readServerUrl()
+        val accessToken = sessionStore.readAccessToken()
+        if (serverUrl.isBlank() || accessToken.isBlank()) {
+            return Result.failure(IllegalStateException("Sign in again to set up this device."))
+        }
+
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val credential = connectorsApi.revokeConnector(
+                    serverUrl = serverUrl,
+                    authorizationToken = accessToken,
+                    connectorId = connectorId,
+                )
+                DeviceSetupCredential(
+                    device = credential.connector.toAgentDevice(),
+                    serverUrl = serverUrl.trimEnd('/'),
+                    connectorToken = credential.connectorToken,
+                )
+            }.recoverCatching { error ->
+                if (error is ApiException) throw error
+                throw IllegalStateException(error.message ?: "Could not prepare device setup.", error)
+            }
+        }
+    }
+
+    suspend fun claimDevicePairCode(
+        credential: DeviceSetupCredential,
+        code: String,
+    ): Result<AgentDevice> {
+        val serverUrl = sessionStore.readServerUrl()
+        val accessToken = sessionStore.readAccessToken()
+        if (serverUrl.isBlank() || accessToken.isBlank()) {
+            return Result.failure(IllegalStateException("Sign in again to claim this pair code."))
+        }
+        val cleanCode = code.trim().uppercase()
+        if (cleanCode.isBlank()) {
+            return Result.failure(IllegalArgumentException("Enter the code shown by uvx anywhere-cli pair."))
+        }
+
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                connectorsApi.claimPairing(
+                    serverUrl = serverUrl,
+                    authorizationToken = accessToken,
+                    code = cleanCode,
+                    name = credential.device.name,
+                    connectorId = credential.device.id,
+                    connectorToken = credential.connectorToken,
+                ).toAgentDevice()
+            }.recoverCatching { error ->
+                if (error is ApiException) throw error
+                throw IllegalStateException(error.message ?: "Could not claim pairing code.", error)
+            }
+        }
+    }
+
+    suspend fun deleteDeviceAgent(
+        connectorId: String,
+        runtime: String,
+    ): Result<List<String>> {
+        val serverUrl = sessionStore.readServerUrl()
+        val accessToken = sessionStore.readAccessToken()
+        if (serverUrl.isBlank() || accessToken.isBlank()) {
+            return Result.failure(IllegalStateException("Sign in again to remove this agent."))
+        }
+
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                connectorsApi.deleteConnectorRuntime(
+                    serverUrl = serverUrl,
+                    authorizationToken = accessToken,
+                    connectorId = connectorId,
+                    runtime = runtime,
+                )
+            }.recoverCatching { error ->
+                if (error is ApiException) throw error
+                throw IllegalStateException(error.message ?: "Could not remove agent.", error)
+            }
+        }
+    }
+
     suspend fun createSession(
         title: String,
         connectorId: String,
@@ -72,7 +202,7 @@ class SessionsController(
 
         return withContext(Dispatchers.IO) {
             runCatching {
-                api.createSession(
+                sessionsApi.createSession(
                     serverUrl = serverUrl,
                     authorizationToken = accessToken,
                     connectorId = connectorId,
@@ -100,7 +230,7 @@ class SessionsController(
 
         return withContext(Dispatchers.IO) {
             runCatching {
-                val directory = api.listConnectorFiles(
+                val directory = connectorsApi.listConnectorFiles(
                     serverUrl = serverUrl,
                     authorizationToken = accessToken,
                     connectorId = connectorId,
@@ -171,7 +301,7 @@ class SessionsController(
 
         return withContext(Dispatchers.IO) {
             runCatching {
-                api.patchSession(
+                sessionsApi.patchSession(
                     serverUrl = serverUrl,
                     authorizationToken = accessToken,
                     sessionId = sessionId,
@@ -358,3 +488,9 @@ class SessionsController(
         }
     }
 }
+
+data class DeviceSetupCredential(
+    val device: AgentDevice,
+    val serverUrl: String,
+    val connectorToken: String,
+)

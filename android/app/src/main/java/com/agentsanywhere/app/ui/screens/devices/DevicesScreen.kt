@@ -48,12 +48,9 @@ import com.agentsanywhere.app.R
 import com.agentsanywhere.app.feature.sessions.SessionsState
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentSession
-import com.agentsanywhere.app.navigation.AppDestination
 import com.agentsanywhere.app.ui.designsystem.HeaderPlusButton
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
-import com.agentsanywhere.app.ui.designsystem.PlaceholderScreen
 import com.agentsanywhere.app.ui.designsystem.SectionLabel
-import com.agentsanywhere.app.ui.designsystem.ScreenScaffold
 import com.composables.icons.lucide.ChevronRight
 import com.composables.icons.lucide.Folder
 import com.composables.icons.lucide.Lucide
@@ -65,17 +62,17 @@ import java.time.format.DateTimeParseException
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DevicesScreen(
-    navigate: (AppDestination) -> Unit,
     state: SessionsState,
     isRefreshing: Boolean,
     onRefresh: () -> Unit,
+    onOpenDevice: (AgentDevice) -> Unit,
 ) {
     val colors = LocalAAColors.current
     val darkMode = colors.canvas == Color(0xFF09090B)
     val devices = remember(state.devices) { state.devices.sortedForDevicesPage() }
     val workspaces = remember(state.sessions) { workspaceRows(state.sessions) }
     var connectorsExpanded by remember { mutableStateOf(true) }
-    var workspacesExpanded by remember { mutableStateOf(true) }
+    var workspacesExpanded by remember { mutableStateOf(false) }
     val refreshState = rememberPullToRefreshState()
     val refreshIndicatorContainer = if (darkMode) Color(0xFF27272A) else Color(0xFFF2F2F2)
     val refreshIndicatorColor = if (darkMode) Color(0xFFE4E4E7) else Color(0xFF8E8E93)
@@ -114,7 +111,7 @@ fun DevicesScreen(
                 },
             ) {
                 when {
-                    state.isLoading && !state.hasLoaded -> DevicesLoadingList(darkMode = darkMode)
+                    state.isLoading && !state.hasLoaded && state.devices.isEmpty() -> DevicesLoadingList(darkMode = darkMode)
                     state.devices.isEmpty() -> Box(
                         modifier = Modifier.fillMaxSize(),
                         contentAlignment = Alignment.Center,
@@ -137,7 +134,7 @@ fun DevicesScreen(
                                 DeviceRow(
                                     device = device,
                                     darkMode = darkMode,
-                                    onClick = { navigate(AppDestination.DeviceDetail) },
+                                    onClick = { onOpenDevice(device) },
                                 )
                             }
                         }
@@ -157,7 +154,7 @@ fun DevicesScreen(
                                     WorkspaceRow(
                                         workspace = workspace,
                                         darkMode = darkMode,
-                                        onClick = { navigate(AppDestination.DeviceDetail) },
+                                        onClick = {},
                                     )
                                 }
                             }
@@ -224,23 +221,6 @@ private fun DevicesHeader(
             contentDescription = "Add device",
             modifier = Modifier.align(Alignment.CenterEnd),
         )
-    }
-}
-
-@Composable
-fun DeviceDetailPlaceholderScreen(navigate: (AppDestination) -> Unit) {
-    ScreenScaffold {
-        Box(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center,
-        ) {
-            PlaceholderScreen(
-                title = "Device Detail",
-                subtitle = "Device details will appear here.",
-                primaryActionLabel = "Back to Devices",
-                onPrimaryAction = { navigate(AppDestination.Devices) },
-            )
-        }
     }
 }
 
@@ -388,7 +368,7 @@ private fun WorkspaceRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(56.dp)
+            .height(64.dp)
             .shadow(
                 if (pressed) 9.dp else if (darkMode) 2.dp else 0.dp,
                 shape,
@@ -405,7 +385,7 @@ private fun WorkspaceRow(
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 onClick()
             }
-            .padding(horizontal = 12.dp),
+            .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
@@ -417,7 +397,7 @@ private fun WorkspaceRow(
         Spacer(Modifier.width(11.dp))
         Column(
             modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
+            verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterVertically),
         ) {
             Text(
                 text = workspace.title,

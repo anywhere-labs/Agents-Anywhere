@@ -14,6 +14,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import com.agentsanywhere.app.feature.sessions.SessionsState
+import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentSession
 import com.agentsanywhere.app.ui.designsystem.BottomNavigationBar
 import com.agentsanywhere.app.ui.designsystem.ScreenScaffold
@@ -35,6 +36,7 @@ fun HomeTabsScreen(
     onSetSessionPinned: suspend (String, Boolean) -> Result<AgentSession>,
     onSetSessionArchived: suspend (String, Boolean) -> Result<AgentSession>,
     onOpenSession: (AgentSession) -> Unit,
+    onOpenDevice: (AgentDevice) -> Unit,
     navigate: (AppDestination) -> Unit,
 ) {
     val tabs = remember { AppTab.entries.toList() }
@@ -108,10 +110,10 @@ fun HomeTabsScreen(
                     },
                 )
                 AppTab.Devices -> DevicesScreen(
-                    navigate = navigate,
                     state = sessionsState,
                     isRefreshing = isRefreshingSessions,
                     onRefresh = onRefreshSessions,
+                    onOpenDevice = onOpenDevice,
                 )
                 AppTab.Profile -> ProfileScreen(navigate = navigate)
             }
