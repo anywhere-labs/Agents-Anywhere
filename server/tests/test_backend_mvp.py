@@ -635,11 +635,12 @@ def test_connector_status_response_uses_live_ws_not_stale_db(tmp_path):
 
     with client.websocket_connect(
         "/connector/ws",
-        headers={"Authorization": f"Bearer {access_token}"},
+        headers={"Authorization": f"Bearer {access_token}", "X-Device-OS": "macos"},
     ) as ws:
         ws.send_json({"type": "notification", "method": "connector.heartbeat", "params": {}})
         connector = client.get(f"/connectors/{connector_id}", headers=headers).json()["connector"]
         assert connector["status"] == "online"
+        assert connector["deviceOs"] == "macos"
         session = client.get(f"/sessions/{session_id}/state", headers=headers).json()["session"]
         assert session["connectorStatus"] == "online"
 

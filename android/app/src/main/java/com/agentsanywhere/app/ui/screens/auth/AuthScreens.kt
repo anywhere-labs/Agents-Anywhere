@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -24,8 +25,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -38,17 +39,18 @@ import com.agentsanywhere.app.feature.auth.AuthController
 import com.agentsanywhere.app.feature.auth.AuthSessionStore
 import com.agentsanywhere.app.feature.auth.AuthState
 import com.agentsanywhere.app.navigation.AppDestination
-import com.agentsanywhere.app.ui.designsystem.AccountGlyph
 import com.agentsanywhere.app.ui.designsystem.AgentsAnywhereTheme
 import com.agentsanywhere.app.ui.designsystem.AuthErrorNotice
 import com.agentsanywhere.app.ui.designsystem.BackPill
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
-import com.agentsanywhere.app.ui.designsystem.PasswordKeyGlyph
-import com.agentsanywhere.app.ui.designsystem.ServerGlyph
-import com.agentsanywhere.app.ui.designsystem.ShieldCheckGlyph
 import com.agentsanywhere.app.ui.designsystem.ScreenScaffold
-import com.agentsanywhere.app.ui.designsystem.SmallQrGlyph
+import com.composables.icons.lucide.KeyRound
+import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.QrCode
+import com.composables.icons.lucide.Server
+import com.composables.icons.lucide.ShieldCheck
+import com.composables.icons.lucide.User
 import kotlinx.coroutines.launch
 
 @Composable
@@ -96,22 +98,19 @@ fun LoginMethodsScreen(navigate: (AppDestination) -> Unit) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 LoginMethodButton(
                     label = "Continue with Password",
+                    icon = Lucide.KeyRound,
                     onClick = { navigate(AppDestination.PasswordLogin) },
-                ) { iconColor ->
-                    PasswordKeyGlyph(color = iconColor)
-                }
+                )
                 LoginMethodButton(
                     label = "Continue with QR Code",
+                    icon = Lucide.QrCode,
                     onClick = { navigate(AppDestination.QrLogin) },
-                ) { iconColor ->
-                    SmallQrGlyph(color = iconColor)
-                }
+                )
                 LoginMethodButton(
                     label = "Continue with OAuth",
+                    icon = Lucide.ShieldCheck,
                     onClick = { navigate(AppDestination.OAuthSetup) },
-                ) { iconColor ->
-                    ShieldCheckGlyph(color = iconColor)
-                }
+                )
             }
 
             Row(
@@ -144,8 +143,8 @@ fun LoginMethodsScreen(navigate: (AppDestination) -> Unit) {
 @Composable
 private fun LoginMethodButton(
     label: String,
+    icon: ImageVector,
     onClick: () -> Unit,
-    icon: @Composable (Color) -> Unit,
 ) {
     val colors = LocalAAColors.current
 
@@ -165,7 +164,12 @@ private fun LoginMethodButton(
             modifier = Modifier.size(22.dp),
             contentAlignment = Alignment.Center,
         ) {
-            icon(colors.onRaisedSurface)
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = colors.onRaisedSurface,
+                modifier = Modifier.size(22.dp),
+            )
         }
         Text(
             modifier = Modifier.padding(start = 10.dp),
@@ -245,27 +249,24 @@ fun PasswordLoginScreen(navigate: (AppDestination) -> Unit) {
                     value = state.serverUrl,
                     onValueChange = { state = state.copy(serverUrl = it, errorMessage = null) },
                     placeholder = "Server URL",
+                    icon = Lucide.Server,
                     enabled = !state.isSubmitting,
-                ) { iconColor ->
-                    ServerGlyph(color = iconColor)
-                }
+                )
                 AuthInputRow(
                     value = state.userId,
                     onValueChange = { state = state.copy(userId = it, errorMessage = null) },
                     placeholder = "User ID",
+                    icon = Lucide.User,
                     enabled = !state.isSubmitting,
-                ) { iconColor ->
-                    AccountGlyph(color = iconColor)
-                }
+                )
                 AuthInputRow(
                     value = state.password,
                     onValueChange = { state = state.copy(password = it, errorMessage = null) },
                     placeholder = "Password",
+                    icon = Lucide.KeyRound,
                     isPassword = true,
                     enabled = !state.isSubmitting,
-                ) { iconColor ->
-                    PasswordKeyGlyph(color = iconColor)
-                }
+                )
                 AuthContinueButton(isLoading = state.isSubmitting) {
                     val submittedState = state
                     state = state.copy(isSubmitting = true, errorMessage = null)
@@ -295,9 +296,9 @@ internal fun AuthInputRow(
     value: String,
     onValueChange: (String) -> Unit,
     placeholder: String,
+    icon: ImageVector,
     isPassword: Boolean = false,
     enabled: Boolean = true,
-    icon: @Composable (Color) -> Unit,
 ) {
     val colors = LocalAAColors.current
 
@@ -316,7 +317,12 @@ internal fun AuthInputRow(
             modifier = Modifier.size(22.dp),
             contentAlignment = Alignment.Center,
         ) {
-            icon(colors.onRaisedSurface)
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = colors.onRaisedSurface,
+                modifier = Modifier.size(22.dp),
+            )
         }
         androidx.compose.foundation.text.BasicTextField(
             modifier = Modifier.weight(1f),

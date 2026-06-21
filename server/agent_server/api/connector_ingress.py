@@ -246,7 +246,11 @@ async def connector_ws(
 
     await websocket.accept()
     connection = manager.register(connector_id, websocket)
-    await db.set_connector_status(connector_id, "online")
+    await db.set_connector_status(
+        connector_id,
+        "online",
+        device_os=_connector_device_os(websocket.headers.get("x-device-os")),
+    )
     await db.record_connector_activity(connector_id)
     await publish_dashboard_changed(
         db,
@@ -281,6 +285,11 @@ async def connector_ws(
                 connector_id=connector_id,
                 reason="connector.offline",
             )
+
+
+def _connector_device_os(value: str | None) -> str | None:
+    normalized = (value or "").strip().lower()
+    return normalized if normalized in {"macos", "windows", "linux"} else None
 
 
 @router.websocket("/connector/terminals/{terminal_id}/relay")

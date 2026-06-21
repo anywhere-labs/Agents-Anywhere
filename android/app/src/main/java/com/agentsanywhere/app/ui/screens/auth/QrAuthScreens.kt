@@ -18,9 +18,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -48,7 +46,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
@@ -57,7 +54,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import com.agentsanywhere.app.R
 import com.agentsanywhere.app.api.AuthApi
 import com.agentsanywhere.app.feature.auth.AuthController
 import com.agentsanywhere.app.feature.auth.AuthSessionStore
@@ -70,6 +66,8 @@ import com.agentsanywhere.app.ui.designsystem.AuthErrorNotice
 import com.agentsanywhere.app.ui.designsystem.BackPill
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.ScreenScaffold
+import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.Monitor
 import com.google.mlkit.vision.barcode.BarcodeScannerOptions
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
@@ -431,15 +429,12 @@ private fun QrScannerOverlay(isScanning: Boolean) {
 
 @Composable
 private fun QrWaitingMonitorIcon() {
-    val iconRes = if (isSystemInDarkTheme()) {
-        R.drawable.ic_web_monitor_dark
-    } else {
-        R.drawable.ic_web_monitor_light
-    }
+    val colors = LocalAAColors.current
 
-    Image(
-        painter = painterResource(iconRes),
+    androidx.compose.material3.Icon(
+        imageVector = Lucide.Monitor,
         contentDescription = null,
+        tint = colors.ink,
         modifier = Modifier.size(width = 64.dp, height = 52.dp),
     )
 }

@@ -22,18 +22,24 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import com.agentsanywhere.app.api.AuthApi
+import com.agentsanywhere.app.api.ConnectorsApi
 import com.agentsanywhere.app.api.SessionsApi
 import com.agentsanywhere.app.feature.auth.AuthController
 import com.agentsanywhere.app.feature.auth.AuthSessionStore
 import com.agentsanywhere.app.feature.auth.OAuthCallbackResult
 import com.agentsanywhere.app.feature.auth.OAuthFlowState
+import com.agentsanywhere.app.feature.sessions.DeviceSetupCredential
 import com.agentsanywhere.app.feature.sessions.SessionsController
 import com.agentsanywhere.app.feature.sessions.SessionsState
 import com.agentsanywhere.app.feature.sessions.NewSessionDirectory
+import com.agentsanywhere.app.feature.sessions.withDeletedDevice
+import com.agentsanywhere.app.feature.sessions.withDeletedDeviceAgent
+import com.agentsanywhere.app.feature.sessions.withPatchedDevice
 import com.agentsanywhere.app.feature.sessions.withPatchedSession
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
 import com.agentsanywhere.app.model.MobileLoginQrPayload
 import com.agentsanywhere.app.feature.auth.OAuthPendingStatus
+import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentSession
 import com.agentsanywhere.app.navigation.AppDestination
 import com.agentsanywhere.app.navigation.selectedTab
@@ -50,9 +56,7 @@ import com.agentsanywhere.app.ui.screens.auth.PasswordLoginScreen
 import com.agentsanywhere.app.ui.screens.auth.QrLoginScreen
 import com.agentsanywhere.app.ui.screens.auth.QrWaitingScreen
 import com.agentsanywhere.app.ui.screens.auth.ServerSetupScreen
-import com.agentsanywhere.app.ui.screens.runtime.CodePreviewScreen
-import com.agentsanywhere.app.ui.screens.runtime.RuntimeFilesScreen
-import com.agentsanywhere.app.ui.screens.runtime.RuntimeTerminalScreen
+import com.agentsanywhere.app.ui.screens.devices.DeviceDetailScreen
 import com.agentsanywhere.app.ui.screens.sessiondetail.SessionDetailScreen
 import com.agentsanywhere.app.ui.screens.home.HomeTabsScreen
 import com.agentsanywhere.app.ui.screens.sessions.NewSessionScreen
@@ -79,6 +83,7 @@ fun AgentsAnywhereApp(
     var oauthFlow by remember { mutableStateOf<OAuthFlowState?>(null) }
     var oauthErrorMessage by remember { mutableStateOf<String?>(null) }
     var selectedSessionId by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedDeviceId by rememberSaveable { mutableStateOf<String?>(null) }
     val authController = remember(context, sessionStore) {
         AuthController(
             api = AuthApi(),
@@ -87,13 +92,15 @@ fun AgentsAnywhereApp(
     }
     val sessionsController = remember(context, sessionStore) {
         SessionsController(
-            api = SessionsApi(),
+            sessionsApi = SessionsApi(),
+            connectorsApi = ConnectorsApi(),
             sessionStore = sessionStore,
         )
     }
     val sessionDetailController = remember(context, sessionStore) {
         SessionDetailController(
-            api = SessionsApi(),
+            sessionsApi = SessionsApi(),
+            connectorsApi = ConnectorsApi(),
             sessionStore = sessionStore,
         )
     }
@@ -113,7 +120,7 @@ fun AgentsAnywhereApp(
     suspend fun refreshSessions(showInitialLoading: Boolean, showRefreshIndicator: Boolean) {
         if (showRefreshIndicator) {
             isRefreshingSessions = true
-        } else if (showInitialLoading && !sessionsState.hasLoaded && sessionsState.sessions.isEmpty()) {
+        } else if (showInitialLoading && !sessionsState.hasLoaded && sessionsState.sessions.isEmpty() && sessionsState.devices.isEmpty()) {
             sessionsState = sessionsState.copy(isLoading = true, errorMessage = null)
         }
 
@@ -163,7 +170,7 @@ fun AgentsAnywhereApp(
                 showInitialLoading = true,
                 showRefreshIndicator = false,
             )
-            delay(30_000)
+            delay(5_000)
         }
     }
 
@@ -222,6 +229,7 @@ fun AgentsAnywhereApp(
         sessionsState = sessionsState,
         isRefreshingSessions = isRefreshingSessions,
         selectedSessionId = selectedSessionId,
+        selectedDeviceId = selectedDeviceId,
         sessionDetailController = sessionDetailController,
         pendingMobileLoginQr = pendingMobileLoginQr,
         oauthFlow = oauthFlow,
@@ -239,6 +247,62 @@ fun AgentsAnywhereApp(
         onOpenSession = { session ->
             selectedSessionId = session.id
             destinationName = AppDestination.SessionDetail.name
+        },
+        onOpenDevice = { device ->
+            selectedDeviceId = device.id
+            destinationName = AppDestination.DeviceDetail.name
+        },
+        onRenameDevice = { connectorId, name ->
+            if (!hasAuthSession) {
+                Result.failure(IllegalStateException("Sign in again to rename this device."))
+            } else {
+                sessionsController.renameDevice(connectorId, name)
+                    .onSuccess { device ->
+                        sessionsState = sessionsState.withPatchedDevice(device)
+                    }
+            }
+        },
+        onDeleteDevice = { connectorId ->
+            if (!hasAuthSession) {
+                Result.failure(IllegalStateException("Sign in again to delete this device."))
+            } else {
+                sessionsController.deleteDevice(connectorId)
+                    .onSuccess {
+                        sessionsState = sessionsState.withDeletedDevice(connectorId)
+                        if (selectedDeviceId == connectorId) selectedDeviceId = null
+                        destinationName = AppDestination.Devices.name
+                    }
+            }
+        },
+        onPrepareDeviceSetup = { connectorId ->
+            if (!hasAuthSession) {
+                Result.failure(IllegalStateException("Sign in again to set up this device."))
+            } else {
+                sessionsController.prepareDeviceSetup(connectorId)
+                    .onSuccess { credential ->
+                        sessionsState = sessionsState.withPatchedDevice(credential.device)
+                    }
+            }
+        },
+        onClaimDevicePairCode = { credential, code ->
+            if (!hasAuthSession) {
+                Result.failure(IllegalStateException("Sign in again to claim this pair code."))
+            } else {
+                sessionsController.claimDevicePairCode(credential, code)
+                    .onSuccess { device ->
+                        sessionsState = sessionsState.withPatchedDevice(device)
+                    }
+            }
+        },
+        onDeleteDeviceAgent = { connectorId, runtime ->
+            if (!hasAuthSession) {
+                Result.failure(IllegalStateException("Sign in again to remove this agent."))
+            } else {
+                sessionsController.deleteDeviceAgent(connectorId, runtime)
+                    .onSuccess { attached ->
+                        sessionsState = sessionsState.withDeletedDeviceAgent(connectorId, runtime, attached)
+                    }
+            }
         },
         onRenameSession = { sessionId, title ->
             if (!hasAuthSession) {
@@ -318,6 +382,7 @@ private fun AgentsAnywhereNavHost(
     sessionsState: SessionsState,
     isRefreshingSessions: Boolean,
     selectedSessionId: String?,
+    selectedDeviceId: String?,
     sessionDetailController: SessionDetailController,
     pendingMobileLoginQr: MobileLoginQrPayload?,
     oauthFlow: OAuthFlowState?,
@@ -325,6 +390,12 @@ private fun AgentsAnywhereNavHost(
     navigate: (AppDestination) -> Unit,
     onRefreshSessions: () -> Unit,
     onOpenSession: (AgentSession) -> Unit,
+    onOpenDevice: (AgentDevice) -> Unit,
+    onRenameDevice: suspend (String, String) -> Result<AgentDevice>,
+    onDeleteDevice: suspend (String) -> Result<Unit>,
+    onPrepareDeviceSetup: suspend (String) -> Result<DeviceSetupCredential>,
+    onClaimDevicePairCode: suspend (DeviceSetupCredential, String) -> Result<AgentDevice>,
+    onDeleteDeviceAgent: suspend (String, String) -> Result<List<String>>,
     onRenameSession: suspend (String, String) -> Result<com.agentsanywhere.app.model.AgentSession>,
     onSetSessionPinned: suspend (String, Boolean) -> Result<com.agentsanywhere.app.model.AgentSession>,
     onSetSessionArchived: suspend (String, Boolean) -> Result<com.agentsanywhere.app.model.AgentSession>,
@@ -412,6 +483,7 @@ private fun AgentsAnywhereNavHost(
                     onSetSessionPinned = onSetSessionPinned,
                     onSetSessionArchived = onSetSessionArchived,
                     onOpenSession = onOpenSession,
+                    onOpenDevice = onOpenDevice,
                     navigate = navigate,
                 )
                 AppDestination.NewSession -> NewSessionScreen(
@@ -432,9 +504,16 @@ private fun AgentsAnywhereNavHost(
                     controller = sessionDetailController,
                     onSessionChanged = onSessionChanged,
                 )
-                AppDestination.RuntimeFiles -> RuntimeFilesScreen(navigate)
-                AppDestination.RuntimeTerminal -> RuntimeTerminalScreen(navigate)
-                AppDestination.CodePreview -> CodePreviewScreen(navigate)
+                AppDestination.DeviceDetail -> DeviceDetailScreen(
+                    navigate = navigate,
+                    state = sessionsState,
+                    selectedDeviceId = selectedDeviceId,
+                    onRenameDevice = onRenameDevice,
+                    onDeleteDevice = onDeleteDevice,
+                    onPrepareDeviceSetup = onPrepareDeviceSetup,
+                    onClaimDevicePairCode = onClaimDevicePairCode,
+                    onDeleteDeviceAgent = onDeleteDeviceAgent,
+                )
                 AppDestination.Devices,
                 AppDestination.Profile -> Unit
             }

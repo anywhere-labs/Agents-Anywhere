@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -61,7 +62,7 @@ import com.agentsanywhere.app.navigation.AppDestination
 import com.agentsanywhere.app.ui.designsystem.AAToastHost
 import com.agentsanywhere.app.ui.designsystem.AAToastVisuals
 import com.agentsanywhere.app.ui.designsystem.CloseGlyph
-import com.agentsanywhere.app.ui.designsystem.FloatingPlus
+import com.agentsanywhere.app.ui.designsystem.HeaderPlusButton
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import kotlinx.coroutines.launch
@@ -111,6 +112,7 @@ fun SessionsScreen(
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         containerColor = Color.Transparent,
+        contentWindowInsets = WindowInsets(0),
     ) { innerPadding ->
         Box(
             modifier = Modifier
@@ -130,17 +132,17 @@ fun SessionsScreen(
                 onSessionActionsClick = { session -> actionSession = session },
                 onOpenSession = onOpenSession,
             )
-            if (state.sessions.isNotEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(end = 7.dp, bottom = 16.dp),
-                ) {
-                    FloatingPlus(
-                        onClick = { navigate(AppDestination.NewSession) },
-                    )
-                }
-            }
+//            if (state.sessions.isNotEmpty()) {
+//                Box(
+//                    modifier = Modifier
+//                        .align(Alignment.BottomEnd)
+//                        .padding(end = 7.dp, bottom = 16.dp),
+//                ) {
+//                    FloatingPlus(
+//                        onClick = { navigate(AppDestination.NewSession) },
+//                    )
+//                }
+//            }
             AAToastHost(
                 hostState = snackbarHostState,
                 modifier = Modifier
@@ -272,7 +274,9 @@ private fun SessionsContent(
             modifier = Modifier.padding(horizontal = 24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            SessionsHeader()
+            SessionsHeader(
+                onNewSession = { navigate(AppDestination.NewSession) },
+            )
             SessionFilters(
                 enabled = allSessions.isNotEmpty(),
                 filters = filters,
@@ -413,24 +417,31 @@ private fun SessionRefreshContent(
 }
 
 @Composable
-private fun SessionsHeader() {
+private fun SessionsHeader(
+    onNewSession: () -> Unit,
+) {
     val colors = LocalAAColors.current
     val darkMode = colors.canvas == Color(0xFF09090B)
     val titleColor = if (darkMode) Color(0xFFF4F4F5) else Color(0xFF151517)
 
-    Row(
+    Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(58.dp),
-        verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = "Sessions",
+            modifier = Modifier.align(Alignment.CenterStart),
             color = titleColor,
             fontSize = 30.sp,
             fontWeight = FontWeight.Bold,
             letterSpacing = 0.sp,
             lineHeight = 34.sp,
+        )
+        HeaderPlusButton(
+            onClick = onNewSession,
+            contentDescription = "New session",
+            modifier = Modifier.align(Alignment.CenterEnd),
         )
     }
 }
