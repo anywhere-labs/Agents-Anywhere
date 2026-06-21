@@ -29,7 +29,9 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -39,6 +41,10 @@ import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.navigation.AppDestination
 import com.agentsanywhere.app.navigation.AppTab
+import com.composables.icons.lucide.ArrowLeft
+import com.composables.icons.lucide.CircleAlert
+import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.Plus
 
 @Composable
 fun PrimaryButton(label: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
@@ -103,7 +109,12 @@ fun BackPill(label: String, onClick: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(7.dp),
     ) {
-        BackGlyph(color = colors.onRaisedSurface)
+        Icon(
+            imageVector = Lucide.ArrowLeft,
+            contentDescription = null,
+            tint = colors.onRaisedSurface,
+            modifier = Modifier.size(16.dp),
+        )
         Text(label, color = colors.onRaisedSurface, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
     }
 }
@@ -123,7 +134,7 @@ fun AuthErrorNotice(message: String, modifier: Modifier = Modifier) {
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Icon(
-            painter = painterResource(R.drawable.ic_error_alert),
+            imageVector = Lucide.CircleAlert,
             contentDescription = null,
             modifier = Modifier.size(20.dp),
             tint = colors.errorIcon,
@@ -177,6 +188,42 @@ fun FloatingPlus(modifier: Modifier = Modifier, onClick: () -> Unit) {
             contentDescription = "New session",
             modifier = Modifier.size(94.dp),
             contentScale = ContentScale.Fit,
+        )
+    }
+}
+
+@Composable
+fun HeaderPlusButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    contentDescription: String = "Add",
+) {
+    val colors = LocalAAColors.current
+    val darkMode = colors.canvas == Color(0xFF09090B)
+    val surface = if (darkMode) Color(0xFF18181B) else Color.White
+    val border = if (darkMode) Color(0xFF34343A) else Color(0xFFE9E5DE)
+    val shadowAlpha = if (darkMode) 0.30f else 0.08f
+
+    Box(
+        modifier = modifier
+            .size(38.dp)
+            .shadow(
+                elevation = 10.dp,
+                shape = CircleShape,
+                ambientColor = Color.Black.copy(alpha = shadowAlpha),
+                spotColor = Color.Black.copy(alpha = shadowAlpha),
+            )
+            .clip(CircleShape)
+            .background(surface)
+            .border(1.dp, border, CircleShape)
+            .noRippleClickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = Lucide.Plus,
+            contentDescription = contentDescription,
+            tint = colors.onRaisedSurface,
+            modifier = Modifier.size(19.dp),
         )
     }
 }
@@ -240,6 +287,84 @@ fun FilterPill(label: String, selected: Boolean = false) {
 }
 
 @Composable
+fun SectionLabel(
+    label: String,
+    expanded: Boolean,
+    onClick: () -> Unit,
+) {
+    val colors = LocalAAColors.current
+    val haptic = LocalHapticFeedback.current
+
+    Row(
+        modifier = Modifier
+            .height(24.dp)
+            .noRippleClickable {
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                onClick()
+            }
+            .padding(start = 0.dp, end = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            text = label,
+            color = colors.faint,
+            fontSize = 15.1.sp,
+            fontWeight = FontWeight.Bold,
+            lineHeight = 18.sp,
+            letterSpacing = 0.sp,
+        )
+        SectionChevronDown(
+            color = colors.faint.copy(alpha = 0.95f),
+            modifier = Modifier.size(width = 8.dp, height = 6.dp),
+            expanded = expanded,
+        )
+    }
+}
+
+@Composable
+private fun SectionChevronDown(
+    color: Color,
+    modifier: Modifier = Modifier,
+    strokeWidthDp: Float = 1.5f,
+    expanded: Boolean = true,
+) {
+    Canvas(modifier = modifier) {
+        if (expanded) {
+            drawLine(
+                color = color,
+                start = Offset(size.width * 0.12f, size.height * 0.22f),
+                end = Offset(size.width * 0.50f, size.height * 0.78f),
+                strokeWidth = strokeWidthDp.dp.toPx(),
+                cap = StrokeCap.Round,
+            )
+            drawLine(
+                color = color,
+                start = Offset(size.width * 0.50f, size.height * 0.78f),
+                end = Offset(size.width * 0.88f, size.height * 0.22f),
+                strokeWidth = strokeWidthDp.dp.toPx(),
+                cap = StrokeCap.Round,
+            )
+        } else {
+            drawLine(
+                color = color,
+                start = Offset(size.width * 0.22f, size.height * 0.12f),
+                end = Offset(size.width * 0.78f, size.height * 0.50f),
+                strokeWidth = strokeWidthDp.dp.toPx(),
+                cap = StrokeCap.Round,
+            )
+            drawLine(
+                color = color,
+                start = Offset(size.width * 0.78f, size.height * 0.50f),
+                end = Offset(size.width * 0.22f, size.height * 0.88f),
+                strokeWidth = strokeWidthDp.dp.toPx(),
+                cap = StrokeCap.Round,
+            )
+        }
+    }
+}
+
+@Composable
 fun MetaPill(label: String) {
     Box(
         modifier = Modifier
@@ -292,9 +417,10 @@ fun BottomNavigationBar(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(62.dp)
+            .background(colors.canvas)
             .windowInsetsPadding(WindowInsets.navigationBars)
-            .padding(start = 22.dp, top = 0.dp, end = 22.dp, bottom = 4.dp),
+            .height(56.dp)
+            .padding(start = 22.dp, top = 0.dp, end = 22.dp, bottom = 0.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -359,7 +485,6 @@ private fun BottomNavItem(
             painter = painterResource(iconRes),
             contentDescription = label,
             modifier = Modifier
-                .padding(bottom = 3.dp)
                 .size(iconSize),
             contentScale = ContentScale.Fit,
         )

@@ -211,6 +211,17 @@ def test_connector_runtime_disables_http_proxy_for_loopback_backend() -> None:
     assert _is_loopback_url("https://agents.example.com") is False
 
 
+def test_connector_runtime_maps_device_os(monkeypatch) -> None:
+    import connector.runtime as runtime
+
+    monkeypatch.setattr(runtime.sys, "platform", "darwin")
+    assert runtime._device_os() == "macos"
+    monkeypatch.setattr(runtime.sys, "platform", "win32")
+    assert runtime._device_os() == "windows"
+    monkeypatch.setattr(runtime.sys, "platform", "linux")
+    assert runtime._device_os() == "linux"
+
+
 def test_connector_runtime_rejects_unknown_runtime() -> None:
     asyncio.run(_exercise_unknown_runtime())
 

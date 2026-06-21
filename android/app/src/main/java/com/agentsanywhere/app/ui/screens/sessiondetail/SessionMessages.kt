@@ -51,8 +51,10 @@ import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -69,6 +71,32 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlin.math.abs
+
+private val SESSION_WELCOME_TITLES = listOf(
+    "What should we build next?",
+    "Where should the agent start?",
+    "What should we work on?",
+    "Give the agent a task.",
+    "Start from a workspace.",
+    "What needs attention?",
+    "What should happen here?",
+    "Send work to the right device.",
+    "Pick a workspace and begin.",
+    "Describe the next change.",
+    "What should be investigated?",
+    "Start a focused session.",
+    "What should the agent inspect?",
+    "Turn an idea into a session.",
+    "Choose a target and run.",
+    "What are we changing today?",
+)
+
+private const val SESSION_WELCOME_WRITE_MS = 58L
+private const val SESSION_WELCOME_ERASE_MS = 22L
+private const val SESSION_WELCOME_HOLD_MS = 15_000L
+private val SessionWelcomeFontFamily = FontFamily(
+    Font(R.font.newsreader_opsz_wght, FontWeight(650)),
+)
 
 @Composable
 internal fun SessionDetailLoadingState(darkMode: Boolean) {
@@ -870,6 +898,44 @@ internal fun EmptyDetailMessage(message: String) {
             color = LocalAAColors.current.muted,
             fontSize = 14.sp,
             fontWeight = FontWeight.Medium,
+        )
+    }
+}
+
+@Composable
+internal fun SessionWelcomeMessage(darkMode: Boolean) {
+    var titleIndex by remember { mutableStateOf(0) }
+    var typedTitle by remember { mutableStateOf("") }
+
+    LaunchedEffect(titleIndex) {
+        val title = SESSION_WELCOME_TITLES[titleIndex % SESSION_WELCOME_TITLES.size]
+        for (count in 0..title.length) {
+            typedTitle = title.take(count)
+            if (count < title.length) delay(SESSION_WELCOME_WRITE_MS)
+        }
+        delay(SESSION_WELCOME_HOLD_MS)
+        for (count in title.length downTo 0) {
+            typedTitle = title.take(count)
+            if (count > 0) delay(SESSION_WELCOME_ERASE_MS)
+        }
+        titleIndex = (titleIndex + 1) % SESSION_WELCOME_TITLES.size
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 30.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = typedTitle,
+            color = if (darkMode) Color(0xFFFAFAFA) else Color(0xFF3E403A),
+            fontSize = 32.sp,
+            fontWeight = FontWeight(650),
+            fontFamily = SessionWelcomeFontFamily,
+            lineHeight = 34.sp,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.width(310.dp),
         )
     }
 }

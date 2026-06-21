@@ -4,7 +4,6 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -31,9 +30,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -48,15 +44,17 @@ import com.agentsanywhere.app.feature.auth.OAuthFlowState
 import com.agentsanywhere.app.feature.auth.OAuthPending
 import com.agentsanywhere.app.feature.auth.OAuthPendingStatus
 import com.agentsanywhere.app.navigation.AppDestination
-import com.agentsanywhere.app.ui.designsystem.AccountGlyph
 import com.agentsanywhere.app.ui.designsystem.AgentsAnywhereTheme
 import com.agentsanywhere.app.ui.designsystem.AuthErrorNotice
 import com.agentsanywhere.app.ui.designsystem.BackPill
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
-import com.agentsanywhere.app.ui.designsystem.PasswordKeyGlyph
 import com.agentsanywhere.app.ui.designsystem.ScreenScaffold
-import com.agentsanywhere.app.ui.designsystem.ServerGlyph
+import com.composables.icons.lucide.Check
+import com.composables.icons.lucide.LockKeyhole
+import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.Server
+import com.composables.icons.lucide.User
 import kotlinx.coroutines.launch
 
 private const val RegistrationClosedMessage = "OAuth registration is closed. Contact your administrator to enable it."
@@ -120,10 +118,9 @@ fun OAuthSetupScreen(
                     value = state.serverUrl,
                     onValueChange = { state = state.copy(serverUrl = it, errorMessage = null) },
                     placeholder = "Server URL",
+                    icon = Lucide.Server,
                     enabled = !state.isSubmitting,
-                ) { iconColor ->
-                    ServerGlyph(color = iconColor)
-                }
+                )
                 AuthContinueButton(
                     isLoading = state.isSubmitting,
                     loadingLabel = "Opening OAuth...",
@@ -212,11 +209,10 @@ fun OAuthLinkExistingAccountScreen(
                         errorMessage = null
                     },
                     placeholder = "Password",
+                    icon = Lucide.LockKeyhole,
                     isPassword = true,
                     enabled = !isSubmitting,
-                ) { iconColor ->
-                    PasswordKeyGlyph(color = iconColor)
-                }
+                )
                 Spacer(Modifier.height(10.dp))
                 AuthContinueButton(
                     isLoading = isSubmitting,
@@ -378,10 +374,9 @@ private fun OAuthCreateAccountFormScreen(
                         errorMessage = null
                     },
                     placeholder = "User ID",
+                    icon = Lucide.User,
                     enabled = !isSubmitting,
-                ) { iconColor ->
-                    AccountGlyph(color = iconColor)
-                }
+                )
                 AuthInputRow(
                     value = password,
                     onValueChange = {
@@ -389,11 +384,10 @@ private fun OAuthCreateAccountFormScreen(
                         errorMessage = null
                     },
                     placeholder = "Password",
+                    icon = Lucide.LockKeyhole,
                     isPassword = true,
                     enabled = !isSubmitting,
-                ) { iconColor ->
-                    PasswordKeyGlyph(color = iconColor)
-                }
+                )
                 AuthInputRow(
                     value = confirmPassword,
                     onValueChange = {
@@ -401,11 +395,10 @@ private fun OAuthCreateAccountFormScreen(
                         errorMessage = null
                     },
                     placeholder = "Confirm password",
+                    icon = Lucide.LockKeyhole,
                     isPassword = true,
                     enabled = !isSubmitting,
-                ) { iconColor ->
-                    PasswordKeyGlyph(color = iconColor)
-                }
+                )
                 AuthContinueButton(
                     isLoading = isSubmitting,
                     label = "Create and sign in",
@@ -587,7 +580,12 @@ private fun OAuthVerifiedPill() {
         horizontalArrangement = Arrangement.spacedBy(5.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        CheckGlyph(color = colors.onRaisedSurface)
+        androidx.compose.material3.Icon(
+            imageVector = Lucide.Check,
+            contentDescription = null,
+            tint = colors.onRaisedSurface,
+            modifier = Modifier.size(12.dp),
+        )
         Text(
             text = "OAuth",
             color = colors.onRaisedSurface,
@@ -623,26 +621,6 @@ private fun OAuthSecondaryButton(
             fontWeight = FontWeight.SemiBold,
             lineHeight = 18.sp,
             textAlign = TextAlign.Center,
-        )
-    }
-}
-
-@Composable
-private fun CheckGlyph(color: Color) {
-    Canvas(modifier = Modifier.size(12.dp)) {
-        drawLine(
-            color = color,
-            start = Offset(size.width * 0.22f, size.height * 0.54f),
-            end = Offset(size.width * 0.43f, size.height * 0.74f),
-            strokeWidth = 1.8.dp.toPx(),
-            cap = StrokeCap.Round,
-        )
-        drawLine(
-            color = color,
-            start = Offset(size.width * 0.43f, size.height * 0.74f),
-            end = Offset(size.width * 0.82f, size.height * 0.28f),
-            strokeWidth = 1.8.dp.toPx(),
-            cap = StrokeCap.Round,
         )
     }
 }

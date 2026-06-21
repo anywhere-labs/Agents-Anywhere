@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 RuntimeName = Literal["codex", "claude", "opencode", "acp"]
 ConnectorStatus = Literal["offline", "online"]
+ConnectorDeviceOs = Literal["macos", "windows", "linux"]
 SessionStatus = Literal["idle", "running", "waiting_approval", "error"]
 TimelineType = Literal["turn.start", "turn.end", "message", "tool", "artifact", "system"]
 TimelineStatus = Literal[
@@ -70,6 +71,7 @@ class ConnectorView(BaseModel):
     id: str
     userId: str
     name: str
+    deviceOs: ConnectorDeviceOs | None = None
     status: ConnectorStatus
     lastSeenAt: str | None = None
     # Per-device agent view. Field name kept for API/db compat with the

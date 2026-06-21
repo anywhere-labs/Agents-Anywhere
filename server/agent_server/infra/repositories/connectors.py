@@ -260,11 +260,13 @@ class ConnectorRepositoryMixin:
         return await self.get_connector(connector_id), token, prefix
 
 
-    async def set_connector_status(self, connector_id: str, status: str) -> None:
+    async def set_connector_status(self, connector_id: str, status: str, *, device_os: str | None = None) -> None:
         now = utc_now()
         values: dict[str, Any] = {"status": status, "updated_at": now}
         if status == "online":
             values["last_seen_at"] = now
+        if device_os is not None:
+            values["device_os"] = device_os
         async with self._engine.begin() as conn:
             await conn.execute(
                 update(connectors_t).where(connectors_t.c.id == connector_id).values(**values)
@@ -306,6 +308,7 @@ class ConnectorRepositoryMixin:
             id=row["id"],
             userId=row["user_id"],
             name=row["name"],
+            deviceOs=row["device_os"],
             status=row["status"],
             lastSeenAt=row["last_seen_at"],
             runtimeCapabilities=_agents_view_from_state(

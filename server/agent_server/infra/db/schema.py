@@ -20,6 +20,7 @@ connectors = Table(
     Column("id", Text, primary_key=True),
     Column("user_id", Text, nullable=False),
     Column("name", Text, nullable=False),
+    Column("device_os", Text),
     Column("status", Text, nullable=False),
     Column("last_seen_at", Text),
     Column("token_hash", Text, nullable=False),
