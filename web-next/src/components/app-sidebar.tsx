@@ -70,6 +70,7 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
   const userId = me?.userId ?? "Unknown"
   const userRole = me?.role ? me.role.replace(/^\w/, (char) => char.toUpperCase()) : ""
   const userInitials = userId.slice(0, 2).toUpperCase()
+  const isAdmin = me?.role === "admin"
 
   const pinnedSessions = React.useMemo(
     () => sessions.filter((session) => session.pinned && !session.archived),
@@ -259,14 +260,18 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
               <Settings className="size-4 text-muted-foreground" />
               {t("nav.settings")}
             </DropdownMenuItem>
-            <DropdownMenuItem className="gap-3 py-2.5" onClick={() => navigate("team")}>
-              <Users className="size-4 text-muted-foreground" />
-              {t("nav.team")}
-            </DropdownMenuItem>
-            <DropdownMenuItem className="gap-3 py-2.5" onClick={() => navigate("service")}>
-              <Server className="size-4 text-muted-foreground" />
-              {t("nav.service")}
-            </DropdownMenuItem>
+            {isAdmin ? (
+              <>
+                <DropdownMenuItem className="gap-3 py-2.5" onClick={() => navigate("team")}>
+                  <Users className="size-4 text-muted-foreground" />
+                  {t("nav.team")}
+                </DropdownMenuItem>
+                <DropdownMenuItem className="gap-3 py-2.5" onClick={() => navigate("service")}>
+                  <Server className="size-4 text-muted-foreground" />
+                  {t("nav.service")}
+                </DropdownMenuItem>
+              </>
+            ) : null}
             <DropdownMenuSeparator />
             <DropdownMenuItem className="gap-3 py-2.5" onClick={() => setSignOutOpen(true)}>
               <LogOut className="size-4 text-muted-foreground" />

@@ -15,6 +15,7 @@ import { DeviceWorkspacePage } from "@/components/pages/device-workspace-page"
 import { WorkspaceProvider, useWorkspace } from "@/components/workspace-context"
 import { LoadingState } from "@/components/loading-state"
 import { PairDeviceDialog } from "@/components/pair-device-dialog"
+import { useAuth } from "@/components/auth/auth-context"
 import { useIsMobile } from "@/hooks/use-mobile"
 import {
   AlertDialog,
@@ -138,6 +139,7 @@ function DesktopResizableShell() {
 }
 
 function WorkspaceMain() {
+  const { me } = useAuth()
   const {
     page,
     isLoading,
@@ -151,16 +153,18 @@ function WorkspaceMain() {
   } = useWorkspace()
   const t = useTranslations("dashboard.firstDevice")
   const isNewSession = page === "home"
+  const isAdmin = me?.role === "admin"
   if (!routeReady || (!isNewSession && isLoading)) {
     return <LoadingState className="h-full bg-background" />
   }
+  const effectivePage = !isAdmin && (page === "team" || page === "service") ? "home" : page
   const content =
-    page === "settings" ? <SettingsPage /> :
-    page === "team" ? <TeamPage /> :
-    page === "service" ? <ServicePage /> :
-    page === "session" ? <SessionView /> :
-    page === "device" ? <DevicePage /> :
-    page === "device-workspace" ? <DeviceWorkspacePage /> :
+    effectivePage === "settings" ? <SettingsPage /> :
+    effectivePage === "team" ? <TeamPage /> :
+    effectivePage === "service" ? <ServicePage /> :
+    effectivePage === "session" ? <SessionView /> :
+    effectivePage === "device" ? <DevicePage /> :
+    effectivePage === "device-workspace" ? <DeviceWorkspacePage /> :
     <TaskComposer />
   return (
     <>
