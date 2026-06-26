@@ -8,7 +8,7 @@ import {
   loadStoredSession,
   saveStoredSession,
 } from "@/features/auth/session"
-import type { AuthMe, StoredSession } from "@/features/auth/types"
+import type { AuthMe, OAuthFinalizePayload, StoredSession } from "@/features/auth/types"
 import { useTranslations } from "next-intl"
 
 export type AuthScreen =
@@ -17,9 +17,13 @@ export type AuthScreen =
   | "register"
   | "oauth-new-user"
   | "oauth-link-existing"
-  | "oauth-link-verify"
-  | "oauth-link-success"
   | "app"
+
+export type OAuthPending = {
+  status: "authenticated" | "needs_password" | "needs_registration"
+  pendingToken: string
+  userId: string
+}
 
 type AuthState = {
   screen: AuthScreen
@@ -31,10 +35,14 @@ type AuthState = {
   isAuthenticated: boolean
   oauthEnabled: boolean
   oauthProviderLabel: string | null
+  oauthPending: OAuthPending | null
   registrationOpen: boolean
   navigate: (screen: AuthScreen) => void
   login: (input: { userId: string; password: string }) => Promise<void>
   register: (input: { userId: string; password: string; setupToken?: string }) => Promise<void>
+  startOAuth: () => Promise<void>
+  finalizeOAuth: (input: { userId?: string; password?: string; setPassword?: boolean }) => Promise<void>
+  cancelOAuth: () => void
   refreshMe: () => Promise<AuthMe | null>
   signOut: () => void
 }
@@ -80,11 +88,41 @@ function screenToHash(s: AuthScreen): string {
     register: "#/register",
     "oauth-new-user": "#/oauth/new",
     "oauth-link-existing": "#/oauth/link",
-    "oauth-link-verify": "#/oauth/link",
-    "oauth-link-success": "#/oauth/link",
     app: "#/",
   }
   return map[s] ?? "#/login"
+}
+
+function readOAuthPendingFromUrl(): OAuthPending | null {
+  const params = new URLSearchParams(window.location.search)
+  const pendingToken = params.get("oauth_pending")
+  const status = params.get("oauth_status") as OAuthPending["status"] | null
+  if (!pendingToken || !status) return null
+  if (status !== "authenticated" && status !== "needs_password" && status !== "needs_registration") return null
+  return {
+    status,
+    pendingToken,
+    userId: params.get("oauth_user") ?? "",
+  }
+}
+
+function readOAuthErrorFromUrl(): string | null {
+  return new URLSearchParams(window.location.search).get("oauth_error")
+}
+
+function clearOAuthQueryParams() {
+  const url = new URL(window.location.href)
+  const hadOAuthParams =
+    url.searchParams.has("oauth_pending") ||
+    url.searchParams.has("oauth_status") ||
+    url.searchParams.has("oauth_user") ||
+    url.searchParams.has("oauth_error")
+  if (!hadOAuthParams) return
+  url.searchParams.delete("oauth_pending")
+  url.searchParams.delete("oauth_status")
+  url.searchParams.delete("oauth_user")
+  url.searchParams.delete("oauth_error")
+  window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`)
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -97,6 +135,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [error, setError] = React.useState<string | null>(null)
   const [oauthEnabled, setOauthEnabled] = React.useState(false)
   const [oauthProviderLabel, setOauthProviderLabel] = React.useState<string | null>(null)
+  const [oauthPending, setOauthPending] = React.useState<OAuthPending | null>(null)
   const [registrationOpen, setRegistrationOpen] = React.useState(false)
 
   // On mount: set screen from the current hash, then listen for changes.
@@ -104,8 +143,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     let cancelled = false
     const stored = loadStoredSession()
     const nextScreen = hashToScreen(window.location.hash)
+    const initialOAuthPending = readOAuthPendingFromUrl()
+    const initialOAuthError = readOAuthErrorFromUrl()
+    clearOAuthQueryParams()
 
     async function boot() {
+      if (initialOAuthError && !cancelled) {
+        setError(initialOAuthError)
+      }
       try {
         const config = await authApi.config()
         if (!cancelled) {
@@ -120,6 +165,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       } catch {
         // Server unreachable — fall through to normal auth flow.
+      }
+      if (initialOAuthPending) {
+        setOauthPending(initialOAuthPending)
+        if (!cancelled) {
+          setScreenState(initialOAuthPending.status === "needs_registration" ? "oauth-new-user" : "oauth-link-existing")
+          setLoading(false)
+        }
+        return
       }
       if (!stored) {
         if (!cancelled) {
@@ -156,6 +209,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const navigate = React.useCallback((s: AuthScreen) => {
     window.location.hash = screenToHash(s)
+    if (s === "login") setOauthPending(null)
     setScreenState(s)
   }, [])
 
@@ -166,9 +220,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const currentUser = await authApi.me(nextSession.accessToken)
     setMe(currentUser)
     setError(null)
+    setOauthPending(null)
     window.location.hash = "#/"
     setScreenState("app")
   }, [])
+
+  React.useEffect(() => {
+    if (!oauthPending || oauthPending.status !== "authenticated") return
+    let cancelled = false
+    const pendingToken = oauthPending.pendingToken
+    async function finalizeAuthenticatedOAuth() {
+      setLoading(true)
+      setError(null)
+      try {
+        const result = await authApi.finalizeOAuth({ pendingToken })
+        if (!cancelled) await finishAuth(result.auth)
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : t("errors.oauth"))
+          setOauthPending(null)
+          setScreenState("login")
+        }
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    void finalizeAuthenticatedOAuth()
+    return () => {
+      cancelled = true
+    }
+  }, [finishAuth, oauthPending, t])
 
   const login = React.useCallback(
     async (input: { userId: string; password: string }) => {
@@ -202,6 +283,50 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [finishAuth, t],
   )
 
+  const startOAuth = React.useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const result = await authApi.startOAuth(window.location.href)
+      window.location.assign(result.authorizeUrl)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("errors.oauth"))
+      setLoading(false)
+      throw err
+    }
+  }, [t])
+
+  const finalizeOAuth = React.useCallback(
+    async (input: { userId?: string; password?: string; setPassword?: boolean }) => {
+      if (!oauthPending) return
+      setLoading(true)
+      setError(null)
+      try {
+        const payload: OAuthFinalizePayload = {
+          pendingToken: oauthPending.pendingToken,
+          userId: input.userId?.trim().toLowerCase() || undefined,
+          password: input.password || undefined,
+          setPassword: Boolean(input.setPassword),
+        }
+        const result = await authApi.finalizeOAuth(payload)
+        await finishAuth(result.auth)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : t("errors.oauth"))
+        throw err
+      } finally {
+        setLoading(false)
+      }
+    },
+    [finishAuth, oauthPending, t],
+  )
+
+  const cancelOAuth = React.useCallback(() => {
+    setOauthPending(null)
+    setError(null)
+    window.location.hash = "#/login"
+    setScreenState("login")
+  }, [])
+
   const refreshMe = React.useCallback(async () => {
     if (!session?.accessToken) {
       setMe(null)
@@ -216,6 +341,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     clearStoredSession()
     setSession(null)
     setMe(null)
+    setOauthPending(null)
     window.location.hash = "#/login"
     setScreenState("login")
   }, [])
@@ -232,11 +358,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isAuthenticated: Boolean(session),
         oauthEnabled,
         oauthProviderLabel,
+        oauthPending,
         registrationOpen,
         navigate,
 
         login,
         register,
+        startOAuth,
+        finalizeOAuth,
+        cancelOAuth,
         refreshMe,
         signOut,
       }}

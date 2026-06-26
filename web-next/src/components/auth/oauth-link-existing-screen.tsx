@@ -1,94 +1,28 @@
 "use client"
 
 import { useState } from "react"
-import { Lock, Eye, EyeOff, CheckCircle2 } from "lucide-react"
+import { Eye, EyeOff, Lock } from "lucide-react"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group"
 import { Label } from "@/components/ui/label"
-import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupButton } from "@/components/ui/input-group"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { Separator } from "@/components/ui/separator"
 import { AuthShell } from "./auth-shell"
 import { useAuth } from "./auth-context"
 import { useTranslations } from "next-intl"
 
-type Step = "confirm" | "verify" | "success"
-
 export function OAuthLinkExistingScreen() {
-  const { navigate, oauthProviderLabel } = useAuth()
+  const { cancelOAuth, error, finalizeOAuth, loading, navigate, oauthPending, oauthProviderLabel } = useAuth()
   const t = useTranslations("auth")
-  const tCommon = useTranslations("common")
-  const [step, setStep] = useState<Step>("confirm")
+  const [confirmed, setConfirmed] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [password, setPassword] = useState("")
 
-  if (step === "success") {
+  if (!oauthPending || oauthPending.status !== "needs_password") {
     return (
       <AuthShell>
         <div className="flex flex-col items-center gap-4 text-center">
-          <div className="flex size-16 items-center justify-center rounded-full bg-emerald-500/15">
-            <CheckCircle2 className="size-8 text-emerald-500" />
-          </div>
-          <div className="flex flex-col gap-2">
-            <h1 className="text-2xl font-bold tracking-tight">{t("oauth.accountLinked")}</h1>
-            <p className="text-sm text-muted-foreground leading-relaxed">
-              {t("oauth.accountLinkedDescription", { provider: oauthProviderLabel ?? "" })}
-            </p>
-          </div>
-          <Button className="mt-4 h-11 w-full font-medium" onClick={() => navigate("app")}>
-            {tCommon("continue")}
-          </Button>
-        </div>
-      </AuthShell>
-    )
-  }
-
-  if (step === "verify") {
-    return (
-      <AuthShell>
-        <div className="flex flex-col items-center gap-3 text-center mb-8">
-          <Avatar className="size-16 rounded-full">
-            <AvatarImage src="/abstract-pixelated-avatar.png" alt="t4wefan" />
-            <AvatarFallback className="rounded-full bg-primary text-primary-foreground">T4</AvatarFallback>
-          </Avatar>
-          <div className="flex flex-col gap-1">
-            <h1 className="text-2xl font-bold tracking-tight">{t("oauth.verifyTitle")}</h1>
-            <p className="text-sm text-muted-foreground">
-              {t("oauth.verifyDescription", { provider: oauthProviderLabel ?? "" })}
-            </p>
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-5">
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="link-password">{t("fields.password")}</Label>
-            <InputGroup className="h-11 rounded-lg">
-              <InputGroupAddon><Lock className="size-4" /></InputGroupAddon>
-              <InputGroupInput
-                id="link-password"
-                type={showPassword ? "text" : "password"}
-                placeholder={t("oauth.passwordPlaceholder")}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="code-mono"
-                autoComplete="current-password"
-              />
-              <InputGroupAddon align="inline-end">
-                <InputGroupButton onClick={() => setShowPassword((v) => !v)} aria-label={showPassword ? t("actions.hidePassword") : t("actions.showPassword")}>
-                  {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-                </InputGroupButton>
-              </InputGroupAddon>
-            </InputGroup>
-          </div>
-
-          <Button
-            className="h-11 w-full font-medium"
-            disabled={!password}
-            onClick={() => setStep("success")}
-          >
-            {t("oauth.verifySubmit")}
-          </Button>
-
-          <Button variant="outline" className="h-11 w-full" onClick={() => navigate("login")}>
+          <p className="text-sm text-muted-foreground">{t("errors.oauth")}</p>
+          <Button className="h-11 w-full" onClick={() => navigate("login")}>
             {t("oauth.back")}
           </Button>
         </div>
@@ -96,47 +30,97 @@ export function OAuthLinkExistingScreen() {
     )
   }
 
-  // step === "confirm"
+  const userId = oauthPending.userId
+  const provider = oauthProviderLabel ?? "OAuth"
+  const fallback = userId.slice(0, 2).toUpperCase() || "AA"
+
+  if (!confirmed) {
+    return (
+      <AuthShell>
+        <div className="flex flex-col items-center gap-3 text-center mb-8">
+          <Avatar className="size-16 rounded-full">
+            <AvatarFallback className="rounded-full bg-primary text-primary-foreground">{fallback}</AvatarFallback>
+          </Avatar>
+          <div className="flex flex-col gap-1">
+            <h1 className="text-2xl font-bold tracking-tight">{t("oauth.matchTitle")}</h1>
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              {t("oauth.matchDescriptionPrefix")}{" "}
+              <span className="code-mono font-medium text-foreground">{userId}</span>.
+            </p>
+          </div>
+        </div>
+
+        {error ? <p className="mb-4 text-center text-sm text-destructive">{error}</p> : null}
+
+        <div className="flex flex-col gap-3">
+          <Button className="h-11 w-full font-medium" onClick={() => setConfirmed(true)}>
+            {t("oauth.useMatchedAccount")}
+          </Button>
+          <Button variant="outline" className="h-11 w-full" onClick={() => navigate("oauth-new-user")}>
+            {t("oauth.useAnotherUser")}
+          </Button>
+          <Button variant="ghost" className="h-11 w-full text-muted-foreground" onClick={cancelOAuth}>
+            {t("oauth.back")}
+          </Button>
+        </div>
+      </AuthShell>
+    )
+  }
+
   return (
     <AuthShell>
       <div className="flex flex-col items-center gap-3 text-center mb-8">
         <Avatar className="size-16 rounded-full">
-          <AvatarImage src="/abstract-pixelated-avatar.png" alt="t4wefan" />
-          <AvatarFallback className="rounded-full bg-primary text-primary-foreground">T4</AvatarFallback>
+          <AvatarFallback className="rounded-full bg-primary text-primary-foreground">{fallback}</AvatarFallback>
         </Avatar>
         <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-bold tracking-tight">{t("oauth.matchTitle")}</h1>
-          <p className="text-sm text-muted-foreground leading-relaxed">
-            {t("oauth.matchDescription", { provider: oauthProviderLabel ?? "" })}
+          <h1 className="text-2xl font-bold tracking-tight">{t("oauth.confirmTitle")}</h1>
+          <p className="text-sm text-muted-foreground">
+            {t("oauth.verifyDescription", { provider })}
           </p>
         </div>
       </div>
 
-      <div className="rounded-lg border border-border bg-card p-4 mb-6">
-        <div className="flex items-center gap-3">
-          <Avatar className="size-10 rounded-full">
-            <AvatarImage src="/abstract-pixelated-avatar.png" alt="t4wefan" />
-            <AvatarFallback className="rounded-full bg-primary text-primary-foreground text-xs">T4</AvatarFallback>
-          </Avatar>
-          <div className="flex flex-col leading-tight">
-            <span className="text-sm font-medium">t4wefan</span>
-            <span className="text-xs text-muted-foreground">{t("oauth.accountRoleAdmin")}</span>
-          </div>
+      <div className="flex flex-col gap-5">
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="oauth-link-password">{t("fields.password")}</Label>
+          <InputGroup className="h-11 rounded-lg">
+            <InputGroupAddon><Lock className="size-4" /></InputGroupAddon>
+            <InputGroupInput
+              id="oauth-link-password"
+              type={showPassword ? "text" : "password"}
+              placeholder={t("oauth.passwordPlaceholder")}
+              value={password}
+              onChange={(event) => setPassword(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && password) {
+                  void finalizeOAuth({ userId, password })
+                }
+              }}
+              className="code-mono"
+              autoComplete="current-password"
+            />
+            <InputGroupAddon align="inline-end">
+              <InputGroupButton onClick={() => setShowPassword((value) => !value)} aria-label={showPassword ? t("actions.hidePassword") : t("actions.showPassword")}>
+                {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+              </InputGroupButton>
+            </InputGroupAddon>
+          </InputGroup>
         </div>
-      </div>
 
-      <div className="flex flex-col gap-3">
-        <Button className="h-11 w-full font-medium" onClick={() => setStep("verify")}>
-          {t("oauth.useMatchedAccountLong")}
+        {error ? <p className="text-center text-sm text-destructive">{error}</p> : null}
+
+        <Button
+          className="h-11 w-full font-medium"
+          disabled={loading || !password}
+          onClick={() => void finalizeOAuth({ userId, password })}
+        >
+          {loading ? t("login.signingIn") : t("oauth.linkSubmit")}
         </Button>
-
-        <Separator className="my-1" />
-
-        <Button variant="outline" className="h-11 w-full" onClick={() => navigate("oauth-new-user")}>
-          {t("oauth.createNewAccount")}
+        <Button variant="outline" className="h-11 w-full" onClick={() => setConfirmed(false)}>
+          {t("oauth.useAnotherUser")}
         </Button>
-
-        <Button variant="ghost" className="h-11 w-full text-muted-foreground" onClick={() => navigate("login")}>
+        <Button variant="ghost" className="h-11 w-full text-muted-foreground" onClick={cancelOAuth}>
           {t("oauth.back")}
         </Button>
       </div>

@@ -10,7 +10,7 @@ import { useAuth } from "./auth-context"
 import { useTranslations } from "next-intl"
 
 export function LoginScreen() {
-  const { navigate, login, loading, error, oauthEnabled, oauthProviderLabel, registrationOpen } = useAuth()
+  const { navigate, login, loading, error, oauthEnabled, oauthProviderLabel, registrationOpen, startOAuth } = useAuth()
   const t = useTranslations("auth")
   const [showPassword, setShowPassword] = useState(false)
   const [userId, setUserId] = useState("")
@@ -89,7 +89,8 @@ export function LoginScreen() {
           <Button
             variant="outline"
             className="h-11 w-full gap-2"
-            onClick={() => navigate("oauth-link-existing")}
+            disabled={loading}
+            onClick={() => void startOAuth()}
           >
             <Globe className="size-4" />
             {t("login.oauth", { provider: oauthProviderLabel })}
