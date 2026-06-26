@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { ArrowDown, CircleAlert, Loader2 } from "lucide-react"
+import { ArrowDown, ChevronDown, CircleAlert, Loader2 } from "lucide-react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -28,8 +28,9 @@ import { useTranslations } from "next-intl"
 import { ApprovalCard, ApprovalHeaderNotice } from "@/components/session/session-approval-card"
 import { SessionSkeleton, SessionSkeletonInline } from "@/components/session/session-skeleton"
 import { TimelineEntry } from "@/components/session/session-timeline-entry"
+import { isCreatedFileChange } from "@/components/session/session-tool-cards"
 import { SessionComposer, type AttachedFile } from "@/components/session/session-composer"
-import { runtimeLabel } from "@/components/session/session-utils"
+import { recordsOf, runtimeLabel, textOf } from "@/components/session/session-utils"
 
 type SessionDetailProps = {
   token: string
@@ -458,6 +459,22 @@ export function SessionDetail({
     scrollToBottomThrottled()
   }, [scrollToBottomThrottled])
 
+  const approvals = state?.approvals ?? []
+  const approvalByTarget = React.useMemo(
+    () => new Map(approvals.map((approval) => [approval.targetItemId, approval])),
+    [approvals],
+  )
+  const detachedApprovals = approvals.filter((approval) => approval.status === "pending" && !approval.targetItemId)
+  const pendingApprovals = approvals.filter((approval) => approval.status === "pending")
+  const approvalTargetIds = React.useMemo(
+    () => new Set(approvals.map((approval) => approval.targetItemId).filter((id): id is string => Boolean(id))),
+    [approvals],
+  )
+  const timelineGroups = React.useMemo(
+    () => groupTimelineItems(state?.items ?? [], approvalTargetIds),
+    [approvalTargetIds, state?.items],
+  )
+
   if (loading && !session) return <SessionSkeleton />
 
   if (error && !session) {
@@ -474,10 +491,6 @@ export function SessionDetail({
 
   if (!session) return null
 
-  const approvals = state?.approvals ?? []
-  const approvalByTarget = new Map(approvals.map((approval) => [approval.targetItemId, approval]))
-  const detachedApprovals = approvals.filter((approval) => approval.status === "pending" && !approval.targetItemId)
-  const pendingApprovals = approvals.filter((approval) => approval.status === "pending")
   const takeoverTarget = pendingTakeover ?? false
 
   return (
@@ -506,18 +519,31 @@ export function SessionDetail({
             {state && state.items.length === 0 && detachedApprovals.length === 0 ? (
               <p className="py-12 text-center text-sm text-muted-foreground">{tSession("noActivity")}</p>
             ) : null}
-            {state?.items.map((item) => (
-              <TimelineEntry
-                key={item.id}
-                token={token}
-                session={session}
-                item={item}
-                approval={approvalByTarget.get(item.id)}
-                resolvingApprovalId={resolvingApprovalId}
-                resolvingStatus={resolvingStatus}
-                onResolveApproval={handleResolveApproval}
-              />
-            ))}
+            {timelineGroups.map((group) =>
+              group.kind === "tool-run" ? (
+                <ToolRunGroup
+                  key={group.key}
+                  group={group}
+                  token={token}
+                  session={session}
+                  approvalByTarget={approvalByTarget}
+                  resolvingApprovalId={resolvingApprovalId}
+                  resolvingStatus={resolvingStatus}
+                  onResolveApproval={handleResolveApproval}
+                />
+              ) : (
+                <TimelineEntry
+                  key={group.item.id}
+                  token={token}
+                  session={session}
+                  item={group.item}
+                  approval={approvalByTarget.get(group.item.id)}
+                  resolvingApprovalId={resolvingApprovalId}
+                  resolvingStatus={resolvingStatus}
+                  onResolveApproval={handleResolveApproval}
+                />
+              ),
+            )}
             {detachedApprovals.map((approval) => (
               <ApprovalCard
                 key={approval.id}
@@ -605,6 +631,142 @@ export function SessionDetail({
       </Dialog>
     </div>
   )
+}
+
+type TimelineSingleGroup = {
+  kind: "single"
+  item: TimelineItem
+}
+
+type TimelineToolRunGroup = {
+  kind: "tool-run"
+  key: string
+  items: TimelineItem[]
+}
+
+type TimelineGroup = TimelineSingleGroup | TimelineToolRunGroup
+
+function groupTimelineItems(items: TimelineItem[], approvalTargetIds: Set<string>): TimelineGroup[] {
+  const groups: TimelineGroup[] = []
+  let pendingTools: TimelineItem[] = []
+
+  const flushTools = () => {
+    if (pendingTools.length >= 2) {
+      groups.push({
+        kind: "tool-run",
+        key: pendingTools.map((item) => item.id).join(":"),
+        items: pendingTools,
+      })
+    } else {
+      for (const item of pendingTools) groups.push({ kind: "single", item })
+    }
+    pendingTools = []
+  }
+
+  for (const item of items) {
+    if (isToolRunBarItem(item) && !approvalTargetIds.has(item.id)) {
+      pendingTools.push(item)
+      continue
+    }
+    flushTools()
+    groups.push({ kind: "single", item })
+  }
+  flushTools()
+  return groups
+}
+
+function isToolRunBarItem(item: TimelineItem): boolean {
+  if (item.type === "tool") return true
+  if (item.type !== "artifact") return false
+  return (item.content.kind ?? "artifact") !== "diff"
+}
+
+function ToolRunGroup({
+  group,
+  token,
+  session,
+  approvalByTarget,
+  resolvingApprovalId,
+  resolvingStatus,
+  onResolveApproval,
+}: {
+  group: TimelineToolRunGroup
+  token: string
+  session: SessionView
+  approvalByTarget: Map<string | null, Approval>
+  resolvingApprovalId: string | null
+  resolvingStatus: ApprovalResolveStatus | null
+  onResolveApproval: (approvalId: string, status: ApprovalResolveStatus) => void
+}) {
+  const tSession = useTranslations("dashboard.session")
+  const [open, setOpen] = React.useState(false)
+  const summary = toolRunSummary(group.items, tSession)
+
+  if (open) {
+    return (
+      <div className="min-w-0 max-w-full space-y-2 overflow-hidden">
+        <button
+          type="button"
+          className="group flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-1 text-left text-muted-foreground transition-colors hover:bg-muted/35 hover:text-foreground"
+          onClick={() => setOpen(false)}
+        >
+          <ChevronDown className="size-3.5 shrink-0 transition-transform" />
+          <span className="code-mono min-w-0 flex-1 truncate text-sm">{summary}</span>
+        </button>
+        {group.items.map((item) => (
+          <TimelineEntry
+            key={item.id}
+            token={token}
+            session={session}
+            item={item}
+            approval={approvalByTarget.get(item.id)}
+            resolvingApprovalId={resolvingApprovalId}
+            resolvingStatus={resolvingStatus}
+            onResolveApproval={onResolveApproval}
+          />
+        ))}
+      </div>
+    )
+  }
+
+  return (
+    <button
+      type="button"
+      className="group flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-1 text-left text-muted-foreground transition-colors hover:bg-muted/35 hover:text-foreground"
+      onClick={() => setOpen(true)}
+    >
+      <ChevronDown className="size-3.5 shrink-0 -rotate-90 transition-transform" />
+      <span className="code-mono min-w-0 flex-1 truncate text-sm">{summary}</span>
+    </button>
+  )
+}
+
+function toolRunSummary(
+  items: TimelineItem[],
+  tSession: (key: string, values?: Record<string, string | number>) => string,
+): string {
+  let commands = 0
+  let createdFiles = 0
+  let changedFiles = 0
+  for (const item of items) {
+    const kind = textOf(item.content.kind)
+    if (kind === "command") {
+      commands += 1
+      continue
+    }
+    if (kind === "file_change") {
+      for (const change of recordsOf(item.content.changes)) {
+        if (isCreatedFileChange(change)) createdFiles += 1
+        else changedFiles += 1
+      }
+    }
+  }
+
+  const parts: string[] = []
+  if (commands > 0) parts.push(tSession("toolSummaryCommands", { count: commands }))
+  if (changedFiles > 0) parts.push(tSession("toolSummaryChangedFiles", { count: changedFiles }))
+  if (createdFiles > 0) parts.push(tSession("toolSummaryCreatedFiles", { count: createdFiles }))
+  return parts.length > 0 ? parts.join(", ") : tSession("toolSummaryItems", { count: items.length })
 }
 
 function mergeSessionState(

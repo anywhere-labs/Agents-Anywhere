@@ -10,6 +10,9 @@ import { openSessionFilePreview } from "@/components/markdown-text"
 import { cn } from "@/lib/utils"
 import type { Approval, ApprovalResolveStatus, SessionView, TimelineItem } from "@/features/dashboard/types"
 import { firstTextOf, messageText, recordsOf, textOf } from "@/components/session/session-utils"
+import { extractAttachments, stripInjectedAttachmentMentions } from "@/features/dashboard/attachments"
+import { MessageAttachments } from "@/components/session/message-attachments"
+import { CollapsibleUserMessage } from "@/components/session/collapsible-user-message"
 
 const MarkdownText = dynamic(() => import("../markdown-text").then((mod) => ({ default: mod.MarkdownText })), { ssr: false })
 
@@ -51,18 +54,44 @@ export function TimelineEntry({
 }
 
 function MessageCard({ token, session, item }: { token: string; session: SessionView; item: TimelineItem }) {
-  const text = messageText(item)
+  const text = stripInjectedAttachmentMentions(messageText(item))
+  const attachments = extractAttachments(item.content)
   const isUser = item.role === "user"
+  const hasAttachments = attachments.length > 0
+  const content = text ? (
+    <MarkdownText text={text} token={token} session={session} />
+  ) : hasAttachments ? null : (
+    <JsonBlock value={item.content} />
+  )
+  const attachmentList = (
+    <MessageAttachments
+      token={token}
+      sessionId={session.id}
+      attachments={attachments}
+      align={isUser ? "right" : "left"}
+    />
+  )
+
   return (
     <div className={cn("flex min-w-0 max-w-full overflow-hidden", isUser && "justify-end")}>
-      <div
-        className={cn(
-          "min-w-0 max-w-[88%] text-sm leading-relaxed",
-          isUser ? "bg-secondary text-secondary-foreground" : "bg-transparent px-0",
-          isUser ? "rounded-2xl px-4 py-3" : "px-0 py-1",
-        )}
-      >
-        {text ? <MarkdownText text={text} token={token} session={session} /> : <JsonBlock value={item.content} />}
+      <div className={cn("flex min-w-0 max-w-[88%] flex-col gap-2 text-sm leading-relaxed", isUser && "items-end")}>
+        {isUser ? attachmentList : null}
+        {content ? (
+          <div
+            className={cn(
+              "min-w-0 max-w-full",
+              isUser ? "rounded-2xl bg-secondary px-4 py-3 text-secondary-foreground" : "bg-transparent px-0 py-1",
+            )}
+          >
+            {isUser ? <CollapsibleUserMessage>{content}</CollapsibleUserMessage> : content}
+          </div>
+        ) : null}
+        {!isUser ? attachmentList : null}
+        {!content && !hasAttachments ? (
+          <div className="min-w-0 max-w-full bg-transparent px-0 py-1">
+            <JsonBlock value={item.content} />
+          </div>
+        ) : null}
       </div>
     </div>
   )

@@ -345,6 +345,10 @@ export type TerminalResponse = {
 
 export type AttachmentRef = {
   fileId: string;
+  name?: string;
+  size?: number;
+  mediaType?: string;
+  sha256?: string;
 };
 
 export type MessageSendOptions = {

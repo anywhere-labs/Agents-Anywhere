@@ -45,23 +45,11 @@ export function ToolCard({
   onResolveApproval: (approvalId: string, status: ApprovalResolveStatus) => void
 }) {
   const tSession = useTranslations("dashboard.session")
-  const kind = textOf(item.content.kind) || "tool"
+  const kind = timelineToolKind(item)
   const command = commandText(item.content.command)
   const output = textOf(item.content.outputPreview) || textOf(item.content.outputText) || textOf(item.content.error)
   const changes = recordsOf(item.content.changes)
-  const createdFilesOnly = changes.length > 0 && changes.every(isCreatedFileChange)
-  const title =
-    kind === "command"
-      ? tSession("toolRan", { command: commandText(item.content.command) || tSession("toolCommandFallback") })
-      : kind === "file_change"
-        ? tSession(createdFilesOnly ? "toolCreatedFiles" : "toolChangedFiles")
-        : kind === "web_search"
-          ? tSession("toolSearched", { query: textOf(item.content.query) || tSession("toolWebFallback") })
-          : kind === "mcp"
-            ? `${textOf(item.content.server) || tSession("toolMcpFallback")} / ${
-                textOf(item.content.tool) || tSession("toolToolFallback")
-              }`
-            : kind
+  const title = timelineToolTitle(item, tSession)
   const defaultOpen = Boolean(approval)
 
   return (
@@ -99,6 +87,34 @@ export function ToolCard({
       </div>
     </Collapsible>
   )
+}
+
+export function timelineToolKind(item: TimelineItem): string {
+  if (item.type === "artifact") return textOf(item.content.kind) || "artifact"
+  return textOf(item.content.kind) || "tool"
+}
+
+export function timelineToolTitle(
+  item: TimelineItem,
+  tSession: (key: string, values?: Record<string, string | number>) => string,
+): string {
+  if (item.type === "artifact") {
+    return firstTextOf(item.content.path, item.content.filePath, item.content.file, item.content.uri) ?? (textOf(item.content.kind) || "artifact")
+  }
+  const kind = timelineToolKind(item)
+  const changes = recordsOf(item.content.changes)
+  const createdFilesOnly = changes.length > 0 && changes.every(isCreatedFileChange)
+  return kind === "command"
+    ? tSession("toolRan", { command: commandText(item.content.command) || tSession("toolCommandFallback") })
+    : kind === "file_change"
+      ? tSession(createdFilesOnly ? "toolCreatedFiles" : "toolChangedFiles")
+      : kind === "web_search"
+        ? tSession("toolSearched", { query: textOf(item.content.query) || tSession("toolWebFallback") })
+        : kind === "mcp"
+          ? `${textOf(item.content.server) || tSession("toolMcpFallback")} / ${
+              textOf(item.content.tool) || tSession("toolToolFallback")
+            }`
+          : kind
 }
 
 export function ToolDetailPanel({
@@ -442,7 +458,7 @@ function isUnifiedDiffLike(value: string) {
   })
 }
 
-function isCreatedFileChange(change: Record<string, unknown>) {
+export function isCreatedFileChange(change: Record<string, unknown>) {
   const diff = textOf(change.diff)
   return Boolean(diff && !isUnifiedDiffLike(diff))
 }
