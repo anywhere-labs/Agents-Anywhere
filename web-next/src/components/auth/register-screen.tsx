@@ -29,7 +29,7 @@ export function RegisterScreen() {
         <h1 className="text-2xl font-bold tracking-tight">{t("register.title")}</h1>
         <p className="text-sm text-muted-foreground leading-relaxed">
           {t("register.descriptionPrefix")}<br />
-          <span className="font-brand font-medium">Agents Anywhere</span>
+          <span className="aa-wordmark">Agents Anywhere</span>
           {" "}{t("register.descriptionSuffix")}
         </p>
       </div>

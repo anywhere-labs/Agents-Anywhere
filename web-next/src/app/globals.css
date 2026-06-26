@@ -148,6 +148,14 @@ body {
 }
 }
 
+.aa-wordmark {
+  font-family: var(--font-caveat), "Snell Roundhand", cursive;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1;
+  white-space: nowrap;
+}
+
 .code-mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }

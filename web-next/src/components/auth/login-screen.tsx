@@ -26,7 +26,7 @@ export function LoginScreen() {
       <div className="flex flex-col items-center gap-2 text-center mb-8">
         <h1 className="text-2xl font-bold tracking-tight">
           {t("login.titlePrefix")}{" "}
-          <span className="font-brand font-medium">Agents Anywhere</span>
+          <span className="aa-wordmark">Agents Anywhere</span>
         </h1>
         <p className="text-sm text-muted-foreground leading-relaxed">
           {t("login.description")}

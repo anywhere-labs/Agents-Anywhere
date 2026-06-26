@@ -2,7 +2,7 @@ import { NextIntlClientProvider, hasLocale } from "next-intl";
 import { getMessages } from "next-intl/server";
 import { Caveat, Geist, Geist_Mono, Instrument_Serif } from "next/font/google";
 import { notFound } from "next/navigation";
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "../globals.css";
 import { routing } from "@/i18n/routing";
 import { ThemeProvider } from "@/components/theme-provider";
@@ -39,7 +39,47 @@ const brand = Caveat({
 
 export const metadata: Metadata = {
   title: "Agents Anywhere",
-  description: "Remote control plane for coding agents"
+  description: "Remote control plane for coding agents",
+  applicationName: "Agents Anywhere",
+  manifest: "/site.webmanifest",
+  icons: {
+    icon: [
+      {
+        url: "/favicon-dark-mode.png",
+        type: "image/png",
+        media: "(prefers-color-scheme: dark)"
+      },
+      {
+        url: "/favicon-light-mode.png",
+        type: "image/png",
+        media: "(prefers-color-scheme: light)"
+      },
+      {
+        url: "/favicon-dark-mode.png",
+        type: "image/png"
+      }
+    ],
+    apple: [
+      {
+        url: "/apple-touch-icon.png",
+        sizes: "180x180",
+        type: "image/png"
+      }
+    ]
+  },
+  appleWebApp: {
+    capable: true,
+    title: "Agents Anywhere",
+    statusBarStyle: "black-translucent"
+  }
+};
+
+export const viewport: Viewport = {
+  colorScheme: "dark light",
+  themeColor: [
+    { media: "(prefers-color-scheme: dark)", color: "#0a0a0b" },
+    { media: "(prefers-color-scheme: light)", color: "#fafaf9" }
+  ]
 };
 
 type LocaleLayoutProps = {

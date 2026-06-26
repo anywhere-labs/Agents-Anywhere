@@ -95,7 +95,7 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
     <Sidebar contained={contained} className="border-sidebar-border">
       <SidebarHeader className="gap-0 px-4 pt-4 pb-2">
         <div className="flex items-center justify-between">
-          <button type="button" onClick={goHome} className="font-brand text-xl font-medium tracking-tight">
+          <button type="button" onClick={goHome} className="aa-wordmark text-xl">
             Agents Anywhere
           </button>
           <div className="flex items-center gap-1 text-muted-foreground">
