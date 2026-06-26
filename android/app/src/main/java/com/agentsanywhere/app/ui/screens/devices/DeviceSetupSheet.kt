@@ -32,10 +32,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -45,7 +50,8 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.agentsanywhere.app.feature.sessions.DeviceSetupCredential
+import com.agentsanywhere.app.R
+import com.agentsanywhere.app.feature.devices.DeviceSetupCredential
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
@@ -68,24 +74,47 @@ internal fun DeviceSetupSheet(
     credential: DeviceSetupCredential?,
     busy: Boolean,
     errorMessage: String?,
+    mode: DeviceSetupMode = DeviceSetupMode.Reconnect,
     onDismiss: () -> Unit,
+    onCreateCredential: (suspend (String) -> Result<DeviceSetupCredential>)? = null,
+    onCredentialCreated: (DeviceSetupCredential) -> Unit = {},
     onClaimPairCode: suspend (DeviceSetupCredential, String) -> Result<AgentDevice>,
 ) {
+    val context = LocalContext.current
     val colors = LocalAAColors.current
     val darkMode = colors.canvas == Color(0xFF09090B)
     val palette = setupSheetPalette(darkMode)
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
-    var page by remember(credential?.device?.id, credential?.connectorToken) { mutableStateOf(SetupSheetPage.Choose) }
+    var sheetCredential by remember(credential?.device?.id, credential?.connectorToken) { mutableStateOf(credential) }
+    var page by remember(mode, sheetCredential?.device?.id, sheetCredential?.connectorToken) {
+        mutableStateOf(if (mode == DeviceSetupMode.PairNew && sheetCredential == null) SetupSheetPage.Create else SetupSheetPage.Choose)
+    }
     var pairCode by remember(credential?.device?.id, credential?.connectorToken) { mutableStateOf("") }
     var claimBusy by remember { mutableStateOf(false) }
     var claimError by remember { mutableStateOf<String?>(null) }
     var waitingForOnline by remember { mutableStateOf(false) }
-    var copied by remember(credential?.connectorToken) { mutableStateOf<String?>(null) }
-    val shownDevice = device ?: credential?.device
-    val title = "Reconnect ${shownDevice?.name ?: "device"}"
+    var createBusy by remember { mutableStateOf(false) }
+    var createError by remember { mutableStateOf<String?>(null) }
+    var deviceName by remember(mode) { mutableStateOf(defaultDeviceName()) }
+    val nameFocusRequester = remember { FocusRequester() }
+    var copied by remember(sheetCredential?.connectorToken) { mutableStateOf<String?>(null) }
+    val shownDevice = device ?: sheetCredential?.device
+    val title = when (mode) {
+        DeviceSetupMode.PairNew -> stringResource(R.string.device_setup_pair_new_title)
+        DeviceSetupMode.Reconnect -> stringResource(
+            R.string.device_setup_reconnect_title,
+            shownDevice?.name ?: stringResource(R.string.device_setup_device_fallback),
+        )
+    }
     val connected = shownDevice?.online == true
-    val connectorId = credential?.device?.id ?: shownDevice?.id.orEmpty()
+    val connectorId = sheetCredential?.device?.id ?: shownDevice?.id.orEmpty()
+
+    LaunchedEffect(credential?.device, credential?.connectorToken) {
+        if (credential != null) {
+            sheetCredential = credential
+        }
+    }
 
     fun copy(label: String, text: String) {
         if (text.isBlank()) return
@@ -98,7 +127,7 @@ internal fun DeviceSetupSheet(
     }
 
     fun claim() {
-        val current = credential ?: return
+        val current = sheetCredential ?: return
         if (claimBusy) return
         claimBusy = true
         claimError = null
@@ -106,10 +135,30 @@ internal fun DeviceSetupSheet(
             onClaimPairCode(current, pairCode)
                 .onSuccess { waitingForOnline = true }
                 .onFailure { error ->
-                    claimError = error.message ?: "Failed to claim pairing code."
+                    claimError = error.message ?: context.getString(R.string.device_setup_claim_failed)
                     waitingForOnline = false
                 }
             claimBusy = false
+        }
+    }
+
+    fun generateCredential() {
+        val create = onCreateCredential ?: return
+        if (createBusy) return
+        createBusy = true
+        createError = null
+        scope.launch {
+            create(deviceName)
+                .onSuccess { created ->
+                    sheetCredential = created
+                    deviceName = created.device.name
+                    onCredentialCreated(created)
+                    page = SetupSheetPage.Choose
+                }
+                .onFailure { error ->
+                    createError = error.message ?: context.getString(R.string.device_setup_generate_failed)
+                }
+            createBusy = false
         }
     }
 
@@ -132,78 +181,106 @@ internal fun DeviceSetupSheet(
             SetupHandle(color = palette.handle)
             SetupHeader(title = title, palette = palette, onDismiss = onDismiss)
 
-            if (busy || credential == null) {
+            val currentCredential = sheetCredential
+            if (mode == DeviceSetupMode.PairNew && page == SetupSheetPage.Create) {
                 SetupHint(
-                    text = errorMessage ?: "Preparing setup credentials for ${shownDevice?.name ?: "this device"}.",
+                    text = stringResource(R.string.device_setup_name_then_generate),
+                    palette = palette,
+                )
+                SetupDeviceNameField(
+                    value = deviceName,
+                    enabled = !createBusy,
+                    palette = palette,
+                    focusRequester = nameFocusRequester,
+                    onValueChange = { deviceName = it },
+                    onSubmit = { generateCredential() },
+                )
+                if (createError != null) {
+                    SetupErrorText(text = createError.orEmpty(), palette = palette)
+                }
+                SetupActionRow(
+                    primaryLabel = if (createBusy) stringResource(R.string.device_setup_generating) else stringResource(R.string.device_setup_generate_token),
+                    primaryEnabled = !createBusy,
+                    palette = palette,
+                    onCancel = onDismiss,
+                    onPrimary = { generateCredential() },
+                )
+            } else if (busy || currentCredential == null) {
+                SetupHint(
+                    text = errorMessage ?: stringResource(
+                        R.string.device_setup_preparing_credentials,
+                        shownDevice?.name ?: stringResource(R.string.device_setup_this_device_fallback),
+                    ),
                     palette = palette,
                 )
                 SetupStatusRow(
-                    text = errorMessage ?: "Preparing setup",
+                    text = errorMessage ?: stringResource(R.string.device_setup_preparing),
                     error = errorMessage != null,
                     connected = false,
                     palette = palette,
                 )
-                SetupCloseButton(label = "Close", palette = palette, onClick = onDismiss)
+                SetupCloseButton(label = stringResource(R.string.common_close), palette = palette, onClick = onDismiss)
             } else {
                 when (page) {
+                    SetupSheetPage.Create -> Unit
                     SetupSheetPage.Choose -> {
                         SetupHint(
-                            text = "Credentials are ready for ${credential.device.name}. Pick one path to connect this device.",
+                            text = stringResource(R.string.device_setup_credentials_ready, currentCredential.device.name),
                             palette = palette,
                         )
                         SetupOptionRow(
                             icon = Lucide.KeyRound,
-                            title = "Use token",
-                            description = "Start the connector directly with this id and token.",
+                            title = stringResource(R.string.device_setup_use_token),
+                            description = stringResource(R.string.device_setup_use_token_description),
                             palette = palette,
                             onClick = { page = SetupSheetPage.Token },
                         )
                         SetupOptionRow(
                             icon = Lucide.Terminal,
-                            title = "Pair code",
-                            description = "Run pair on the target machine and claim its code here.",
+                            title = stringResource(R.string.device_setup_pair_code),
+                            description = stringResource(R.string.device_setup_pair_code_description),
                             palette = palette,
                             onClick = { page = SetupSheetPage.PairCode },
                         )
                         SetupStatusRow(
-                            text = if (connected) "Connected" else "Waiting for connection",
+                            text = if (connected) stringResource(R.string.device_setup_connected) else stringResource(R.string.device_setup_waiting_connection),
                             error = false,
                             connected = connected,
                             palette = palette,
                         )
-                        SetupCloseButton(label = "Close", palette = palette, onClick = onDismiss)
+                        SetupCloseButton(label = if (connected) stringResource(R.string.common_done) else stringResource(R.string.common_close), palette = palette, onClick = onDismiss)
                     }
                     SetupSheetPage.Token -> {
                         SetupBackButton(palette = palette, onClick = { page = SetupSheetPage.Choose })
                         SetupHint(
-                            text = "Run this command on the machine that should connect to this server.",
+                            text = stringResource(R.string.device_setup_run_start_command),
                             palette = palette,
                         )
-                        val lines = startCommandLines(credential)
+                        val lines = startCommandLines(currentCredential)
                         SetupCommandBlock(
-                            label = "start connector",
+                            label = stringResource(R.string.device_setup_start_connector),
                             lines = lines,
                             copied = copied == "token",
                             palette = palette,
                             onCopy = { copy("token", lines.joinToString(" ")) },
                         )
                         SetupStatusRow(
-                            text = if (connected) "Connected" else "Waiting for connection",
+                            text = if (connected) stringResource(R.string.device_setup_connected) else stringResource(R.string.device_setup_waiting_connection),
                             error = false,
                             connected = connected,
                             palette = palette,
                         )
-                        SetupCloseButton(label = "Close", palette = palette, onClick = onDismiss)
+                        SetupCloseButton(label = if (connected) stringResource(R.string.common_done) else stringResource(R.string.common_close), palette = palette, onClick = onDismiss)
                     }
                     SetupSheetPage.PairCode -> {
                         SetupBackButton(palette = palette, onClick = { page = SetupSheetPage.Choose })
                         SetupHint(
-                            text = "Run the pairing command on the device, then paste the code shown by the connector CLI.",
+                            text = stringResource(R.string.device_setup_run_pair_command),
                             palette = palette,
                         )
-                        val pairCommand = pairCommand(credential.serverUrl)
+                        val pairCommand = pairCommand(currentCredential.serverUrl)
                         SetupCommandBlock(
-                            label = "pair command",
+                            label = stringResource(R.string.device_setup_pair_command),
                             lines = listOf(pairCommand),
                             copied = copied == "pair",
                             palette = palette,
@@ -218,15 +295,16 @@ internal fun DeviceSetupSheet(
                         )
                         SetupStatusRow(
                             text = claimError ?: when {
-                                connected -> "Connected"
-                                claimBusy -> "Claiming..."
-                                waitingForOnline -> "Waiting for device"
-                                else -> "Waiting for connection"
+                                connected -> stringResource(R.string.device_setup_connected)
+                                claimBusy -> stringResource(R.string.device_setup_claiming)
+                                waitingForOnline -> stringResource(R.string.device_setup_waiting_device)
+                                else -> stringResource(R.string.device_setup_waiting_connection)
                             },
                             error = claimError != null,
                             connected = connected,
                             palette = palette,
                         )
+                        SetupCloseButton(label = if (connected) stringResource(R.string.common_done) else stringResource(R.string.common_close), palette = palette, onClick = onDismiss)
                     }
                 }
             }
@@ -285,7 +363,7 @@ private fun SetupHeader(
         ) {
             Icon(
                 imageVector = Lucide.X,
-                contentDescription = "Close setup",
+                contentDescription = stringResource(R.string.device_setup_close_content_description),
                 tint = palette.icon,
                 modifier = Modifier.size(13.dp),
             )
@@ -302,6 +380,125 @@ private fun SetupHint(text: String, palette: DeviceSetupPalette) {
         fontWeight = FontWeight.Medium,
         lineHeight = 19.sp,
     )
+}
+
+@Composable
+private fun SetupDeviceNameField(
+    value: String,
+    enabled: Boolean,
+    palette: DeviceSetupPalette,
+    focusRequester: FocusRequester,
+    onValueChange: (String) -> Unit,
+    onSubmit: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        Text(
+            text = stringResource(R.string.device_setup_device_name),
+            color = palette.faint,
+            fontSize = 12.6.sp,
+            fontWeight = FontWeight.Bold,
+        )
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            enabled = enabled,
+            singleLine = true,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(palette.card)
+                .border(1.dp, palette.border, RoundedCornerShape(10.dp))
+                .focusRequester(focusRequester)
+                .padding(horizontal = 12.dp),
+            textStyle = TextStyle(
+                color = palette.title,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                fontFamily = FontFamily.SansSerif,
+            ),
+            cursorBrush = SolidColor(palette.title),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { onSubmit() }),
+            decorationBox = { innerTextField ->
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    if (value.isBlank()) {
+                        Text(
+                            text = stringResource(R.string.device_setup_device_name),
+                            color = palette.faint,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium,
+                        )
+                    }
+                    innerTextField()
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun SetupErrorText(text: String, palette: DeviceSetupPalette) {
+    Text(
+        text = text,
+        color = palette.error,
+        fontSize = 13.sp,
+        fontWeight = FontWeight.SemiBold,
+        lineHeight = 17.sp,
+    )
+}
+
+@Composable
+private fun SetupActionRow(
+    primaryLabel: String,
+    primaryEnabled: Boolean,
+    palette: DeviceSetupPalette,
+    onCancel: () -> Unit,
+    onPrimary: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(42.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .height(42.dp)
+                .clip(CircleShape)
+                .border(1.dp, palette.border, CircleShape)
+                .noRippleClickable(onClick = onCancel),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = stringResource(R.string.common_cancel),
+                color = palette.title,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .height(42.dp)
+                .clip(CircleShape)
+                .background(palette.primary.copy(alpha = if (primaryEnabled) 1f else 0.45f))
+                .noRippleClickable(enabled = primaryEnabled, onClick = onPrimary),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = primaryLabel,
+                color = palette.onPrimary,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+            )
+        }
+    }
 }
 
 @Composable
@@ -386,7 +583,7 @@ private fun SetupBackButton(palette: DeviceSetupPalette, onClick: () -> Unit) {
             modifier = Modifier.size(14.dp),
         )
         Text(
-            text = "Back",
+            text = stringResource(R.string.common_back),
             color = palette.body,
             fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold,
@@ -452,7 +649,7 @@ private fun SetupCommandBlock(
                 )
                 Spacer(Modifier.width(5.dp))
                 Text(
-                    text = if (copied) "Copied" else "Copy",
+                    text = if (copied) stringResource(R.string.common_copied) else stringResource(R.string.common_copy),
                     color = palette.title,
                     fontSize = 12.2.sp,
                     fontWeight = FontWeight.Bold,
@@ -531,7 +728,7 @@ private fun SetupPairCodeRow(
                     Box(modifier = Modifier.weight(1f)) {
                         if (value.isBlank()) {
                             Text(
-                                text = "PAIR CODE",
+                                text = stringResource(R.string.device_setup_pair_code_placeholder),
                                 color = palette.faint,
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = 14.sp,
@@ -553,7 +750,7 @@ private fun SetupPairCodeRow(
             contentAlignment = Alignment.Center,
         ) {
             Text(
-                text = if (busy) "Wait" else "Claim",
+                text = if (busy) stringResource(R.string.common_wait) else stringResource(R.string.common_claim),
                 color = palette.onPrimary,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
@@ -630,9 +827,15 @@ private fun SetupCloseButton(
 }
 
 private enum class SetupSheetPage {
+    Create,
     Choose,
     Token,
     PairCode,
+}
+
+internal enum class DeviceSetupMode {
+    Reconnect,
+    PairNew,
 }
 
 private data class DeviceSetupPalette(
@@ -743,4 +946,38 @@ private fun String.pairServerAddress(): String {
 private fun shellQuote(value: String): String {
     if (value.matches(Regex("^[A-Za-z0-9_./:=@%+-]+$"))) return value
     return "'" + value.replace("'", "'\"'\"'") + "'"
+}
+
+private val deviceNameAdjectives = listOf(
+    "Amber",
+    "Bright",
+    "Calm",
+    "Cedar",
+    "Clear",
+    "Copper",
+    "Delta",
+    "Harbor",
+    "Ivory",
+    "Maple",
+    "North",
+    "Quiet",
+    "River",
+    "Silver",
+    "Slate",
+    "Swift",
+)
+
+private val deviceNameNouns = listOf(
+    "Desktop",
+    "Laptop",
+    "Mac",
+    "Machine",
+    "Node",
+    "Studio",
+    "Terminal",
+    "Workstation",
+)
+
+private fun defaultDeviceName(): String {
+    return "${deviceNameAdjectives.random()} ${deviceNameNouns.random()}"
 }

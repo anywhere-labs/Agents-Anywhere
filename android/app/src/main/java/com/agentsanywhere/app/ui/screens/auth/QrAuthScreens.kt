@@ -46,6 +46,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
@@ -54,6 +55,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.agentsanywhere.app.R
 import com.agentsanywhere.app.api.AuthApi
 import com.agentsanywhere.app.feature.auth.AuthController
 import com.agentsanywhere.app.feature.auth.AuthSessionStore
@@ -103,7 +105,7 @@ fun QrLoginScreen(
         ) { granted ->
             hasCameraPermission = granted
             if (!granted) {
-                state = state.copy(errorMessage = "Camera permission is required to scan QR codes.")
+                state = state.copy(errorMessage = context.getString(R.string.qr_camera_permission_required))
             }
         }
     }
@@ -127,7 +129,7 @@ fun QrLoginScreen(
                 .padding(top = 74.dp, bottom = 30.dp),
             verticalArrangement = Arrangement.spacedBy(128.dp),
         ) {
-            BackPill(label = "Back", onClick = navigateBack)
+            BackPill(label = stringResource(R.string.common_back), onClick = navigateBack)
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -149,7 +151,7 @@ fun QrLoginScreen(
                             }.onFailure { error ->
                                 state = state.copy(
                                     isSubmitting = false,
-                                    errorMessage = error.message ?: "Could not start QR sign-in.",
+                                    errorMessage = error.message ?: context.getString(R.string.qr_start_failed),
                                 )
                             }
                         }
@@ -161,7 +163,7 @@ fun QrLoginScreen(
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Text(
-                        text = "How do I generate a mobile sign-in QR?",
+                        text = stringResource(R.string.qr_help_title),
                         color = colors.ink,
                         fontSize = 16.sp,
                         fontWeight = FontWeight.SemiBold,
@@ -169,7 +171,7 @@ fun QrLoginScreen(
                         textAlign = TextAlign.Center,
                     )
                     Text(
-                        text = "Open Agents Anywhere on the web, then go to Settings - Account - Mobile sign-in and click Generate QR.",
+                        text = stringResource(R.string.qr_help_body),
                         color = colors.muted,
                         fontSize = 14.sp,
                         lineHeight = 20.sp,
@@ -210,14 +212,14 @@ fun QrWaitingScreen(
     LaunchedEffect(mobileLoginQr) {
         val payload = mobileLoginQr
         if (payload == null) {
-            state = state.copy(errorMessage = "Scan a QR code first.")
+            state = state.copy(errorMessage = context.getString(R.string.qr_scan_first))
             return@LaunchedEffect
         }
         while (true) {
             val statusResult = authController.mobileLoginStatus(payload)
             val status = statusResult.getOrNull()
             if (status == null) {
-                state = state.copy(errorMessage = statusResult.exceptionOrNull()?.message ?: "Could not check QR sign-in status.")
+                state = state.copy(errorMessage = statusResult.exceptionOrNull()?.message ?: context.getString(R.string.qr_status_failed))
                 delay(1_600)
                 continue
             }
@@ -234,7 +236,7 @@ fun QrWaitingScreen(
                         .onFailure { error ->
                             state = state.copy(
                                 isExchanging = false,
-                                errorMessage = error.message ?: "Could not complete QR sign-in.",
+                                errorMessage = error.message ?: context.getString(R.string.qr_complete_failed),
                             )
                         }
                     return@LaunchedEffect
@@ -253,7 +255,7 @@ fun QrWaitingScreen(
                 .padding(top = 74.dp, bottom = 30.dp),
             verticalArrangement = Arrangement.spacedBy(42.dp),
         ) {
-            BackPill(label = "Back", onClick = navigateBack)
+            BackPill(label = stringResource(R.string.common_back), onClick = navigateBack)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -312,7 +314,7 @@ private fun QrScannerFrame(
         } else {
             Text(
                 modifier = Modifier.padding(horizontal = 28.dp),
-                text = "Camera access is needed to scan.",
+                text = stringResource(R.string.qr_camera_access_needed),
                 color = colors.muted,
                 fontSize = 12.5.sp,
                 lineHeight = 16.sp,
@@ -439,13 +441,14 @@ private fun QrWaitingMonitorIcon() {
     )
 }
 
+@Composable
 private fun qrWaitingTitle(state: QrWaitingState): String {
     return when {
-        state.isExchanging -> "Completing sign-in..."
-        state.status == "rejected" -> "Sign-in rejected."
-        state.status == "expired" -> "QR code expired."
-        state.status == "consumed" -> "QR code already used."
-        else -> "Waiting for web confirmation..."
+        state.isExchanging -> stringResource(R.string.qr_completing)
+        state.status == "rejected" -> stringResource(R.string.qr_rejected)
+        state.status == "expired" -> stringResource(R.string.qr_expired)
+        state.status == "consumed" -> stringResource(R.string.qr_consumed)
+        else -> stringResource(R.string.qr_waiting)
     }
 }
 

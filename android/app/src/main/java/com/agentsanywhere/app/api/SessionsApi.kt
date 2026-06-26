@@ -60,6 +60,43 @@ class SessionsApi(
         ).getJSONObject("session").toRemoteSession()
     }
 
+    fun bulkArchiveSessions(
+        serverUrl: String,
+        authorizationToken: String,
+        ids: List<String>,
+        archived: Boolean,
+    ): List<RemoteSession> {
+        val body = JSONObject().apply {
+            put("ids", JSONArray(ids))
+            put("archived", archived)
+        }
+        return client.postJson(
+            serverUrl = serverUrl,
+            path = "/sessions/bulk-archive",
+            body = body,
+            authorizationToken = authorizationToken,
+        ).optJSONArray("sessions").toObjectList { toRemoteSession() }
+    }
+
+    fun archiveAllDeviceSessions(
+        serverUrl: String,
+        authorizationToken: String,
+        deviceId: String,
+        archived: Boolean,
+        scope: String,
+    ): List<RemoteSession> {
+        val body = JSONObject().apply {
+            put("archived", archived)
+            put("scope", scope)
+        }
+        return client.postJson(
+            serverUrl = serverUrl,
+            path = "/connectors/${deviceId.urlEncode()}/sessions/archive-all",
+            body = body,
+            authorizationToken = authorizationToken,
+        ).optJSONArray("sessions").toObjectList { toRemoteSession() }
+    }
+
     fun getRuntimeConfigSchema(
         serverUrl: String,
         authorizationToken: String,

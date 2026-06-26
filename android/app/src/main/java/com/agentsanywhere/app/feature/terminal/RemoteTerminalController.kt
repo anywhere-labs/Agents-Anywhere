@@ -1,9 +1,10 @@
-package com.agentsanywhere.app.feature.sessiondetail
+package com.agentsanywhere.app.feature.terminal
 
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.KeyEvent
+import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentSession
 import com.termux.terminal.KeyHandler
 import com.termux.terminal.TerminalEmulator
@@ -31,7 +32,7 @@ import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 
 class RemoteTerminalController(
-    private val sessionController: SessionDetailController,
+    private val terminalController: TerminalController,
 ) : TerminalSessionClient {
     val state = MutableStateFlow(RemoteTerminalState())
     val modifierState = MutableStateFlow(TerminalModifierState())
@@ -92,8 +93,42 @@ class RemoteTerminalController(
             return
         }
         state.value = RemoteTerminalState(status = RemoteTerminalStatus.Connecting)
-        sessionController.openWorkspaceTerminal(
+        terminalController.openWorkspaceTerminal(
             session = session,
+            cols = lastCols,
+            rows = lastRows,
+            ephemeralGroupId = groupId,
+        )
+            .onSuccess { connection ->
+                connectorId = connection.connectorId
+                terminalId = connection.terminal.terminalId
+                streamUrl = connection.streamUrl
+                lastSeenSeq = 0L
+                reconnectAttempts = 0
+                diag("terminal opened connector=${connection.connectorId} terminal=${connection.terminal.terminalId}")
+                connectSocket(connection.streamUrl)
+            }
+            .onFailure { error ->
+                diag("open failed ${error::class.java.simpleName}: ${error.message}")
+                state.value = RemoteTerminalState(
+                    status = RemoteTerminalStatus.Error,
+                    message = error.message ?: "Could not open terminal.",
+                )
+            }
+    }
+
+    suspend fun ensureStarted(device: AgentDevice) {
+        if (terminalId != null && connectorId == device.id) {
+            return
+        }
+        close()
+        if (!device.online) {
+            state.value = RemoteTerminalState(status = RemoteTerminalStatus.Error, message = "This device is offline.")
+            return
+        }
+        state.value = RemoteTerminalState(status = RemoteTerminalStatus.Connecting)
+        terminalController.openDeviceTerminal(
+            connectorId = device.id,
             cols = lastCols,
             rows = lastRows,
             ephemeralGroupId = groupId,
@@ -185,6 +220,12 @@ class RemoteTerminalController(
         ensureStarted(session)
     }
 
+    suspend fun restart(device: AgentDevice) {
+        clearLocalScreen()
+        close()
+        ensureStarted(device)
+    }
+
     suspend fun close() {
         diag("close requested terminal=$terminalId")
         manuallyClosed = true
@@ -204,7 +245,7 @@ class RemoteTerminalController(
         state.value = RemoteTerminalState()
         if (currentConnectorId != null && currentTerminalId != null) {
             withContext(Dispatchers.IO) {
-                sessionController.closeWorkspaceTerminal(currentConnectorId, currentTerminalId)
+                terminalController.closeTerminal(currentConnectorId, currentTerminalId)
             }
         }
     }

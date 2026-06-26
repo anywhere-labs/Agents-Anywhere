@@ -90,6 +90,18 @@ private val DarkAgentsAnywhereColors = AgentsAnywhereColors(
 
 val LocalAAColors = staticCompositionLocalOf { LightAgentsAnywhereColors }
 
+object AAAppearanceMode {
+    const val System = "system"
+    const val Light = "light"
+    const val Dark = "dark"
+}
+
+object AALanguageMode {
+    const val System = "system"
+    const val English = "en"
+    const val SimplifiedChinese = "zh-CN"
+}
+
 private val LightAgentsAnywhereColorScheme = lightColorScheme(
     primary = AAColor.Ink,
     onPrimary = Color.White,
@@ -122,8 +134,16 @@ private val AgentsAnywhereTypography = Typography(
 )
 
 @Composable
-fun AgentsAnywhereTheme(content: @Composable () -> Unit) {
-    val darkTheme = isSystemInDarkTheme()
+fun AgentsAnywhereTheme(
+    appearanceMode: String = AAAppearanceMode.System,
+    content: @Composable () -> Unit,
+) {
+    val systemDarkTheme = isSystemInDarkTheme()
+    val darkTheme = when (appearanceMode) {
+        AAAppearanceMode.Light -> false
+        AAAppearanceMode.Dark -> true
+        else -> systemDarkTheme
+    }
     val colors = if (darkTheme) DarkAgentsAnywhereColors else LightAgentsAnywhereColors
     val colorScheme = if (darkTheme) DarkAgentsAnywhereColorScheme else LightAgentsAnywhereColorScheme
     val view = LocalView.current
