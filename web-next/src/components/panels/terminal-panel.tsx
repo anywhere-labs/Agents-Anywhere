@@ -358,9 +358,9 @@ function XtermHost({
         fontSize: 12.5,
         fontFamily: '"Menlo", "JetBrains Mono", "SF Mono", monospace',
         theme: {
-          background: "#000000",
-          foreground: "#d4d4d4",
-          cursor: "#d4d4d4",
+          background: "#1d2028",
+          foreground: "#d8d8dd",
+          cursor: "#f4f4f5",
           selectionBackground: "rgba(255,255,255,0.15)",
         },
         scrollback: 5000,
