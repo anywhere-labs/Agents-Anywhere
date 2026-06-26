@@ -4,6 +4,7 @@ import android.net.Uri
 import com.agentsanywhere.app.api.ApiException
 import com.agentsanywhere.app.api.AuthApi
 import com.agentsanywhere.app.api.AuthConfigResponse
+import com.agentsanywhere.app.api.AuthMeResponse
 import com.agentsanywhere.app.api.MobileLoginStatusResponse
 import com.agentsanywhere.app.model.MobileLoginQrPayload
 import kotlinx.coroutines.Dispatchers
@@ -18,8 +19,87 @@ class AuthController(
         return sessionStore.readServerUrl()
     }
 
+    fun savedUserId(): String {
+        return sessionStore.readUserId()
+    }
+
+    fun savedRole(): String {
+        return sessionStore.readRole()
+    }
+
+    fun signOut() {
+        sessionStore.clearAuthSession()
+    }
+
     fun normalizedServerUrl(serverUrl: String): String? {
         return normalizeServerUrl(serverUrl)
+    }
+
+    suspend fun me(): Result<AuthMeResponse> {
+        val serverUrl = sessionStore.readServerUrl()
+        val token = sessionStore.readAccessToken()
+        if (serverUrl.isBlank() || token.isBlank()) {
+            return Result.failure(IllegalStateException("Sign in again to load account."))
+        }
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                api.me(serverUrl = serverUrl, token = token)
+            }.recoverCatching { error ->
+                if (error is ApiException) throw error
+                throw IllegalStateException(error.message ?: "Could not load account.", error)
+            }
+        }
+    }
+
+    suspend fun updateAvatar(avatar: String): Result<AuthMeResponse> {
+        val serverUrl = sessionStore.readServerUrl()
+        val token = sessionStore.readAccessToken()
+        if (serverUrl.isBlank() || token.isBlank()) {
+            return Result.failure(IllegalStateException("Sign in again to update avatar."))
+        }
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                api.updateAvatar(serverUrl = serverUrl, token = token, avatar = avatar)
+            }.recoverCatching { error ->
+                if (error is ApiException) throw error
+                throw IllegalStateException(error.message ?: "Could not update avatar.", error)
+            }
+        }
+    }
+
+    suspend fun clearAvatar(): Result<AuthMeResponse> {
+        val serverUrl = sessionStore.readServerUrl()
+        val token = sessionStore.readAccessToken()
+        if (serverUrl.isBlank() || token.isBlank()) {
+            return Result.failure(IllegalStateException("Sign in again to clear avatar."))
+        }
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                api.clearAvatar(serverUrl = serverUrl, token = token)
+            }.recoverCatching { error ->
+                if (error is ApiException) throw error
+                throw IllegalStateException(error.message ?: "Could not clear avatar.", error)
+            }
+        }
+    }
+
+    suspend fun changePassword(newPassword: String): Result<Unit> {
+        if (newPassword.length < 8) {
+            return Result.failure(IllegalArgumentException("Password must be at least 8 characters."))
+        }
+        val serverUrl = sessionStore.readServerUrl()
+        val token = sessionStore.readAccessToken()
+        if (serverUrl.isBlank() || token.isBlank()) {
+            return Result.failure(IllegalStateException("Sign in again to change password."))
+        }
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                api.changePassword(serverUrl = serverUrl, token = token, newPassword = newPassword)
+            }.recoverCatching { error ->
+                if (error is ApiException) throw error
+                throw IllegalStateException(error.message ?: "Could not change password.", error)
+            }
+        }
     }
 
     suspend fun loginWithPassword(
@@ -49,6 +129,37 @@ class AuthController(
             }.recoverCatching { error ->
                 if (error is ApiException) throw error
                 throw IllegalStateException(error.message ?: "Login failed.", error)
+            }
+        }
+    }
+
+    suspend fun registerWithPassword(
+        serverUrl: String,
+        userId: String,
+        password: String,
+    ): Result<Unit> {
+        val normalizedServerUrl = normalizeServerUrl(serverUrl)
+            ?: return Result.failure(IllegalArgumentException("Enter a valid server URL."))
+        val trimmedUserId = userId.trim().lowercase()
+        if (!USER_ID_PATTERN.matches(trimmedUserId)) {
+            return Result.failure(IllegalArgumentException(USER_ID_HINT))
+        }
+        if (password.length < 8) {
+            return Result.failure(IllegalArgumentException("Password must be at least 8 characters."))
+        }
+
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                sessionStore.saveServerUrl(normalizedServerUrl)
+                val auth = api.register(
+                    serverUrl = normalizedServerUrl,
+                    userId = trimmedUserId,
+                    password = password,
+                )
+                sessionStore.saveAuthSession(normalizedServerUrl, auth)
+            }.recoverCatching { error ->
+                if (error is ApiException) throw error
+                throw IllegalStateException(error.message ?: "Registration failed.", error)
             }
         }
     }
@@ -321,6 +432,9 @@ class AuthController(
         private const val OAUTH_CALLBACK_HOST = "oauth"
     }
 }
+
+private val USER_ID_PATTERN = Regex("^[a-z0-9_-]{3,40}$")
+private const val USER_ID_HINT = "Use 3-40 lowercase letters, numbers, underscores, or hyphens."
 
 sealed interface OAuthCallbackResult {
     data class Pending(val pending: OAuthPending) : OAuthCallbackResult

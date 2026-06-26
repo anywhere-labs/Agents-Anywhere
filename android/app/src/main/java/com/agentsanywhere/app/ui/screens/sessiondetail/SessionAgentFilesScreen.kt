@@ -60,6 +60,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -72,13 +73,15 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.zIndex
-import com.agentsanywhere.app.feature.sessiondetail.RemoteTerminalController
-import com.agentsanywhere.app.feature.sessiondetail.RemoteTerminalStatus
-import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
-import com.agentsanywhere.app.feature.sessiondetail.SessionFileEntry
-import com.agentsanywhere.app.feature.sessiondetail.SessionFilesDirectory
-import com.agentsanywhere.app.feature.sessiondetail.SessionTextFile
-import com.agentsanywhere.app.feature.sessiondetail.TerminalShortcut
+import com.agentsanywhere.app.R
+import com.agentsanywhere.app.feature.files.FileEntry
+import com.agentsanywhere.app.feature.files.FilesController
+import com.agentsanywhere.app.feature.files.FilesDirectory
+import com.agentsanywhere.app.feature.files.TextFile
+import com.agentsanywhere.app.feature.terminal.RemoteTerminalController
+import com.agentsanywhere.app.feature.terminal.RemoteTerminalStatus
+import com.agentsanywhere.app.feature.terminal.TerminalShortcut
+import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentSession
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
@@ -106,7 +109,7 @@ import kotlin.math.roundToInt
 @Composable
 internal fun SessionAgentFilesScreen(
     session: AgentSession?,
-    controller: SessionDetailController,
+    filesController: FilesController,
     terminalController: RemoteTerminalController,
     darkMode: Boolean,
     onTerminalVerticalDragChange: (Boolean) -> Unit = {},
@@ -114,12 +117,12 @@ internal fun SessionAgentFilesScreen(
 ) {
     val colors = LocalAAColors.current
     val scope = rememberCoroutineScope()
-    var directory by remember(session?.id) { mutableStateOf(SessionFilesDirectory(path = ".")) }
+    var directory by remember(session?.id) { mutableStateOf(FilesDirectory(path = ".")) }
     var loading by remember(session?.id) { mutableStateOf(false) }
     var error by remember(session?.id) { mutableStateOf<String?>(null) }
     var openActionPath by remember(session?.id) { mutableStateOf<String?>(null) }
-    var selectedFile by remember(session?.id) { mutableStateOf<SessionFileEntry?>(null) }
-    var preview by remember(session?.id) { mutableStateOf<SessionTextFile?>(null) }
+    var selectedFile by remember(session?.id) { mutableStateOf<FileEntry?>(null) }
+    var preview by remember(session?.id) { mutableStateOf<TextFile?>(null) }
     var previewLoading by remember(session?.id) { mutableStateOf(false) }
     var previewError by remember(session?.id) { mutableStateOf<String?>(null) }
     var searchOpen by remember(session?.id) { mutableStateOf(false) }
@@ -127,6 +130,9 @@ internal fun SessionAgentFilesScreen(
     var searchResult by remember(session?.id) { mutableStateOf(SoraFileSearchResult()) }
     var pushView by remember(session?.id) { mutableStateOf(PushView.Files) }
     val searchController = remember(selectedFile?.path) { SoraFileSearchController() }
+    val noWorkspaceMessage = stringResource(R.string.files_session_no_workspace)
+    val loadFilesFailedMessage = stringResource(R.string.files_load_failed)
+    val openFileFailedMessage = stringResource(R.string.files_open_failed)
 
     DisposableEffect(Unit) {
         onDispose { onTerminalVerticalDragChange(false) }
@@ -136,19 +142,19 @@ internal fun SessionAgentFilesScreen(
         val current = session
         val root = current?.cwd?.takeIf { it.isNotBlank() }
         if (current == null || root == null) {
-            error = "This session has no workspace."
+            error = noWorkspaceMessage
             return
         }
         loading = true
         error = null
         scope.launch {
-            controller.listWorkspaceFiles(
+            filesController.listFiles(
                 connectorId = current.connectorId,
                 root = root,
                 path = path,
             )
                 .onSuccess { directory = it.copy(path = path) }
-                .onFailure { failure -> error = failure.message ?: "Could not load files." }
+                .onFailure { failure -> error = failure.message ?: loadFilesFailedMessage }
             loading = false
         }
     }
@@ -160,9 +166,9 @@ internal fun SessionAgentFilesScreen(
         searchOpen = false
         searchQuery = ""
         searchResult = SoraFileSearchResult()
-        directory = SessionFilesDirectory(path = ".")
+        directory = FilesDirectory(path = ".")
         if (session?.cwd.isNullOrBlank()) {
-            error = "This session has no workspace."
+            error = noWorkspaceMessage
         } else {
             load(".")
         }
@@ -176,7 +182,7 @@ internal fun SessionAgentFilesScreen(
         if (current == null || root == null) {
             preview = null
             previewLoading = false
-            previewError = "This session has no workspace."
+            previewError = noWorkspaceMessage
             return@LaunchedEffect
         }
         preview = null
@@ -184,13 +190,13 @@ internal fun SessionAgentFilesScreen(
         previewError = null
         searchQuery = ""
         searchResult = SoraFileSearchResult()
-        controller.readWorkspaceTextFile(
+        filesController.readTextFile(
             connectorId = current.connectorId,
             root = root,
             path = file.path,
         )
             .onSuccess { preview = it }
-            .onFailure { failure -> previewError = failure.message ?: "Could not open file." }
+            .onFailure { failure -> previewError = failure.message ?: openFileFailedMessage }
         previewLoading = false
     }
 
@@ -207,9 +213,18 @@ internal fun SessionAgentFilesScreen(
         )
         if (pushView == PushView.Terminal) {
             TerminalContent(
-                session = session,
                 terminalController = terminalController,
                 darkMode = darkMode,
+                terminalKey = session?.id,
+                canReconnect = session != null,
+                onStart = {
+                    val current = session ?: return@TerminalContent
+                    terminalController.ensureStarted(current)
+                },
+                onRestart = {
+                    val current = session ?: return@TerminalContent
+                    terminalController.restart(current)
+                },
                 onVerticalDragChange = onTerminalVerticalDragChange,
                 modifier = Modifier.weight(1f),
             )
@@ -217,7 +232,7 @@ internal fun SessionAgentFilesScreen(
             val file = selectedFile
             if (file == null) {
                 FileListContent(
-                    session = session,
+                    rootPath = session?.cwd,
                     directory = directory,
                     loading = loading,
                     error = error,
@@ -234,7 +249,7 @@ internal fun SessionAgentFilesScreen(
                 )
             } else {
                 FilePreviewContent(
-                    session = session,
+                    rootPath = session?.cwd,
                     file = file,
                     preview = preview,
                     loading = previewLoading,
@@ -261,16 +276,152 @@ internal fun SessionAgentFilesScreen(
     }
 }
 
+@Composable
+internal fun DeviceFilesContent(
+    device: AgentDevice?,
+    controller: FilesController,
+    darkMode: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val scope = rememberCoroutineScope()
+    var directory by remember(device?.id) { mutableStateOf(FilesDirectory(path = ".")) }
+    var loading by remember(device?.id) { mutableStateOf(false) }
+    var error by remember(device?.id) { mutableStateOf<String?>(null) }
+    var openActionPath by remember(device?.id) { mutableStateOf<String?>(null) }
+    var selectedFile by remember(device?.id) { mutableStateOf<FileEntry?>(null) }
+    var preview by remember(device?.id) { mutableStateOf<TextFile?>(null) }
+    var previewLoading by remember(device?.id) { mutableStateOf(false) }
+    var previewError by remember(device?.id) { mutableStateOf<String?>(null) }
+    var searchOpen by remember(device?.id) { mutableStateOf(false) }
+    var searchQuery by remember(device?.id) { mutableStateOf("") }
+    var searchResult by remember(device?.id) { mutableStateOf(SoraFileSearchResult()) }
+    val searchController = remember(selectedFile?.path) { SoraFileSearchController() }
+    val root = "~"
+    val deviceOfflineMessage = stringResource(R.string.files_device_offline)
+    val selectDeviceMessage = stringResource(R.string.files_select_device)
+    val loadFilesFailedMessage = stringResource(R.string.files_load_failed)
+    val openFileFailedMessage = stringResource(R.string.files_open_failed)
+
+    fun load(path: String) {
+        val current = device ?: return
+        if (!current.online) {
+            error = deviceOfflineMessage
+            return
+        }
+        loading = true
+        error = null
+        scope.launch {
+            controller.listFiles(
+                connectorId = current.id,
+                root = root,
+                path = path,
+            )
+                .onSuccess { directory = it.copy(path = path) }
+                .onFailure { failure -> error = failure.message ?: loadFilesFailedMessage }
+            loading = false
+        }
+    }
+
+    LaunchedEffect(device?.id, device?.online) {
+        selectedFile = null
+        preview = null
+        previewError = null
+        searchOpen = false
+        searchQuery = ""
+        searchResult = SoraFileSearchResult()
+        directory = FilesDirectory(path = ".")
+        error = when {
+            device == null -> selectDeviceMessage
+            !device.online -> deviceOfflineMessage
+            else -> null
+        }
+        if (device?.online == true) load(".")
+    }
+
+    LaunchedEffect(device?.id, selectedFile?.path) {
+        val file = selectedFile ?: return@LaunchedEffect
+        val current = device ?: return@LaunchedEffect
+        if (!current.online) {
+            preview = null
+            previewLoading = false
+            previewError = deviceOfflineMessage
+            return@LaunchedEffect
+        }
+        preview = null
+        previewLoading = true
+        previewError = null
+        searchQuery = ""
+        searchResult = SoraFileSearchResult()
+        controller.readTextFile(
+            connectorId = current.id,
+            root = root,
+            path = file.path,
+        )
+            .onSuccess { preview = it }
+            .onFailure { failure -> previewError = failure.message ?: openFileFailedMessage }
+        previewLoading = false
+    }
+
+    Box(modifier = modifier.fillMaxSize()) {
+        val file = selectedFile
+        if (file == null) {
+            FileListContent(
+                rootPath = root,
+                directory = directory,
+                loading = loading,
+                error = error,
+                openActionPath = openActionPath,
+                darkMode = darkMode,
+                onOpenActionPath = { openActionPath = it },
+                onDismissMenu = { openActionPath = null },
+                onOpenDirectory = { load(it) },
+                onOpenFile = {
+                    openActionPath = null
+                    selectedFile = it
+                    searchOpen = false
+                },
+            )
+        } else {
+            FilePreviewContent(
+                rootPath = root,
+                file = file,
+                preview = preview,
+                loading = previewLoading,
+                error = previewError,
+                darkMode = darkMode,
+                searchOpen = searchOpen,
+                searchQuery = searchQuery,
+                searchResult = searchResult,
+                searchController = searchController,
+                onBackToFiles = {
+                    selectedFile = null
+                    preview = null
+                    previewError = null
+                    searchOpen = false
+                    searchQuery = ""
+                    searchResult = SoraFileSearchResult()
+                },
+                onToggleSearch = { searchOpen = !searchOpen },
+                onSearchQueryChange = { searchQuery = it },
+                onSearchResult = { searchResult = it },
+            )
+        }
+    }
+}
+
 private enum class PushView {
     Files,
     Terminal,
 }
 
 @Composable
-private fun TerminalContent(
-    session: AgentSession?,
+internal fun TerminalContent(
     terminalController: RemoteTerminalController,
     darkMode: Boolean,
+    terminalKey: Any?,
+    canReconnect: Boolean,
+    onStart: suspend () -> Unit,
+    onRestart: suspend () -> Unit,
     onVerticalDragChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -286,19 +437,20 @@ private fun TerminalContent(
     val background = if (darkMode) Color(0xFF09090B) else Color(0xFFFEFDFB)
     val statusText = when (terminalState.status) {
         RemoteTerminalStatus.Idle -> null
-        RemoteTerminalStatus.Connecting -> "Connecting..."
+        RemoteTerminalStatus.Connecting -> stringResource(R.string.files_terminal_connecting)
         RemoteTerminalStatus.Open -> null
-        RemoteTerminalStatus.Closed -> terminalState.message ?: "Disconnected. Tap to reconnect."
-        RemoteTerminalStatus.Exited -> terminalState.message ?: "Exited. Tap to reconnect."
-        RemoteTerminalStatus.Error -> terminalState.message ?: "Terminal error. Tap to reconnect."
+        RemoteTerminalStatus.Closed -> terminalState.message ?: stringResource(R.string.files_terminal_disconnected)
+        RemoteTerminalStatus.Exited -> terminalState.message ?: stringResource(R.string.files_terminal_exited)
+        RemoteTerminalStatus.Error -> terminalState.message ?: stringResource(R.string.files_terminal_error)
     }
-    val canReconnect = terminalState.status == RemoteTerminalStatus.Closed ||
+    val reconnectable = canReconnect && (
+        terminalState.status == RemoteTerminalStatus.Closed ||
         terminalState.status == RemoteTerminalStatus.Exited ||
         terminalState.status == RemoteTerminalStatus.Error
+        )
 
-    LaunchedEffect(session?.id, session?.cwd) {
-        val current = session ?: return@LaunchedEffect
-        terminalController.ensureStarted(current)
+    LaunchedEffect(terminalKey) {
+        if (terminalKey != null) onStart()
     }
 
     val terminalClient = remember(terminalController, onVerticalDragChange) {
@@ -362,9 +514,9 @@ private fun TerminalContent(
                     modifier = Modifier
                         .padding(horizontal = 14.dp, vertical = 10.dp)
                         .then(
-                            if (canReconnect && session != null) {
+                            if (reconnectable) {
                                 Modifier.noRippleClickable {
-                                    scope.launch { terminalController.restart(session) }
+                                    scope.launch { onRestart() }
                                 }
                             } else {
                                 Modifier
@@ -537,8 +689,8 @@ private fun TerminalShortcutRow(
 
 @Composable
 private fun FileListContent(
-    session: AgentSession?,
-    directory: SessionFilesDirectory,
+    rootPath: String?,
+    directory: FilesDirectory,
     loading: Boolean,
     error: String?,
     openActionPath: String?,
@@ -546,7 +698,7 @@ private fun FileListContent(
     onOpenActionPath: (String) -> Unit,
     onDismissMenu: () -> Unit,
     onOpenDirectory: (String) -> Unit,
-    onOpenFile: (SessionFileEntry) -> Unit,
+    onOpenFile: (FileEntry) -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -555,7 +707,7 @@ private fun FileListContent(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         PathBar(
-            path = displayPath(session?.cwd, directory.path),
+            path = displayPath(rootPath, directory.path),
             darkMode = darkMode,
         )
         LazyColumn(
@@ -563,16 +715,16 @@ private fun FileListContent(
             verticalArrangement = Arrangement.spacedBy(1.dp),
         ) {
             when {
-                loading && directory.entries.isEmpty() -> item { FilesMessage("Loading files...", darkMode) }
+                loading && directory.entries.isEmpty() -> item { FilesMessage(stringResource(R.string.files_loading), darkMode) }
                 error != null && directory.entries.isEmpty() -> item { FilesMessage(error.orEmpty(), darkMode) }
-                !loading && directory.entries.isEmpty() -> item { FilesMessage("This directory is empty.", darkMode) }
+                !loading && directory.entries.isEmpty() -> item { FilesMessage(stringResource(R.string.files_empty_directory), darkMode) }
             }
             val parent = parentPath(directory.path)
             if (parent.isNotBlank()) {
                 item("..") {
                     FolderRow(
                         name = "..",
-                        copyPath = displayPath(session?.cwd, parent),
+                        copyPath = displayPath(rootPath, parent),
                         darkMode = darkMode,
                         menuOpen = openActionPath == parent,
                         onOpenMenu = { onOpenActionPath(parent) },
@@ -585,7 +737,7 @@ private fun FileListContent(
                 if (entry.isDirectory) {
                     FolderRow(
                         name = entry.name,
-                        copyPath = displayPath(session?.cwd, entry.path),
+                        copyPath = displayPath(rootPath, entry.path),
                         darkMode = darkMode,
                         menuOpen = openActionPath == entry.path,
                         onOpenMenu = { onOpenActionPath(entry.path) },
@@ -595,7 +747,7 @@ private fun FileListContent(
                 } else {
                     FileRow(
                         entry = entry,
-                        copyPath = displayPath(session?.cwd, entry.path),
+                        copyPath = displayPath(rootPath, entry.path),
                         darkMode = darkMode,
                         menuOpen = openActionPath == entry.path,
                         onOpenMenu = { onOpenActionPath(entry.path) },
@@ -611,9 +763,9 @@ private fun FileListContent(
 
 @Composable
 private fun FilePreviewContent(
-    session: AgentSession?,
-    file: SessionFileEntry,
-    preview: SessionTextFile?,
+    rootPath: String?,
+    file: FileEntry,
+    preview: TextFile?,
     loading: Boolean,
     error: String?,
     darkMode: Boolean,
@@ -633,7 +785,7 @@ private fun FilePreviewContent(
         verticalArrangement = Arrangement.spacedBy(9.dp),
     ) {
         PreviewBreadcrumb(
-            path = displayPath(session?.cwd, file.path),
+            path = displayPath(rootPath, file.path),
             darkMode = darkMode,
             onBackToFiles = onBackToFiles,
         )
@@ -682,7 +834,7 @@ private fun PreviewBreadcrumb(
             horizontalArrangement = Arrangement.spacedBy(5.dp),
         ) {
             Icon(Lucide.ChevronLeft, contentDescription = null, tint = chipText, modifier = Modifier.size(13.dp))
-            Text("Files", color = chipText, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text(stringResource(R.string.common_files), color = chipText, fontSize = 11.sp, fontWeight = FontWeight.Bold)
         }
         Text("/", color = if (darkMode) Color(0xFF71717A) else Color(0xFFA8A6A0), fontSize = 11.sp, fontWeight = FontWeight.Bold)
         Text(
@@ -701,8 +853,8 @@ private fun PreviewBreadcrumb(
 
 @Composable
 private fun PreviewCard(
-    file: SessionFileEntry,
-    preview: SessionTextFile?,
+    file: FileEntry,
+    preview: TextFile?,
     loading: Boolean,
     error: String?,
     darkMode: Boolean,
@@ -762,10 +914,10 @@ private fun PreviewCard(
             contentAlignment = Alignment.TopStart,
         ) {
             when {
-                loading -> PreviewMessage("Loading file...", darkMode)
+                loading -> PreviewMessage(stringResource(R.string.files_loading_file), darkMode)
                 error != null -> PreviewMessage(error, darkMode)
-                preview?.binary == true -> PreviewMessage("This file cannot be previewed.", darkMode)
-                preview == null -> PreviewMessage("Open a file to preview it.", darkMode)
+                preview?.binary == true -> PreviewMessage(stringResource(R.string.files_binary_preview_unavailable), darkMode)
+                preview == null -> PreviewMessage(stringResource(R.string.files_open_file_to_preview), darkMode)
                 else -> SoraFilePreview(
                     text = preview.content,
                     languageHint = preview.name.ifBlank { file.name },
@@ -818,7 +970,7 @@ private fun PreviewCardHeader(
             background = buttonBackground,
             border = buttonBorder,
             enabled = true,
-            contentDescription = "Search in file",
+            contentDescription = stringResource(R.string.files_search_in_file),
             onClick = onToggleSearch,
         )
         PreviewIconButton(
@@ -827,7 +979,11 @@ private fun PreviewCardHeader(
             background = buttonBackground,
             border = buttonBorder,
             enabled = copyEnabled,
-            contentDescription = if (copied) "Copied code" else "Copy code",
+            contentDescription = if (copied) {
+                stringResource(R.string.files_copied_code)
+            } else {
+                stringResource(R.string.files_copy_code)
+            },
             onClick = onCopy,
         )
     }
@@ -892,7 +1048,7 @@ private fun InlineFileSearchControls(
                 decorationBox = { innerTextField ->
                     if (query.isBlank()) {
                         Text(
-                            text = "Search",
+                            text = stringResource(R.string.files_search),
                             color = muted,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
@@ -1023,7 +1179,7 @@ private fun BackChip(
         horizontalArrangement = Arrangement.spacedBy(7.dp),
     ) {
         Icon(Lucide.ChevronLeft, contentDescription = null, tint = content, modifier = Modifier.size(14.dp))
-        Text("Back", color = content, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Text(stringResource(R.string.common_back), color = content, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -1073,7 +1229,7 @@ private fun PushSwitcher(
         ) {
         val filesSelected = view == PushView.Files
         SwitcherTab(
-            label = "Files",
+            label = stringResource(R.string.common_files),
             icon = Lucide.Folder,
             background = Color.Transparent,
             content = if (filesSelected) selectedText else muted,
@@ -1084,7 +1240,7 @@ private fun PushSwitcher(
         )
         val terminalSelected = view == PushView.Terminal
         SwitcherTab(
-            label = "Terminal",
+            label = stringResource(R.string.common_terminal),
             icon = Lucide.Terminal,
             background = Color.Transparent,
             content = if (terminalSelected) selectedText else muted,
@@ -1181,7 +1337,11 @@ private fun PathBar(
         ) {
             Icon(
                 if (copied) Lucide.Check else Lucide.Copy,
-                contentDescription = if (copied) "Copied path" else "Copy path",
+                contentDescription = if (copied) {
+                    stringResource(R.string.files_copied_path)
+                } else {
+                    stringResource(R.string.files_copy_path)
+                },
                 tint = textColor,
                 modifier = Modifier.size(20.dp),
             )
@@ -1221,7 +1381,7 @@ private fun FolderRow(
 
 @Composable
 private fun FileRow(
-    entry: SessionFileEntry,
+    entry: FileEntry,
     copyPath: String,
     darkMode: Boolean,
     menuOpen: Boolean,
@@ -1380,7 +1540,7 @@ private fun FileActionMenu(
             Icon(Lucide.Copy, contentDescription = null, tint = text, modifier = Modifier.size(17.dp))
         }
         Text(
-            text = "Copy path",
+            text = stringResource(R.string.files_copy_path),
             color = text,
             fontSize = 14.sp,
             fontWeight = FontWeight.SemiBold,

@@ -8,6 +8,14 @@ data class AuthResponse(
     val serverTime: String,
 )
 
+data class AuthMeResponse(
+    val userId: String,
+    val role: String,
+    val disabled: Boolean,
+    val avatar: String?,
+    val serverTime: String,
+)
+
 data class AuthConfigResponse(
     val needsBootstrap: Boolean,
     val registrationOpen: Boolean,

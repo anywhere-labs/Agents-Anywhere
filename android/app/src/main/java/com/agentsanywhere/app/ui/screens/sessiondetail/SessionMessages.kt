@@ -50,6 +50,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
@@ -71,25 +72,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlin.math.abs
-
-private val SESSION_WELCOME_TITLES = listOf(
-    "What should we build next?",
-    "Where should the agent start?",
-    "What should we work on?",
-    "Give the agent a task.",
-    "Start from a workspace.",
-    "What needs attention?",
-    "What should happen here?",
-    "Send work to the right device.",
-    "Pick a workspace and begin.",
-    "Describe the next change.",
-    "What should be investigated?",
-    "Start a focused session.",
-    "What should the agent inspect?",
-    "Turn an idea into a session.",
-    "Choose a target and run.",
-    "What are we changing today?",
-)
 
 private const val SESSION_WELCOME_WRITE_MS = 58L
 private const val SESSION_WELCOME_ERASE_MS = 22L
@@ -373,7 +355,7 @@ private fun UserBubble(
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val maxBubbleWidth = maxWidth * 0.78f
         val meta = when (message.status) {
-            "failed" -> "Failed"
+            "failed" -> stringResource(R.string.session_status_failed)
             else -> ""
         }
 
@@ -422,7 +404,11 @@ private fun UserBubble(
                             )
                             if (canExpand || expanded) {
                                 Text(
-                                    text = if (expanded) "Show less" else "Read more",
+                                    text = if (expanded) {
+                                        stringResource(R.string.session_show_less)
+                                    } else {
+                                        stringResource(R.string.session_read_more)
+                                    },
                                     color = Color(0xFFEAB308),
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold,
@@ -553,7 +539,7 @@ private fun ReasoningSection(message: TimelineMessage, darkMode: Boolean) {
                 sizeDp = 14,
             )
             Text(
-                text = message.title.ifBlank { "Reasoning" },
+                text = message.title.ifBlank { stringResource(R.string.session_reasoning) },
                 color = muted,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Bold,
@@ -725,10 +711,10 @@ private fun expandedTitleTarget(message: TimelineMessage): String {
 @Composable
 private fun CommandPreview(command: String, output: String, darkMode: Boolean) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        CommandLineBar(command = command.ifBlank { "command" }, darkMode = darkMode)
+        CommandLineBar(command = command.ifBlank { stringResource(R.string.session_command_fallback) }, darkMode = darkMode)
         CommandPreviewSection(
-            label = "Output",
-            text = output.ifBlank { "No output" },
+            label = stringResource(R.string.session_output),
+            text = output.ifBlank { stringResource(R.string.session_no_output) },
             languageHint = null,
             darkMode = darkMode,
         )
@@ -743,7 +729,7 @@ private fun CommandLineBar(command: String, darkMode: Boolean) {
     val border = if (darkMode) Color(0xFF27272A) else Color(0xFFE0DED8)
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(
-            text = "Command",
+            text = stringResource(R.string.session_command),
             color = muted,
             fontSize = 11.sp,
             fontWeight = FontWeight.Bold,
@@ -807,7 +793,7 @@ private fun CommandPreviewSection(
 private fun DiffPreview(diff: String, path: String, darkMode: Boolean) {
     val preview = remember(diff) { diffPreview(diff) }
     SoraCodeBlock(
-        text = preview.text.ifBlank { "No preview" },
+        text = preview.text.ifBlank { stringResource(R.string.session_no_preview) },
         languageHint = path,
         darkMode = darkMode,
         diffHighlights = preview.highlights,
@@ -904,11 +890,29 @@ internal fun EmptyDetailMessage(message: String) {
 
 @Composable
 internal fun SessionWelcomeMessage(darkMode: Boolean) {
+    val titles = listOf(
+        stringResource(R.string.session_welcome_1),
+        stringResource(R.string.session_welcome_2),
+        stringResource(R.string.session_welcome_3),
+        stringResource(R.string.session_welcome_4),
+        stringResource(R.string.session_welcome_5),
+        stringResource(R.string.session_welcome_6),
+        stringResource(R.string.session_welcome_7),
+        stringResource(R.string.session_welcome_8),
+        stringResource(R.string.session_welcome_9),
+        stringResource(R.string.session_welcome_10),
+        stringResource(R.string.session_welcome_11),
+        stringResource(R.string.session_welcome_12),
+        stringResource(R.string.session_welcome_13),
+        stringResource(R.string.session_welcome_14),
+        stringResource(R.string.session_welcome_15),
+        stringResource(R.string.session_welcome_16),
+    )
     var titleIndex by remember { mutableStateOf(0) }
     var typedTitle by remember { mutableStateOf("") }
 
-    LaunchedEffect(titleIndex) {
-        val title = SESSION_WELCOME_TITLES[titleIndex % SESSION_WELCOME_TITLES.size]
+    LaunchedEffect(titleIndex, titles) {
+        val title = titles[titleIndex % titles.size]
         for (count in 0..title.length) {
             typedTitle = title.take(count)
             if (count < title.length) delay(SESSION_WELCOME_WRITE_MS)
@@ -918,7 +922,7 @@ internal fun SessionWelcomeMessage(darkMode: Boolean) {
             typedTitle = title.take(count)
             if (count > 0) delay(SESSION_WELCOME_ERASE_MS)
         }
-        titleIndex = (titleIndex + 1) % SESSION_WELCOME_TITLES.size
+        titleIndex = (titleIndex + 1) % titles.size
     }
 
     Box(

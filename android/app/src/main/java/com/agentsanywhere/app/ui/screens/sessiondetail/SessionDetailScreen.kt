@@ -51,6 +51,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -60,13 +61,16 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.core.content.ContextCompat
+import com.agentsanywhere.app.R
 import com.agentsanywhere.app.api.UploadFilePart
+import com.agentsanywhere.app.feature.files.FilesController
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailState
 import com.agentsanywhere.app.feature.sessiondetail.SessionStreamEvent
 import com.agentsanywhere.app.feature.sessiondetail.TimelineApproval
-import com.agentsanywhere.app.feature.sessiondetail.RemoteTerminalController
-import com.agentsanywhere.app.feature.sessiondetail.RemoteTerminalForegroundService
+import com.agentsanywhere.app.feature.terminal.RemoteTerminalController
+import com.agentsanywhere.app.feature.terminal.RemoteTerminalForegroundService
+import com.agentsanywhere.app.feature.terminal.TerminalController
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentSession
 import com.agentsanywhere.app.model.SessionStatus
@@ -93,6 +97,8 @@ fun SessionDetailScreen(
     initialSession: AgentSession?,
     devices: List<AgentDevice>,
     controller: SessionDetailController,
+    filesController: FilesController,
+    terminalController: TerminalController,
     onSessionChanged: (AgentSession) -> Unit = {},
 ) {
     val colors = LocalAAColors.current
@@ -112,13 +118,14 @@ fun SessionDetailScreen(
     var pendingErrorSend by remember(sessionId) { mutableStateOf<String?>(null) }
     var previewImage by remember(sessionId) { mutableStateOf<AttachmentPreview?>(null) }
     var showCamera by remember(sessionId) { mutableStateOf(false) }
+    var showDeviceOffline by remember(sessionId) { mutableStateOf(false) }
     var showRuntimeSettings by remember(sessionId) { mutableStateOf(false) }
     var terminalVerticalDragActive by remember(sessionId) { mutableStateOf(false) }
     var composerHeightPx by remember { mutableStateOf(0) }
     var readOnlyComposerTapCount by remember(sessionId) { mutableStateOf(0) }
     val refetchInFlight = remember(sessionId) { AtomicBoolean(false) }
     val streamOpen = remember(sessionId) { AtomicBoolean(false) }
-    val remoteTerminal = remember(sessionId) { RemoteTerminalController(controller) }
+    val remoteTerminal = remember(sessionId, terminalController) { RemoteTerminalController(terminalController) }
 
     var appVisible by remember(lifecycleOwner) {
         mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
@@ -160,7 +167,7 @@ fun SessionDetailScreen(
                 updateAttachment(attachment.id) {
                     it.copy(
                         uploadState = AttachmentUploadState.Failed,
-                        errorMessage = error.message ?: "Could not read attachment.",
+                        errorMessage = error.message ?: context.getString(R.string.session_attachment_read_failed),
                     )
                 }
                 return@launch
@@ -172,7 +179,7 @@ fun SessionDetailScreen(
                         if (remote == null) {
                             it.copy(
                                 uploadState = AttachmentUploadState.Failed,
-                                errorMessage = "Upload returned no file.",
+                                errorMessage = context.getString(R.string.session_attachment_upload_empty),
                             )
                         } else {
                             it.copy(
@@ -187,7 +194,7 @@ fun SessionDetailScreen(
                     updateAttachment(attachment.id) {
                         it.copy(
                             uploadState = AttachmentUploadState.Failed,
-                            errorMessage = error.message ?: "Could not upload attachment.",
+                            errorMessage = error.message ?: context.getString(R.string.session_attachment_upload_failed),
                         )
                     }
                 }
@@ -204,23 +211,27 @@ fun SessionDetailScreen(
         readOnlyComposerTapCount += 1
         if (readOnlyComposerTapCount >= 2) {
             readOnlyComposerTapCount = 0
-            takeoverConfirm = true
+            if (state.session?.connectorOnline != true) {
+                showDeviceOffline = true
+            } else if (state.session?.takeover != true) {
+                takeoverConfirm = true
+            }
         }
     }
 
     fun attachPending(picked: List<PendingAttachment>) {
         val remainingSlots = MAX_ATTACHMENT_FILES - attachments.size
         if (remainingSlots <= 0) {
-            showError("You can attach up to $MAX_ATTACHMENT_FILES files per message.")
+            showError(context.getString(R.string.session_attachment_limit, MAX_ATTACHMENT_FILES))
             return
         }
         if (picked.size > remainingSlots) {
-            showError("You can attach up to $MAX_ATTACHMENT_FILES files per message.")
+            showError(context.getString(R.string.session_attachment_limit, MAX_ATTACHMENT_FILES))
         }
         val accepted = picked
             .filter { attachment ->
                 if (attachment.size > MAX_ATTACHMENT_BYTES) {
-                    showError("${attachment.name} exceeds 25 MB.")
+                    showError(context.getString(R.string.session_attachment_file_too_large, attachment.name))
                     false
                 } else {
                     true
@@ -241,7 +252,7 @@ fun SessionDetailScreen(
 
     fun attachPending(attachment: PendingAttachment?) {
         if (attachment == null) {
-            showError("Could not read that attachment.")
+            showError(context.getString(R.string.session_attachment_read_one_failed))
         } else {
             attachPending(listOf(attachment))
         }
@@ -270,7 +281,7 @@ fun SessionDetailScreen(
         if (granted) {
             showCamera = true
         } else {
-            showError("Camera permission is required to take a photo.")
+            showError(context.getString(R.string.session_camera_permission_required))
         }
     }
 
@@ -278,7 +289,7 @@ fun SessionDetailScreen(
         try {
             photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
         } catch (_: Exception) {
-            showError("Please allow photo access to choose images.")
+            showError(context.getString(R.string.session_photo_access_required))
         }
     }
 
@@ -286,7 +297,7 @@ fun SessionDetailScreen(
         try {
             filePicker.launch(arrayOf("*/*"))
         } catch (_: Exception) {
-            showError("Could not open file picker.")
+            showError(context.getString(R.string.session_file_picker_failed))
         }
     }
 
@@ -321,7 +332,7 @@ fun SessionDetailScreen(
                     if (appVisible) {
                         state = state.copy(
                             isLoading = false,
-                            errorMessage = error.message ?: "Could not load messages.",
+                            errorMessage = error.message ?: context.getString(R.string.session_load_messages_failed),
                         )
                     }
                 }
@@ -337,7 +348,7 @@ fun SessionDetailScreen(
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
         scope.launch {
             if (pendingAttachments.any { it.uploadState != AttachmentUploadState.Uploaded || it.remote == null }) {
-                showError("Wait for attachments to finish uploading.")
+                showError(context.getString(R.string.session_wait_uploads))
                 return@launch
             }
             val uploadedAttachments = pendingAttachments.mapNotNull { it.remote }
@@ -367,7 +378,7 @@ fun SessionDetailScreen(
                     )
                 }
                 .onFailure { error ->
-                    val message = error.message ?: "Could not send message."
+                    val message = error.message ?: context.getString(R.string.session_send_failed)
                     state = controller.markOptimisticMessage(state, clientMessageId, "failed")
                         .copy(actionError = message)
                     showError(message)
@@ -396,7 +407,7 @@ fun SessionDetailScreen(
                     onSessionChanged(session)
                 }
                 .onFailure { error ->
-                    val message = error.message ?: "Could not update takeover."
+                    val message = error.message ?: context.getString(R.string.session_takeover_update_failed)
                     state = state.copy(takeoverInFlight = false, actionError = message)
                     showError(message)
                 }
@@ -416,7 +427,7 @@ fun SessionDetailScreen(
                     state = state.copy(runtimeSettings = runtimeState)
                 }
                 .onFailure { error ->
-                    val message = error.message ?: "Could not load runtime settings."
+                    val message = error.message ?: context.getString(R.string.session_runtime_load_failed)
                     state = state.copy(
                         runtimeSettings = state.runtimeSettings.copy(
                             isLoading = false,
@@ -451,7 +462,7 @@ fun SessionDetailScreen(
                     nextSession?.let(onSessionChanged)
                 }
                 .onFailure { error ->
-                    val message = error.message ?: "Could not save runtime settings."
+                    val message = error.message ?: context.getString(R.string.session_runtime_save_failed)
                     state = state.copy(
                         runtimeSettings = state.runtimeSettings.copy(
                             savingKey = null,
@@ -471,7 +482,7 @@ fun SessionDetailScreen(
         scope.launch {
             controller.interrupt(id)
                 .onFailure { error ->
-                    val message = error.message ?: "Could not interrupt this session."
+                    val message = error.message ?: context.getString(R.string.session_interrupt_failed)
                     if (message.contains("no active turn", ignoreCase = true)) {
                         state = state.copy(actionError = null)
                         refetch(showLoading = false)
@@ -488,7 +499,7 @@ fun SessionDetailScreen(
         scope.launch {
             controller.resolveApproval(approval.id, status)
                 .onFailure { error ->
-                    val message = error.message ?: "Could not resolve approval."
+                    val message = error.message ?: context.getString(R.string.session_approval_resolve_failed)
                     state = state.copy(actionError = message)
                     showError(message)
                 }
@@ -625,16 +636,20 @@ fun SessionDetailScreen(
         state.session?.status == SessionStatus.Running ||
         state.messages.any { it.optimistic && it.status == "running" }
     )) {
-        "${state.session?.runtimeLabel?.takeIf { it.isNotBlank() } ?: "Agent"} is working"
+        context.getString(
+            R.string.session_agent_working,
+            state.session?.runtimeLabel?.takeIf { it.isNotBlank() } ?: context.getString(R.string.session_agent_fallback),
+        )
     } else {
         null
     }
     val showInterrupt = inputEnabled && isBusy && draft.isBlank() && attachments.isEmpty()
-    val replyTarget = state.session?.runtimeLabel?.takeIf { it.isNotBlank() } ?: "Agent"
-    val placeholder = if (takeoverEnabled) {
-        "Reply to $replyTarget"
-    } else {
-        "Read only, turn on take over to send messages."
+    val replyTarget = state.session?.runtimeLabel?.takeIf { it.isNotBlank() }
+        ?: stringResource(R.string.session_agent_fallback)
+    val placeholder = when {
+        state.session != null && !connectorOnline -> stringResource(R.string.session_device_offline_placeholder)
+        takeoverEnabled -> stringResource(R.string.session_reply_to, replyTarget)
+        else -> stringResource(R.string.session_read_only_placeholder)
     }
 
     ScreenScaffold {
@@ -673,7 +688,7 @@ fun SessionDetailScreen(
                             .background(colors.canvas),
                     ) {
                         when {
-                            sessionId == null -> EmptyDetailMessage("Open a session from the list.")
+                            sessionId == null -> EmptyDetailMessage(stringResource(R.string.session_open_from_list))
                             state.isLoading && state.messages.isEmpty() -> SessionDetailLoadingState(darkMode = darkMode)
                             state.errorMessage != null && state.messages.isEmpty() -> EmptyDetailMessage(state.errorMessage.orEmpty())
                             state.messages.isEmpty() -> SessionWelcomeMessage(darkMode = darkMode)
@@ -722,7 +737,7 @@ fun SessionDetailScreen(
                             modifier = Modifier.align(Alignment.TopCenter),
                         )
                         SessionDetailHeader(
-                            title = state.session?.title ?: "Session",
+                            title = state.session?.title ?: stringResource(R.string.session_title_fallback),
                             darkMode = darkMode,
                             onLeftClick = { showRuntimeSettings = true },
                             onRightClick = { scope.launch { pagerState.animateScrollToPage(1) } },
@@ -749,7 +764,7 @@ fun SessionDetailScreen(
             } else {
                 SessionAgentFilesScreen(
                     session = state.session,
-                    controller = controller,
+                    filesController = filesController,
                     terminalController = remoteTerminal,
                     darkMode = darkMode,
                     onTerminalVerticalDragChange = { terminalVerticalDragActive = it },
@@ -778,13 +793,18 @@ fun SessionDetailScreen(
         TakeoverConfirmDialog(
             enabled = enabled,
             busy = state.takeoverInFlight,
-            agentLabel = state.session?.runtimeLabel?.takeIf { it.isNotBlank() } ?: "agent",
+            agentLabel = state.session?.runtimeLabel?.takeIf { it.isNotBlank() }
+                ?: stringResource(R.string.session_agent_fallback).lowercase(),
             onDismiss = { if (!state.takeoverInFlight) takeoverConfirm = null },
             onConfirm = {
                 takeoverConfirm = null
                 applyTakeover(enabled)
             },
         )
+    }
+
+    if (showDeviceOffline) {
+        DeviceOfflineDialog(onDismiss = { showDeviceOffline = false })
     }
 
     pendingErrorSend?.let { text ->
@@ -816,6 +836,58 @@ fun SessionDetailScreen(
 }
 
 @Composable
+private fun DeviceOfflineDialog(
+    onDismiss: () -> Unit,
+) {
+    val colors = LocalAAColors.current
+    val darkMode = colors.canvas == Color(0xFF09090B)
+    val shape = RoundedCornerShape(26.dp)
+    val surface = if (darkMode) Color(0xFF18181B) else Color.White
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 22.dp)
+                .widthIn(max = 380.dp)
+                .shadow(34.dp, shape, ambientColor = Color(0x33000000), spotColor = Color(0x33000000))
+                .clip(shape)
+                .background(surface)
+                .border(1.dp, colors.border, shape)
+                .padding(22.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.session_device_offline_title),
+                color = colors.ink,
+                fontSize = 24.sp,
+                fontWeight = FontWeight.ExtraBold,
+                lineHeight = 29.sp,
+            )
+            Text(
+                text = stringResource(R.string.session_device_offline_body),
+                color = colors.muted,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium,
+                lineHeight = 21.sp,
+            )
+            TakeoverDialogButton(
+                label = stringResource(R.string.common_ok),
+                background = colors.primaryAction,
+                content = colors.onPrimaryAction,
+                enabled = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 6.dp),
+                onClick = onDismiss,
+            )
+        }
+    }
+}
+
+@Composable
 private fun TakeoverConfirmDialog(
     enabled: Boolean,
     busy: Boolean,
@@ -829,9 +901,9 @@ private fun TakeoverConfirmDialog(
     val surface = if (darkMode) Color(0xFF18181B) else Color.White
     val secondaryButton = if (darkMode) Color(0xFF27272A) else Color(0xFFF3F3F3)
     val message = if (enabled) {
-        "Take over this session from your phone. Messages may not sync to $agentLabel desktop app/CLI right away. Sending while $agentLabel desktop app/CLI is still running may cause unexpected results."
+        stringResource(R.string.session_enable_takeover_body, agentLabel)
     } else {
-        "This session will become read-only. You won't be able to send messages."
+        stringResource(R.string.session_disable_takeover_body)
     }
 
     Dialog(
@@ -850,7 +922,11 @@ private fun TakeoverConfirmDialog(
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
             Text(
-                text = if (enabled) "Enable takeover?" else "Disable takeover?",
+                text = if (enabled) {
+                    stringResource(R.string.session_enable_takeover_title)
+                } else {
+                    stringResource(R.string.session_disable_takeover_title)
+                },
                 color = colors.ink,
                 fontSize = 24.sp,
                 fontWeight = FontWeight.ExtraBold,
@@ -870,7 +946,7 @@ private fun TakeoverConfirmDialog(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 TakeoverDialogButton(
-                    label = "Cancel",
+                    label = stringResource(R.string.common_cancel),
                     background = secondaryButton,
                     content = colors.ink,
                     enabled = !busy,
@@ -878,7 +954,7 @@ private fun TakeoverConfirmDialog(
                     onClick = onDismiss,
                 )
                 TakeoverDialogButton(
-                    label = if (enabled) "Enable" else "Disable",
+                    label = if (enabled) stringResource(R.string.common_enable) else stringResource(R.string.common_disable),
                     background = colors.primaryAction.copy(alpha = if (busy) 0.38f else 1f),
                     content = colors.onPrimaryAction,
                     enabled = !busy,
@@ -924,16 +1000,16 @@ private fun ErrorSendConfirmDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Send anyway?") },
-        text = { Text("This session is in an error state. Sending will try to start a new turn.") },
+        title = { Text(stringResource(R.string.session_send_anyway_title)) },
+        text = { Text(stringResource(R.string.session_send_anyway_body)) },
         confirmButton = {
             TextButton(onClick = onConfirm) {
-                Text("Send")
+                Text(stringResource(R.string.common_send))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel")
+                Text(stringResource(R.string.common_cancel))
             }
         },
     )
@@ -951,24 +1027,24 @@ private fun ApprovalDialog(
         text = {
             Text(
                 approval.description
-                    ?: "Allow this ${approval.kind.replace('_', ' ')} request?",
+                    ?: stringResource(R.string.session_approval_fallback, approval.kind.replace('_', ' ')),
             )
         },
         confirmButton = {
             Row(horizontalArrangement = Arrangement.End) {
                 if ("reject" in approval.choices) {
                     TextButton(onClick = { onResolve("rejected") }) {
-                        Text("Deny")
+                        Text(stringResource(R.string.session_approval_deny))
                     }
                 }
                 if ("approve_for_session" in approval.choices) {
                     TextButton(onClick = { onResolve("approved_for_session") }) {
-                        Text("Always allow")
+                        Text(stringResource(R.string.session_approval_always_allow))
                     }
                 }
                 if ("approve" in approval.choices) {
                     TextButton(onClick = { onResolve("approved") }) {
-                        Text("Allow")
+                        Text(stringResource(R.string.session_approval_allow))
                     }
                 }
             }
@@ -978,7 +1054,7 @@ private fun ApprovalDialog(
 
 private fun Context.pendingAttachment(uri: Uri): PendingAttachment? {
     val resolver = contentResolver
-    var name = "attachment"
+    var name = getString(R.string.session_attachment_name_fallback)
     var size = 0L
     resolver.query(uri, null, null, null, null)?.use { cursor ->
         val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
@@ -1000,9 +1076,11 @@ private fun Context.pendingAttachment(uri: Uri): PendingAttachment? {
 private fun Context.uploadPart(attachment: PendingAttachment): UploadFilePart {
     val bytes = contentResolver.openInputStream(attachment.uri)?.use { input ->
         input.readBytes()
-    } ?: throw IllegalStateException("Could not read ${attachment.name}.")
-    if (bytes.isEmpty()) throw IllegalStateException("${attachment.name} is empty.")
-    if (bytes.size > MAX_ATTACHMENT_BYTES) throw IllegalStateException("${attachment.name} exceeds 25 MB.")
+    } ?: throw IllegalStateException(getString(R.string.session_upload_file_read_failed, attachment.name))
+    if (bytes.isEmpty()) throw IllegalStateException(getString(R.string.session_upload_file_empty, attachment.name))
+    if (bytes.size > MAX_ATTACHMENT_BYTES) {
+        throw IllegalStateException(getString(R.string.session_attachment_file_too_large, attachment.name))
+    }
     return UploadFilePart(
         name = attachment.name,
         mediaType = attachment.mediaType,

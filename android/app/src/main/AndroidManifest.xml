@@ -41,7 +41,7 @@
             </intent-filter>
         </activity>
         <service
-            android:name=".feature.sessiondetail.RemoteTerminalForegroundService"
+            android:name=".feature.terminal.RemoteTerminalForegroundService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
     </application>

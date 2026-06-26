@@ -1,5 +1,6 @@
 package com.agentsanywhere.app.ui.screens.devices
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -9,14 +10,18 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -40,20 +45,21 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
+import com.agentsanywhere.app.feature.devices.DeviceSetupCredential
 import com.agentsanywhere.app.feature.sessions.SessionsState
 import com.agentsanywhere.app.model.AgentDevice
-import com.agentsanywhere.app.model.AgentSession
-import com.agentsanywhere.app.ui.designsystem.HeaderPlusButton
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
-import com.agentsanywhere.app.ui.designsystem.SectionLabel
+import com.agentsanywhere.app.ui.screens.common.AppEmptyState
+import com.composables.icons.lucide.ChevronLeft
 import com.composables.icons.lucide.ChevronRight
-import com.composables.icons.lucide.Folder
 import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.Plus
 import com.valentinilk.shimmer.shimmer
 import java.time.Duration
 import java.time.Instant
@@ -66,16 +72,22 @@ fun DevicesScreen(
     isRefreshing: Boolean,
     onRefresh: () -> Unit,
     onOpenDevice: (AgentDevice) -> Unit,
+    onBack: (() -> Unit)? = null,
+    onCreateDeviceSetup: suspend (String) -> Result<DeviceSetupCredential>,
+    onDeviceCredentialCreated: (DeviceSetupCredential) -> Unit,
+    onClaimDevicePairCode: suspend (DeviceSetupCredential, String) -> Result<AgentDevice>,
 ) {
     val colors = LocalAAColors.current
     val darkMode = colors.canvas == Color(0xFF09090B)
     val devices = remember(state.devices) { state.devices.sortedForDevicesPage() }
-    val workspaces = remember(state.sessions) { workspaceRows(state.sessions) }
-    var connectorsExpanded by remember { mutableStateOf(true) }
-    var workspacesExpanded by remember { mutableStateOf(false) }
     val refreshState = rememberPullToRefreshState()
     val refreshIndicatorContainer = if (darkMode) Color(0xFF27272A) else Color(0xFFF2F2F2)
     val refreshIndicatorColor = if (darkMode) Color(0xFFE4E4E7) else Color(0xFF8E8E93)
+    var setupSheetOpen by remember { mutableStateOf(false) }
+
+    if (onBack != null) {
+        BackHandler(onBack = onBack)
+    }
 
     Box(
         modifier = Modifier
@@ -85,13 +97,12 @@ fun DevicesScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(start = 24.dp, top = 20.dp, end = 24.dp),
+                .windowInsetsPadding(WindowInsets.statusBars)
         ) {
             DevicesHeader(
                 darkMode = darkMode,
-                onAdd = {},
+                onBack = onBack,
             )
-            Spacer(Modifier.height(12.dp))
 
             PullToRefreshBox(
                 isRefreshing = isRefreshing,
@@ -112,24 +123,26 @@ fun DevicesScreen(
             ) {
                 when {
                     state.isLoading && !state.hasLoaded && state.devices.isEmpty() -> DevicesLoadingList(darkMode = darkMode)
-                    state.devices.isEmpty() -> Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        DevicesEmptyState(message = state.errorMessage)
-                    }
                     else -> LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 24.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
+                        contentPadding = PaddingValues(top = 8.dp, bottom = 28.dp),
                     ) {
-                        item("connectors-label") {
-                            SectionLabel(
-                                label = "CONNECTORS",
-                                expanded = connectorsExpanded,
-                                onClick = { connectorsExpanded = !connectorsExpanded },
+                        item("add-device") {
+                            AddDeviceRow(
+                                darkMode = darkMode,
+                                onClick = {
+                                    setupSheetOpen = true
+                                },
                             )
                         }
-                        if (connectorsExpanded) {
+                        if (devices.isEmpty()) {
+                            item("empty") {
+                                DevicesEmptyState(message = state.errorMessage)
+                            }
+                        } else {
                             items(devices, key = { it.id }) { device ->
                                 DeviceRow(
                                     device = device,
@@ -138,94 +151,154 @@ fun DevicesScreen(
                                 )
                             }
                         }
-                        if (workspaces.isNotEmpty()) {
-                            item("workspace-gap") {
-                                Spacer(Modifier.height(4.dp))
-                            }
-                            item("workspaces-label") {
-                                SectionLabel(
-                                    label = "WORKSPACES",
-                                    expanded = workspacesExpanded,
-                                    onClick = { workspacesExpanded = !workspacesExpanded },
-                                )
-                            }
-                            if (workspacesExpanded) {
-                                items(workspaces, key = { it.path }) { workspace ->
-                                    WorkspaceRow(
-                                        workspace = workspace,
-                                        darkMode = darkMode,
-                                        onClick = {},
-                                    )
-                                }
-                            }
-                        }
-                        item("bottom-space") {
-                            Spacer(Modifier.height(18.dp))
-                        }
                     }
                 }
             }
         }
     }
+
+    PairNewDeviceSheetHost(
+        open = setupSheetOpen,
+        devices = state.devices,
+        onDismiss = { setupSheetOpen = false },
+        onCreateDeviceSetup = onCreateDeviceSetup,
+        onDeviceCredentialCreated = onDeviceCredentialCreated,
+        onClaimDevicePairCode = onClaimDevicePairCode,
+    )
 }
 
 @Composable
 private fun DevicesEmptyState(message: String?) {
-    val colors = LocalAAColors.current
-
-    Column(
+    AppEmptyState(
+        message = message ?: stringResource(R.string.devices_empty),
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 28.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Text(
-            text = "No Devices",
-            color = colors.ink,
-            fontSize = 28.sp,
-            fontWeight = FontWeight.Bold,
-        )
-        Spacer(Modifier.height(8.dp))
-        Text(
-            text = message ?: "Pair a device first, so sessions have somewhere to land.",
-            color = colors.muted,
-            fontSize = 15.sp,
-            lineHeight = 21.sp,
-        )
-    }
+            .height(360.dp),
+    )
 }
 
 @Composable
 private fun DevicesHeader(
     darkMode: Boolean,
-    onAdd: () -> Unit,
+    onBack: (() -> Unit)?,
 ) {
-    val titleColor = if (darkMode) Color(0xFFFAFAFA) else Color(0xFF0A0A0B)
+    val colors = LocalAAColors.current
+    val iconColor = if (darkMode) Color(0xFFE4E4E7) else Color(0xFF1C1C1E)
+    val iconSurface = if (darkMode) Color(0xFF18181B) else Color.White
+    val iconBorder = if (darkMode) Color(0xFF27272A) else Color(0xFFE7E6E2)
 
-    Box(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(58.dp),
+            .height(64.dp)
+            .padding(horizontal = 18.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (onBack != null) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(iconSurface)
+                    .border(1.dp, iconBorder, CircleShape)
+                    .clickable(onClick = onBack),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Lucide.ChevronLeft,
+                    contentDescription = stringResource(R.string.common_back),
+                    tint = iconColor,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+        }
         Text(
-            text = "Devices",
-            modifier = Modifier.align(Alignment.CenterStart),
-            color = titleColor,
-            fontSize = 30.sp,
-            fontWeight = FontWeight.ExtraBold,
-            lineHeight = 36.sp,
-        )
-        HeaderPlusButton(
-            onClick = onAdd,
-            contentDescription = "Add device",
-            modifier = Modifier.align(Alignment.CenterEnd),
+            text = stringResource(R.string.devices_title),
+            color = colors.ink,
+            fontSize = 17.sp,
+            fontWeight = FontWeight.SemiBold,
+            lineHeight = 22.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }
 
 @Composable
-private fun DeviceRow(
+private fun AddDeviceRow(
+    darkMode: Boolean,
+    onClick: () -> Unit,
+) {
+    val colors = LocalAAColors.current
+    val surface = colors.raisedSurface
+    val border = if (darkMode) colors.border else Color(0xFFECECEC)
+    val title = if (darkMode) Color(0xFFDADADF) else Color(0xFF343436)
+    val meta = colors.faint
+    val shape = RoundedCornerShape(15.dp)
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val haptic = LocalHapticFeedback.current
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(60.dp)
+            .shadow(
+                if (pressed) 9.dp else 2.dp,
+                shape,
+                ambientColor = Color.Black.copy(alpha = if (pressed) 0.16f else if (darkMode) 0.20f else 0.03f),
+                spotColor = Color.Black.copy(alpha = if (pressed) 0.16f else if (darkMode) 0.20f else 0.03f),
+            )
+            .clip(shape)
+            .background(surface)
+            .border(1.dp, border, shape)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+            ) {
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                onClick()
+            }
+            .padding(start = 12.dp, end = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(42.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(if (darkMode) Color(0xFF27272A) else Color(0xFFF3F2EF)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Lucide.Plus,
+                contentDescription = null,
+                tint = title,
+                modifier = Modifier.size(22.dp),
+            )
+        }
+        Spacer(Modifier.width(11.dp))
+        Text(
+            text = stringResource(R.string.devices_add_new),
+            modifier = Modifier.weight(1f),
+            color = title,
+            fontSize = 17.sp,
+            fontWeight = FontWeight.SemiBold,
+            lineHeight = 21.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Icon(
+            imageVector = Lucide.ChevronRight,
+            contentDescription = null,
+            tint = meta,
+            modifier = Modifier.size(20.dp),
+        )
+    }
+}
+
+@Composable
+internal fun DeviceRow(
     device: AgentDevice,
     darkMode: Boolean,
     onClick: () -> Unit,
@@ -338,86 +411,13 @@ private fun StatusPill(online: Boolean, darkMode: Boolean) {
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            text = if (online) "Online" else "Offline",
+            text = stringResource(if (online) R.string.devices_online else R.string.devices_offline),
             color = textColor,
             fontSize = 12.sp,
             fontWeight = FontWeight.Bold,
             lineHeight = 14.sp,
             maxLines = 1,
         )
-    }
-}
-
-@Composable
-private fun WorkspaceRow(
-    workspace: WorkspaceRowModel,
-    darkMode: Boolean,
-    onClick: () -> Unit,
-) {
-    val colors = LocalAAColors.current
-    val surface = colors.raisedSurface
-    val border = if (darkMode) colors.border else Color(0xFFECECEC)
-    val title = if (darkMode) Color(0xFFDADADF) else Color(0xFF343436)
-    val meta = if (darkMode) colors.muted else colors.faint
-    val icon = colors.faint
-    val shape = RoundedCornerShape(15.dp)
-    val interactionSource = remember { MutableInteractionSource() }
-    val pressed by interactionSource.collectIsPressedAsState()
-    val haptic = LocalHapticFeedback.current
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(64.dp)
-            .shadow(
-                if (pressed) 9.dp else if (darkMode) 2.dp else 0.dp,
-                shape,
-                ambientColor = Color.Black.copy(alpha = if (pressed) 0.16f else 0.20f),
-                spotColor = Color.Black.copy(alpha = if (pressed) 0.16f else 0.20f),
-            )
-            .clip(shape)
-            .background(surface)
-            .border(1.dp, border, shape)
-            .clickable(
-                interactionSource = interactionSource,
-                indication = null,
-            ) {
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                onClick()
-            }
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            imageVector = Lucide.Folder,
-            contentDescription = null,
-            tint = icon,
-            modifier = Modifier.size(28.dp),
-        )
-        Spacer(Modifier.width(11.dp))
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterVertically),
-        ) {
-            Text(
-                text = workspace.title,
-                color = title,
-                fontSize = 15.5.sp,
-                fontWeight = FontWeight.SemiBold,
-                lineHeight = 18.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = workspace.path,
-                color = meta,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Medium,
-                lineHeight = 14.sp,
-                maxLines = 1,
-                overflow = TextOverflow.MiddleEllipsis,
-            )
-        }
     }
 }
 
@@ -436,11 +436,6 @@ private fun DevicesLoadingList(darkMode: Boolean) {
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        SectionLabel(
-            label = "CONNECTORS",
-            expanded = true,
-            onClick = {},
-        )
         repeat(4) {
             LoadingRow(darkMode)
         }
@@ -474,78 +469,53 @@ private fun LoadingRow(darkMode: Boolean) {
     }
 }
 
+@Composable
 private fun deviceMeta(device: AgentDevice): String {
     val count = device.attachedRuntimes.size
-    val agents = "$count ${if (count == 1) "agent" else "agents"}"
-    val seen = if (device.online) "now" else device.lastSeenAt.relativeTimeLabel()
+    val agents = stringResource(
+        if (count == 1) R.string.devices_agent_count_one else R.string.devices_agent_count_other,
+        count,
+    )
+    val seen = if (device.online) stringResource(R.string.common_now) else device.lastSeenAt.relativeTimeLabel()
     return "$agents · $seen"
 }
 
-private fun List<AgentDevice>.sortedForDevicesPage(): List<AgentDevice> {
+internal fun List<AgentDevice>.sortedForDevicesPage(): List<AgentDevice> {
     return sortedWith(
-        compareBy<AgentDevice> { it.createdAt.orEmpty() }
+        compareByDescending<AgentDevice> { it.online }
+            .thenBy { it.createdAt.orEmpty() }
             .thenBy { it.name.lowercase() },
     )
 }
 
-private fun workspaceRows(sessions: List<AgentSession>): List<WorkspaceRowModel> {
-    return sessions
-        .asSequence()
-        .mapNotNull { session ->
-            val path = session.cwd?.trim()?.trimEnd('/', '\\')?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-            path to session
-        }
-        .groupBy({ it.first }, { it.second })
-        .map { (path, grouped) ->
-            WorkspaceRowModel(
-                path = path,
-                title = workspaceTitle(path),
-                sortKey = grouped.maxOfOrNull { it.sortKey } ?: "",
-            )
-        }
-        .sortedWith(compareByDescending<WorkspaceRowModel> { it.sortKey }.thenBy { it.title.lowercase() })
-        .toList()
-}
-
-private fun workspaceTitle(path: String): String {
-    val clean = path.trimEnd('/', '\\')
-    if (clean == "/") return "/"
-    return clean.replace('\\', '/').substringAfterLast('/').ifBlank { clean }
-}
-
+@Composable
 private fun String?.relativeTimeLabel(): String {
-    if (isNullOrBlank()) return "offline"
+    if (isNullOrBlank()) return stringResource(R.string.devices_seen_offline)
     val instant = try {
         Instant.parse(this)
     } catch (_: DateTimeParseException) {
-        return "offline"
+        return stringResource(R.string.devices_seen_offline)
     }
     val elapsed = Duration.between(instant, Instant.now()).coerceAtLeast(Duration.ZERO)
     val minutes = elapsed.toMinutes()
     val hours = elapsed.toHours()
     val days = elapsed.toDays()
     return when {
-        minutes < 1 -> "now"
-        minutes < 60 -> "${minutes}m ago"
-        hours < 24 -> "${hours}h ago"
-        days == 1L -> "yesterday"
-        days < 30 -> "${days}d ago"
-        days < 365 -> "${days / 30}mo ago"
-        else -> "${days / 365}y ago"
+        minutes < 1 -> stringResource(R.string.common_now)
+        minutes < 60 -> stringResource(R.string.devices_seen_minutes_ago, minutes)
+        hours < 24 -> stringResource(R.string.devices_seen_hours_ago, hours)
+        days == 1L -> stringResource(R.string.devices_seen_yesterday)
+        days < 30 -> stringResource(R.string.devices_seen_days_ago, days)
+        days < 365 -> stringResource(R.string.devices_seen_months_ago, days / 30)
+        else -> stringResource(R.string.devices_seen_years_ago, days / 365)
     }
 }
 
 private fun deviceKind(device: AgentDevice): DeviceKind {
-    when (device.deviceOs?.lowercase()) {
-        "macos" -> return DeviceKind.Mac
-        "windows" -> return DeviceKind.Windows
-        "linux" -> return DeviceKind.Linux
-    }
-    val lower = device.name.lowercase()
-    return when {
-        "mac" in lower || "mbp" in lower || "book" in lower -> DeviceKind.Mac
-        "win" in lower || "pc" in lower -> DeviceKind.Windows
-        "linux" in lower || "ubuntu" in lower || "staging" in lower -> DeviceKind.Linux
+    return when (device.deviceOs?.lowercase()) {
+        "macos" -> DeviceKind.Mac
+        "windows" -> DeviceKind.Windows
+        "linux" -> DeviceKind.Linux
         else -> DeviceKind.Generic
     }
 }
@@ -574,12 +544,6 @@ private fun deviceIconRes(device: AgentDevice, darkMode: Boolean): Int {
         }
     }
 }
-
-private data class WorkspaceRowModel(
-    val path: String,
-    val title: String,
-    val sortKey: String,
-)
 
 private enum class DeviceKind {
     Mac,

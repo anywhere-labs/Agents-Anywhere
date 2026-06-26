@@ -18,6 +18,14 @@ class AuthSessionStore(context: Context) {
         return preferences.getString(KEY_ACCESS_TOKEN, "").orEmpty()
     }
 
+    fun readUserId(): String {
+        return preferences.getString(KEY_USER_ID, "").orEmpty()
+    }
+
+    fun readRole(): String {
+        return preferences.getString(KEY_ROLE, "").orEmpty()
+    }
+
     fun hasAuthSession(): Boolean {
         return readServerUrl().isNotBlank() && readAccessToken().isNotBlank()
     }
@@ -47,6 +55,14 @@ class AuthSessionStore(context: Context) {
             .putString(KEY_ROLE, exchange.auth.role)
             .putString(KEY_REFRESH_TOKEN, exchange.refreshToken)
             .putString(KEY_REFRESH_EXPIRES_AT, exchange.expiresAt)
+            .apply()
+    }
+
+    fun clearAuthSession() {
+        val serverUrl = readServerUrl()
+        preferences.edit()
+            .clear()
+            .putString(KEY_SERVER_URL, serverUrl)
             .apply()
     }
 

@@ -1221,7 +1221,6 @@ function toComposerMenuItems(
     field?.options?.map((option) => ({
       id: String(option.value),
       label: option.label,
-      description: option.description,
     })) ?? []
   );
 }

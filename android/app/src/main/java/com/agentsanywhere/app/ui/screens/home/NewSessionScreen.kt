@@ -1,4 +1,4 @@
-package com.agentsanywhere.app.ui.screens.sessions
+package com.agentsanywhere.app.ui.screens.home
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateDpAsState
@@ -54,7 +54,9 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -63,6 +65,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.agentsanywhere.app.R
 import com.agentsanywhere.app.feature.sessions.NewSessionAgent
 import com.agentsanywhere.app.feature.sessions.NewSessionDirectory
 import com.agentsanywhere.app.feature.sessions.NewSessionPathEntry
@@ -103,13 +106,15 @@ fun NewSessionScreen(
 ) {
     val colors = LocalAAColors.current
     val darkMode = colors.canvas == Color(0xFF09090B)
+    val context = LocalContext.current
+    val defaultTitle = stringResource(R.string.new_session_title)
     val scope = rememberCoroutineScope()
     val keyboard = LocalSoftwareKeyboardController.current
     val focusRequester = remember { FocusRequester() }
     val devices = remember(sessionsState.devices) {
         sessionsState.devices.filter { it.online && it.attachedRuntimes.isNotEmpty() }
     }
-    var title by rememberSaveable { mutableStateOf("New Session") }
+    var title by rememberSaveable { mutableStateOf(defaultTitle) }
     var editingTitle by rememberSaveable { mutableStateOf(false) }
     var selectedDeviceId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedRuntime by rememberSaveable { mutableStateOf<String?>(null) }
@@ -155,7 +160,7 @@ fun NewSessionScreen(
             }
             .onFailure { error ->
                 pathEntries = emptyList()
-                pathError = error.message ?: "Could not load this directory."
+                pathError = error.message ?: context.getString(R.string.new_session_load_directory_failed)
             }
         pathLoading = false
     }
@@ -183,13 +188,14 @@ fun NewSessionScreen(
         workspaceOptionsFor(sessionsState.sessions, selectedDevice?.id, homePath)
     }
     val selectedWorkspace = workspaces.firstOrNull { it.path == selectedWorkspacePath }
-    val selectedWorkspaceTitle = selectedWorkspace?.title ?: pathTitle(selectedWorkspacePath)
+    val selectedWorkspaceTitle = selectedWorkspace?.title?.localizedWorkspaceTitle()
+        ?: pathTitle(selectedWorkspacePath, stringResource(R.string.new_session_home_directory))
     val selectedWorkspaceDetail = selectedWorkspace?.detail ?: selectedWorkspacePath
     val selectedAgent = agents.firstOrNull { it.runtime == selectedRuntime }
     val canStart = selectedDevice != null && selectedAgent != null && selectedWorkspacePath.isNotBlank() && !creating
 
     fun submitTitle() {
-        title = title.trim().ifBlank { "New Session" }
+        title = title.trim().ifBlank { defaultTitle }
         editingTitle = false
         keyboard?.hide()
     }
@@ -208,7 +214,7 @@ fun NewSessionScreen(
                 }
                 .onFailure { error ->
                     creating = false
-                    createError = error.message ?: "Could not create session."
+                    createError = error.message ?: context.getString(R.string.new_session_create_failed)
                 }
         }
     }
@@ -243,16 +249,16 @@ fun NewSessionScreen(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     RuntimeSelectPill(
-                        label = "Device",
-                        value = selectedDevice?.name ?: "No device",
+                        label = stringResource(R.string.new_session_device),
+                        value = selectedDevice?.name ?: stringResource(R.string.new_session_no_device),
                         icon = Lucide.Monitor,
                         darkMode = darkMode,
                         modifier = Modifier.weight(1f),
                         onClick = { sheet = NewSessionSheet.Device },
                     )
                     RuntimeSelectPill(
-                        label = "Agent",
-                        value = selectedAgent?.label ?: "No agent",
+                        label = stringResource(R.string.new_session_agent),
+                        value = selectedAgent?.label ?: stringResource(R.string.new_session_no_agent),
                         icon = Lucide.Bot,
                         darkMode = darkMode,
                         modifier = Modifier.weight(1f),
@@ -310,7 +316,7 @@ fun NewSessionScreen(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 val error = createError ?: if (devices.isEmpty()) {
-                    "No online device with an attached agent."
+                    stringResource(R.string.new_session_no_online_agent)
                 } else {
                     null
                 }
@@ -325,7 +331,7 @@ fun NewSessionScreen(
                     )
                 }
                 StartChatButton(
-                    label = if (creating) "Starting..." else "Start chat",
+                    label = if (creating) stringResource(R.string.new_session_starting) else stringResource(R.string.new_session_start_chat),
                     enabled = canStart,
                     onClick = ::startSession,
                 )
@@ -549,7 +555,7 @@ private fun WorkspaceSection(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "Workspace",
+                text = stringResource(R.string.new_session_workspace),
                 color = LocalAAColors.current.ink,
                 fontSize = 17.sp,
                 fontWeight = FontWeight.ExtraBold,
@@ -558,7 +564,7 @@ private fun WorkspaceSection(
             SmallPill(darkMode = darkMode, onClick = onChoosePath) {
                 SearchGlyph(color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF555555))
                 Text(
-                    text = "Choose path",
+                    text = stringResource(R.string.new_session_choose_path),
                     color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF555555),
                     fontSize = 13.sp,
                     fontWeight = FontWeight.ExtraBold,
@@ -776,7 +782,7 @@ private fun ChoosePathSection(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "Choose path",
+                text = stringResource(R.string.new_session_choose_path),
                 color = LocalAAColors.current.ink,
                 fontSize = 17.sp,
                 fontWeight = FontWeight.ExtraBold,
@@ -785,7 +791,7 @@ private fun ChoosePathSection(
             SmallPill(darkMode = darkMode, onClick = onBack) {
                 BackGlyph(color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF555555))
                 Text(
-                    text = "Back",
+                    text = stringResource(R.string.common_back),
                     color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF555555),
                     fontSize = 13.sp,
                     fontWeight = FontWeight.ExtraBold,
@@ -807,7 +813,7 @@ private fun ChoosePathSection(
             LazyColumn(modifier = Modifier.fillMaxSize()) {
                 when {
                     loading -> item {
-                        PathMessage("Loading directory...", darkMode)
+                        PathMessage(stringResource(R.string.new_session_loading_directory), darkMode)
                     }
                     error != null -> item {
                         PathMessage(error, darkMode)
@@ -819,7 +825,7 @@ private fun ChoosePathSection(
                             }
                         }
                         if (entries.isEmpty()) {
-                            item { PathMessage("This directory is empty.", darkMode) }
+                            item { PathMessage(stringResource(R.string.new_session_empty_directory), darkMode) }
                         }
                         items(entries, key = { it.path }) { entry ->
                             PathRow(name = entry.name, icon = Lucide.Folder, darkMode = darkMode, onClick = { onOpenEntry(entry) })
@@ -1023,9 +1029,9 @@ private fun DevicePickerSheet(
     onDismiss: () -> Unit,
     onSelect: (AgentDevice) -> Unit,
 ) {
-    PickerSheet(title = "Choose device", darkMode = darkMode, onDismiss = onDismiss) {
+    PickerSheet(title = stringResource(R.string.new_session_choose_device), darkMode = darkMode, onDismiss = onDismiss) {
         if (devices.isEmpty()) {
-            SheetEmptyText("No online devices with attached agents.", darkMode)
+            SheetEmptyText(stringResource(R.string.new_session_no_online_agents), darkMode)
         } else {
             LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
                 items(devices, key = { it.id }) { device ->
@@ -1052,9 +1058,9 @@ private fun AgentPickerSheet(
     onDismiss: () -> Unit,
     onSelect: (NewSessionAgent) -> Unit,
 ) {
-    PickerSheet(title = "Choose agent", darkMode = darkMode, onDismiss = onDismiss) {
+    PickerSheet(title = stringResource(R.string.new_session_choose_agent), darkMode = darkMode, onDismiss = onDismiss) {
         if (agents.isEmpty()) {
-            SheetEmptyText("No attached agents on this device.", darkMode)
+            SheetEmptyText(stringResource(R.string.new_session_no_attached_agents), darkMode)
         } else {
             LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
                 items(agents, key = { it.runtime }) { agent ->
@@ -1183,8 +1189,13 @@ private enum class NewSessionSheet {
     Agent,
 }
 
-private fun pathTitle(path: String): String {
+private fun pathTitle(path: String, homeDirectory: String): String {
     val clean = path.trim().trimEnd('/').ifBlank { path }
-    if (clean == "~") return "Home directory"
+    if (clean == "~") return homeDirectory
     return clean.substringAfterLast('/').ifBlank { clean }
+}
+
+@Composable
+private fun String.localizedWorkspaceTitle(): String {
+    return if (this == "Home directory") stringResource(R.string.new_session_home_directory) else this
 }

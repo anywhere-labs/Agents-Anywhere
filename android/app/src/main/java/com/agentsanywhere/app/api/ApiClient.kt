@@ -50,6 +50,21 @@ class ApiClient {
         )
     }
 
+    fun putJson(
+        serverUrl: String,
+        path: String,
+        body: JSONObject,
+        authorizationToken: String? = null,
+    ): JSONObject {
+        return requestJson(
+            serverUrl = serverUrl,
+            path = path,
+            method = "PUT",
+            body = body,
+            authorizationToken = authorizationToken,
+        )
+    }
+
     fun deleteJson(
         serverUrl: String,
         path: String,
