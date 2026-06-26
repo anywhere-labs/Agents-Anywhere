@@ -45,7 +45,7 @@ export function LoginScreen() {
               placeholder={t("login.userPlaceholder")}
               autoComplete="username"
               spellCheck={false}
-              className="font-mono"
+              className="code-mono"
             />
           </InputGroup>
         </div>
@@ -65,7 +65,7 @@ export function LoginScreen() {
               placeholder={t("login.passwordPlaceholder")}
               autoComplete="current-password"
               spellCheck={false}
-              className="font-mono"
+              className="code-mono"
             />
             <InputGroupAddon align="inline-end">
               <InputGroupButton onClick={() => setShowPassword((v) => !v)} aria-label={showPassword ? t("actions.hidePassword") : t("actions.showPassword")}>

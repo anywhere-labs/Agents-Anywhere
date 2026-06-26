@@ -91,7 +91,7 @@ function CodeBlock({ code }: { code: string }) {
     <div className="grid rounded-lg border border-border bg-muted/40" style={{ gridTemplateColumns: "1fr auto" }}>
       <ScrollArea className="min-w-0">
         <div className="px-4 py-3">
-        <code className="block whitespace-nowrap font-mono text-xs text-foreground">{code}</code>
+        <code className="block whitespace-nowrap code-mono text-xs text-foreground">{code}</code>
         </div>
         <ScrollBar orientation="horizontal" />
       </ScrollArea>
@@ -309,7 +309,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder={t("namePlaceholder")}
-                  className="font-mono"
+                  className="code-mono"
                   onKeyDown={(e) => e.key === "Enter" && handleCreate()}
                   autoFocus
                 />

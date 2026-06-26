@@ -69,7 +69,7 @@ export function OAuthLinkExistingScreen() {
                 placeholder={t("oauth.passwordPlaceholder")}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="font-mono"
+                className="code-mono"
                 autoComplete="current-password"
               />
               <InputGroupAddon align="inline-end">

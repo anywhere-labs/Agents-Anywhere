@@ -236,12 +236,10 @@ export function FilesPanelBody({
 }
 
 export function openNativeFilePreviewWindow({
-  token,
   connectorId,
   root,
   file,
   onBlocked,
-  labels,
 }: {
   token?: string | null
   connectorId?: string | null
@@ -256,117 +254,24 @@ export function openNativeFilePreviewWindow({
     truncated: string
   }
 }) {
-  const previewLabels = labels ?? defaultPreviewLabels
-  const child = window.open("", "_blank", "width=980,height=720,resizable=yes,scrollbars=yes")
+  const locale = previewLocale()
+  const search = new URLSearchParams({
+    connectorId: connectorId ?? "",
+    root,
+    path: file.path,
+    name: file.name,
+  })
+  const child = window.open(`/${locale}/preview?${search.toString()}`, "_blank", "width=980,height=720,resizable=yes,scrollbars=yes")
   if (!child) {
     onBlocked?.()
     return
   }
-  writePreviewDocument(child, {
-    title: `${file.name} - ${previewLabels.preview}`,
-    body: `<main class="center">${escapeHtml(previewLabels.loading)}</main>`,
-  })
-  if (!token || !connectorId) {
-    writePreviewDocument(child, {
-      title: `${file.name} - ${previewLabels.preview}`,
-      body: `<main class="center error">${escapeHtml(previewLabels.noConnector)}</main>`,
-    })
-    return
-  }
-  dashboardApi
-    .connectorFsReadText(token, connectorId, root, file.path, 1_000_000)
-    .then((result) => {
-      if (result.binary) {
-        writePreviewDocument(child, {
-          title: `${file.name} - ${previewLabels.preview}`,
-          body: `<main class="center">${escapeHtml(previewLabels.binaryUnavailable(result.size.toLocaleString()))}</main>`,
-        })
-        return
-      }
-      writePreviewDocument(child, {
-        title: `${file.name} - ${previewLabels.preview}`,
-        body: buildCodePreviewBody(file, result.content, result.truncated, previewLabels.truncated),
-      })
-    })
-    .catch((error) => {
-      writePreviewDocument(child, {
-        title: `${file.name} - ${previewLabels.preview}`,
-        body: `<main class="center error">${escapeHtml(error instanceof Error ? error.message : String(error))}</main>`,
-      })
-    })
-}
-
-function writePreviewDocument(child: Window, { title, body }: { title: string; body: string }) {
-  const theme = getPreviewTheme()
-  child.document.open()
-  child.document.write(`<!doctype html>
-<html class="${escapeHtml(document.documentElement.className)}">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>${escapeHtml(title)}</title>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; }
-    html, body { margin: 0; min-height: 100%; background: ${theme.background}; color: ${theme.foreground}; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 13px; }
-    header { display: flex; align-items: center; gap: 10px; height: 42px; padding: 0 14px; border-bottom: 1px solid ${theme.border}; background: ${theme.header}; font-family: ui-sans-serif, system-ui, sans-serif; }
-    header strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    header span { color: ${theme.muted}; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .scroll { overflow: auto; height: calc(100vh - 42px); padding: 8px 0; }
-    .line { display: flex; min-height: 22px; }
-    .line:hover { background: ${theme.hover}; }
-    .ln { width: 52px; flex: 0 0 auto; padding-right: 12px; text-align: right; color: ${theme.lineNumber}; user-select: none; }
-    .code { white-space: pre; padding: 0 16px 0 4px; }
-    .center { min-height: 100vh; display: grid; place-items: center; padding: 24px; color: ${theme.muted}; }
-    .error { color: ${theme.error}; }
-  </style>
-</head>
-<body>${body}</body>
-</html>`)
-  child.document.close()
   child.focus()
 }
 
-function getPreviewTheme() {
-  const style = getComputedStyle(document.documentElement)
-  const isDark = document.documentElement.classList.contains("dark")
-  return {
-    background: cssColor(style.getPropertyValue("--background"), isDark ? "#000000" : "#ffffff"),
-    foreground: cssColor(style.getPropertyValue("--foreground"), isDark ? "#f4f4f5" : "#18181b"),
-    header: cssColor(style.getPropertyValue("--sidebar"), isDark ? "#151515" : "#fafafa"),
-    border: cssColor(style.getPropertyValue("--border"), isDark ? "rgba(255,255,255,.12)" : "rgba(0,0,0,.12)"),
-    muted: cssColor(style.getPropertyValue("--muted-foreground"), isDark ? "#a1a1aa" : "#71717a"),
-    error: cssColor(style.getPropertyValue("--destructive"), isDark ? "#f87171" : "#dc2626"),
-    hover: isDark ? "rgba(255,255,255,.045)" : "rgba(0,0,0,.045)",
-    lineNumber: isDark ? "#555" : "#a1a1aa",
-  }
-}
-
-function cssColor(value: string, fallback: string) {
-  return value.trim() || fallback
-}
-
-const defaultPreviewLabels = {
-  preview: "Preview",
-  loading: "Loading...",
-  noConnector: "No online connector for this session.",
-  binaryUnavailable: (size: string) => `Binary file (${size} bytes). Preview unavailable.`,
-  truncated: "truncated",
-}
-
-function buildCodePreviewBody(file: PickedFile, content: string, truncated: boolean, truncatedLabel: string): string {
-  const rows = content.split(/\r?\n/).map((line, index) => {
-    const num = String(index + 1).padStart(4, " ")
-    return `<div class="line"><span class="ln">${num}</span><span class="code">${escapeHtml(line)}</span></div>`
-  }).join("")
-  return `<header><strong>${escapeHtml(file.name)}</strong><span>${escapeHtml(file.path)}${truncated ? ` · ${escapeHtml(truncatedLabel)}` : ""}</span></header><div class="scroll">${rows}</div>`
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
+function previewLocale() {
+  const firstSegment = window.location.pathname.split("/").filter(Boolean)[0]
+  return firstSegment === "zh-CN" || firstSegment === "en" ? firstSegment : "en"
 }
 
 function parentOf(rawPath: string): string {

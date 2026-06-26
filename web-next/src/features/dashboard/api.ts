@@ -31,7 +31,8 @@ import type {
   TakeoverResponse,
   TerminalCreateRequest,
   TerminalListResponse,
-  TerminalResponse
+  TerminalResponse,
+  UserAgentDefaultsResponse
 } from "@/features/dashboard/types";
 
 export class DashboardApi {
@@ -394,6 +395,21 @@ export class DashboardApi {
   listAgentEfforts(token: string, runtime: string): Promise<AgentCatalogResponse> {
     return this.client.get<AgentCatalogResponse>(
       `/agents/${encodeURIComponent(runtime)}/efforts`,
+      { token },
+    );
+  }
+
+  getAgentDefaults(token: string): Promise<UserAgentDefaultsResponse> {
+    return this.client.get<UserAgentDefaultsResponse>("/agents/defaults", { token });
+  }
+
+  updateAgentDefaults(
+    token: string,
+    runtimes: Record<string, { enabled?: boolean; settings?: Record<string, unknown> }>,
+  ): Promise<UserAgentDefaultsResponse> {
+    return this.client.patch<UserAgentDefaultsResponse>(
+      "/agents/defaults",
+      { runtimes },
       { token },
     );
   }

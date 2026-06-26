@@ -9,6 +9,7 @@ import type {
   AuthConfig,
   AuthCredentials,
   AuthMe,
+  ChangePasswordRequest,
   AuthPasswordSaltResponse,
   AuthResponse,
   InstanceSettings,
@@ -17,7 +18,9 @@ import type {
   OAuthFinalizeResponse,
   OAuthStartResponse,
   ServiceInfo,
-  UserRole
+  UserRole,
+  MobileLoginQrCreateResponse,
+  MobileLoginStatusResponse
 } from "@/features/auth/types";
 
 export class AuthApi {
@@ -115,6 +118,35 @@ export class AuthApi {
     return this.client.get<AuthMe>("/auth/me", { token });
   }
 
+  async changePassword(
+    token: string,
+    body: { newPassword?: string; newPasswordVerifier?: string; newPasswordSalt?: string },
+  ): Promise<void> {
+    let verifier: ChangePasswordRequest = {};
+    if (body.newPasswordVerifier && body.newPasswordSalt) {
+      verifier = { newPasswordVerifier: body.newPasswordVerifier, newPasswordSalt: body.newPasswordSalt };
+    } else if (body.newPassword) {
+      const created = await createPasswordVerifier(body.newPassword);
+      verifier = {
+        newPasswordVerifier: created.passwordVerifier,
+        newPasswordSalt: created.passwordSalt,
+      };
+    }
+    return this.client.post<void>(
+      "/auth/change-password",
+      verifier,
+      { token },
+    );
+  }
+
+  updateAvatar(token: string, avatar: string): Promise<AuthMe> {
+    return this.client.put<AuthMe>("/auth/me/avatar", { avatar }, { token });
+  }
+
+  clearAvatar(token: string): Promise<AuthMe> {
+    return this.client.delete<AuthMe>("/auth/me/avatar", { token });
+  }
+
   listUsers(token: string): Promise<AdminUserListResponse> {
     return this.client.get<AdminUserListResponse>("/admin/users", { token });
   }
@@ -201,8 +233,19 @@ export class AuthApi {
     const { salt } = await this.passwordSalt(userId);
     return derivePasswordVerifier(password, salt);
   }
-}
 
+  createMobileLoginQr(token: string): Promise<MobileLoginQrCreateResponse> {
+    return this.client.post<MobileLoginQrCreateResponse>("/auth/mobile-login/qr", {}, { token });
+  }
+
+  mobileLoginStatus(token: string, loginToken: string): Promise<MobileLoginStatusResponse> {
+    return this.client.post<MobileLoginStatusResponse>("/auth/mobile-login/status", { loginToken }, { token });
+  }
+
+  confirmMobileLogin(token: string, loginToken: string, approved: boolean): Promise<MobileLoginStatusResponse> {
+    return this.client.post<MobileLoginStatusResponse>("/auth/mobile-login/confirm", { loginToken, approved }, { token });
+  }
+}
 export const authApi = new AuthApi();
 
 export function normalizeUserId(userId: string): string {

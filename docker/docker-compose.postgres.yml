@@ -18,7 +18,8 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    image: agents-anywhere:postgres
+      target: server
+    image: agents-anywhere-server:postgres
     restart: unless-stopped
     depends_on:
       postgres:
@@ -29,11 +30,27 @@ services:
       AGENT_SERVER_FILES_BACKEND: local
       AGENT_SERVER_FILES_LOCAL_ROOT: /data/agent-server.files
       AGENT_SERVER_SECRET: ${AGENT_SERVER_SECRET:-change-me-before-production}
-      AGENT_SERVER_STATIC_DIR: /app/web-dist
+      AGENT_SERVER_CORS_ORIGINS: ${AGENT_SERVER_CORS_ORIGINS:-http://127.0.0.1:${AGENTS_ANYWHERE_WEB_PORT:-5174},http://localhost:${AGENTS_ANYWHERE_WEB_PORT:-5174}}
     volumes:
       - agents-anywhere-files:/data
+    expose:
+      - "8000"
+
+  web:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: web-next
+      args:
+        AGENTS_ANYWHERE_API: ${AGENTS_ANYWHERE_API:-http://server:8000}
+    image: agents-anywhere-web-next:postgres
+    restart: unless-stopped
+    depends_on:
+      - server
+    environment:
+      AGENTS_ANYWHERE_API: ${AGENTS_ANYWHERE_API:-http://server:8000}
     ports:
-      - "${AGENTS_ANYWHERE_PORT:-8000}:8000"
+      - "${AGENTS_ANYWHERE_WEB_PORT:-5174}:5174"
 
 volumes:
   agents-anywhere-pg:

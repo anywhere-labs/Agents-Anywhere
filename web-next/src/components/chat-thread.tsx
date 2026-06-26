@@ -31,7 +31,7 @@ export function ChatThread() {
                 </button>
               </div>
               <ScrollArea className="max-h-80">
-                <pre className="px-4 pb-4 pt-1 font-mono text-[13px] leading-relaxed">
+                <pre className="px-4 pb-4 pt-1 code-mono text-[13px] leading-relaxed">
                   {msg.code.lines.join("\n")}
                 </pre>
                 <ScrollBar orientation="horizontal" />
@@ -44,7 +44,7 @@ export function ChatThread() {
               {msg.list.map((item, i) => (
                 <li key={i} className="flex items-start gap-2 text-sm">
                   <span className="mt-2 size-1 shrink-0 rounded-full bg-muted-foreground/60" />
-                  <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[13px]">{item}</code>
+                  <code className="rounded bg-muted px-1.5 py-0.5 code-mono text-[13px]">{item}</code>
                 </li>
               ))}
             </ul>

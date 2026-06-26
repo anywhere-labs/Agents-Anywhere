@@ -1,31 +1,10 @@
 "use client"
 
 import * as React from "react"
-import ReactMarkdown from "react-markdown"
-import remarkGfm from "remark-gfm"
-import {
-  ArrowDown,
-  ArrowUp,
-  Check,
-  ChevronDown,
-  CircleAlert,
-  Clock,
-  Copy,
-  ExternalLink,
-  FilePenLine,
-  Hammer,
-  Loader2,
-  ShieldCheck,
-  Sparkles,
-  Square,
-  TerminalSquare,
-  X,
-} from "lucide-react"
+import { ArrowDown, CircleAlert, Loader2 } from "lucide-react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import {
   Dialog,
   DialogContent,
@@ -34,39 +13,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { Skeleton } from "@/components/ui/skeleton"
-import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
-import { Switch } from "@/components/ui/switch"
-import { Textarea } from "@/components/ui/textarea"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
-import { highlightCode } from "@/lib/code-highlight"
-import {
-  AttachmentButton,
-  AttachmentPreviewList,
-  DragOverlay,
-  useAttachments,
-  type AttachedFile,
-} from "@/components/attachment-input"
-import { openNativeFilePreviewWindow } from "@/components/panels/files-panel"
 import { dashboardApi } from "@/features/dashboard/api"
-import {
-  composerMenuOptions,
-  effectiveFieldValue,
-  filterClaudeEffortField,
-  optionLabel,
-  permissionLabelKey,
-  runtimeConfigFields,
-} from "@/features/dashboard/runtime-config"
 import type {
   Approval,
   ApprovalResolveStatus,
@@ -76,12 +25,28 @@ import type {
   TimelineItem,
 } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
+import { ApprovalCard, ApprovalHeaderNotice } from "@/components/session/session-approval-card"
+import { SessionSkeleton, SessionSkeletonInline } from "@/components/session/session-skeleton"
+import { TimelineEntry } from "@/components/session/session-timeline-entry"
+import { SessionComposer, type AttachedFile } from "@/components/session/session-composer"
+import { runtimeLabel } from "@/components/session/session-utils"
 
 type SessionDetailProps = {
   token: string
   sessionId: string
   fallbackSession: SessionView | null
   onSessionUpdated?: (session: SessionView) => void
+  onMemorySnapshotUpdated?: (snapshot: SessionMemorySnapshot | null) => void
+}
+
+export type SessionMemorySnapshot = {
+  session: SessionView
+  items: TimelineItem[]
+  approvals: Approval[]
+  nextSeq: number
+  hasMore: boolean
+  serverTime: string
+  pendingApprovalCount: number
 }
 
 type SessionEventEnvelope = Partial<SessionStateResponse> & {
@@ -91,12 +56,91 @@ type SessionEventEnvelope = Partial<SessionStateResponse> & {
 
 const AUTO_SCROLL_BOTTOM_DISTANCE = 180
 const SCROLL_TO_BOTTOM_INTERVAL_MS = 1000
+const SESSION_STATE_PAGE_LIMIT = 500
+const COMPOSER_BLUR_LAYERS = buildComposerBlurLayers({
+  height: 144,
+  layerCount: 10,
+  maxBlur: 14,
+  minBlur: 0,
+  overlap: 10,
+  gamma: 1.8,
+})
+
+type ComposerBlurLayerStyle = React.CSSProperties & {
+  WebkitBackdropFilter?: string
+  WebkitMaskImage?: string
+}
+
+function buildComposerBlurLayers({
+  height,
+  layerCount,
+  maxBlur,
+  minBlur,
+  overlap,
+  gamma,
+}: {
+  height: number
+  layerCount: number
+  maxBlur: number
+  minBlur: number
+  overlap: number
+  gamma: number
+}) {
+  const step = height / layerCount
+  return Array.from({ length: layerCount }, (_, index) => {
+    const start = Math.max(0, Math.round(index * step - overlap * 0.5))
+    const end = Math.min(height, Math.round((index + 1) * step + overlap))
+    const progress = index / Math.max(1, layerCount - 1)
+    const blur = minBlur + (maxBlur - minBlur) * Math.pow(1 - progress, gamma)
+    const fadeIn = index === 0 ? 0 : 26
+    const fadeOut = index === layerCount - 1 ? 72 : 76
+    const mask =
+      index === 0
+        ? `linear-gradient(to top, black 0%, black ${fadeOut}%, transparent 100%)`
+        : `linear-gradient(to top, transparent 0%, black ${fadeIn}%, black ${fadeOut}%, transparent 100%)`
+
+    return {
+      key: `${index}-${start}-${end}-${blur.toFixed(2)}`,
+      className: "absolute inset-x-0",
+      style: {
+        bottom: `${start}px`,
+        height: `${Math.max(1, end - start)}px`,
+        backdropFilter: `blur(${blur.toFixed(2)}px)`,
+        WebkitBackdropFilter: `blur(${blur.toFixed(2)}px)`,
+        maskImage: mask,
+        WebkitMaskImage: mask,
+      } satisfies ComposerBlurLayerStyle,
+    }
+  })
+}
+
+async function loadCompleteSessionState(token: string, sessionId: string): Promise<SessionStateResponse> {
+  const firstPage = await dashboardApi.getSessionState(token, sessionId, 0, SESSION_STATE_PAGE_LIMIT)
+  if (!firstPage.hasMore) return firstPage
+
+  const items = [...firstPage.items]
+  let latestPage = firstPage
+
+  while (latestPage.hasMore) {
+    const lastItem = latestPage.items.at(-1)
+    if (!lastItem) break
+    latestPage = await dashboardApi.getSessionState(token, sessionId, lastItem.updatedSeq, SESSION_STATE_PAGE_LIMIT)
+    items.push(...latestPage.items)
+  }
+
+  return {
+    ...latestPage,
+    items,
+    hasMore: latestPage.hasMore && latestPage.items.length > 0,
+  }
+}
 
 export function SessionDetail({
   token,
   sessionId,
   fallbackSession,
   onSessionUpdated,
+  onMemorySnapshotUpdated,
 }: SessionDetailProps) {
   const tSession = useTranslations("dashboard.session")
   const tNew = useTranslations("dashboard.new")
@@ -124,6 +168,22 @@ export function SessionDetail({
   const scrollToBottomTimerRef = React.useRef<number | null>(null)
 
   const session = state?.session ?? fallbackSession
+
+  React.useEffect(() => {
+    if (!state) {
+      onMemorySnapshotUpdated?.(null)
+      return
+    }
+    onMemorySnapshotUpdated?.({
+      session: state.session,
+      items: state.items,
+      approvals: state.approvals,
+      nextSeq: state.nextSeq,
+      hasMore: state.hasMore,
+      serverTime: state.serverTime,
+      pendingApprovalCount: state.approvals.filter((approval) => approval.status === "pending").length,
+    })
+  }, [onMemorySnapshotUpdated, state])
 
   const distanceFromBottom = React.useCallback(() => {
     const viewport = timelineRef.current
@@ -183,7 +243,7 @@ export function SessionDetail({
     if (options.preserveBottom ?? true) markAutoScrollIfNearBottom()
     if (options.scrollToBottom) forceScrollOnNextUpdateRef.current = true
     setError(null)
-    const next = await dashboardApi.getSessionState(token, sessionId, 0, 500)
+    const next = await loadCompleteSessionState(token, sessionId)
     setState(next)
     nextSeqRef.current = Math.max(nextSeqRef.current, next.nextSeq)
     onSessionUpdated?.(next.session)
@@ -195,8 +255,7 @@ export function SessionDetail({
     setLoading(true)
     setState(null)
     setError(null)
-    dashboardApi
-      .getSessionState(token, sessionId, 0, 500)
+    loadCompleteSessionState(token, sessionId)
       .then((next) => {
         if (cancelled) return
         setState(next)
@@ -245,8 +304,7 @@ export function SessionDetail({
     let eventSource: EventSource | null = null
     const refetch = () => {
       markAutoScrollIfNearBottom()
-      dashboardApi
-        .getSessionState(token, sessionId, 0, 500)
+      loadCompleteSessionState(token, sessionId)
         .then((next) => {
           if (cancelled) return
           nextSeqRef.current = Math.max(nextSeqRef.current, next.nextSeq)
@@ -438,7 +496,12 @@ export function SessionDetail({
           className="h-full"
           viewportProps={{ onScroll: updateScrollBottomState }}
         >
-          <div className="mx-auto flex w-full min-w-0 max-w-4xl flex-col gap-3 overflow-hidden px-5 py-6">
+          <div
+            className={cn(
+              "mx-auto flex w-full min-w-0 max-w-4xl flex-col gap-3 overflow-hidden px-5 pb-44 pt-20",
+              pendingApprovals.length > 0 && "pt-32",
+            )}
+          >
             {loading && !state ? <SessionSkeletonInline /> : null}
             {state && state.items.length === 0 && detachedApprovals.length === 0 ? (
               <p className="py-12 text-center text-sm text-muted-foreground">{tSession("noActivity")}</p>
@@ -477,7 +540,7 @@ export function SessionDetail({
             type="button"
             size="sm"
             variant="secondary"
-            className="absolute bottom-4 left-1/2 z-10 h-8 -translate-x-1/2 gap-1.5 rounded-full border bg-background/95 px-3 shadow-lg backdrop-blur"
+            className="absolute bottom-36 left-1/2 z-10 h-8 -translate-x-1/2 gap-1.5 rounded-full border bg-background/95 px-3 shadow-lg backdrop-blur"
             onClick={scrollToBottom}
           >
             <ArrowDown className="size-3.5" />
@@ -486,22 +549,34 @@ export function SessionDetail({
         ) : null}
       </div>
 
-      <SessionComposer
-        session={session}
-        pendingApprovalCount={pendingApprovals.length}
-        error={composerError}
-        sending={sending}
-        takeoverBusy={takeoverBusy}
-        runtimeSchema={runtimeSchema}
-        runtimeSettings={runtimeSettings}
-        runtimeSettingsError={runtimeSettingsError}
-        runtimeSettingsBusy={runtimeSettingsBusy}
-        onDismissError={() => setComposerError(null)}
-        onPatchRuntimeSettings={handlePatchRuntimeSettings}
-        onSend={handleSend}
-        onInterrupt={handleInterrupt}
-        onToggleTakeover={() => setPendingTakeover(!session.takeover)}
-      />
+      {pendingApprovals.length > 0 ? (
+        <ApprovalHeaderNotice pendingApprovalCount={pendingApprovals.length} onResolveClick={scrollToBottom} />
+      ) : null}
+
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 overflow-hidden">
+        <div className="absolute inset-x-0 bottom-0 h-36 bg-linear-to-t from-background/80 to-background/0" />
+        {COMPOSER_BLUR_LAYERS.map((layer) => (
+          <div key={layer.key} className={layer.className} style={layer.style} />
+        ))}
+        <div className="pointer-events-auto relative">
+          <SessionComposer
+            session={session}
+            pendingApprovalCount={pendingApprovals.length}
+            error={composerError}
+            sending={sending}
+            takeoverBusy={takeoverBusy}
+            runtimeSchema={runtimeSchema}
+            runtimeSettings={runtimeSettings}
+            runtimeSettingsError={runtimeSettingsError}
+            runtimeSettingsBusy={runtimeSettingsBusy}
+            onDismissError={() => setComposerError(null)}
+            onPatchRuntimeSettings={handlePatchRuntimeSettings}
+            onSend={handleSend}
+            onInterrupt={handleInterrupt}
+            onToggleTakeover={() => setPendingTakeover(!session.takeover)}
+          />
+        </div>
+      </div>
       <Dialog
         open={pendingTakeover !== null}
         onOpenChange={(open) => {
@@ -530,877 +605,6 @@ export function SessionDetail({
       </Dialog>
     </div>
   )
-}
-
-function TimelineEntry({
-  token,
-  session,
-  item,
-  approval,
-  resolvingApprovalId,
-  resolvingStatus,
-  onResolveApproval,
-}: {
-  token: string
-  session: SessionView
-  item: TimelineItem
-  approval?: Approval
-  resolvingApprovalId: string | null
-  resolvingStatus: ApprovalResolveStatus | null
-  onResolveApproval: (approvalId: string, status: ApprovalResolveStatus) => void
-}) {
-  if (item.type === "turn.start" || item.type === "turn.end") return null
-  if (item.type === "message") return <MessageCard token={token} session={session} item={item} />
-  if (item.type === "tool") {
-    return (
-      <ToolCard
-        item={item}
-        approval={approval}
-        resolvingApprovalId={resolvingApprovalId}
-        resolvingStatus={resolvingStatus}
-        onResolveApproval={onResolveApproval}
-      />
-    )
-  }
-  if (item.type === "system") return <SystemCard item={item} />
-  if (item.type === "artifact") return <ArtifactCard item={item} />
-  return null
-}
-
-function MessageCard({ token, session, item }: { token: string; session: SessionView; item: TimelineItem }) {
-  const text = messageText(item)
-  const isUser = item.role === "user"
-  return (
-    <div className={cn("flex min-w-0 max-w-full overflow-hidden", isUser && "justify-end")}>
-      <div
-        className={cn(
-          "min-w-0 max-w-[88%] text-sm leading-relaxed",
-          isUser ? "bg-secondary text-secondary-foreground" : "bg-transparent px-0",
-          isUser ? "rounded-2xl px-4 py-3" : "px-0 py-1",
-        )}
-      >
-        {text ? <MarkdownText text={text} token={token} session={session} /> : <JsonBlock value={item.content} />}
-      </div>
-    </div>
-  )
-}
-
-function ToolCard({
-  item,
-  approval,
-  resolvingApprovalId,
-  resolvingStatus,
-  onResolveApproval,
-}: {
-  item: TimelineItem
-  approval?: Approval
-  resolvingApprovalId: string | null
-  resolvingStatus: ApprovalResolveStatus | null
-  onResolveApproval: (approvalId: string, status: ApprovalResolveStatus) => void
-}) {
-  const tSession = useTranslations("dashboard.session")
-  const kind = textOf(item.content.kind) || "tool"
-  const title =
-    kind === "command"
-      ? tSession("toolRan", { command: commandText(item.content.command) || tSession("toolCommandFallback") })
-      : kind === "file_change"
-        ? tSession("toolChangedFiles")
-        : kind === "web_search"
-          ? tSession("toolSearched", { query: textOf(item.content.query) || tSession("toolWebFallback") })
-          : kind === "mcp"
-            ? `${textOf(item.content.server) || tSession("toolMcpFallback")} / ${
-                textOf(item.content.tool) || tSession("toolToolFallback")
-              }`
-            : kind
-  const command = commandText(item.content.command)
-  const output = textOf(item.content.outputPreview) || textOf(item.content.outputText) || textOf(item.content.error)
-  const changes = recordsOf(item.content.changes)
-  const defaultOpen = Boolean(approval)
-
-  return (
-    <Collapsible defaultOpen={defaultOpen} className="min-w-0 max-w-full overflow-hidden">
-      <div className="min-w-0 max-w-full space-y-2 overflow-hidden">
-        <CollapsibleTrigger asChild>
-          <button className="group flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-1 text-left text-muted-foreground transition-colors hover:bg-muted/35 hover:text-foreground">
-            <ChevronDown className="size-3.5 shrink-0 -rotate-90 transition-transform group-data-[state=open]:rotate-0" />
-            <ToolIcon kind={kind} status={item.status} />
-            <span className="min-w-0 flex-1 truncate font-mono text-sm">{title}</span>
-            <TimelineStatusBadge status={item.status} />
-          </button>
-        </CollapsibleTrigger>
-        <CollapsibleContent className="min-w-0 max-w-full overflow-hidden">
-          <ToolDetailPanel command={command} output={output} changes={changes} fallback={item.content} />
-          {approval ? (
-            <div className="mt-2">
-              <ApprovalCard
-                approval={approval}
-                resolvingApprovalId={resolvingApprovalId}
-                resolvingStatus={resolvingStatus}
-                onResolveApproval={onResolveApproval}
-                compact
-              />
-            </div>
-          ) : null}
-        </CollapsibleContent>
-      </div>
-    </Collapsible>
-  )
-}
-
-function ApprovalCard({
-  approval,
-  resolvingApprovalId,
-  resolvingStatus,
-  onResolveApproval,
-  compact,
-}: {
-  approval: Approval
-  resolvingApprovalId: string | null
-  resolvingStatus: ApprovalResolveStatus | null
-  onResolveApproval: (approvalId: string, status: ApprovalResolveStatus) => void
-  compact?: boolean
-}) {
-  const tSession = useTranslations("dashboard.session")
-  const resolving = resolvingApprovalId === approval.id
-  const disabled = resolvingApprovalId !== null
-  return (
-    <div className={cn("rounded-xl border border-border bg-muted/25 p-3", compact && "rounded-lg")}>
-      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
-        <div className="flex min-w-0 gap-2">
-          <ShieldCheck className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-          <div className="min-w-0">
-            <div className="break-words text-sm font-medium">{approval.title || tSession("approvalRequested")}</div>
-            {approval.description ? (
-              <p className="mt-0.5 break-words text-sm text-muted-foreground">{approval.description}</p>
-            ) : null}
-          </div>
-        </div>
-        <div className="flex flex-wrap justify-end gap-2 md:flex-nowrap">
-          {approval.choices.includes("reject") ? (
-            <Button
-              variant="outline"
-              size="sm"
-              className="whitespace-nowrap"
-              disabled={disabled}
-              onClick={() => onResolveApproval(approval.id, "rejected")}
-            >
-              {resolving && resolvingStatus === "rejected" ? <Loader2 className="size-3.5 animate-spin" /> : <X className="size-3.5" />}
-              {tSession("reject")}
-            </Button>
-          ) : null}
-          {approval.choices.includes("approve_for_session") ? (
-            <Button
-              variant="outline"
-              size="sm"
-              className="whitespace-nowrap"
-              disabled={disabled}
-              onClick={() => onResolveApproval(approval.id, "approved_for_session")}
-            >
-              {resolving && resolvingStatus === "approved_for_session" ? <Loader2 className="size-3.5 animate-spin" /> : <ShieldCheck className="size-3.5" />}
-              {tSession("approveSession")}
-            </Button>
-          ) : null}
-          {approval.choices.includes("approve") ? (
-            <Button
-              size="sm"
-              className="whitespace-nowrap"
-              disabled={disabled}
-              onClick={() => onResolveApproval(approval.id, "approved")}
-            >
-              {resolving && resolvingStatus === "approved" ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
-              {tSession("approve")}
-            </Button>
-          ) : null}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function SystemCard({ item }: { item: TimelineItem }) {
-  const kind = textOf(item.content.kind) || "system"
-  if (kind === "reasoning") return <ReasoningEntry item={item} />
-  const text = textOf(item.content.text) || textOf(item.content.message) || textOf(item.content.rawText)
-  const failed = item.status === "failed" || kind === "error"
-  return (
-    <div className={cn("flex items-start gap-2 rounded-lg border px-3 py-2 text-sm", failed ? "border-destructive/35 bg-destructive/5 text-destructive" : "border-border bg-muted/20 text-muted-foreground")}>
-      {failed ? <CircleAlert className="mt-0.5 size-4 shrink-0" /> : <Clock className="mt-0.5 size-4 shrink-0" />}
-      <div className="min-w-0">
-        <div className="font-medium">{kind}</div>
-        <div className="break-words">{text || item.status}</div>
-      </div>
-    </div>
-  )
-}
-
-function ReasoningEntry({ item }: { item: TimelineItem }) {
-  const tSession = useTranslations("dashboard.session")
-  const summaries = recordsOf(item.content.summaries)
-    .map((summary) => textOf(summary.text))
-    .filter((text): text is string => Boolean(text))
-  const rawText = textOf(item.content.rawText) || textOf(item.content.text)
-  const lines = summaries.length > 0 ? summaries : rawText ? [rawText] : []
-  return (
-    <Collapsible className="min-w-0 max-w-full overflow-hidden">
-      <div className="min-w-0 max-w-full space-y-2 overflow-hidden">
-        <CollapsibleTrigger asChild>
-          <button className="group inline-flex h-7 max-w-full items-center gap-1.5 rounded-full bg-secondary px-2.5 text-left text-xs font-medium text-secondary-foreground transition-colors hover:bg-secondary/80">
-            <ChevronDown className="size-3.5 shrink-0 -rotate-90 transition-transform group-data-[state=open]:rotate-0" />
-            <Sparkles className="size-3.5 shrink-0" />
-            <span className="truncate">{tSession("reasoning")}</span>
-          </button>
-        </CollapsibleTrigger>
-      {lines.length > 0 ? (
-        <CollapsibleContent className="min-w-0 max-w-full overflow-hidden">
-          <div className="space-y-2 pl-1 text-sm leading-relaxed text-muted-foreground">
-            {lines.map((line, index) => (
-              <p key={index}>{line}</p>
-            ))}
-          </div>
-        </CollapsibleContent>
-      ) : null}
-      </div>
-    </Collapsible>
-  )
-}
-
-function ArtifactCard({ item }: { item: TimelineItem }) {
-  const kind = textOf(item.content.kind) || "artifact"
-  if (kind === "diff") return null
-  return (
-    <Collapsible className="min-w-0 max-w-full overflow-hidden">
-      <div className="min-w-0 max-w-full space-y-2 overflow-hidden">
-        <CollapsibleTrigger asChild>
-          <button className="group flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-1 text-left text-muted-foreground transition-colors hover:bg-muted/35 hover:text-foreground">
-            <ChevronDown className="size-3.5 shrink-0 -rotate-90 transition-transform group-data-[state=open]:rotate-0" />
-            <FilePenLine className="size-4 shrink-0" />
-            <span className="min-w-0 flex-1 truncate font-mono text-sm">{kind}</span>
-            <TimelineStatusBadge status={item.status} />
-          </button>
-        </CollapsibleTrigger>
-        <CollapsibleContent className="min-w-0 max-w-full overflow-hidden">
-          <JsonBlock value={item.content} />
-        </CollapsibleContent>
-      </div>
-    </Collapsible>
-  )
-}
-
-function SessionComposer({
-  session,
-  pendingApprovalCount,
-  error,
-  sending,
-  takeoverBusy,
-  runtimeSchema,
-  runtimeSettings,
-  runtimeSettingsError,
-  runtimeSettingsBusy,
-  onDismissError,
-  onPatchRuntimeSettings,
-  onSend,
-  onInterrupt,
-  onToggleTakeover,
-}: {
-  session: SessionView
-  pendingApprovalCount: number
-  error: string | null
-  sending: boolean
-  takeoverBusy: boolean
-  runtimeSchema: RuntimeConfigSchema | null
-  runtimeSettings: Record<string, unknown> | null
-  runtimeSettingsError: string | null
-  runtimeSettingsBusy: boolean
-  onDismissError: () => void
-  onPatchRuntimeSettings: (settings: Record<string, unknown>) => void
-  onSend: (content: string, attachments: AttachedFile[]) => void
-  onInterrupt: () => void
-  onToggleTakeover: () => void
-}) {
-  const tSession = useTranslations("dashboard.session")
-  const tNew = useTranslations("dashboard.new")
-  const [value, setValue] = React.useState("")
-  const { attachments, isDragging, add, remove, clear, onDragEnter, onDragLeave, onDragOver, onDrop } =
-    useAttachments()
-  const isBusy = session.status === "running" || session.status === "waiting_approval"
-  const connectorOnline = session.connectorStatus === "online"
-  const canSend =
-    connectorOnline &&
-    session.takeover &&
-    !sending &&
-    (session.status === "idle" || session.status === "error")
-  const hasInput = value.trim().length > 0 || attachments.length > 0
-  const showInterrupt = isBusy && !hasInput
-  const settingsFields = runtimeConfigFields(runtimeSchema, runtimeSettings, "session")
-  const permissionField = settingsFields.find((field) => field.key === "permissionMode")
-  const modelField = settingsFields.find((field) => field.key === "model")
-  const effortField = filterClaudeEffortField(
-    session.runtime,
-    settingsFields.find((field) => field.key === "effort"),
-    runtimeSettings?.model,
-  )
-  const permissionItems = composerMenuOptions(permissionField)
-  const modelItems = composerMenuOptions(modelField)
-  const effortItems = composerMenuOptions(effortField)
-  const permissionValue = stringSetting(runtimeSettings?.permissionMode)
-  const modelValue = effectiveFieldValue(modelField, runtimeSettings?.model)
-  const effortValue = effectiveFieldValue(effortField, runtimeSettings?.effort)
-  const selectedPermissionLabelKey = permissionLabelKey(permissionValue)
-  const permissionLabel = selectedPermissionLabelKey
-    ? tNew(selectedPermissionLabelKey)
-    : optionLabel(permissionField, runtimeSettings?.permissionMode, tNew("permissionMode"))
-  const modelLabel = optionLabel(modelField, runtimeSettings?.model, tNew("model"))
-  const effortLabel = optionLabel(effortField, runtimeSettings?.effort, tNew("reasoning"))
-  const hasSelectors = Boolean(permissionField || modelField || effortField)
-  const placeholder = !session.takeover
-    ? tSession("readOnlyPlaceholder")
-    : !connectorOnline
-      ? tSession("deviceOfflinePlaceholder")
-      : pendingApprovalCount > 0
-        ? tSession("waitingApprovalPlaceholder")
-        : isBusy
-          ? tSession("busyPlaceholder")
-          : session.status === "error"
-            ? tSession("errorPlaceholder")
-            : tSession("replyPlaceholder")
-
-  const submit = () => {
-    if (!canSend || !hasInput) return
-    const text = value
-    setValue("")
-    const files = attachments
-    clear()
-    onSend(text, files)
-  }
-
-  return (
-    <div
-      className="shrink-0 bg-background/95 px-4 pb-4 pt-2 backdrop-blur"
-      onDragEnter={onDragEnter}
-      onDragLeave={onDragLeave}
-      onDragOver={onDragOver}
-      onDrop={onDrop}
-    >
-      <DragOverlay isDragging={isDragging} />
-      <div className="mx-auto w-full max-w-3xl space-y-2">
-        {pendingApprovalCount > 0 ? (
-          <div className="flex items-center justify-between rounded-2xl border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm">
-            <div className="flex items-center gap-2 text-amber-700 dark:text-amber-300">
-              <ShieldCheck className="size-4" />
-              <span>
-                {tSession(pendingApprovalCount > 1 ? "approvalPendingPlural" : "approvalPending", {
-                  count: pendingApprovalCount,
-                })}
-              </span>
-            </div>
-            <span className="text-xs text-muted-foreground">{tSession("resolveAbove")}</span>
-          </div>
-        ) : null}
-        {error ? (
-          <button type="button" className="block text-left text-sm text-destructive" onClick={onDismissError}>
-            {error}
-          </button>
-        ) : null}
-        <div
-          className={cn(
-            "relative rounded-2xl border border-border bg-card shadow-sm transition-colors",
-            isDragging && "border-primary bg-primary/5",
-          )}
-        >
-          {isDragging ? (
-            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-background/75 text-sm font-medium text-foreground backdrop-blur-sm">
-              {tSession("dropFiles")}
-            </div>
-          ) : null}
-          <div className="space-y-3 px-4 pt-4">
-            <AttachmentPreviewList attachments={attachments} onRemove={remove} />
-            <Textarea
-              value={value}
-              onChange={(event) => setValue(event.currentTarget.value)}
-              onKeyDown={(event) => {
-                if (event.nativeEvent.isComposing) return
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault()
-                  submit()
-                }
-              }}
-              placeholder={placeholder}
-              disabled={!session.takeover || !connectorOnline}
-              className="min-h-12 max-h-40 resize-none overflow-y-auto rounded-none border-0 bg-transparent p-0 text-sm shadow-none focus-visible:ring-0 dark:bg-transparent"
-            />
-          </div>
-          <div className="flex flex-wrap items-center gap-1 px-3 pb-3 pt-2">
-            <AttachmentButton
-              attachments={attachments}
-              onAttach={add}
-              isDragging={isDragging}
-              className="size-8"
-            />
-            {hasSelectors ? (
-              <>
-                {permissionField ? (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 gap-1.5 rounded-xl px-2.5 text-muted-foreground"
-                        disabled={!runtimeSettings || runtimeSettingsBusy}
-                      >
-                        <span className="size-1.5 rounded-full bg-primary" />
-                        <span className="text-foreground">{permissionLabel}</span>
-                        <ChevronDown className="size-3.5 opacity-60" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start" className="w-64">
-                      {permissionItems.map((item) => (
-                        <DropdownMenuItem
-                          key={item.id}
-                          className="gap-2"
-                          onSelect={() => onPatchRuntimeSettings({ permissionMode: item.id })}
-                        >
-                          <Check className={cn("size-3.5", permissionValue === item.id ? "opacity-100" : "opacity-0")} />
-                          <span>
-                            {permissionLabelKey(item.id) ? tNew(permissionLabelKey(item.id)!) : item.label}
-                          </span>
-                        </DropdownMenuItem>
-                      ))}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                ) : null}
-                {modelField || effortField ? (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 gap-1.5 rounded-xl px-2.5 text-muted-foreground"
-                        disabled={!runtimeSettings || runtimeSettingsBusy}
-                      >
-                        {effortField ? <span className="text-foreground">{effortLabel}</span> : null}
-                        {effortField && modelField ? <span className="text-muted-foreground/50">·</span> : null}
-                        {modelField ? <span className="max-w-40 truncate text-foreground">{modelLabel}</span> : null}
-                        <ChevronDown className="size-3.5 opacity-60" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start" className="w-56">
-                      {effortItems.length > 0 ? (
-                        <>
-                          {effortItems.map((item) => (
-                            <DropdownMenuItem
-                              key={item.id}
-                              className="gap-2"
-                              onSelect={() => onPatchRuntimeSettings({ effort: item.id })}
-                            >
-                              <Check className={cn("size-3.5", effortValue === item.id ? "opacity-100" : "opacity-0")} />
-                              <span>{item.label}</span>
-                            </DropdownMenuItem>
-                          ))}
-                        </>
-                      ) : null}
-                      {effortItems.length > 0 && modelItems.length > 0 ? <DropdownMenuSeparator /> : null}
-                      {modelItems.length > 0 ? (
-                        <DropdownMenuSub>
-                          <DropdownMenuSubTrigger className="gap-2">
-                            <span className="size-3.5" />
-                            <span className="max-w-40 truncate">{modelLabel}</span>
-                          </DropdownMenuSubTrigger>
-                          <DropdownMenuSubContent className="w-56">
-                            {modelItems.map((item) => (
-                              <DropdownMenuItem
-                                key={item.id}
-                                className="gap-2"
-                                onSelect={() => onPatchRuntimeSettings({ model: item.id })}
-                              >
-                                <Check className={cn("size-3.5", modelValue === item.id ? "opacity-100" : "opacity-0")} />
-                                <span className="truncate">{item.label}</span>
-                              </DropdownMenuItem>
-                            ))}
-                          </DropdownMenuSubContent>
-                        </DropdownMenuSub>
-                      ) : null}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                ) : null}
-              </>
-            ) : null}
-            <div
-              role="switch"
-              aria-checked={session.takeover}
-              aria-disabled={!connectorOnline || takeoverBusy}
-              tabIndex={connectorOnline && !takeoverBusy ? 0 : -1}
-              className={cn(
-                "ml-auto flex h-8 items-center gap-2 rounded-xl px-2.5 text-sm text-muted-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-                connectorOnline && !takeoverBusy && "cursor-pointer hover:bg-accent hover:text-accent-foreground",
-                (!connectorOnline || takeoverBusy) && "opacity-50",
-                session.takeover && "text-foreground",
-              )}
-              onClick={() => {
-                if (!connectorOnline || takeoverBusy) return
-                onToggleTakeover()
-              }}
-              onKeyDown={(event) => {
-                if (!connectorOnline || takeoverBusy) return
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault()
-                  onToggleTakeover()
-                }
-              }}
-            >
-              {takeoverBusy ? (
-                <Loader2 className="size-3.5 animate-spin" />
-              ) : (
-                <Switch
-                  size="sm"
-                  checked={session.takeover}
-                  tabIndex={-1}
-                  aria-hidden
-                  className="pointer-events-none"
-                />
-              )}
-              {tSession("takeover")}
-            </div>
-            <span className="mx-1 h-5 w-px bg-border" />
-            <Button
-              type="button"
-              size="icon"
-              aria-label={showInterrupt ? tSession("interrupt") : tSession("send")}
-              className={cn("size-8 rounded-full", showInterrupt && "bg-destructive text-destructive-foreground hover:bg-destructive/90")}
-              disabled={showInterrupt ? !connectorOnline : !canSend || !hasInput}
-              onClick={showInterrupt ? onInterrupt : submit}
-            >
-              {sending ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : showInterrupt ? (
-                <Square className="size-4" />
-              ) : (
-                <ArrowUp className="size-4" />
-              )}
-            </Button>
-          </div>
-        </div>
-        {runtimeSettingsError ? (
-          <div className="text-xs text-destructive">{runtimeSettingsError}</div>
-        ) : null}
-      </div>
-    </div>
-  )
-}
-
-function MarkdownText({
-  text,
-  token,
-  session,
-  inverted,
-}: {
-  text: string
-  token?: string
-  session?: SessionView
-  inverted?: boolean
-}) {
-  return (
-    <div
-      className={cn(
-        "space-y-3 text-sm leading-relaxed [&_a]:underline [&_blockquote]:border-l [&_blockquote]:pl-3 [&_code]:font-mono [&_code]:text-[0.92em] [&_li]:ml-5 [&_ol]:list-decimal [&_pre]:m-0 [&_ul]:list-disc",
-        inverted
-          ? "[&_pre]:border-primary-foreground/15"
-          : "[&_pre]:border-border",
-      )}
-    >
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          code({ className, children, ...props }) {
-            const match = /language-(\w+)/.exec(className ?? "")
-            const code = String(children).replace(/\n$/, "")
-            if (!match) {
-              const previewPath = typeof children === "string" ? parseInlineFileRef(children) : null
-              if (previewPath && token && session) {
-                return (
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    className="inline-flex max-w-full items-baseline gap-0.5 rounded-none bg-transparent p-0 align-baseline font-mono text-[0.92em] text-inherit underline underline-offset-2 hover:text-foreground"
-                    onClick={() => openSessionFilePreview(token, session, previewPath)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") openSessionFilePreview(token, session, previewPath)
-                    }}
-                  >
-                    <span className="min-w-0 truncate">{children}</span>
-                    <ExternalLink className="relative -top-0.5 size-3 shrink-0" />
-                  </span>
-                )
-              }
-              return (
-                <code
-                  className={cn(
-                    className,
-                    "rounded-md bg-secondary px-1.5 py-0.5 text-secondary-foreground",
-                  )}
-                  {...props}
-                >
-                  {children}
-                </code>
-              )
-            }
-            return <MarkdownCodeBlock code={code} language={match[1] ?? "text"} />
-          },
-          a({ href, children, node: _node, ...props }) {
-            const childText = textFromReactChildren(children)
-            const path = href && isMarkdownFilePath(href)
-              ? stripLineSuffix(href)
-              : parseInlineFileRef(childText)
-            if (!path || !token || !session) {
-              return (
-                <a href={href} target="_blank" rel="noreferrer" {...props}>
-                  {children}
-                </a>
-              )
-            }
-            return (
-              <span
-                role="button"
-                tabIndex={0}
-                className="inline-flex max-w-full items-baseline gap-0.5 align-baseline text-left underline underline-offset-2 hover:text-foreground"
-                onClick={() => openSessionFilePreview(token, session, path)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") openSessionFilePreview(token, session, path)
-                }}
-              >
-                <span className="min-w-0 truncate">{children}</span>
-                <ExternalLink className="relative -top-0.5 size-3 shrink-0" />
-              </span>
-            )
-          },
-        }}
-      >
-        {text}
-      </ReactMarkdown>
-    </div>
-  )
-}
-
-function MarkdownCodeBlock({ code, language }: { code: string; language: string }) {
-  const tSession = useTranslations("dashboard.session")
-  const [copied, setCopied] = React.useState(false)
-  return (
-    <div className="my-3 min-w-0 max-w-full overflow-hidden rounded-xl border border-border bg-background">
-      <div className="flex h-9 items-center justify-between border-b bg-muted/25 px-3">
-        <span className="font-mono text-xs text-muted-foreground">{language || "text"}</span>
-        <button
-          type="button"
-          className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-          onClick={() => {
-            navigator.clipboard.writeText(code).catch(() => undefined)
-            setCopied(true)
-            setTimeout(() => setCopied(false), 1200)
-          }}
-          aria-label={tSession("copyCode")}
-        >
-          {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-        </button>
-      </div>
-      <ScrollArea contentWide className="max-h-96 min-w-0 max-w-full overflow-hidden">
-        <pre className="w-max min-w-full p-3 font-mono text-xs leading-relaxed">
-          <code>{highlightCode(code, language)}</code>
-        </pre>
-        <ScrollBar orientation="horizontal" />
-      </ScrollArea>
-    </div>
-  )
-}
-
-function stripLineSuffix(path: string) {
-  return path.replace(/:\d+(?::\d+)?$/, "")
-}
-
-function parseInlineFileRef(text: string): string | null {
-  if (!text || text.includes(" ") || text.includes("://")) return null
-  if (!text.includes("/")) return null
-  if (!/\.[a-zA-Z0-9]+(?::\d+(?::\d+)?)?$/.test(text)) return null
-  return stripLineSuffix(text)
-}
-
-function textFromReactChildren(children: React.ReactNode): string {
-  if (typeof children === "string" || typeof children === "number") return String(children)
-  if (Array.isArray(children)) return children.map(textFromReactChildren).join("")
-  return ""
-}
-
-function isMarkdownFilePath(href: string): boolean {
-  if (!href) return false
-  if (
-    href.startsWith("http://") ||
-    href.startsWith("https://") ||
-    href.startsWith("mailto:") ||
-    href.startsWith("#") ||
-    href.startsWith("//")
-  ) {
-    return false
-  }
-  return true
-}
-
-function openSessionFilePreview(token: string, session: SessionView, path: string) {
-  openNativeFilePreviewWindow({
-    token,
-    connectorId: session.connectorId,
-    root: session.cwd || ".",
-    file: { name: fileNameFromPath(path), path },
-  })
-}
-
-function fileNameFromPath(path: string) {
-  const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "")
-  return normalized.split("/").pop() || path
-}
-
-function ToolDetailPanel({
-  command,
-  output,
-  changes,
-  fallback,
-}: {
-  command: string | null
-  output: string | null
-  changes: Array<Record<string, unknown>>
-  fallback: unknown
-}) {
-  const hasContent = Boolean(command || output || changes.length > 0)
-  if (!hasContent) return <JsonBlock value={fallback} />
-  return (
-    <div className="min-w-0 max-w-full overflow-hidden rounded-xl border border-border bg-background">
-      {command ? <CodePanel label="command" code={command} language="bash" flush /> : null}
-      {changes.length > 0 ? (
-        <div className={cn(command && "border-t")}>
-          {changes.map((change, index) => (
-            <FileChangeRow change={change} key={`${textOf(change.path) ?? "change"}-${index}`} />
-          ))}
-        </div>
-      ) : null}
-      {output ? (
-        <div className={cn((command || changes.length > 0) && "border-t")}>
-          <CodePanel label="output" code={output} language="text" flush />
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
-function CodePanel({ label, code, language, flush }: { label: string; code: string; language: string; flush?: boolean }) {
-  const [copied, setCopied] = React.useState(false)
-  return (
-    <div className={cn("min-w-0 max-w-full overflow-hidden bg-background", !flush && "rounded-xl border border-border")}>
-      <div className="flex h-9 items-center justify-between border-b bg-muted/25 px-3">
-        <span className="font-mono text-xs text-muted-foreground">{label}</span>
-        <button
-          type="button"
-          className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-          onClick={() => {
-            navigator.clipboard.writeText(code).catch(() => undefined)
-            setCopied(true)
-            setTimeout(() => setCopied(false), 1200)
-          }}
-        >
-          {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-        </button>
-      </div>
-      <ScrollArea contentWide className="max-h-80 min-w-0 max-w-full overflow-hidden">
-        <pre className="w-max min-w-full p-3 font-mono text-xs leading-relaxed text-foreground">
-          <code>{highlightCode(code, language)}</code>
-        </pre>
-        <ScrollBar orientation="horizontal" />
-      </ScrollArea>
-    </div>
-  )
-}
-
-function JsonBlock({ value }: { value: unknown }) {
-  return <CodePanel label="json" code={JSON.stringify(value, null, 2)} language="json" />
-}
-
-function FileChangeRow({ change }: { change: Record<string, unknown> }) {
-  const path = textOf(change.path) ?? "unknown path"
-  const diff = textOf(change.diff)
-  return (
-    <div className="min-w-0 max-w-full overflow-hidden border-b last:border-b-0">
-      <div className="flex h-9 items-center gap-2 bg-muted/20 px-3 text-sm">
-        <FilePenLine className="size-4 text-muted-foreground" />
-        <span className="min-w-0 truncate font-mono text-xs">{path}</span>
-      </div>
-      {diff ? <CodePanel label="diff" code={diff} language="diff" flush /> : null}
-    </div>
-  )
-}
-
-function ToolIcon({ kind, status }: { kind: string; status: TimelineItem["status"] }) {
-  const className = cn("size-4", status === "failed" ? "text-destructive" : "text-muted-foreground")
-  if (kind === "command") return <TerminalSquare className={className} />
-  if (kind === "file_change") return <FilePenLine className={className} />
-  if (status === "running") return <Loader2 className={cn(className, "animate-spin")} />
-  return <Hammer className={className} />
-}
-
-function TimelineStatusBadge({ status }: { status: TimelineItem["status"] }) {
-  const variant = status === "failed" ? "destructive" : "secondary"
-  return (
-    <Badge variant={variant} className="h-5 text-[11px] font-normal">
-      {status}
-    </Badge>
-  )
-}
-
-function SessionSkeleton() {
-  return (
-    <div className="mx-auto w-full max-w-3xl space-y-4 px-6 py-8">
-      <SessionSkeletonInline />
-    </div>
-  )
-}
-
-function SessionSkeletonInline() {
-  return (
-    <>
-      <Skeleton className="h-20 w-2/3" />
-      <Skeleton className="ml-auto h-16 w-1/2" />
-      <Skeleton className="h-32 w-full" />
-    </>
-  )
-}
-
-function messageText(item: TimelineItem): string {
-  return (
-    textOf(item.content.text) ||
-    textOf(item.content.content) ||
-    textOf(item.content.message) ||
-    textOf(item.content.rawText) ||
-    ""
-  )
-}
-
-function runtimeLabel(runtime: string): string {
-  return runtime.slice(0, 1).toUpperCase() + runtime.slice(1)
-}
-
-function textOf(value: unknown): string | null {
-  return typeof value === "string" ? value : null
-}
-
-function commandText(value: unknown): string | null {
-  if (typeof value === "string") return value
-  if (Array.isArray(value)) return value.map((part) => String(part)).join(" ")
-  return null
-}
-
-function stringSetting(value: unknown): string {
-  return typeof value === "string" ? value : ""
-}
-
-function recordsOf(value: unknown): Array<Record<string, unknown>> {
-  if (!Array.isArray(value)) return []
-  return value.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
 }
 
 function mergeSessionState(

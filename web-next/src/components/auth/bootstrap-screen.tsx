@@ -47,7 +47,7 @@ export function BootstrapScreen() {
               onChange={(event) => setSetupToken(event.currentTarget.value)}
               placeholder={t("bootstrap.tokenPlaceholder")}
               spellCheck={false}
-              className="font-mono"
+              className="code-mono"
             />
           </InputGroup>
           <p className="text-xs text-muted-foreground">{t("bootstrap.setupHint")}</p>
@@ -64,7 +64,7 @@ export function BootstrapScreen() {
               placeholder={t("bootstrap.userPlaceholder")}
               autoComplete="username"
               spellCheck={false}
-              className="font-mono"
+              className="code-mono"
             />
           </InputGroup>
         </div>
@@ -81,7 +81,7 @@ export function BootstrapScreen() {
               placeholder={t("login.passwordPlaceholder")}
               autoComplete="new-password"
               spellCheck={false}
-              className="font-mono"
+              className="code-mono"
             />
             <InputGroupAddon align="inline-end">
               <InputGroupButton onClick={() => setShowPassword((v) => !v)} aria-label={showPassword ? t("actions.hidePassword") : t("actions.showPassword")}>
@@ -106,7 +106,7 @@ export function BootstrapScreen() {
               placeholder={t("register.confirmPlaceholder")}
               autoComplete="new-password"
               spellCheck={false}
-              className="font-mono"
+              className="code-mono"
             />
           </InputGroup>
         </div>

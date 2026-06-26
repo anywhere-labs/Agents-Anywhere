@@ -228,7 +228,7 @@ export function AttachmentPreviewList({ attachments, onRemove }: AttachmentPrevi
             <FileText className="size-3.5 shrink-0 text-muted-foreground" />
           )}
           <span className="truncate">{file.name}</span>
-          <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
+          <span className="shrink-0 code-mono text-[10px] text-muted-foreground">
             {formatBytes(file.size)}
           </span>
           <button

@@ -82,7 +82,7 @@ Native mobile clients are in development. Today, you can also use the Web consol
 - **Remote shell and terminal.** Run one-shot shell commands, shell tasks, and interactive terminals.
 - **Device pairing.** Start from a Web-generated token command or from `uvx anywhere-cli pair` with a pairing code.
 - **Self-hosted backend.** The FastAPI backend supports SQLite for local development and PostgreSQL for production-style deployments.
-- **Web console.** React + Vite frontend for auth, devices, workspaces, runtime settings, team/admin management, and session detail.
+- **Web console.** Next.js + shadcn frontend for auth, devices, workspaces, runtime settings, team/admin management, and session detail.
 
 ## Supported Agents And Runtimes
 
@@ -172,7 +172,8 @@ Repository layout:
 ```text
 server/      FastAPI backend, SQLite/PostgreSQL storage, Connector RPC broker
 connector/   Local daemon and CLI for Codex / Claude runtime integration
-web/         React + Vite frontend
+web-next/    Next.js + shadcn Web console
+web/         Legacy React + Vite frontend kept as a fallback/reference
 docker/      Development, production, and PostgreSQL compose deployment files
 docs/        Shared reference notes
 ```
@@ -181,18 +182,18 @@ Package-specific docs:
 
 - [Server](server/README.md)
 - [Connector](connector/README.md)
-- [Web](web/README.md)
+- [Web Next](web-next/)
 - [Docker](docker/README.md)
 
 ## Quickstart: Run The Full App With Docker
 
-Run the development container from the repository root. It starts the FastAPI backend and Vite frontend in one container, and publishes only the Vite port:
+Run the development container from the repository root. It starts the FastAPI backend and the Next.js Web console in one container, and publishes only the Next dev port:
 
 ```bash
 docker build -f docker/Dockerfile.dev -t agents-anywhere:dev . \
   && docker run --rm -it \
     --name agents-anywhere-dev \
-    -p 5173:5173 \
+    -p 5174:5174 \
     -v agents-anywhere-dev-data:/data \
     agents-anywhere:dev
 ```
@@ -200,7 +201,7 @@ docker build -f docker/Dockerfile.dev -t agents-anywhere:dev . \
 Open:
 
 ```text
-http://127.0.0.1:5173
+http://127.0.0.1:5174
 ```
 
 The first startup on an empty database logs a bootstrap token. Use it in the Web UI to create the first admin user.
@@ -216,18 +217,18 @@ AGENT_SERVER_DB=agent-server.sqlite3 \
   uv run uvicorn agent_server.app:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
-The frontend uses React + Vite. Use `yarn`:
+The frontend uses Next.js + shadcn. Use `yarn`:
 
 ```bash
-cd web
+cd web-next
 yarn install
 yarn dev
 ```
 
-Vite listens on `127.0.0.1:5173` and proxies API / WebSocket requests to `http://127.0.0.1:8000` by default. Override the backend target when needed:
+Next listens on `127.0.0.1:5174` and rewrites API / WebSocket requests to `http://127.0.0.1:8000` by default. Override the backend target when needed:
 
 ```bash
-cd web
+cd web-next
 AGENTS_ANYWHERE_API=http://127.0.0.1:8000 yarn dev
 ```
 
@@ -305,24 +306,37 @@ CLAUDE_BIN=/path/to/claude
 
 ## Self-Host: Production-Style Deployment
 
-### Single-Container SQLite
+### Docker SQLite
 
-The production-style image builds the frontend, serves it from FastAPI, and persists database/file data under `/data`:
+The production-style Docker setup now runs the FastAPI API and the Next.js Web console as separate containers. Build the server and web images, then run them on a shared Docker network:
 
 ```bash
-docker build -f docker/Dockerfile -t agents-anywhere:latest . \
-  && docker run --rm -it \
-    --name agents-anywhere \
-    -p 8000:8000 \
-    -v agents-anywhere-data:/data \
-    -e AGENT_SERVER_SECRET=change-me-before-production \
-    agents-anywhere:latest
+docker network create agents-anywhere-net
+
+docker build -f docker/Dockerfile --target server -t agents-anywhere-server:latest .
+docker build -f docker/Dockerfile --target web-next \
+  --build-arg AGENTS_ANYWHERE_API=http://agents-anywhere-server:8000 \
+  -t agents-anywhere-web-next:latest .
+
+docker run -d \
+  --name agents-anywhere-server \
+  --network agents-anywhere-net \
+  -v agents-anywhere-data:/data \
+  -e AGENT_SERVER_SECRET=change-me-before-production \
+  agents-anywhere-server:latest
+
+docker run --rm -it \
+  --name agents-anywhere-web \
+  --network agents-anywhere-net \
+  -p 5174:5174 \
+  -e AGENTS_ANYWHERE_API=http://agents-anywhere-server:8000 \
+  agents-anywhere-web-next:latest
 ```
 
 Open:
 
 ```text
-http://127.0.0.1:8000
+http://127.0.0.1:5174
 ```
 
 ### PostgreSQL Compose
@@ -343,14 +357,14 @@ docker compose -f docker/docker-compose.postgres.yml build \
   server
 ```
 
-The compose file runs PostgreSQL and the production-style server image:
+The compose file runs PostgreSQL, the FastAPI server image, and the Next.js Web console image:
 
-- Backend and frontend are available on port `8000` by default.
-- Set `AGENTS_ANYWHERE_PORT=18000` to publish the service on another host port.
+- Web console is available on port `5174` by default.
+- The backend is internal to the compose network as `http://server:8000`.
+- Set `AGENTS_ANYWHERE_WEB_PORT=18000` to publish the Web console on another host port.
 - PostgreSQL data uses the `agents-anywhere-pg` volume.
 - Uploads and attachments use a persistent volume mounted at `/data`.
-- The backend serves the built web UI from `/app/web-dist`, including root assets
-  such as `/site.webmanifest`.
+- The Next.js Web container rewrites API and WebSocket traffic to the backend.
 
 For production, change at least `AGENT_SERVER_SECRET` and the database password, and put HTTPS in front of the service.
 
@@ -369,8 +383,14 @@ Server:
 | `AGENT_SERVER_FILES_S3_PREFIX` | Optional S3 key prefix. |
 | `AGENT_SERVER_FILES_S3_ENDPOINT_URL` | Optional S3-compatible endpoint URL. |
 | `AGENT_SERVER_SECRET` | Server secret for signed auth tokens. Required in production. |
-| `AGENT_SERVER_STATIC_DIR` | Frontend build output directory. When set, the backend serves the Web UI. |
 | `AGENT_SERVER_CORS_ORIGINS` | Explicit allowed CORS origins. |
+
+Web:
+
+| Variable | Purpose |
+| --- | --- |
+| `AGENTS_ANYWHERE_API` | Backend API base URL used by Next rewrites. Defaults to `http://127.0.0.1:8000` locally and is set to `http://server:8000` in Docker compose. |
+| `NEXT_PUBLIC_AGENTS_ANYWHERE_API` | Public copy exposed by Next for browser-generated server URLs. Normally derived from `AGENTS_ANYWHERE_API` in `next.config.ts`. |
 
 Connector:
 
@@ -395,7 +415,7 @@ cd ../connector
 uv run ruff check connector tests
 uv run pytest -q
 
-cd ../web
+cd ../web-next
 yarn build
 ```
 

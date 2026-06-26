@@ -35,6 +35,7 @@ type AuthState = {
   navigate: (screen: AuthScreen) => void
   login: (input: { userId: string; password: string }) => Promise<void>
   register: (input: { userId: string; password: string; setupToken?: string }) => Promise<void>
+  refreshMe: () => Promise<AuthMe | null>
   signOut: () => void
 }
 
@@ -201,6 +202,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [finishAuth, t],
   )
 
+  const refreshMe = React.useCallback(async () => {
+    if (!session?.accessToken) {
+      setMe(null)
+      return null
+    }
+    const currentUser = await authApi.me(session.accessToken)
+    setMe(currentUser)
+    return currentUser
+  }, [session?.accessToken])
+
   const signOut = React.useCallback(() => {
     clearStoredSession()
     setSession(null)
@@ -226,6 +237,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         login,
         register,
+        refreshMe,
         signOut,
       }}
     >

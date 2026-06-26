@@ -41,7 +41,7 @@ export function OAuthNewUserScreen() {
             id="oauth-userid"
             value={oauthUsername}
             onChange={(e) => setOauthUsername(e.target.value)}
-            className="font-mono h-11"
+            className="code-mono h-11"
           />
         </div>
 
@@ -67,7 +67,7 @@ export function OAuthNewUserScreen() {
                 placeholder={t("register.passwordPlaceholder")}
                 value={password}
                 onChange={(e) => setPassword2(e.target.value)}
-                className="font-mono"
+                className="code-mono"
               />
             </InputGroup>
           </div>

@@ -12,6 +12,12 @@ web/.yarn/
 web/.pnp.cjs
 web/.pnp.loader.mjs
 web/tsconfig.tsbuildinfo
+web-next/.next/
+web-next/.yarn/
+web-next/.pnp.cjs
+web-next/.pnp.loader.mjs
+web-next/tsconfig.tsbuildinfo
+desktop-next/
 server/*.sqlite
 server/*.sqlite3
 server/*.db

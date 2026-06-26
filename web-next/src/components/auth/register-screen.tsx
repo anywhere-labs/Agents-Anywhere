@@ -46,7 +46,7 @@ export function RegisterScreen() {
               placeholder={t("login.userPlaceholder")}
               autoComplete="username"
               spellCheck={false}
-              className="font-mono"
+              className="code-mono"
             />
           </InputGroup>
         </div>
@@ -63,7 +63,7 @@ export function RegisterScreen() {
               placeholder={t("register.passwordPlaceholder")}
               autoComplete="new-password"
               spellCheck={false}
-              className="font-mono"
+              className="code-mono"
             />
             <InputGroupAddon align="inline-end">
               <InputGroupButton onClick={() => setShowPassword((v) => !v)} aria-label={showPassword ? t("actions.hidePassword") : t("actions.showPassword")}>
@@ -88,7 +88,7 @@ export function RegisterScreen() {
               placeholder={t("register.confirmPlaceholder")}
               autoComplete="new-password"
               spellCheck={false}
-              className="font-mono"
+              className="code-mono"
             />
           </InputGroup>
         </div>

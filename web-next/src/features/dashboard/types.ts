@@ -287,6 +287,7 @@ export type FsReadFileResult = {
   name: string;
   size: number;
   sha256: string;
+  mediaType?: string;
   transferId: string;
   token: string;
   downloadUrl: string;
@@ -427,6 +428,19 @@ export type AgentCatalogEntry = {
 export type AgentCatalogResponse = {
   runtime: string;
   entries: AgentCatalogEntry[];
+  serverTime: string;
+};
+
+export type UserAgentDefaultRuntime = {
+  runtime: string;
+  enabled: boolean;
+  settings: Record<string, unknown>;
+  models: AgentCatalogEntry[];
+  efforts: AgentCatalogEntry[];
+};
+
+export type UserAgentDefaultsResponse = {
+  runtimes: Record<string, UserAgentDefaultRuntime>;
   serverTime: string;
 };
 

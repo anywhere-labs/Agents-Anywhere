@@ -77,17 +77,25 @@ curl http://127.0.0.1:8000/health
   messages, interrupt, sync, filesystem, shell, terminal, and uploads.
 - `/approvals/*`: approval resolution.
 
-## Static Frontend Serving
+## Web Frontend
 
-For production-style serving, build the frontend and point the server at the
-build output:
+The current Web console lives in `../web-next` and runs as a Next.js app. In
+development, start the FastAPI server on `127.0.0.1:8000`, then start Next:
 
 ```bash
-cd ../web
-yarn build
+cd ../web-next
+AGENTS_ANYWHERE_API=http://127.0.0.1:8000 yarn dev
+```
 
-cd ../server
-AGENT_SERVER_STATIC_DIR=../web/dist \
+For production, run the `web-next` Next server separately and set
+`AGENTS_ANYWHERE_API` to the backend URL. Docker uses `http://server:8000`.
+
+Legacy static serving is still available for old built frontends by setting
+`AGENT_SERVER_STATIC_DIR`, but it is no longer the primary deployment path for
+`web-next`.
+
+```bash
+AGENT_SERVER_STATIC_DIR=/path/to/legacy/dist \
   uv run uvicorn agent_server.app:create_app --factory --host 127.0.0.1 --port 8000
 ```
 

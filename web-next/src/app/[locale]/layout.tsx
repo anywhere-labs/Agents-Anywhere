@@ -6,6 +6,7 @@ import type { Metadata } from "next";
 import "../globals.css";
 import { routing } from "@/i18n/routing";
 import { ThemeProvider } from "@/components/theme-provider";
+import { ToasterProvider } from "@/components/toaster-provider";
 
 const sans = Geist({
   subsets: ["latin"],
@@ -60,7 +61,7 @@ export default async function LocaleLayout({
     <html lang={locale} suppressHydrationWarning>
       <body className={`${sans.variable} ${mono.variable} ${serif.variable} ${brand.variable} antialiased`}>
         <NextIntlClientProvider messages={messages}>
-          <ThemeProvider defaultTheme="dark">{children}</ThemeProvider>
+          <ThemeProvider defaultTheme="dark">{children}<ToasterProvider /></ThemeProvider>
         </NextIntlClientProvider>
       </body>
     </html>

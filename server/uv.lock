@@ -35,7 +35,7 @@ requires-dist = [
     { name = "claude-agent-sdk" },
     { name = "fastapi", specifier = ">=0.136.1" },
     { name = "httpx", specifier = ">=0.28.1" },
-    { name = "httpx-s3-client", git = "https://gitlab.t4wefan.pub/t4wefan/httpx-s3-client.git" },
+    { name = "httpx-s3-client", git = "https://github.com/t4wefan/httpx-s3-client.git" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "python-multipart", specifier = ">=0.0.20" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.36" },
@@ -462,7 +462,7 @@ wheels = [
 [[package]]
 name = "httpx-s3-client"
 version = "0.1.0"
-source = { git = "https://gitlab.t4wefan.pub/t4wefan/httpx-s3-client.git#9fb9c04a6ea93d8c4fa8b0269a7eaf670b4b3c47" }
+source = { git = "https://github.com/t4wefan/httpx-s3-client.git#2a7fe15c74a2f9d1cd38b0ef48b1faa9b61952b3" }
 dependencies = [
     { name = "aiofiles" },
     { name = "black" },

@@ -26,6 +26,12 @@ export type AuthMe = {
   serverTime: string;
 };
 
+export type ChangePasswordRequest = {
+  newPassword?: string;
+  newPasswordVerifier?: string;
+  newPasswordSalt?: string;
+};
+
 export type AuthCredentials = {
   userId: string;
   password?: string;
@@ -111,4 +117,25 @@ export type StoredSession = {
   accessToken: string;
   userId: string;
   role: UserRole;
+};
+
+// ─── Mobile sign-in ──────────────────────────────────────────────
+
+export type MobileLoginStatus = "pending_scan" | "pending_web_confirm" | "approved" | "rejected" | "expired" | "consumed";
+
+export type MobileLoginQrCreateResponse = {
+  userId: string;
+  loginToken: string;
+  expiresAt: string;
+  serverTime: string;
+};
+
+export type MobileLoginStatusResponse = {
+  status: MobileLoginStatus;
+  userId: string | null;
+  deviceName: string | null;
+  expiresAt: string | null;
+  requestedAt: string | null;
+  approvedAt: string | null;
+  serverTime: string;
 };

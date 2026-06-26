@@ -565,7 +565,7 @@ export function DevicePage() {
 
   if (loading || !connector) {
     return (
-      <LoadingState className="flex-1" />
+      <LoadingState className="h-full" />
     )
   }
 
@@ -716,7 +716,7 @@ export function DevicePage() {
   }
 
   return (
-    <ScrollArea className="flex-1">
+    <ScrollArea className="h-full min-h-0 w-full">
       <div className="mx-auto w-full max-w-3xl px-6 py-8">
 
         {/* Header */}

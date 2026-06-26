@@ -1,134 +1,127 @@
-import type { ReactNode } from "react";
-import { cpp } from "@codemirror/lang-cpp";
-import { css } from "@codemirror/lang-css";
-import { html } from "@codemirror/lang-html";
-import { java } from "@codemirror/lang-java";
-import { javascript } from "@codemirror/lang-javascript";
-import { json } from "@codemirror/lang-json";
-import { markdown } from "@codemirror/lang-markdown";
-import { php } from "@codemirror/lang-php";
-import { python } from "@codemirror/lang-python";
-import { sql, MySQL, PostgreSQL, SQLite } from "@codemirror/lang-sql";
-import { xml } from "@codemirror/lang-xml";
-import { yaml } from "@codemirror/lang-yaml";
-import { StreamLanguage, type Language, type LanguageSupport } from "@codemirror/language";
-import { shell } from "@codemirror/legacy-modes/mode/shell";
-import { toml } from "@codemirror/legacy-modes/mode/toml";
-import { highlightTree, tagHighlighter, tags as t } from "@lezer/highlight";
+import type { ReactNode } from "react"
+import hljs from "highlight.js/lib/core"
+import bash from "highlight.js/lib/languages/bash"
+import cpp from "highlight.js/lib/languages/cpp"
+import csharp from "highlight.js/lib/languages/csharp"
+import css from "highlight.js/lib/languages/css"
+import diff from "highlight.js/lib/languages/diff"
+import dart from "highlight.js/lib/languages/dart"
+import dockerfile from "highlight.js/lib/languages/dockerfile"
+import go from "highlight.js/lib/languages/go"
+import graphql from "highlight.js/lib/languages/graphql"
+import ini from "highlight.js/lib/languages/ini"
+import java from "highlight.js/lib/languages/java"
+import javascript from "highlight.js/lib/languages/javascript"
+import json from "highlight.js/lib/languages/json"
+import kotlin from "highlight.js/lib/languages/kotlin"
+import lua from "highlight.js/lib/languages/lua"
+import makefile from "highlight.js/lib/languages/makefile"
+import markdown from "highlight.js/lib/languages/markdown"
+import nginx from "highlight.js/lib/languages/nginx"
+import objectivec from "highlight.js/lib/languages/objectivec"
+import php from "highlight.js/lib/languages/php"
+import plaintext from "highlight.js/lib/languages/plaintext"
+import powershell from "highlight.js/lib/languages/powershell"
+import properties from "highlight.js/lib/languages/properties"
+import python from "highlight.js/lib/languages/python"
+import r from "highlight.js/lib/languages/r"
+import ruby from "highlight.js/lib/languages/ruby"
+import rust from "highlight.js/lib/languages/rust"
+import shell from "highlight.js/lib/languages/shell"
+import sql from "highlight.js/lib/languages/sql"
+import swift from "highlight.js/lib/languages/swift"
+import typescript from "highlight.js/lib/languages/typescript"
+import xml from "highlight.js/lib/languages/xml"
+import yaml from "highlight.js/lib/languages/yaml"
 
-type Segment = {
-  from: number;
-  to: number;
-  classes: string;
-};
+const languageAliases: Record<string, string> = {
+  c: "cpp",
+  cc: "cpp",
+  cjs: "javascript",
+  conf: "nginx",
+  cs: "csharp",
+  csx: "csharp",
+  docker: "dockerfile",
+  h: "cpp",
+  hpp: "cpp",
+  html: "xml",
+  js: "javascript",
+  jsx: "javascript",
+  kt: "kotlin",
+  kts: "kotlin",
+  m: "objectivec",
+  make: "makefile",
+  md: "markdown",
+  mk: "makefile",
+  mm: "objectivec",
+  mjs: "javascript",
+  ps1: "powershell",
+  py: "python",
+  rb: "ruby",
+  rs: "rust",
+  sh: "bash",
+  text: "plaintext",
+  ts: "typescript",
+  tsx: "typescript",
+  gql: "graphql",
+  yml: "yaml",
+  zsh: "bash",
+}
 
-const codeHighlighter = tagHighlighter([
-  { tag: [t.keyword, t.controlKeyword, t.definitionKeyword, t.modifier], class: "cm-aa-keyword" },
-  { tag: [t.string, t.special(t.string), t.regexp], class: "cm-aa-string" },
-  { tag: [t.number, t.bool, t.null, t.atom], class: "cm-aa-literal" },
-  { tag: [t.comment, t.lineComment, t.blockComment], class: "cm-aa-comment" },
-  { tag: [t.function(t.variableName), t.function(t.propertyName), t.labelName], class: "cm-aa-function" },
-  { tag: [t.className, t.typeName, t.namespace], class: "cm-aa-type" },
-  { tag: [t.propertyName, t.attributeName], class: "cm-aa-property" },
-  { tag: [t.variableName, t.definition(t.variableName)], class: "cm-aa-variable" },
-  { tag: [t.operator, t.derefOperator, t.arithmeticOperator, t.logicOperator, t.compareOperator], class: "cm-aa-operator" },
-  { tag: [t.punctuation, t.separator, t.brace, t.squareBracket, t.paren], class: "cm-aa-punctuation" },
-  { tag: [t.heading, t.strong], class: "cm-aa-heading" },
-  { tag: [t.emphasis, t.link], class: "cm-aa-emphasis" },
-]);
+let registered = false
+
+function registerLanguages() {
+  if (registered) return
+  registered = true
+  hljs.registerLanguage("bash", bash)
+  hljs.registerLanguage("cpp", cpp)
+  hljs.registerLanguage("csharp", csharp)
+  hljs.registerLanguage("css", css)
+  hljs.registerLanguage("dart", dart)
+  hljs.registerLanguage("diff", diff)
+  hljs.registerLanguage("dockerfile", dockerfile)
+  hljs.registerLanguage("go", go)
+  hljs.registerLanguage("graphql", graphql)
+  hljs.registerLanguage("ini", ini)
+  hljs.registerLanguage("java", java)
+  hljs.registerLanguage("javascript", javascript)
+  hljs.registerLanguage("json", json)
+  hljs.registerLanguage("kotlin", kotlin)
+  hljs.registerLanguage("lua", lua)
+  hljs.registerLanguage("makefile", makefile)
+  hljs.registerLanguage("markdown", markdown)
+  hljs.registerLanguage("nginx", nginx)
+  hljs.registerLanguage("objectivec", objectivec)
+  hljs.registerLanguage("php", php)
+  hljs.registerLanguage("plaintext", plaintext)
+  hljs.registerLanguage("powershell", powershell)
+  hljs.registerLanguage("properties", properties)
+  hljs.registerLanguage("python", python)
+  hljs.registerLanguage("r", r)
+  hljs.registerLanguage("ruby", ruby)
+  hljs.registerLanguage("rust", rust)
+  hljs.registerLanguage("shell", shell)
+  hljs.registerLanguage("sql", sql)
+  hljs.registerLanguage("swift", swift)
+  hljs.registerLanguage("typescript", typescript)
+  hljs.registerLanguage("xml", xml)
+  hljs.registerLanguage("yaml", yaml)
+}
 
 export function highlightCode(code: string, language: string): ReactNode {
-  const parser = languageParser(language);
-  if (!parser) return code;
+  registerLanguages()
+  const normalized = normalizeLanguage(language)
   try {
-    const tree = parser.parser.parse(code);
-    const segments: Segment[] = [];
-    highlightTree(tree, codeHighlighter, (from, to, classes) => {
-      if (classes) segments.push({ from, to, classes });
-    });
-    if (segments.length === 0) return code;
-    const out: ReactNode[] = [];
-    let pos = 0;
-    segments.forEach((segment, index) => {
-      if (segment.from > pos) out.push(code.slice(pos, segment.from));
-      out.push(
-        <span className={segment.classes} key={`${segment.from}-${segment.to}-${index}`}>
-          {code.slice(segment.from, segment.to)}
-        </span>,
-      );
-      pos = segment.to;
-    });
-    if (pos < code.length) out.push(code.slice(pos));
-    return out;
+    const highlighted = hljs.getLanguage(normalized)
+      ? hljs.highlight(code, { language: normalized, ignoreIllegals: true }).value
+      : hljs.highlight(code, { language: "plaintext", ignoreIllegals: true }).value
+    return <span dangerouslySetInnerHTML={{ __html: highlighted }} />
   } catch {
-    return code;
+    return code
   }
 }
 
-function languageParser(language: string): Language | StreamLanguage<unknown> | null {
-  const support = languageSupport(language);
-  if (!support) return null;
-  return support instanceof StreamLanguage ? support : support.language;
-}
-
-function languageSupport(language: string): LanguageSupport | StreamLanguage<unknown> | null {
-  const lang = language.toLowerCase();
-  switch (lang) {
-    case "js":
-    case "jsx":
-    case "javascript":
-      return javascript({ jsx: true });
-    case "ts":
-    case "tsx":
-    case "typescript":
-      return javascript({ jsx: true, typescript: true });
-    case "json":
-    case "jsonc":
-      return json();
-    case "py":
-    case "python":
-      return python();
-    case "html":
-    case "xml":
-      return lang === "xml" ? xml() : html();
-    case "css":
-    case "scss":
-    case "sass":
-      return css();
-    case "md":
-    case "markdown":
-      return markdown();
-    case "yaml":
-    case "yml":
-      return yaml();
-    case "sql":
-      return sql();
-    case "mysql":
-      return sql({ dialect: MySQL });
-    case "postgres":
-    case "postgresql":
-      return sql({ dialect: PostgreSQL });
-    case "sqlite":
-      return sql({ dialect: SQLite });
-    case "java":
-      return java();
-    case "c":
-    case "cc":
-    case "cpp":
-    case "c++":
-    case "h":
-    case "hpp":
-      return cpp();
-    case "php":
-      return php();
-    case "bash":
-    case "shell":
-    case "sh":
-    case "zsh":
-      return StreamLanguage.define(shell);
-    case "toml":
-      return StreamLanguage.define(toml);
-    default:
-      return null;
-  }
+function normalizeLanguage(language: string) {
+  const key = language.trim().toLowerCase()
+  return languageAliases[key] ?? key
 }
