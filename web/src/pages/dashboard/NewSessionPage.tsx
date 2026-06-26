@@ -407,6 +407,7 @@ export function NewSessionPage({
     runtime,
     runtimeFields.find((field) => field.key === "effort"),
     runtimeSettings?.model,
+    modelField,
   );
   const modelLabel = optionLabel(modelField, runtimeSettings?.model, "Model");
   const effortLabel = optionLabel(effortField, runtimeSettings?.effort, "Reasoning");

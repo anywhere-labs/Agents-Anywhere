@@ -597,6 +597,7 @@ class AgentCatalogEntry(BaseModel):
     description: str | None = None
     isDefault: bool
     sortOrder: int
+    efforts: list["AgentCatalogEntry"] = Field(default_factory=list)
 
 
 class AgentCatalogResponse(BaseModel):
@@ -610,7 +611,6 @@ class UserAgentDefaultRuntime(BaseModel):
     enabled: bool = True
     settings: dict[str, Any] = Field(default_factory=dict)
     models: list[AgentCatalogEntry] = Field(default_factory=list)
-    efforts: list[AgentCatalogEntry] = Field(default_factory=list)
 
 
 class UserAgentDefaultsResponse(BaseModel):
@@ -624,13 +624,11 @@ class AgentCatalogEntryUpdate(BaseModel):
     description: str | None = None
     isDefault: bool = False
     sortOrder: int = 0
+    efforts: list["AgentCatalogEntryUpdate"] | None = None
 
 
 class UserAgentDefaultRuntimeUpdate(BaseModel):
-    enabled: bool | None = None
-    settings: dict[str, Any] | None = None
     models: list[AgentCatalogEntryUpdate] | None = None
-    efforts: list[AgentCatalogEntryUpdate] | None = None
 
 
 class UserAgentDefaultsUpdateRequest(BaseModel):

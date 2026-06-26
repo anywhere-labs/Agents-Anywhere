@@ -52,6 +52,7 @@ export function RuntimeSettingsForm({
           key={field.key}
           runtime={runtime}
           field={field}
+          modelField={fields.find((item) => item.key === "model")}
           settings={settings}
           scope={scope}
           disabled={disabled || !settings}
@@ -91,6 +92,7 @@ export function optionLabel(
 function RuntimeSettingField({
   runtime,
   field,
+  modelField,
   settings,
   scope,
   disabled,
@@ -99,6 +101,7 @@ function RuntimeSettingField({
 }: {
   runtime: string;
   field: RuntimeConfigField;
+  modelField: RuntimeConfigField | undefined;
   settings: Record<string, unknown> | null;
   scope: "device" | "session";
   disabled: boolean;
@@ -107,7 +110,12 @@ function RuntimeSettingField({
 }) {
   const resolvedField =
     runtime === "claude" && field.key === "effort"
-      ? filterClaudeEffortField(runtime, field, settings?.model)
+      ? filterClaudeEffortField(
+          runtime,
+          field,
+          settings?.model,
+          modelField,
+        )
       : field;
   if (!resolvedField) return null;
   field = resolvedField;

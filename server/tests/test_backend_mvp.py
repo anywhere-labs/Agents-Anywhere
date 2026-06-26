@@ -1347,13 +1347,25 @@ def test_agent_catalog_lists_seeded_claude_entries(tmp_path):
     models = client.get("/agents/claude/models", headers=headers).json()
     model_keys = [entry["key"] for entry in models["entries"]]
     assert model_keys == [
+        "claude-opus-4-8",
+        "claude-opus-4-8[1M]",
         "claude-opus-4-7",
-        "claude-opus-4-7[1m]",
-        "claude-sonnet-4-6",
-        "claude-haiku-4-5",
+        "claude-opus-4-7[1M]",
         "claude-opus-4-6",
+        "claude-opus-4-6[1M]",
+        "claude-sonnet-4-6",
+        "claude-sonnet-4-6[1M]",
+        "claude-haiku-4-5",
     ]
-    assert next(e for e in models["entries"] if e["isDefault"])["key"] == "claude-opus-4-7"
+    assert next(e for e in models["entries"] if e["isDefault"])["key"] == "claude-opus-4-8"
+    assert [entry["key"] for entry in models["entries"][0]["efforts"]] == [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+    ]
+    assert models["entries"][-1]["efforts"] == []
 
     efforts = client.get("/agents/claude/efforts", headers=headers).json()
     effort_keys = [entry["key"] for entry in efforts["entries"]]

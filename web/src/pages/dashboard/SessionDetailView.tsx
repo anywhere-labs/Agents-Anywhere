@@ -2518,6 +2518,7 @@ function Composer({
     runtime,
     rawEffortField,
     runtimeSettings?.model,
+    modelField,
   );
   const selectorFields = [permissionField, modelField, effortField].filter(
     (field): field is RuntimeConfigField => Boolean(field),

@@ -21,8 +21,8 @@ class RuntimeSettingsRepository:
         connector_id: str,
         *,
         user_id: str | None = None,
-    ) -> None:
-        query = select(connectors_t.c.id).where(
+    ) -> str:
+        query = select(connectors_t.c.id, connectors_t.c.user_id).where(
             connectors_t.c.id == connector_id,
             connectors_t.c.revoked == 0,
         )
@@ -32,6 +32,7 @@ class RuntimeSettingsRepository:
             row = (await conn.execute(query)).first()
         if row is None:
             raise KeyError(connector_id)
+        return str(row.user_id)
 
     async def get_device_settings_json(
         self,
@@ -121,6 +122,7 @@ class RuntimeSettingsRepository:
                 sessions_t.c.connector_id,
                 sessions_t.c.runtime,
                 sessions_t.c.runtime_settings_override,
+                connectors_t.c.user_id.label("connector_user_id"),
             )
             .join(connectors_t, connectors_t.c.id == sessions_t.c.connector_id)
             .where(sessions_t.c.id == session_id, connectors_t.c.revoked == 0)

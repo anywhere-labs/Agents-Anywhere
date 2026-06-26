@@ -20,24 +20,6 @@ const RUNTIMES = [
   { key: "claude", label: "Claude" },
 ] as const;
 
-const CODEX_PERMISSION_OPTIONS = [
-  { value: "ask", label: "Ask for approval" },
-  { value: "auto", label: "Approve for me" },
-  { value: "fullAccess", label: "Full access" },
-];
-
-const CLAUDE_PERMISSION_OPTIONS = [
-  { value: "default", label: "Ask permissions" },
-  { value: "acceptEdits", label: "Accept edits" },
-  { value: "plan", label: "Plan mode" },
-  { value: "bypassPermissions", label: "Bypass permissions" },
-];
-
-const CLAUDE_RUN_MODE_OPTIONS = [
-  { value: "chat", label: "Chat" },
-  { value: "terminal", label: "Terminal" },
-];
-
 export function AgentDefaultsPanel({ token }: Props) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [serverDraft, setServerDraft] = useState<Draft | null>(null);
@@ -68,30 +50,18 @@ export function AgentDefaultsPanel({ token }: Props) {
     [draft, serverDraft],
   );
 
-  const updateRuntime = (
-    runtime: string,
-    patch: Partial<UserAgentDefaultRuntime>,
-  ) => {
+  const updateModels = (runtime: string, models: AgentCatalogEntry[]) => {
     setDraft((prev) => {
       if (!prev?.[runtime]) return prev;
       return {
         ...prev,
         [runtime]: {
           ...prev[runtime],
-          ...patch,
-          settings: patch.settings
-            ? { ...prev[runtime].settings, ...patch.settings }
-            : prev[runtime].settings,
+          models: normalizeDefaultEntry(models),
         },
       };
     });
   };
-
-  const updateCatalog = (
-    runtime: string,
-    kind: "models" | "efforts",
-    entries: AgentCatalogEntry[],
-  ) => updateRuntime(runtime, { [kind]: normalizeDefaultEntry(entries) });
 
   const save = async () => {
     if (!draft || saving) return;
@@ -103,10 +73,7 @@ export function AgentDefaultsPanel({ token }: Props) {
           Object.entries(draft).map(([runtime, item]) => [
             runtime,
             {
-              enabled: item.enabled,
-              settings: item.settings,
               models: toCatalogUpdate(item.models),
-              efforts: toCatalogUpdate(item.efforts),
             },
           ]),
         ),
@@ -138,6 +105,18 @@ export function AgentDefaultsPanel({ token }: Props) {
 
   return (
     <div className="aa-settings-stack">
+      <div className="aa-agent-defaults-toolbar">
+        <div>
+          <h3>Agent models</h3>
+          <span>Configure available model IDs and the effort IDs each model supports.</span>
+        </div>
+        <button type="button" onClick={save} disabled={!dirty || saving}>
+          {saving ? "Saving..." : "Save changes"}
+        </button>
+      </div>
+
+      {error && <div className="aa-agent-defaults-error">{error}</div>}
+
       {RUNTIMES.map((runtime) => {
         const item = draft[runtime.key];
         if (!item) return null;
@@ -145,122 +124,27 @@ export function AgentDefaultsPanel({ token }: Props) {
           <div className="aa-srv-card aa-agent-default-card" key={runtime.key}>
             <div className="hd">
               <h3>{runtime.label}</h3>
-              <label className="aa-srv-switch aa-agent-runtime-switch">
-                <input
-                  type="checkbox"
-                  checked={item.enabled}
-                  onChange={(event) =>
-                    updateRuntime(runtime.key, { enabled: event.target.checked })
-                  }
-                />
-                <span className="track" />
-                <span className="knob" />
-              </label>
             </div>
             <div className="body aa-agent-defaults-body">
-              {runtime.key === "claude" && (
-                <AgentSelect
-                  label="Default run mode"
-                  value={stringSetting(item.settings.runMode, "chat")}
-                  options={CLAUDE_RUN_MODE_OPTIONS}
-                  onChange={(value) =>
-                    updateRuntime(runtime.key, { settings: { runMode: value } })
-                  }
-                />
-              )}
-              <AgentSelect
-                label="Permission mode"
-                value={stringSetting(
-                  item.settings.permissionMode,
-                  runtime.key === "codex" ? "ask" : "acceptEdits",
-                )}
-                options={
-                  runtime.key === "codex"
-                    ? CODEX_PERMISSION_OPTIONS
-                    : CLAUDE_PERMISSION_OPTIONS
-                }
-                onChange={(value) =>
-                  updateRuntime(runtime.key, { settings: { permissionMode: value } })
-                }
-              />
-              <AgentSelect
-                label="Default model"
-                value={stringSetting(item.settings.model, item.models[0]?.key ?? "")}
-                options={item.models.map((entry) => ({
-                  value: entry.key,
-                  label: entry.displayLabel,
-                }))}
-                onChange={(value) =>
-                  updateRuntime(runtime.key, { settings: { model: value || null } })
-                }
-              />
-              <AgentSelect
-                label="Effort"
-                value={stringSetting(item.settings.effort, item.efforts[0]?.key ?? "")}
-                options={item.efforts.map((entry) => ({
-                  value: entry.key,
-                  label: entry.displayLabel,
-                }))}
-                onChange={(value) =>
-                  updateRuntime(runtime.key, { settings: { effort: value || null } })
-                }
-              />
-              <CatalogEditor
-                title="Models"
+              <ModelCatalogEditor
+                runtime={runtime.key}
                 entries={item.models}
-                onChange={(entries) => updateCatalog(runtime.key, "models", entries)}
-              />
-              <CatalogEditor
-                title="Efforts"
-                entries={item.efforts}
-                onChange={(entries) => updateCatalog(runtime.key, "efforts", entries)}
+                onChange={(entries) => updateModels(runtime.key, entries)}
               />
             </div>
           </div>
         );
       })}
-
-      <div className="aa-agent-defaults-actions">
-        {error && <span className="aa-agent-defaults-error">{error}</span>}
-        <button type="button" onClick={save} disabled={!dirty || saving}>
-          {saving ? "Saving..." : "Save changes"}
-        </button>
-      </div>
     </div>
   );
 }
 
-function AgentSelect({
-  label,
-  value,
-  options,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  options: Array<{ value: string; label: string }>;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <label className="aa-agent-field">
-      <span>{label}</span>
-      <select value={value} onChange={(event) => onChange(event.target.value)}>
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-function CatalogEditor({
-  title,
+function ModelCatalogEditor({
+  runtime,
   entries,
   onChange,
 }: {
-  title: string;
+  runtime: string;
   entries: AgentCatalogEntry[];
   onChange: (entries: AgentCatalogEntry[]) => void;
 }) {
@@ -275,12 +159,13 @@ function CatalogEditor({
     onChange([
       ...entries,
       {
-        runtime: entries[0]?.runtime ?? "codex",
-        key: `custom-${next}`,
-        displayLabel: `Custom ${next}`,
+        runtime,
+        key: `custom-model-${next}`,
+        displayLabel: `Custom model ${next}`,
         description: null,
         isDefault: entries.length === 0,
         sortOrder: next,
+        efforts: [],
       },
     ]);
   };
@@ -288,40 +173,45 @@ function CatalogEditor({
   return (
     <div className="aa-agent-catalog">
       <div className="aa-agent-catalog-head">
-        <span>{title}</span>
+        <span>Models</span>
         <button type="button" onClick={add}>
           <Icons.Plus size={13} />
-          Add
+          Add model
         </button>
       </div>
       <div className="aa-agent-catalog-list">
         {entries.map((entry, index) => (
-          <div className="aa-agent-catalog-row" key={`${entry.key}-${index}`}>
-            <input
-              value={entry.key}
-              aria-label={`${title} key`}
-              onChange={(event) => update(index, { key: event.target.value })}
-            />
-            <input
-              value={entry.displayLabel}
-              aria-label={`${title} label`}
-              onChange={(event) =>
-                update(index, { displayLabel: event.target.value })
-              }
-            />
-            <label className="aa-agent-default-radio">
-              <input
-                type="radio"
-                checked={entry.isDefault}
-                onChange={() =>
-                  onChange(entries.map((item, i) => ({ ...item, isDefault: i === index })))
-                }
+          <div className="aa-agent-model-card" key={`${entry.key}-${index}`}>
+            <div className="aa-agent-catalog-row aa-agent-model-row">
+              <LabeledInput
+                label="Model ID"
+                value={entry.key}
+                onChange={(value) => update(index, { key: value })}
               />
-              Default
-            </label>
-            <button type="button" className="aa-agent-icon-btn" onClick={() => remove(index)}>
-              <Icons.Trash size={13} />
-            </button>
+              <LabeledInput
+                label="Display label"
+                value={entry.displayLabel}
+                onChange={(value) => update(index, { displayLabel: value })}
+              />
+              <label className="aa-agent-default-radio">
+                <input
+                  type="radio"
+                  checked={entry.isDefault}
+                  onChange={() =>
+                    onChange(entries.map((item, i) => ({ ...item, isDefault: i === index })))
+                  }
+                />
+                Default model
+              </label>
+              <button type="button" className="aa-agent-icon-btn" onClick={() => remove(index)}>
+                <Icons.Trash size={13} />
+              </button>
+            </div>
+            <EffortCatalogEditor
+              runtime={runtime}
+              model={entry}
+              onChange={(efforts) => update(index, { efforts })}
+            />
           </div>
         ))}
       </div>
@@ -329,10 +219,110 @@ function CatalogEditor({
   );
 }
 
+function EffortCatalogEditor({
+  runtime,
+  model,
+  onChange,
+}: {
+  runtime: string;
+  model: AgentCatalogEntry;
+  onChange: (entries: AgentCatalogEntry[]) => void;
+}) {
+  const efforts = model.efforts ?? [];
+  const update = (index: number, patch: Partial<AgentCatalogEntry>) => {
+    onChange(efforts.map((entry, i) => (i === index ? { ...entry, ...patch } : entry)));
+  };
+  const remove = (index: number) => {
+    onChange(efforts.filter((_, i) => i !== index));
+  };
+  const add = () => {
+    const next = efforts.length + 1;
+    onChange([
+      ...efforts,
+      {
+        runtime,
+        key: `custom-effort-${next}`,
+        displayLabel: `Custom effort ${next}`,
+        description: null,
+        isDefault: efforts.length === 0,
+        sortOrder: next,
+        efforts: [],
+      },
+    ]);
+  };
+
+  return (
+    <div className="aa-agent-efforts">
+      <div className="aa-agent-efforts-head">
+        <span>Efforts for {model.displayLabel || model.key}</span>
+        <button type="button" onClick={add}>
+          <Icons.Plus size={13} />
+          Add effort
+        </button>
+      </div>
+      {efforts.length === 0 ? (
+        <div className="aa-agent-efforts-empty">No effort selector for this model.</div>
+      ) : (
+        <div className="aa-agent-efforts-list">
+          {efforts.map((entry, index) => (
+            <div className="aa-agent-catalog-row aa-agent-effort-row" key={`${entry.key}-${index}`}>
+              <LabeledInput
+                label="Effort ID"
+                value={entry.key}
+                onChange={(value) => update(index, { key: value })}
+              />
+              <LabeledInput
+                label="Display label"
+                value={entry.displayLabel}
+                onChange={(value) => update(index, { displayLabel: value })}
+              />
+              <label className="aa-agent-default-radio">
+                <input
+                  type="radio"
+                  checked={entry.isDefault}
+                  onChange={() =>
+                    onChange(efforts.map((item, i) => ({ ...item, isDefault: i === index })))
+                  }
+                />
+                Default effort
+              </label>
+              <button type="button" className="aa-agent-icon-btn" onClick={() => remove(index)}>
+                <Icons.Trash size={13} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LabeledInput({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="aa-agent-inline-field">
+      <span>{label}</span>
+      <input value={value} onChange={(event) => onChange(event.target.value)} />
+    </label>
+  );
+}
+
 function normalizeDefaultEntry(entries: AgentCatalogEntry[]): AgentCatalogEntry[] {
   if (entries.length === 0) return entries;
-  if (entries.some((entry) => entry.isDefault)) return entries;
-  return entries.map((entry, index) => ({ ...entry, isDefault: index === 0 }));
+  const normalized = entries.some((entry) => entry.isDefault)
+    ? entries
+    : entries.map((entry, index) => ({ ...entry, isDefault: index === 0 }));
+  return normalized.map((entry) => ({
+    ...entry,
+    efforts: normalizeDefaultEntry(entry.efforts ?? []),
+  }));
 }
 
 function toCatalogUpdate(entries: AgentCatalogEntry[]): AgentCatalogEntryUpdate[] {
@@ -342,9 +332,6 @@ function toCatalogUpdate(entries: AgentCatalogEntry[]): AgentCatalogEntryUpdate[
     description: entry.description,
     isDefault: entry.isDefault,
     sortOrder: entry.sortOrder || index + 1,
+    efforts: toCatalogUpdate(entry.efforts ?? []),
   }));
-}
-
-function stringSetting(value: unknown, fallback: string): string {
-  return typeof value === "string" ? value : fallback;
 }

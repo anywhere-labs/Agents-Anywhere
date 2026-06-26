@@ -81,7 +81,6 @@ user_agent_defaults = Table(
     Column("enabled", Integer, nullable=False),
     Column("settings_json", Text, nullable=False),
     Column("models_json", Text, nullable=False),
-    Column("efforts_json", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
     PrimaryKeyConstraint("user_id", "runtime"),
 )

@@ -104,38 +104,38 @@ def test_user_agent_defaults_customize_schema_and_new_connectors(tmp_path):
         json={
             "runtimes": {
                 "codex": {
-                    "enabled": False,
-                    "settings": {"permissionMode": "auto", "model": "gpt-custom"},
                     "models": [
                         {
                             "key": "gpt-custom",
                             "displayLabel": "GPT Custom",
                             "isDefault": True,
                             "sortOrder": 1,
+                            "efforts": [
+                                {
+                                    "key": "custom-effort",
+                                    "displayLabel": "Custom Effort",
+                                    "isDefault": True,
+                                    "sortOrder": 1,
+                                }
+                            ],
                         }
                     ],
                 },
                 "claude": {
-                    "settings": {
-                        "runMode": "terminal",
-                        "permissionMode": "plan",
-                        "model": "claude-custom",
-                        "effort": "high",
-                    },
                     "models": [
                         {
                             "key": "claude-custom",
                             "displayLabel": "Claude Custom",
                             "isDefault": True,
                             "sortOrder": 1,
-                        }
-                    ],
-                    "efforts": [
-                        {
-                            "key": "high",
-                            "displayLabel": "High",
-                            "isDefault": True,
-                            "sortOrder": 1,
+                            "efforts": [
+                                {
+                                    "key": "high",
+                                    "displayLabel": "High",
+                                    "isDefault": True,
+                                    "sortOrder": 1,
+                                }
+                            ],
                         }
                     ],
                 },
@@ -144,16 +144,18 @@ def test_user_agent_defaults_customize_schema_and_new_connectors(tmp_path):
     )
     assert updated.status_code == 200, updated.text
     body = updated.json()["runtimes"]
-    assert body["codex"]["enabled"] is False
-    assert body["codex"]["settings"]["permissionMode"] == "auto"
+    assert body["codex"]["enabled"] is True
+    assert body["codex"]["settings"]["permissionMode"] == "ask"
     assert body["codex"]["models"][0]["key"] == "gpt-custom"
+    assert body["codex"]["models"][0]["efforts"][0]["key"] == "custom-effort"
 
     schema = client.get("/agents/codex/config-schema", headers=headers)
     assert schema.status_code == 200, schema.text
     fields = {field["key"]: field for field in schema.json()["schema"]["fields"]}
-    assert fields["model"]["options"] == [
-        {"value": "gpt-custom", "label": "GPT Custom", "description": None}
-    ]
+    assert fields["model"]["options"][0]["value"] == "gpt-custom"
+    assert fields["model"]["options"][0]["label"] == "GPT Custom"
+    assert fields["model"]["options"][0]["efforts"][0]["value"] == "custom-effort"
+    assert fields["model"]["options"][0]["efforts"][0]["label"] == "Custom Effort"
 
     connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
     assert connector_response.status_code == 200, connector_response.text
@@ -164,26 +166,22 @@ def test_user_agent_defaults_customize_schema_and_new_connectors(tmp_path):
         headers=headers,
     )
     assert codex_settings.status_code == 200, codex_settings.text
-    assert codex_settings.json()["settings"]["permissionMode"] == "auto"
-    assert codex_settings.json()["settings"]["model"] == "gpt-custom"
+    assert codex_settings.json()["settings"]["permissionMode"] == "ask"
+    assert codex_settings.json()["settings"]["model"] is None
 
     claude_settings = client.get(
         f"/connectors/{connector_id}/agents/claude/settings",
         headers=headers,
     )
     assert claude_settings.status_code == 200, claude_settings.text
-    assert claude_settings.json()["settings"]["runMode"] == "terminal"
-    assert claude_settings.json()["settings"]["permissionMode"] == "plan"
+    assert claude_settings.json()["settings"]["runMode"] == "chat"
+    assert claude_settings.json()["settings"]["permissionMode"] == "acceptEdits"
 
 
 def test_first_discovery_respects_user_agent_default_enabled(tmp_path):
     client = make_client(tmp_path)
     headers = auth_headers(client)
-    disabled = client.patch(
-        "/agents/defaults",
-        headers=headers,
-        json={"runtimes": {"codex": {"enabled": False}, "claude": {"enabled": True}}},
-    )
+    disabled = client.patch("/agents/defaults", headers=headers, json={"runtimes": {"codex": {}}})
     assert disabled.status_code == 200, disabled.text
     connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
     connector_id = connector_response.json()["connector"]["id"]
@@ -209,7 +207,7 @@ def test_first_discovery_respects_user_agent_default_enabled(tmp_path):
     )
 
     assert "claude" in state["attached"]
-    assert "codex" not in state["attached"]
+    assert "codex" in state["attached"]
     assert "codex" not in state["disabled"]
 
 
@@ -332,6 +330,57 @@ def test_claude_effort_options_are_constrained_by_model(tmp_path):
         json={"settings": {"effort": "low"}},
     )
     assert haiku_bad.status_code == 422
+
+
+def test_custom_model_efforts_drive_runtime_settings_validation(tmp_path):
+    client = make_client(tmp_path)
+    headers = auth_headers(client)
+    defaults = client.patch(
+        "/agents/defaults",
+        headers=headers,
+        json={
+            "runtimes": {
+                "codex": {
+                    "models": [
+                        {
+                            "key": "gpt-third-party",
+                            "displayLabel": "GPT Third Party",
+                            "isDefault": True,
+                            "sortOrder": 1,
+                            "efforts": [
+                                {
+                                    "key": "balanced",
+                                    "displayLabel": "Balanced",
+                                    "isDefault": True,
+                                    "sortOrder": 1,
+                                }
+                            ],
+                        }
+                    ],
+                }
+            }
+        },
+    )
+    assert defaults.status_code == 200, defaults.text
+
+    connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
+    connector_id = connector_response.json()["connector"]["id"]
+
+    ok = client.patch(
+        f"/connectors/{connector_id}/agents/codex/settings",
+        headers=headers,
+        json={"settings": {"model": "gpt-third-party", "effort": "balanced"}},
+    )
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["settings"]["model"] == "gpt-third-party"
+    assert ok.json()["settings"]["effort"] == "balanced"
+
+    bad = client.patch(
+        f"/connectors/{connector_id}/agents/codex/settings",
+        headers=headers,
+        json={"settings": {"effort": "high"}},
+    )
+    assert bad.status_code == 422
 
 
 def test_session_runtime_settings_override_respects_schema(tmp_path):

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from copy import deepcopy
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -14,7 +13,10 @@ from agent_server.core.models import (
     UserAgentDefaultsUpdateRequest,
     UserAgentDefaultRuntime,
 )
-from agent_server.core.runtime_config import RuntimeConfigOption, RuntimeConfigSchemaResponse
+from agent_server.core.runtime_config import (
+    RuntimeConfigSchemaResponse,
+    schema_with_user_agent_defaults,
+)
 from agent_server.services.runtime_config import RuntimeConfigService
 from agent_server.infra.repositories.facade import Store
 from agent_server.core.utc import utc_now
@@ -100,10 +102,10 @@ async def list_agent_efforts(
 ) -> AgentCatalogResponse:
     defaults = await db.get_user_agent_defaults(user_id)
     runtime_defaults = defaults.get(runtime)
-    if runtime_defaults and runtime_defaults.get("efforts"):
+    if runtime_defaults and runtime_defaults.get("models"):
         return AgentCatalogResponse(
             runtime=runtime,
-            entries=runtime_defaults["efforts"],
+            entries=_efforts_from_models(runtime_defaults["models"]),
             serverTime=utc_now(),
         )
     return AgentCatalogResponse(
@@ -123,7 +125,7 @@ async def get_runtime_config_schema(
     try:
         schema = await runtime_config.get_runtime_config_schema(runtime)
         defaults = await db.get_user_agent_defaults(user_id)
-        schema = _schema_with_user_catalog(schema, defaults.get(runtime))
+        schema = schema_with_user_agent_defaults(schema, defaults.get(runtime))
     except KeyError:
         raise HTTPException(status_code=500, detail=f"runtime config schema missing: {runtime}") from None
     except ValueError as exc:
@@ -142,30 +144,18 @@ def _agent_defaults_response(raw: dict[str, Any]) -> dict[str, UserAgentDefaultR
             enabled=item["enabled"],
             settings=item["settings"],
             models=item["models"],
-            efforts=item["efforts"],
         )
         for runtime, item in raw.items()
     }
 
 
-def _schema_with_user_catalog(schema: Any, defaults: dict[str, Any] | None) -> Any:
-    if not defaults:
-        return schema
-    result = deepcopy(schema)
-    catalogs: dict[str, list[AgentCatalogEntry]] = {
-        "model": defaults.get("models") or [],
-        "effort": defaults.get("efforts") or [],
-    }
-    for field in result.fields:
-        entries = catalogs.get(field.key)
-        if not entries:
-            continue
-        field.options = [
-            RuntimeConfigOption(
-                value=entry.key,
-                label=entry.displayLabel,
-                description=entry.description,
-            )
-            for entry in entries
-        ]
+def _efforts_from_models(models: list[AgentCatalogEntry]) -> list[AgentCatalogEntry]:
+    result: list[AgentCatalogEntry] = []
+    seen: set[str] = set()
+    for model in models:
+        for effort in model.efforts:
+            if effort.key in seen:
+                continue
+            seen.add(effort.key)
+            result.append(effort.model_copy(update={"efforts": []}))
     return result

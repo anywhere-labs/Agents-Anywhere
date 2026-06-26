@@ -12,6 +12,18 @@ class RuntimeConfigRepositoryMixin:
         return await self.runtime_config.get_runtime_config_schema(runtime)
 
 
+    async def get_runtime_config_schema_for_user(
+        self,
+        runtime: str,
+        *,
+        user_id: str | None = None,
+    ) -> RuntimeConfigSchema:
+        return await self.runtime_config.get_runtime_config_schema_for_user(
+            runtime,
+            user_id=user_id,
+        )
+
+
     async def set_runtime_config_schema(
         self,
         runtime: str,
