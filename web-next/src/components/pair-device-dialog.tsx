@@ -134,6 +134,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
   const [polling, setPolling] = React.useState(false)
   const [exitGuardOpen, setExitGuardOpen] = React.useState(false)
   const pollingRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  const suppressCloseGuardRef = React.useRef(false)
   const serverUrl = React.useMemo(resolvePairingServerUrl, [])
 
   // Stable device-created guard: once connector exists, closing needs confirmation
@@ -193,12 +194,21 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
   }
 
   const handleOpenChange = (next: boolean) => {
+    if (!next && suppressCloseGuardRef.current) return
     if (!next && deviceCreated) {
       setExitGuardOpen(true)
       return
     }
     if (!next) reset()
     onOpenChange(next)
+  }
+
+  const continuePairing = () => {
+    suppressCloseGuardRef.current = true
+    setExitGuardOpen(false)
+    window.setTimeout(() => {
+      suppressCloseGuardRef.current = false
+    }, 0)
   }
 
   const handleCreate = async () => {
@@ -459,7 +469,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>{t("continuePairing")}</AlertDialogCancel>
+            <AlertDialogCancel onClick={continuePairing}>{t("continuePairing")}</AlertDialogCancel>
             <AlertDialogAction onClick={handleForceClose}>
               {t("closeAnyway")}
             </AlertDialogAction>
