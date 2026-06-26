@@ -45,6 +45,7 @@ export function RegisterScreen() {
               onChange={(event) => setUserId(event.currentTarget.value)}
               placeholder={t("login.userPlaceholder")}
               autoComplete="username"
+              spellCheck={false}
               className="font-mono"
             />
           </InputGroup>
@@ -61,6 +62,7 @@ export function RegisterScreen() {
               onChange={(event) => setPassword(event.currentTarget.value)}
               placeholder={t("register.passwordPlaceholder")}
               autoComplete="new-password"
+              spellCheck={false}
               className="font-mono"
             />
             <InputGroupAddon align="inline-end">
@@ -85,6 +87,7 @@ export function RegisterScreen() {
               }}
               placeholder={t("register.confirmPlaceholder")}
               autoComplete="new-password"
+              spellCheck={false}
               className="font-mono"
             />
           </InputGroup>

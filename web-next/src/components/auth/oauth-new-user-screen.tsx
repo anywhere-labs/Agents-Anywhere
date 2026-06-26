@@ -13,9 +13,10 @@ import { useAuth } from "./auth-context"
 import { useTranslations } from "next-intl"
 
 export function OAuthNewUserScreen() {
-  const { navigate, oauthUsername, setOauthUsername } = useAuth()
+  const { navigate } = useAuth()
   const t = useTranslations("auth")
   const [setPassword, setSetPassword] = useState(false)
+  const [oauthUsername, setOauthUsername] = useState("")
   const [password, setPassword2] = useState("")
 
   return (

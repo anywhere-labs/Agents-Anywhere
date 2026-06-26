@@ -14,7 +14,7 @@ import { useTranslations } from "next-intl"
 type Step = "confirm" | "verify" | "success"
 
 export function OAuthLinkExistingScreen() {
-  const { navigate, oauthProvider } = useAuth()
+  const { navigate, oauthProviderLabel } = useAuth()
   const t = useTranslations("auth")
   const tCommon = useTranslations("common")
   const [step, setStep] = useState<Step>("confirm")
@@ -31,7 +31,7 @@ export function OAuthLinkExistingScreen() {
           <div className="flex flex-col gap-2">
             <h1 className="text-2xl font-bold tracking-tight">{t("oauth.accountLinked")}</h1>
             <p className="text-sm text-muted-foreground leading-relaxed">
-              {t("oauth.accountLinkedDescription", { provider: oauthProvider })}
+              {t("oauth.accountLinkedDescription", { provider: oauthProviderLabel ?? "" })}
             </p>
           </div>
           <Button className="mt-4 h-11 w-full font-medium" onClick={() => navigate("app")}>
@@ -53,7 +53,7 @@ export function OAuthLinkExistingScreen() {
           <div className="flex flex-col gap-1">
             <h1 className="text-2xl font-bold tracking-tight">{t("oauth.verifyTitle")}</h1>
             <p className="text-sm text-muted-foreground">
-              {t("oauth.verifyDescription", { provider: oauthProvider })}
+              {t("oauth.verifyDescription", { provider: oauthProviderLabel ?? "" })}
             </p>
           </div>
         </div>
@@ -107,7 +107,7 @@ export function OAuthLinkExistingScreen() {
         <div className="flex flex-col gap-1">
           <h1 className="text-2xl font-bold tracking-tight">{t("oauth.matchTitle")}</h1>
           <p className="text-sm text-muted-foreground leading-relaxed">
-            {t("oauth.matchDescription", { provider: oauthProvider })}
+            {t("oauth.matchDescription", { provider: oauthProviderLabel ?? "" })}
           </p>
         </div>
       </div>

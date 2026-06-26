@@ -29,11 +29,10 @@ type AuthState = {
   loading: boolean
   error: string | null
   isAuthenticated: boolean
-  oauthProvider: string
-  oauthUsername: string
+  oauthEnabled: boolean
+  oauthProviderLabel: string | null
+  registrationOpen: boolean
   navigate: (screen: AuthScreen) => void
-  setOauthProvider: (p: string) => void
-  setOauthUsername: (u: string) => void
   login: (input: { userId: string; password: string }) => Promise<void>
   register: (input: { userId: string; password: string; setupToken?: string }) => Promise<void>
   signOut: () => void
@@ -95,8 +94,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [me, setMe] = React.useState<AuthMe | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
-  const [oauthProvider, setOauthProvider] = React.useState("GitLab")
-  const [oauthUsername, setOauthUsername] = React.useState("testoauth")
+  const [oauthEnabled, setOauthEnabled] = React.useState(false)
+  const [oauthProviderLabel, setOauthProviderLabel] = React.useState<string | null>(null)
+  const [registrationOpen, setRegistrationOpen] = React.useState(false)
 
   // On mount: set screen from the current hash, then listen for changes.
   React.useEffect(() => {
@@ -107,6 +107,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     async function boot() {
       try {
         const config = await authApi.config()
+        if (!cancelled) {
+          setOauthEnabled(config.oauthEnabled)
+          setOauthProviderLabel(config.oauthProviderLabel)
+          setRegistrationOpen(config.registrationOpen)
+        }
         if (config.needsBootstrap && !cancelled) {
           setScreenState("bootstrap")
           setLoading(false)
@@ -214,11 +219,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         loading,
         error,
         isAuthenticated: Boolean(session),
-        oauthProvider,
-        oauthUsername,
+        oauthEnabled,
+        oauthProviderLabel,
+        registrationOpen,
         navigate,
-        setOauthProvider,
-        setOauthUsername,
+
         login,
         register,
         signOut,
