@@ -37,6 +37,7 @@ CMD ["sh", "-c", "cd /app/server && uv run --no-sync uvicorn agent_server.app:cr
 FROM node:22-bookworm-slim AS web-next
 
 ARG AGENTS_ANYWHERE_API=http://server:8000
+ARG YARN_REGISTRY=
 
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
@@ -45,10 +46,12 @@ ENV NODE_ENV=production \
 WORKDIR /app/web-next
 
 COPY web-next/package.json web-next/yarn.lock ./
-RUN corepack enable && yarn install --immutable
+RUN corepack enable \
+    && if [ -n "$YARN_REGISTRY" ]; then yarn config set npmRegistryServer "$YARN_REGISTRY"; fi \
+    && yarn
 
 COPY web-next ./
-RUN yarn build
+RUN yarn && yarn build
 
 EXPOSE 5174
 CMD ["yarn", "start", "--hostname", "0.0.0.0", "--port", "5174"]
