@@ -1418,3 +1418,59 @@ async def _exercise_adapter_registers_client_message_id() -> None:
         and params["item"].get("role") == "user"
     ]
     assert user_items[-1]["source"]["clientMessageId"] == "opt_hello"
+
+def test_reducer_merges_live_reasoning_and_snapshot_into_single_item() -> None:
+    reducer = TimelineReducer()
+    reducer.bind_session("sess_1", "thr_1")
+
+    live = reducer.reduce_notification(
+        {
+            "method": "item/completed",
+            "params": {
+                "threadId": "thr_1",
+                "turnId": "turn_1",
+                "itemId": "item_real_reasoning",
+                "item": {
+                    "id": "item_real_reasoning",
+                    "type": "reasoning",
+                    "summary": [{"text": "thinking about stuff"}],
+                },
+            },
+        }
+    )
+    live_reasoning = [
+        item
+        for item in live.timeline_items
+        if item.get("type") == "system" and item.get("content", {}).get("kind") == "reasoning"
+    ]
+    assert len(live_reasoning) == 1
+    live_id = live_reasoning[0]["id"]
+
+    snapshot = reducer.reduce_thread_snapshot(
+        "sess_1",
+        {
+            "id": "thr_1",
+            "status": {"type": "idle"},
+            "turns": [
+                {
+                    "id": "turn_1",
+                    "status": "completed",
+                    "items": [
+                        {
+                            "id": "item-1",
+                            "type": "reasoning",
+                            "summary": [{"text": "thinking about stuff"}],
+                        },
+                    ],
+                }
+            ],
+        },
+    )
+    snapshot_reasoning = [
+        item
+        for item in snapshot.timeline_items
+        if item.get("type") == "system" and item.get("content", {}).get("kind") == "reasoning"
+    ]
+    assert len(snapshot_reasoning) == 1
+    assert snapshot_reasoning[0]["id"] == live_id
+    assert snapshot_reasoning[0]["source"]["derivedKey"] == "reasoning-0"

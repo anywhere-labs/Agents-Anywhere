@@ -33,6 +33,7 @@ class TimelineReducer:
         self._tool_kind_by_call: dict[str, str] = {}
         self._client_message_by_turn: dict[tuple[str, str | None, str], dict[str, Any]] = {}
         self._pending_client_messages: dict[tuple[str, str | None], list[dict[str, Any]]] = {}
+        self._reasoning_index_by_turn: dict[tuple[str, str], int] = {}
         self._next_order = 1
 
     def bind_session(self, session_id: str, thread_id: str) -> None:
@@ -111,6 +112,7 @@ class TimelineReducer:
             ]
             message_counts = _message_type_counts(turn_items)
             message_indices: dict[str, int] = {}
+            _reasoning_index_by_turn: dict[str | None, int] = {}
             if turn_id:
                 items.append(
                     self._upsert_turn_start(
@@ -126,6 +128,10 @@ class TimelineReducer:
                 item = dict(item)
                 item.setdefault("_snapshotIndex", index)
                 codex_type = _string_value(item.get("type"))
+                if codex_type == "reasoning":
+                    idx = _reasoning_index_by_turn.get(turn_id, 0)
+                    item["_reasoningTurnIndex"] = idx
+                    _reasoning_index_by_turn[turn_id] = idx + 1
                 if codex_type in {"userMessage", "agentMessage"}:
                     message_index = message_indices.get(codex_type, 0)
                     message_indices[codex_type] = message_index + 1
@@ -411,6 +417,11 @@ class TimelineReducer:
             role = "assistant"
             content = {"text": _message_text(item), "format": "markdown"}
         elif codex_type == "reasoning":
+            if derived_key is None and turn_id is not None:
+                key = (session_id, turn_id)
+                idx = self._reasoning_index_by_turn.get(key, 0)
+                self._reasoning_index_by_turn[key] = idx + 1
+                derived_key = f"reasoning-{idx}"
             role = "system"
             content = _reasoning_content(item)
         elif codex_type == "plan":
@@ -928,6 +939,11 @@ def _stable_item_key(item: dict[str, Any]) -> str | None:
         if item_id and not item_id.startswith("item-"):
             return None
         return _message_item_key(codex_type)
+    if codex_type == "reasoning":
+        idx = item.get("_reasoningTurnIndex")
+        if isinstance(idx, int):
+            return f"reasoning-{idx}"
+        return None
     item_id = _string_value(item.get("id"))
     if not item_id or not item_id.startswith("item-"):
         return None
