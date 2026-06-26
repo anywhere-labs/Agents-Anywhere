@@ -44,6 +44,7 @@
 .aa-rt-sep {
   min-width: 1px;
   height: 18px;
+  align-self: center;
   background: var(--sidebar-border);
 }
 
