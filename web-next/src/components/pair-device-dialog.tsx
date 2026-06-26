@@ -41,6 +41,32 @@ function randomName(): string {
   return `${adj}-${noun}`
 }
 
+function resolvePairingServerUrl(): string {
+  if (typeof window === "undefined") return ""
+  const { hostname, origin } = window.location
+  const isLocalDev = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1"
+  if (isLocalDev) {
+    const api = process.env.NEXT_PUBLIC_AGENTS_ANYWHERE_API
+    if (api) return api.replace(/\/$/, "")
+  }
+  return origin.replace(/\/$/, "")
+}
+
+function pairServerAddress(serverUrl: string): string {
+  try {
+    const url = new URL(serverUrl)
+    if (url.protocol === "https:") return url.host
+  } catch {
+    return serverUrl
+  }
+  return serverUrl
+}
+
+function shellQuote(value: string): string {
+  if (/^[A-Za-z0-9_./:=@%+-]+$/.test(value)) return value
+  return `'${value.replace(/'/g, "'\\''")}'`
+}
+
 // ── Types ──────────────────────────────────────────────────
 type Step = "name" | "method" | "token" | "paircode" | "success"
 
@@ -108,6 +134,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
   const [polling, setPolling] = React.useState(false)
   const [exitGuardOpen, setExitGuardOpen] = React.useState(false)
   const pollingRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  const serverUrl = React.useMemo(resolvePairingServerUrl, [])
 
   // Stable device-created guard: once connector exists, closing needs confirmation
   const deviceCreated = connectorId !== null && step !== "success"
@@ -175,33 +202,27 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
   }
 
   const handleCreate = async () => {
-    if (!name.trim()) return
-    setCreating(true)
-    setError(null)
-    try {
-      setStep("method")
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t("errors.prepareFailed"))
-    } finally {
-      setCreating(false)
-    }
-  }
-
-  const handleSelectToken = async () => {
-    if (!session?.accessToken) return
+    if (!name.trim() || !session?.accessToken) return
     setCreating(true)
     setError(null)
     try {
       const result = await dashboardApi.createConnector(session.accessToken, name.trim())
       setConnectorId(result.connector.id)
       setToken(result.connectorToken)
-      setStep("token")
-      startConnectorPolling(result.connector.id)
+      setName(result.connector.name)
+      setStep("method")
     } catch (err) {
       setError(err instanceof Error ? err.message : t("errors.createFailed"))
     } finally {
       setCreating(false)
     }
+  }
+
+  const handleSelectToken = () => {
+    if (!connectorId) return
+    setError(null)
+    setStep("token")
+    startConnectorPolling(connectorId)
   }
 
   const handleSelectPairCode = () => {
@@ -211,13 +232,16 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
 
   const handleClaim = async () => {
     const code = pairCode
-    if (code.length < 6 || !session?.accessToken) return
+    if (code.length < 6 || !session?.accessToken || !connectorId || !token) return
     setClaiming(true)
     setError(null)
     try {
       const result = await dashboardApi.claimPairing(session.accessToken, {
         code,
         name: name.trim(),
+        serverUrl,
+        connectorId,
+        connectorToken: token,
       })
       if (result.connector?.id) setConnectorId(result.connector.id)
       onConnectorCreated?.()
@@ -243,12 +267,16 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
     onConnectorCreated?.()
   }
 
-  // Build the pairing command from connectorId + token
   const tokenCommand = connectorId && token
-    ? `agents-anywhere-connector pair --id ${connectorId} --token ${token}`
+    ? [
+      "uvx anywhere-cli start",
+      `--server-url ${shellQuote(serverUrl)}`,
+      `--connector-id ${shellQuote(connectorId)}`,
+      `--connector-token ${shellQuote(token)}`,
+    ].join(" ")
     : ""
 
-  const pairCodeCommand = "agents-anywhere-connector pair"
+  const pairCodeCommand = `uvx anywhere-cli pair ${shellQuote(pairServerAddress(serverUrl))}`
 
   return (
     <>
