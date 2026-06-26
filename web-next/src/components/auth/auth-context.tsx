@@ -12,6 +12,7 @@ import type { AuthMe, StoredSession } from "@/features/auth/types"
 import { useTranslations } from "next-intl"
 
 export type AuthScreen =
+  | "bootstrap"
   | "login"
   | "register"
   | "oauth-new-user"
@@ -22,6 +23,7 @@ export type AuthScreen =
 
 type AuthState = {
   screen: AuthScreen
+  needsBootstrap: boolean
   session: StoredSession | null
   me: AuthMe | null
   loading: boolean
@@ -73,6 +75,7 @@ function hashToScreen(hash: string): AuthScreen {
 
 function screenToHash(s: AuthScreen): string {
   const map: Record<AuthScreen, string> = {
+    bootstrap: "#/bootstrap",
     login: "#/login",
     register: "#/register",
     "oauth-new-user": "#/oauth/new",
@@ -102,6 +105,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const nextScreen = hashToScreen(window.location.hash)
 
     async function boot() {
+      try {
+        const config = await authApi.config()
+        if (config.needsBootstrap && !cancelled) {
+          setScreenState("bootstrap")
+          setLoading(false)
+          return
+        }
+      } catch {
+        // Server unreachable — fall through to normal auth flow.
+      }
       if (!stored) {
         if (!cancelled) {
           setScreenState(nextScreen === "app" ? "login" : nextScreen)
@@ -195,6 +208,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     <AuthContext.Provider
       value={{
         screen,
+        needsBootstrap: screen === "bootstrap",
         session,
         me,
         loading,

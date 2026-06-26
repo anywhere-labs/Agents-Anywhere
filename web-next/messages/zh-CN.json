@@ -381,6 +381,7 @@
       "description": "全新安装。这里创建的账号会成为实例管理员。",
       "setupHint": "从服务器日志复制 setup-token 后继续。",
       "submit": "创建管理员并继续",
+      "submitting": "正在创建管理员…",
       "titlePrefix": "欢迎使用",
       "tokenPlaceholder": "粘贴服务器日志里的 token",
       "userPlaceholder": "例如 admin"

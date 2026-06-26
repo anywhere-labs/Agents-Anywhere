@@ -381,6 +381,7 @@
       "description": "Fresh install. The account you create here becomes the instance admin.",
       "setupHint": "Copy the setup-token from the server log to continue.",
       "submit": "Create admin & continue",
+      "submitting": "Creating admin…",
       "titlePrefix": "Welcome to",
       "tokenPlaceholder": "Paste the token from the server log",
       "userPlaceholder": "e.g. admin"
