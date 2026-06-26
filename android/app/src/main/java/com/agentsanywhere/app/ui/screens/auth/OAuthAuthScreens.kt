@@ -31,11 +31,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.agentsanywhere.app.R
 import com.agentsanywhere.app.api.ApiException
 import com.agentsanywhere.app.api.AuthApi
 import com.agentsanywhere.app.feature.auth.AuthController
@@ -56,8 +58,6 @@ import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Server
 import com.composables.icons.lucide.User
 import kotlinx.coroutines.launch
-
-private const val RegistrationClosedMessage = "OAuth registration is closed. Contact your administrator to enable it."
 
 @Composable
 fun OAuthSetupScreen(
@@ -101,9 +101,9 @@ fun OAuthSetupScreen(
                 .padding(top = 74.dp, bottom = 30.dp),
             verticalArrangement = Arrangement.spacedBy(30.dp),
         ) {
-            BackPill(label = "Back", onClick = navigateBack)
+            BackPill(label = stringResource(R.string.common_back), onClick = navigateBack)
             Text(
-                text = "Enter your server URL first",
+                text = stringResource(R.string.oauth_enter_server_url),
                 color = colors.ink,
                 fontSize = 24.sp,
                 fontWeight = FontWeight.Medium,
@@ -117,13 +117,13 @@ fun OAuthSetupScreen(
                 AuthInputRow(
                     value = state.serverUrl,
                     onValueChange = { state = state.copy(serverUrl = it, errorMessage = null) },
-                    placeholder = "Server URL",
+                    placeholder = stringResource(R.string.common_server_url),
                     icon = Lucide.Server,
                     enabled = !state.isSubmitting,
                 )
                 AuthContinueButton(
                     isLoading = state.isSubmitting,
-                    loadingLabel = "Opening OAuth...",
+                    loadingLabel = stringResource(R.string.oauth_opening),
                 ) {
                     val submitted = state.serverUrl
                     state = state.copy(isSubmitting = true, errorMessage = null)
@@ -136,9 +136,9 @@ fun OAuthSetupScreen(
                             runCatching { context.startActivity(intent) }
                                 .onFailure { error ->
                                     val message = if (error is ActivityNotFoundException) {
-                                        "No browser app is available to continue OAuth sign-in."
+                                        context.getString(R.string.oauth_no_browser)
                                     } else {
-                                        error.message ?: "Could not open OAuth sign-in."
+                                        error.message ?: context.getString(R.string.oauth_open_failed)
                                     }
                                     state = state.copy(isSubmitting = false, errorMessage = message)
                                 }
@@ -148,7 +148,7 @@ fun OAuthSetupScreen(
                         }.onFailure { error ->
                             state = state.copy(
                                 isSubmitting = false,
-                                errorMessage = error.message ?: "OAuth sign-in failed.",
+                                errorMessage = error.message ?: context.getString(R.string.oauth_sign_in_failed),
                             )
                         }
                     }
@@ -192,10 +192,10 @@ fun OAuthLinkExistingAccountScreen(
                 .padding(top = 74.dp, bottom = 30.dp),
             verticalArrangement = Arrangement.spacedBy(30.dp),
         ) {
-            BackPill(label = "Back", onClick = navigateBack)
+            BackPill(label = stringResource(R.string.common_back), onClick = navigateBack)
             OAuthPageHeader(
-                title = "Is this your account?",
-                subtitle = "OAuth matched an existing local account. Enter its password to link and sign in.",
+                title = stringResource(R.string.oauth_is_this_account),
+                subtitle = stringResource(R.string.oauth_existing_account_subtitle),
             )
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 MatchedAccountCard(userId = flowState.pending.suggestedUserId)
@@ -208,7 +208,7 @@ fun OAuthLinkExistingAccountScreen(
                         password = it
                         errorMessage = null
                     },
-                    placeholder = "Password",
+                    placeholder = stringResource(R.string.common_password),
                     icon = Lucide.LockKeyhole,
                     isPassword = true,
                     enabled = !isSubmitting,
@@ -216,8 +216,8 @@ fun OAuthLinkExistingAccountScreen(
                 Spacer(Modifier.height(10.dp))
                 AuthContinueButton(
                     isLoading = isSubmitting,
-                    label = "Link and sign in",
-                    loadingLabel = "Linking...",
+                    label = stringResource(R.string.oauth_link_and_sign_in),
+                    loadingLabel = stringResource(R.string.oauth_linking),
                 ) {
                     isSubmitting = true
                     errorMessage = null
@@ -232,12 +232,12 @@ fun OAuthLinkExistingAccountScreen(
                             navigate(AppDestination.Sessions)
                         }.onFailure { error ->
                             isSubmitting = false
-                            errorMessage = error.message ?: "OAuth sign-in failed."
+                            errorMessage = error.message ?: context.getString(R.string.oauth_sign_in_failed)
                         }
                     }
                 }
                 OAuthSecondaryButton(
-                    label = "Use another account",
+                    label = stringResource(R.string.oauth_use_another_account),
                     enabled = !isSubmitting,
                 ) {
                     isSubmitting = true
@@ -256,7 +256,7 @@ fun OAuthLinkExistingAccountScreen(
                             }
                             .onFailure { error ->
                                 isSubmitting = false
-                                errorMessage = error.message ?: "Could not check auth configuration."
+                                errorMessage = error.message ?: context.getString(R.string.auth_config_check_failed)
                             }
                     }
                 }
@@ -279,12 +279,12 @@ fun OAuthRegistrationClosedScreen(navigate: (AppDestination) -> Unit) {
                 .padding(top = 74.dp, bottom = 30.dp),
             verticalArrangement = Arrangement.spacedBy(30.dp),
         ) {
-            BackPill(label = "Back", onClick = navigateBack)
-            OAuthPageHeader(title = "Registration is closed")
-            AuthErrorNotice(message = RegistrationClosedMessage)
+            BackPill(label = stringResource(R.string.common_back), onClick = navigateBack)
+            OAuthPageHeader(title = stringResource(R.string.oauth_registration_is_closed))
+            AuthErrorNotice(message = stringResource(R.string.oauth_registration_closed_message))
             AuthContinueButton(
                 isLoading = false,
-                label = "Back to sign in",
+                label = stringResource(R.string.oauth_back_to_sign_in),
             ) {
                 navigate(AppDestination.LoginMethods)
             }
@@ -316,7 +316,7 @@ fun OAuthRegistrationClosedErrorScreen(
     OAuthCreateAccountFormScreen(
         navigate = navigate,
         flowState = flowState,
-        initialErrorMessage = RegistrationClosedMessage,
+        initialErrorMessage = stringResource(R.string.oauth_registration_closed_message),
         onRegistrationClosed = {},
     )
 }
@@ -358,10 +358,10 @@ private fun OAuthCreateAccountFormScreen(
                 .padding(top = 74.dp, bottom = 30.dp),
             verticalArrangement = Arrangement.spacedBy(30.dp),
         ) {
-            BackPill(label = "Back", onClick = navigateBack)
+            BackPill(label = stringResource(R.string.common_back), onClick = navigateBack)
             OAuthPageHeader(
-                title = "Create your account",
-                subtitle = "Confirm your user ID and set a password to finish OAuth sign-up.",
+                title = stringResource(R.string.auth_create_your_account),
+                subtitle = stringResource(R.string.oauth_create_account_subtitle),
             )
             errorMessage?.let { message ->
                 AuthErrorNotice(message = message)
@@ -373,7 +373,7 @@ private fun OAuthCreateAccountFormScreen(
                         userId = it.replace("\\s".toRegex(), "")
                         errorMessage = null
                     },
-                    placeholder = "User ID",
+                    placeholder = stringResource(R.string.common_user_id),
                     icon = Lucide.User,
                     enabled = !isSubmitting,
                 )
@@ -383,7 +383,7 @@ private fun OAuthCreateAccountFormScreen(
                         password = it
                         errorMessage = null
                     },
-                    placeholder = "Password",
+                    placeholder = stringResource(R.string.common_password),
                     icon = Lucide.LockKeyhole,
                     isPassword = true,
                     enabled = !isSubmitting,
@@ -394,21 +394,21 @@ private fun OAuthCreateAccountFormScreen(
                         confirmPassword = it
                         errorMessage = null
                     },
-                    placeholder = "Confirm password",
+                    placeholder = stringResource(R.string.auth_confirm_password),
                     icon = Lucide.LockKeyhole,
                     isPassword = true,
                     enabled = !isSubmitting,
                 )
                 AuthContinueButton(
                     isLoading = isSubmitting,
-                    label = "Create and sign in",
-                    loadingLabel = "Creating...",
+                    label = stringResource(R.string.auth_create_and_sign_in),
+                    loadingLabel = stringResource(R.string.common_creating),
                 ) {
                     val trimmedUserId = userId.trim()
                     when {
-                        trimmedUserId.isBlank() -> errorMessage = "Enter your User ID."
-                        password.isBlank() -> errorMessage = "Enter your password."
-                        password != confirmPassword -> errorMessage = "Passwords do not match."
+                        trimmedUserId.isBlank() -> errorMessage = context.getString(R.string.oauth_enter_user_id)
+                        password.isBlank() -> errorMessage = context.getString(R.string.oauth_enter_password)
+                        password != confirmPassword -> errorMessage = context.getString(R.string.auth_passwords_do_not_match)
                         else -> {
                             isSubmitting = true
                             errorMessage = null
@@ -425,9 +425,9 @@ private fun OAuthCreateAccountFormScreen(
                                     isSubmitting = false
                                     if ((error as? ApiException)?.statusCode == 403) {
                                         onRegistrationClosed(flowState)
-                                        errorMessage = RegistrationClosedMessage
+                                        errorMessage = context.getString(R.string.oauth_registration_closed_message)
                                     } else {
-                                        errorMessage = error.message ?: "OAuth sign-in failed."
+                                        errorMessage = error.message ?: context.getString(R.string.oauth_sign_in_failed)
                                     }
                                 }
                             }
@@ -453,12 +453,12 @@ private fun OAuthMissingSessionScreen(navigate: (AppDestination) -> Unit) {
                 .padding(top = 74.dp, bottom = 30.dp),
             verticalArrangement = Arrangement.spacedBy(30.dp),
         ) {
-            BackPill(label = "Back", onClick = navigateBack)
-            OAuthPageHeader(title = "OAuth session expired")
-            AuthErrorNotice(message = "Start OAuth sign-in again.")
+            BackPill(label = stringResource(R.string.common_back), onClick = navigateBack)
+            OAuthPageHeader(title = stringResource(R.string.oauth_session_expired))
+            AuthErrorNotice(message = stringResource(R.string.oauth_start_again))
             AuthContinueButton(
                 isLoading = false,
-                label = "Back to sign in",
+                label = stringResource(R.string.oauth_back_to_sign_in),
             ) {
                 navigate(AppDestination.LoginMethods)
             }
@@ -517,7 +517,7 @@ private fun MatchedAccountCard(userId: String) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "Matched profile",
+                text = stringResource(R.string.oauth_matched_profile),
                 color = colors.muted,
                 fontSize = 12.5.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -557,7 +557,7 @@ private fun MatchedAccountCard(userId: String) {
                     lineHeight = 21.sp,
                 )
                 Text(
-                    text = "Existing local account found",
+                    text = stringResource(R.string.oauth_existing_local_account),
                     color = colors.muted,
                     fontSize = 13.sp,
                     lineHeight = 16.sp,

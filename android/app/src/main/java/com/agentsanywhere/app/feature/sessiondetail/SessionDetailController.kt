@@ -1,7 +1,6 @@
 package com.agentsanywhere.app.feature.sessiondetail
 
 import com.agentsanywhere.app.api.ApiException
-import com.agentsanywhere.app.api.ConnectorsApi
 import com.agentsanywhere.app.api.RemoteApproval
 import com.agentsanywhere.app.api.RemoteRuntimeConfigField
 import com.agentsanywhere.app.api.RemoteRuntimeConfigOption
@@ -9,7 +8,6 @@ import com.agentsanywhere.app.api.RemoteRuntimeConfigSchema
 import com.agentsanywhere.app.api.RemoteRuntimeSettings
 import com.agentsanywhere.app.api.RemoteSession
 import com.agentsanywhere.app.api.RemoteSessionEvent
-import com.agentsanywhere.app.api.RemoteTerminal
 import com.agentsanywhere.app.api.RemoteTimelineItem
 import com.agentsanywhere.app.api.RemoteUploadedAttachment
 import com.agentsanywhere.app.api.SessionsApi
@@ -29,12 +27,10 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
-import java.net.URLEncoder
 import kotlin.math.max
 
 class SessionDetailController(
     private val sessionsApi: SessionsApi,
-    private val connectorsApi: ConnectorsApi,
     private val sessionStore: AuthSessionStore,
 ) {
     suspend fun load(
@@ -215,126 +211,6 @@ class SessionDetailController(
                     sessionId = sessionId,
                 )
                 settings.toRuntimeSettingsState(schema)
-            }
-        }
-    }
-
-    suspend fun listWorkspaceFiles(
-        connectorId: String,
-        root: String,
-        path: String = ".",
-    ): Result<SessionFilesDirectory> {
-        return withContext(Dispatchers.IO) {
-            runCatching {
-                val auth = authSession()
-                val directory = connectorsApi.listConnectorFiles(
-                    serverUrl = auth.serverUrl,
-                    authorizationToken = auth.accessToken,
-                    connectorId = connectorId,
-                    root = root,
-                    path = path,
-                )
-                SessionFilesDirectory(
-                    path = directory.path,
-                    entries = directory.entries
-                        .filter { it.type == "directory" || it.type == "file" }
-                        .map {
-                            SessionFileEntry(
-                                name = it.name,
-                                path = it.path,
-                                isDirectory = it.type == "directory",
-                                size = it.size,
-                            )
-                        }
-                        .sortedWith(compareBy<SessionFileEntry> { !it.isDirectory }.thenBy { it.name.lowercase() }),
-                )
-            }.recoverCatching { error ->
-                if (error is ApiException) throw error
-                throw IllegalStateException(error.message ?: "Could not load files.", error)
-            }
-        }
-    }
-
-    suspend fun readWorkspaceTextFile(
-        connectorId: String,
-        root: String,
-        path: String,
-    ): Result<SessionTextFile> {
-        return withContext(Dispatchers.IO) {
-            runCatching {
-                val auth = authSession()
-                val file = connectorsApi.readConnectorTextFile(
-                    serverUrl = auth.serverUrl,
-                    authorizationToken = auth.accessToken,
-                    connectorId = connectorId,
-                    root = root,
-                    path = path,
-                )
-                SessionTextFile(
-                    path = file.path,
-                    name = file.name,
-                    size = file.size,
-                    sha256 = file.sha256,
-                    encoding = file.encoding,
-                    content = file.content,
-                    truncated = file.truncated,
-                    binary = file.binary,
-                )
-            }.recoverCatching { error ->
-                if (error is ApiException) throw error
-                throw IllegalStateException(error.message ?: "Could not open file.", error)
-            }
-        }
-    }
-
-    suspend fun openWorkspaceTerminal(
-        session: AgentSession,
-        cols: Int,
-        rows: Int,
-        ephemeralGroupId: String,
-    ): Result<WorkspaceTerminalConnection> {
-        return withContext(Dispatchers.IO) {
-            runCatching {
-                val root = session.cwd?.takeIf { it.isNotBlank() }
-                    ?: throw IllegalStateException("This session has no workspace.")
-                val auth = authSession()
-                val terminal = connectorsApi.createConnectorTerminal(
-                    serverUrl = auth.serverUrl,
-                    authorizationToken = auth.accessToken,
-                    connectorId = session.connectorId,
-                    root = root,
-                    cols = cols,
-                    rows = rows,
-                    ephemeralGroupId = ephemeralGroupId,
-                )
-                WorkspaceTerminalConnection(
-                    connectorId = session.connectorId,
-                    terminal = terminal,
-                    streamUrl = auth.serverUrl.toWebSocketBase() +
-                        "/connectors/${session.connectorId.urlEncode()}/terminals/${terminal.terminalId.urlEncode()}/stream" +
-                        "?fromSeq=0&token=${auth.accessToken.urlEncode()}",
-                )
-            }.recoverCatching { error ->
-                if (error is ApiException) throw error
-                throw IllegalStateException(error.message ?: "Could not open terminal.", error)
-            }
-        }
-    }
-
-    suspend fun closeWorkspaceTerminal(
-        connectorId: String,
-        terminalId: String,
-    ): Result<Unit> {
-        return withContext(Dispatchers.IO) {
-            runCatching {
-                val auth = authSession()
-                connectorsApi.closeConnectorTerminal(
-                    serverUrl = auth.serverUrl,
-                    authorizationToken = auth.accessToken,
-                    connectorId = connectorId,
-                    terminalId = terminalId,
-                )
-                Unit
             }
         }
     }
@@ -881,19 +757,6 @@ class SessionDetailController(
         return take(cut).trimEnd()
     }
 
-    private fun String.toWebSocketBase(): String {
-        val base = trimEnd('/')
-        return when {
-            base.startsWith("https://") -> "wss://" + base.removePrefix("https://")
-            base.startsWith("http://") -> "ws://" + base.removePrefix("http://")
-            else -> base
-        }
-    }
-
-    private fun String.urlEncode(): String {
-        return URLEncoder.encode(this, Charsets.UTF_8.name()).replace("+", "%20")
-    }
-
     private data class ApiAuth(
         val serverUrl: String,
         val accessToken: String,
@@ -912,10 +775,4 @@ data class SendMessageResult(
 data class RuntimeSettingsPatchResult(
     val settings: RuntimeSettingsState,
     val effectiveRunMode: String?,
-)
-
-data class WorkspaceTerminalConnection(
-    val connectorId: String,
-    val terminal: RemoteTerminal,
-    val streamUrl: String,
 )

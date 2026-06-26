@@ -15,7 +15,14 @@ internal fun JSONObject?.toMap(): Map<String, Any?> {
         when (value) {
             JSONObject.NULL -> null
             is JSONObject -> value.toMap()
-            is JSONArray -> List(value.length()) { index -> value.opt(index) }
+            is JSONArray -> List(value.length()) { index ->
+                when (val item = value.opt(index)) {
+                    JSONObject.NULL -> null
+                    is JSONObject -> item.toMap()
+                    is JSONArray -> List(item.length()) { nestedIndex -> item.opt(nestedIndex) }
+                    else -> item
+                }
+            }
             else -> value
         }
     }

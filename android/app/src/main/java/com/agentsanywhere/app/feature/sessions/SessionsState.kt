@@ -54,10 +54,17 @@ fun SessionsState.withPatchedSession(session: AgentSession): SessionsState {
     )
 }
 
+fun SessionsState.withPatchedSessions(updated: List<AgentSession>): SessionsState {
+    return updated.fold(this) { state, session -> state.withPatchedSession(session) }
+}
+
 fun SessionsState.withPatchedDevice(device: AgentDevice): SessionsState {
-    val nextDevices = devices
-        .map { current -> if (current.id == device.id) device else current }
-        .sortedBy { it.name.lowercase() }
+    val hadDevice = devices.any { it.id == device.id }
+    val nextDevices = if (hadDevice) {
+        devices.map { current -> if (current.id == device.id) device else current }
+    } else {
+        devices + device
+    }.sortedBy { it.name.lowercase() }
 
     return copy(
         devices = nextDevices,
@@ -91,6 +98,20 @@ fun SessionsState.withDeletedDeviceAgent(
         },
         sessions = sessions.filterNot { it.connectorId == deviceId && it.runtime == runtime },
         archivedSessions = archivedSessions.filterNot { it.connectorId == deviceId && it.runtime == runtime },
+        isLoading = false,
+        errorMessage = null,
+        hasLoaded = true,
+    )
+}
+
+fun SessionsState.withDeviceAgents(
+    deviceId: String,
+    attachedRuntimes: List<String>,
+): SessionsState {
+    return copy(
+        devices = devices.map { device ->
+            if (device.id == deviceId) device.copy(attachedRuntimes = attachedRuntimes) else device
+        },
         isLoading = false,
         errorMessage = null,
         hasLoaded = true,

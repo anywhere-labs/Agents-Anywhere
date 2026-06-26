@@ -24,6 +24,15 @@ com.agentsanywhere.app.app
 - API 相关异常
 - JSON 解析辅助函数
 
+按产品概念拆 API 文件。Auth、Sessions、Devices、Terminal、Files 都是一等资源，不要因为后端路径里出现
+`connectors` 就把设备、文件、终端混在一个 API 类里：
+
+- `AuthApi` / `AuthDtos`：登录、OAuth、移动端 QR 登录。
+- `SessionsApi` / `SessionsDtos`：session 列表、创建、状态流、消息、approval、附件、runtime settings。
+- `DevicesApi` / `DevicesDtos`：设备列表、重命名、删除、pairing、runtime capabilities。
+- `TerminalApi` / `TerminalDtos`：打开、关闭、stream URL。
+- `FilesApi` / `FilesDtos`：目录列表、文本文件读取。
+
 不应该放这里：
 
 - Compose UI
@@ -139,14 +148,19 @@ model -> api
 - 这是多个功能都会用到的稳定 app 概念吗？放 `model`。
 - 这段代码只是把 screen、controller、api 组装起来吗？放 `app`。
 
-## Sessions 功能示例
+## API 拆分示例
 
-Sessions 相关代码按下面方式归位：
+Sessions、Devices、Files、Terminal 相关代码按下面方式归位：
 
-- `api/SessionsApi.kt`：调用 `/sessions`、`/connectors`，解析远端数据。
-- `feature/sessions/SessionsController.kt`：加载、更新 sessions。
+- `api/SessionsApi.kt`：调用 `/sessions`，解析 session、timeline、approval、attachment、runtime settings。
+- `api/DevicesApi.kt`：调用设备相关端点，解析远端设备数据。
+- `api/FilesApi.kt`：调用文件系统端点，解析目录和文本文件。
+- `api/TerminalApi.kt`：调用终端端点，生成终端 stream URL。
+- `feature/sessions/SessionsController.kt`：加载、更新 sessions；可以聚合 devices 生成首页状态，但不放设备写操作。
+- `feature/devices/DevicesController.kt`：设备重命名、删除、setup、pairing、删除设备 agent。
 - `feature/sessions/SessionsState.kt`：sessions 页面状态和派生状态。
-- `feature/sessions/SessionsFilters.kt`：筛选状态、筛选逻辑、筛选选项生成。
-- `ui/screens/sessions/*`：Compose 布局、session row、sheet、snackbar、视觉控件。
+- `feature/sessions/RuntimeLabels.kt`：runtime 展示名。
+- `ui/screens/home/HomeScreen.kt`：Home page、Active/Archived/Devices tab、session 长按操作面板。
+- `ui/screens/home/NewSessionScreen.kt`：新建 session 流程。
 
 UI 可以调用 feature helper，但 feature 不能 import Compose，也不能依赖 `ui` 包。

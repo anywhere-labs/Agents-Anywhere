@@ -18,6 +18,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarVisuals
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -27,6 +28,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 
 @Composable
 fun AAToastHost(
@@ -38,6 +40,13 @@ fun AAToastHost(
         contentAlignment = Alignment.TopCenter,
     ) {
         SnackbarHost(hostState = hostState) { data ->
+            val timeoutMillis = (data.visuals as? AAToastVisuals)?.timeoutMillis
+            LaunchedEffect(data, timeoutMillis) {
+                if (timeoutMillis != null) {
+                    delay(timeoutMillis)
+                    data.dismiss()
+                }
+            }
             AAToast(data)
         }
     }
@@ -120,6 +129,7 @@ data class AAToastVisuals(
     override val message: String,
     override val actionLabel: String? = null,
     val isError: Boolean = false,
+    val timeoutMillis: Long? = if (actionLabel == null) 1_600L else null,
     override val withDismissAction: Boolean = false,
     override val duration: SnackbarDuration = SnackbarDuration.Short,
 ) : SnackbarVisuals

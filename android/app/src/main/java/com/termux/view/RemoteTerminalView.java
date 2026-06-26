@@ -39,7 +39,7 @@ import androidx.annotation.RequiresApi;
 
 import com.termux.terminal.KeyHandler;
 import com.termux.terminal.TerminalEmulator;
-import com.agentsanywhere.app.feature.sessiondetail.RemoteTerminalController;
+import com.agentsanywhere.app.feature.terminal.RemoteTerminalController;
 
 /** View displaying and interacting with a {@link RemoteTerminalController}. */
 public final class RemoteTerminalView extends View {

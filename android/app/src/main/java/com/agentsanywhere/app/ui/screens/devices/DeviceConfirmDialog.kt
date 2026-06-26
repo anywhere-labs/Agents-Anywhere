@@ -18,12 +18,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.agentsanywhere.app.R
 import com.agentsanywhere.app.feature.devices.DeviceDetailAgent
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
@@ -32,6 +34,11 @@ internal sealed interface DeviceConfirmAction {
     data object DeleteDevice : DeviceConfirmAction
     data class RevokeDevice(val deviceName: String) : DeviceConfirmAction
     data class DeleteAgent(val agent: DeviceDetailAgent) : DeviceConfirmAction
+    data class ArchiveAllSessions(
+        val deviceName: String,
+        val archived: Boolean,
+        val scopeLabel: String,
+    ) : DeviceConfirmAction
 }
 
 @Composable
@@ -50,30 +57,51 @@ internal fun DeviceConfirmDialog(
     val title: String
     val body: String
     val confirmLabel: String
+    val danger: Boolean
 
     when (action) {
         DeviceConfirmAction.DeleteDevice -> {
-            title = "Delete this device?"
-            body = "This removes the device and deletes all server records tied to it, including its sessions, workspaces, attached agents, runtime settings, and connector token. To bring it back you'll need to pair it again."
+            danger = true
+            title = stringResource(R.string.device_confirm_delete_device_title)
+            body = stringResource(R.string.device_confirm_delete_device_body)
             confirmLabel = when {
-                busy -> "Deleting..."
-                errorMessage != null -> "Retry delete"
-                else -> "Delete"
+                busy -> stringResource(R.string.device_confirm_deleting)
+                errorMessage != null -> stringResource(R.string.device_confirm_retry_delete)
+                else -> stringResource(R.string.common_delete)
             }
         }
         is DeviceConfirmAction.RevokeDevice -> {
-            title = "Revoke this device token?"
-            body = "The current connector token for ${action.deviceName} will stop working and the device will be disconnected until you run the new setup command."
-            confirmLabel = if (busy) "Revoking..." else "Revoke"
+            danger = true
+            title = stringResource(R.string.device_confirm_revoke_title)
+            body = stringResource(R.string.device_confirm_revoke_body, action.deviceName)
+            confirmLabel = if (busy) stringResource(R.string.device_confirm_revoking) else stringResource(R.string.common_revoke)
         }
         is DeviceConfirmAction.DeleteAgent -> {
+            danger = true
             val label = action.agent.label
-            title = "Remove $label from this device?"
-            body = "Removing $label only forgets it on the server - your local install on this machine is untouched. All chat sessions for $label on this device will be permanently removed. To bring $label back later, click + Add above."
+            title = stringResource(R.string.device_confirm_remove_agent_title, label)
+            body = stringResource(R.string.device_confirm_remove_agent_body, label)
             confirmLabel = when {
-                busy -> "Removing..."
-                errorMessage != null -> "Retry remove"
-                else -> "Remove agent"
+                busy -> stringResource(R.string.device_confirm_removing)
+                errorMessage != null -> stringResource(R.string.device_confirm_retry_remove)
+                else -> stringResource(R.string.device_confirm_remove_agent)
+            }
+        }
+        is DeviceConfirmAction.ArchiveAllSessions -> {
+            danger = false
+            title = stringResource(
+                if (action.archived) R.string.device_confirm_archive_all_title else R.string.device_confirm_unarchive_all_title,
+                action.scopeLabel,
+            )
+            body = if (action.archived) {
+                stringResource(R.string.device_confirm_archive_all_body, action.deviceName)
+            } else {
+                stringResource(R.string.device_confirm_unarchive_all_body, action.deviceName)
+            }
+            confirmLabel = if (busy) {
+                stringResource(R.string.common_working)
+            } else {
+                stringResource(if (action.archived) R.string.device_confirm_archive_all_confirm else R.string.device_confirm_unarchive_all_confirm)
             }
         }
     }
@@ -123,7 +151,7 @@ internal fun DeviceConfirmDialog(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 DeviceDialogButton(
-                    label = "Cancel",
+                    label = stringResource(R.string.common_cancel),
                     background = secondaryButton,
                     content = colors.ink,
                     enabled = !busy,
@@ -132,8 +160,14 @@ internal fun DeviceConfirmDialog(
                 )
                 DeviceDialogButton(
                     label = confirmLabel,
-                    background = colors.errorText.copy(alpha = if (busy) 0.38f else 1f),
-                    content = Color.White,
+                    background = if (danger) {
+                        colors.errorText.copy(alpha = if (busy) 0.38f else 1f)
+                    } else if (darkMode) {
+                        Color(0xFFE4E4E7)
+                    } else {
+                        Color(0xFF181816)
+                    },
+                    content = if (!danger && darkMode) Color(0xFF181816) else Color.White,
                     enabled = !busy,
                     modifier = Modifier.weight(1f),
                     onClick = onConfirm,

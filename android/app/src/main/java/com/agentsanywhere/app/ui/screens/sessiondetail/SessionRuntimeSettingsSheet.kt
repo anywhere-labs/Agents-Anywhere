@@ -34,12 +34,13 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.agentsanywhere.app.R
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeConfigField
-import com.agentsanywhere.app.feature.sessiondetail.RuntimeConfigOption
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeSettingsState
 import com.agentsanywhere.app.model.AgentSession
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
@@ -119,7 +120,7 @@ private fun ModelPage(
     val effortField = state.filteredEffortField()
 
     SheetHeader(
-        title = "Select model",
+        title = stringResource(R.string.session_runtime_select_model),
         palette = palette,
         leading = { IconButtonMini(onClick = onDismiss) { CloseGlyph(palette.icon) } },
         trailing = { Spacer(Modifier.size(38.dp)) },
@@ -131,7 +132,7 @@ private fun ModelPage(
                 val selected = state.value(field.key, field) == option.value
                 OptionRow(
                     title = option.label.ifBlank { option.value },
-                    subtitle = option.description,
+                    subtitle = localizedRuntimeOptionDescription(field, option),
                     selected = selected,
                     palette = palette,
                     rowHeight = 48.dp,
@@ -154,12 +155,17 @@ private fun ModelPage(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            Text("Mode & effort", color = palette.primaryText, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            Text(
+                stringResource(R.string.session_runtime_mode_effort),
+                color = palette.primaryText,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
             Text(
                 text = listOfNotNull(
                     modeField?.let { labelFor(it, state.value(it.key, it)) },
                     effortField?.let { labelFor(it, state.value(it.key, it)) },
-                ).joinToString(" · ").ifBlank { "No settings available" },
+                ).joinToString(" · ").ifBlank { stringResource(R.string.session_runtime_no_settings) },
                 color = palette.secondaryText,
                 fontSize = 11.5.sp,
                 fontWeight = FontWeight.Medium,
@@ -186,7 +192,7 @@ private fun ModeEffortPage(
         ?: session.runtimeLabel
 
     SheetHeader(
-        title = "Mode & effort",
+        title = stringResource(R.string.session_runtime_mode_effort),
         palette = palette,
         leading = { IconButtonMini(onClick = onBack) { BackGlyph(palette.icon) } },
         trailing = {
@@ -213,12 +219,12 @@ private fun ModeEffortPage(
 
     modeField?.let { field ->
         Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-            SectionLabel("Permission mode", palette)
+            SectionLabel(stringResource(R.string.session_runtime_permission_mode), palette)
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 field.options.forEach { option ->
                     OptionRow(
-                        title = option.label.ifBlank { option.value },
-                        subtitle = option.description,
+                        title = localizedRuntimeOptionLabel(field, option),
+                        subtitle = localizedRuntimeOptionDescription(field, option),
                         selected = state.value(field.key, field) == option.value,
                         palette = palette,
                         rowHeight = 50.dp,
@@ -234,7 +240,7 @@ private fun ModeEffortPage(
 
     effortField?.let { field ->
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            SectionLabel("Effort for $modelLabel", palette)
+            SectionLabel(stringResource(R.string.session_runtime_effort_for, modelLabel), palette)
             EffortSegments(
                 field = field,
                 selected = state.value(field.key, field),
@@ -341,7 +347,7 @@ private fun EffortSegments(
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    text = option.label.ifBlank { option.value },
+                    text = localizedRuntimeOptionLabel(field, option),
                     color = if (on) palette.segmentSelectedText else palette.segmentText,
                     fontSize = 12.sp,
                     fontWeight = if (on) FontWeight.Bold else FontWeight.Medium,
@@ -498,9 +504,14 @@ private fun RuntimeSettingsState.value(key: String, field: RuntimeConfigField): 
         ?: ""
 }
 
+@Composable
 private fun labelFor(field: RuntimeConfigField, value: String): String {
-    return field.options.firstOrNull { it.value == value }?.label
-        ?: value.ifBlank { field.options.firstOrNull()?.label.orEmpty() }
+    val option = field.options.firstOrNull { it.value == value }
+    return if (option != null) {
+        localizedRuntimeOptionLabel(field, option)
+    } else {
+        value.ifBlank { field.options.firstOrNull()?.let { localizedRuntimeOptionLabel(field, it) }.orEmpty() }
+    }
 }
 
 private fun claudeEffortValuesForModel(model: String?): Set<String> {

@@ -1,4 +1,4 @@
-package com.agentsanywhere.app.feature.sessiondetail
+package com.agentsanywhere.app.feature.terminal
 
 import android.app.Notification
 import android.app.NotificationChannel

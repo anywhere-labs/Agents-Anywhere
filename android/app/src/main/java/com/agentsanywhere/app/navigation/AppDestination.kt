@@ -15,27 +15,8 @@ enum class AppDestination(val title: String) {
     Sessions("Sessions"),
     NewSession("New Session"),
     Devices("Devices"),
+    Terminal("Terminal"),
+    Files("Files"),
     DeviceDetail("Device Detail"),
-    Profile("Profile"),
     SessionDetail("Session"),
-}
-
-enum class AppTab(
-    val title: String,
-    val destination: AppDestination,
-) {
-    Sessions("Sessions", AppDestination.Sessions),
-    Devices("Devices", AppDestination.Devices),
-    Profile("Profile", AppDestination.Profile),
-}
-
-fun AppDestination.selectedTab(): AppTab? = when (this) {
-    AppDestination.Sessions,
-    AppDestination.NewSession,
-    AppDestination.SessionDetail -> AppTab.Sessions
-
-    AppDestination.Devices,
-    AppDestination.DeviceDetail -> AppTab.Devices
-    AppDestination.Profile -> AppTab.Profile
-    else -> null
 }

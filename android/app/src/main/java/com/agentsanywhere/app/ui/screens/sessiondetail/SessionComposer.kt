@@ -48,6 +48,7 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -115,6 +116,7 @@ internal fun MessageComposer(
     var showAttachMenu by remember { mutableStateOf(false) }
     var keepAttachMenuMounted by remember { mutableStateOf(false) }
     val menuOffset = with(LocalDensity.current) { IntOffset(14.dp.roundToPx(), (-34).dp.roundToPx()) }
+    val textFieldMaxHeight = if (attachments.isEmpty()) 92.dp else 40.dp
     LaunchedEffect(showAttachMenu) {
         if (showAttachMenu) {
             keepAttachMenuMounted = true
@@ -155,7 +157,7 @@ internal fun MessageComposer(
                 enabled = inputEnabled,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 28.dp, max = 92.dp),
+                    .heightIn(min = 28.dp, max = textFieldMaxHeight),
                 textStyle = TextStyle(
                     color = input,
                     fontSize = 16.sp,
@@ -346,7 +348,7 @@ private fun PendingFileAttachmentCard(
             ) {
                 Image(
                     painter = painterResource(iconRes),
-                    contentDescription = "File",
+                    contentDescription = stringResource(R.string.session_attachment_file),
                     modifier = Modifier.size(22.dp),
                 )
             }
@@ -498,7 +500,7 @@ private fun ComposerActions(
             ) {
                 TakeoverSwitch(darkMode = darkMode, enabled = takeoverEnabled)
                 Text(
-                    text = "Takeover",
+                    text = stringResource(R.string.session_takeover),
                     color = label,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -560,9 +562,27 @@ private fun AttachmentSourceMenu(
             .padding(horizontal = 18.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        AttachmentSourceRow(label = "Camera", iconRes = cameraIcon, iconSurface = iconSurface, text = text, onClick = onCamera)
-        AttachmentSourceRow(label = "Photos", iconRes = photoIcon, iconSurface = iconSurface, text = text, onClick = onPhoto)
-        AttachmentSourceRow(label = "File", iconRes = fileIcon, iconSurface = iconSurface, text = text, onClick = onFile)
+        AttachmentSourceRow(
+            label = stringResource(R.string.session_attachment_camera),
+            iconRes = cameraIcon,
+            iconSurface = iconSurface,
+            text = text,
+            onClick = onCamera,
+        )
+        AttachmentSourceRow(
+            label = stringResource(R.string.session_attachment_photos),
+            iconRes = photoIcon,
+            iconSurface = iconSurface,
+            text = text,
+            onClick = onPhoto,
+        )
+        AttachmentSourceRow(
+            label = stringResource(R.string.session_attachment_file),
+            iconRes = fileIcon,
+            iconSurface = iconSurface,
+            text = text,
+            onClick = onFile,
+        )
     }
 }
 

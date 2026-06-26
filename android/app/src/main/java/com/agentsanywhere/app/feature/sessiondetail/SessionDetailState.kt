@@ -49,29 +49,6 @@ data class RuntimeConfigOption(
     val description: String?,
 )
 
-data class SessionFilesDirectory(
-    val path: String,
-    val entries: List<SessionFileEntry> = emptyList(),
-)
-
-data class SessionFileEntry(
-    val name: String,
-    val path: String,
-    val isDirectory: Boolean,
-    val size: Long?,
-)
-
-data class SessionTextFile(
-    val path: String,
-    val name: String,
-    val size: Long,
-    val sha256: String,
-    val encoding: String,
-    val content: String,
-    val truncated: Boolean,
-    val binary: Boolean,
-)
-
 data class TimelineMessage(
     val id: String,
     val sourceItemId: String = id,
