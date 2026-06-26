@@ -1,4 +1,5 @@
 import { Fragment, type CSSProperties, type ReactNode } from "react";
+import { normalizeCommandOutput } from "../../lib/commandOutput";
 
 // Minimal ANSI SGR → React renderer for command output. Command tools (Bash)
 // often emit colored output; rendered raw it shows escape-code garbage like
@@ -120,19 +121,6 @@ function styleOf(state: SgrState): CSSProperties {
   return css;
 }
 
-// Emulate carriage-return overwrites (progress bars): within each newline-
-// delimited line, keep only the text after the final bare `\r`.
-function collapseCarriageReturns(text: string): string {
-  if (!text.includes("\r")) return text;
-  return text
-    .split("\n")
-    .map((line) => {
-      const segments = line.split("\r");
-      return segments[segments.length - 1] ?? "";
-    })
-    .join("\n");
-}
-
 type Run = { text: string; style: SgrState };
 
 function parse(input: string): Run[] {
@@ -197,7 +185,7 @@ function parse(input: string): Run[] {
 }
 
 export function AnsiText({ text }: { text: string }): ReactNode {
-  const runs = parse(collapseCarriageReturns(text));
+  const runs = parse(normalizeCommandOutput(text));
   // Fast path: no styling at all — return the plain string.
   if (runs.every((r) => Object.keys(r.style).length === 0)) {
     return runs.map((r) => r.text).join("");
