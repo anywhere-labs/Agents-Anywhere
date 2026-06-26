@@ -201,7 +201,7 @@ function AgentConfigDialog({
                 return (
                   <div key={field.key} className="flex flex-col gap-2">
                     <Label>{field.label}</Label>
-                    <DropdownMenu>
+                    <DropdownMenu modal={false}>
                       <DropdownMenuTrigger asChild>
                         <Button
                           type="button"
