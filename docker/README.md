@@ -116,11 +116,12 @@ docker compose -f docker/docker-compose.postgres.yml up --build
 
 The compose file uses:
 
-- `agents-anywhere-pg` volume for PostgreSQL data
-- `agents-anywhere-files` volume mounted at `/data` for uploads / attachments
-- internal backend URL `http://server:8000`
+- `agents-anywhere-pg-next` volume for PostgreSQL data
+- `agents-anywhere-files-next` volume mounted at `/data` for uploads / attachments
+- internal backend URL `http://server-next:8000`
 - public Web port `${AGENTS_ANYWHERE_WEB_PORT:-5174}`
-- `AGENTS_ANYWHERE_API=http://server:8000` for Next rewrites
+- `AGENTS_ANYWHERE_API=http://server-next:8000` for Next rewrites
+- optional `AGENT_SERVER_PUBLIC_ORIGIN=https://agents.example.com` for OAuth redirect URLs behind a reverse proxy
 
 Publish the Web console on a different host port:
 

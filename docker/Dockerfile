@@ -36,7 +36,7 @@ CMD ["sh", "-c", "cd /app/server && uv run --no-sync uvicorn agent_server.app:cr
 
 FROM node:22-bookworm-slim AS web-next
 
-ARG AGENTS_ANYWHERE_API=http://server:8000
+ARG AGENTS_ANYWHERE_API=http://server-next:8000
 ARG YARN_REGISTRY=
 
 ENV NODE_ENV=production \

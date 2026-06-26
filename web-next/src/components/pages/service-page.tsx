@@ -60,7 +60,7 @@ type OAuthTemplate = {
   apply: (baseUrl: string) => Partial<OAuthProviderConfigUpdate>
 }
 
-type CopyKey = "endpoint" | "database" | "callback" | "mobileClient"
+type CopyKey = "endpoint" | "database" | "webCallback" | "callback" | "mobileClient"
 
 const MOBILE_CLIENT_ID = "agents-anywhere-mobile"
 const MOBILE_CALLBACK = "agents-anywhere://oauth/callback"
@@ -82,6 +82,10 @@ function formatUptime(seconds: number) {
 function browserPublicUrl(fallback: string): string {
   if (typeof window === "undefined") return fallback
   return window.location.origin.replace(/\/$/, "") || fallback
+}
+
+function webOAuthRedirectUrl(publicUrl: string): string {
+  return `${publicUrl.replace(/\/$/, "")}/auth/oauth/callback`
 }
 
 function normalizeBaseUrl(value: string): string {
@@ -403,7 +407,7 @@ export function ServicePage() {
           onSave={() => void saveOAuthProvider()}
         />
 
-        <FirstPartyClientsCard copied={copied} onCopy={copy} />
+        <FirstPartyClientsCard publicUrl={publicUrl} copied={copied} onCopy={copy} />
         <AboutCard />
       </div>
     </ScrollArea>
@@ -795,14 +799,17 @@ function TextField({
 }
 
 function FirstPartyClientsCard({
+  publicUrl,
   copied,
   onCopy,
 }: {
+  publicUrl: string
   copied: CopyKey | null
   onCopy: (key: CopyKey, value: string) => void
 }) {
   const t = useTranslations("pages.service")
   const tCommon = useTranslations("common")
+  const webCallback = webOAuthRedirectUrl(publicUrl)
 
   return (
     <Card>
@@ -830,7 +837,18 @@ function FirstPartyClientsCard({
           }
         />
         <InfoRow
-          label={t("callback")}
+          label={t("webCallback")}
+          value={<code className="code-mono text-sm">{webCallback}</code>}
+          action={
+            <CopyButton
+              copied={copied === "webCallback"}
+              label={tCommon("copy")}
+              onClick={() => onCopy("webCallback", webCallback)}
+            />
+          }
+        />
+        <InfoRow
+          label={t("nativeCallback")}
           value={<code className="code-mono text-sm">{MOBILE_CALLBACK}</code>}
           action={
             <CopyButton

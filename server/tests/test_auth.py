@@ -731,6 +731,42 @@ def test_oauth_finalize_requires_oauth_registration_for_new_user(tmp_path):
     assert opened.json()["auth"]["userId"] == "oauthuser"
 
 
+def test_oauth_start_uses_return_to_origin_for_redirect_uri(tmp_path):
+    client = make_client(tmp_path)
+    admin = admin_token(client)
+    client.patch(
+        "/admin/settings",
+        headers=bearer(admin),
+        json={
+            "oauth": {
+                "enabled": True,
+                "provider": "gitlab",
+                "label": "GitLab",
+                "authorizeUrl": "https://gitlab.example.com/oauth/authorize",
+                "tokenUrl": "https://gitlab.example.com/oauth/token",
+                "userInfoUrl": "https://gitlab.example.com/oauth/userinfo",
+                "clientId": "client-id",
+                "clientSecret": "client-secret",
+                "scopes": "openid profile email",
+                "usernameClaim": "nickname",
+                "subjectClaim": "sub",
+                "emailClaim": "email",
+                "nameClaim": "name",
+            }
+        },
+    )
+
+    response = client.get(
+        "/auth/oauth/start",
+        params={"returnTo": "https://app.example.com/zh-CN/login#/login"},
+    )
+
+    assert response.status_code == 200, response.text
+    authorize_url = response.json()["authorizeUrl"]
+    query = parse_qs(urlparse(authorize_url).query)
+    assert query["redirect_uri"] == ["https://app.example.com/auth/oauth/callback"]
+
+
 def test_admin_oauth_client_configuration_is_closed(tmp_path):
     client = make_client(tmp_path)
     token = admin_token(client)

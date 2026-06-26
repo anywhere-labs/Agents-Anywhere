@@ -30,6 +30,7 @@ services:
       AGENT_SERVER_FILES_BACKEND: local
       AGENT_SERVER_FILES_LOCAL_ROOT: /data/agent-server.files
       AGENT_SERVER_SECRET: ${AGENT_SERVER_SECRET:-change-me-before-production}
+      AGENT_SERVER_PUBLIC_ORIGIN: ${AGENT_SERVER_PUBLIC_ORIGIN:-}
       AGENT_SERVER_CORS_ORIGINS: ${AGENT_SERVER_CORS_ORIGINS:-http://127.0.0.1:${AGENTS_ANYWHERE_WEB_PORT:-5174},http://localhost:${AGENTS_ANYWHERE_WEB_PORT:-5174}}
     volumes:
       - agents-anywhere-files-next:/data
