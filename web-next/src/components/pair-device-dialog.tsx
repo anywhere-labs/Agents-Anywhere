@@ -320,9 +320,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
               <DialogHeader>
                 <DialogTitle>{title ?? t("methodTitle")}</DialogTitle>
                 <DialogDescription>
-                  {t.rich("methodDescription", {
-                    name: () => <span className="font-medium text-foreground font-mono">{name}</span>,
-                  })}
+                  {t("methodDescription", { name })}
                 </DialogDescription>
               </DialogHeader>
               <div className="flex flex-col gap-3 py-2">
@@ -353,9 +351,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
               <DialogHeader>
                 <DialogTitle>{t("tokenStepTitle")}</DialogTitle>
                 <DialogDescription>
-                  {t.rich("tokenStepDescription", {
-                    name: () => <span className="font-medium text-foreground font-mono">{name}</span>,
-                  })}
+                  {t("tokenStepDescription", { name })}
                 </DialogDescription>
               </DialogHeader>
               <div className="flex flex-col gap-3 py-2">
@@ -383,9 +379,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
               <DialogHeader>
                 <DialogTitle>{t("codeStepTitle")}</DialogTitle>
                 <DialogDescription>
-                  {t.rich("codeStepDescription", {
-                    name: () => <span className="font-medium text-foreground font-mono">{name}</span>,
-                  })}
+                  {t("codeStepDescription", { name })}
                 </DialogDescription>
               </DialogHeader>
               <div className="flex flex-col gap-4 py-2">
@@ -443,9 +437,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
                   {t("successTitle")}
                 </DialogTitle>
                 <DialogDescription>
-                  {t.rich("successDescription", {
-                    name: () => <span className="font-mono font-medium text-foreground">{name}</span>,
-                  })}
+                  {t("successDescription", { name })}
                 </DialogDescription>
               </DialogHeader>
               <DialogFooter>
@@ -463,9 +455,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
           <AlertDialogHeader>
             <AlertDialogTitle>{t("exitTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t.rich("exitDescription", {
-                name: () => <span className="font-mono font-medium text-foreground">{name}</span>,
-              })}
+              {t("exitDescription", { name })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
