@@ -9,6 +9,7 @@ import {
   ChevronRight,
   FolderOpen,
   CheckCircle2,
+  Check,
   Circle,
   AlertCircle,
   Archive,
@@ -41,12 +42,11 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
 import type {
@@ -62,7 +62,9 @@ import { PairDeviceDialog } from "@/components/pair-device-dialog"
 import type { ConnectorRevokeResponse } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
 import {
+  effectiveFieldValue,
   filterClaudeEffortField,
+  optionLabel,
   runtimeConfigFields,
 } from "@/features/dashboard/runtime-config"
 
@@ -194,24 +196,35 @@ function AgentConfigDialog({
                 )
               }
               if (field.type === "enum" && field.options?.length) {
+                const selectedValue = effectiveFieldValue(field, value)
+                const selectedLabel = optionLabel(field, value, field.label)
                 return (
                   <div key={field.key} className="flex flex-col gap-2">
                     <Label>{field.label}</Label>
-                    <Select
-                      value={typeof value === "string" ? value : String(field.options[0]?.value ?? "")}
-                      onValueChange={(next) => patch(field.key, next)}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="w-full min-w-0 justify-between"
+                        >
+                          <span className="min-w-0 flex-1 truncate text-left">{selectedLabel}</span>
+                          <ChevronRight className="size-3.5 shrink-0 rotate-90 opacity-60" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="start" className="w-(--radix-dropdown-menu-trigger-width) max-w-(--radix-dropdown-menu-trigger-width)">
                         {field.options.map((option) => (
-                          <SelectItem key={String(option.value)} value={String(option.value)}>
-                            {option.label}
-                          </SelectItem>
+                          <DropdownMenuItem
+                            key={String(option.value)}
+                            className="min-w-0 gap-2"
+                            onSelect={() => patch(field.key, String(option.value))}
+                          >
+                            <Check className={cn("size-3.5 shrink-0", selectedValue === String(option.value) ? "opacity-100" : "opacity-0")} />
+                            <span className="min-w-0 flex-1 truncate">{option.label}</span>
+                          </DropdownMenuItem>
                         ))}
-                      </SelectContent>
-                    </Select>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                     {field.description ? <p className="text-xs text-muted-foreground">{field.description}</p> : null}
                   </div>
                 )
