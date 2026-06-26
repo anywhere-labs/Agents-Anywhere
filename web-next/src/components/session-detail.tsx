@@ -741,19 +741,26 @@ function ReasoningEntry({ item }: { item: TimelineItem }) {
   const rawText = textOf(item.content.rawText) || textOf(item.content.text)
   const lines = summaries.length > 0 ? summaries : rawText ? [rawText] : []
   return (
-    <div className="space-y-2">
-      <div className="inline-flex h-7 items-center gap-1.5 rounded-full bg-secondary px-2.5 text-xs font-medium text-secondary-foreground">
-        <Sparkles className="size-3.5" />
-        {tSession("reasoning")}
-      </div>
+    <Collapsible className="min-w-0 max-w-full overflow-hidden">
+      <div className="min-w-0 max-w-full space-y-2 overflow-hidden">
+        <CollapsibleTrigger asChild>
+          <button className="group inline-flex h-7 max-w-full items-center gap-1.5 rounded-full bg-secondary px-2.5 text-left text-xs font-medium text-secondary-foreground transition-colors hover:bg-secondary/80">
+            <ChevronDown className="size-3.5 shrink-0 -rotate-90 transition-transform group-data-[state=open]:rotate-0" />
+            <Sparkles className="size-3.5 shrink-0" />
+            <span className="truncate">{tSession("reasoning")}</span>
+          </button>
+        </CollapsibleTrigger>
       {lines.length > 0 ? (
-        <div className="space-y-2 pl-1 text-sm leading-relaxed text-muted-foreground">
-          {lines.map((line, index) => (
-            <p key={index}>{line}</p>
-          ))}
-        </div>
+        <CollapsibleContent className="min-w-0 max-w-full overflow-hidden">
+          <div className="space-y-2 pl-1 text-sm leading-relaxed text-muted-foreground">
+            {lines.map((line, index) => (
+              <p key={index}>{line}</p>
+            ))}
+          </div>
+        </CollapsibleContent>
       ) : null}
-    </div>
+      </div>
+    </Collapsible>
   )
 }
 
