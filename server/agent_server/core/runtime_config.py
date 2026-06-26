@@ -390,19 +390,23 @@ def _schema_efforts_for_model(
     model: Any,
 ) -> set[str] | None:
     model_options = model_field.options or []
+    if model_options and any(option.efforts is not None for option in model_options):
+        selected = next(
+            (
+                option
+                for option in model_options
+                if isinstance(model, str) and model and option.value == model
+            ),
+            model_options[0] if not isinstance(model, str) or not model else None,
+        )
+        if selected is None:
+            return None
+        return {str(effort.value) for effort in (selected.efforts or [])}
     if isinstance(model, str) and model:
         for option in model_options:
             if option.value == model:
-                if option.efforts is None:
-                    return None
-                return {str(effort.value) for effort in option.efforts}
+                return None
         return None
-    if model_options and any(option.efforts is not None for option in model_options):
-        return {
-            str(effort.value)
-            for option in model_options
-            for effort in (option.efforts or [])
-        }
     if effort_field.options:
         return {str(option.value) for option in effort_field.options}
     return None

@@ -41,7 +41,7 @@ export function filterClaudeEffortField(
   modelField?: RuntimeConfigField | null,
 ): RuntimeConfigField | null {
   if (!field) return null;
-  if (runtime !== "claude" || field.key !== "effort") return field;
+  if (field.key !== "effort") return field;
   const schemaEfforts = modelEffortsFromSchema(modelField, model);
   if (schemaEfforts) {
     if (schemaEfforts.length === 0) return null;
@@ -50,6 +50,7 @@ export function filterClaudeEffortField(
       options: schemaEfforts,
     };
   }
+  if (runtime !== "claude") return field;
   const allowed = claudeEffortValuesForModel(model);
   if (allowed.size === 0) return null;
   return {
@@ -65,18 +66,10 @@ function modelEffortsFromSchema(
   if (!modelField) return null;
   const modelKey = typeof model === "string" ? model : "";
   const options = modelField.options ?? [];
-  const selected = options.find((option) => String(option.value) === modelKey);
+  const selected = modelKey
+    ? options.find((option) => String(option.value) === modelKey)
+    : options[0];
   if (selected?.efforts) return selected.efforts;
-  if (options.some((option) => option.efforts)) {
-    const seen = new Set<string>();
-    return options.flatMap((option) =>
-      (option.efforts ?? []).filter((effort) => {
-        const key = String(effort.value);
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      }),
-    );
-  }
+  if (options.some((option) => option.efforts)) return [];
   return null;
 }

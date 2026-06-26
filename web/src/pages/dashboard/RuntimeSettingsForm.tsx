@@ -109,7 +109,7 @@ function RuntimeSettingField({
   onPatch: (settings: Record<string, unknown>) => void;
 }) {
   const resolvedField =
-    runtime === "claude" && field.key === "effort"
+    field.key === "effort"
       ? filterClaudeEffortField(
           runtime,
           field,

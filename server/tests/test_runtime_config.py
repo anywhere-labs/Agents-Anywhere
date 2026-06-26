@@ -405,6 +405,18 @@ def test_custom_model_efforts_drive_runtime_settings_validation(tmp_path):
                                     "sortOrder": 1,
                                 }
                             ],
+                        },
+                        {
+                            "key": "gpt-other",
+                            "displayLabel": "GPT Other",
+                            "sortOrder": 2,
+                            "efforts": [
+                                {
+                                    "key": "other-effort",
+                                    "displayLabel": "Other Effort",
+                                    "sortOrder": 1,
+                                }
+                            ],
                         }
                     ],
                 }
@@ -424,6 +436,13 @@ def test_custom_model_efforts_drive_runtime_settings_validation(tmp_path):
     assert ok.status_code == 200, ok.text
     assert ok.json()["settings"]["model"] == "gpt-third-party"
     assert ok.json()["settings"]["effort"] == "balanced"
+
+    wrong_model_effort = client.patch(
+        f"/connectors/{connector_id}/agents/codex/settings",
+        headers=headers,
+        json={"settings": {"effort": "other-effort"}},
+    )
+    assert wrong_model_effort.status_code == 422
 
     bad = client.patch(
         f"/connectors/{connector_id}/agents/codex/settings",
