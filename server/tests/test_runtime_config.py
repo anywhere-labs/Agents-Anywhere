@@ -108,13 +108,11 @@ def test_user_agent_defaults_customize_schema_and_new_connectors(tmp_path):
                         {
                             "key": "gpt-custom",
                             "displayLabel": "GPT Custom",
-                            "isDefault": True,
                             "sortOrder": 1,
                             "efforts": [
                                 {
                                     "key": "custom-effort",
                                     "displayLabel": "Custom Effort",
-                                    "isDefault": True,
                                     "sortOrder": 1,
                                 }
                             ],
@@ -126,13 +124,11 @@ def test_user_agent_defaults_customize_schema_and_new_connectors(tmp_path):
                         {
                             "key": "claude-custom",
                             "displayLabel": "Claude Custom",
-                            "isDefault": True,
                             "sortOrder": 1,
                             "efforts": [
                                 {
                                     "key": "high",
                                     "displayLabel": "High",
-                                    "isDefault": True,
                                     "sortOrder": 1,
                                 }
                             ],
@@ -176,6 +172,62 @@ def test_user_agent_defaults_customize_schema_and_new_connectors(tmp_path):
     assert claude_settings.status_code == 200, claude_settings.text
     assert claude_settings.json()["settings"]["runMode"] == "chat"
     assert claude_settings.json()["settings"]["permissionMode"] == "acceptEdits"
+
+
+def test_user_agent_defaults_ignore_default_flags(tmp_path):
+    client = make_client(tmp_path)
+    headers = auth_headers(client)
+
+    response = client.patch(
+        "/agents/defaults",
+        headers=headers,
+        json={
+            "runtimes": {
+                "codex": {
+                    "models": [
+                        {
+                            "key": "gpt-first",
+                            "displayLabel": "GPT First",
+                            "isDefault": False,
+                            "sortOrder": 1,
+                            "efforts": [
+                                {
+                                    "key": "lowish",
+                                    "displayLabel": "Lowish",
+                                    "isDefault": False,
+                                    "sortOrder": 1,
+                                },
+                                {
+                                    "key": "highish",
+                                    "displayLabel": "Highish",
+                                    "isDefault": True,
+                                    "sortOrder": 2,
+                                },
+                            ],
+                        },
+                        {
+                            "key": "gpt-second",
+                            "displayLabel": "GPT Second",
+                            "isDefault": True,
+                            "sortOrder": 2,
+                            "efforts": [],
+                        },
+                    ],
+                },
+            },
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    models = response.json()["runtimes"]["codex"]["models"]
+    assert [(entry["key"], entry["isDefault"]) for entry in models] == [
+        ("gpt-first", True),
+        ("gpt-second", False),
+    ]
+    assert [(entry["key"], entry["isDefault"]) for entry in models[0]["efforts"]] == [
+        ("lowish", True),
+        ("highish", False),
+    ]
 
 
 def test_first_discovery_respects_user_agent_default_enabled(tmp_path):
@@ -345,13 +397,11 @@ def test_custom_model_efforts_drive_runtime_settings_validation(tmp_path):
                         {
                             "key": "gpt-third-party",
                             "displayLabel": "GPT Third Party",
-                            "isDefault": True,
                             "sortOrder": 1,
                             "efforts": [
                                 {
                                     "key": "balanced",
                                     "displayLabel": "Balanced",
-                                    "isDefault": True,
                                     "sortOrder": 1,
                                 }
                             ],

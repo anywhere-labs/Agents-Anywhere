@@ -57,7 +57,7 @@ export function AgentDefaultsPanel({ token }: Props) {
         ...prev,
         [runtime]: {
           ...prev[runtime],
-          models: normalizeDefaultEntry(models),
+          models,
         },
       };
     });
@@ -163,7 +163,7 @@ function ModelCatalogEditor({
         key: `custom-model-${next}`,
         displayLabel: `Custom model ${next}`,
         description: null,
-        isDefault: entries.length === 0,
+        isDefault: false,
         sortOrder: next,
         efforts: [],
       },
@@ -193,16 +193,6 @@ function ModelCatalogEditor({
                 value={entry.displayLabel}
                 onChange={(value) => update(index, { displayLabel: value })}
               />
-              <label className="aa-agent-default-radio">
-                <input
-                  type="radio"
-                  checked={entry.isDefault}
-                  onChange={() =>
-                    onChange(entries.map((item, i) => ({ ...item, isDefault: i === index })))
-                  }
-                />
-                Default model
-              </label>
               <button type="button" className="aa-agent-icon-btn" onClick={() => remove(index)}>
                 <Icons.Trash size={13} />
               </button>
@@ -244,7 +234,7 @@ function EffortCatalogEditor({
         key: `custom-effort-${next}`,
         displayLabel: `Custom effort ${next}`,
         description: null,
-        isDefault: efforts.length === 0,
+        isDefault: false,
         sortOrder: next,
         efforts: [],
       },
@@ -276,16 +266,6 @@ function EffortCatalogEditor({
                 value={entry.displayLabel}
                 onChange={(value) => update(index, { displayLabel: value })}
               />
-              <label className="aa-agent-default-radio">
-                <input
-                  type="radio"
-                  checked={entry.isDefault}
-                  onChange={() =>
-                    onChange(efforts.map((item, i) => ({ ...item, isDefault: i === index })))
-                  }
-                />
-                Default effort
-              </label>
               <button type="button" className="aa-agent-icon-btn" onClick={() => remove(index)}>
                 <Icons.Trash size={13} />
               </button>
@@ -314,23 +294,11 @@ function LabeledInput({
   );
 }
 
-function normalizeDefaultEntry(entries: AgentCatalogEntry[]): AgentCatalogEntry[] {
-  if (entries.length === 0) return entries;
-  const normalized = entries.some((entry) => entry.isDefault)
-    ? entries
-    : entries.map((entry, index) => ({ ...entry, isDefault: index === 0 }));
-  return normalized.map((entry) => ({
-    ...entry,
-    efforts: normalizeDefaultEntry(entry.efforts ?? []),
-  }));
-}
-
 function toCatalogUpdate(entries: AgentCatalogEntry[]): AgentCatalogEntryUpdate[] {
   return entries.map((entry, index) => ({
     key: entry.key,
     displayLabel: entry.displayLabel,
     description: entry.description,
-    isDefault: entry.isDefault,
     sortOrder: entry.sortOrder || index + 1,
     efforts: toCatalogUpdate(entry.efforts ?? []),
   }));

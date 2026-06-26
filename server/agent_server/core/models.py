@@ -622,7 +622,6 @@ class AgentCatalogEntryUpdate(BaseModel):
     key: str = Field(min_length=1)
     displayLabel: str = Field(min_length=1)
     description: str | None = None
-    isDefault: bool = False
     sortOrder: int = 0
     efforts: list["AgentCatalogEntryUpdate"] | None = None
 

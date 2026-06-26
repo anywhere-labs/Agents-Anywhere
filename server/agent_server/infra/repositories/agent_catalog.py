@@ -301,7 +301,6 @@ def _normalize_user_catalog_entries(
         raise ValueError("catalog entries must be a list")
     result: list[AgentCatalogEntry] = []
     seen: set[str] = set()
-    default_seen = False
     for index, item in enumerate(raw):
         if not isinstance(item, dict):
             raise ValueError("catalog entry must be an object")
@@ -314,15 +313,13 @@ def _normalize_user_catalog_entries(
         if key in seen:
             raise ValueError(f"duplicate catalog entry: {key}")
         seen.add(key)
-        is_default = bool(item.get("isDefault", False)) and not default_seen
-        default_seen = default_seen or is_default
         result.append(
             AgentCatalogEntry(
                 runtime=runtime,
                 key=key,
                 displayLabel=label,
                 description=item.get("description") if isinstance(item.get("description"), str) else None,
-                isDefault=is_default,
+                isDefault=index == 0,
                 sortOrder=int(item.get("sortOrder") if item.get("sortOrder") is not None else index + 1),
                 efforts=_normalize_effort_entries(
                     runtime,
@@ -331,9 +328,6 @@ def _normalize_user_catalog_entries(
                 ),
             )
         )
-    if result and not any(entry.isDefault for entry in result):
-        first = result[0]
-        result[0] = first.model_copy(update={"isDefault": True})
     return result
 
 

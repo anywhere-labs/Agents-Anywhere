@@ -295,7 +295,6 @@ export type AgentCatalogEntryUpdate = {
   key: string;
   displayLabel: string;
   description?: string | null;
-  isDefault?: boolean;
   sortOrder?: number;
   efforts?: AgentCatalogEntryUpdate[];
 };

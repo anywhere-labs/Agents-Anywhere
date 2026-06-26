@@ -3188,7 +3188,7 @@
 
 .aa-agent-catalog-row {
   display: grid;
-  grid-template-columns: minmax(160px, 1fr) minmax(150px, 0.8fr) auto 30px;
+  grid-template-columns: minmax(160px, 1fr) minmax(150px, 0.8fr) 30px;
   gap: 8px;
   align-items: center;
 }
@@ -3231,15 +3231,6 @@
   display: flex;
   flex-direction: column;
   gap: 7px;
-}
-
-.aa-agent-default-radio {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--text-mut);
-  font-size: var(--fs-xs);
-  white-space: nowrap;
 }
 
 .aa-agent-icon-btn {
@@ -3316,10 +3307,6 @@
 
   .aa-agent-catalog-row {
     grid-template-columns: 1fr;
-  }
-
-  .aa-agent-default-radio {
-    min-height: 28px;
   }
 
   .aa-agent-defaults-actions {
