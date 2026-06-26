@@ -5,7 +5,10 @@ import { ChevronRight, ChevronUp, File, Folder, FolderOpen, RefreshCw, X } from 
 
 import "./runtime-panel.css"
 import { ChevronExternal } from "./runtime-icons"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { Separator } from "@/components/ui/separator"
 import { dashboardApi } from "@/features/dashboard/api"
 import type { FsEntry } from "@/features/dashboard/types"
 import { cn } from "@/lib/utils"
@@ -111,97 +114,124 @@ export function FilesPanelBody({
   }
 
   return (
-    <div className="aa-rt-pane">
-      <div className="aa-rt-hd">
-        <div className="aa-rt-title">
+    <Card size="sm" className="aa-rt-pane">
+      <CardHeader className="aa-rt-hd">
+        <CardTitle className="aa-rt-title">
           <FolderOpen className="size-3.5" />
           {t("title")}
-        </div>
-        <span className="aa-rt-sep" />
+        </CardTitle>
+        <Separator orientation="vertical" className="aa-rt-sep" />
         <div className="aa-rt-acts">
-          <button
+          <Button
             className="aa-rt-iconbtn"
+            variant="ghost"
+            size="icon-sm"
             type="button"
             title={t("goParent")}
+            aria-label={t("goParent")}
             onClick={() => parentPath && void loadDir(parentPath)}
             disabled={loading || !parentPath || !canLoad}
           >
             <ChevronUp className="size-3.5" />
-          </button>
-          <button
+          </Button>
+          <Button
             className="aa-rt-iconbtn"
+            variant="ghost"
+            size="icon-sm"
             type="button"
             title={t("refresh")}
+            aria-label={t("refresh")}
             onClick={() => void loadDir(path)}
             disabled={loading || !canLoad}
           >
             <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
-          </button>
+          </Button>
           {onPopOut ? (
-            <button className="aa-rt-iconbtn" type="button" title={t("openWindow")} onClick={onPopOut}>
+            <Button
+              className="aa-rt-iconbtn"
+              variant="ghost"
+              size="icon-sm"
+              type="button"
+              title={t("openWindow")}
+              aria-label={t("openWindow")}
+              onClick={onPopOut}
+            >
               <ChevronExternal />
-            </button>
+            </Button>
           ) : null}
           {onClose ? (
-            <button className="aa-rt-iconbtn" type="button" title={t("close")} onClick={onClose}>
-              <X className="size-3.5" />
-            </button>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="aa-fs-pathbar">
-        <div className="aa-fs-path-field">
-          <input
-            value={path}
-            onChange={(event) => setPath(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") void loadDir(path)
-            }}
-            aria-label={t("directoryPath")}
-            disabled={!canLoad}
-          />
-        </div>
-        <button
-          className="aa-rt-iconbtn"
-          type="button"
-          title={t("openPath")}
-          onClick={() => void loadDir(path)}
-          disabled={loading || !path.trim() || !canLoad}
-        >
-          <ChevronRight className="size-3.5" />
-        </button>
-      </div>
-
-      <ScrollArea className="aa-fs-browser">
-        <div className="aa-fs-browser-inner">
-          {!canLoad ? <div className="aa-rt-empty">{t("noConnector")}</div> : null}
-          {error ? <div className="aa-rt-error">{error}</div> : null}
-          {loading && entries.length === 0 ? <div className="aa-rt-empty">{t("loading")}</div> : null}
-          {!loading && !error && canLoad && entries.length === 0 ? <div className="aa-rt-empty">{t("empty")}</div> : null}
-          {canLoad && parentPath ? (
-            <button className="aa-fs-row" type="button" onClick={() => void loadDir(parentPath)}>
-              <FolderOpen className="size-3.5" />
-              <span>..</span>
-              <em>{t("parent")}</em>
-            </button>
-          ) : null}
-          {sortedEntries.map((entry) => (
-            <button
-              key={entry.path}
-              className="aa-fs-row"
+            <Button
+              className="aa-rt-iconbtn"
+              variant="ghost"
+              size="icon-sm"
               type="button"
-              onClick={() => openEntry(entry)}
-              disabled={entry.type !== "directory" && entry.type !== "file" && entry.type !== "symlink"}
+              title={t("close")}
+              aria-label={t("close")}
+              onClick={onClose}
             >
-              {entry.type === "directory" ? <Folder className="size-3.5" /> : <File className="size-3.5" />}
-              <span>{entry.name}</span>
-              <em>{entry.type === "file" && typeof entry.size === "number" ? formatBytes(entry.size) : entry.type}</em>
-            </button>
-          ))}
+              <X className="size-3.5" />
+            </Button>
+          ) : null}
         </div>
-      </ScrollArea>
-    </div>
+      </CardHeader>
+
+      <CardContent className="aa-rt-content">
+        <div className="aa-fs-pathbar">
+          <div className="aa-fs-path-field">
+            <input
+              value={path}
+              onChange={(event) => setPath(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") void loadDir(path)
+              }}
+              aria-label={t("directoryPath")}
+              disabled={!canLoad}
+            />
+          </div>
+          <Button
+            className="aa-rt-iconbtn"
+            variant="ghost"
+            size="icon-sm"
+            type="button"
+            title={t("openPath")}
+            aria-label={t("openPath")}
+            onClick={() => void loadDir(path)}
+            disabled={loading || !path.trim() || !canLoad}
+          >
+            <ChevronRight className="size-3.5" />
+          </Button>
+        </div>
+
+        <ScrollArea className="aa-fs-browser">
+          <div className="aa-fs-browser-inner">
+            {!canLoad ? <div className="aa-rt-empty">{t("noConnector")}</div> : null}
+            {error ? <div className="aa-rt-error">{error}</div> : null}
+            {loading && entries.length === 0 ? <div className="aa-rt-empty">{t("loading")}</div> : null}
+            {!loading && !error && canLoad && entries.length === 0 ? <div className="aa-rt-empty">{t("empty")}</div> : null}
+            {canLoad && parentPath ? (
+              <button className="aa-fs-row" type="button" onClick={() => void loadDir(parentPath)}>
+                <FolderOpen className="size-3.5" />
+                <span>..</span>
+                <em>{t("parent")}</em>
+              </button>
+            ) : null}
+            {sortedEntries.map((entry) => (
+              <button
+                key={entry.path}
+                className="aa-fs-row"
+                type="button"
+                onClick={() => openEntry(entry)}
+                disabled={entry.type !== "directory" && entry.type !== "file" && entry.type !== "symlink"}
+              >
+                {entry.type === "directory" ? <Folder className="size-3.5" /> : <File className="size-3.5" />}
+                <span>{entry.name}</span>
+                <em>{entry.type === "file" && typeof entry.size === "number" ? formatBytes(entry.size) : entry.type}</em>
+              </button>
+            ))}
+          </div>
+        </ScrollArea>
+      </CardContent>
+    </Card>
   )
 }
 
