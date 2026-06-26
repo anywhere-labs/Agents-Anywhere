@@ -353,7 +353,10 @@
       "resolvingHome": "Resolving home...",
       "openWorkspace": "Open workspace",
       "browseFilesystem": "Browse filesystem...",
-      "loadFailed": "Failed to load directory."
+      "loadFailed": "Failed to load directory.",
+      "noOnlineDeviceTitle": "No device is online",
+      "noOnlineDeviceDescription": "Add a device before choosing a workspace or starting a session.",
+      "addDevice": "Add device"
     },
     "device": {
       "defaultConfiguration": "Default configuration",
@@ -588,6 +591,12 @@
         "createFailed": "Failed to create connector.",
         "claimFailed": "Failed to claim pairing."
       }
+    },
+    "firstDevice": {
+      "title": "Add your first device?",
+      "description": "Agents Anywhere needs a paired online device before it can choose a workspace or start sessions.",
+      "later": "Maybe later",
+      "addDevice": "Add device"
     }
   },
   "auth": {
@@ -725,7 +734,28 @@
       "darkDescription": "Dim interface",
       "autoDescription": "Follow system",
       "unavailable": "Account unavailable.",
-      "loadFailed": "Failed to load account."
+      "loadFailed": "Failed to load account.",
+      "mobileQrFailed": "Failed to generate QR code.",
+      "mobileConfirmFailed": "Failed to confirm mobile sign-in.",
+      "mobileRiskDescription": "Create a short-lived QR code for {userId}. Only approve a scan you started yourself.",
+      "mobileScanDescription": "Scan this QR code from the mobile app to continue.",
+      "mobileRiskNote": "Anyone who can scan and confirm this QR code can sign in as {userId}. Keep this screen private.",
+      "mobileGenerating": "Generating QR code...",
+      "mobileQrAlt": "QR code for mobile sign-in",
+      "mobileExpires": "Expires at {time}",
+      "mobileConfirming": "Confirming sign-in...",
+      "cancel": "Cancel",
+      "reject": "Reject",
+      "mobileConfirm": "Confirm",
+      "close": "Close",
+      "mobileGenerateNew": "Generate new",
+      "mobileStatus": {
+        "waiting": "Waiting for scan",
+        "pending_web_confirm": "Confirm this mobile sign-in",
+        "approved": "Mobile sign-in approved",
+        "rejected": "Mobile sign-in rejected",
+        "expired": "QR code expired"
+      }
     },
     "team": {
       "title": "Team",
