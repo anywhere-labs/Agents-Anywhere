@@ -27,6 +27,7 @@
       "archive": "归档",
       "collapse": "折叠侧栏",
       "expand": "展开侧栏",
+      "markAllRead": "全部标为已读",
       "filter": "过滤最近会话",
       "newSession": "新会话",
       "pairDevice": "配对设备",

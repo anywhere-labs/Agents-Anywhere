@@ -27,6 +27,7 @@
       "archive": "Archive",
       "collapse": "Collapse sidebar",
       "expand": "Expand sidebar",
+      "markAllRead": "Mark all read",
       "filter": "Filter recents",
       "newSession": "New session",
       "pairDevice": "Pair device",
