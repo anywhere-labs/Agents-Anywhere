@@ -10,11 +10,17 @@ import {
   FolderOpen,
   CheckCircle2,
   Circle,
+  AlertCircle,
+  Archive,
+  RefreshCw,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Separator } from "@/components/ui/separator"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Badge } from "@/components/ui/badge"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { LoadingState } from "@/components/loading-state"
 import {
   Dialog,
@@ -43,125 +49,195 @@ import {
 } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
-import {
-  type ConnectorWorkspace,
-  type AgentConfig,
-  type SessionView,
-} from "@/lib/demo-api"
+import type {
+  AttachedAgent,
+  RuntimeConfigSchema,
+  RuntimeSettingsResponse,
+  SessionView as RealSessionView,
+} from "@/features/dashboard/types"
 import { useWorkspace } from "@/components/workspace-context"
 import { useAuth } from "@/components/auth/auth-context"
 import { dashboardApi } from "@/features/dashboard/api"
 import { PairDeviceDialog } from "@/components/pair-device-dialog"
 import type { ConnectorRevokeResponse } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
+import {
+  filterClaudeEffortField,
+  runtimeConfigFields,
+} from "@/features/dashboard/runtime-config"
 
 type DeviceConnector = ReturnType<typeof useWorkspace>["connectors"][number]
 
-// ── Config options ─────────────────────────────────────────────
-
-const PERMISSION_OPTIONS = [
-  { value: "ask_for_approval", labelKey: "permissionAskForApproval" },
-  { value: "auto_edit", labelKey: "permissionAutoEdit" },
-  { value: "full_auto", labelKey: "permissionFullAuto" },
-]
-const MODEL_OPTIONS = [
-  { value: "codex-mini-latest", label: "codex-mini-latest" },
-  { value: "o4-mini", label: "o4-mini" },
-  { value: "o3", label: "o3" },
-  { value: "claude-opus-4-5", label: "claude-opus-4-5" },
-  { value: "claude-sonnet-4-5", label: "claude-sonnet-4-5" },
-  { value: "gpt-5-mini", label: "gpt-5-mini" },
-]
-const EFFORT_OPTIONS = [
-  { value: "low", labelKey: "effortLow" },
-  { value: "medium", labelKey: "effortMedium" },
-  { value: "high", labelKey: "effortHigh" },
-]
 const DEVICE_STATUS_LABEL_KEYS = {
   online: "online",
   offline: "offline",
 } as const
 
+type AgentRow = {
+  runtime: string
+  agent: AttachedAgent
+  healthy: boolean
+  reason: string | null
+}
+
+type ConnectorWorkspace = {
+  path: string
+  name: string
+  sessionCount: number
+  lastActiveAt: string | null
+}
+
+type DeviceSession = {
+  id: string
+  connectorId: string
+  connectorStatus: "online" | "offline"
+  runtime: string
+  title?: string | null
+  cwd?: string | null
+  status: "idle" | "running" | "waiting_approval" | "error"
+  takeover: boolean
+  pinned: boolean
+  archived: boolean
+  unread: boolean
+  lastReadSeq: number
+  updatedSeq: number
+  effectiveRunMode?: "chat" | "terminal" | null
+  runtimeSettings?: Record<string, unknown> | null
+  updatedAt?: string | null
+  sortAt?: string | null
+  lastActivityAt?: string | null
+  lastItemAt?: string | null
+}
+
+function isConfigurableField(
+  field: ReturnType<typeof filterClaudeEffortField>,
+): field is NonNullable<ReturnType<typeof filterClaudeEffortField>> {
+  return field !== null && field.type !== "object"
+}
+
 // ── AgentConfigDialog ──────────────────────────────────────────
 
 function AgentConfigDialog({
-  agent,
+  runtime,
+  schema,
+  settings,
+  error,
+  saving,
   open,
   onOpenChange,
+  onSave,
 }: {
-  agent: AgentConfig
+  runtime: string
+  schema: RuntimeConfigSchema | null
+  settings: Record<string, unknown> | null
+  error: string | null
+  saving: boolean
   open: boolean
   onOpenChange: (v: boolean) => void
+  onSave: (settings: Record<string, unknown>) => Promise<void>
 }) {
   const t = useTranslations("dashboard.device")
   const tCommon = useTranslations("common")
-  const [permissionMode, setPermissionMode] = React.useState(agent.defaultPermissionMode)
-  const [model, setModel] = React.useState(agent.defaultModel)
-  const [effort, setEffort] = React.useState(agent.defaultEffort)
+  const [draft, setDraft] = React.useState<Record<string, unknown>>(settings ?? {})
 
   React.useEffect(() => {
-    if (open) {
-      setPermissionMode(agent.defaultPermissionMode)
-      setModel(agent.defaultModel)
-      setEffort(agent.defaultEffort)
-    }
-  }, [open, agent])
+    if (open) setDraft(settings ?? {})
+  }, [open, settings])
+
+  const fields = React.useMemo(() => runtimeConfigFields(schema, draft, "device"), [draft, schema])
+  const visibleFields = fields
+    .map((field) => field.key === "effort" ? filterClaudeEffortField(runtime, field, draft.model) : field)
+    .filter(isConfigurableField)
+
+  const patch = (key: string, value: unknown) => {
+    setDraft((prev) => ({ ...prev, [key]: value }))
+  }
+
+  const submit = async () => {
+    await onSave(draft)
+    onOpenChange(false)
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{agent.name}</DialogTitle>
+          <DialogTitle>{runtime}</DialogTitle>
           <DialogDescription>{t("defaultConfiguration")}</DialogDescription>
         </DialogHeader>
 
-        <div className="grid grid-cols-2 gap-4 py-2">
-          <div className="flex flex-col gap-2">
-            <Label>{t("defaultPermissionMode")}</Label>
-            <Select value={permissionMode} onValueChange={setPermissionMode}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {PERMISSION_OPTIONS.map((o) => (
-                  <SelectItem key={o.value} value={o.value}>{t(o.labelKey)}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="flex flex-col gap-2">
-            <Label>{t("defaultModel")}</Label>
-            <Select value={model} onValueChange={setModel}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {MODEL_OPTIONS.map((o) => (
-                  <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="col-span-2 flex flex-col gap-2">
-            <Label>{t("defaultEffort")}</Label>
-            <Select value={effort} onValueChange={setEffort}>
-              <SelectTrigger className="w-1/2">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {EFFORT_OPTIONS.map((o) => (
-                  <SelectItem key={o.value} value={o.value}>{t(o.labelKey)}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+        <div className="flex flex-col gap-4 py-2">
+          {error ? (
+            <Alert variant="destructive">
+              <AlertCircle />
+              <AlertTitle>{t("agentSettingsFailed")}</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          ) : null}
+          {visibleFields.length === 0 ? (
+            <p className="text-sm text-muted-foreground">{t("noAgentSettings")}</p>
+          ) : (
+            visibleFields.map((field) => {
+              const value = draft[field.key]
+              if (field.type === "boolean") {
+                return (
+                  <label key={field.key} className="flex items-start gap-3 rounded-lg border border-border p-3">
+                    <Checkbox
+                      checked={Boolean(value)}
+                      onCheckedChange={(checked) => patch(field.key, checked === true)}
+                    />
+                    <span className="flex min-w-0 flex-col gap-1">
+                      <span className="text-sm font-medium">{field.label}</span>
+                      {field.description ? <span className="text-xs text-muted-foreground">{field.description}</span> : null}
+                    </span>
+                  </label>
+                )
+              }
+              if (field.type === "enum" && field.options?.length) {
+                return (
+                  <div key={field.key} className="flex flex-col gap-2">
+                    <Label>{field.label}</Label>
+                    <Select
+                      value={typeof value === "string" ? value : String(field.options[0]?.value ?? "")}
+                      onValueChange={(next) => patch(field.key, next)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {field.options.map((option) => (
+                          <SelectItem key={String(option.value)} value={String(option.value)}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {field.description ? <p className="text-xs text-muted-foreground">{field.description}</p> : null}
+                  </div>
+                )
+              }
+              return (
+                <div key={field.key} className="flex flex-col gap-2">
+                  <Label htmlFor={`agent-${runtime}-${field.key}`}>{field.label}</Label>
+                  <Input
+                    id={`agent-${runtime}-${field.key}`}
+                    value={typeof value === "string" ? value : ""}
+                    onChange={(event) => patch(field.key, event.currentTarget.value)}
+                    placeholder={field.description ?? field.label}
+                    spellCheck={false}
+                  />
+                </div>
+              )
+            })
+          )}
         </div>
 
         <DialogFooter>
-          <Button onClick={() => onOpenChange(false)}>
-            {tCommon("done")}
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            {tCommon("cancel")}
+          </Button>
+          <Button onClick={() => void submit()} disabled={saving || visibleFields.length === 0}>
+            {saving ? t("saving") : tCommon("save")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -182,29 +258,31 @@ function WorkspaceCard({
 }) {
   const t = useTranslations("dashboard.device")
   return (
-    <button
-      type="button"
-      onClick={onOpen}
-      className="group flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-3 text-left transition-colors hover:bg-accent/40"
-    >
-      <FolderOpen className="size-4 shrink-0 text-muted-foreground" />
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium">{workspace.name}</p>
-        <p className="text-xs text-muted-foreground">
-          {t("sessionCount", { count: workspace.sessionCount })}
-        </p>
-      </div>
-      <span
-        role="button"
-        tabIndex={0}
-        onClick={(e) => { e.stopPropagation(); onNewSession() }}
-        onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); onNewSession() } }}
-        aria-label={t("newSession")}
-        className="shrink-0 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
+    <div className="group grid grid-cols-[1fr_auto] items-stretch rounded-lg border border-border bg-card transition-colors hover:bg-accent/40">
+      <button
+        type="button"
+        onClick={onOpen}
+        className="flex min-w-0 items-center gap-3 px-4 py-3 text-left"
       >
-        <Plus className="size-3.5" />
-      </span>
-    </button>
+        <FolderOpen className="size-4 shrink-0 text-muted-foreground" />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium">{workspace.name}</p>
+          <p className="text-xs text-muted-foreground">
+            {t("sessionCount", { count: workspace.sessionCount })}
+          </p>
+        </div>
+      </button>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        onClick={onNewSession}
+        aria-label={t("newSession")}
+        className="m-2 self-center opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
+      >
+        <Plus />
+      </Button>
+    </div>
   )
 }
 
@@ -217,14 +295,29 @@ const SESSION_TABS: { value: SessionTabId; labelKey: "active" | "archived" | "al
   { value: "all", labelKey: "all" },
 ]
 
-function SessionRow({ session, onClick }: { session: SessionView; onClick: () => void }) {
+function SessionRow({
+  session,
+  selected,
+  selectMode,
+  onClick,
+  onSelectChange,
+}: {
+  session: DeviceSession
+  selected: boolean
+  selectMode: boolean
+  onClick: () => void
+  onSelectChange: (checked: boolean) => void
+}) {
   const t = useTranslations("dashboard.device")
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="flex w-full items-center gap-3 rounded-md px-2 py-2.5 text-left transition-colors hover:bg-accent/40"
-    >
+    <div className="flex w-full items-center gap-3 rounded-md px-2 py-2.5 transition-colors hover:bg-accent/40">
+      {selectMode ? (
+        <Checkbox
+          checked={selected}
+          onCheckedChange={(checked) => onSelectChange(checked === true)}
+          aria-label={t("selectSession", { title: session.title ?? t("untitled") })}
+        />
+      ) : null}
       <span
         className={cn(
           "size-1.5 shrink-0 rounded-full border",
@@ -234,12 +327,18 @@ function SessionRow({ session, onClick }: { session: SessionView; onClick: () =>
               ? "border-red-500/70"
               : session.status === "waiting_approval"
                 ? "border-amber-400/70"
-                : "border-muted-foreground/40",
+          : "border-muted-foreground/40",
         )}
       />
-      <span className="flex-1 truncate text-sm">{session.title ?? t("untitled")}</span>
-      <span className="shrink-0 text-xs text-muted-foreground">{session.updatedAt}</span>
-    </button>
+      <button
+        type="button"
+        onClick={selectMode ? () => onSelectChange(!selected) : onClick}
+        className="min-w-0 flex-1 truncate text-left text-sm"
+      >
+        {session.title ?? t("untitled")}
+      </button>
+      <span className="shrink-0 text-xs text-muted-foreground">{formatSessionTime(session)}</span>
+    </div>
   )
 }
 
@@ -247,33 +346,96 @@ function SessionRow({ session, onClick }: { session: SessionView; onClick: () =>
 
 const WORKSPACE_PAGE_SIZE = 6
 
-function workspacesFromSessions(sessions: SessionView[]): ConnectorWorkspace[] {
+function timeValue(value: string | null | undefined) {
+  return value ? new Date(value).getTime() : 0
+}
+
+function sessionActivityAt(session: DeviceSession) {
+  return session.sortAt ?? session.lastActivityAt ?? session.lastItemAt ?? session.updatedAt ?? null
+}
+
+function formatSessionTime(session: DeviceSession) {
+  const value = sessionActivityAt(session)
+  if (!value) return ""
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(new Date(value))
+  } catch {
+    return value
+  }
+}
+
+function mergeRealSession(prev: DeviceSession | undefined, session: RealSessionView): DeviceSession {
+  return {
+    id: session.id,
+    connectorId: session.connectorId,
+    connectorStatus: session.connectorStatus,
+    runtime: prev?.runtime ?? session.runtime,
+    title: session.title,
+    cwd: session.cwd,
+    status: session.status,
+    takeover: session.takeover,
+    pinned: session.pinned,
+    archived: session.archived,
+    unread: session.unread,
+    lastReadSeq: session.lastReadSeq,
+    updatedSeq: session.updatedSeq,
+    effectiveRunMode: session.effectiveRunMode,
+    runtimeSettings: session.runtimeSettings ?? null,
+    updatedAt: prev?.updatedAt ?? session.sortAt ?? session.lastActivityAt ?? session.lastItemAt,
+    sortAt: session.sortAt,
+    lastActivityAt: session.lastActivityAt,
+    lastItemAt: session.lastItemAt,
+  }
+}
+
+function mergeRealSessions(prev: DeviceSession[], updates: RealSessionView[]) {
+  const current = new Map(prev.map((session) => [session.id, session]))
+  const updated = new Map(updates.map((session) => [session.id, mergeRealSession(current.get(session.id), session)]))
+  return prev.map((session) => updated.get(session.id) ?? session)
+}
+
+function workspacesFromSessions(sessions: DeviceSession[]): ConnectorWorkspace[] {
   const byPath = new Map<string, ConnectorWorkspace>()
   for (const session of sessions) {
     const path = session.cwd || "~"
+    const activeAt = sessionActivityAt(session)
     const existing = byPath.get(path)
     if (existing) {
       existing.sessionCount += 1
+      if (timeValue(activeAt) > timeValue(existing.lastActiveAt)) existing.lastActiveAt = activeAt
       continue
     }
     byPath.set(path, {
       path,
       name: path.split(/[\\/]/).filter(Boolean).at(-1) ?? path,
       sessionCount: 1,
-      lastActiveAt: session.updatedAt,
+      lastActiveAt: activeAt,
     })
   }
-  return Array.from(byPath.values()).sort((a, b) => b.sessionCount - a.sessionCount)
+  return Array.from(byPath.values()).sort((a, b) => timeValue(b.lastActiveAt) - timeValue(a.lastActiveAt))
 }
 
-function agentsFromConnector(connector: DeviceConnector | null): AgentConfig[] {
+function agentsFromConnector(connector: DeviceConnector | null): AgentRow[] {
   if (!connector) return []
-  return Object.entries(connector.runtimeCapabilities.attached).map(([runtime, attached]) => ({
-    name: runtime,
-    defaultPermissionMode: "ask_for_approval",
-    defaultModel: attached.report.selected?.version ?? runtime,
-    defaultEffort: "medium",
-  }))
+  return Object.entries(connector.runtimeCapabilities.attached)
+    .map(([runtime, agent]) => ({
+      runtime,
+      agent,
+      healthy: reportIsHealthy(agent),
+      reason: agent.report.error?.message ?? agent.report.checked?.find((entry) => entry.status !== "ok")?.reason ?? null,
+    }))
+    .sort((a, b) => a.runtime.localeCompare(b.runtime))
+}
+
+function reportIsHealthy(agent: AttachedAgent) {
+  if (agent.report.error) return false
+  if (!agent.report.selected) return false
+  return !(agent.report.checked ?? []).some((entry) => entry.status === "failed")
 }
 
 export function DevicePage() {
@@ -292,13 +454,19 @@ export function DevicePage() {
 
   const [connector, setConnector] = React.useState<(typeof connectors)[number] | null>(null)
   const [workspaces, setWorkspaces] = React.useState<ConnectorWorkspace[]>([])
-  const [agents, setAgents] = React.useState<AgentConfig[]>([])
-  const [sessions, setSessions] = React.useState<SessionView[]>([])
+  const [agents, setAgents] = React.useState<AgentRow[]>([])
+  const [sessions, setSessions] = React.useState<DeviceSession[]>([])
   const [loading, setLoading] = React.useState(true)
 
   const [showAllWorkspaces, setShowAllWorkspaces] = React.useState(false)
   const [sessionTab, setSessionTab] = React.useState<SessionTabId>("active")
-  const [configAgent, setConfigAgent] = React.useState<AgentConfig | null>(null)
+  const [configAgent, setConfigAgent] = React.useState<AgentRow | null>(null)
+  const [agentSettings, setAgentSettings] = React.useState<Record<string, RuntimeSettingsResponse | null>>({})
+  const [agentSchemas, setAgentSchemas] = React.useState<Record<string, RuntimeConfigSchema | null>>({})
+  const [agentSettingsError, setAgentSettingsError] = React.useState<Record<string, string | null>>({})
+  const [savingAgentRuntime, setSavingAgentRuntime] = React.useState<string | null>(null)
+  const [removeAgentRuntime, setRemoveAgentRuntime] = React.useState<string | null>(null)
+  const [removeAgentError, setRemoveAgentError] = React.useState<string | null>(null)
   const [revokeOpen, setRevokeOpen] = React.useState(false)
   const [deleteOpen, setDeleteOpen] = React.useState(false)
   const [setupCredential, setSetupCredential] = React.useState<ConnectorRevokeResponse | null>(null)
@@ -308,6 +476,11 @@ export function DevicePage() {
   const [editingName, setEditingName] = React.useState(false)
   const [nameDraft, setNameDraft] = React.useState("")
   const [renameError, setRenameError] = React.useState<string | null>(null)
+  const [selectMode, setSelectMode] = React.useState(false)
+  const [selectedSessionIds, setSelectedSessionIds] = React.useState<Set<string>>(() => new Set())
+  const [bulkBusy, setBulkBusy] = React.useState(false)
+  const [bulkError, setBulkError] = React.useState<string | null>(null)
+  const [archiveAllOpen, setArchiveAllOpen] = React.useState(false)
 
   React.useEffect(() => {
     if (!activeConnectorId) return
@@ -324,6 +497,14 @@ export function DevicePage() {
     setSessions(connectorSessions)
     setWorkspaces(workspacesFromSessions(connectorSessions))
     setAgents(agentsFromConnector(currentConnector))
+    setAgentSettings({})
+    setAgentSchemas({})
+    setAgentSettingsError({})
+    setConfigAgent(null)
+    setRemoveAgentRuntime(null)
+    setSelectMode(false)
+    setSelectedSessionIds(new Set())
+    setBulkError(null)
     setLoading(false)
   }, [activeConnectorId, connectors, allSessions])
 
@@ -335,6 +516,39 @@ export function DevicePage() {
     if (sessionTab === "archived") return s.archived
     return true
   })
+  const targetArchiveSelected = sessionTab !== "archived" || Array.from(selectedSessionIds).some((id) => !sessions.find((s) => s.id === id)?.archived)
+  const targetArchiveAll = sessionTab !== "archived"
+  const allVisibleSelected = filteredSessions.length > 0 && filteredSessions.every((session) => selectedSessionIds.has(session.id))
+
+  React.useEffect(() => {
+    if (!authSession?.accessToken || !connector) return
+    let cancelled = false
+    const runtimes = agents.map((agent) => agent.runtime)
+    if (runtimes.length === 0) return
+    for (const runtime of runtimes) {
+      setAgentSettings((prev) => ({ ...prev, [runtime]: prev[runtime] ?? null }))
+      Promise.all([
+        dashboardApi.getConnectorAgentSettings(authSession.accessToken, connector.id, runtime),
+        dashboardApi.getRuntimeConfigSchema(authSession.accessToken, runtime),
+      ])
+        .then(([settings, schema]) => {
+          if (cancelled) return
+          setAgentSettings((prev) => ({ ...prev, [runtime]: settings }))
+          setAgentSchemas((prev) => ({ ...prev, [runtime]: schema.schema }))
+          setAgentSettingsError((prev) => ({ ...prev, [runtime]: null }))
+        })
+        .catch((err) => {
+          if (cancelled) return
+          setAgentSettingsError((prev) => ({
+            ...prev,
+            [runtime]: err instanceof Error ? err.message : t("agentSettingsFailed"),
+          }))
+        })
+    }
+    return () => {
+      cancelled = true
+    }
+  }, [agents, authSession?.accessToken, connector, t])
 
   if (loading || !connector) {
     return (
@@ -394,6 +608,100 @@ export function DevicePage() {
     goHome()
   }
 
+  const saveAgentSettings = async (runtime: string, settings: Record<string, unknown>) => {
+    if (!authSession?.accessToken) return
+    setSavingAgentRuntime(runtime)
+    setAgentSettingsError((prev) => ({ ...prev, [runtime]: null }))
+    try {
+      const response = await dashboardApi.patchConnectorAgentSettings(authSession.accessToken, connector.id, runtime, settings)
+      setAgentSettings((prev) => ({ ...prev, [runtime]: response }))
+      refreshData()
+    } catch (err) {
+      const message = err instanceof Error ? err.message : t("saveAgentSettingsFailed")
+      setAgentSettingsError((prev) => ({ ...prev, [runtime]: message }))
+      throw err
+    } finally {
+      setSavingAgentRuntime(null)
+    }
+  }
+
+  const removeAgent = async () => {
+    if (!authSession?.accessToken || !removeAgentRuntime) return
+    setRemoveAgentError(null)
+    try {
+      const response = await dashboardApi.deleteConnectorRuntime(authSession.accessToken, connector.id, removeAgentRuntime)
+      setConnector((prev) => prev ? { ...prev, runtimeCapabilities: response.runtimeCapabilities } : prev)
+      setAgents((prev) => prev.filter((agent) => agent.runtime !== removeAgentRuntime))
+      setSessions((prev) => prev.filter((session) => session.runtime !== removeAgentRuntime))
+      setRemoveAgentRuntime(null)
+      refreshData()
+    } catch (err) {
+      setRemoveAgentError(err instanceof Error ? err.message : t("removeAgentFailed"))
+    }
+  }
+
+  const toggleSessionSelection = (id: string, checked: boolean) => {
+    setSelectedSessionIds((prev) => {
+      const next = new Set(prev)
+      if (checked) next.add(id)
+      else next.delete(id)
+      return next
+    })
+  }
+
+  const toggleAllVisible = (checked: boolean) => {
+    setSelectedSessionIds((prev) => {
+      const next = new Set(prev)
+      for (const session of filteredSessions) {
+        if (checked) next.add(session.id)
+        else next.delete(session.id)
+      }
+      return next
+    })
+  }
+
+  const closeSelectMode = () => {
+    setSelectMode(false)
+    setSelectedSessionIds(new Set())
+    setBulkError(null)
+  }
+
+  const bulkArchiveSelected = async () => {
+    if (!authSession?.accessToken || selectedSessionIds.size === 0) return
+    setBulkBusy(true)
+    setBulkError(null)
+    try {
+      const response = await dashboardApi.bulkArchiveSessions(authSession.accessToken, Array.from(selectedSessionIds), targetArchiveSelected)
+      setSessions((prev) => mergeRealSessions(prev, response.sessions))
+      closeSelectMode()
+      refreshData()
+    } catch (err) {
+      setBulkError(err instanceof Error ? err.message : t("bulkArchiveFailed"))
+    } finally {
+      setBulkBusy(false)
+    }
+  }
+
+  const archiveAll = async () => {
+    if (!authSession?.accessToken) return
+    setBulkBusy(true)
+    setBulkError(null)
+    try {
+      const response = await dashboardApi.archiveConnectorSessions(authSession.accessToken, connector.id, {
+        archived: targetArchiveAll,
+        scope: sessionTab,
+      })
+      setSessions((prev) => mergeRealSessions(prev, response.sessions))
+      setArchiveAllOpen(false)
+      closeSelectMode()
+      refreshData()
+    } catch (err) {
+      setBulkError(err instanceof Error ? err.message : t("bulkArchiveFailed"))
+    } finally {
+      setBulkBusy(false)
+    }
+  }
+
   return (
     <ScrollArea className="flex-1">
       <div className="mx-auto w-full max-w-3xl px-6 py-8">
@@ -449,7 +757,6 @@ export function DevicePage() {
             <Button
               variant="outline"
               size="sm"
-              className="gap-1.5"
               onClick={() => {
                 setTokenActionError(null)
                 if (connector.status === "offline") {
@@ -460,7 +767,7 @@ export function DevicePage() {
               }}
               disabled={tokenActionBusy}
             >
-              <KeyRound className="size-3.5" />
+              <KeyRound />
               {tokenActionBusy ? t("preparing") : connector.status === "offline" ? t("setup") : t("revoke")}
             </Button>
             <Button
@@ -468,8 +775,9 @@ export function DevicePage() {
               size="icon"
               className="size-8 text-muted-foreground hover:text-destructive"
               onClick={() => setDeleteOpen(true)}
+              aria-label={t("deleteDevice")}
             >
-              <Trash2 className="size-4" />
+              <Trash2 />
             </Button>
           </div>
         </div>
@@ -484,12 +792,15 @@ export function DevicePage() {
             <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
               {t("agents")}
             </h2>
-            <button
+            <Button
               type="button"
-              className="rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              variant="ghost"
+              size="icon"
+              onClick={() => refreshData()}
+              aria-label={t("refreshAgents")}
             >
-              <Plus className="size-3.5" />
-            </button>
+              <RefreshCw />
+            </Button>
           </div>
 
           {agents.length === 0 ? (
@@ -498,27 +809,46 @@ export function DevicePage() {
             <div className="flex flex-col gap-0.5">
               {agents.map((agent) => (
                 <div
-                  key={agent.name}
+                  key={agent.runtime}
                   className="flex items-center gap-3 rounded-md px-2 py-2 transition-colors hover:bg-accent/30"
                 >
-                  <span className="size-2 shrink-0 rounded-full bg-emerald-500" />
-                  <span className="flex-1 text-sm font-medium">{agent.name}</span>
+                  <span
+                    className={cn(
+                      "size-2 shrink-0 rounded-full",
+                      agent.healthy ? "bg-emerald-500" : "bg-destructive",
+                    )}
+                  />
+                  <span className="flex min-w-0 flex-1 items-center gap-2">
+                    <span className="truncate text-sm font-medium">{agent.runtime}</span>
+                    {agent.reason ? (
+                      <Badge variant="destructive" className="max-w-48 truncate">
+                        {agent.reason}
+                      </Badge>
+                    ) : null}
+                  </span>
                   <div className="flex items-center gap-0.5">
-                    <button
+                    <Button
                       type="button"
                       onClick={() => setConfigAgent(agent)}
-                      className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                      aria-label={t("configureAgent", { name: agent.name })}
+                      variant="ghost"
+                      size="icon"
+                      aria-label={t("configureAgent", { name: agent.runtime })}
                     >
-                      <Settings className="size-3.5" />
-                    </button>
-                    <button
+                      <Settings />
+                    </Button>
+                    <Button
                       type="button"
-                      className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-destructive"
-                      aria-label={t("removeAgent", { name: agent.name })}
+                      variant="ghost"
+                      size="icon"
+                      className="text-muted-foreground hover:text-destructive"
+                      onClick={() => {
+                        setRemoveAgentError(null)
+                        setRemoveAgentRuntime(agent.runtime)
+                      }}
+                      aria-label={t("removeAgent", { name: agent.runtime })}
                     >
-                      <Trash2 className="size-3.5" />
-                    </button>
+                      <Trash2 />
+                    </Button>
                   </div>
                 </div>
               ))}
@@ -532,12 +862,15 @@ export function DevicePage() {
             <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
               {t("workspaces")}
             </h2>
-            <button
+            <Button
               type="button"
-              className="rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              variant="ghost"
+              size="icon"
+              onClick={() => navigateToWorkspace(connector.id, "~")}
+              aria-label={t("newSession")}
             >
-              <Plus className="size-3.5" />
-            </button>
+              <Plus />
+            </Button>
           </div>
 
           {workspaces.length === 0 ? (
@@ -550,7 +883,7 @@ export function DevicePage() {
                     key={ws.path}
                     workspace={ws}
                     onOpen={() => navigateToWorkspace(connector.id, ws.path)}
-                    onNewSession={() => {}}
+                    onNewSession={() => navigateToWorkspace(connector.id, ws.path)}
                   />
                 ))}
               </div>
@@ -579,14 +912,35 @@ export function DevicePage() {
             <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
               {t("sessions")}
             </h2>
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <button type="button" className="transition-colors hover:text-foreground">
-                {t("select")}
-              </button>
-              <span aria-hidden>·</span>
-              <button type="button" className="transition-colors hover:text-foreground">
-                {t("archiveAll")}
-              </button>
+            <div className="flex items-center gap-2">
+              {selectMode ? (
+                <Button type="button" variant="ghost" size="sm" onClick={closeSelectMode} disabled={bulkBusy}>
+                  {tCommon("cancel")}
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setSelectMode(true)
+                    setBulkError(null)
+                  }}
+                  disabled={filteredSessions.length === 0}
+                >
+                  {t("select")}
+                </Button>
+              )}
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setArchiveAllOpen(true)}
+                disabled={filteredSessions.length === 0 || bulkBusy}
+              >
+                <Archive />
+                {targetArchiveAll ? t("archiveAll") : t("unarchiveAll")}
+              </Button>
             </div>
           </div>
 
@@ -608,12 +962,43 @@ export function DevicePage() {
             ))}
           </div>
 
+          {bulkError ? (
+            <p className="mb-3 text-sm text-destructive">{bulkError}</p>
+          ) : null}
+
+          {selectMode ? (
+            <div className="mb-3 flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2 text-sm">
+              <Checkbox
+                checked={allVisibleSelected}
+                onCheckedChange={(checked) => toggleAllVisible(checked === true)}
+                aria-label={t("selectAllVisible")}
+              />
+              <span className="flex-1 text-muted-foreground">
+                {t("selectedCount", { count: selectedSessionIds.size })}
+              </span>
+              <Button
+                size="sm"
+                onClick={() => void bulkArchiveSelected()}
+                disabled={selectedSessionIds.size === 0 || bulkBusy}
+              >
+                {bulkBusy ? t("working") : targetArchiveSelected ? t("archiveSelected") : t("unarchiveSelected")}
+              </Button>
+            </div>
+          ) : null}
+
           {filteredSessions.length === 0 ? (
             <p className="py-4 text-center text-sm text-muted-foreground">{t("noSessions")}</p>
           ) : (
             <div className="flex flex-col">
               {filteredSessions.map((s) => (
-                <SessionRow key={s.id} session={s} onClick={() => openSession(s.id)} />
+                <SessionRow
+                  key={s.id}
+                  session={s}
+                  selected={selectedSessionIds.has(s.id)}
+                  selectMode={selectMode}
+                  onClick={() => openSession(s.id)}
+                  onSelectChange={(checked) => toggleSessionSelection(s.id, checked)}
+                />
               ))}
             </div>
           )}
@@ -623,9 +1008,14 @@ export function DevicePage() {
       {/* Agent config dialog */}
       {configAgent && (
         <AgentConfigDialog
-          agent={configAgent}
+          runtime={configAgent.runtime}
+          schema={agentSchemas[configAgent.runtime] ?? null}
+          settings={agentSettings[configAgent.runtime]?.settings ?? agentSettings[configAgent.runtime]?.runtimeSettings ?? null}
+          error={agentSettingsError[configAgent.runtime] ?? null}
+          saving={savingAgentRuntime === configAgent.runtime}
           open={!!configAgent}
           onOpenChange={(v) => { if (!v) setConfigAgent(null) }}
+          onSave={(settings) => saveAgentSettings(configAgent.runtime, settings)}
         />
       )}
 
@@ -674,6 +1064,48 @@ export function DevicePage() {
               onClick={handleDelete}
             >
               {t("delete")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={removeAgentRuntime !== null} onOpenChange={(open) => {
+        if (!open) setRemoveAgentRuntime(null)
+      }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("removeAgentTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("removeAgentDescription", { name: removeAgentRuntime ?? "" })}
+            </AlertDialogDescription>
+            {removeAgentError ? <p className="text-sm text-destructive">{removeAgentError}</p> : null}
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{tCommon("cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => void removeAgent()}
+            >
+              {t("removeAgentAction")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={archiveAllOpen} onOpenChange={setArchiveAllOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{targetArchiveAll ? t("archiveAllTitle") : t("unarchiveAllTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {targetArchiveAll
+                ? t("archiveAllDescription", { name: connector.name })
+                : t("unarchiveAllDescription", { name: connector.name })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{tCommon("cancel")}</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void archiveAll()} disabled={bulkBusy}>
+              {bulkBusy ? t("working") : targetArchiveAll ? t("archiveAll") : t("unarchiveAll")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

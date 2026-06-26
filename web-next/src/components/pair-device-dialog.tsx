@@ -23,6 +23,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/components/auth/auth-context"
@@ -100,9 +101,8 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
   const [name, setName] = React.useState(() => setupCredential?.connector.name ?? randomName())
   const [connectorId, setConnectorId] = React.useState<string | null>(() => setupCredential?.connector.id ?? null)
   const [token, setToken] = React.useState<string | null>(() => setupCredential?.connectorToken ?? null)
-  const [pairCode, setPairCode] = React.useState<string[]>(Array(6).fill(""))
+  const [pairCode, setPairCode] = React.useState("")
   const [error, setError] = React.useState<string | null>(null)
-  const pairCodeBoxRefs = React.useRef<(HTMLInputElement | null)[]>([])
   const [creating, setCreating] = React.useState(false)
   const [claiming, setClaiming] = React.useState(false)
   const [polling, setPolling] = React.useState(false)
@@ -158,7 +158,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
     setName(setupCredential?.connector.name ?? randomName())
     setConnectorId(setupCredential?.connector.id ?? null)
     setToken(setupCredential?.connectorToken ?? null)
-    setPairCode(Array(6).fill(""))
+    setPairCode("")
     setError(null)
     setCreating(false)
     setClaiming(false)
@@ -210,7 +210,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
   }
 
   const handleClaim = async () => {
-    const code = pairCode.join("")
+    const code = pairCode
     if (code.length < 6 || !session?.accessToken) return
     setClaiming(true)
     setError(null)
@@ -364,48 +364,21 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
                 <CodeBlock code={pairCodeCommand} />
                 <div className="flex flex-col gap-2">
                   <Label>{t("codeLabel")}</Label>
-                  <div className="flex items-center gap-2">
-                    {Array.from({ length: 6 }).map((_, i) => (
-                      <input
-                        key={i}
-                        ref={(el) => { pairCodeBoxRefs.current[i] = el }}
-                        type="text"
-                        inputMode="numeric"
-                        maxLength={1}
-                        value={pairCode[i]}
-                        disabled={polling}
-                        aria-label={t("codeDigitLabel", { index: i + 1 })}
-                        onChange={(e) => {
-                          const val = e.target.value.replace(/\D/g, "").slice(-1)
-                          const next = [...pairCode]
-                          next[i] = val
-                          setPairCode(next)
-                          if (val && i < 5) pairCodeBoxRefs.current[i + 1]?.focus()
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === "Backspace" && !pairCode[i] && i > 0) {
-                            pairCodeBoxRefs.current[i - 1]?.focus()
-                          }
-                        }}
-                        onPaste={(e) => {
-                          e.preventDefault()
-                          const text = e.clipboardData.getData("text").replace(/\D/g, "").slice(0, 6)
-                          const next = Array(6).fill("")
-                          for (let j = 0; j < text.length; j++) next[j] = text[j]
-                          setPairCode(next)
-                          const focusIdx = Math.min(text.length, 5)
-                          pairCodeBoxRefs.current[focusIdx]?.focus()
-                        }}
-                        className={cn(
-                          "h-12 w-full rounded-md border border-border bg-background text-center font-mono text-xl font-medium",
-                          "caret-transparent outline-none ring-offset-background",
-                          "focus:border-ring focus:ring-2 focus:ring-ring focus:ring-offset-2",
-                          "disabled:opacity-40",
-                          polling && "opacity-40",
-                        )}
-                      />
-                    ))}
-                  </div>
+                  <InputOTP
+                    maxLength={6}
+                    value={pairCode}
+                    onChange={(value) => setPairCode(value.replace(/\D/g, "").slice(0, 6))}
+                    disabled={polling}
+                    inputMode="numeric"
+                    aria-label={t("codeLabel")}
+                    containerClassName={cn("w-full justify-between", polling && "opacity-40")}
+                  >
+                    <InputOTPGroup className="w-full">
+                      {Array.from({ length: 6 }).map((_, i) => (
+                        <InputOTPSlot key={i} index={i} className="h-12 flex-1 text-xl" />
+                      ))}
+                    </InputOTPGroup>
+                  </InputOTP>
                 </div>
                 {error && <p className="text-sm text-destructive">{error}</p>}
                 {polling && <PollingIndicator label={t("confirming")} />}
@@ -423,7 +396,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
                 </Button>
                 <Button
                   onClick={handleClaim}
-                  disabled={pairCode.join("").length < 6 || claiming || polling}
+                  disabled={pairCode.length < 6 || claiming || polling}
                   className="flex-1"
                 >
                   {claiming && <Loader2 className="mr-2 size-4 animate-spin" />}

@@ -88,6 +88,12 @@ export type ConnectorResponse = {
   serverTime: string;
 };
 
+export type ConnectorRuntimeCapabilitiesResponse = {
+  connectorId: string;
+  runtimeCapabilities: DeviceAgentsState;
+  serverTime: string;
+};
+
 export type ConnectorCreateResponse = {
   connector: ConnectorView;
   connectorToken: string;
@@ -428,4 +434,10 @@ export type DashboardState = {
   me: AuthMe;
   connectors: ConnectorView[];
   sessions: SessionView[];
+};
+
+export type BulkArchiveResponse = {
+  sessions: SessionView[];
+  notFound: string[];
+  serverTime: string;
 };

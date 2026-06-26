@@ -2,6 +2,7 @@ import { ApiClient, apiClient } from "@/lib/api";
 import type {
   AgentCatalogResponse,
   ArchiveAllResponse,
+  BulkArchiveResponse,
   ArchiveAllScope,
   AttachmentUploadResponse,
   ApprovalResolveStatus,
@@ -9,6 +10,7 @@ import type {
   ConnectorListResponse,
   ConnectorResponse,
   ConnectorRevokeResponse,
+  ConnectorRuntimeCapabilitiesResponse,
   FsListResult,
   FsReadFileResult,
   FsReadTextResult,
@@ -129,6 +131,22 @@ export class DashboardApi {
     return this.client.patch<SessionResponse>(
       `/sessions/${encodeURIComponent(sessionId)}`,
       body,
+      { token },
+    );
+  }
+
+  bulkMarkSessionsRead(token: string, ids: string[]): Promise<BulkArchiveResponse> {
+    return this.client.post<BulkArchiveResponse>("/sessions/bulk-read", { ids }, { token });
+  }
+
+  bulkArchiveSessions(
+    token: string,
+    ids: string[],
+    archived: boolean,
+  ): Promise<BulkArchiveResponse> {
+    return this.client.post<BulkArchiveResponse>(
+      "/sessions/bulk-archive",
+      { ids, archived },
       { token },
     );
   }
@@ -387,6 +405,30 @@ export class DashboardApi {
   ): Promise<RuntimeSettingsResponse> {
     return this.client.get<RuntimeSettingsResponse>(
       `/connectors/${encodeURIComponent(connectorId)}/agents/${encodeURIComponent(runtime)}/settings`,
+      { token },
+    );
+  }
+
+  patchConnectorAgentSettings(
+    token: string,
+    connectorId: string,
+    runtime: string,
+    settings: Record<string, unknown>,
+  ): Promise<RuntimeSettingsResponse> {
+    return this.client.patch<RuntimeSettingsResponse>(
+      `/connectors/${encodeURIComponent(connectorId)}/agents/${encodeURIComponent(runtime)}/settings`,
+      { settings },
+      { token },
+    );
+  }
+
+  deleteConnectorRuntime(
+    token: string,
+    connectorId: string,
+    runtime: string,
+  ): Promise<ConnectorRuntimeCapabilitiesResponse> {
+    return this.client.delete<ConnectorRuntimeCapabilitiesResponse>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtime-capabilities/${encodeURIComponent(runtime)}`,
       { token },
     );
   }
