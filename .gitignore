@@ -6,6 +6,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .venv/
+.next/
 
 # Local Claude tooling (launch.json, transcripts, worktree metadata)
 .claude/
