@@ -422,7 +422,7 @@ def _canonical_duplicate_key(item: TimelineItem) -> tuple[str, str | None, str, 
 
 def _live_duplicate_key(item: TimelineItem) -> tuple[str, str | None, str, str] | None:
     if item.type != "message":
-        return None
+        return _live_reasoning_duplicate_key(item)
     source_item_id = item.source.itemId
     if not source_item_id or source_item_id.startswith("item-"):
         return None
@@ -431,11 +431,36 @@ def _live_duplicate_key(item: TimelineItem) -> tuple[str, str | None, str, str] 
 
 def _snapshot_duplicate_key(item: TimelineItem) -> tuple[str, str | None, str, str] | None:
     if item.type != "message":
-        return None
+        return _snapshot_reasoning_duplicate_key(item)
     source_item_id = item.source.itemId
     if not source_item_id or not source_item_id.startswith("item-"):
         return None
     return (item.type, item.turnId, str(item.role or ""), _json_dumps(item.content))
+
+
+def _live_reasoning_duplicate_key(item: TimelineItem) -> tuple[str, str | None, str, str] | None:
+    if not _is_reasoning_timeline_item(item):
+        return None
+    source_item_id = item.source.itemId
+    if not source_item_id or source_item_id.startswith("item-"):
+        return None
+    return (item.type, item.turnId, "reasoning", _json_dumps(item.content))
+
+
+def _snapshot_reasoning_duplicate_key(item: TimelineItem) -> tuple[str, str | None, str, str] | None:
+    if not _is_reasoning_timeline_item(item):
+        return None
+    source_item_id = item.source.itemId
+    if not source_item_id or not source_item_id.startswith("item-"):
+        return None
+    return (item.type, item.turnId, "reasoning", _json_dumps(item.content))
+
+
+def _is_reasoning_timeline_item(item: TimelineItem) -> bool:
+    if item.type != "system" or item.role != "system":
+        return False
+    content = item.content
+    return isinstance(content, dict) and content.get("kind") == "reasoning"
 
 
 def _legacy_duplicate_key(item: TimelineItem) -> tuple[str, str | None, str, str] | None:
