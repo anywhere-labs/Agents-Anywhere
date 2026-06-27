@@ -34,6 +34,12 @@ import {
   stripInjectedAttachmentMentions,
   userMessageMatches,
 } from "../../lib/attachmentReconcile";
+import {
+  ATTACHMENT_ONLY_PROMPT,
+  createClientMessageId,
+  createOptimisticUserMessage,
+  turnIdFromSendResult,
+} from "../../lib/optimisticTimeline";
 import { workspaceKey } from "./Sidebar";
 import { FilesPanel, type PickedFile } from "./session-detail/runtime/FilesPanel";
 import { FilePreviewPanel } from "./session-detail/runtime/FilePreviewPanel";
@@ -54,6 +60,8 @@ type SessionDetailViewProps = {
   connector: ConnectorView | null;
   onSessionRefreshed: (next: SessionView) => void;
   onUnauthorized: () => void;
+  initialOptimisticItems?: TimelineItem[];
+  onInitialOptimisticItemsSettled?: (sessionId: string) => void;
   /** True when the parent dashboard's sidebar is collapsed — used to add
    * left padding to the header so the title doesn't overlap the absolute-
    * positioned expand button, and to widen the runtime panel a bit. */
@@ -83,6 +91,7 @@ const STATE_PAGE_LIMIT = 500;
 const STREAM_REVEAL_MIN_CHARS_PER_SECOND = 260;
 const STREAM_REVEAL_FAST_CHARS_PER_SECOND = 1600;
 const STREAM_MARKDOWN_MIN_INTERVAL_MS = 34;
+const EMPTY_TIMELINE_ITEMS: TimelineItem[] = [];
 
 type PendingTimelineDelta = {
   itemsById: Record<string, TimelineItem>;
@@ -98,6 +107,8 @@ export function SessionDetailView({
   connector,
   onSessionRefreshed,
   onUnauthorized,
+  initialOptimisticItems = EMPTY_TIMELINE_ITEMS,
+  onInitialOptimisticItemsSettled,
   sidebarCollapsed = false,
 }: SessionDetailViewProps) {
   const sessionId = session.id;
@@ -143,7 +154,9 @@ export function SessionDetailView({
   // Optimistic UI: messages render immediately and the Interrupt button flips
   // immediately, both ahead of the backend round-trip. Real items arriving via
   // polling dedupe the optimistic ones; an API error rolls each back.
-  const [optimisticItems, setOptimisticItems] = useState<TimelineItem[]>([]);
+  const [optimisticItems, setOptimisticItems] = useState<TimelineItem[]>(
+    initialOptimisticItems,
+  );
   const [interrupting, setInterrupting] = useState(false);
   const [resolvingApprovalId, setResolvingApprovalId] = useState<string | null>(null);
   const [resolvingApprovalStatus, setResolvingApprovalStatus] =
@@ -167,7 +180,7 @@ export function SessionDetailView({
     setRuntimeSettingsSchema(null);
     setRuntimeSettings(session.runtimeSettings ?? null);
     setRuntimeSettingsError(null);
-    setOptimisticItems([]);
+    setOptimisticItems(initialOptimisticItems);
     setInterrupting(false);
     setResolvingApprovalId(null);
     setResolvingApprovalStatus(null);
@@ -175,6 +188,20 @@ export function SessionDetailView({
     setLocallyResolvedApprovalIds(new Set());
     setPendingErrorSend(null);
   }, [sessionId]);
+
+  useEffect(() => {
+    if (initialOptimisticItems.length === 0) return;
+    const realItems = Object.values(state.itemsById);
+    setOptimisticItems((prev) => {
+      const existingIds = new Set(prev.map((item) => item.id));
+      const missing = initialOptimisticItems.filter(
+        (item) =>
+          !existingIds.has(item.id) &&
+          !realItems.some((real) => userMessageMatches(real, item.id)),
+      );
+      return missing.length === 0 ? prev : [...prev, ...missing];
+    });
+  }, [initialOptimisticItems, state.itemsById]);
 
   useEffect(() => {
     let cancelled = false;
@@ -463,6 +490,20 @@ export function SessionDetailView({
     });
   }, [state.itemsById, optimisticItems]);
 
+  useEffect(() => {
+    if (initialOptimisticItems.length === 0) return;
+    const realItems = Object.values(state.itemsById);
+    const settled = initialOptimisticItems.every((opt) =>
+      realItems.some((real) => userMessageMatches(real, opt.id)),
+    );
+    if (settled) onInitialOptimisticItemsSettled?.(sessionId);
+  }, [
+    initialOptimisticItems,
+    onInitialOptimisticItemsSettled,
+    sessionId,
+    state.itemsById,
+  ]);
+
   const approvalByTarget = useMemo(() => {
     const map: Record<string, Approval> = {};
     for (const approval of state.approvals) {
@@ -588,34 +629,17 @@ export function SessionDetailView({
 
       // 2) Optimistic user message. Includes the attachment metadata so the
       //    bubble can render thumbnails immediately from IndexedDB.
-      const tempId = `opt_${Date.now()}_${Math.random()
-        .toString(36)
-        .slice(2, 8)}`;
-      const now = new Date().toISOString();
+      const tempId = createClientMessageId();
       const visibleContent = content.trim();
       const sendContent =
         visibleContent || (uploadedMeta.length > 0 ? ATTACHMENT_ONLY_PROMPT : content);
-
-      const optimistic: TimelineItem = {
-        id: tempId,
+      const optimistic = createOptimisticUserMessage({
         sessionId,
-        turnId: null,
-        type: "message",
-        status: "pending",
-        role: "user",
-        content:
-          uploadedMeta.length > 0
-            ? { text: visibleContent, attachments: uploadedMeta }
-            : { text: content },
-        source: {},
-        orderSeq: Number.MAX_SAFE_INTEGER,
-        revision: 0,
-        contentHash: "",
-        updatedSeq: 0,
-        createdAt: now,
-        updatedAt: now,
-        completedAt: null,
-      };
+        clientMessageId: tempId,
+        content,
+        visibleContent,
+        attachments: uploadedMeta,
+      });
       setOptimisticItems((prev) => [...prev, optimistic]);
       try {
         const response = await api.sendSessionMessage(
@@ -625,13 +649,7 @@ export function SessionDetailView({
           attachmentRefs,
           tempId,
         );
-        const turnId =
-          response.result &&
-          typeof response.result === "object" &&
-          "turnId" in response.result &&
-          typeof response.result.turnId === "string"
-            ? response.result.turnId
-            : null;
+        const turnId = turnIdFromSendResult(response.result);
         setOptimisticItems((prev) =>
           prev.map((m) =>
             m.id === tempId && m.status === "pending"
@@ -2192,7 +2210,6 @@ function ApprovalButtons({
 // composer rejects obvious mistakes before paying the round-trip.
 const MAX_ATTACHMENT_FILES = 5;
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
-const ATTACHMENT_ONLY_PROMPT = "(No text content.)";
 
 function attachmentImageExtension(type: string): string {
   switch (type) {

@@ -17,12 +17,19 @@ import {
   type RuntimeConfigField,
   type RuntimeConfigSchema,
   type SessionView,
+  type TimelineItem,
   type UploadedAttachment,
 } from "../../lib/api";
 import { Icons } from "../../components/Icons";
 import { reportIsHealthy, runtimeLabel } from "../../lib/runtime";
 import { putAttachment } from "../../lib/attachmentCache";
 import { filterClaudeEffortField } from "../../lib/claudeRuntime";
+import {
+  ATTACHMENT_ONLY_PROMPT,
+  createClientMessageId,
+  createOptimisticUserMessage,
+  turnIdFromSendResult,
+} from "../../lib/optimisticTimeline";
 import { optionLabel, runtimeConfigFields } from "./RuntimeSettingsForm";
 import "./session_detail.css";
 
@@ -33,7 +40,7 @@ type NewSessionPageProps = {
   preferredConnectorId?: string | null;
   initialCwd?: string | null;
   onNewDevice: () => void;
-  onCreated: (session: SessionView) => void;
+  onCreated: (session: SessionView, initialOptimisticItem?: TimelineItem) => void;
 };
 
 const PERMISSION_MODES = [
@@ -86,7 +93,6 @@ const MAX_ATTACHMENT_FILES = 5;
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 const COMPOSER_MENU_MARGIN = 8;
 const COMPOSER_MENU_GAP = 8;
-const ATTACHMENT_ONLY_PROMPT = "(No text content.)";
 const LAST_SELECTION_STORAGE_KEY = "aa.newSession.lastSelection.v1";
 
 type LastNewSessionSelection = {
@@ -518,6 +524,7 @@ export function NewSessionPage({
       const sessionId = takeover.session.id;
       const visibleText = prompt.trim();
       const text = visibleText || (files.length > 0 ? ATTACHMENT_ONLY_PROMPT : "");
+      let initialOptimisticItem: TimelineItem | undefined;
       if (text || files.length > 0) {
         let uploadedMeta: UploadedAttachment[] = [];
         let attachmentRefs: { fileId: string }[] = [];
@@ -539,10 +546,23 @@ export function NewSessionPage({
             ),
           );
         }
-        const clientMessageId = `new_${Date.now()}_${Math.random()
-          .toString(36)
-          .slice(2, 8)}`;
-        await api.sendSessionMessage(token, sessionId, text, attachmentRefs, clientMessageId);
+        const clientMessageId = createClientMessageId("new");
+        const response = await api.sendSessionMessage(
+          token,
+          sessionId,
+          text,
+          attachmentRefs,
+          clientMessageId,
+        );
+        initialOptimisticItem = createOptimisticUserMessage({
+          sessionId,
+          clientMessageId,
+          content: text,
+          visibleContent: visibleText,
+          attachments: uploadedMeta,
+          status: "running",
+          turnId: turnIdFromSendResult(response.result),
+        });
       }
       const selection = { connectorId: connector.id, runtime };
       saveLastNewSessionSelection(selection);
@@ -551,7 +571,7 @@ export function NewSessionPage({
           ? prev
           : selection,
       );
-      onCreated(takeover.session);
+      onCreated(takeover.session, initialOptimisticItem);
     } catch (err: unknown) {
       setCreateError(
         err instanceof ApiError

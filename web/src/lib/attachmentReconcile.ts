@@ -12,6 +12,11 @@ export type ReconcileAttachment = {
   mediaType?: string;
 };
 
+export type SentAttachmentRecord = {
+  sentId: string;
+  attachments: ReconcileAttachment[];
+};
+
 export type ReconcileItem = {
   id: string;
   type: string;
@@ -75,6 +80,25 @@ export function userMessageMatches(
   const realClientId = (real.source as { clientMessageId?: string } | undefined)
     ?.clientMessageId;
   return Boolean(realClientId && realClientId === clientId);
+}
+
+export function assignSentRecords(
+  realItems: ReconcileItem[],
+  sentRecords: SentAttachmentRecord[],
+): Map<string, ReconcileAttachment[]> {
+  const recordsBySentId = new Map(
+    sentRecords.map((record) => [record.sentId, record.attachments]),
+  );
+  const out = new Map<string, ReconcileAttachment[]>();
+  for (const item of realItems) {
+    if (extractAttachments(item.content).length > 0) continue;
+    const clientMessageId = (item.source as { clientMessageId?: string } | undefined)
+      ?.clientMessageId;
+    if (!clientMessageId) continue;
+    const attachments = recordsBySentId.get(clientMessageId);
+    if (attachments && attachments.length > 0) out.set(item.id, attachments);
+  }
+  return out;
 }
 
 export function mergeOptimisticTimelineItems<T extends ReconcileItem>(

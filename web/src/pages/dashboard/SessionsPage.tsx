@@ -8,6 +8,7 @@ import {
   type ConnectorView,
   type DashboardEvent,
   type SessionView,
+  type TimelineItem,
 } from "../../lib/api";
 import { runtimeLabel } from "../../lib/runtime";
 import type { Theme } from "../../lib/theme";
@@ -133,6 +134,9 @@ export function SessionsPage({
   const [sessionsLoading, setSessionsLoading] = useState(true);
   const [pairing, setPairing] = useState<PairingState>(false);
   const [onboardPromptOpen, setOnboardPromptOpen] = useState(false);
+  const [initialOptimisticItems, setInitialOptimisticItems] = useState<
+    Record<string, TimelineItem[]>
+  >({});
 
   const [collapsed, setCollapsed] = useState(false);
   const [flyout, setFlyout] = useState(false);
@@ -475,10 +479,28 @@ export function SessionsPage({
     setPairing({});
   };
 
-  const handleSessionCreated = (session: SessionView) => {
+  const handleSessionCreated = (
+    session: SessionView,
+    initialOptimisticItem?: TimelineItem,
+  ) => {
     setSessions((prev) => [session, ...prev.filter((s) => s.id !== session.id)]);
+    if (initialOptimisticItem) {
+      setInitialOptimisticItems((prev) => ({
+        ...prev,
+        [session.id]: [initialOptimisticItem],
+      }));
+    }
     navigate(`/sessions/${encodeURIComponent(session.id)}`);
   };
+
+  const clearInitialOptimisticItems = useCallback((sessionId: string) => {
+    setInitialOptimisticItems((prev) => {
+      if (!prev[sessionId]) return prev;
+      const next = { ...prev };
+      delete next[sessionId];
+      return next;
+    });
+  }, []);
 
   const handleDeviceRenamed = (next: ConnectorView) => {
     setConnectors((prev) => prev.map((c) => (c.id === next.id ? next : c)));
@@ -671,6 +693,8 @@ export function SessionsPage({
               }
               onSessionRefreshed={handleSessionRefreshed}
               onUnauthorized={onSignOut}
+              initialOptimisticItems={initialOptimisticItems[activeSession.id]}
+              onInitialOptimisticItemsSettled={clearInitialOptimisticItems}
               sidebarCollapsed={collapsed}
             />
           ) : (
