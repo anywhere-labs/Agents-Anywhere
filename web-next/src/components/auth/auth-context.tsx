@@ -15,6 +15,7 @@ export type AuthScreen =
   | "bootstrap"
   | "login"
   | "register"
+  | "signed-out"
   | "oauth-new-user"
   | "oauth-link-existing"
   | "app"
@@ -60,6 +61,7 @@ function hashToScreen(hash: string): AuthScreen {
   const exactMap: Record<string, AuthScreen> = {
     "#/login": "login",
     "#/register": "register",
+    "#/signed-out": "signed-out",
     "#/oauth/new": "oauth-new-user",
     "#/oauth/link": "oauth-link-existing",
   }
@@ -86,6 +88,7 @@ function screenToHash(s: AuthScreen): string {
     bootstrap: "#/bootstrap",
     login: "#/login",
     register: "#/register",
+    "signed-out": "#/signed-out",
     "oauth-new-user": "#/oauth/new",
     "oauth-link-existing": "#/oauth/link",
     app: "#/",
@@ -342,8 +345,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setSession(null)
     setMe(null)
     setOauthPending(null)
-    window.location.hash = "#/login"
-    setScreenState("login")
+    window.location.hash = "#/signed-out"
+    setScreenState("signed-out")
   }, [])
 
   return (

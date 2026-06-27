@@ -700,6 +700,11 @@
       "signingIn": "Signing in...",
       "submitWithEnter": "Sign in ↵"
     },
+    "signedOut": {
+      "description": "Your local credentials have been cleared. You can safely close this page, or open the sign-in page to continue.",
+      "login": "Open sign-in page",
+      "title": "Signed out"
+    },
     "passwordStrength": {
       "0": "Too short",
       "1": "Weak",

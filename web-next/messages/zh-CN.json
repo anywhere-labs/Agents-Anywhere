@@ -700,6 +700,11 @@
       "signingIn": "正在登录...",
       "submitWithEnter": "登录 ↵"
     },
+    "signedOut": {
+      "description": "你的本地登录凭据已经清除。可以安全关闭这个页面，或重新打开登录页面继续使用。",
+      "login": "打开登录页面",
+      "title": "已退出登录"
+    },
     "passwordStrength": {
       "0": "太短",
       "1": "较弱",

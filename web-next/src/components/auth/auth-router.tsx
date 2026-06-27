@@ -6,6 +6,7 @@ import { LoginScreen } from "./login-screen"
 import { RegisterScreen } from "./register-screen"
 import { OAuthNewUserScreen } from "./oauth-new-user-screen"
 import { OAuthLinkExistingScreen } from "./oauth-link-existing-screen"
+import { SignedOutScreen } from "./signed-out-screen"
 import { Demo } from "@/components/demo"
 import { LoadingState } from "@/components/loading-state"
 
@@ -19,6 +20,7 @@ function AuthRouterInner() {
   }
   if (screen === "bootstrap") return <BootstrapScreen />
   if (screen === "app") return isAuthenticated ? <Demo /> : <LoginScreen />
+  if (screen === "signed-out") return <SignedOutScreen />
   if (screen === "register") return <RegisterScreen />
   if (screen === "oauth-new-user") return <OAuthNewUserScreen />
   if (screen === "oauth-link-existing") return <OAuthLinkExistingScreen />
