@@ -31,7 +31,7 @@ import { SessionSkeleton, SessionSkeletonInline } from "@/components/session/ses
 import { TimelineEntry } from "@/components/session/session-timeline-entry"
 import { isCreatedFileChange } from "@/components/session/session-tool-cards"
 import { SessionComposer, type AttachedFile } from "@/components/session/session-composer"
-import { recordsOf, runtimeLabel, textOf } from "@/components/session/session-utils"
+import { recordsOf, runtimeLabel, sortTimelineItems, textOf } from "@/components/session/session-utils"
 
 type SessionDetailProps = {
   token: string
@@ -120,7 +120,11 @@ function buildComposerBlurLayers({
 }
 
 async function loadInitialSessionState(token: string, sessionId: string): Promise<SessionStateResponse> {
-  return dashboardApi.getLatestSessionState(token, sessionId, INITIAL_TIMELINE_LIMIT)
+  const state = await dashboardApi.getLatestSessionState(token, sessionId, INITIAL_TIMELINE_LIMIT)
+  return {
+    ...state,
+    items: sortTimelineItems(state.items),
+  }
 }
 
 export function SessionDetail({
@@ -925,8 +929,4 @@ function mergeTimelineItems(
     if (!existing || existing.updatedSeq <= item.updatedSeq) byId.set(item.id, item)
   }
   return sortTimelineItems(Array.from(byId.values()))
-}
-
-function sortTimelineItems(items: TimelineItem[]): TimelineItem[] {
-  return [...items].sort((a, b) => a.orderSeq - b.orderSeq || a.updatedSeq - b.updatedSeq || a.id.localeCompare(b.id))
 }

@@ -19,6 +19,7 @@ import { useTranslations } from "next-intl"
 import { toast } from "sonner"
 import { dashboardApi } from "@/features/dashboard/api"
 import type { Approval, SessionView as SessionViewData, TimelineItem } from "@/features/dashboard/types"
+import { sortTimelineItems } from "@/components/session/session-utils"
 
 const HORIZONTAL_LAYOUT_KEY = "aa-session-runtime-horizontal-layout"
 const SESSION_PANEL_ID = "session-main"
@@ -75,7 +76,7 @@ export function SessionView() {
       {
         source: "memory",
         session: memorySnapshot.session,
-        items: memorySnapshot.items,
+        items: sortTimelineItems(memorySnapshot.items),
         approvals: memorySnapshot.approvals,
         nextSeq: memorySnapshot.nextSeq,
         hasMore: memorySnapshot.hasMore,
@@ -115,7 +116,7 @@ export function SessionView() {
         {
           source: "remote",
           session: sessionSnapshot,
-          items: allItems,
+          items: sortTimelineItems(allItems),
           approvals,
           nextSeq,
           hasMore: false,

@@ -14,6 +14,14 @@ export function runtimeLabel(runtime: string): string {
   return runtime.slice(0, 1).toUpperCase() + runtime.slice(1)
 }
 
+export function sortTimelineItems(items: TimelineItem[]): TimelineItem[] {
+  return [...items].sort(compareTimelineItems)
+}
+
+export function compareTimelineItems(a: TimelineItem, b: TimelineItem): number {
+  return a.orderSeq - b.orderSeq || a.updatedSeq - b.updatedSeq || a.id.localeCompare(b.id)
+}
+
 export function textOf(value: unknown): string | null {
   return typeof value === "string" ? value : null
 }
