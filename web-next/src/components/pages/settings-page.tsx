@@ -60,7 +60,12 @@ import { useWorkspace } from "@/components/workspace-context"
 import { authApi } from "@/features/auth/api"
 import type { AuthMe } from "@/features/auth/types"
 import { dashboardApi } from "@/features/dashboard/api"
-import type { AgentCatalogEntry } from "@/features/dashboard/types"
+import {
+  readNewSessionPermissionMode,
+  writeNewSessionPermissionMode,
+} from "@/features/dashboard/new-session-preferences"
+import { permissionLabelKey } from "@/features/dashboard/runtime-config"
+import type { AgentCatalogEntry, RuntimeConfigOption } from "@/features/dashboard/types"
 import { routing } from "@/i18n/routing"
 import { cn } from "@/lib/utils"
 
@@ -456,6 +461,9 @@ function AvatarCropDialog({
 
 function AgentTab({ token }: { token: string }) {
   const t = useTranslations("pages.settings")
+  const [permissionOptions, setPermissionOptions] = React.useState<RuntimeConfigOption[]>([])
+  const [selectedPermissionMode, setSelectedPermissionMode] = React.useState("")
+  const [savedPermissionMode, setSavedPermissionMode] = React.useState("")
   const [models, setModels] = React.useState<AgentCatalogEntry[]>([])
   const [savedModels, setSavedModels] = React.useState<AgentCatalogEntry[]>([])
   const [defaultModelKey, setDefaultModelKey] = React.useState("")
@@ -465,10 +473,11 @@ function AgentTab({ token }: { token: string }) {
   const [error, setError] = React.useState<string | null>(null)
   const dirty = React.useMemo(
     () =>
+      selectedPermissionMode !== savedPermissionMode ||
       defaultModelKey !== savedDefaultModelKey ||
       JSON.stringify(toAgentDefaultsPayload(models, defaultModelKey)) !==
         JSON.stringify(toAgentDefaultsPayload(savedModels, savedDefaultModelKey)),
-    [defaultModelKey, models, savedDefaultModelKey, savedModels],
+    [defaultModelKey, models, savedDefaultModelKey, savedModels, savedPermissionMode, selectedPermissionMode],
   )
 
   React.useEffect(() => {
@@ -479,11 +488,27 @@ function AgentTab({ token }: { token: string }) {
     let cancelled = false
     setLoading(true)
     setError(null)
-    dashboardApi.getAgentDefaults(token)
-      .then((defaultsResponse) => {
+    Promise.all([
+      dashboardApi.getRuntimeConfigSchema(token, CODEX_RUNTIME),
+      dashboardApi.getAgentDefaults(token),
+    ])
+      .then(([schemaResponse, defaultsResponse]) => {
         if (cancelled) return
+        const permissionField = schemaResponse.schema.fields.find((field) => field.key === "permissionMode")
+        const nextPermissionOptions = permissionField?.options ?? []
+        const serverPermissionMode = defaultsResponse.runtimes[CODEX_RUNTIME]?.settings.permissionMode
+        const localPermissionMode = readNewSessionPermissionMode()
+        const nextPermissionMode =
+          localPermissionMode && nextPermissionOptions.some((option) => option.value === localPermissionMode)
+            ? localPermissionMode
+            : typeof serverPermissionMode === "string" && nextPermissionOptions.some((option) => option.value === serverPermissionMode)
+              ? serverPermissionMode
+              : String(nextPermissionOptions[0]?.value ?? "")
         const nextModels = defaultsResponse.runtimes[CODEX_RUNTIME]?.models ?? []
         const nextDefaultModelKey = nextModels.find((model) => model.isDefault)?.key ?? nextModels[0]?.key ?? ""
+        setPermissionOptions(nextPermissionOptions)
+        setSelectedPermissionMode(nextPermissionMode)
+        setSavedPermissionMode(nextPermissionMode)
         setModels(nextModels)
         setSavedModels(nextModels)
         setDefaultModelKey(nextDefaultModelKey)
@@ -505,6 +530,10 @@ function AgentTab({ token }: { token: string }) {
     setSaving(true)
     setError(null)
     try {
+      if (selectedPermissionMode) {
+        writeNewSessionPermissionMode(selectedPermissionMode)
+        setSavedPermissionMode(selectedPermissionMode)
+      }
       const response = await dashboardApi.updateAgentDefaults(token, {
         [CODEX_RUNTIME]: {
           models: toAgentDefaultsPayload(models, defaultModelKey),
@@ -537,6 +566,47 @@ function AgentTab({ token }: { token: string }) {
   return (
     <div className="flex flex-col gap-4">
       <section className="rounded-xl border border-border bg-card">
+        <div className="px-6 py-5">
+          <h2 className="text-base font-semibold">{t("defaultPermission")}</h2>
+          <p className="mt-0.5 text-sm text-muted-foreground">{t("defaultPermissionDescription")}</p>
+        </div>
+        <Separator />
+        {loading ? (
+          <LoadingState className="min-h-48" />
+        ) : (
+          <RadioGroup value={selectedPermissionMode} onValueChange={setSelectedPermissionMode} className="gap-0 p-2">
+            {permissionOptions.map((option) => {
+              const value = String(option.value)
+              const labelKey = permissionLabelKey(value)
+              const descriptionKey = permissionDescriptionKey(value)
+              return (
+                <FieldLabel
+                  key={value}
+                  htmlFor={`default-permission-${value}`}
+                  className={cn(
+                    "flex w-full cursor-pointer flex-row items-start gap-3 rounded-none px-4 py-3 transition-colors hover:bg-accent/50",
+                    selectedPermissionMode === value && "bg-accent",
+                  )}
+                >
+                  <RadioGroupItem id={`default-permission-${value}`} value={value} className="mt-0.5" />
+                  <FieldContent>
+                    <span className="text-sm font-medium">
+                      {labelKey ? t(labelKey) : option.label}
+                    </span>
+                    {(descriptionKey || option.description) ? (
+                      <span className="text-xs text-muted-foreground">
+                        {descriptionKey ? t(descriptionKey) : option.description}
+                      </span>
+                    ) : null}
+                  </FieldContent>
+                </FieldLabel>
+              )
+            })}
+          </RadioGroup>
+        )}
+      </section>
+
+      <section className="rounded-xl border border-border bg-card">
         <div className="flex items-center justify-between gap-4 px-6 py-5">
           <div className="min-w-0">
             <h2 className="text-base font-semibold">{t("defaultModel")}</h2>
@@ -561,12 +631,11 @@ function AgentTab({ token }: { token: string }) {
             <Accordion type="multiple" className="rounded-none border-0">
               {models.map((model, modelIndex) => (
                 <AccordionItem key={model.key} value={model.key} className="border-0 data-open:bg-transparent">
-                  <AccordionTrigger className="min-h-20 px-6 py-4 hover:no-underline">
-                    <div className="flex min-w-0 flex-1 items-center gap-3">
+                  <div className="flex min-h-20 items-center gap-3 px-6 py-4">
+                    <div className="flex min-w-0 flex-1 items-center gap-3 text-left">
                       <RadioGroupItem
                         value={model.key}
                         aria-label={t("defaultModel")}
-                        onClick={(event) => event.stopPropagation()}
                       />
                       <div className="min-w-0 flex-1 text-left">
                         <div className="flex min-w-0 items-center gap-2">
@@ -579,7 +648,7 @@ function AgentTab({ token }: { token: string }) {
                         </div>
                       </div>
                     </div>
-                    <div className="mr-3 flex items-center gap-1">
+                    <div className="flex items-center gap-1">
                       <Button
                         type="button"
                         variant="ghost"
@@ -606,8 +675,12 @@ function AgentTab({ token }: { token: string }) {
                       >
                         <ArrowDown className="size-3.5" />
                       </Button>
+                      <AccordionTrigger
+                        aria-label={model.displayLabel}
+                        className="size-7 flex-none items-center justify-center gap-0 rounded-md border-0 p-0 hover:bg-accent hover:no-underline [&_[data-slot=accordion-trigger-icon]]:ml-0 [&_[data-slot=accordion-trigger-icon]]:size-3.5"
+                      />
                     </div>
-                  </AccordionTrigger>
+                  </div>
                   <AccordionContent className="px-6 pb-5">
                     {model.description ? <p className="mb-3 text-sm text-muted-foreground">{model.description}</p> : null}
                     <Table>
@@ -684,6 +757,13 @@ function moveEntry<T>(items: T[], index: number, direction: -1 | 1): T[] {
   next[index] = target
   next[nextIndex] = current
   return next
+}
+
+function permissionDescriptionKey(value: string): "askApprovalPermissionDescription" | "autoApprovePermissionDescription" | "fullAccessPermissionDescription" | null {
+  if (value === "ask") return "askApprovalPermissionDescription"
+  if (value === "auto") return "autoApprovePermissionDescription"
+  if (value === "fullAccess") return "fullAccessPermissionDescription"
+  return null
 }
 
 function toAgentDefaultsPayload(models: AgentCatalogEntry[], defaultModelKey: string) {
