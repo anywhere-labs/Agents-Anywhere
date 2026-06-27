@@ -5,10 +5,10 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
---font-sans: var(--font-sans);
---font-heading: var(--font-sans);
---font-mono: var(--font-mono);
---font-serif: var(--font-serif);
+--font-sans: var(--font-geist);
+--font-heading: var(--font-geist);
+--font-mono: var(--font-geist-mono);
+--font-serif: var(--font-instrument-serif);
 --font-brand: var(--font-caveat);
 --color-background: var(--background);
 --color-foreground: var(--foreground);
@@ -87,6 +87,7 @@
 }
 
 .dark {
+  color-scheme: dark;
   --background: oklch(0.145 0 0);
 --foreground: oklch(0.985 0 0);
 --card: oklch(0.205 0 0);
@@ -120,14 +121,147 @@
 --sidebar-ring: oklch(0.556 0 0);
 }
 
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@keyframes composer-caret {
+  50% {
+    opacity: 0;
+  }
+}
+
 @layer base {
 * {
   @apply border-border outline-ring/50;
 }
 html {
   @apply size-full overflow-hidden overscroll-none;
+  touch-action: manipulation;
 }
 body {
   @apply size-full overflow-hidden overscroll-none bg-background text-foreground;
 }
+}
+
+.aa-wordmark {
+  font-family: var(--font-caveat), "Snell Roundhand", cursive;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.code-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.code-mono * {
+  font-family: inherit;
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-built_in,
+.hljs-name,
+.hljs-tag {
+  color: #7c3aed;
+}
+
+.hljs-string,
+.hljs-attr,
+.hljs-symbol,
+.hljs-bullet {
+  color: #15803d;
+}
+
+.hljs-number,
+.hljs-literal {
+  color: #dc2626;
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: #71717a;
+  font-style: italic;
+}
+
+.hljs-title,
+.hljs-section,
+.hljs-function .hljs-title {
+  color: #2563eb;
+}
+
+.hljs-type,
+.hljs-class .hljs-title {
+  color: #a16207;
+}
+
+.hljs-property,
+.hljs-attribute,
+.hljs-variable,
+.hljs-template-variable {
+  color: #0891b2;
+}
+
+.hljs-meta,
+.hljs-operator,
+.hljs-punctuation {
+  color: #52525b;
+}
+
+.hljs-addition {
+  color: #15803d;
+}
+
+.hljs-deletion {
+  color: #dc2626;
+}
+
+.dark .hljs-keyword,
+.dark .hljs-selector-tag,
+.dark .hljs-built_in,
+.dark .hljs-name,
+.dark .hljs-tag {
+  color: #c084fc;
+}
+
+.dark .hljs-string,
+.dark .hljs-attr,
+.dark .hljs-symbol,
+.dark .hljs-bullet {
+  color: #86efac;
+}
+
+.dark .hljs-number,
+.dark .hljs-literal {
+  color: #fca5a5;
+}
+
+.dark .hljs-title,
+.dark .hljs-section,
+.dark .hljs-function .hljs-title {
+  color: #93c5fd;
+}
+
+.dark .hljs-type,
+.dark .hljs-class .hljs-title {
+  color: #facc15;
+}
+
+.dark .hljs-property,
+.dark .hljs-attribute,
+.dark .hljs-variable,
+.dark .hljs-template-variable {
+  color: #7dd3fc;
+}
+
+.dark .hljs-meta,
+.dark .hljs-operator,
+.dark .hljs-punctuation {
+  color: #a1a1aa;
 }

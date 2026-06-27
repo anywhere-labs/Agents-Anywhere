@@ -16,7 +16,7 @@ Run agents on your own laptop, remote devbox, or cloud sandbox. Control sessions
 ![Yarn](https://img.shields.io/badge/Yarn-4.6-2C8EBB)
 ![Docker](https://img.shields.io/badge/Docker-ready-2496ED)
 
-[Docker Quickstart](#quickstart-run-the-full-app-with-docker) · [Pair Connector](#pair-and-start-the-connector) · [Self-host](#self-host-production-style-deployment) · [简体中文](README.zh-CN.md)
+[Docker Quickstart](#quickstart-run-the-full-app-with-docker) · [Pair Connector](#pair-and-start-the-connector) · [Docker Docs](docker/README.md) · [简体中文](README.zh-CN.md)
 
 ![Agents Anywhere session workspace](docs/screenshots/hero.png)
 
@@ -82,7 +82,7 @@ Native mobile clients are in development. Today, you can also use the Web consol
 - **Remote shell and terminal.** Run one-shot shell commands, shell tasks, and interactive terminals.
 - **Device pairing.** Start from a Web-generated token command or from `uvx anywhere-cli pair` with a pairing code.
 - **Self-hosted backend.** The FastAPI backend supports SQLite for local development and PostgreSQL for production-style deployments.
-- **Web console.** React + Vite frontend for auth, devices, workspaces, runtime settings, team/admin management, and session detail.
+- **Web console.** Next.js + shadcn frontend for auth, devices, workspaces, runtime settings, team/admin management, and session detail.
 
 ## Supported Agents And Runtimes
 
@@ -137,14 +137,14 @@ No. The Connector uses the Codex / Claude runtime and login state already presen
 Official remote control is usually tied to each vendor's subscription account and product surface. Agents Anywhere does not need to bind to your model subscription account; it only needs the Connector to reach a runtime that is already logged in locally. The goal is one unified entry point for multiple agents: Codex, Claude, and more agents over time. More adapters are in development, and Connector adapter contributions are welcome.
 
 **Can I self-host it?**
-Yes. Use SQLite for local development, a production-style single-container SQLite deployment, or PostgreSQL compose. See [docker/README.md](docker/README.md).
+Yes. The Docker quickstart runs the Web console, FastAPI backend, and PostgreSQL together. For deployment variants and environment variables, see [docker/README.md](docker/README.md).
 
 **Which agents are supported today?**
 The current code focuses on Codex and Claude. Codex is the most complete adapter today. Claude supports the basic flow and is still being expanded. Other runtimes are coming soon and can be added by implementing Connector adapters.
 
-## Technical Guide And Self-Hosting
+## Technical Guide
 
-The sections above describe the product: Agents Anywhere solves the problem of agents running elsewhere while humans still need to take over. The sections below are for developers and self-hosters: architecture, local startup, Connector pairing, production-style deployment, key environment variables, and verification commands. If you only want to try it, start with [Docker Quickstart](#quickstart-run-the-full-app-with-docker). If you want to add a runtime or deploy this for a team, read the architecture and Connector pairing flow first.
+The sections above describe the product: Agents Anywhere solves the problem of agents running elsewhere while humans still need to take over. The sections below cover the architecture, Docker quickstart, and Connector pairing flow. For detailed Docker deployment options, local development images, environment variables, and verification commands, see [docker/README.md](docker/README.md).
 
 ## Architecture
 
@@ -172,7 +172,8 @@ Repository layout:
 ```text
 server/      FastAPI backend, SQLite/PostgreSQL storage, Connector RPC broker
 connector/   Local daemon and CLI for Codex / Claude runtime integration
-web/         React + Vite frontend
+web-next/    Next.js + shadcn Web console
+web/         Legacy React + Vite frontend kept as a fallback/reference
 docker/      Development, production, and PostgreSQL compose deployment files
 docs/        Shared reference notes
 ```
@@ -181,55 +182,34 @@ Package-specific docs:
 
 - [Server](server/README.md)
 - [Connector](connector/README.md)
-- [Web](web/README.md)
+- [Web Next](web-next/)
 - [Docker](docker/README.md)
 
 ## Quickstart: Run The Full App With Docker
 
-Run the development container from the repository root. It starts the FastAPI backend and Vite frontend in one container, and publishes only the Vite port:
+Run the PostgreSQL-backed stack from the repository root:
 
 ```bash
-docker build -f docker/Dockerfile.dev -t agents-anywhere:dev . \
-  && docker run --rm -it \
-    --name agents-anywhere-dev \
-    -p 5173:5173 \
-    -v agents-anywhere-dev-data:/data \
-    agents-anywhere:dev
+POSTGRES_PASSWORD=change-me \
+AGENT_SERVER_SECRET=change-me-too \
+docker compose -f docker/docker-compose.postgres.yml up --build
 ```
 
 Open:
 
 ```text
-http://127.0.0.1:5173
+http://127.0.0.1:5174
 ```
+
+This starts three services:
+
+- `postgres`: PostgreSQL 17 with a persistent Docker volume.
+- `server`: FastAPI backend on the internal compose network at `http://server:8000`.
+- `web`: Next.js `web-next` console published on host port `5174`; it rewrites API and WebSocket traffic to the backend.
 
 The first startup on an empty database logs a bootstrap token. Use it in the Web UI to create the first admin user.
 
-## Quickstart: Local Development
-
-The backend uses Python + FastAPI. Use `uv` for dependencies:
-
-```bash
-cd server
-uv sync
-AGENT_SERVER_DB=agent-server.sqlite3 \
-  uv run uvicorn agent_server.app:create_app --factory --host 127.0.0.1 --port 8000
-```
-
-The frontend uses React + Vite. Use `yarn`:
-
-```bash
-cd web
-yarn install
-yarn dev
-```
-
-Vite listens on `127.0.0.1:5173` and proxies API / WebSocket requests to `http://127.0.0.1:8000` by default. Override the backend target when needed:
-
-```bash
-cd web
-AGENTS_ANYWHERE_API=http://127.0.0.1:8000 yarn dev
-```
+For custom ports, production secrets, SQLite/manual Docker runs, mirrors, connector images, and local development containers, see [docker/README.md](docker/README.md).
 
 ## Pair And Start The Connector
 
@@ -278,126 +258,12 @@ The server address can be a bare host, host with port, or a full URL. When the s
 
 If `codex` or `claude` is not on `PATH`, configure the runtime path from the UI or set these before starting the Connector:
 
-### Dockerized Ubuntu Connector
-
-For a disposable Ubuntu 24.04 runtime with SSH and the Connector installed:
-
-```bash
-docker build -f docker/Dockerfile.connector-ubuntu -t agents-anywhere-connector:ubuntu2404 .
-docker run --rm -it \
-  -p 2222:2222 \
-  -v agents-anywhere-connector-data:/data \
-  -v "$PWD:/workspace" \
-  -e AGENT_SERVER_URL=http://host.docker.internal:8000 \
-  -e AGENT_CONNECTOR_ID=conn_xxx \
-  -e AGENT_CONNECTOR_TOKEN=cxt_xxx \
-  -e SSH_AUTHORIZED_KEYS="$(cat ~/.ssh/id_ed25519.pub)" \
-  agents-anywhere-connector:ubuntu2404
-```
-
-Omit `AGENT_CONNECTOR_ID` / `AGENT_CONNECTOR_TOKEN` and set
-`AGENT_CONNECTOR_MODE=pair` to start the pairing flow instead.
-
 ```bash
 CODEX_BIN=/path/to/codex
 CLAUDE_BIN=/path/to/claude
 ```
 
-## Self-Host: Production-Style Deployment
-
-### Single-Container SQLite
-
-The production-style image builds the frontend, serves it from FastAPI, and persists database/file data under `/data`:
-
-```bash
-docker build -f docker/Dockerfile -t agents-anywhere:latest . \
-  && docker run --rm -it \
-    --name agents-anywhere \
-    -p 8000:8000 \
-    -v agents-anywhere-data:/data \
-    -e AGENT_SERVER_SECRET=change-me-before-production \
-    agents-anywhere:latest
-```
-
-Open:
-
-```text
-http://127.0.0.1:8000
-```
-
-### PostgreSQL Compose
-
-```bash
-POSTGRES_PASSWORD=change-me \
-AGENT_SERVER_SECRET=change-me-too \
-docker compose -f docker/docker-compose.postgres.yml up --build
-```
-
-When building from networks where PyPI or Debian mirrors are slow, pass mirrors
-to the compose build step:
-
-```bash
-docker compose -f docker/docker-compose.postgres.yml build \
-  --build-arg APT_MIRROR=https://mirrors.ustc.edu.cn/debian \
-  --build-arg PIP_INDEX_URL=https://mirrors.ustc.edu.cn/pypi/simple \
-  server
-```
-
-The compose file runs PostgreSQL and the production-style server image:
-
-- Backend and frontend are available on port `8000` by default.
-- Set `AGENTS_ANYWHERE_PORT=18000` to publish the service on another host port.
-- PostgreSQL data uses the `agents-anywhere-pg` volume.
-- Uploads and attachments use a persistent volume mounted at `/data`.
-- The backend serves the built web UI from `/app/web-dist`, including root assets
-  such as `/site.webmanifest`.
-
-For production, change at least `AGENT_SERVER_SECRET` and the database password, and put HTTPS in front of the service.
-
-## Key Environment Variables
-
-Server:
-
-| Variable | Purpose |
-| --- | --- |
-| `AGENT_SERVER_DB` | SQLite database path. Defaults to `agent-server.sqlite3`. |
-| `AGENT_SERVER_DB_URL` | Explicit SQLAlchemy URL. Takes precedence over `AGENT_SERVER_DB`. |
-| `AGENT_SERVER_DB_BACKEND` | Database backend selector. Use `postgres` for PostgreSQL deployments. |
-| `AGENT_SERVER_FILES_BACKEND` | File storage backend. Use `local` or `s3`. Defaults to `local`. |
-| `AGENT_SERVER_FILES_LOCAL_ROOT` | Local file/attachment storage directory. |
-| `AGENT_SERVER_FILES_S3_BUCKET` | S3 bucket name when `AGENT_SERVER_FILES_BACKEND=s3`. |
-| `AGENT_SERVER_FILES_S3_PREFIX` | Optional S3 key prefix. |
-| `AGENT_SERVER_FILES_S3_ENDPOINT_URL` | Optional S3-compatible endpoint URL. |
-| `AGENT_SERVER_SECRET` | Server secret for signed auth tokens. Required in production. |
-| `AGENT_SERVER_STATIC_DIR` | Frontend build output directory. When set, the backend serves the Web UI. |
-| `AGENT_SERVER_CORS_ORIGINS` | Explicit allowed CORS origins. |
-
-Connector:
-
-| Variable | Purpose |
-| --- | --- |
-| `AGENT_CONNECTOR_CONFIG` | Connector config path. |
-| `AGENT_SERVER_URL` | Backend URL used when `--server-url` is omitted. |
-| `AGENT_CONNECTOR_ID` | Connector id used when `--connector-id` is omitted. |
-| `AGENT_CONNECTOR_TOKEN` | Connector token used when `--connector-token` is omitted. |
-| `AGENT_CONNECTOR_ATTACHMENTS_ROOT` | Runtime attachment download directory. Defaults to `~/.agents-anywhere/attachments`. |
-| `CODEX_BIN` | Codex CLI/app-server path. |
-| `CLAUDE_BIN` | Claude Code CLI path. |
-
-## Verify
-
-```bash
-cd server
-uv run ruff check . --exclude .venv
-uv run pytest -q
-
-cd ../connector
-uv run ruff check connector tests
-uv run pytest -q
-
-cd ../web
-yarn build
-```
+For Dockerized Connector images, SSH-enabled development containers, and agent installer images, see [docker/README.md](docker/README.md).
 
 ## License
 

@@ -6,6 +6,17 @@ import java.net.URLEncoder
 class AuthApi(
     private val client: ApiClient = ApiClient(),
 ) {
+    fun me(
+        serverUrl: String,
+        token: String,
+    ): AuthMeResponse {
+        return client.getJson(
+            serverUrl = serverUrl,
+            path = "/auth/me",
+            authorizationToken = token,
+        ).toAuthMeResponse()
+    }
+
     fun authConfig(serverUrl: String): AuthConfigResponse {
         return client.getJson(
             serverUrl = serverUrl,
@@ -31,6 +42,28 @@ class AuthApi(
                 throw ApiException("Invalid User ID or password.", exc.statusCode, exc)
             }
             throw exc
+        }
+    }
+
+    fun register(
+        serverUrl: String,
+        userId: String,
+        password: String,
+    ): AuthResponse {
+        return try {
+            client.postJson(
+                serverUrl = serverUrl,
+                path = "/auth/register",
+                body = JSONObject()
+                    .put("userId", userId)
+                    .put("password", password),
+            ).toAuthResponse()
+        } catch (exc: ApiException) {
+            throw when (exc.statusCode) {
+                403 -> ApiException("Registration is closed. Contact your administrator to enable it.", exc.statusCode, exc)
+                409 -> ApiException("That User ID is already taken.", exc.statusCode, exc)
+                else -> exc
+            }
         }
     }
 
@@ -149,6 +182,43 @@ class AuthApi(
         }
     }
 
+    fun updateAvatar(
+        serverUrl: String,
+        token: String,
+        avatar: String,
+    ): AuthMeResponse {
+        return client.putJson(
+            serverUrl = serverUrl,
+            path = "/auth/me/avatar",
+            body = JSONObject().put("avatar", avatar),
+            authorizationToken = token,
+        ).toAuthMeResponse()
+    }
+
+    fun clearAvatar(
+        serverUrl: String,
+        token: String,
+    ): AuthMeResponse {
+        return client.deleteJson(
+            serverUrl = serverUrl,
+            path = "/auth/me/avatar",
+            authorizationToken = token,
+        ).toAuthMeResponse()
+    }
+
+    fun changePassword(
+        serverUrl: String,
+        token: String,
+        newPassword: String,
+    ) {
+        client.postJson(
+            serverUrl = serverUrl,
+            path = "/auth/change-password",
+            body = JSONObject().put("newPassword", newPassword),
+            authorizationToken = token,
+        )
+    }
+
     private fun JSONObject.toAuthConfigResponse(): AuthConfigResponse {
         return AuthConfigResponse(
             needsBootstrap = optBoolean("needsBootstrap", false),
@@ -171,6 +241,16 @@ class AuthApi(
     private fun JSONObject.toOAuthFinalizeResponse(): OAuthFinalizeResponse {
         return OAuthFinalizeResponse(
             auth = getJSONObject("auth").toAuthResponse(),
+            serverTime = getString("serverTime"),
+        )
+    }
+
+    private fun JSONObject.toAuthMeResponse(): AuthMeResponse {
+        return AuthMeResponse(
+            userId = getString("userId"),
+            role = getString("role"),
+            disabled = optBoolean("disabled", false),
+            avatar = optNullableString("avatar"),
             serverTime = getString("serverTime"),
         )
     }

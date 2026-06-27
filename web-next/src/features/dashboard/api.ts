@@ -2,6 +2,7 @@ import { ApiClient, apiClient } from "@/lib/api";
 import type {
   AgentCatalogResponse,
   ArchiveAllResponse,
+  BulkArchiveResponse,
   ArchiveAllScope,
   AttachmentUploadResponse,
   ApprovalResolveStatus,
@@ -9,6 +10,7 @@ import type {
   ConnectorListResponse,
   ConnectorResponse,
   ConnectorRevokeResponse,
+  ConnectorRuntimeCapabilitiesResponse,
   FsListResult,
   FsReadFileResult,
   FsReadTextResult,
@@ -29,7 +31,8 @@ import type {
   TakeoverResponse,
   TerminalCreateRequest,
   TerminalListResponse,
-  TerminalResponse
+  TerminalResponse,
+  UserAgentDefaultsResponse
 } from "@/features/dashboard/types";
 
 export class DashboardApi {
@@ -129,6 +132,22 @@ export class DashboardApi {
     return this.client.patch<SessionResponse>(
       `/sessions/${encodeURIComponent(sessionId)}`,
       body,
+      { token },
+    );
+  }
+
+  bulkMarkSessionsRead(token: string, ids: string[]): Promise<BulkArchiveResponse> {
+    return this.client.post<BulkArchiveResponse>("/sessions/bulk-read", { ids }, { token });
+  }
+
+  bulkArchiveSessions(
+    token: string,
+    ids: string[],
+    archived: boolean,
+  ): Promise<BulkArchiveResponse> {
+    return this.client.post<BulkArchiveResponse>(
+      "/sessions/bulk-archive",
+      { ids, archived },
       { token },
     );
   }
@@ -380,6 +399,21 @@ export class DashboardApi {
     );
   }
 
+  getAgentDefaults(token: string): Promise<UserAgentDefaultsResponse> {
+    return this.client.get<UserAgentDefaultsResponse>("/agents/defaults", { token });
+  }
+
+  updateAgentDefaults(
+    token: string,
+    runtimes: Record<string, { enabled?: boolean; settings?: Record<string, unknown> }>,
+  ): Promise<UserAgentDefaultsResponse> {
+    return this.client.patch<UserAgentDefaultsResponse>(
+      "/agents/defaults",
+      { runtimes },
+      { token },
+    );
+  }
+
   getConnectorAgentSettings(
     token: string,
     connectorId: string,
@@ -387,6 +421,30 @@ export class DashboardApi {
   ): Promise<RuntimeSettingsResponse> {
     return this.client.get<RuntimeSettingsResponse>(
       `/connectors/${encodeURIComponent(connectorId)}/agents/${encodeURIComponent(runtime)}/settings`,
+      { token },
+    );
+  }
+
+  patchConnectorAgentSettings(
+    token: string,
+    connectorId: string,
+    runtime: string,
+    settings: Record<string, unknown>,
+  ): Promise<RuntimeSettingsResponse> {
+    return this.client.patch<RuntimeSettingsResponse>(
+      `/connectors/${encodeURIComponent(connectorId)}/agents/${encodeURIComponent(runtime)}/settings`,
+      { settings },
+      { token },
+    );
+  }
+
+  deleteConnectorRuntime(
+    token: string,
+    connectorId: string,
+    runtime: string,
+  ): Promise<ConnectorRuntimeCapabilitiesResponse> {
+    return this.client.delete<ConnectorRuntimeCapabilitiesResponse>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtime-capabilities/${encodeURIComponent(runtime)}`,
       { token },
     );
   }

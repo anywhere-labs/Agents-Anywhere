@@ -5,7 +5,7 @@ import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
 import android.view.View;
 
-import com.agentsanywhere.app.feature.sessiondetail.RemoteTerminalController;
+import com.agentsanywhere.app.feature.terminal.RemoteTerminalController;
 
 /**
  * The interface for communication between {@link TerminalView} and its client. It allows for getting

@@ -29,7 +29,7 @@ export function RegisterScreen() {
         <h1 className="text-2xl font-bold tracking-tight">{t("register.title")}</h1>
         <p className="text-sm text-muted-foreground leading-relaxed">
           {t("register.descriptionPrefix")}<br />
-          <span className="font-brand font-medium">Agents Anywhere</span>
+          <span className="aa-wordmark">Agents Anywhere</span>
           {" "}{t("register.descriptionSuffix")}
         </p>
       </div>
@@ -45,7 +45,8 @@ export function RegisterScreen() {
               onChange={(event) => setUserId(event.currentTarget.value)}
               placeholder={t("login.userPlaceholder")}
               autoComplete="username"
-              className="font-mono"
+              spellCheck={false}
+              className="code-mono"
             />
           </InputGroup>
         </div>
@@ -61,7 +62,8 @@ export function RegisterScreen() {
               onChange={(event) => setPassword(event.currentTarget.value)}
               placeholder={t("register.passwordPlaceholder")}
               autoComplete="new-password"
-              className="font-mono"
+              spellCheck={false}
+              className="code-mono"
             />
             <InputGroupAddon align="inline-end">
               <InputGroupButton onClick={() => setShowPassword((v) => !v)} aria-label={showPassword ? t("actions.hidePassword") : t("actions.showPassword")}>
@@ -85,7 +87,8 @@ export function RegisterScreen() {
               }}
               placeholder={t("register.confirmPlaceholder")}
               autoComplete="new-password"
-              className="font-mono"
+              spellCheck={false}
+              className="code-mono"
             />
           </InputGroup>
         </div>

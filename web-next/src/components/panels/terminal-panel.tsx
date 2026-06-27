@@ -6,6 +6,9 @@ import { useTranslations } from "next-intl"
 
 import "./runtime-panel.css"
 import { ChevronExternal } from "./runtime-icons"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Separator } from "@/components/ui/separator"
 import { dashboardApi } from "@/features/dashboard/api"
 import type { TerminalView } from "@/features/dashboard/types"
 import { cn } from "@/lib/utils"
@@ -172,12 +175,12 @@ export function TerminalPanelBody({ token, connectorId, root, onClose, onPopOut 
   }, [])
 
   return (
-    <div className="aa-rt-pane aa-term">
-      <div className="aa-rt-hd">
-        <div className="aa-rt-title">
+    <Card size="sm" className="aa-rt-pane aa-term">
+      <CardHeader className="aa-rt-hd">
+        <CardTitle className="aa-rt-title">
           <SquareTerminal className="size-3.5" />
           {t("title")}
-        </div>
+        </CardTitle>
         <div
           className="aa-term-tabs"
           role="tablist"
@@ -260,43 +263,61 @@ export function TerminalPanelBody({ token, connectorId, root, onClose, onPopOut 
             <Plus className="size-3.5" />
           </button>
         </div>
-        <span className="aa-rt-sep" />
+        <Separator orientation="vertical" className="aa-rt-sep" />
         <div className="aa-rt-acts">
           {onPopOut ? (
-            <button className="aa-rt-iconbtn" type="button" title={t("openWindow")} onClick={onPopOut}>
+            <Button
+              className="aa-rt-iconbtn"
+              variant="ghost"
+              size="icon-sm"
+              type="button"
+              title={t("openWindow")}
+              aria-label={t("openWindow")}
+              onClick={onPopOut}
+            >
               <ChevronExternal />
-            </button>
+            </Button>
           ) : null}
           {onClose ? (
-            <button className="aa-rt-iconbtn" type="button" title={t("close")} onClick={onClose}>
+            <Button
+              className="aa-rt-iconbtn"
+              variant="ghost"
+              size="icon-sm"
+              type="button"
+              title={t("close")}
+              aria-label={t("close")}
+              onClick={onClose}
+            >
               <X className="size-3.5" />
-            </button>
+            </Button>
           ) : null}
         </div>
-      </div>
-      <div className="aa-term-host">
-        {error ? <div className="aa-term-status text-destructive">{error}</div> : null}
-        {!canConnect ? <div className="aa-term-status">{t("noConnector")}</div> : null}
-        {terms.map((term) => (
-          <div
-            key={`${connectorId}:${term.terminalId}`}
-            className={cn("aa-term-host-layer", activeId === term.terminalId && "active")}
-          >
-            {token && connectorId ? (
-              <XtermHost
-                token={token}
-                connectorId={connectorId}
-                terminal={term}
-                active={activeId === term.terminalId}
-                onError={handleTerminalError}
-                onClosed={removeTerminal}
-              />
-            ) : null}
-          </div>
-        ))}
-        {terms.length === 0 && canConnect && !error ? <div className="aa-term-status">{t("noTerminal")}</div> : null}
-      </div>
-    </div>
+      </CardHeader>
+      <CardContent className="aa-rt-content">
+        <div className="aa-term-host">
+          {error ? <div className="aa-term-status text-destructive">{error}</div> : null}
+          {!canConnect ? <div className="aa-term-status">{t("noConnector")}</div> : null}
+          {terms.map((term) => (
+            <div
+              key={`${connectorId}:${term.terminalId}`}
+              className={cn("aa-term-host-layer", activeId === term.terminalId && "active")}
+            >
+              {token && connectorId ? (
+                <XtermHost
+                  token={token}
+                  connectorId={connectorId}
+                  terminal={term}
+                  active={activeId === term.terminalId}
+                  onError={handleTerminalError}
+                  onClosed={removeTerminal}
+                />
+              ) : null}
+            </div>
+          ))}
+          {terms.length === 0 && canConnect && !error ? <div className="aa-term-status">{t("noTerminal")}</div> : null}
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 

@@ -23,6 +23,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/components/auth/auth-context"
@@ -38,6 +39,32 @@ function randomName(): string {
   const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)]
   const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)]
   return `${adj}-${noun}`
+}
+
+function resolvePairingServerUrl(): string {
+  if (typeof window === "undefined") return ""
+  const { hostname, origin } = window.location
+  const isLocalDev = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1"
+  if (isLocalDev) {
+    const api = process.env.NEXT_PUBLIC_AGENTS_ANYWHERE_API
+    if (api) return api.replace(/\/$/, "")
+  }
+  return origin.replace(/\/$/, "")
+}
+
+function pairServerAddress(serverUrl: string): string {
+  try {
+    const url = new URL(serverUrl)
+    if (url.protocol === "https:") return url.host
+  } catch {
+    return serverUrl
+  }
+  return serverUrl
+}
+
+function shellQuote(value: string): string {
+  if (/^[A-Za-z0-9_./:=@%+-]+$/.test(value)) return value
+  return `'${value.replace(/'/g, "'\\''")}'`
 }
 
 // ── Types ──────────────────────────────────────────────────
@@ -64,7 +91,7 @@ function CodeBlock({ code }: { code: string }) {
     <div className="grid rounded-lg border border-border bg-muted/40" style={{ gridTemplateColumns: "1fr auto" }}>
       <ScrollArea className="min-w-0">
         <div className="px-4 py-3">
-        <code className="block whitespace-nowrap font-mono text-xs text-foreground">{code}</code>
+        <code className="block whitespace-nowrap code-mono text-xs text-foreground">{code}</code>
         </div>
         <ScrollBar orientation="horizontal" />
       </ScrollArea>
@@ -100,14 +127,15 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
   const [name, setName] = React.useState(() => setupCredential?.connector.name ?? randomName())
   const [connectorId, setConnectorId] = React.useState<string | null>(() => setupCredential?.connector.id ?? null)
   const [token, setToken] = React.useState<string | null>(() => setupCredential?.connectorToken ?? null)
-  const [pairCode, setPairCode] = React.useState<string[]>(Array(6).fill(""))
+  const [pairCode, setPairCode] = React.useState("")
   const [error, setError] = React.useState<string | null>(null)
-  const pairCodeBoxRefs = React.useRef<(HTMLInputElement | null)[]>([])
   const [creating, setCreating] = React.useState(false)
   const [claiming, setClaiming] = React.useState(false)
   const [polling, setPolling] = React.useState(false)
   const [exitGuardOpen, setExitGuardOpen] = React.useState(false)
   const pollingRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  const suppressCloseGuardRef = React.useRef(false)
+  const serverUrl = React.useMemo(resolvePairingServerUrl, [])
 
   // Stable device-created guard: once connector exists, closing needs confirmation
   const deviceCreated = connectorId !== null && step !== "success"
@@ -158,7 +186,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
     setName(setupCredential?.connector.name ?? randomName())
     setConnectorId(setupCredential?.connector.id ?? null)
     setToken(setupCredential?.connectorToken ?? null)
-    setPairCode(Array(6).fill(""))
+    setPairCode("")
     setError(null)
     setCreating(false)
     setClaiming(false)
@@ -166,6 +194,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
   }
 
   const handleOpenChange = (next: boolean) => {
+    if (!next && suppressCloseGuardRef.current) return
     if (!next && deviceCreated) {
       setExitGuardOpen(true)
       return
@@ -174,34 +203,36 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
     onOpenChange(next)
   }
 
-  const handleCreate = async () => {
-    if (!name.trim()) return
-    setCreating(true)
-    setError(null)
-    try {
-      setStep("method")
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t("errors.prepareFailed"))
-    } finally {
-      setCreating(false)
-    }
+  const continuePairing = () => {
+    suppressCloseGuardRef.current = true
+    setExitGuardOpen(false)
+    window.setTimeout(() => {
+      suppressCloseGuardRef.current = false
+    }, 0)
   }
 
-  const handleSelectToken = async () => {
-    if (!session?.accessToken) return
+  const handleCreate = async () => {
+    if (!name.trim() || !session?.accessToken) return
     setCreating(true)
     setError(null)
     try {
       const result = await dashboardApi.createConnector(session.accessToken, name.trim())
       setConnectorId(result.connector.id)
       setToken(result.connectorToken)
-      setStep("token")
-      startConnectorPolling(result.connector.id)
+      setName(result.connector.name)
+      setStep("method")
     } catch (err) {
       setError(err instanceof Error ? err.message : t("errors.createFailed"))
     } finally {
       setCreating(false)
     }
+  }
+
+  const handleSelectToken = () => {
+    if (!connectorId) return
+    setError(null)
+    setStep("token")
+    startConnectorPolling(connectorId)
   }
 
   const handleSelectPairCode = () => {
@@ -210,14 +241,17 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
   }
 
   const handleClaim = async () => {
-    const code = pairCode.join("")
-    if (code.length < 6 || !session?.accessToken) return
+    const code = pairCode
+    if (code.length < 6 || !session?.accessToken || !connectorId || !token) return
     setClaiming(true)
     setError(null)
     try {
       const result = await dashboardApi.claimPairing(session.accessToken, {
         code,
         name: name.trim(),
+        serverUrl,
+        connectorId,
+        connectorToken: token,
       })
       if (result.connector?.id) setConnectorId(result.connector.id)
       onConnectorCreated?.()
@@ -243,12 +277,16 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
     onConnectorCreated?.()
   }
 
-  // Build the pairing command from connectorId + token
   const tokenCommand = connectorId && token
-    ? `agents-anywhere-connector pair --id ${connectorId} --token ${token}`
+    ? [
+      "uvx anywhere-cli start",
+      `--server-url ${shellQuote(serverUrl)}`,
+      `--connector-id ${shellQuote(connectorId)}`,
+      `--connector-token ${shellQuote(token)}`,
+    ].join(" ")
     : ""
 
-  const pairCodeCommand = "agents-anywhere-connector pair"
+  const pairCodeCommand = `uvx anywhere-cli pair ${shellQuote(pairServerAddress(serverUrl))}`
 
   return (
     <>
@@ -271,7 +309,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder={t("namePlaceholder")}
-                  className="font-mono"
+                  className="code-mono"
                   onKeyDown={(e) => e.key === "Enter" && handleCreate()}
                   autoFocus
                 />
@@ -292,9 +330,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
               <DialogHeader>
                 <DialogTitle>{title ?? t("methodTitle")}</DialogTitle>
                 <DialogDescription>
-                  {t.rich("methodDescription", {
-                    name: () => <span className="font-medium text-foreground font-mono">{name}</span>,
-                  })}
+                  {t("methodDescription", { name })}
                 </DialogDescription>
               </DialogHeader>
               <div className="flex flex-col gap-3 py-2">
@@ -325,9 +361,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
               <DialogHeader>
                 <DialogTitle>{t("tokenStepTitle")}</DialogTitle>
                 <DialogDescription>
-                  {t.rich("tokenStepDescription", {
-                    name: () => <span className="font-medium text-foreground font-mono">{name}</span>,
-                  })}
+                  {t("tokenStepDescription", { name })}
                 </DialogDescription>
               </DialogHeader>
               <div className="flex flex-col gap-3 py-2">
@@ -355,57 +389,28 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
               <DialogHeader>
                 <DialogTitle>{t("codeStepTitle")}</DialogTitle>
                 <DialogDescription>
-                  {t.rich("codeStepDescription", {
-                    name: () => <span className="font-medium text-foreground font-mono">{name}</span>,
-                  })}
+                  {t("codeStepDescription", { name })}
                 </DialogDescription>
               </DialogHeader>
               <div className="flex flex-col gap-4 py-2">
                 <CodeBlock code={pairCodeCommand} />
                 <div className="flex flex-col gap-2">
                   <Label>{t("codeLabel")}</Label>
-                  <div className="flex items-center gap-2">
-                    {Array.from({ length: 6 }).map((_, i) => (
-                      <input
-                        key={i}
-                        ref={(el) => { pairCodeBoxRefs.current[i] = el }}
-                        type="text"
-                        inputMode="numeric"
-                        maxLength={1}
-                        value={pairCode[i]}
-                        disabled={polling}
-                        aria-label={t("codeDigitLabel", { index: i + 1 })}
-                        onChange={(e) => {
-                          const val = e.target.value.replace(/\D/g, "").slice(-1)
-                          const next = [...pairCode]
-                          next[i] = val
-                          setPairCode(next)
-                          if (val && i < 5) pairCodeBoxRefs.current[i + 1]?.focus()
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === "Backspace" && !pairCode[i] && i > 0) {
-                            pairCodeBoxRefs.current[i - 1]?.focus()
-                          }
-                        }}
-                        onPaste={(e) => {
-                          e.preventDefault()
-                          const text = e.clipboardData.getData("text").replace(/\D/g, "").slice(0, 6)
-                          const next = Array(6).fill("")
-                          for (let j = 0; j < text.length; j++) next[j] = text[j]
-                          setPairCode(next)
-                          const focusIdx = Math.min(text.length, 5)
-                          pairCodeBoxRefs.current[focusIdx]?.focus()
-                        }}
-                        className={cn(
-                          "h-12 w-full rounded-md border border-border bg-background text-center font-mono text-xl font-medium",
-                          "caret-transparent outline-none ring-offset-background",
-                          "focus:border-ring focus:ring-2 focus:ring-ring focus:ring-offset-2",
-                          "disabled:opacity-40",
-                          polling && "opacity-40",
-                        )}
-                      />
-                    ))}
-                  </div>
+                  <InputOTP
+                    maxLength={6}
+                    value={pairCode}
+                    onChange={(value) => setPairCode(value.replace(/\D/g, "").slice(0, 6))}
+                    disabled={polling}
+                    inputMode="numeric"
+                    aria-label={t("codeLabel")}
+                    containerClassName={cn("w-full justify-between", polling && "opacity-40")}
+                  >
+                    <InputOTPGroup className="w-full">
+                      {Array.from({ length: 6 }).map((_, i) => (
+                        <InputOTPSlot key={i} index={i} className="h-12 flex-1 text-xl" />
+                      ))}
+                    </InputOTPGroup>
+                  </InputOTP>
                 </div>
                 {error && <p className="text-sm text-destructive">{error}</p>}
                 {polling && <PollingIndicator label={t("confirming")} />}
@@ -423,7 +428,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
                 </Button>
                 <Button
                   onClick={handleClaim}
-                  disabled={pairCode.join("").length < 6 || claiming || polling}
+                  disabled={pairCode.length < 6 || claiming || polling}
                   className="flex-1"
                 >
                   {claiming && <Loader2 className="mr-2 size-4 animate-spin" />}
@@ -442,9 +447,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
                   {t("successTitle")}
                 </DialogTitle>
                 <DialogDescription>
-                  {t.rich("successDescription", {
-                    name: () => <span className="font-mono font-medium text-foreground">{name}</span>,
-                  })}
+                  {t("successDescription", { name })}
                 </DialogDescription>
               </DialogHeader>
               <DialogFooter>
@@ -462,13 +465,11 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
           <AlertDialogHeader>
             <AlertDialogTitle>{t("exitTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t.rich("exitDescription", {
-                name: () => <span className="font-mono font-medium text-foreground">{name}</span>,
-              })}
+              {t("exitDescription", { name })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>{t("continuePairing")}</AlertDialogCancel>
+            <AlertDialogCancel onClick={continuePairing}>{t("continuePairing")}</AlertDialogCancel>
             <AlertDialogAction onClick={handleForceClose}>
               {t("closeAnyway")}
             </AlertDialogAction>

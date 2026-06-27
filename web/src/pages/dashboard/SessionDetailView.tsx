@@ -2816,9 +2816,8 @@ function ComposerMenu({
       document.removeEventListener("keydown", onKey);
     };
   }, [anchor, onClose]);
-  const hasDescriptions = items.some((item) => item.description);
-  const W = hasDescriptions ? 420 : 240;
-  const itemHeight = hasDescriptions ? 58 : 36;
+  const W = 240;
+  const itemHeight = 36;
   const style = composerMenuStyle(anchor, W, 44 + items.length * itemHeight);
   return (
     <div
@@ -2850,9 +2849,6 @@ function ComposerMenu({
               {item.label}
               {item.tier && <span className="tier"> {item.tier}</span>}
             </span>
-            {item.description && (
-              <span className="desc">{item.description}</span>
-            )}
           </span>
           <span className="check">
             <Icons.Check size={11} />
@@ -3031,7 +3027,6 @@ function toComposerMenuItems(
     field?.options?.map((option) => ({
       id: String(option.value),
       label: option.label,
-      description: option.description,
     })) ?? []
   );
 }

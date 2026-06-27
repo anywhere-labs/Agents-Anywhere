@@ -28,6 +28,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { Spinner } from "@/components/ui/spinner"
 import { useWorkspace } from "@/components/workspace-context"
 import { useAuth } from "@/components/auth/auth-context"
 import { LoadingState } from "@/components/loading-state"
@@ -133,7 +134,7 @@ function FileBrowserDialog({
               if (e.key === "Enter") loadPath(inputPath)
             }}
             placeholder={t("enterPath")}
-            className="min-w-0 font-mono text-xs"
+            className="min-w-0 code-mono text-xs"
           />
           {parentPath && (
             <Button variant="outline" size="icon" onClick={() => loadPath(parentPath)} title={t("parent")}>
@@ -174,7 +175,7 @@ function FileBrowserDialog({
           )}
         </ScrollArea>
 
-        <div className="truncate rounded-md border border-border bg-muted/40 px-3 py-2 font-mono text-xs text-muted-foreground">
+        <div className="truncate rounded-md border border-border bg-muted/40 px-3 py-2 code-mono text-xs text-muted-foreground">
           {currentPath || t("resolvingHome")}
         </div>
 
@@ -202,13 +203,15 @@ export function WorkspacePicker({
   connectorId,
   value,
   onChange,
+  loading = false,
 }: {
   connectorId?: string
   value?: WorkspaceSelection | null
   onChange?: (workspace: WorkspaceSelection) => void
+  loading?: boolean
 } = {}) {
   const { session: authSession } = useAuth()
-  const { connectors, sessions } = useWorkspace()
+  const { connectors, sessions, openPairDeviceDialog } = useWorkspace()
   const t = useTranslations("dashboard.workspacePicker")
 
   // Pick first online connector for FS browsing
@@ -216,14 +219,18 @@ export function WorkspacePicker({
     connectors.find((c) => c.id === connectorId) ??
     connectors.find((c) => c.status === "online") ??
     connectors[0]
+  const hasOnlineConnector = connectors.some((c) => c.status === "online")
   const [resolvedHomePath, setResolvedHomePath] = React.useState("")
+  const [resolvingHomePath, setResolvingHomePath] = React.useState(false)
 
   React.useEffect(() => {
     setResolvedHomePath("")
     if (!authSession?.accessToken || !activeConnector?.id) {
+      setResolvingHomePath(false)
       return
     }
     let cancelled = false
+    setResolvingHomePath(true)
     dashboardApi
       .connectorFsList(authSession.accessToken, activeConnector.id, { root: "~", path: "." })
       .then((response) => {
@@ -232,6 +239,9 @@ export function WorkspacePicker({
       })
       .catch(() => {
         if (!cancelled) setResolvedHomePath("")
+      })
+      .finally(() => {
+        if (!cancelled) setResolvingHomePath(false)
       })
     return () => {
       cancelled = true
@@ -287,6 +297,37 @@ export function WorkspacePicker({
 
   const isHome = Boolean(homeWorkspace.path && workspace.path === homeWorkspace.path)
 
+  if (!hasOnlineConnector) {
+    return (
+      <div className="flex w-full items-center gap-3 rounded-xl border border-dashed border-border px-4 py-3 text-sm">
+        <Folder className="size-4 shrink-0 text-muted-foreground" />
+        <div className="min-w-0 flex-1">
+          <p className="font-medium">{t("noOnlineDeviceTitle")}</p>
+          <p className="text-xs text-muted-foreground">{t("noOnlineDeviceDescription")}</p>
+        </div>
+        <Button size="sm" variant="outline" onClick={openPairDeviceDialog}>
+          <Plus className="size-4" />
+          {t("addDevice")}
+        </Button>
+      </div>
+    )
+  }
+
+  if (loading || resolvingHomePath) {
+    return (
+      <button
+        type="button"
+        disabled
+        className="flex w-full items-center gap-3 rounded-xl border border-border px-4 py-3 text-left text-sm opacity-100"
+      >
+        <Folder className="size-4 shrink-0 text-muted-foreground" />
+        <Spinner className="size-4 shrink-0 text-muted-foreground" />
+        <span className="h-3 w-28 rounded-full bg-muted-foreground/20" />
+        <span className="h-3 min-w-0 flex-1 rounded-full bg-muted-foreground/10" />
+      </button>
+    )
+  }
+
   return (
     <>
       <DropdownMenu>
@@ -297,7 +338,7 @@ export function WorkspacePicker({
           >
             <Folder className="size-4 shrink-0 text-muted-foreground" />
             <span className="font-medium">{isHome ? t("home") : workspace.label}</span>
-            <span className="truncate font-mono text-xs text-muted-foreground">
+            <span className="truncate code-mono text-xs text-muted-foreground">
               {workspace.path || t("resolvingHome")}
             </span>
             <ChevronDown className="ml-auto size-4 shrink-0 text-muted-foreground" />
@@ -314,7 +355,7 @@ export function WorkspacePicker({
             <Home className="size-4 shrink-0 text-muted-foreground" />
             <div className="flex flex-col">
               <span>{t("home")}</span>
-              <span className="font-mono text-xs text-muted-foreground">
+              <span className="code-mono text-xs text-muted-foreground">
                 {homeWorkspace.path || t("resolvingHome")}
               </span>
             </div>
@@ -340,7 +381,7 @@ export function WorkspacePicker({
                   <Folder className="size-4 shrink-0 text-muted-foreground" />
                   <div className="flex min-w-0 flex-col">
                     <span>{ws.label}</span>
-                    <span className="truncate font-mono text-xs text-muted-foreground">{ws.path}</span>
+                    <span className="truncate code-mono text-xs text-muted-foreground">{ws.path}</span>
                   </div>
                   {workspace.path === ws.path && <Check className="ml-auto size-3.5 shrink-0" />}
                 </DropdownMenuItem>

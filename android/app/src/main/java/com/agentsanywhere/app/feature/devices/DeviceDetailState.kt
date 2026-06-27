@@ -9,6 +9,7 @@ data class DeviceDetailState(
     val agents: List<DeviceDetailAgent>,
     val workspaces: List<DeviceDetailWorkspace>,
     val activeSessions: List<AgentSession>,
+    val archivedSessions: List<AgentSession>,
 )
 
 data class DeviceDetailAgent(
@@ -48,6 +49,7 @@ fun SessionsState.deviceDetailState(deviceId: String?): DeviceDetailState {
             }
             .sortedWith(compareByDescending<DeviceDetailWorkspace> { it.sortKey }.thenBy { it.title.lowercase() }),
         activeSessions = sessions.filter { it.connectorId == device?.id },
+        archivedSessions = archivedSessions.filter { it.connectorId == device?.id },
     )
 }
 

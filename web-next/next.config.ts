@@ -7,6 +7,9 @@ const apiTarget = process.env.AGENTS_ANYWHERE_API ?? "http://127.0.0.1:8000";
 
 const nextConfig: NextConfig = {
   devIndicators: false,
+  env: {
+    NEXT_PUBLIC_AGENTS_ANYWHERE_API: apiTarget,
+  },
   async rewrites() {
     return [
       "/auth/:path*",

@@ -1007,6 +1007,95 @@ def test_timeline_upsert_removes_legacy_history_duplicates(tmp_path):
         assert [item["id"] for item in messages] == ["tl_canonical"]
 
 
+def test_timeline_sync_removes_snapshot_reasoning_duplicate_after_live_item(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+
+    content = {
+        "kind": "reasoning",
+        "rawText": None,
+        "summaries": [{"index": 0, "text": "same reasoning"}],
+    }
+    base_item = {
+        "sessionId": session_id,
+        "turnId": "turn_1",
+        "type": "system",
+        "status": "done",
+        "role": "system",
+        "content": content,
+        "source": {
+            "runtime": "codex",
+            "sessionId": "thr_1",
+            "turnId": "turn_1",
+            "itemType": "reasoning",
+        },
+        "revision": 1,
+        "contentHash": "sha256:reasoning",
+    }
+
+    live = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.itemUpsert",
+                    "params": {
+                        "sessionId": session_id,
+                        "item": {
+                            **base_item,
+                            "id": "tl_live_reasoning",
+                            "source": {
+                                **base_item["source"],
+                                "itemId": "item_live_reasoning",
+                                "event": "item/completed",
+                            },
+                            "orderSeq": 3,
+                        },
+                    },
+                }
+            ]
+        },
+    )
+    assert live.status_code == 200, live.text
+
+    synced = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.sync",
+                    "params": {
+                        "sessionId": session_id,
+                        "items": [
+                            {
+                                **base_item,
+                                "id": "tl_snapshot_reasoning",
+                                "source": {
+                                    **base_item["source"],
+                                    "itemId": "item-2",
+                                    "derivedKey": "snapshot-reasoning-1",
+                                },
+                                "orderSeq": 17,
+                            }
+                        ],
+                    },
+                }
+            ]
+        },
+    )
+    assert synced.status_code == 200, synced.text
+
+    state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+    reasoning_items = [
+        item
+        for item in state["items"]
+        if item["type"] == "system" and item["content"].get("kind") == "reasoning"
+    ]
+    assert [item["id"] for item in reasoning_items] == ["tl_live_reasoning"]
+
+
 def test_sessions_sort_by_latest_timeline_item_not_session_update(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, first_session_id, headers = create_connector_and_session(client)

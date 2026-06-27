@@ -320,8 +320,7 @@ function SettingMenu({
   }, [anchor, onClose]);
 
   const rect = anchor.getBoundingClientRect();
-  const hasDescriptions = options.some((option) => option.description);
-  const width = Math.max(hasDescriptions ? 360 : 220, rect.width);
+  const width = Math.max(220, rect.width);
   const top = rect.bottom + 6;
   const left = Math.min(window.innerWidth - width - 8, rect.left);
   return (
@@ -342,11 +341,6 @@ function SettingMenu({
         >
           <span className="kl-runtime-settings-menu-copy">
             <span>{option.label}</span>
-            {option.description && (
-              <span className="kl-runtime-settings-menu-desc">
-                {option.description}
-              </span>
-            )}
           </span>
           <Icons.Check size={12} />
         </button>
@@ -383,7 +377,6 @@ function optionPairs(
   return (field.options ?? []).map((option) => ({
     value: String(option.value),
     label: option.label,
-    description: option.description,
   }));
 }
 

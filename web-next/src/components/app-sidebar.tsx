@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Search, Plus, Settings, Users, Server, LogOut, Pin, Archive } from "lucide-react"
+import { Search, Plus, Settings, Users, Server, LogOut, Pin, Archive, CheckCheck } from "lucide-react"
 import { PairDeviceDialog } from "@/components/pair-device-dialog"
 
 import {
@@ -40,9 +40,10 @@ import { filterSessions } from "@/lib/demo-api"
 import { useWorkspace } from "@/components/workspace-context"
 import { SessionFilterMenu } from "@/components/session-filter-menu"
 import { useAuth } from "@/components/auth/auth-context"
+import { dashboardApi } from "@/features/dashboard/api"
 import { useTranslations } from "next-intl"
 
-export function AppSidebar() {
+export function AppSidebar({ contained = false }: { contained?: boolean }) {
   const {
     connectors,
     sessions,
@@ -60,7 +61,7 @@ export function AppSidebar() {
     toggleArchiveSession,
     refreshData,
   } = useWorkspace()
-  const { signOut, me } = useAuth()
+  const { signOut, me, session: authSession } = useAuth()
   const t = useTranslations("dashboard")
   const tCommon = useTranslations("common")
   const [signOutOpen, setSignOutOpen] = React.useState(false)
@@ -69,11 +70,21 @@ export function AppSidebar() {
   const userId = me?.userId ?? "Unknown"
   const userRole = me?.role ? me.role.replace(/^\w/, (char) => char.toUpperCase()) : ""
   const userInitials = userId.slice(0, 2).toUpperCase()
+  const isAdmin = me?.role === "admin"
 
   const pinnedSessions = React.useMemo(
     () => sessions.filter((session) => session.pinned && !session.archived),
     [sessions],
   )
+
+  const markAllRead = React.useCallback(async () => {
+    if (!authSession?.accessToken) return
+    const unreadIds = sessions.filter((s) => s.unread).map((s) => s.id)
+    if (unreadIds.length === 0) return
+    await dashboardApi.bulkMarkSessionsRead(authSession.accessToken, unreadIds)
+    refreshData()
+  }, [authSession?.accessToken, refreshData, sessions])
+
 
   const filtered = filterSessions(
     sessions.filter((s) => !s.archived),
@@ -82,10 +93,10 @@ export function AppSidebar() {
   ).filter((session) => !session.pinned)
 
   return (
-    <Sidebar className="border-sidebar-border">
+    <Sidebar contained={contained} className="border-sidebar-border">
       <SidebarHeader className="gap-0 px-4 pt-4 pb-2">
         <div className="flex items-center justify-between">
-          <button type="button" onClick={goHome} className="font-brand text-xl font-medium tracking-tight">
+          <button type="button" onClick={goHome} className="aa-wordmark text-xl">
             Agents Anywhere
           </button>
           <div className="flex items-center gap-1 text-muted-foreground">
@@ -113,7 +124,7 @@ export function AppSidebar() {
       <SidebarContent className="px-2">
         {/* Devices section */}
         <SidebarGroup>
-          <SidebarGroupLabel className="flex items-center justify-between pr-1">
+          <SidebarGroupLabel className="flex items-center justify-between pr-1" role="heading" aria-level={2}>
             <span>{t("sections.devices")}</span>
             <button
               type="button"
@@ -134,7 +145,7 @@ export function AppSidebar() {
                 connectors.map((connector) => (
                   <SidebarMenuItem key={connector.id}>
                     <SidebarMenuButton
-                      className="font-mono text-[13px]"
+                      className="code-mono text-[13px]"
                       isActive={
                         (page === "device" || page === "device-workspace") &&
                         activeConnectorId === connector.id
@@ -161,7 +172,7 @@ export function AppSidebar() {
         {/* Pinned section */}
         {!isLoading && pinnedSessions.length > 0 ? (
           <SidebarGroup>
-            <SidebarGroupLabel>{t("sections.pinned")}</SidebarGroupLabel>
+            <SidebarGroupLabel role="heading" aria-level={2}>{t("sections.pinned")}</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
                 {pinnedSessions.map((item) => (
@@ -181,9 +192,17 @@ export function AppSidebar() {
 
         {/* Sessions section */}
         <SidebarGroup>
-          <SidebarGroupLabel className="flex items-center gap-1">
+          <SidebarGroupLabel className="flex items-center gap-1" role="heading" aria-level={2}>
             <span>{t("sections.recents")}</span>
             <SessionFilterMenu />
+            <button
+              type="button"
+              aria-label={t("actions.markAllRead")}
+              onClick={() => void markAllRead()}
+              className="rounded-md p-0.5 text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+            >
+              <CheckCheck className="size-3.5" />
+            </button>
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
@@ -241,14 +260,18 @@ export function AppSidebar() {
               <Settings className="size-4 text-muted-foreground" />
               {t("nav.settings")}
             </DropdownMenuItem>
-            <DropdownMenuItem className="gap-3 py-2.5" onClick={() => navigate("team")}>
-              <Users className="size-4 text-muted-foreground" />
-              {t("nav.team")}
-            </DropdownMenuItem>
-            <DropdownMenuItem className="gap-3 py-2.5" onClick={() => navigate("service")}>
-              <Server className="size-4 text-muted-foreground" />
-              {t("nav.service")}
-            </DropdownMenuItem>
+            {isAdmin ? (
+              <>
+                <DropdownMenuItem className="gap-3 py-2.5" onClick={() => navigate("team")}>
+                  <Users className="size-4 text-muted-foreground" />
+                  {t("nav.team")}
+                </DropdownMenuItem>
+                <DropdownMenuItem className="gap-3 py-2.5" onClick={() => navigate("service")}>
+                  <Server className="size-4 text-muted-foreground" />
+                  {t("nav.service")}
+                </DropdownMenuItem>
+              </>
+            ) : null}
             <DropdownMenuSeparator />
             <DropdownMenuItem className="gap-3 py-2.5" onClick={() => setSignOutOpen(true)}>
               <LogOut className="size-4 text-muted-foreground" />

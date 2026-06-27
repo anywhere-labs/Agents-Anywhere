@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import secrets
 import time
@@ -174,7 +175,7 @@ async def oauth_start(
     try:
         authorize_url = build_authorize_url(
             config,
-            redirect_uri=_oauth_redirect_uri(request),
+            redirect_uri=_oauth_redirect_uri(request, return_to=returnTo),
             return_to=returnTo,
         )
     except OAuthConfigError as exc:
@@ -205,7 +206,7 @@ async def oauth_callback(
             config,
             code=code,
             state=state,
-            redirect_uri=_oauth_redirect_uri(request),
+            redirect_uri=_oauth_redirect_uri(request, return_to=return_to),
         )
     except Exception as exc:  # noqa: BLE001 - OAuth provider failures return to the UI.
         return _oauth_frontend_redirect(request, {"oauth_error": str(exc)}, return_to=return_to)
@@ -549,8 +550,22 @@ def _password_hash_from_oauth_finalize(payload: OAuthFinalizeRequest) -> str | N
     return hash_password_verifier(payload.passwordVerifier, salt=payload.passwordSalt)
 
 
-def _oauth_redirect_uri(request: Request) -> str:
-    return f"{_public_origin(request)}/auth/oauth/callback"
+def _oauth_redirect_uri(request: Request, *, return_to: str | None = None) -> str:
+    return f"{_oauth_public_origin(request, return_to=return_to)}/auth/oauth/callback"
+
+
+def _oauth_public_origin(request: Request, *, return_to: str | None = None) -> str:
+    if return_to:
+        try:
+            parts = urlsplit(return_to)
+            if parts.scheme in {"http", "https"} and parts.netloc:
+                return f"{parts.scheme}://{parts.netloc}"
+        except ValueError:
+            pass
+    configured_origin = os.environ.get("AGENT_SERVER_PUBLIC_ORIGIN")
+    if configured_origin:
+        return configured_origin.rstrip("/")
+    return _public_origin(request)
 
 
 def _public_origin(request: Request) -> str:

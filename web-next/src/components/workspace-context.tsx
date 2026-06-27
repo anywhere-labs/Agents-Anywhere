@@ -170,6 +170,8 @@ type WorkspaceState = {
   panels: Record<PanelId, PanelMode>
   collapsed: Record<PanelId, boolean>
   popupBlocked: boolean
+  firstDevicePromptOpen: boolean
+  pairDeviceDialogOpen: boolean
 
   // Actions
   openSession: (id: string) => void
@@ -182,13 +184,19 @@ type WorkspaceState = {
   setPanelMode: (id: PanelId, mode: PanelMode) => void
   toggleCollapse: (id: PanelId) => void
   dismissPopupBlocked: () => void
+  openPairDeviceDialog: () => void
+  closePairDeviceDialog: () => void
+  closeFirstDevicePrompt: () => void
   togglePinSession: (id: string) => void
   toggleArchiveSession: (id: string) => void
+  markSessionRead: (id: string) => void
   upsertSession: (session: RealSessionView) => void
   refreshData: () => void
 }
 
 const WorkspaceContext = React.createContext<WorkspaceState | null>(null)
+
+const FIRST_DEVICE_WIZARD_DISMISSED_KEY = "aa-first-device-wizard-dismissed-v1"
 
 export function useWorkspace() {
   const ctx = React.useContext(WorkspaceContext)
@@ -219,10 +227,17 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     terminal: false,
   })
   const [popupBlocked, setPopupBlocked] = React.useState(false)
+  const [firstDevicePromptOpen, setFirstDevicePromptOpen] = React.useState(false)
+  const [pairDeviceDialogOpen, setPairDeviceDialogOpen] = React.useState(false)
+  const firstDeviceWizardCheckedRef = React.useRef(false)
 
   // ── Fetch data from mock API ──────────────────────────────
+  const initialLoadDoneRef = React.useRef(false)
+
   const fetchData = React.useCallback(async () => {
-    setIsLoading(true)
+    if (!initialLoadDoneRef.current) {
+      setIsLoading(true)
+    }
     try {
       if (authSession?.accessToken) {
         const [connRes, sessRes] = await Promise.all([
@@ -241,33 +256,119 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       setSessions(sessRes.sessions)
     } finally {
       setIsLoading(false)
+      initialLoadDoneRef.current = true
     }
+  }, [authSession?.accessToken])
+
+  React.useEffect(() => {
+    initialLoadDoneRef.current = false
   }, [authSession?.accessToken])
 
   React.useEffect(() => {
     fetchData()
   }, [fetchData])
 
+  // ── Dashboard SSE + polling ────────────────────────────────
+  const tokenRef = React.useRef(authSession?.accessToken ?? null)
+  tokenRef.current = authSession?.accessToken ?? null
+
+  React.useEffect(() => {
+    if (!authSession?.accessToken) return
+    let cancelled = false
+    let eventSource: EventSource | null = null
+    let pollTimer: number | null = null
+
+    const refetch = () => {
+      if (cancelled) return
+      fetchData()
+    }
+
+    // SSE for real-time dashboard updates
+    try {
+      eventSource = new EventSource(dashboardApi.dashboardEventsUrl(authSession.accessToken))
+      eventSource.onmessage = (event) => {
+        if (cancelled || !event.data) return
+        try {
+          const msg = JSON.parse(event.data) as { type?: string }
+          if (msg.type === "dashboard.changed" || msg.type === "dashboard.sync") {
+            refetch()
+          }
+        } catch { /* ignore malformed */ }
+      }
+      eventSource.onerror = () => {
+        eventSource?.close()
+        eventSource = null
+      }
+    } catch { /* SSE unavailable */ }
+
+    // Fallback polling when SSE is disconnected
+    pollTimer = window.setInterval(() => {
+      if (cancelled) return
+      if (!eventSource || eventSource.readyState !== EventSource.OPEN) {
+        refetch()
+      }
+    }, 30_000)
+
+    return () => {
+      cancelled = true
+      eventSource?.close()
+      if (pollTimer !== null) window.clearInterval(pollTimer)
+    }
+  }, [authSession?.accessToken, fetchData])
+
   // ── Hash routing ──────────────────────────────────────────
   React.useEffect(() => {
     // Correct from hash immediately on mount, then keep in sync.
     setRoute(parseHash(window.location.hash))
     setRouteReady(true)
-    const handler = () => setRoute(parseHash(window.location.hash))
+    const handler = () => React.startTransition(() => setRoute(parseHash(window.location.hash)))
     window.addEventListener("hashchange", handler)
     return () => window.removeEventListener("hashchange", handler)
   }, [])
 
   const pushRoute = React.useCallback((r: ParsedRoute) => {
     window.location.hash = buildHash(r)
-    setRoute(r)
+    React.startTransition(() => setRoute(r))
   }, [])
 
   // ── Navigation helpers ────────────────────────────────────
 
+  const markSessionRead = React.useCallback((id: string) => {
+    const targetSession = sessions.find((session) => session.id === id)
+    if (!targetSession || !targetSession.unread) return
+
+    setSessions((prev) =>
+      prev.map((session) =>
+        session.id === id
+          ? { ...session, unread: false, lastReadSeq: Math.max(session.lastReadSeq, session.updatedSeq) }
+          : session,
+      ),
+    )
+
+    if (!authSession?.accessToken) return
+    dashboardApi
+      .markSessionRead(authSession.accessToken, id)
+      .then((response) => {
+        const mapped = mapSession(response.session)
+        setSessions((prev) => {
+          const index = prev.findIndex((item) => item.id === mapped.id)
+          if (index === -1) return [mapped, ...prev]
+          const next = [...prev]
+          next[index] = mapped
+          return next
+        })
+      })
+      .catch(() => {
+        fetchData()
+      })
+  }, [authSession?.accessToken, fetchData, sessions])
+
   const openSession = React.useCallback(
-    (id: string) => pushRoute({ page: "session", sessionId: id }),
-    [pushRoute],
+    (id: string) => {
+      markSessionRead(id)
+      pushRoute({ page: "session", sessionId: id })
+    },
+    [markSessionRead, pushRoute],
   )
 
   const goHome = React.useCallback(() => pushRoute({ page: "home" }), [pushRoute])
@@ -306,6 +407,35 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const dismissPopupBlocked = React.useCallback(() => setPopupBlocked(false), [])
+
+  const openPairDeviceDialog = React.useCallback(() => {
+    setFirstDevicePromptOpen(false)
+    setPairDeviceDialogOpen(true)
+  }, [])
+
+  const closePairDeviceDialog = React.useCallback(() => {
+    setPairDeviceDialogOpen(false)
+  }, [])
+
+  const closeFirstDevicePrompt = React.useCallback(() => {
+    setFirstDevicePromptOpen(false)
+    if (typeof window !== "undefined") {
+      window.sessionStorage.setItem(FIRST_DEVICE_WIZARD_DISMISSED_KEY, "1")
+    }
+  }, [])
+
+  React.useEffect(() => {
+    if (!routeReady || isLoading || route.page !== "home" || firstDeviceWizardCheckedRef.current) return
+    if (connectors.length > 0) {
+      firstDeviceWizardCheckedRef.current = true
+      return
+    }
+    firstDeviceWizardCheckedRef.current = true
+    if (typeof window !== "undefined" && window.sessionStorage.getItem(FIRST_DEVICE_WIZARD_DISMISSED_KEY) === "1") {
+      return
+    }
+    setFirstDevicePromptOpen(true)
+  }, [connectors.length, isLoading, route.page, routeReady])
 
   // ── Session optimistic patch helpers ──────────────────────
 
@@ -373,6 +503,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     panels,
     collapsed,
     popupBlocked,
+    firstDevicePromptOpen,
+    pairDeviceDialogOpen,
     openSession,
     goHome,
     navigate,
@@ -383,8 +515,12 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     setPanelMode,
     toggleCollapse,
     dismissPopupBlocked,
+    openPairDeviceDialog,
+    closePairDeviceDialog,
+    closeFirstDevicePrompt,
     togglePinSession,
     toggleArchiveSession,
+    markSessionRead,
     upsertSession,
     refreshData: fetchData,
   }

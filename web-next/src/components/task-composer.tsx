@@ -1,10 +1,12 @@
 "use client"
 
 import * as React from "react"
-import { Monitor, ChevronDown, ArrowUp, Hand, Loader2, CircleAlert } from "lucide-react"
+import { Monitor, ChevronDown, ArrowUp, Loader2, CircleAlert, Check } from "lucide-react"
 
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
+import { Separator } from "@/components/ui/separator"
+import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
 import {
   DropdownMenu,
@@ -23,10 +25,12 @@ import { WorkspacePicker, type WorkspaceSelection } from "@/components/workspace
 import { useWorkspace } from "@/components/workspace-context"
 import { useAuth } from "@/components/auth/auth-context"
 import { dashboardApi } from "@/features/dashboard/api"
+import { cn } from "@/lib/utils"
 import {
   composerMenuOptions,
   effectiveFieldValue,
   filterClaudeEffortField,
+  permissionLabelKey,
   type ComposerPermissionLabelKey,
   runtimeConfigFields,
 } from "@/features/dashboard/runtime-config"
@@ -62,16 +66,45 @@ const PERMISSION_MODES: [ComposerPermissionMode, ...ComposerPermissionMode[]] = 
 ]
 
 const NEW_SESSION_PREFERENCE_KEY = "aa-new-session-preference-v1"
+const TITLE_WRITE_MS = 58
+const TITLE_ERASE_MS = 22
+const CJK_TITLE_WRITE_MS = 96
+const CJK_TITLE_ERASE_MS = 38
+const TITLE_HOLD_MS = 15_000
+const NEW_SESSION_TITLE_KEYS = [
+  "typewriter.buildNext",
+  "typewriter.startWhere",
+  "typewriter.workOn",
+  "typewriter.giveTask",
+  "typewriter.startWorkspace",
+  "typewriter.needsAttention",
+  "typewriter.happenHere",
+  "typewriter.rightDevice",
+  "typewriter.pickWorkspace",
+  "typewriter.nextChange",
+  "typewriter.investigate",
+  "typewriter.focusedSession",
+  "typewriter.inspect",
+  "typewriter.ideaToSession",
+  "typewriter.chooseTarget",
+  "typewriter.changingToday",
+] as const
 
 type NewSessionPreference = {
   connectorId: string
   agent: string
 }
 
+type NewSessionTitleKey = (typeof NEW_SESSION_TITLE_KEYS)[number]
+
 export function TaskComposer() {
   const { session: authSession } = useAuth()
   const { connectors, openSession, upsertSession, refreshData } = useWorkspace()
   const t = useTranslations("dashboard.new")
+  const typewriterTitles = React.useMemo(
+    () => NEW_SESSION_TITLE_KEYS.map((key) => t(key as NewSessionTitleKey)),
+    [t],
+  )
 
   // Derive online connectors for the device picker
   const onlineConnectors = React.useMemo(
@@ -87,6 +120,7 @@ export function TaskComposer() {
       })),
     [onlineConnectors],
   )
+  const hasOnlineDevice = deviceOptions.length > 0
 
   const [selectedDevice, setSelectedDevice] = React.useState(deviceOptions[0]?.id ?? "")
   const selectedConnector =
@@ -101,12 +135,15 @@ export function TaskComposer() {
   const [selectedAgent, setSelectedAgent] = React.useState(agentOptions[0]?.id ?? "")
   const [selectedModel, setSelectedModel] = React.useState("")
   const [selectedReasoning, setSelectedReasoning] = React.useState("")
-  const [approval, setApproval] = React.useState<(typeof PERMISSION_MODES)[number]["id"]>("full")
+  const [approval, setApproval] = React.useState<(typeof PERMISSION_MODES)[number]["id"]>("ask")
+  const [selectedPermissionMode, setSelectedPermissionMode] = React.useState("")
   const [workspace, setWorkspace] = React.useState<WorkspaceSelection | null>(null)
   const [prompt, setPrompt] = React.useState("")
   const [runtimeSchema, setRuntimeSchema] = React.useState<RuntimeConfigSchema | null>(null)
   const [runtimeSettings, setRuntimeSettings] = React.useState<Record<string, unknown>>({})
+  const [runtimeConfigLoading, setRuntimeConfigLoading] = React.useState(false)
   const [creating, setCreating] = React.useState(false)
+  const [createTick, setCreateTick] = React.useState(0)
   const [error, setError] = React.useState<string | null>(null)
   const [preferenceLoaded, setPreferenceLoaded] = React.useState(false)
   const [preference, setPreference] = React.useState<NewSessionPreference | null>(null)
@@ -115,6 +152,17 @@ export function TaskComposer() {
 
   const { attachments, isDragging, add, remove, clear, onDragEnter, onDragLeave, onDragOver, onDrop } =
     useAttachments()
+  const typedTitle = useTypewriterTitle(typewriterTitles, creating)
+
+  React.useEffect(() => {
+    if (!creating) {
+      setCreateTick(0)
+      return
+    }
+
+    const tickTimer = window.setInterval(() => setCreateTick((tick) => tick + 1), 450)
+    return () => window.clearInterval(tickTimer)
+  }, [creating])
 
   React.useEffect(() => {
     setPreference(readNewSessionPreference())
@@ -182,24 +230,36 @@ export function TaskComposer() {
     if (!authSession?.accessToken || !selectedConnector || !selectedAgent) {
       setRuntimeSchema(null)
       setRuntimeSettings({})
+      setRuntimeConfigLoading(false)
       return
     }
     let cancelled = false
+    setRuntimeConfigLoading(true)
     setRuntimeSchema(null)
     setRuntimeSettings({})
     Promise.all([
       dashboardApi.getRuntimeConfigSchema(authSession.accessToken, selectedAgent),
       dashboardApi.getConnectorAgentSettings(authSession.accessToken, selectedConnector.id, selectedAgent),
+      dashboardApi.getAgentDefaults(authSession.accessToken),
     ])
-      .then(([schemaResponse, settingsResponse]) => {
+      .then(([schemaResponse, settingsResponse, defaultsResponse]) => {
         if (cancelled) return
+        const userDefaultSettings = defaultsResponse.runtimes[selectedAgent]?.settings ?? {}
         setRuntimeSchema(schemaResponse.schema)
-        setRuntimeSettings(settingsResponse.runtimeSettings ?? settingsResponse.settings ?? {})
+        setRuntimeSettings({
+          ...(settingsResponse.runtimeSettings ?? settingsResponse.settings ?? {}),
+          ...(typeof userDefaultSettings.permissionMode === "string"
+            ? { permissionMode: userDefaultSettings.permissionMode }
+            : {}),
+        })
       })
       .catch(() => {
         if (cancelled) return
         setRuntimeSchema(null)
         setRuntimeSettings({})
+      })
+      .finally(() => {
+        if (!cancelled) setRuntimeConfigLoading(false)
       })
     return () => {
       cancelled = true
@@ -211,18 +271,27 @@ export function TaskComposer() {
     [runtimeSchema, runtimeSettings],
   )
   const modelField = runtimeFields.find((field) => field.key === "model")
+  const permissionField = runtimeFields.find((field) => field.key === "permissionMode")
   const effortField = filterClaudeEffortField(
     selectedAgent,
     runtimeFields.find((field) => field.key === "effort"),
     selectedModel || runtimeSettings.model,
   )
   const models = composerMenuOptions(modelField)
+  const permissionOptions = composerMenuOptions(permissionField)
   const reasoningOptions = composerMenuOptions(effortField)
 
   React.useEffect(() => {
     const nextModel = effectiveFieldValue(modelField, runtimeSettings.model)
     setSelectedModel((current) => current && models.some((option) => option.id === current) ? current : nextModel)
   }, [modelField, models, runtimeSettings.model])
+
+  React.useEffect(() => {
+    const nextPermissionMode = effectiveFieldValue(permissionField, runtimeSettings.permissionMode)
+    setSelectedPermissionMode((current) =>
+      current && permissionOptions.some((option) => option.id === current) ? current : nextPermissionMode,
+    )
+  }, [permissionField, permissionOptions, runtimeSettings.permissionMode])
 
   React.useEffect(() => {
     const nextEffort = effectiveFieldValue(effortField, runtimeSettings.effort)
@@ -232,10 +301,19 @@ export function TaskComposer() {
   }, [effortField, reasoningOptions, runtimeSettings.effort])
 
   const approvalMode = PERMISSION_MODES.find((o) => o.id === approval) ?? PERMISSION_MODES[0]
+  const selectedPermissionOption = permissionOptions.find((option) => option.id === selectedPermissionMode)
+  const selectedPermissionLabelKey = permissionLabelKey(selectedPermissionMode)
+  const permissionLabel = selectedPermissionLabelKey
+    ? t(selectedPermissionLabelKey)
+    : selectedPermissionOption?.label ?? t(approvalMode.labelKey)
   const canCreate =
     Boolean(authSession?.accessToken && selectedConnector && selectedAgent) &&
     !creating &&
+    !runtimeConfigLoading &&
     (prompt.trim().length > 0 || attachments.length > 0)
+  const selectorsLoading =
+    Boolean(authSession?.accessToken && hasOnlineDevice && selectedConnector && selectedAgent) &&
+    (runtimeConfigLoading || !runtimeSchema)
 
   const handleCreate = async () => {
     if (!authSession?.accessToken || !selectedConnector || !selectedAgent || creating) return
@@ -257,6 +335,7 @@ export function TaskComposer() {
       const takeover = await dashboardApi.enableTakeover(authSession.accessToken, created.session.id)
       const sessionId = takeover.session.id
       const settings: Record<string, unknown> = {}
+      if (selectedPermissionMode) settings.permissionMode = selectedPermissionMode
       if (selectedModel) settings.model = selectedModel
       if (selectedReasoning) settings.effort = selectedReasoning
       if (Object.keys(settings).length > 0) {
@@ -301,8 +380,9 @@ export function TaskComposer() {
       <DragOverlay isDragging={isDragging} />
 
       <div className="w-full max-w-3xl">
-        <h1 className="mb-8 text-balance text-center text-5xl font-semibold tracking-tight">
-          {t("title")}
+        <h1 className="mb-8 min-h-[3.5rem] text-balance text-center text-5xl font-semibold leading-tight tracking-tight" aria-live="polite">
+          <span>{creating ? `${t("creatingBase")}${".".repeat((createTick % 3) + 1)}` : typedTitle}</span>
+          <span className="ml-1 inline-block h-[0.9em] w-0.5 translate-y-[0.1em] rounded-full bg-muted-foreground motion-safe:animate-[composer-caret_1s_steps(1,end)_infinite]" aria-hidden="true" />
         </h1>
 
         {error ? (
@@ -312,7 +392,7 @@ export function TaskComposer() {
           </Alert>
         ) : null}
 
-        <div className="rounded-2xl border border-border bg-card shadow-sm">
+        <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20">
           <div className="space-y-3 px-6 pt-6">
             <AttachmentPreviewList attachments={attachments} onRemove={remove} />
             <Textarea
@@ -331,6 +411,10 @@ export function TaskComposer() {
             />
           </div>
 
+          <div className="px-6 pt-3">
+            <Separator />
+          </div>
+
           <div className="flex flex-wrap items-center gap-1 px-3 pb-3 pt-2">
             <AttachmentButton
               attachments={attachments}
@@ -338,45 +422,70 @@ export function TaskComposer() {
               isDragging={isDragging}
             />
 
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground">
-                  <Hand className="size-4" />
-                  <span className="text-foreground">{t(approvalMode.labelKey)}</span>
-                  <ChevronDown className="size-3.5 opacity-50" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-44">
-                {PERMISSION_MODES.map((opt) => (
-                  <DropdownMenuItem key={opt.id} onSelect={() => setApproval(opt.id)}>
-                    {t(opt.labelKey)}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
+            {selectorsLoading ? (
+              <>
+                <ComposerSelectorLoading className="w-36" />
+                <ComposerSelectorLoading className="w-44" />
+                <ComposerSelectorLoading className="w-36" />
+              </>
+            ) : (
+              <>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground">
+                      {permissionField ? <span className="size-1.5 rounded-full bg-primary" /> : null}
+                      <span className="text-foreground">{permissionLabel}</span>
+                      <ChevronDown className="size-3.5 opacity-50" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-64">
+                    {permissionField ? (
+                      permissionOptions.map((item) => (
+                        <DropdownMenuItem
+                          key={item.id}
+                          className="gap-2"
+                          onSelect={() => setSelectedPermissionMode(item.id)}
+                        >
+                          <Check className={cn("size-3.5", selectedPermissionMode === item.id ? "opacity-100" : "opacity-0")} />
+                          <span>{permissionLabelKey(item.id) ? t(permissionLabelKey(item.id)!) : item.label}</span>
+                        </DropdownMenuItem>
+                      ))
+                    ) : (
+                      PERMISSION_MODES.map((opt) => (
+                        <DropdownMenuItem key={opt.id} onSelect={() => setApproval(opt.id)}>
+                          {t(opt.labelKey)}
+                        </DropdownMenuItem>
+                      ))
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
 
-            <CascadingSelector
-              icon={<Monitor className="size-4" />}
-              primaryOptions={deviceOptions}
-              secondaryOptions={agentOptions}
-              selectedPrimary={selectedDevice}
-              selectedSecondary={selectedAgent}
-              onPrimaryChange={setSelectedDevice}
-              onSecondaryChange={setSelectedAgent}
-              secondaryLabel={t("agent")}
-            />
+                {hasOnlineDevice ? (
+                  <CascadingSelector
+                    icon={<Monitor className="size-4" />}
+                    primaryOptions={deviceOptions}
+                    secondaryOptions={agentOptions}
+                    selectedPrimary={selectedDevice}
+                    selectedSecondary={selectedAgent}
+                    onPrimaryChange={setSelectedDevice}
+                    onSecondaryChange={setSelectedAgent}
+                    secondaryLabel={t("agent")}
+                  />
+                ) : null}
 
-            {models.length > 0 || reasoningOptions.length > 0 ? (
-              <CascadingSelector
-                primaryOptions={models.length > 0 ? models : [{ id: "default", label: t("defaultModel") }]}
-                secondaryOptions={reasoningOptions.length > 0 ? reasoningOptions : [{ id: "default", label: t("defaultReasoning") }]}
-                selectedPrimary={selectedModel || "default"}
-                selectedSecondary={selectedReasoning || "default"}
-                onPrimaryChange={(id) => setSelectedModel(id === "default" ? "" : id)}
-                onSecondaryChange={(id) => setSelectedReasoning(id === "default" ? "" : id)}
-                secondaryLabel={t("reasoning")}
-              />
-            ) : null}
+                {hasOnlineDevice && (models.length > 0 || reasoningOptions.length > 0) ? (
+                  <CascadingSelector
+                    primaryOptions={models.length > 0 ? models : [{ id: "default", label: t("defaultModel") }]}
+                    secondaryOptions={reasoningOptions.length > 0 ? reasoningOptions : [{ id: "default", label: t("defaultReasoning") }]}
+                    selectedPrimary={selectedModel || "default"}
+                    selectedSecondary={selectedReasoning || "default"}
+                    onPrimaryChange={(id) => setSelectedModel(id === "default" ? "" : id)}
+                    onSecondaryChange={(id) => setSelectedReasoning(id === "default" ? "" : id)}
+                    secondaryLabel={t("reasoning")}
+                  />
+                ) : null}
+              </>
+            )}
 
             <Button
               size="icon"
@@ -395,6 +504,7 @@ export function TaskComposer() {
             connectorId={selectedConnector?.id}
             value={workspace}
             onChange={setWorkspace}
+            loading={selectorsLoading}
           />
         </div>
       </div>
@@ -404,6 +514,70 @@ export function TaskComposer() {
 
 function attachedRuntimes(connector: { runtimeCapabilities?: { attached?: Record<string, unknown> } }) {
   return Object.keys(connector.runtimeCapabilities?.attached ?? {}).sort((a, b) => a.localeCompare(b))
+}
+
+function ComposerSelectorLoading({ className }: { className?: string }) {
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      disabled
+      className={cn("justify-start gap-2 text-muted-foreground opacity-100", className)}
+    >
+      <Spinner className="size-3.5" />
+      <span className="h-3 w-16 rounded-full bg-muted-foreground/20" />
+    </Button>
+  )
+}
+
+function useTypewriterTitle(titles: string[], paused: boolean) {
+  const [titleIndex, setTitleIndex] = React.useState(0)
+  const [typedTitle, setTypedTitle] = React.useState("")
+
+  React.useEffect(() => {
+    if (paused || titles.length === 0) return
+
+    const title = titles[titleIndex % titles.length] ?? titles[0] ?? ""
+    const hasCjk = /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/.test(title)
+    const writeDelay = hasCjk ? CJK_TITLE_WRITE_MS : TITLE_WRITE_MS
+    const eraseDelay = hasCjk ? CJK_TITLE_ERASE_MS : TITLE_ERASE_MS
+    let cancelled = false
+    let timeout: number | undefined
+
+    const schedule = (fn: () => void, delay: number) => {
+      timeout = window.setTimeout(fn, delay)
+    }
+
+    const write = (count: number) => {
+      if (cancelled) return
+      setTypedTitle(title.slice(0, count))
+      if (count < title.length) {
+        schedule(() => write(count + 1), writeDelay)
+        return
+      }
+      schedule(() => erase(title.length), TITLE_HOLD_MS)
+    }
+
+    const erase = (count: number) => {
+      if (cancelled) return
+      setTypedTitle(title.slice(0, count))
+      if (count > 0) {
+        schedule(() => erase(count - 1), eraseDelay)
+        return
+      }
+      setTitleIndex((index) => (index + 1) % titles.length)
+    }
+
+    write(0)
+
+    return () => {
+      cancelled = true
+      if (timeout !== undefined) window.clearTimeout(timeout)
+    }
+  }, [paused, titleIndex, titles])
+
+  return typedTitle
 }
 
 function runtimeLabel(runtime: string): string {

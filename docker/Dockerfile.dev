@@ -30,15 +30,15 @@ COPY server/pyproject.toml server/uv.lock ./server/
 RUN if [ -n "$PIP_INDEX_URL" ]; then export UV_INDEX_URL="$PIP_INDEX_URL"; fi \
     && cd server && uv sync --no-install-project
 
-COPY web/package.json web/yarn.lock ./web/
-RUN corepack enable && cd web && yarn install --immutable
+COPY web-next/package.json web-next/yarn.lock ./web-next/
+RUN corepack enable && cd web-next && yarn install --immutable
 
 COPY server ./server
-COPY web ./web
+COPY web-next ./web-next
 
 RUN mkdir -p /data
 VOLUME ["/data"]
 
-EXPOSE 5173
+EXPOSE 5174
 ENTRYPOINT ["tini", "--"]
-CMD ["sh", "-c", "cd /app/server && uv run --no-sync uvicorn agent_server.app:create_app --factory --host 127.0.0.1 --port 8000 & cd /app/web && yarn dev --host 0.0.0.0"]
+CMD ["sh", "-c", "cd /app/server && uv run --no-sync uvicorn agent_server.app:create_app --factory --host 127.0.0.1 --port 8000 & cd /app/web-next && yarn dev --hostname 0.0.0.0 --port 5174"]

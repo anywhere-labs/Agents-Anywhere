@@ -1,5 +1,5 @@
 services:
-  postgres:
+  postgres-next:
     image: postgres:17-alpine
     restart: unless-stopped
     environment:
@@ -7,34 +7,52 @@ services:
       POSTGRES_USER: agents_anywhere
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agents_anywhere_dev_password}
     volumes:
-      - agents-anywhere-pg:/var/lib/postgresql/data
+      - agents-anywhere-pg-next:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U agents_anywhere -d agents_anywhere"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  server:
+  server-next:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    image: agents-anywhere:postgres
+      target: server
+    image: agents-anywhere-server:postgres
     restart: unless-stopped
     depends_on:
-      postgres:
+      postgres-next:
         condition: service_healthy
     environment:
       AGENT_SERVER_DB_BACKEND: postgres
-      AGENT_SERVER_DB_URL: postgresql+asyncpg://agents_anywhere:${POSTGRES_PASSWORD:-agents_anywhere_dev_password}@postgres:5432/agents_anywhere
+      AGENT_SERVER_DB_URL: postgresql+asyncpg://agents_anywhere:${POSTGRES_PASSWORD:-agents_anywhere_dev_password}@postgres-next:5432/agents_anywhere
       AGENT_SERVER_FILES_BACKEND: local
       AGENT_SERVER_FILES_LOCAL_ROOT: /data/agent-server.files
       AGENT_SERVER_SECRET: ${AGENT_SERVER_SECRET:-change-me-before-production}
-      AGENT_SERVER_STATIC_DIR: /app/web-dist
+      AGENT_SERVER_PUBLIC_ORIGIN: ${AGENT_SERVER_PUBLIC_ORIGIN:-}
+      AGENT_SERVER_CORS_ORIGINS: ${AGENT_SERVER_CORS_ORIGINS:-http://127.0.0.1:${AGENTS_ANYWHERE_WEB_PORT:-5174},http://localhost:${AGENTS_ANYWHERE_WEB_PORT:-5174}}
     volumes:
-      - agents-anywhere-files:/data
+      - agents-anywhere-files-next:/data
+    expose:
+      - "8000"
+
+  web-next:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: web-next
+      args:
+        AGENTS_ANYWHERE_API: ${AGENTS_ANYWHERE_API:-http://server-next:8000}
+    image: agents-anywhere-web-next:postgres
+    restart: unless-stopped
+    depends_on:
+      - server-next
+    environment:
+      AGENTS_ANYWHERE_API: ${AGENTS_ANYWHERE_API:-http://server-next:8000}
     ports:
-      - "${AGENTS_ANYWHERE_PORT:-8000}:8000"
+      - "${AGENTS_ANYWHERE_WEB_PORT:-5174}:5174"
 
 volumes:
-  agents-anywhere-pg:
-  agents-anywhere-files:
+  agents-anywhere-pg-next:
+  agents-anywhere-files-next:

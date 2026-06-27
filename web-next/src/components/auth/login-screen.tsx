@@ -10,7 +10,7 @@ import { useAuth } from "./auth-context"
 import { useTranslations } from "next-intl"
 
 export function LoginScreen() {
-  const { navigate, login, loading, error } = useAuth()
+  const { navigate, login, loading, error, oauthEnabled, oauthProviderLabel, registrationOpen, startOAuth } = useAuth()
   const t = useTranslations("auth")
   const [showPassword, setShowPassword] = useState(false)
   const [userId, setUserId] = useState("")
@@ -26,7 +26,7 @@ export function LoginScreen() {
       <div className="flex flex-col items-center gap-2 text-center mb-8">
         <h1 className="text-2xl font-bold tracking-tight">
           {t("login.titlePrefix")}{" "}
-          <span className="font-brand font-medium">Agents Anywhere</span>
+          <span className="aa-wordmark">Agents Anywhere</span>
         </h1>
         <p className="text-sm text-muted-foreground leading-relaxed">
           {t("login.description")}
@@ -44,7 +44,8 @@ export function LoginScreen() {
               onChange={(event) => setUserId(event.currentTarget.value)}
               placeholder={t("login.userPlaceholder")}
               autoComplete="username"
-              className="font-mono"
+              spellCheck={false}
+              className="code-mono"
             />
           </InputGroup>
         </div>
@@ -63,7 +64,8 @@ export function LoginScreen() {
               }}
               placeholder={t("login.passwordPlaceholder")}
               autoComplete="current-password"
-              className="font-mono"
+              spellCheck={false}
+              className="code-mono"
             />
             <InputGroupAddon align="inline-end">
               <InputGroupButton onClick={() => setShowPassword((v) => !v)} aria-label={showPassword ? t("actions.hidePassword") : t("actions.showPassword")}>
@@ -83,28 +85,33 @@ export function LoginScreen() {
 
         {error ? <p className="text-center text-sm text-destructive">{error}</p> : null}
 
-        <Button
-          variant="outline"
-          className="h-11 w-full gap-2"
-          onClick={() => navigate("oauth-link-existing")}
-        >
-          <Globe className="size-4" />
-          {t("login.oauth", { provider: "GitLab" })}
-        </Button>
+        {oauthEnabled && oauthProviderLabel ? (
+          <Button
+            variant="outline"
+            className="h-11 w-full gap-2"
+            disabled={loading}
+            onClick={() => void startOAuth()}
+          >
+            <Globe className="size-4" />
+            {t("login.oauth", { provider: oauthProviderLabel })}
+          </Button>
+        ) : null}
 
-        <div className="flex flex-col items-center gap-1 text-sm text-muted-foreground">
-          <p>
-            {t("login.newHere")}{" "}
-            <button
-              type="button"
-              className="font-medium text-foreground underline-offset-4 hover:underline"
-              onClick={() => navigate("register")}
-            >
-              {t("login.createAccount")}
-            </button>
-          </p>
-          <p>{t("login.forgot")}</p>
-        </div>
+        {registrationOpen ? (
+          <div className="flex flex-col items-center gap-1 text-sm text-muted-foreground">
+            <p>
+              {t("login.newHere")}{" "}
+              <button
+                type="button"
+                className="font-medium text-foreground underline-offset-4 hover:underline"
+                onClick={() => navigate("register")}
+              >
+                {t("login.createAccount")}
+              </button>
+            </p>
+            <p>{t("login.forgot")}</p>
+          </div>
+        ) : null}
       </div>
     </AuthShell>
   )

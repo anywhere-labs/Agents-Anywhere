@@ -6,6 +6,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .venv/
+.next/
 .env.local
 .env.*.local
 

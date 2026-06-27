@@ -88,6 +88,12 @@ export type ConnectorResponse = {
   serverTime: string;
 };
 
+export type ConnectorRuntimeCapabilitiesResponse = {
+  connectorId: string;
+  runtimeCapabilities: DeviceAgentsState;
+  serverTime: string;
+};
+
 export type ConnectorCreateResponse = {
   connector: ConnectorView;
   connectorToken: string;
@@ -281,6 +287,7 @@ export type FsReadFileResult = {
   name: string;
   size: number;
   sha256: string;
+  mediaType?: string;
   transferId: string;
   token: string;
   downloadUrl: string;
@@ -338,6 +345,10 @@ export type TerminalResponse = {
 
 export type AttachmentRef = {
   fileId: string;
+  name?: string;
+  size?: number;
+  mediaType?: string;
+  sha256?: string;
 };
 
 export type MessageSendOptions = {
@@ -424,8 +435,27 @@ export type AgentCatalogResponse = {
   serverTime: string;
 };
 
+export type UserAgentDefaultRuntime = {
+  runtime: string;
+  enabled: boolean;
+  settings: Record<string, unknown>;
+  models: AgentCatalogEntry[];
+  efforts: AgentCatalogEntry[];
+};
+
+export type UserAgentDefaultsResponse = {
+  runtimes: Record<string, UserAgentDefaultRuntime>;
+  serverTime: string;
+};
+
 export type DashboardState = {
   me: AuthMe;
   connectors: ConnectorView[];
   sessions: SessionView[];
+};
+
+export type BulkArchiveResponse = {
+  sessions: SessionView[];
+  notFound: string[];
+  serverTime: string;
 };
