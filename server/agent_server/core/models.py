@@ -423,6 +423,7 @@ class SessionCreateRequest(BaseModel):
     externalSessionId: str | None = None
     title: str | None = None
     cwd: str | None = None
+    runtimeSettings: dict[str, Any] | None = None
     # Forwarded to the connector's runtime-create RPC. For codex these map to
     # `thread/start.approvalPolicy` and `thread/start.sandbox` — set to
     # "never"/"danger-full-access" to disable approval prompts during testing.

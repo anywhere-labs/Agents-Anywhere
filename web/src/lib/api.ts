@@ -779,6 +779,7 @@ export const api = {
       runtime: string;
       title?: string;
       cwd?: string;
+      runtimeSettings?: Record<string, unknown> | null;
       approvalPolicy?: string;
       sandbox?: string;
     },

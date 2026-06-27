@@ -510,14 +510,12 @@ export function NewSessionPage({
         runtime,
         title: prompt.trim() || undefined,
         cwd: cwdForCreate || undefined,
+        runtimeSettings,
         approvalPolicy: permission.approvalPolicy,
         sandbox: permission.sandbox,
       });
       const takeover = await api.enableTakeover(token, created.session.id);
       const sessionId = takeover.session.id;
-      if (runtimeSettings && Object.keys(runtimeSettings).length > 0) {
-        await api.patchSessionRuntimeSettings(token, sessionId, runtimeSettings);
-      }
       const visibleText = prompt.trim();
       const text = visibleText || (files.length > 0 ? ATTACHMENT_ONLY_PROMPT : "");
       if (text || files.length > 0) {
@@ -565,7 +563,7 @@ export function NewSessionPage({
     } finally {
       setCreating(false);
     }
-  }, [connector, creating, files, homeCwd, onCreated, permission, prompt, resolveHomeCwd, runtime, selectedWorkspaceCwd, token]);
+  }, [connector, creating, files, homeCwd, onCreated, permission, prompt, resolveHomeCwd, runtime, runtimeSettings, selectedWorkspaceCwd, token]);
 
   return (
     <div className="kl-new-page">

@@ -344,7 +344,7 @@ def test_session_runtime_settings_exposes_default_run_mode_configured(tmp_path):
 
     after = client.get(f"/sessions/{session.id}/runtime-settings", headers=headers)
     assert after.status_code == 200, after.text
-    assert after.json()["runtimeSettings"]["runMode"] == "terminal"
+    assert after.json()["runtimeSettings"]["runMode"] == "chat"
     assert after.json()["defaultRunModeConfigured"] is True
 
 
@@ -513,7 +513,12 @@ def test_session_claude_effort_patch_uses_effective_model(tmp_path):
         json={"settings": {"effort": "xhigh"}},
     )
     assert effort.status_code == 200, effort.text
-    assert effort.json()["runtimeSettingsOverride"] == {"effort": "xhigh"}
+    assert effort.json()["runtimeSettingsOverride"] == {
+        "runMode": "chat",
+        "permissionMode": "acceptEdits",
+        "model": "claude-opus-4-8",
+        "effort": "xhigh",
+    }
     assert effort.json()["runtimeSettings"]["effort"] == "xhigh"
 
     sonnet = client.patch(
@@ -523,6 +528,8 @@ def test_session_claude_effort_patch_uses_effective_model(tmp_path):
     )
     assert sonnet.status_code == 200, sonnet.text
     assert sonnet.json()["runtimeSettingsOverride"] == {
+        "runMode": "chat",
+        "permissionMode": "acceptEdits",
         "model": "claude-sonnet-4-6"
     }
     assert sonnet.json()["runtimeSettings"]["effort"] is None

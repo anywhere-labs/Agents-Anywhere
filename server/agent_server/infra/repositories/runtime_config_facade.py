@@ -114,17 +114,35 @@ class RuntimeConfigRepositoryMixin:
         )
 
 
-    async def get_effective_settings_for_connector_agent(
+    async def get_initial_runtime_settings_for_connector_agent(
+        self,
+        connector_id: str,
+        runtime: str,
+        *,
+        user_id: str | None = None,
+        patch: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return await self.runtime_config.get_initial_runtime_settings_for_connector_agent(
+            connector_id,
+            runtime,
+            user_id=user_id,
+            patch=patch,
+        )
+
+
+    async def serialize_initial_settings_for_connector_agent(
         self,
         connector_id: str,
         runtime: str,
         *,
         user_id: str | None = None,
         cwd: str | None = None,
+        patch: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        return await self.runtime_config.get_effective_settings_for_connector_agent(
+        return await self.runtime_config.serialize_initial_settings_for_connector_agent(
             connector_id,
             runtime,
             user_id=user_id,
             cwd=cwd,
+            patch=patch,
         )
