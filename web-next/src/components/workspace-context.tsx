@@ -197,6 +197,48 @@ type WorkspaceState = {
 const WorkspaceContext = React.createContext<WorkspaceState | null>(null)
 
 const FIRST_DEVICE_WIZARD_DISMISSED_KEY = "aa-first-device-wizard-dismissed-v1"
+const PANEL_MODE_STORAGE_KEY = "aa-session-runtime-panel-modes-v1"
+const DEFAULT_PANEL_MODES: Record<PanelId, PanelMode> = {
+  files: "docked",
+  terminal: "docked",
+}
+const PANEL_IDS: PanelId[] = ["files", "terminal"]
+
+function readStoredPanelModes(): Record<PanelId, PanelMode> {
+  if (typeof window === "undefined") return DEFAULT_PANEL_MODES
+  try {
+    const raw = window.localStorage.getItem(PANEL_MODE_STORAGE_KEY)
+    if (!raw) return DEFAULT_PANEL_MODES
+    const parsed = JSON.parse(raw) as Partial<Record<PanelId, PanelMode>>
+    const next = { ...DEFAULT_PANEL_MODES }
+    for (const id of PANEL_IDS) {
+      const mode = parsed[id]
+      if (mode === "docked" || mode === "floating" || mode === "closed") next[id] = persistedPanelMode(mode)
+    }
+    return next
+  } catch {
+    return DEFAULT_PANEL_MODES
+  }
+}
+
+function persistedPanelMode(mode: PanelMode): PanelMode {
+  return mode === "floating" ? "docked" : mode
+}
+
+function writeStoredPanelModes(panels: Record<PanelId, PanelMode>) {
+  if (typeof window === "undefined") return
+  try {
+    window.localStorage.setItem(
+      PANEL_MODE_STORAGE_KEY,
+      JSON.stringify({
+        files: persistedPanelMode(panels.files),
+        terminal: persistedPanelMode(panels.terminal),
+      }),
+    )
+  } catch {
+    // Persisting the panel preference is best-effort.
+  }
+}
 
 export function useWorkspace() {
   const ctx = React.useContext(WorkspaceContext)
@@ -218,10 +260,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
   const [filter, setFilter] = React.useState<FilterValue>(defaultFilter)
   const [search, setSearch] = React.useState("")
-  const [panels, setPanels] = React.useState<Record<PanelId, PanelMode>>({
-    files: "docked",
-    terminal: "docked",
-  })
+  const [panels, setPanels] = React.useState<Record<PanelId, PanelMode>>(readStoredPanelModes)
   const [collapsed, setCollapsed] = React.useState<Record<PanelId, boolean>>({
     files: false,
     terminal: false,
@@ -398,7 +437,11 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   // ── Panel helpers ─────────────────────────────────────────
 
   const setPanelMode = React.useCallback((id: PanelId, mode: PanelMode) => {
-    setPanels((prev) => ({ ...prev, [id]: mode }))
+    setPanels((prev) => {
+      const next = { ...prev, [id]: mode }
+      writeStoredPanelModes(next)
+      return next
+    })
     if (mode !== "closed") setCollapsed((prev) => ({ ...prev, [id]: false }))
   }, [])
 
