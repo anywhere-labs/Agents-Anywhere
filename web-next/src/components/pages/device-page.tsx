@@ -62,10 +62,11 @@ import { PairDeviceDialog } from "@/components/pair-device-dialog"
 import type { ConnectorRevokeResponse } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
 import {
+  effortFieldForModel,
   effectiveFieldValue,
-  filterClaudeEffortField,
   optionLabel,
   runtimeConfigFields,
+  validEffortValue,
 } from "@/features/dashboard/runtime-config"
 
 type DeviceConnector = ReturnType<typeof useWorkspace>["connectors"][number]
@@ -112,8 +113,8 @@ type DeviceSession = {
 }
 
 function isConfigurableField(
-  field: ReturnType<typeof filterClaudeEffortField>,
-): field is NonNullable<ReturnType<typeof filterClaudeEffortField>> {
+  field: ReturnType<typeof effortFieldForModel>,
+): field is NonNullable<ReturnType<typeof effortFieldForModel>> {
   return field !== null && field.type !== "object"
 }
 
@@ -147,12 +148,22 @@ function AgentConfigDialog({
   }, [open, settings])
 
   const fields = React.useMemo(() => runtimeConfigFields(schema, draft, "device"), [draft, schema])
+  const modelField = fields.find((field) => field.key === "model")
   const visibleFields = fields
-    .map((field) => field.key === "effort" ? filterClaudeEffortField(runtime, field, draft.model) : field)
+    .map((field) => field.key === "effort" ? effortFieldForModel(modelField, field, draft.model) : field)
     .filter(isConfigurableField)
 
   const patch = (key: string, value: unknown) => {
-    setDraft((prev) => ({ ...prev, [key]: value }))
+    setDraft((prev) => {
+      const next = { ...prev, [key]: value }
+      if (key === "model") {
+        const nextEffortField = effortFieldForModel(modelField, fields.find((field) => field.key === "effort"), value)
+        const nextEffort = validEffortValue(nextEffortField, prev.effort)
+        if (nextEffort) next.effort = nextEffort
+        else delete next.effort
+      }
+      return next
+    })
   }
 
   const submit = async () => {

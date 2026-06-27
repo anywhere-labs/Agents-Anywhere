@@ -13,6 +13,9 @@ import {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu"
 import { CascadingSelector } from "@/components/cascading-selector"
 import {
@@ -28,11 +31,13 @@ import { dashboardApi } from "@/features/dashboard/api"
 import { cn } from "@/lib/utils"
 import {
   composerMenuOptions,
+  effortFieldForModel,
   effectiveFieldValue,
-  filterClaudeEffortField,
+  optionLabel,
   permissionLabelKey,
   type ComposerPermissionLabelKey,
   runtimeConfigFields,
+  validEffortValue,
 } from "@/features/dashboard/runtime-config"
 import type { RuntimeConfigSchema } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
@@ -272,10 +277,16 @@ export function TaskComposer() {
   )
   const modelField = runtimeFields.find((field) => field.key === "model")
   const permissionField = runtimeFields.find((field) => field.key === "permissionMode")
-  const effortField = filterClaudeEffortField(
-    selectedAgent,
-    runtimeFields.find((field) => field.key === "effort"),
+  const rawEffortField = runtimeFields.find((field) => field.key === "effort")
+  const effortField = effortFieldForModel(
+    modelField,
+    rawEffortField,
     selectedModel || runtimeSettings.model,
+  )
+  const effortFieldFor = (model: string) => effortFieldForModel(
+    modelField,
+    rawEffortField,
+    model,
   )
   const models = composerMenuOptions(modelField)
   const permissionOptions = composerMenuOptions(permissionField)
@@ -300,8 +311,17 @@ export function TaskComposer() {
     )
   }, [effortField, reasoningOptions, runtimeSettings.effort])
 
+  React.useEffect(() => {
+    setSelectedReasoning((current) => {
+      if (!current) return current
+      return reasoningOptions.some((option) => option.id === current) ? current : ""
+    })
+  }, [reasoningOptions])
+
   const approvalMode = PERMISSION_MODES.find((o) => o.id === approval) ?? PERMISSION_MODES[0]
   const selectedPermissionOption = permissionOptions.find((option) => option.id === selectedPermissionMode)
+  const modelLabel = optionLabel(modelField, selectedModel || runtimeSettings.model, t("defaultModel"))
+  const effortLabel = optionLabel(effortField, selectedReasoning || runtimeSettings.effort, t("defaultReasoning"))
   const selectedPermissionLabelKey = permissionLabelKey(selectedPermissionMode)
   const permissionLabel = selectedPermissionLabelKey
     ? t(selectedPermissionLabelKey)
@@ -335,9 +355,10 @@ export function TaskComposer() {
       const takeover = await dashboardApi.enableTakeover(authSession.accessToken, created.session.id)
       const sessionId = takeover.session.id
       const settings: Record<string, unknown> = {}
+      const validSelectedReasoning = validEffortValue(effortField, selectedReasoning)
       if (selectedPermissionMode) settings.permissionMode = selectedPermissionMode
       if (selectedModel) settings.model = selectedModel
-      if (selectedReasoning) settings.effort = selectedReasoning
+      if (validSelectedReasoning) settings.effort = validSelectedReasoning
       if (Object.keys(settings).length > 0) {
         await dashboardApi.patchSessionRuntimeSettings(authSession.accessToken, sessionId, settings)
       }
@@ -354,7 +375,7 @@ export function TaskComposer() {
           attachments: attachmentRefs,
           clientMessageId: crypto.randomUUID(),
           model: selectedModel || undefined,
-          effort: selectedReasoning || undefined,
+          effort: validSelectedReasoning || undefined,
         },
       )
       clear()
@@ -474,15 +495,75 @@ export function TaskComposer() {
                 ) : null}
 
                 {hasOnlineDevice && (models.length > 0 || reasoningOptions.length > 0) ? (
-                  <CascadingSelector
-                    primaryOptions={models.length > 0 ? models : [{ id: "default", label: t("defaultModel") }]}
-                    secondaryOptions={reasoningOptions.length > 0 ? reasoningOptions : [{ id: "default", label: t("defaultReasoning") }]}
-                    selectedPrimary={selectedModel || "default"}
-                    selectedSecondary={selectedReasoning || "default"}
-                    onPrimaryChange={(id) => setSelectedModel(id === "default" ? "" : id)}
-                    onSecondaryChange={(id) => setSelectedReasoning(id === "default" ? "" : id)}
-                    secondaryLabel={t("reasoning")}
-                  />
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="sm" className="max-w-72 gap-1.5 text-muted-foreground">
+                        {effortField ? <span className="text-foreground">{effortLabel}</span> : null}
+                        {effortField && modelField ? <span className="text-muted-foreground/50">·</span> : null}
+                        {modelField ? <span className="truncate text-foreground">{modelLabel}</span> : null}
+                        <ChevronDown className="size-3.5 shrink-0 opacity-50" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" className="w-56">
+                      {!modelField && reasoningOptions.length > 0 ? (
+                        reasoningOptions.map((item) => (
+                          <DropdownMenuItem
+                            key={item.id}
+                            className="gap-2"
+                            onSelect={() => setSelectedReasoning(item.id)}
+                          >
+                            <Check className={cn("size-3.5", selectedReasoning === item.id ? "opacity-100" : "opacity-0")} />
+                            <span className="truncate">{item.label}</span>
+                          </DropdownMenuItem>
+                        ))
+                      ) : null}
+                      {models.map((modelItem) => {
+                        const modelEffortField = effortFieldFor(modelItem.id)
+                        const modelEfforts = composerMenuOptions(modelEffortField)
+                        if (modelEfforts.length === 0) {
+                          return (
+                            <DropdownMenuItem
+                              key={modelItem.id}
+                              className="gap-2"
+                              onSelect={() => {
+                                setSelectedModel(modelItem.id)
+                                setSelectedReasoning("")
+                              }}
+                            >
+                              <Check className={cn("size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
+                              <span className="truncate">{modelItem.label}</span>
+                            </DropdownMenuItem>
+                          )
+                        }
+                        return (
+                          <DropdownMenuSub key={modelItem.id}>
+                            <DropdownMenuSubTrigger className="gap-2">
+                              <Check className={cn("size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
+                              <span className="max-w-40 truncate">{modelItem.label}</span>
+                            </DropdownMenuSubTrigger>
+                            <DropdownMenuSubContent className="w-56">
+                              {modelEfforts.map((item) => (
+                                <DropdownMenuItem
+                                  key={item.id}
+                                  className="gap-2"
+                                  onSelect={() => {
+                                    setSelectedModel(modelItem.id)
+                                    setSelectedReasoning(item.id)
+                                  }}
+                                >
+                                  <Check className={cn(
+                                    "size-3.5",
+                                    selectedModel === modelItem.id && selectedReasoning === item.id ? "opacity-100" : "opacity-0",
+                                  )} />
+                                  <span className="truncate">{item.label}</span>
+                                </DropdownMenuItem>
+                              ))}
+                            </DropdownMenuSubContent>
+                          </DropdownMenuSub>
+                        )
+                      })}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 ) : null}
               </>
             )}

@@ -3,11 +3,14 @@
 import * as React from "react"
 import Cropper, { type Area, type Point } from "react-easy-crop"
 import {
+  ArrowDown,
+  ArrowUp,
   Camera,
   ChevronDown,
   ChevronLeft,
   Globe2,
   RotateCw,
+  Save,
   Settings,
   Sun,
   Trash2,
@@ -18,7 +21,9 @@ import { useLocale, useTranslations } from "next-intl"
 import { useTheme } from "next-themes"
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import {
   Dialog,
   DialogContent,
@@ -40,7 +45,6 @@ import {
   FieldDescription,
   FieldGroup,
   FieldLabel,
-  FieldSet,
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
@@ -48,6 +52,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { Slider } from "@/components/ui/slider"
 import { Spinner } from "@/components/ui/spinner"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { MobileSignInPanel } from "@/components/pages/mobile-signin-panel"
 import { useAuth } from "@/components/auth/auth-context"
 import { LoadingState } from "@/components/loading-state"
@@ -55,8 +60,7 @@ import { useWorkspace } from "@/components/workspace-context"
 import { authApi } from "@/features/auth/api"
 import type { AuthMe } from "@/features/auth/types"
 import { dashboardApi } from "@/features/dashboard/api"
-import { permissionLabelKey } from "@/features/dashboard/runtime-config"
-import type { RuntimeConfigOption } from "@/features/dashboard/types"
+import type { AgentCatalogEntry } from "@/features/dashboard/types"
 import { routing } from "@/i18n/routing"
 import { cn } from "@/lib/utils"
 
@@ -452,11 +456,15 @@ function AvatarCropDialog({
 
 function AgentTab({ token }: { token: string }) {
   const t = useTranslations("pages.settings")
-  const [options, setOptions] = React.useState<RuntimeConfigOption[]>([])
-  const [selected, setSelected] = React.useState("")
+  const [models, setModels] = React.useState<AgentCatalogEntry[]>([])
+  const [savedModels, setSavedModels] = React.useState<AgentCatalogEntry[]>([])
   const [loading, setLoading] = React.useState(true)
   const [saving, setSaving] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
+  const dirty = React.useMemo(
+    () => JSON.stringify(toAgentDefaultsPayload(models)) !== JSON.stringify(toAgentDefaultsPayload(savedModels)),
+    [models, savedModels],
+  )
 
   React.useEffect(() => {
     if (!token) {
@@ -466,21 +474,12 @@ function AgentTab({ token }: { token: string }) {
     let cancelled = false
     setLoading(true)
     setError(null)
-    Promise.all([
-      dashboardApi.getRuntimeConfigSchema(token, CODEX_RUNTIME),
-      dashboardApi.getAgentDefaults(token),
-    ])
-      .then(([schemaResponse, defaultsResponse]) => {
+    dashboardApi.getAgentDefaults(token)
+      .then((defaultsResponse) => {
         if (cancelled) return
-        const field = schemaResponse.schema.fields.find((item) => item.key === "permissionMode")
-        const permissionOptions = field?.options ?? []
-        const saved = defaultsResponse.runtimes[CODEX_RUNTIME]?.settings.permissionMode
-        setOptions(permissionOptions)
-        setSelected(
-          typeof saved === "string" && permissionOptions.some((option) => option.value === saved)
-            ? saved
-            : String(permissionOptions[0]?.value ?? ""),
-        )
+        const nextModels = defaultsResponse.runtimes[CODEX_RUNTIME]?.models ?? []
+        setModels(nextModels)
+        setSavedModels(nextModels)
       })
       .catch((err) => {
         if (!cancelled) setError(err instanceof Error ? err.message : t("agentDefaultsLoadFailed"))
@@ -493,68 +492,163 @@ function AgentTab({ token }: { token: string }) {
     }
   }, [token, t])
 
-  const savePermission = async (value: string) => {
-    if (!token || !value) return
-    const previous = selected
-    setSelected(value)
+  const saveModels = async () => {
+    if (!token || saving || !dirty) return
     setSaving(true)
     setError(null)
     try {
-      await dashboardApi.updateAgentDefaults(token, {
+      const response = await dashboardApi.updateAgentDefaults(token, {
         [CODEX_RUNTIME]: {
-          settings: { permissionMode: value },
+          models: toAgentDefaultsPayload(models),
         },
       })
+      const nextModels = response.runtimes[CODEX_RUNTIME]?.models ?? models
+      setModels(nextModels)
+      setSavedModels(nextModels)
     } catch (err) {
-      setSelected(previous)
       setError(err instanceof Error ? err.message : t("agentDefaultsSaveFailed"))
     } finally {
       setSaving(false)
     }
   }
 
+  const moveModel = (index: number, direction: -1 | 1) => {
+    setModels((current) => moveEntry(current, index, direction))
+  }
+
+  const makeDefaultModel = (index: number) => {
+    setModels((current) => moveToFront(current, index))
+  }
+
+  const moveEffort = (modelIndex: number, effortIndex: number, direction: -1 | 1) => {
+    setModels((current) => current.map((model, index) => (
+      index === modelIndex
+        ? { ...model, efforts: moveEntry(model.efforts, effortIndex, direction) }
+        : model
+    )))
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <section className="rounded-xl border border-border bg-card">
-        <div className="px-6 py-5">
-          <h2 className="text-base font-semibold">{t("defaultPermission")}</h2>
-          <p className="mt-0.5 text-sm text-muted-foreground">{t("defaultPermissionDescription")}</p>
+        <div className="flex items-center justify-between gap-4 px-6 py-5">
+          <div className="min-w-0">
+            <h2 className="text-base font-semibold">{t("defaultModel")}</h2>
+            <p className="mt-0.5 text-sm text-muted-foreground">{t("defaultModelDescription")}</p>
+          </div>
+          <Button type="button" disabled={!dirty || saving} onClick={() => void saveModels()}>
+            {saving ? <Spinner /> : <Save data-icon="inline-start" />}
+            {t("saveChanges")}
+          </Button>
         </div>
         <Separator />
         {loading ? (
           <LoadingState className="min-h-48" />
+        ) : models.length === 0 ? (
+          <p className="px-6 py-8 text-sm text-muted-foreground">{t("agentDefaultsLoadFailed")}</p>
         ) : (
-          <FieldSet className="gap-0">
-            <RadioGroup value={selected} onValueChange={savePermission} className="p-2">
-              {options.map((option) => {
-                const value = String(option.value)
-                const labelKey = permissionLabelKey(value)
-                const descriptionKey = permissionDescriptionKey(value)
-                return (
-                  <FieldLabel
-                    key={value}
-                    htmlFor={`default-permission-${value}`}
-                    className={cn(
-                      "flex w-full cursor-pointer flex-row items-start gap-3 rounded-lg px-4 py-3 transition-colors hover:bg-accent/50",
-                      selected === value && "bg-accent",
-                    )}
-                  >
-                    <RadioGroupItem id={`default-permission-${value}`} value={value} className="mt-0.5" />
-                    <FieldContent>
-                      <span className="text-sm font-medium">
-                        {labelKey ? t(labelKey) : option.label}
-                      </span>
-                      {(descriptionKey || option.description) ? (
-                        <span className="text-xs text-muted-foreground">
-                          {descriptionKey ? t(descriptionKey) : option.description}
-                        </span>
-                      ) : null}
-                    </FieldContent>
-                  </FieldLabel>
-                )
-              })}
-            </RadioGroup>
-          </FieldSet>
+          <Accordion type="multiple" className="divide-y divide-border">
+            {models.map((model, modelIndex) => (
+              <AccordionItem key={model.key} value={model.key} className="border-0">
+                <AccordionTrigger className="px-6 py-4 hover:no-underline">
+                  <div className="flex min-w-0 flex-1 items-center gap-3">
+                    <RadioGroup value={models[0]?.key ?? ""} onValueChange={() => makeDefaultModel(modelIndex)}>
+                      <RadioGroupItem
+                        value={model.key}
+                        aria-label={t("defaultModel")}
+                        onClick={(event) => event.stopPropagation()}
+                      />
+                    </RadioGroup>
+                    <div className="min-w-0 text-left">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="truncate text-sm font-medium">{model.displayLabel}</span>
+                        {modelIndex === 0 ? <Badge variant="secondary">{t("defaultModel")}</Badge> : null}
+                      </div>
+                      <div className="mt-1 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+                        <span className="truncate">{model.key}</span>
+                        <span>{model.efforts.length} {t("reasoningEffort")}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mr-3 flex items-center gap-1">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-7"
+                      disabled={modelIndex === 0}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        moveModel(modelIndex, -1)
+                      }}
+                    >
+                      <ArrowUp className="size-3.5" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-7"
+                      disabled={modelIndex === models.length - 1}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        moveModel(modelIndex, 1)
+                      }}
+                    >
+                      <ArrowDown className="size-3.5" />
+                    </Button>
+                  </div>
+                </AccordionTrigger>
+                <AccordionContent className="px-6 pb-5">
+                  {model.description ? <p className="mb-3 text-sm text-muted-foreground">{model.description}</p> : null}
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>{t("reasoningEffort")}</TableHead>
+                        <TableHead>Key</TableHead>
+                        <TableHead className="w-24 text-right">Order</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {model.efforts.map((effort, effortIndex) => (
+                        <TableRow key={effort.key}>
+                          <TableCell>
+                            <div className="font-medium">{effort.displayLabel}</div>
+                            {effort.description ? <div className="text-xs text-muted-foreground">{effort.description}</div> : null}
+                          </TableCell>
+                          <TableCell className="font-mono text-xs text-muted-foreground">{effort.key}</TableCell>
+                          <TableCell>
+                            <div className="flex justify-end gap-1">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="size-7"
+                                disabled={effortIndex === 0}
+                                onClick={() => moveEffort(modelIndex, effortIndex, -1)}
+                              >
+                                <ArrowUp className="size-3.5" />
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="size-7"
+                                disabled={effortIndex === model.efforts.length - 1}
+                                onClick={() => moveEffort(modelIndex, effortIndex, 1)}
+                              >
+                                <ArrowDown className="size-3.5" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </AccordionContent>
+              </AccordionItem>
+            ))}
+          </Accordion>
         )}
         {(error || saving) ? (
           <>
@@ -570,11 +664,39 @@ function AgentTab({ token }: { token: string }) {
   )
 }
 
-function permissionDescriptionKey(value: string): "askApprovalPermissionDescription" | "autoApprovePermissionDescription" | "fullAccessPermissionDescription" | null {
-  if (value === "ask") return "askApprovalPermissionDescription"
-  if (value === "auto") return "autoApprovePermissionDescription"
-  if (value === "fullAccess") return "fullAccessPermissionDescription"
-  return null
+function moveEntry<T>(items: T[], index: number, direction: -1 | 1): T[] {
+  const nextIndex = index + direction
+  if (nextIndex < 0 || nextIndex >= items.length) return items
+  const next = [...items]
+  const current = next[index]
+  const target = next[nextIndex]
+  if (current === undefined || target === undefined) return items
+  next[index] = target
+  next[nextIndex] = current
+  return next
+}
+
+function moveToFront<T>(items: T[], index: number): T[] {
+  if (index <= 0 || index >= items.length) return items
+  const next = [...items]
+  const [item] = next.splice(index, 1)
+  if (item === undefined) return items
+  return [item, ...next]
+}
+
+function toAgentDefaultsPayload(models: AgentCatalogEntry[]) {
+  return models.map((model, modelIndex) => ({
+    key: model.key,
+    displayLabel: model.displayLabel,
+    description: model.description ?? null,
+    sortOrder: modelIndex + 1,
+    efforts: model.efforts.map((effort, effortIndex) => ({
+      key: effort.key,
+      displayLabel: effort.displayLabel,
+      description: effort.description ?? null,
+      sortOrder: effortIndex + 1,
+    })),
+  }))
 }
 
 const themes: { id: AppearanceMode; labelKey: string; descKey: string }[] = [

@@ -405,7 +405,18 @@ export class DashboardApi {
 
   updateAgentDefaults(
     token: string,
-    runtimes: Record<string, { enabled?: boolean; settings?: Record<string, unknown> }>,
+    runtimes: Record<string, { models?: Array<{
+      key: string;
+      displayLabel: string;
+      description?: string | null;
+      sortOrder?: number;
+      efforts?: Array<{
+        key: string;
+        displayLabel: string;
+        description?: string | null;
+        sortOrder?: number;
+      }>;
+    }> }>,
   ): Promise<UserAgentDefaultsResponse> {
     return this.client.patch<UserAgentDefaultsResponse>(
       "/agents/defaults",
