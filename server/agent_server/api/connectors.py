@@ -810,7 +810,6 @@ async def get_connector_agent_settings(
         connectorId=connector_id,
         runtime=runtime,
         settings=result.settings,
-        defaultRunModeConfigured=result.default_run_mode_configured,
         schemaVersion=result.schema.schemaVersion,
         serverTime=utc_now(),
     )
@@ -842,7 +841,6 @@ async def patch_connector_agent_settings(
         connectorId=connector_id,
         runtime=runtime,
         settings=result.settings,
-        defaultRunModeConfigured=result.default_run_mode_configured,
         schemaVersion=result.schema.schemaVersion,
         serverTime=utc_now(),
     )

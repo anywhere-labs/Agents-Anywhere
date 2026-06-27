@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from agent_server.infra.repositories.store_support import *
-from agent_server.core.runtime_config import DEFAULT_RUNTIME_CONFIG_SCHEMAS
+from agent_server.core.runtime_config import (
+    DEFAULT_RUNTIME_CONFIG_SCHEMAS,
+    claude_efforts_for_model,
+)
 
 
 class AgentCatalogRepositoryMixin:
@@ -114,23 +117,11 @@ class AgentCatalogRepositoryMixin:
                     user_id,
                     runtime,
                 )
-                enabled = bool(raw_update.get("enabled", current["enabled"]))
+                enabled = bool(current["enabled"])
                 settings = current["settings"]
-                if "settings" in raw_update and raw_update["settings"] is not None:
-                    settings_patch = raw_update["settings"]
-                    if not isinstance(settings_patch, dict):
-                        raise ValueError(f"{runtime}.settings must be an object")
-                    settings = _normalize_runtime_default_settings(
-                        runtime,
-                        settings,
-                        settings_patch,
-                    )
                 models = current["models"]
                 if "models" in raw_update and raw_update["models"] is not None:
-                    models = _normalize_user_catalog_entries(runtime, raw_update["models"])
-                efforts = current["efforts"]
-                if "efforts" in raw_update and raw_update["efforts"] is not None:
-                    efforts = _normalize_user_catalog_entries(runtime, raw_update["efforts"])
+                    models = _normalize_model_catalog_entries(runtime, raw_update["models"])
                 await self._upsert_user_agent_default_on_conn(
                     conn,
                     user_id=user_id,
@@ -138,7 +129,6 @@ class AgentCatalogRepositoryMixin:
                     enabled=enabled,
                     settings=settings,
                     models=models,
-                    efforts=efforts,
                     updated_at=now,
                 )
         return await self.get_user_agent_defaults(user_id)
@@ -163,7 +153,6 @@ class AgentCatalogRepositoryMixin:
                         connector_id=connector_id,
                         runtime=runtime,
                         settings_json=_json_dumps(settings),
-                        default_run_mode_configured=0,
                         schema_version=schema.schemaVersion,
                         updated_at=now,
                     )
@@ -199,7 +188,6 @@ class AgentCatalogRepositoryMixin:
                 "enabled": bool(row["enabled"]),
                 "settings": _json_loads(row["settings_json"]) or {},
                 "models": _catalog_entries_from_json(runtime, row["models_json"]),
-                "efforts": _catalog_entries_from_json(runtime, row["efforts_json"]),
             }
         models = await self._list_agent_catalog_on_conn(conn, agent_models_t, runtime)
         efforts = await self._list_agent_catalog_on_conn(conn, agent_efforts_t, runtime)
@@ -211,8 +199,7 @@ class AgentCatalogRepositoryMixin:
             "runtime": runtime,
             "enabled": True,
             "settings": default_agent_settings(runtime),
-            "models": models,
-            "efforts": efforts,
+            "models": _models_with_default_efforts(runtime, models, efforts),
         }
 
 
@@ -251,7 +238,6 @@ class AgentCatalogRepositoryMixin:
         enabled: bool,
         settings: dict[str, Any],
         models: list[AgentCatalogEntry],
-        efforts: list[AgentCatalogEntry],
         updated_at: str,
     ) -> None:
         values = {
@@ -260,7 +246,6 @@ class AgentCatalogRepositoryMixin:
             "enabled": 1 if enabled else 0,
             "settings_json": _json_dumps(settings),
             "models_json": _json_dumps([entry.model_dump() for entry in models]),
-            "efforts_json": _json_dumps([entry.model_dump() for entry in efforts]),
             "updated_at": updated_at,
         }
         existing = (
@@ -288,15 +273,33 @@ def _catalog_entries_from_json(runtime: str, raw: str | None) -> list[AgentCatal
     data = _json_loads(raw)
     if not isinstance(data, list):
         return []
-    return _normalize_user_catalog_entries(runtime, data)
+    return _normalize_model_catalog_entries(runtime, data)
 
 
-def _normalize_user_catalog_entries(runtime: str, raw: Any) -> list[AgentCatalogEntry]:
+def _normalize_model_catalog_entries(runtime: str, raw: Any) -> list[AgentCatalogEntry]:
+    fallback_efforts = _default_catalog_from_runtime_schema(runtime, "effort")
+    normalized = _normalize_user_catalog_entries(
+        runtime,
+        raw,
+        default_efforts_by_model={
+            entry.get("key") if isinstance(entry, dict) else getattr(entry, "key", ""):
+                _default_efforts_for_model(runtime, entry.get("key") if isinstance(entry, dict) else getattr(entry, "key", ""), fallback_efforts)
+            for entry in raw
+        } if isinstance(raw, list) else {},
+    )
+    return normalized
+
+
+def _normalize_user_catalog_entries(
+    runtime: str,
+    raw: Any,
+    *,
+    default_efforts_by_model: dict[str, list[AgentCatalogEntry]] | None = None,
+) -> list[AgentCatalogEntry]:
     if not isinstance(raw, list):
         raise ValueError("catalog entries must be a list")
     result: list[AgentCatalogEntry] = []
     seen: set[str] = set()
-    default_seen = False
     for index, item in enumerate(raw):
         if not isinstance(item, dict):
             raise ValueError("catalog entry must be an object")
@@ -309,59 +312,36 @@ def _normalize_user_catalog_entries(runtime: str, raw: Any) -> list[AgentCatalog
         if key in seen:
             raise ValueError(f"duplicate catalog entry: {key}")
         seen.add(key)
-        is_default = bool(item.get("isDefault", False)) and not default_seen
-        default_seen = default_seen or is_default
         result.append(
             AgentCatalogEntry(
                 runtime=runtime,
                 key=key,
                 displayLabel=label,
                 description=item.get("description") if isinstance(item.get("description"), str) else None,
-                isDefault=is_default,
+                isDefault=index == 0,
                 sortOrder=int(item.get("sortOrder") if item.get("sortOrder") is not None else index + 1),
+                efforts=_normalize_effort_entries(
+                    runtime,
+                    item.get("efforts"),
+                    default_efforts=(default_efforts_by_model or {}).get(key, []),
+                ),
             )
         )
-    if result and not any(entry.isDefault for entry in result):
-        first = result[0]
-        result[0] = first.model_copy(update={"isDefault": True})
     return result
 
 
-def _normalize_runtime_default_settings(
+def _normalize_effort_entries(
     runtime: str,
-    current: dict[str, Any],
-    patch: dict[str, Any],
-) -> dict[str, Any]:
-    allowed = set(default_agent_settings(runtime))
-    result = {**current}
-    for key, value in patch.items():
-        if key not in allowed:
-            raise ValueError(f"{runtime}.settings.{key} is not configurable")
-        if value is not None and not isinstance(value, str):
-            raise ValueError(f"{runtime}.settings.{key} must be a string or null")
-        if key == "runMode" and value not in {None, "chat", "terminal"}:
-            raise ValueError(f"{runtime}.settings.runMode has unsupported value: {value}")
-        if runtime == "codex" and key == "permissionMode" and value not in {
-            None,
-            "ask",
-            "auto",
-            "fullAccess",
-        }:
-            raise ValueError(
-                f"{runtime}.settings.permissionMode has unsupported value: {value}"
-            )
-        if runtime == "claude" and key == "permissionMode" and value not in {
-            None,
-            "default",
-            "acceptEdits",
-            "plan",
-            "bypassPermissions",
-        }:
-            raise ValueError(
-                f"{runtime}.settings.permissionMode has unsupported value: {value}"
-            )
-        result[key] = value
-    return result
+    raw: Any,
+    *,
+    default_efforts: list[AgentCatalogEntry],
+) -> list[AgentCatalogEntry]:
+    if raw is None:
+        return default_efforts
+    return [
+        entry.model_copy(update={"efforts": []})
+        for entry in _normalize_user_catalog_entries(runtime, raw, default_efforts_by_model={})
+    ]
 
 
 def _default_catalog_from_runtime_schema(runtime: str, field_key: str) -> list[AgentCatalogEntry]:
@@ -379,8 +359,37 @@ def _default_catalog_from_runtime_schema(runtime: str, field_key: str) -> list[A
                 description=option.description,
                 isDefault=index == 0,
                 sortOrder=index + 1,
+                efforts=[],
             )
             for index, option in enumerate(field.options or [])
             if isinstance(option.value, str)
         ]
     return []
+
+
+def _models_with_default_efforts(
+    runtime: str,
+    models: list[AgentCatalogEntry],
+    efforts: list[AgentCatalogEntry],
+) -> list[AgentCatalogEntry]:
+    return [
+        model.model_copy(
+            update={"efforts": _default_efforts_for_model(runtime, model.key, efforts)}
+        )
+        for model in models
+    ]
+
+
+def _default_efforts_for_model(
+    runtime: str,
+    model: str,
+    efforts: list[AgentCatalogEntry],
+) -> list[AgentCatalogEntry]:
+    if runtime != "claude":
+        return [entry.model_copy(update={"efforts": []}) for entry in efforts]
+    allowed = claude_efforts_for_model(model)
+    return [
+        entry.model_copy(update={"efforts": []})
+        for entry in efforts
+        if entry.key in allowed
+    ]

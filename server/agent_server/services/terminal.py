@@ -1,21 +1,16 @@
 from __future__ import annotations
 
-import asyncio
-import json
 from typing import Any
 
-from fastapi import HTTPException
 from loguru import logger
 
 from agent_server.infra.connector_rpc import ConnectorRpcManager
-from agent_server.infra.runtimes.serializers import serializer_for_runtime
 from agent_server.core.models import (
     TerminalCreateRequest,
     TerminalListResponse,
     TerminalPatchRequest,
     TerminalResizeRequest,
     TerminalResponse,
-    SessionView,
     TerminalView,
 )
 from agent_server.services.workspace import (
@@ -24,7 +19,7 @@ from agent_server.services.workspace import (
     resolve_workspace_path,
 )
 from agent_server.infra.repositories.facade import Store
-from agent_server.infra.terminal_broker import Terminal, TerminalBroker
+from agent_server.infra.terminal_broker import TerminalBroker
 from agent_server.core.utc import utc_now
 
 
@@ -50,52 +45,6 @@ def _label_for(req: TerminalCreateRequest, default_count: int) -> str:
     shell = (req.shell or "").strip().replace("\\", "/").rstrip("/")
     base = shell.rsplit("/", 1)[-1] if shell else "Shell"
     return base if default_count == 0 else f"{base} {default_count + 1}"
-
-
-def _primary_claude_terminal(terminals: list[Terminal]) -> Terminal | None:
-    for term in terminals:
-        if term.purpose == "primary_claude":
-            return term
-    return None
-
-
-def _open_connector_terminal_ids(result: object) -> set[str]:
-    if not isinstance(result, dict):
-        return set()
-    terminals = result.get("terminals")
-    if not isinstance(terminals, list):
-        return set()
-    ids: set[str] = set()
-    for item in terminals:
-        if not isinstance(item, dict) or item.get("closed") is True:
-            continue
-        terminal_id = item.get("terminalId")
-        if isinstance(terminal_id, str) and terminal_id:
-            ids.add(terminal_id)
-    return ids
-
-
-def _claude_terminal_args(
-    *,
-    external_session_id: str | None,
-    runtime_params: dict[str, object],
-) -> list[str]:
-    args = ["--resume", external_session_id] if external_session_id else []
-    permission_mode = runtime_params.get("permissionMode")
-    if isinstance(permission_mode, str) and permission_mode:
-        args += ["--permission-mode", permission_mode]
-        args += ["--setting-sources", "project,local"]
-    model = runtime_params.get("model")
-    if isinstance(model, str) and model:
-        args += ["--model", model]
-    effort = runtime_params.get("effort")
-    if isinstance(effort, str) and effort:
-        args += ["--effort", effort]
-    return args
-
-
-def _launch_signature(command: str, args: list[str]) -> str:
-    return json.dumps([command, args], separators=(",", ":"), ensure_ascii=True)
 
 
 def terminal_connector_scope_id(connector_id: str) -> str:
@@ -229,143 +178,6 @@ class TerminalService:
                 raise
             return TerminalResponse(terminal=TerminalView(**term.view()), serverTime=utc_now())
 
-    async def ensure_primary_claude(
-        self,
-        session_id: str,
-        *,
-        user_id: str,
-    ) -> TerminalResponse:
-        session = await local_rpc_session(session_id, user_id, self._store, self._manager)
-        if session.runtime != "claude":
-            raise TerminalConflictError("terminal primary is only supported for Claude")
-        if session.effectiveRunMode != "terminal":
-            raise TerminalConflictError("session is not in Claude terminal mode")
-
-        async with self._broker.session_lock(session.id):
-            return await self._ensure_primary_claude_locked(session, user_id=user_id)
-
-    async def _ensure_primary_claude_locked(
-        self,
-        session: SessionView,
-        *,
-        user_id: str,
-    ) -> TerminalResponse:
-        runtime_params = await self._claude_runtime_params(session, user_id=user_id)
-        args = _claude_terminal_args(
-            external_session_id=session.externalSessionId,
-            runtime_params=runtime_params,
-        )
-        launch_signature = _launch_signature("claude", args)
-
-        existing = self._broker.get_for_session(session.id)
-        primary = _primary_claude_terminal(existing)
-        if primary is not None:
-            if primary.launch_signature != launch_signature:
-                logger.info(
-                    "recreating Claude terminal after launch config changed "
-                    "terminal_id={} session_id={}",
-                    primary.id,
-                    session.id,
-                )
-                await self._close_connector_terminal(
-                    connector_id=session.connectorId,
-                    session_id=session.id,
-                    terminal_id=primary.id,
-                )
-                await self._broker.remove(primary.id)
-                return await self._create_primary_claude(
-                    session,
-                    args=args,
-                    launch_signature=launch_signature,
-                )
-            if primary.status == "starting":
-                connector_terminal_ids = await self._connector_terminal_ids(
-                    session.connectorId,
-                    session.id,
-                )
-                if connector_terminal_ids is not None and primary.id in connector_terminal_ids:
-                    return TerminalResponse(
-                        terminal=TerminalView(**primary.view()),
-                        serverTime=utc_now(),
-                    )
-                logger.info(
-                    "recreating stale starting Claude terminal terminal_id={} session_id={}",
-                    primary.id,
-                    session.id,
-                )
-                await self._close_connector_terminal(
-                    connector_id=session.connectorId,
-                    session_id=session.id,
-                    terminal_id=primary.id,
-                )
-                await self._broker.remove(primary.id)
-            if primary.status == "running":
-                connector_terminal_ids = await self._connector_terminal_ids(
-                    session.connectorId,
-                    session.id,
-                )
-                if connector_terminal_ids is None:
-                    return TerminalResponse(
-                        terminal=TerminalView(**primary.view()),
-                        serverTime=utc_now(),
-                    )
-                if primary.id in connector_terminal_ids:
-                    return TerminalResponse(
-                        terminal=TerminalView(**primary.view()),
-                        serverTime=utc_now(),
-                    )
-                logger.info(
-                    "recreating stale Claude terminal terminal_id={} session_id={}",
-                    primary.id,
-                    session.id,
-                )
-            await self._broker.remove(primary.id)
-
-        return await self._create_primary_claude(
-            session,
-            args=args,
-            launch_signature=launch_signature,
-        )
-
-    async def _claude_runtime_params(
-        self,
-        session: SessionView,
-        *,
-        user_id: str,
-    ) -> dict[str, Any]:
-        try:
-            effective_settings = await self._store.get_effective_runtime_settings(
-                session.id,
-                user_id=user_id,
-            )
-            return serializer_for_runtime("claude").serialize(
-                settings=effective_settings,
-                cwd=session.cwd,
-            )
-        except ValueError as exc:
-            raise TerminalConflictError(str(exc)) from exc
-
-    async def _connector_terminal_ids(self, connector_id: str, session_id: str) -> set[str] | None:
-        try:
-            result = await request_connector(
-                self._manager,
-                connector_id,
-                "terminal.list",
-                {"sessionId": session_id},
-                timeout=2,
-            )
-        except HTTPException as exc:
-            logger.warning(
-                "terminal.list rpc failed while checking primary terminal "
-                "connector_id={} session_id={} status={} detail={}",
-                connector_id,
-                session_id,
-                exc.status_code,
-                exc.detail,
-            )
-            return None
-        return _open_connector_terminal_ids(result)
-
     async def _close_connector_terminal(
         self,
         *,
@@ -414,56 +226,6 @@ class TerminalService:
                 terminal_id=term.id,
             )
             await self._broker.remove(term.id)
-
-    async def _create_primary_claude(
-        self,
-        session: SessionView,
-        *,
-        args: list[str],
-        launch_signature: str,
-    ) -> TerminalResponse:
-        cwd = resolve_workspace_path(session.cwd, ".")
-        term = await self._broker.register(
-            session_id=session.id,
-            connector_id=session.connectorId,
-            label="Claude",
-            root=session.cwd,
-            cwd=cwd,
-            shell="",
-            cols=120,
-            rows=36,
-            purpose="primary_claude",
-            launch_signature=launch_signature,
-        )
-        try:
-            result = await request_connector(
-                self._manager,
-                session.connectorId,
-                "terminal.create",
-                {
-                    "terminalId": term.id,
-                    "sessionId": session.id,
-                    "root": session.cwd,
-                    "cwd": cwd,
-                    "shell": None,
-                    "command": "claude",
-                    "args": args,
-                    "profile": "claude",
-                    "cols": term.cols,
-                    "rows": term.rows,
-                    "env": {},
-                },
-                timeout=15,
-            )
-        except asyncio.CancelledError:
-            await self._broker.remove(term.id)
-            raise
-        except Exception:
-            await self._broker.remove(term.id)
-            raise
-        pid = result.get("pid") if isinstance(result, dict) else None
-        await self._broker.mark_running(term.id, pid=pid)
-        return TerminalResponse(terminal=TerminalView(**term.view()), serverTime=utc_now())
 
     async def list(self, session_id: str, *, user_id: str) -> TerminalListResponse:
         try:

@@ -17,7 +17,6 @@ type Props = {
   scope: "device" | "session";
   disabled?: boolean;
   className?: string;
-  onExplainRunMode?: () => void;
   onPatch: (settings: Record<string, unknown>) => void;
 };
 
@@ -28,7 +27,6 @@ export function RuntimeSettingsForm({
   scope,
   disabled = false,
   className = "kl-runtime-settings-form",
-  onExplainRunMode,
   onPatch,
 }: Props) {
   const fields = runtimeConfigFields(schema, settings, scope);
@@ -52,10 +50,10 @@ export function RuntimeSettingsForm({
           key={field.key}
           runtime={runtime}
           field={field}
+          modelField={fields.find((item) => item.key === "model")}
           settings={settings}
           scope={scope}
           disabled={disabled || !settings}
-          onExplainRunMode={onExplainRunMode}
           onPatch={onPatch}
         />
       ))}
@@ -91,59 +89,31 @@ export function optionLabel(
 function RuntimeSettingField({
   runtime,
   field,
+  modelField,
   settings,
   scope,
   disabled,
-  onExplainRunMode,
   onPatch,
 }: {
   runtime: string;
   field: RuntimeConfigField;
+  modelField: RuntimeConfigField | undefined;
   settings: Record<string, unknown> | null;
   scope: "device" | "session";
   disabled: boolean;
-  onExplainRunMode?: () => void;
   onPatch: (settings: Record<string, unknown>) => void;
 }) {
   const resolvedField =
-    runtime === "claude" && field.key === "effort"
-      ? filterClaudeEffortField(runtime, field, settings?.model)
+    field.key === "effort"
+      ? filterClaudeEffortField(
+          runtime,
+          field,
+          settings?.model,
+          modelField,
+        )
       : field;
   if (!resolvedField) return null;
   field = resolvedField;
-
-  if (runtime === "claude" && scope === "device" && field.key === "runMode") {
-    const runMode = stringSetting(settings?.runMode, "chat");
-    return (
-      <div className="kl-runtime-settings-row">
-        <div className="kl-runtime-settings-label-line">
-          <span className="kl-runtime-settings-label">Default run mode</span>
-          {onExplainRunMode && (
-            <button
-              type="button"
-              className="kl-runmode-learn"
-              onClick={onExplainRunMode}
-            >
-              Learn More
-            </button>
-          )}
-        </div>
-        <div className="kl-runtime-settings-segmented" role="group">
-          {optionPairs(field).map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              className={runMode === option.value ? "on" : ""}
-              disabled={disabled}
-              onClick={() => onPatch({ runMode: option.value })}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-      </div>
-    );
-  }
 
   if (field.type === "object") {
     return (

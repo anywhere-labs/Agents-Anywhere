@@ -53,6 +53,15 @@ class SessionRunService:
 
         connector_result = None
         if payload.externalSessionId is not None:
+            try:
+                runtime_settings_override = await self._store.get_initial_runtime_settings_for_connector_agent(
+                    payload.connectorId,
+                    payload.runtime,
+                    user_id=user_id,
+                    patch=payload.runtimeSettings,
+                )
+            except ValueError as exc:
+                raise SessionRunInvalidConfigError(str(exc)) from exc
             session = await self._store.create_session(
                 connector_id=payload.connectorId,
                 user_id=user_id,
@@ -60,17 +69,25 @@ class SessionRunService:
                 external_session_id=payload.externalSessionId,
                 title=payload.title,
                 cwd=payload.cwd,
+                runtime_settings_override=runtime_settings_override,
             )
             return {"session": session, "connectorResult": connector_result}
 
         if not self._manager.is_online(payload.connectorId):
             raise SessionRunConflictError("connector is offline")
         try:
-            effective_settings = await self._store.get_effective_settings_for_connector_agent(
+            runtime_settings_override = await self._store.get_initial_runtime_settings_for_connector_agent(
+                payload.connectorId,
+                payload.runtime,
+                user_id=user_id,
+                patch=payload.runtimeSettings,
+            )
+            connector_settings = await self._store.serialize_initial_settings_for_connector_agent(
                 payload.connectorId,
                 payload.runtime,
                 user_id=user_id,
                 cwd=payload.cwd,
+                patch=payload.runtimeSettings,
             )
         except ValueError as exc:
             raise SessionRunInvalidConfigError(str(exc)) from exc
@@ -79,7 +96,7 @@ class SessionRunService:
             "runtime": payload.runtime,
             "title": payload.title,
             "cwd": payload.cwd,
-            **effective_settings,
+            **connector_settings,
         }
         if payload.runtime == "codex" and "sandboxPolicy" in connector_params:
             connector_params["sandbox"] = connector_params.pop("sandboxPolicy")
@@ -126,7 +143,15 @@ class SessionRunService:
             cwd=payload.cwd,
             status="idle",
             last_synced_at=utc_now(),
+            runtime_settings_override=runtime_settings_override,
         )
+        if session.runtimeSettings != runtime_settings_override:
+            session = session.model_copy(
+                update={
+                    "runtimeSettings": runtime_settings_override,
+                    "runtimeSettingsOverride": runtime_settings_override,
+                }
+            )
         return {"session": session, "connectorResult": connector_result}
 
     async def send_message(
@@ -147,9 +172,6 @@ class SessionRunService:
             raise SessionRunConflictError("connector is offline")
         if session.status not in {"idle", "error"}:
             raise SessionRunConflictError(f"session is {session.status}")
-        if session.runtime == "claude" and session.effectiveRunMode == "terminal":
-            raise SessionRunConflictError("terminal_mode_uses_terminal")
-
         try:
             effective_settings = await self._store.get_effective_runtime_settings(
                 session_id,
@@ -195,7 +217,6 @@ class SessionRunService:
         await self._store.start_active_run(
             session_id=session_id,
             runtime=session.runtime,
-            run_mode=session.effectiveRunMode,
             external_session_id=session.externalSessionId,
             params=params,
         )

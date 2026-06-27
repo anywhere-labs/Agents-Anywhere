@@ -250,13 +250,6 @@ async def get_session_runtime_settings(
             user_id=user_id,
         )
         schema = await runtime_config.get_runtime_config_schema(session.runtime)
-        default_run_mode_configured = (
-            await runtime_config.is_default_run_mode_configured(
-                session.connectorId,
-                session.runtime,
-                user_id=user_id,
-            )
-        )
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
     except ValueError as exc:
@@ -267,8 +260,6 @@ async def get_session_runtime_settings(
         settings=effective,
         runtimeSettings=effective,
         runtimeSettingsOverride=override,
-        effectiveRunMode=session.effectiveRunMode,
-        defaultRunModeConfigured=default_run_mode_configured,
         schemaVersion=schema.schemaVersion,
         serverTime=utc_now(),
     )
@@ -294,13 +285,6 @@ async def patch_session_runtime_settings(
             user_id=user_id,
         )
         schema = await runtime_config.get_runtime_config_schema(session.runtime)
-        default_run_mode_configured = (
-            await runtime_config.is_default_run_mode_configured(
-                session.connectorId,
-                session.runtime,
-                user_id=user_id,
-            )
-        )
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
     except ValueError as exc:
@@ -311,8 +295,6 @@ async def patch_session_runtime_settings(
         settings=effective,
         runtimeSettings=effective,
         runtimeSettingsOverride=override,
-        effectiveRunMode=session.effectiveRunMode,
-        defaultRunModeConfigured=default_run_mode_configured,
         schemaVersion=schema.schemaVersion,
         serverTime=utc_now(),
     )

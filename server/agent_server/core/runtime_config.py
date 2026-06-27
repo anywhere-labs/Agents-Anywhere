@@ -13,6 +13,7 @@ class RuntimeConfigOption(BaseModel):
     value: str | bool
     label: str
     description: str | None = None
+    efforts: list["RuntimeConfigOption"] | None = None
 
 
 class RuntimeConfigField(BaseModel):
@@ -60,8 +61,6 @@ class RuntimeSettingsResponse(BaseModel):
     settings: dict[str, Any]
     runtimeSettings: dict[str, Any] | None = None
     runtimeSettingsOverride: dict[str, Any] | None = None
-    effectiveRunMode: Literal["chat", "terminal"] | None = None
-    defaultRunModeConfigured: bool = False
     schemaVersion: int
     serverTime: str
 
@@ -76,7 +75,6 @@ class RuntimeConfigSchemaResponse(BaseModel):
 
 DEFAULT_RUNTIME_SETTINGS: dict[str, dict[str, Any]] = {
     "claude": {
-        "runMode": "chat",
         "permissionMode": "acceptEdits",
         "model": None,
         "effort": None,
@@ -92,18 +90,8 @@ DEFAULT_RUNTIME_SETTINGS: dict[str, dict[str, Any]] = {
 DEFAULT_RUNTIME_CONFIG_SCHEMAS: dict[str, RuntimeConfigSchema] = {
     "claude": RuntimeConfigSchema(
         runtime="claude",
-        schemaVersion=3,
+        schemaVersion=4,
         fields=[
-            RuntimeConfigField(
-                key="runMode",
-                label="Run mode",
-                type="enum",
-                allowSessionOverride=False,
-                options=[
-                    RuntimeConfigOption(value="chat", label="Chat"),
-                    RuntimeConfigOption(value="terminal", label="Terminal"),
-                ],
-            ),
             RuntimeConfigField(
                 key="permissionMode",
                 label="Permission mode",
@@ -240,6 +228,16 @@ def normalize_runtime_settings(runtime: str, settings: dict[str, Any]) -> dict[s
     return result
 
 
+def filter_runtime_settings(
+    settings: dict[str, Any],
+    schema: RuntimeConfigSchema,
+    *,
+    session_override: bool,
+) -> dict[str, Any]:
+    allowed_paths = _field_paths(schema.fields, session_override=session_override)
+    return {key: value for key, value in settings.items() if key in allowed_paths}
+
+
 def validate_runtime_schema(runtime: str, raw: Any) -> RuntimeConfigSchema:
     schema = RuntimeConfigSchema.model_validate(raw)
     if schema.runtime != runtime:
@@ -284,6 +282,7 @@ def apply_settings_patch(
     prune_nulls: bool = False,
     runtime: str | None = None,
     explicit_keys: set[str] | None = None,
+    schema: RuntimeConfigSchema | None = None,
 ) -> dict[str, Any]:
     result = _deep_merge(existing or {}, patch, overwrite_null=True)
     if runtime is not None:
@@ -291,6 +290,7 @@ def apply_settings_patch(
             runtime,
             result,
             explicit_keys=explicit_keys or set(patch),
+            schema=schema,
         )
     return _prune_nulls(result) if prune_nulls else result
 
@@ -300,10 +300,42 @@ def normalize_setting_constraints(
     settings: dict[str, Any],
     *,
     explicit_keys: set[str],
+    schema: RuntimeConfigSchema | None = None,
 ) -> dict[str, Any]:
+    schema_normalized = _normalize_model_effort_from_schema(
+        settings,
+        schema=schema,
+        explicit_keys=explicit_keys,
+    )
+    if schema_normalized is not None:
+        return schema_normalized
     if runtime != "claude":
         return settings
     return _normalize_claude_model_effort(settings, explicit_keys=explicit_keys)
+
+
+def schema_with_user_agent_defaults(
+    schema: RuntimeConfigSchema,
+    defaults: dict[str, Any] | None,
+) -> RuntimeConfigSchema:
+    result = deepcopy(schema)
+    if not defaults:
+        _attach_default_model_efforts(result)
+        return result
+
+    models = defaults.get("models") or []
+    if models:
+        model_options = [_catalog_entry_to_option(entry, include_efforts=True) for entry in models]
+        effort_options = _aggregate_effort_options(model_options)
+        for field in result.fields:
+            if field.key == "model":
+                field.options = model_options
+            elif field.key == "effort" and effort_options:
+                field.options = effort_options
+        return result
+
+    _attach_default_model_efforts(result)
+    return result
 
 
 def claude_efforts_for_model(model: Any) -> frozenset[str]:
@@ -315,6 +347,128 @@ def claude_efforts_for_model(model: Any) -> frozenset[str]:
     if key.startswith("claude-opus-4-6") or key.startswith("claude-sonnet-4-6"):
         return _CLAUDE_OPUS_46_SONNET_46_EFFORTS
     return _CLAUDE_OPUS_46_SONNET_46_EFFORTS
+
+
+def _normalize_model_effort_from_schema(
+    settings: dict[str, Any],
+    *,
+    schema: RuntimeConfigSchema | None,
+    explicit_keys: set[str],
+) -> dict[str, Any] | None:
+    if schema is None:
+        return None
+    field_map = {field.key: field for field in schema.fields}
+    model_field = field_map.get("model")
+    effort_field = field_map.get("effort")
+    if model_field is None or effort_field is None:
+        return None
+
+    result = deepcopy(settings)
+    model = result.get("model")
+    effort = result.get("effort")
+    allowed = _schema_efforts_for_model(model_field, effort_field, model)
+    if allowed is None:
+        return None
+    if not allowed:
+        if effort is not None and "effort" in explicit_keys:
+            raise ValueError(f"effort is not supported by {model}")
+        result["effort"] = None
+        return result
+    if effort is not None and effort not in allowed:
+        if "effort" in explicit_keys:
+            raise ValueError(f"effort {effort} is not supported by {model}")
+        result["effort"] = None
+    return result
+
+
+def _schema_efforts_for_model(
+    model_field: RuntimeConfigField,
+    effort_field: RuntimeConfigField,
+    model: Any,
+) -> set[str] | None:
+    model_options = model_field.options or []
+    if model_options and any(option.efforts is not None for option in model_options):
+        selected = next(
+            (
+                option
+                for option in model_options
+                if isinstance(model, str) and model and option.value == model
+            ),
+            model_options[0] if not isinstance(model, str) or not model else None,
+        )
+        if selected is None:
+            return None
+        return {str(effort.value) for effort in (selected.efforts or [])}
+    if isinstance(model, str) and model:
+        for option in model_options:
+            if option.value == model:
+                return None
+        return None
+    if effort_field.options:
+        return {str(option.value) for option in effort_field.options}
+    return None
+
+
+def _attach_default_model_efforts(schema: RuntimeConfigSchema) -> None:
+    field_map = {field.key: field for field in schema.fields}
+    model_field = field_map.get("model")
+    effort_field = field_map.get("effort")
+    if model_field is None or effort_field is None:
+        return
+    effort_options = effort_field.options or []
+    if not effort_options:
+        return
+    model_options: list[RuntimeConfigOption] = []
+    for option in model_field.options or []:
+        efforts = _default_effort_options_for_model(schema.runtime, option.value, effort_options)
+        model_options.append(option.model_copy(update={"efforts": efforts}))
+    model_field.options = model_options
+
+
+def _default_effort_options_for_model(
+    runtime: str,
+    model: Any,
+    effort_options: list[RuntimeConfigOption],
+) -> list[RuntimeConfigOption]:
+    if runtime != "claude":
+        return deepcopy(effort_options)
+    allowed = claude_efforts_for_model(model)
+    return [deepcopy(option) for option in effort_options if str(option.value) in allowed]
+
+
+def _catalog_entry_to_option(entry: Any, *, include_efforts: bool) -> RuntimeConfigOption:
+    key = _entry_value(entry, "key")
+    label = _entry_value(entry, "displayLabel") or key
+    description = _entry_value(entry, "description")
+    efforts = _entry_value(entry, "efforts")
+    return RuntimeConfigOption(
+        value=key,
+        label=label,
+        description=description if isinstance(description, str) else None,
+        efforts=[
+            _catalog_entry_to_option(effort, include_efforts=False)
+            for effort in (efforts if include_efforts and isinstance(efforts, list) else [])
+        ] if include_efforts else None,
+    )
+
+
+def _aggregate_effort_options(model_options: list[RuntimeConfigOption]) -> list[RuntimeConfigOption]:
+    result: list[RuntimeConfigOption] = []
+    seen: set[str] = set()
+    for model in model_options:
+        for effort in model.efforts or []:
+            key = str(effort.value)
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(effort.model_copy(update={"efforts": None}))
+    return result
+
+
+def _entry_value(entry: Any, key: str) -> Any:
+    if isinstance(entry, dict):
+        return entry.get(key)
+    return getattr(entry, key, None)
 
 
 def _normalize_claude_model_effort(

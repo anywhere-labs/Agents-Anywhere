@@ -51,9 +51,7 @@ def get_session_run_service(conn: HTTPConnection) -> SessionRunService:
 
 def get_device_agent_settings_service(conn: HTTPConnection) -> DeviceAgentSettingsService:
     return DeviceAgentSettingsService(
-        conn.app.state.store,
         conn.app.state.store.runtime_config,
-        get_session_run_service(conn),
     )
 
 
