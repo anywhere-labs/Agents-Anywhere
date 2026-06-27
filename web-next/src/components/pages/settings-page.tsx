@@ -391,7 +391,7 @@ function AvatarCropDialog({
             onChange={selectFile}
             tabIndex={-1}
           />
-          <div className="relative mx-auto h-72 w-full max-w-72 overflow-hidden rounded-2xl border border-border bg-muted">
+          <div className="relative mx-auto size-64 overflow-hidden rounded-2xl border border-border bg-muted">
             {source ? (
               <Cropper
                 image={source}
@@ -399,7 +399,7 @@ function AvatarCropDialog({
                 zoom={zoom}
                 aspect={1}
                 cropShape="round"
-                cropSize={{ width: 220, height: 220 }}
+                cropSize={{ width: AVATAR_OUTPUT_SIZE, height: AVATAR_OUTPUT_SIZE }}
                 showGrid={false}
                 restrictPosition
                 objectFit="cover"
@@ -409,9 +409,9 @@ function AvatarCropDialog({
                 mediaProps={{ alt: t("avatarPreviewAlt", { userId }) }}
                 style={{
                   cropAreaStyle: {
-                    border: "1px dashed hsl(var(--foreground) / 0.7)",
+                    border: "2px solid rgba(255, 255, 255, 0.95)",
                     borderRadius: "9999px",
-                    boxShadow: "0 0 0 9999px hsl(var(--background) / 0.58)",
+                    boxShadow: "0 0 0 1px rgba(0, 0, 0, 0.35), 0 0 0 9999px rgba(0, 0, 0, 0.48)",
                   },
                 }}
               />
@@ -574,7 +574,7 @@ function AgentTab({ token }: { token: string }) {
         {loading ? (
           <LoadingState className="min-h-48" />
         ) : (
-          <RadioGroup value={selectedPermissionMode} onValueChange={setSelectedPermissionMode} className="gap-0 p-2">
+          <RadioGroup value={selectedPermissionMode} onValueChange={setSelectedPermissionMode} className="p-2">
             {permissionOptions.map((option) => {
               const value = String(option.value)
               const labelKey = permissionLabelKey(value)
@@ -584,11 +584,11 @@ function AgentTab({ token }: { token: string }) {
                   key={value}
                   htmlFor={`default-permission-${value}`}
                   className={cn(
-                    "flex w-full cursor-pointer flex-row items-start gap-3 rounded-none px-4 py-3 transition-colors hover:bg-accent/50",
+                    "flex w-full cursor-pointer flex-row items-center gap-3 rounded-lg px-4 py-3 transition-colors hover:bg-accent/50",
                     selectedPermissionMode === value && "bg-accent",
                   )}
                 >
-                  <RadioGroupItem id={`default-permission-${value}`} value={value} className="mt-0.5" />
+                  <RadioGroupItem id={`default-permission-${value}`} value={value} />
                   <FieldContent>
                     <span className="text-sm font-medium">
                       {labelKey ? t(labelKey) : option.label}
