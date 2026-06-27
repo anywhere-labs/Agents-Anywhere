@@ -43,28 +43,6 @@ type NewSessionPageProps = {
   onCreated: (session: SessionView, initialOptimisticItem?: TimelineItem) => void;
 };
 
-const PERMISSION_MODES = [
-  {
-    key: "ask",
-    label: "Ask approval",
-    approvalPolicy: undefined,
-    sandbox: undefined,
-  },
-  {
-    key: "full",
-    label: "Full access",
-    approvalPolicy: "never",
-    sandbox: "danger-full-access",
-  },
-  {
-    key: "read",
-    label: "Read only",
-    approvalPolicy: "on-request",
-    sandbox: "read-only",
-  },
-] as const;
-
-type PermissionKey = (typeof PERMISSION_MODES)[number]["key"];
 type HoverMenuProps = Pick<HTMLAttributes<HTMLDivElement>, "onMouseEnter" | "onMouseLeave">;
 
 const NEW_SESSION_TITLES = [
@@ -94,6 +72,10 @@ const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 const COMPOSER_MENU_MARGIN = 8;
 const COMPOSER_MENU_GAP = 8;
 const LAST_SELECTION_STORAGE_KEY = "aa.newSession.lastSelection.v1";
+const NEW_SESSION_PERMISSION_DEFAULTS: Record<string, string> = {
+  codex: "fullAccess",
+  claude: "bypassPermissions",
+};
 
 type LastNewSessionSelection = {
   connectorId: string;
@@ -136,7 +118,6 @@ export function NewSessionPage({
     [connector],
   );
   const [runtime, setRuntime] = useState(initialRuntime);
-  const [permissionMode, setPermissionMode] = useState<PermissionKey>("ask");
   const [prompt, setPrompt] = useState("");
   const [workspaceCwd, setWorkspaceCwd] = useState<string | null>(initialCwd || null);
   const [manualCwd, setManualCwd] = useState(initialCwd || "~");
@@ -158,6 +139,7 @@ export function NewSessionPage({
   const [manualWorkspace, setManualWorkspace] = useState(false);
   const [runtimeSchema, setRuntimeSchema] = useState<RuntimeConfigSchema | null>(null);
   const [runtimeSettings, setRuntimeSettings] = useState<Record<string, unknown> | null>(null);
+  const [manualPermissionKey, setManualPermissionKey] = useState<string | null>(null);
   const [permissionAnchor, setPermissionAnchor] = useState<HTMLElement | null>(null);
   const [deviceAgentAnchor, setDeviceAgentAnchor] = useState<HTMLElement | null>(null);
   const [tuningAnchor, setTuningAnchor] = useState<HTMLElement | null>(null);
@@ -355,6 +337,23 @@ export function NewSessionPage({
   }, [connector, runtime, token]);
 
   useEffect(() => {
+    if (!runtimeSchema || !runtimeSettings) return;
+    const key = `${connector?.id ?? ""}:${runtime}`;
+    if (manualPermissionKey === key) return;
+    const field = runtimeConfigFields(runtimeSchema, runtimeSettings, "session").find(
+      (item) => item.key === "permissionMode",
+    );
+    if (!field) return;
+    const preferred = preferredPermissionMode(runtime, field);
+    if (!preferred) return;
+    if (runtimeSettings.permissionMode === preferred) return;
+    setRuntimeSettings((prev) => ({
+      ...(prev ?? {}),
+      permissionMode: preferred,
+    }));
+  }, [connector?.id, manualPermissionKey, runtime, runtimeSchema, runtimeSettings]);
+
+  useEffect(() => {
     if (!connector) return;
     if (lastConnectorRef.current === connector.id) return;
     lastConnectorRef.current = connector.id;
@@ -400,20 +399,25 @@ export function NewSessionPage({
   }, [workspaceOpen]);
 
   const parent = useMemo(() => parentPath(manualCwd), [manualCwd]);
-  const permission = PERMISSION_MODES.find((mode) => mode.key === permissionMode)!;
-  const permissionLabel = permission.label;
   const workspaces = useMemo(
     () => workspaceOptions(sessions, connector?.id ?? null),
     [connector, sessions],
   );
   const selectedWorkspaceCwd = workspaceCwd?.trim() || "";
   const runtimeFields = runtimeConfigFields(runtimeSchema, runtimeSettings, "session");
+  const permissionField = runtimeFields.find((field) => field.key === "permissionMode");
   const modelField = runtimeFields.find((field) => field.key === "model");
   const effortField = filterClaudeEffortField(
     runtime,
     runtimeFields.find((field) => field.key === "effort"),
     runtimeSettings?.model,
     modelField,
+  );
+  const permissionValue = effectivePermissionMode(runtime, runtimeSettings);
+  const permissionLabel = optionLabel(permissionField, permissionValue, "Permission mode");
+  const runtimeSettingsForCreate = useMemo(
+    () => withEffectivePermissionMode(runtime, runtimeSettings),
+    [runtime, runtimeSettings],
   );
   const modelLabel = optionLabel(modelField, runtimeSettings?.model, "Model");
   const effortLabel = optionLabel(effortField, runtimeSettings?.effort, "Reasoning");
@@ -516,9 +520,7 @@ export function NewSessionPage({
         runtime,
         title: prompt.trim() || undefined,
         cwd: cwdForCreate || undefined,
-        runtimeSettings,
-        approvalPolicy: permission.approvalPolicy,
-        sandbox: permission.sandbox,
+        runtimeSettings: runtimeSettingsForCreate,
       });
       const takeover = await api.enableTakeover(token, created.session.id);
       const sessionId = takeover.session.id;
@@ -583,7 +585,7 @@ export function NewSessionPage({
     } finally {
       setCreating(false);
     }
-  }, [connector, creating, files, homeCwd, onCreated, permission, prompt, resolveHomeCwd, runtime, runtimeSettings, selectedWorkspaceCwd, token]);
+  }, [connector, creating, files, homeCwd, onCreated, prompt, resolveHomeCwd, runtime, runtimeSettingsForCreate, selectedWorkspaceCwd, token]);
 
   return (
     <div className="kl-new-page">
@@ -675,7 +677,9 @@ export function NewSessionPage({
               type="button"
               className="kl-comp-sel"
               title="Permission mode"
+              disabled={!permissionField}
               onMouseEnter={(event) => {
+                if (!permissionField) return;
                 clearHoverClose();
                 setDeviceAgentAnchor(null);
                 setTuningAnchor(null);
@@ -684,6 +688,7 @@ export function NewSessionPage({
               onMouseLeave={scheduleHoverClose}
               onClick={(event) => {
                 event.stopPropagation();
+                if (!permissionField) return;
                 setDeviceAgentAnchor(null);
                 setTuningAnchor(null);
                 setPermissionAnchor((prev) =>
@@ -764,8 +769,15 @@ export function NewSessionPage({
         {permissionAnchor && (
           <NewPermissionMenu
             anchor={permissionAnchor}
-            value={permissionMode}
-            onChange={setPermissionMode}
+            field={permissionField}
+            value={permissionValue}
+            onChange={(value) => {
+              setManualPermissionKey(`${connector?.id ?? ""}:${runtime}`);
+              setRuntimeSettings((prev) => ({
+                ...(prev ?? {}),
+                permissionMode: value,
+              }));
+            }}
             onClose={() => setPermissionAnchor(null)}
             hoverProps={hoverMenuProps}
           />
@@ -1021,33 +1033,73 @@ function saveLastNewSessionSelection(selection: LastNewSessionSelection) {
   }
 }
 
+function preferredPermissionMode(
+  runtime: string,
+  field: RuntimeConfigField | undefined,
+): string | null {
+  const preferred = NEW_SESSION_PERMISSION_DEFAULTS[runtime];
+  if (preferred && field?.options?.some((option) => String(option.value) === preferred)) {
+    return preferred;
+  }
+  const first = field?.options?.[0]?.value;
+  return first == null ? null : String(first);
+}
+
+function effectivePermissionMode(
+  runtime: string,
+  settings: Record<string, unknown> | null,
+): string {
+  const value = settings?.permissionMode;
+  return typeof value === "string"
+    ? value
+    : NEW_SESSION_PERMISSION_DEFAULTS[runtime] ?? "";
+}
+
+function withEffectivePermissionMode(
+  runtime: string,
+  settings: Record<string, unknown> | null,
+): Record<string, unknown> {
+  const permissionMode = effectivePermissionMode(runtime, settings);
+  return permissionMode
+    ? { ...(settings ?? {}), permissionMode }
+    : { ...(settings ?? {}) };
+}
+
 function NewPermissionMenu({
   anchor,
+  field,
   value,
   onChange,
   onClose,
   hoverProps,
 }: {
   anchor: HTMLElement;
-  value: PermissionKey;
-  onChange: (value: PermissionKey) => void;
+  field: RuntimeConfigField | undefined;
+  value: string;
+  onChange: (value: string) => void;
   onClose: () => void;
   hoverProps: HoverMenuProps;
 }) {
   const ref = useDismissableMenu(anchor, onClose);
-  const style = composerMenuStyle(anchor, 220, 44 + PERMISSION_MODES.length * 36);
+  const options = field?.options ?? [];
+  const style = composerMenuStyle(anchor, 240, 44 + Math.max(1, options.length) * 36);
   return (
     <div ref={ref} className="kl-comp-menu kl-new-popover" style={style} {...hoverProps}>
       <div className="kl-comp-menu-hd">
         <span>Permission mode</span>
       </div>
-      {PERMISSION_MODES.map((item) => (
+      {options.length === 0 && (
+        <button type="button" className="kl-comp-menu-row" disabled>
+          <span>No permission modes</span>
+        </button>
+      )}
+      {options.map((item) => (
         <button
-          key={item.key}
+          key={String(item.value)}
           type="button"
-          className={`kl-comp-menu-row${value === item.key ? " on" : ""}`}
+          className={`kl-comp-menu-row${value === String(item.value) ? " on" : ""}`}
           onClick={() => {
-            onChange(item.key);
+            onChange(String(item.value));
             onClose();
           }}
         >
