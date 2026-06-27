@@ -8,6 +8,8 @@ import {
   Camera,
   ChevronDown,
   ChevronLeft,
+  Pencil,
+  Plus,
   Globe2,
   RotateCw,
   Save,
@@ -53,6 +55,7 @@ import { Separator } from "@/components/ui/separator"
 import { Slider } from "@/components/ui/slider"
 import { Spinner } from "@/components/ui/spinner"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { MobileSignInPanel } from "@/components/pages/mobile-signin-panel"
 import { useAuth } from "@/components/auth/auth-context"
 import { LoadingState } from "@/components/loading-state"
@@ -74,6 +77,7 @@ type AppearanceMode = "light" | "dark" | "auto"
 type AppLocale = (typeof routing.locales)[number]
 
 const CODEX_RUNTIME = "codex"
+const AGENT_RUNTIMES = ["codex", "claude"] as const
 const AVATAR_OUTPUT_SIZE = 256
 const AVATAR_MAX_FILE_SIZE = 8 * 1024 * 1024
 
@@ -464,20 +468,20 @@ function AgentTab({ token }: { token: string }) {
   const [permissionOptions, setPermissionOptions] = React.useState<RuntimeConfigOption[]>([])
   const [selectedPermissionMode, setSelectedPermissionMode] = React.useState("")
   const [savedPermissionMode, setSavedPermissionMode] = React.useState("")
-  const [models, setModels] = React.useState<AgentCatalogEntry[]>([])
-  const [savedModels, setSavedModels] = React.useState<AgentCatalogEntry[]>([])
-  const [defaultModelKey, setDefaultModelKey] = React.useState("")
-  const [savedDefaultModelKey, setSavedDefaultModelKey] = React.useState("")
+  const [selectedRuntime, setSelectedRuntime] = React.useState<(typeof AGENT_RUNTIMES)[number]>("codex")
+  const [modelsByRuntime, setModelsByRuntime] = React.useState<Record<string, AgentCatalogEntry[]>>({})
+  const [savedModelsByRuntime, setSavedModelsByRuntime] = React.useState<Record<string, AgentCatalogEntry[]>>({})
+  const [editingModel, setEditingModel] = React.useState<{ runtime: string; index: number | null } | null>(null)
+  const [editingEffort, setEditingEffort] = React.useState<{ runtime: string; modelIndex: number; effortIndex: number | null } | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [saving, setSaving] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const dirty = React.useMemo(
     () =>
       selectedPermissionMode !== savedPermissionMode ||
-      defaultModelKey !== savedDefaultModelKey ||
-      JSON.stringify(toAgentDefaultsPayload(models, defaultModelKey)) !==
-        JSON.stringify(toAgentDefaultsPayload(savedModels, savedDefaultModelKey)),
-    [defaultModelKey, models, savedDefaultModelKey, savedModels, savedPermissionMode, selectedPermissionMode],
+      JSON.stringify(toAgentDefaultsPayloadByRuntime(modelsByRuntime)) !==
+        JSON.stringify(toAgentDefaultsPayloadByRuntime(savedModelsByRuntime)),
+    [modelsByRuntime, savedModelsByRuntime, savedPermissionMode, selectedPermissionMode],
   )
 
   React.useEffect(() => {
@@ -504,15 +508,14 @@ function AgentTab({ token }: { token: string }) {
             : typeof serverPermissionMode === "string" && nextPermissionOptions.some((option) => option.value === serverPermissionMode)
               ? serverPermissionMode
               : String(nextPermissionOptions[0]?.value ?? "")
-        const nextModels = defaultsResponse.runtimes[CODEX_RUNTIME]?.models ?? []
-        const nextDefaultModelKey = nextModels.find((model) => model.isDefault)?.key ?? nextModels[0]?.key ?? ""
+        const nextModelsByRuntime = Object.fromEntries(
+          AGENT_RUNTIMES.map((runtime) => [runtime, defaultsResponse.runtimes[runtime]?.models ?? []]),
+        )
         setPermissionOptions(nextPermissionOptions)
         setSelectedPermissionMode(nextPermissionMode)
         setSavedPermissionMode(nextPermissionMode)
-        setModels(nextModels)
-        setSavedModels(nextModels)
-        setDefaultModelKey(nextDefaultModelKey)
-        setSavedDefaultModelKey(nextDefaultModelKey)
+        setModelsByRuntime(nextModelsByRuntime)
+        setSavedModelsByRuntime(nextModelsByRuntime)
       })
       .catch((err) => {
         if (!cancelled) setError(err instanceof Error ? err.message : t("agentDefaultsLoadFailed"))
@@ -535,15 +538,18 @@ function AgentTab({ token }: { token: string }) {
         setSavedPermissionMode(selectedPermissionMode)
       }
       const response = await dashboardApi.updateAgentDefaults(token, {
-        [CODEX_RUNTIME]: {
-          models: toAgentDefaultsPayload(models, defaultModelKey),
-        },
+        ...Object.fromEntries(
+          AGENT_RUNTIMES.map((runtime) => [
+            runtime,
+            { models: toAgentDefaultsPayload(modelsByRuntime[runtime] ?? []) },
+          ]),
+        ),
       })
-      const nextModels = response.runtimes[CODEX_RUNTIME]?.models ?? models
-      const nextDefaultModelKey = nextModels.find((model) => model.isDefault)?.key ?? defaultModelKey
-      setSavedModels(models)
-      setSavedDefaultModelKey(nextDefaultModelKey)
-      setDefaultModelKey(nextDefaultModelKey)
+      const nextModelsByRuntime = Object.fromEntries(
+        AGENT_RUNTIMES.map((runtime) => [runtime, response.runtimes[runtime]?.models ?? modelsByRuntime[runtime] ?? []]),
+      )
+      setModelsByRuntime(nextModelsByRuntime)
+      setSavedModelsByRuntime(nextModelsByRuntime)
     } catch (err) {
       setError(err instanceof Error ? err.message : t("agentDefaultsSaveFailed"))
     } finally {
@@ -551,16 +557,50 @@ function AgentTab({ token }: { token: string }) {
     }
   }
 
-  const moveModel = (index: number, direction: -1 | 1) => {
-    setModels((current) => moveEntry(current, index, direction))
+  const setRuntimeModels = (runtime: string, updater: (models: AgentCatalogEntry[]) => AgentCatalogEntry[]) => {
+    setModelsByRuntime((current) => ({
+      ...current,
+      [runtime]: updater(current[runtime] ?? []),
+    }))
   }
 
-  const moveEffort = (modelIndex: number, effortIndex: number, direction: -1 | 1) => {
-    setModels((current) => current.map((model, index) => (
+  const moveModel = (runtime: string, index: number, direction: -1 | 1) => {
+    setRuntimeModels(runtime, (models) => moveEntry(models, index, direction))
+  }
+
+  const removeModel = (runtime: string, index: number) => {
+    setRuntimeModels(runtime, (models) => models.filter((_, itemIndex) => itemIndex !== index))
+  }
+
+  const moveEffort = (runtime: string, modelIndex: number, effortIndex: number, direction: -1 | 1) => {
+    setRuntimeModels(runtime, (models) => models.map((model, index) => (
+      index === modelIndex ? { ...model, efforts: moveEntry(model.efforts, effortIndex, direction) } : model
+    )))
+  }
+
+  const removeEffort = (runtime: string, modelIndex: number, effortIndex: number) => {
+    setRuntimeModels(runtime, (models) => models.map((model, index) => (
       index === modelIndex
-        ? { ...model, efforts: moveEntry(model.efforts, effortIndex, direction) }
+        ? { ...model, efforts: model.efforts.filter((_, itemIndex) => itemIndex !== effortIndex) }
         : model
     )))
+  }
+
+  const upsertModel = (runtime: string, index: number | null, model: AgentCatalogEntry) => {
+    setRuntimeModels(runtime, (models) => {
+      if (index == null) return [...models, model]
+      return models.map((item, itemIndex) => itemIndex === index ? model : item)
+    })
+  }
+
+  const upsertEffort = (runtime: string, modelIndex: number, effortIndex: number | null, effort: AgentCatalogEntry) => {
+    setRuntimeModels(runtime, (models) => models.map((model, index) => {
+      if (index !== modelIndex) return model
+      const efforts = effortIndex == null
+        ? [...model.efforts, effort]
+        : model.efforts.map((item, itemIndex) => itemIndex === effortIndex ? effort : item)
+      return { ...model, efforts }
+    }))
   }
 
   return (
@@ -609,8 +649,8 @@ function AgentTab({ token }: { token: string }) {
       <section className="rounded-xl border border-border bg-card">
         <div className="flex items-center justify-between gap-4 px-6 py-5">
           <div className="min-w-0">
-            <h2 className="text-base font-semibold">{t("defaultModel")}</h2>
-            <p className="mt-0.5 text-sm text-muted-foreground">{t("defaultModelDescription")}</p>
+            <h2 className="text-base font-semibold">{t("modelCatalog")}</h2>
+            <p className="mt-0.5 text-sm text-muted-foreground">{t("modelCatalogDescription")}</p>
           </div>
           <Button type="button" disabled={!dirty || saving} onClick={() => void saveModels()}>
             {saving ? <Spinner /> : <Save data-icon="inline-start" />}
@@ -620,118 +660,36 @@ function AgentTab({ token }: { token: string }) {
         <Separator />
         {loading ? (
           <LoadingState className="min-h-48" />
-        ) : models.length === 0 ? (
-          <p className="px-6 py-8 text-sm text-muted-foreground">{t("agentDefaultsLoadFailed")}</p>
         ) : (
-          <RadioGroup
-            value={defaultModelKey}
-            onValueChange={setDefaultModelKey}
-            className="gap-0"
-          >
-            <Accordion type="multiple" className="rounded-none border-0">
-              {models.map((model, modelIndex) => (
-                <AccordionItem key={model.key} value={model.key} className="border-0 data-open:bg-transparent">
-                  <div className="flex min-h-20 items-center gap-3 px-6 py-4">
-                    <div className="flex min-w-0 flex-1 items-center gap-3 text-left">
-                      <RadioGroupItem
-                        value={model.key}
-                        aria-label={t("defaultModel")}
-                      />
-                      <div className="min-w-0 flex-1 text-left">
-                        <div className="flex min-w-0 items-center gap-2">
-                          <span className="truncate text-sm font-medium">{model.displayLabel}</span>
-                          {defaultModelKey === model.key ? <Badge variant="secondary">{t("defaultModel")}</Badge> : null}
-                        </div>
-                        <div className="mt-1 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-                          <span className="truncate">{model.key}</span>
-                          <span>{model.efforts.length} {t("reasoningEffort")}</span>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="size-7"
-                        disabled={modelIndex === 0}
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          moveModel(modelIndex, -1)
-                        }}
-                      >
-                        <ArrowUp className="size-3.5" />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="size-7"
-                        disabled={modelIndex === models.length - 1}
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          moveModel(modelIndex, 1)
-                        }}
-                      >
-                        <ArrowDown className="size-3.5" />
-                      </Button>
-                      <AccordionTrigger
-                        aria-label={model.displayLabel}
-                        className="size-7 flex-none items-center justify-center gap-0 rounded-md border-0 p-0 hover:bg-accent hover:no-underline [&_[data-slot=accordion-trigger-icon]]:ml-0 [&_[data-slot=accordion-trigger-icon]]:size-3.5"
-                      />
-                    </div>
-                  </div>
-                  <AccordionContent className="px-6 pb-5">
-                    {model.description ? <p className="mb-3 text-sm text-muted-foreground">{model.description}</p> : null}
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>{t("reasoningEffort")}</TableHead>
-                          <TableHead>Key</TableHead>
-                          <TableHead className="w-24 text-right">Order</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {model.efforts.map((effort, effortIndex) => (
-                          <TableRow key={effort.key}>
-                            <TableCell>
-                              <div className="font-medium">{effort.displayLabel}</div>
-                              {effort.description ? <div className="text-xs text-muted-foreground">{effort.description}</div> : null}
-                            </TableCell>
-                            <TableCell className="font-mono text-xs text-muted-foreground">{effort.key}</TableCell>
-                            <TableCell>
-                              <div className="flex justify-end gap-1">
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  className="size-7"
-                                  disabled={effortIndex === 0}
-                                  onClick={() => moveEffort(modelIndex, effortIndex, -1)}
-                                >
-                                  <ArrowUp className="size-3.5" />
-                                </Button>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  className="size-7"
-                                  disabled={effortIndex === model.efforts.length - 1}
-                                  onClick={() => moveEffort(modelIndex, effortIndex, 1)}
-                                >
-                                  <ArrowDown className="size-3.5" />
-                                </Button>
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </AccordionContent>
-                </AccordionItem>
-              ))}
-            </Accordion>
-          </RadioGroup>
+          <Tabs value={selectedRuntime} onValueChange={(value) => setSelectedRuntime(value as (typeof AGENT_RUNTIMES)[number])} className="gap-0">
+            <div className="flex items-center justify-between gap-4 px-6 py-4">
+              <TabsList>
+                {AGENT_RUNTIMES.map((runtime) => (
+                  <TabsTrigger key={runtime} value={runtime}>{runtime}</TabsTrigger>
+                ))}
+              </TabsList>
+              <Button type="button" variant="outline" size="sm" onClick={() => setEditingModel({ runtime: selectedRuntime, index: null })}>
+                <Plus data-icon="inline-start" />
+                {t("addModel")}
+              </Button>
+            </div>
+            <Separator />
+            {AGENT_RUNTIMES.map((runtime) => (
+              <TabsContent key={runtime} value={runtime} className="m-0">
+                <AgentModelCatalog
+                  runtime={runtime}
+                  models={modelsByRuntime[runtime] ?? []}
+                  onEditModel={(index) => setEditingModel({ runtime, index })}
+                  onRemoveModel={(index) => removeModel(runtime, index)}
+                  onMoveModel={(index, direction) => moveModel(runtime, index, direction)}
+                  onAddEffort={(modelIndex) => setEditingEffort({ runtime, modelIndex, effortIndex: null })}
+                  onEditEffort={(modelIndex, effortIndex) => setEditingEffort({ runtime, modelIndex, effortIndex })}
+                  onRemoveEffort={(modelIndex, effortIndex) => removeEffort(runtime, modelIndex, effortIndex)}
+                  onMoveEffort={(modelIndex, effortIndex, direction) => moveEffort(runtime, modelIndex, effortIndex, direction)}
+                />
+              </TabsContent>
+            ))}
+          </Tabs>
         )}
         {(error || saving) ? (
           <>
@@ -743,6 +701,34 @@ function AgentTab({ token }: { token: string }) {
           </>
         ) : null}
       </section>
+      <ModelEditDialog
+        open={Boolean(editingModel)}
+        runtime={editingModel?.runtime ?? selectedRuntime}
+        model={editingModel && editingModel.index != null ? modelsByRuntime[editingModel.runtime]?.[editingModel.index] : null}
+        onOpenChange={(open) => {
+          if (!open) setEditingModel(null)
+        }}
+        onSave={(model) => {
+          if (!editingModel) return
+          upsertModel(editingModel.runtime, editingModel.index, model)
+          setEditingModel(null)
+        }}
+      />
+      <EffortEditDialog
+        open={Boolean(editingEffort)}
+        runtime={editingEffort?.runtime ?? selectedRuntime}
+        effort={editingEffort && editingEffort.effortIndex != null
+          ? modelsByRuntime[editingEffort.runtime]?.[editingEffort.modelIndex]?.efforts[editingEffort.effortIndex]
+          : null}
+        onOpenChange={(open) => {
+          if (!open) setEditingEffort(null)
+        }}
+        onSave={(effort) => {
+          if (!editingEffort) return
+          upsertEffort(editingEffort.runtime, editingEffort.modelIndex, editingEffort.effortIndex, effort)
+          setEditingEffort(null)
+        }}
+      />
     </div>
   )
 }
@@ -766,14 +752,268 @@ function permissionDescriptionKey(value: string): "askApprovalPermissionDescript
   return null
 }
 
-function toAgentDefaultsPayload(models: AgentCatalogEntry[], defaultModelKey: string) {
-  const orderedModels = defaultModelKey
-    ? [
-        ...models.filter((model) => model.key === defaultModelKey),
-        ...models.filter((model) => model.key !== defaultModelKey),
-      ]
-    : models
-  return orderedModels.map((model, modelIndex) => ({
+function AgentModelCatalog({
+  runtime,
+  models,
+  onEditModel,
+  onRemoveModel,
+  onMoveModel,
+  onAddEffort,
+  onEditEffort,
+  onRemoveEffort,
+  onMoveEffort,
+}: {
+  runtime: string
+  models: AgentCatalogEntry[]
+  onEditModel: (index: number) => void
+  onRemoveModel: (index: number) => void
+  onMoveModel: (index: number, direction: -1 | 1) => void
+  onAddEffort: (modelIndex: number) => void
+  onEditEffort: (modelIndex: number, effortIndex: number) => void
+  onRemoveEffort: (modelIndex: number, effortIndex: number) => void
+  onMoveEffort: (modelIndex: number, effortIndex: number, direction: -1 | 1) => void
+}) {
+  const t = useTranslations("pages.settings")
+  if (models.length === 0) {
+    return <p className="px-6 py-8 text-sm text-muted-foreground">{t("noModels")}</p>
+  }
+  return (
+    <Accordion type="multiple" className="rounded-none border-0">
+      {models.map((model, modelIndex) => (
+        <AccordionItem key={model.key} value={model.key} className="border-0 data-open:bg-transparent">
+          <div className="flex min-h-20 items-center gap-3 px-6 py-4">
+            <div className="min-w-0 flex-1 text-left">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="truncate text-sm font-medium">{model.displayLabel}</span>
+                {modelIndex === 0 ? <Badge variant="secondary">{t("defaultModel")}</Badge> : null}
+              </div>
+              <div className="mt-1 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+                <span className="truncate">{model.key}</span>
+                <span>{model.efforts.length} {t("reasoningEffort")}</span>
+                <span>{runtime}</span>
+              </div>
+            </div>
+            <div className="flex items-center gap-1">
+              <Button type="button" variant="ghost" size="icon" className="size-7" onClick={() => onEditModel(modelIndex)}>
+                <Pencil className="size-3.5" />
+              </Button>
+              <Button type="button" variant="ghost" size="icon" className="size-7" disabled={modelIndex === 0} onClick={() => onMoveModel(modelIndex, -1)}>
+                <ArrowUp className="size-3.5" />
+              </Button>
+              <Button type="button" variant="ghost" size="icon" className="size-7" disabled={modelIndex === models.length - 1} onClick={() => onMoveModel(modelIndex, 1)}>
+                <ArrowDown className="size-3.5" />
+              </Button>
+              <Button type="button" variant="ghost" size="icon" className="size-7" onClick={() => onRemoveModel(modelIndex)}>
+                <Trash2 className="size-3.5" />
+              </Button>
+              <AccordionTrigger
+                aria-label={model.displayLabel}
+                className="size-7 flex-none items-center justify-center gap-0 rounded-md border-0 p-0 hover:bg-accent hover:no-underline [&_[data-slot=accordion-trigger-icon]]:ml-0 [&_[data-slot=accordion-trigger-icon]]:size-3.5"
+              />
+            </div>
+          </div>
+          <AccordionContent className="px-6 pb-5">
+            {model.description ? <p className="mb-3 text-sm text-muted-foreground">{model.description}</p> : null}
+            <div className="mb-3 flex justify-end">
+              <Button type="button" variant="outline" size="sm" onClick={() => onAddEffort(modelIndex)}>
+                <Plus data-icon="inline-start" />
+                {t("addEffort")}
+              </Button>
+            </div>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>{t("reasoningEffort")}</TableHead>
+                  <TableHead>Key</TableHead>
+                  <TableHead className="w-36 text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {model.efforts.map((effort, effortIndex) => (
+                  <TableRow key={effort.key}>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{effort.displayLabel}</span>
+                        {effortIndex === 0 ? <Badge variant="secondary">{t("defaultEffort")}</Badge> : null}
+                      </div>
+                      {effort.description ? <div className="text-xs text-muted-foreground">{effort.description}</div> : null}
+                    </TableCell>
+                    <TableCell className="font-mono text-xs text-muted-foreground">{effort.key}</TableCell>
+                    <TableCell>
+                      <div className="flex justify-end gap-1">
+                        <Button type="button" variant="ghost" size="icon" className="size-7" onClick={() => onEditEffort(modelIndex, effortIndex)}>
+                          <Pencil className="size-3.5" />
+                        </Button>
+                        <Button type="button" variant="ghost" size="icon" className="size-7" disabled={effortIndex === 0} onClick={() => onMoveEffort(modelIndex, effortIndex, -1)}>
+                          <ArrowUp className="size-3.5" />
+                        </Button>
+                        <Button type="button" variant="ghost" size="icon" className="size-7" disabled={effortIndex === model.efforts.length - 1} onClick={() => onMoveEffort(modelIndex, effortIndex, 1)}>
+                          <ArrowDown className="size-3.5" />
+                        </Button>
+                        <Button type="button" variant="ghost" size="icon" className="size-7" onClick={() => onRemoveEffort(modelIndex, effortIndex)}>
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </AccordionContent>
+        </AccordionItem>
+      ))}
+    </Accordion>
+  )
+}
+
+function ModelEditDialog({
+  open,
+  runtime,
+  model,
+  onOpenChange,
+  onSave,
+}: {
+  open: boolean
+  runtime: string
+  model: AgentCatalogEntry | null | undefined
+  onOpenChange: (open: boolean) => void
+  onSave: (model: AgentCatalogEntry) => void
+}) {
+  const t = useTranslations("pages.settings")
+  const [key, setKey] = React.useState("")
+  const [label, setLabel] = React.useState("")
+  const [description, setDescription] = React.useState("")
+
+  React.useEffect(() => {
+    if (!open) return
+    setKey(model?.key ?? "")
+    setLabel(model?.displayLabel ?? "")
+    setDescription(model?.description ?? "")
+  }, [model, open])
+
+  const submit = () => {
+    const cleanKey = key.trim()
+    const cleanLabel = label.trim()
+    if (!cleanKey || !cleanLabel) return
+    onSave({
+      runtime,
+      key: cleanKey,
+      displayLabel: cleanLabel,
+      description: description.trim() || null,
+      isDefault: false,
+      sortOrder: model?.sortOrder ?? 0,
+      efforts: model?.efforts ?? [],
+    })
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{model ? t("editModel") : t("addModel")}</DialogTitle>
+          <DialogDescription>{runtime}</DialogDescription>
+        </DialogHeader>
+        <FieldGroup>
+          <Field>
+            <FieldLabel>{t("modelId")}</FieldLabel>
+            <Input value={key} onChange={(event) => setKey(event.currentTarget.value)} spellCheck={false} />
+          </Field>
+          <Field>
+            <FieldLabel>{t("displayName")}</FieldLabel>
+            <Input value={label} onChange={(event) => setLabel(event.currentTarget.value)} />
+          </Field>
+          <Field>
+            <FieldLabel>{t("description")}</FieldLabel>
+            <Input value={description} onChange={(event) => setDescription(event.currentTarget.value)} />
+          </Field>
+        </FieldGroup>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>{t("cancel")}</Button>
+          <Button type="button" onClick={submit} disabled={!key.trim() || !label.trim()}>{t("saveChanges")}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function EffortEditDialog({
+  open,
+  runtime,
+  effort,
+  onOpenChange,
+  onSave,
+}: {
+  open: boolean
+  runtime: string
+  effort: AgentCatalogEntry | null | undefined
+  onOpenChange: (open: boolean) => void
+  onSave: (effort: AgentCatalogEntry) => void
+}) {
+  const t = useTranslations("pages.settings")
+  const [key, setKey] = React.useState("")
+  const [label, setLabel] = React.useState("")
+  const [description, setDescription] = React.useState("")
+
+  React.useEffect(() => {
+    if (!open) return
+    setKey(effort?.key ?? "")
+    setLabel(effort?.displayLabel ?? "")
+    setDescription(effort?.description ?? "")
+  }, [effort, open])
+
+  const submit = () => {
+    const cleanKey = key.trim()
+    const cleanLabel = label.trim()
+    if (!cleanKey || !cleanLabel) return
+    onSave({
+      runtime,
+      key: cleanKey,
+      displayLabel: cleanLabel,
+      description: description.trim() || null,
+      isDefault: false,
+      sortOrder: effort?.sortOrder ?? 0,
+      efforts: [],
+    })
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{effort ? t("editEffort") : t("addEffort")}</DialogTitle>
+          <DialogDescription>{runtime}</DialogDescription>
+        </DialogHeader>
+        <FieldGroup>
+          <Field>
+            <FieldLabel>{t("effortId")}</FieldLabel>
+            <Input value={key} onChange={(event) => setKey(event.currentTarget.value)} spellCheck={false} />
+          </Field>
+          <Field>
+            <FieldLabel>{t("displayName")}</FieldLabel>
+            <Input value={label} onChange={(event) => setLabel(event.currentTarget.value)} />
+          </Field>
+          <Field>
+            <FieldLabel>{t("description")}</FieldLabel>
+            <Input value={description} onChange={(event) => setDescription(event.currentTarget.value)} />
+          </Field>
+        </FieldGroup>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>{t("cancel")}</Button>
+          <Button type="button" onClick={submit} disabled={!key.trim() || !label.trim()}>{t("saveChanges")}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function toAgentDefaultsPayloadByRuntime(modelsByRuntime: Record<string, AgentCatalogEntry[]>) {
+  return Object.fromEntries(
+    AGENT_RUNTIMES.map((runtime) => [runtime, toAgentDefaultsPayload(modelsByRuntime[runtime] ?? [])]),
+  )
+}
+
+function toAgentDefaultsPayload(models: AgentCatalogEntry[]) {
+  return models.map((model, modelIndex) => ({
     key: model.key,
     displayLabel: model.displayLabel,
     description: model.description ?? null,
