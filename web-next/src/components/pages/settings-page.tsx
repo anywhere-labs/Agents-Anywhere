@@ -21,6 +21,7 @@ import {
 } from "lucide-react"
 import { useLocale, useTranslations } from "next-intl"
 import { useTheme } from "next-themes"
+import { toast } from "sonner"
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
@@ -210,14 +211,12 @@ function ResetPasswordDialog({
   const [confirm, setConfirm] = React.useState("")
   const [saving, setSaving] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
-  const [saved, setSaved] = React.useState(false)
 
   React.useEffect(() => {
     if (!open) {
       setPassword("")
       setConfirm("")
       setError(null)
-      setSaved(false)
       setSaving(false)
     }
   }, [open])
@@ -237,11 +236,11 @@ function ResetPasswordDialog({
     setError(null)
     try {
       await authApi.changePassword(token, { newPassword: password })
-      setSaved(true)
+      toast.success(t("passwordResetSaved"))
       setPassword("")
       setConfirm("")
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("passwordResetFailed"))
+      toast.error(err instanceof Error ? err.message : t("passwordResetFailed"))
     } finally {
       setSaving(false)
     }
@@ -281,7 +280,6 @@ function ResetPasswordDialog({
             </Field>
           </FieldGroup>
           {error ? <p className="text-sm text-destructive">{error}</p> : null}
-          {saved ? <p className="text-sm text-muted-foreground">{t("passwordResetSaved")}</p> : null}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               {t("cancel")}
@@ -362,7 +360,7 @@ function AvatarCropDialog({
       onMeChange(await authApi.updateAvatar(token, avatar))
       onOpenChange(false)
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("avatarUploadFailed"))
+      toast.error(err instanceof Error ? err.message : t("avatarUploadFailed"))
     } finally {
       setSaving(false)
     }
@@ -551,7 +549,7 @@ function AgentTab({ token }: { token: string }) {
       setModelsByRuntime(nextModelsByRuntime)
       setSavedModelsByRuntime(nextModelsByRuntime)
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("agentDefaultsSaveFailed"))
+      toast.error(err instanceof Error ? err.message : t("agentDefaultsSaveFailed"))
     } finally {
       setSaving(false)
     }
@@ -613,6 +611,8 @@ function AgentTab({ token }: { token: string }) {
         <Separator />
         {loading ? (
           <LoadingState className="min-h-48" />
+        ) : error ? (
+          <div className="px-6 py-8 text-sm text-destructive">{error}</div>
         ) : (
           <RadioGroup value={selectedPermissionMode} onValueChange={setSelectedPermissionMode} className="p-2">
             {permissionOptions.map((option) => {
@@ -660,6 +660,8 @@ function AgentTab({ token }: { token: string }) {
         <Separator />
         {loading ? (
           <LoadingState className="min-h-48" />
+        ) : error ? (
+          <div className="px-6 py-8 text-sm text-destructive">{error}</div>
         ) : (
           <Tabs value={selectedRuntime} onValueChange={(value) => setSelectedRuntime(value as (typeof AGENT_RUNTIMES)[number])} className="gap-0">
             <div className="flex items-center justify-between gap-4 px-6 py-4">
@@ -691,12 +693,12 @@ function AgentTab({ token }: { token: string }) {
             ))}
           </Tabs>
         )}
-        {(error || saving) ? (
+        {saving ? (
           <>
             <Separator />
             <div className="flex items-center gap-2 px-6 py-4 text-sm text-muted-foreground">
-              {saving ? <Spinner /> : null}
-              <span className={cn(error && "text-destructive")}>{error ?? t("saving")}</span>
+              <Spinner />
+              <span>{t("saving")}</span>
             </div>
           </>
         ) : null}
@@ -1186,14 +1188,16 @@ export function SettingsPage() {
   return (
     <div className="flex h-full flex-col bg-background">
       <div className="px-8 pb-0 pt-8">
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="sm"
           onClick={() => navigate("home")}
-          className="mb-6 flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
+          className="mb-6 -ml-2 gap-1.5 text-muted-foreground"
         >
           <ChevronLeft className="size-4" />
           {tCommon("back")}
-        </button>
+        </Button>
         <h1 className="text-2xl font-semibold">{t("title")}</h1>
         <p className="mt-1 text-sm text-muted-foreground">{t("description")}</p>
       </div>

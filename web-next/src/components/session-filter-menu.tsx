@@ -1,10 +1,19 @@
 "use client"
 
 import * as React from "react"
-import { ChevronRight, Check } from "lucide-react"
+import { ChevronRight } from "lucide-react"
 
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Separator } from "@/components/ui/separator"
+import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
 import { defaultFilter, type FilterValue, type SessionStatus } from "@/lib/demo-api"
 import { useWorkspace } from "@/components/workspace-context"
@@ -14,17 +23,8 @@ export function SessionFilterMenu() {
   const { filter, setFilter, connectors, sessions } = useWorkspace()
   const t = useTranslations("dashboard")
   const [open, setOpen] = React.useState(false)
-  const closeTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const active = filter.connectorId !== "all" || filter.runtime !== "all" || filter.status !== "all"
-
-  const openNow = () => {
-    if (closeTimer.current) clearTimeout(closeTimer.current)
-    setOpen(true)
-  }
-  const closeSoon = () => {
-    closeTimer.current = setTimeout(() => setOpen(false), 160)
-  }
 
   const update = (patch: Partial<FilterValue>) => setFilter({ ...filter, ...patch })
   const statuses: { value: SessionStatus | "all"; label: string }[] = [
@@ -42,28 +42,25 @@ export function SessionFilterMenu() {
   )
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button
+    <DropdownMenu open={open} onOpenChange={setOpen}>
+      <DropdownMenuTrigger asChild>
+        <Button
           type="button"
+          variant="ghost"
+          size="icon"
           aria-label={t("actions.filter")}
-          onClick={() => setOpen((o) => !o)}
-          onMouseEnter={openNow}
-          onMouseLeave={closeSoon}
           className={cn(
-            "rounded-md p-0.5 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+            "size-6 rounded-md p-0",
             active ? "text-foreground" : "text-sidebar-foreground/60",
           )}
         >
           <ChevronRight className={cn("size-3.5 transition-transform", open && "rotate-90")} />
-        </button>
-      </PopoverTrigger>
-      <PopoverContent
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
         align="start"
         side="right"
-        className="w-56 p-2"
-        onMouseEnter={openNow}
-        onMouseLeave={closeSoon}
+        className="w-56"
       >
         <FilterSection
           label={t("filters.devices")}
@@ -74,7 +71,7 @@ export function SessionFilterMenu() {
           value={filter.connectorId}
           onSelect={(v) => update({ connectorId: v })}
         />
-        <Separator className="my-1.5" />
+        <DropdownMenuSeparator />
         <FilterSection
           label={t("filters.agents")}
           options={[
@@ -84,7 +81,7 @@ export function SessionFilterMenu() {
           value={filter.runtime}
           onSelect={(v) => update({ runtime: v })}
         />
-        <Separator className="my-1.5" />
+        <DropdownMenuSeparator />
         <FilterSection
           label={t("filters.status")}
           options={statuses}
@@ -93,18 +90,14 @@ export function SessionFilterMenu() {
         />
         {active && (
           <>
-            <Separator className="my-1.5" />
-            <button
-              type="button"
-              onClick={() => setFilter(defaultFilter)}
-              className="w-full rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            >
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => setFilter(defaultFilter)}>
               {t("filters.clear")}
-            </button>
+            </DropdownMenuItem>
           </>
         )}
-      </PopoverContent>
-    </Popover>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
@@ -120,19 +113,18 @@ function FilterSection({
   onSelect: (value: string) => void
 }) {
   return (
-    <div>
-      <div className="px-2 py-1 text-xs font-medium text-muted-foreground">{label}</div>
+    <>
+      <DropdownMenuLabel className="text-xs text-muted-foreground">{label}</DropdownMenuLabel>
+      <DropdownMenuRadioGroup value={value} onValueChange={onSelect}>
       {options.map((opt) => (
-        <button
+        <DropdownMenuRadioItem
           key={opt.value}
-          type="button"
-          onClick={() => onSelect(opt.value)}
-          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent"
+          value={opt.value}
         >
-          <Check className={cn("size-3.5 shrink-0", value === opt.value ? "opacity-100" : "opacity-0")} />
           <span className="truncate">{opt.label}</span>
-        </button>
+        </DropdownMenuRadioItem>
       ))}
-    </div>
+      </DropdownMenuRadioGroup>
+    </>
   )
 }

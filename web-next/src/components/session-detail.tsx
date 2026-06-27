@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import { ArrowDown, ChevronDown, CircleAlert, Loader2 } from "lucide-react"
+import { toast } from "sonner"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -149,14 +150,12 @@ export function SessionDetail({
   const [state, setState] = React.useState<SessionStateResponse | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
-  const [composerError, setComposerError] = React.useState<string | null>(null)
   const [sending, setSending] = React.useState(false)
   const [takeoverBusy, setTakeoverBusy] = React.useState(false)
   const [resolvingApprovalId, setResolvingApprovalId] = React.useState<string | null>(null)
   const [resolvingStatus, setResolvingStatus] = React.useState<ApprovalResolveStatus | null>(null)
   const [runtimeSchema, setRuntimeSchema] = React.useState<RuntimeConfigSchema | null>(null)
   const [runtimeSettings, setRuntimeSettings] = React.useState<Record<string, unknown> | null>(null)
-  const [runtimeSettingsError, setRuntimeSettingsError] = React.useState<string | null>(null)
   const [runtimeSettingsBusy, setRuntimeSettingsBusy] = React.useState(false)
   const [showScrollBottom, setShowScrollBottom] = React.useState(false)
   const [pendingTakeover, setPendingTakeover] = React.useState<boolean | null>(null)
@@ -279,7 +278,6 @@ export function SessionDetail({
     let cancelled = false
     setRuntimeSchema(null)
     setRuntimeSettings(null)
-    setRuntimeSettingsError(null)
     Promise.all([
       dashboardApi.getRuntimeConfigSchema(token, session.runtime),
       dashboardApi.getSessionRuntimeSettings(token, session.id),
@@ -293,7 +291,7 @@ export function SessionDetail({
         if (cancelled) return
         setRuntimeSchema(null)
         setRuntimeSettings(null)
-        setRuntimeSettingsError(err instanceof Error ? err.message : tSession("loadRuntimeSettingsFailed"))
+        toast.error(err instanceof Error ? err.message : tSession("loadRuntimeSettingsFailed"))
       })
     return () => {
       cancelled = true
@@ -354,7 +352,6 @@ export function SessionDetail({
   const handleSend = async (content: string, attachments: AttachedFile[]) => {
     if (!session || (!content.trim() && attachments.length === 0)) return
     setSending(true)
-    setComposerError(null)
     try {
       const files = attachments.map((attachment) => attachment.file)
       const upload = files.length > 0
@@ -367,7 +364,7 @@ export function SessionDetail({
       await refresh({ scrollToBottom: true })
       scrollToBottomThrottled()
     } catch (err) {
-      setComposerError(err instanceof Error ? err.message : tSession("sendFailed"))
+      toast.error(err instanceof Error ? err.message : tSession("sendFailed"))
     } finally {
       setSending(false)
     }
@@ -377,7 +374,6 @@ export function SessionDetail({
     if (!session) return
     const nextTakeover = pendingTakeover ?? !session.takeover
     setTakeoverBusy(true)
-    setComposerError(null)
     try {
       const result = nextTakeover
         ? await dashboardApi.enableTakeover(token, session.id)
@@ -386,7 +382,7 @@ export function SessionDetail({
       onSessionUpdated?.(result.session)
       setPendingTakeover(null)
     } catch (err) {
-      setComposerError(err instanceof Error ? err.message : tSession("updateTakeoverFailed"))
+      toast.error(err instanceof Error ? err.message : tSession("updateTakeoverFailed"))
     } finally {
       setTakeoverBusy(false)
     }
@@ -394,12 +390,11 @@ export function SessionDetail({
 
   const handleInterrupt = async () => {
     if (!session) return
-    setComposerError(null)
     try {
       await dashboardApi.interruptSession(token, session.id)
       await refresh()
     } catch (err) {
-      setComposerError(err instanceof Error ? err.message : tSession("interruptFailed"))
+      toast.error(err instanceof Error ? err.message : tSession("interruptFailed"))
     }
   }
 
@@ -407,12 +402,11 @@ export function SessionDetail({
     if (resolvingApprovalId) return
     setResolvingApprovalId(approvalId)
     setResolvingStatus(status)
-    setComposerError(null)
     try {
       await dashboardApi.resolveApproval(token, approvalId, status)
       await refresh()
     } catch (err) {
-      setComposerError(err instanceof Error ? err.message : tSession("resolveApprovalFailed"))
+      toast.error(err instanceof Error ? err.message : tSession("resolveApprovalFailed"))
     } finally {
       setResolvingApprovalId(null)
       setResolvingStatus(null)
@@ -424,13 +418,12 @@ export function SessionDetail({
     const nextSettings = { ...(runtimeSettings ?? {}), ...patch }
     setRuntimeSettings(nextSettings)
     setRuntimeSettingsBusy(true)
-    setRuntimeSettingsError(null)
     try {
       const response = await dashboardApi.patchSessionRuntimeSettings(token, session.id, nextSettings)
       setRuntimeSettings(response.runtimeSettings ?? response.settings ?? nextSettings)
       await refresh()
     } catch (err) {
-      setRuntimeSettingsError(err instanceof Error ? err.message : tSession("updateRuntimeSettingsFailed"))
+      toast.error(err instanceof Error ? err.message : tSession("updateRuntimeSettingsFailed"))
     } finally {
       setRuntimeSettingsBusy(false)
     }
@@ -588,14 +581,11 @@ export function SessionDetail({
           <SessionComposer
             session={session}
             pendingApprovalCount={pendingApprovals.length}
-            error={composerError}
             sending={sending}
             takeoverBusy={takeoverBusy}
             runtimeSchema={runtimeSchema}
             runtimeSettings={runtimeSettings}
-            runtimeSettingsError={runtimeSettingsError}
             runtimeSettingsBusy={runtimeSettingsBusy}
-            onDismissError={() => setComposerError(null)}
             onPatchRuntimeSettings={handlePatchRuntimeSettings}
             onSend={handleSend}
             onInterrupt={handleInterrupt}

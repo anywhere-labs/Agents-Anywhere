@@ -15,6 +15,7 @@ import {
   Users,
 } from "lucide-react"
 import { useTranslations } from "next-intl"
+import { toast } from "sonner"
 
 import {
   AlertDialog,
@@ -177,7 +178,7 @@ export function TeamPage() {
     try {
       upsertUser(await authApi.updateUser(session.accessToken, user.userId, { disabled: !user.disabled }))
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("updateFailed"))
+      toast.error(err instanceof Error ? err.message : t("updateFailed"))
     } finally {
       setRowBusyUserId(null)
     }
@@ -191,7 +192,7 @@ export function TeamPage() {
     try {
       upsertUser(await authApi.updateUser(session.accessToken, user.userId, { role: nextRole }))
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("updateFailed"))
+      toast.error(err instanceof Error ? err.message : t("updateFailed"))
     } finally {
       setRowBusyUserId(null)
     }
@@ -213,14 +214,16 @@ export function TeamPage() {
     <ScrollArea className="h-full bg-background">
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-8 pb-16 pt-8">
         <div>
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             onClick={() => navigate("home")}
-            className="mb-6 flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
+            className="mb-6 -ml-2 gap-1.5 text-muted-foreground"
           >
             <ChevronLeft className="size-4" />
             {tCommon("back")}
-          </button>
+          </Button>
 
           <div className="flex flex-wrap items-end justify-between gap-4">
             <div>
@@ -492,7 +495,7 @@ function CreateUserDialog({
       onCreated(created)
       onOpenChange(false)
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("createFailed"))
+      toast.error(err instanceof Error ? err.message : t("createFailed"))
     } finally {
       setSaving(false)
     }
@@ -578,7 +581,7 @@ function EditUserDialog({
       })
       onSaved(updated)
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("updateFailed"))
+      toast.error(err instanceof Error ? err.message : t("updateFailed"))
     } finally {
       setSaving(false)
     }
@@ -598,7 +601,7 @@ function EditUserDialog({
       setPassword("")
       setConfirmPassword("")
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("passwordResetFailed"))
+      toast.error(err instanceof Error ? err.message : t("passwordResetFailed"))
     } finally {
       setSaving(false)
     }
@@ -736,12 +739,10 @@ function DeleteUserDialog({
   const t = useTranslations("pages.team")
   const [confirmation, setConfirmation] = React.useState("")
   const [saving, setSaving] = React.useState(false)
-  const [error, setError] = React.useState<string | null>(null)
 
   React.useEffect(() => {
     setConfirmation("")
     setSaving(false)
-    setError(null)
   }, [user])
 
   if (!user) return null
@@ -750,12 +751,11 @@ function DeleteUserDialog({
   const deleteUser = async () => {
     if (!token || saving || !confirmed) return
     setSaving(true)
-    setError(null)
     try {
       await authApi.deleteUser(token, user.userId)
       onDeleted(user.userId)
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("deleteFailed"))
+      toast.error(err instanceof Error ? err.message : t("deleteFailed"))
     } finally {
       setSaving(false)
     }
@@ -780,7 +780,6 @@ function DeleteUserDialog({
             />
           </Field>
         </FieldGroup>
-        {error ? <p className="text-sm text-destructive">{error}</p> : null}
         <AlertDialogFooter>
           <AlertDialogCancel disabled={saving}>{t("cancel")}</AlertDialogCancel>
           <AlertDialogAction variant="destructive" disabled={!confirmed || saving} onClick={(event) => {

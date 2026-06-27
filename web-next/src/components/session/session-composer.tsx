@@ -42,14 +42,11 @@ export type { AttachedFile }
 export function SessionComposer({
   session,
   pendingApprovalCount,
-  error,
   sending,
   takeoverBusy,
   runtimeSchema,
   runtimeSettings,
-  runtimeSettingsError,
   runtimeSettingsBusy,
-  onDismissError,
   onPatchRuntimeSettings,
   onSend,
   onInterrupt,
@@ -57,14 +54,11 @@ export function SessionComposer({
 }: {
   session: SessionView
   pendingApprovalCount: number
-  error: string | null
   sending: boolean
   takeoverBusy: boolean
   runtimeSchema: RuntimeConfigSchema | null
   runtimeSettings: Record<string, unknown> | null
-  runtimeSettingsError: string | null
   runtimeSettingsBusy: boolean
-  onDismissError: () => void
   onPatchRuntimeSettings: (settings: Record<string, unknown>) => void
   onSend: (content: string, attachments: AttachedFile[]) => void
   onInterrupt: () => void
@@ -149,11 +143,6 @@ export function SessionComposer({
     >
       <DragOverlay isDragging={isDragging} />
       <div className="mx-auto w-full max-w-3xl space-y-2">
-        {error ? (
-          <button type="button" className="block text-left text-sm text-destructive" onClick={onDismissError}>
-            {error}
-          </button>
-        ) : null}
         <div
           className={cn(
             "relative rounded-2xl border border-border bg-card/85 shadow-sm backdrop-blur-xl transition-colors supports-backdrop-filter:bg-card/70 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20",
@@ -353,9 +342,6 @@ export function SessionComposer({
             </Button>
           </div>
         </div>
-        {runtimeSettingsError ? (
-          <div className="text-xs text-destructive">{runtimeSettingsError}</div>
-        ) : null}
       </div>
     </div>
   )

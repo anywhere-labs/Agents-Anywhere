@@ -1,9 +1,9 @@
 "use client"
 
 import * as React from "react"
-import { Monitor, ChevronDown, ArrowUp, Loader2, CircleAlert, Check } from "lucide-react"
+import { Monitor, ChevronDown, ArrowUp, Loader2, Check } from "lucide-react"
+import { toast } from "sonner"
 
-import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { Spinner } from "@/components/ui/spinner"
@@ -150,7 +150,6 @@ export function TaskComposer() {
   const [runtimeConfigLoading, setRuntimeConfigLoading] = React.useState(false)
   const [creating, setCreating] = React.useState(false)
   const [createTick, setCreateTick] = React.useState(0)
-  const [error, setError] = React.useState<string | null>(null)
   const [preferenceLoaded, setPreferenceLoaded] = React.useState(false)
   const [preference, setPreference] = React.useState<NewSessionPreference | null>(null)
   const devicePreferenceAppliedRef = React.useRef(false)
@@ -343,7 +342,6 @@ export function TaskComposer() {
     if (!authSession?.accessToken || !selectedConnector || !selectedAgent || creating) return
     if (!prompt.trim() && attachments.length === 0) return
     setCreating(true)
-    setError(null)
     try {
       const created = await dashboardApi.createSession(authSession.accessToken, {
         connectorId: selectedConnector.id,
@@ -388,7 +386,7 @@ export function TaskComposer() {
       refreshData()
       openSession(sessionId)
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("createFailed"))
+      toast.error(err instanceof Error ? err.message : t("createFailed"))
     } finally {
       setCreating(false)
     }
@@ -409,13 +407,6 @@ export function TaskComposer() {
           <span>{creating ? `${t("creatingBase")}${".".repeat((createTick % 3) + 1)}` : typedTitle}</span>
           <span className="ml-1 inline-block h-[0.9em] w-0.5 translate-y-[0.1em] rounded-full bg-muted-foreground motion-safe:animate-[composer-caret_1s_steps(1,end)_infinite]" aria-hidden="true" />
         </h1>
-
-        {error ? (
-          <Alert variant="destructive" className="mb-3">
-            <CircleAlert className="size-4" />
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        ) : null}
 
         <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20">
           <div className="space-y-3 px-6 pt-6">

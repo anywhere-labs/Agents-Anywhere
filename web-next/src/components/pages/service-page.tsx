@@ -13,6 +13,7 @@ import {
   ShieldCheck,
 } from "lucide-react"
 import { useTranslations } from "next-intl"
+import { toast } from "sonner"
 
 import { useAuth } from "@/components/auth/auth-context"
 import { LoadingState } from "@/components/loading-state"
@@ -279,7 +280,7 @@ export function ServicePage() {
         setSettings(await authApi.updateSettings(session.accessToken, { [key]: value }))
       } catch (err) {
         setSettings(previous)
-        setError(err instanceof Error ? err.message : t("updateFailed"))
+        toast.error(err instanceof Error ? err.message : t("updateFailed"))
       } finally {
         setTogglePending(null)
       }
@@ -300,7 +301,7 @@ export function ServicePage() {
       setOauthTemplate("custom")
       setOauthBaseUrl("")
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("oauthUpdateFailed"))
+      toast.error(err instanceof Error ? err.message : t("oauthUpdateFailed"))
     } finally {
       setOauthSaving(false)
     }
@@ -330,14 +331,16 @@ export function ServicePage() {
     <ScrollArea className="h-full bg-background">
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-8 pb-16 pt-8">
         <div>
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             onClick={() => navigate("home")}
-            className="mb-6 flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
+            className="mb-6 -ml-2 gap-1.5 text-muted-foreground"
           >
             <ChevronLeft />
             {tCommon("back")}
-          </button>
+          </Button>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <h1 className="text-2xl font-semibold">{t("title")}</h1>
@@ -348,11 +351,6 @@ export function ServicePage() {
               {t("refresh")}
             </Button>
           </div>
-          {error && (
-            <p className="mt-3 rounded-2xl border border-destructive/25 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              {error}
-            </p>
-          )}
         </div>
 
         <ServerCard
