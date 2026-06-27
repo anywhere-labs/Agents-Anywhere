@@ -190,22 +190,29 @@ export function DevicePage({
     };
   }, [agentRuntimeKey, device.id, token]);
 
-  const patchAgentSettings = (runtime: string, settings: Record<string, unknown>) => {
+  const patchAgentSettings = async (
+    runtime: string,
+    settings: Record<string, unknown>,
+  ) => {
     setAgentSettingsError((prev) => ({ ...prev, [runtime]: null }));
-    api
-      .patchConnectorAgentSettings(token, device.id, runtime, settings)
-      .then((res) => {
-        setAgentSettings((prev) => ({ ...prev, [runtime]: res }));
-      })
-      .catch((err: unknown) => {
-        const msg =
-          err instanceof ApiError
-            ? err.detail
-            : err instanceof Error
-              ? err.message
-              : "Failed to save settings.";
-        setAgentSettingsError((prev) => ({ ...prev, [runtime]: msg }));
-      });
+    try {
+      const res = await api.patchConnectorAgentSettings(
+        token,
+        device.id,
+        runtime,
+        settings,
+      );
+      setAgentSettings((prev) => ({ ...prev, [runtime]: res }));
+    } catch (err) {
+      const msg =
+        err instanceof ApiError
+          ? err.detail
+          : err instanceof Error
+            ? err.message
+            : "Failed to save settings.";
+      setAgentSettingsError((prev) => ({ ...prev, [runtime]: msg }));
+      throw err;
+    }
   };
 
   const deviceSessions = sessions
@@ -978,7 +985,7 @@ function AgentRowView({
   settings: Record<string, unknown> | null;
   schema: RuntimeConfigSchema | null;
   settingsError: string | null;
-  onPatchSettings: (settings: Record<string, unknown>) => void;
+  onPatchSettings: (settings: Record<string, unknown>) => Promise<void>;
   onDelete: () => void;
 }) {
   const [configOpen, setConfigOpen] = useState(false);
@@ -1067,24 +1074,70 @@ function RuntimeConfigModal({
   settingsError: string | null;
   initialView?: "settings" | "runModeGuide";
   onClose: () => void;
-  onPatchSettings: (settings: Record<string, unknown>) => void;
+  onPatchSettings: (settings: Record<string, unknown>) => Promise<void>;
 }) {
   const [view, setView] = useState<"settings" | "runModeGuide">(initialView);
-  const savedRunMode = settings?.runMode === "terminal" ? "terminal" : "chat";
+  const [draftSettings, setDraftSettings] = useState<Record<string, unknown> | null>(
+    settings ? { ...settings } : null,
+  );
+  const [saving, setSaving] = useState(false);
+  const currentRunMode =
+    draftSettings?.runMode === "terminal" ? "terminal" : "chat";
   const [draftRunMode, setDraftRunMode] = useState<"chat" | "terminal">(
-    savedRunMode,
+    currentRunMode,
   );
   const isRunModeGuide = runtime === "claude" && view === "runModeGuide";
-  useEffect(() => {
-    setDraftRunMode(savedRunMode);
-  }, [savedRunMode, isRunModeGuide]);
+  const dirty = useMemo(
+    () => JSON.stringify(draftSettings ?? null) !== JSON.stringify(settings ?? null),
+    [draftSettings, settings],
+  );
 
-  const handleDoneRunMode = () => {
-    if (settings) {
-      onPatchSettings({ runMode: draftRunMode });
+  useEffect(() => {
+    setDraftSettings(settings ? { ...settings } : null);
+  }, [settings]);
+
+  useEffect(() => {
+    setDraftRunMode(currentRunMode);
+  }, [currentRunMode, isRunModeGuide]);
+
+  const patchDraftSettings = (patch: Record<string, unknown>) => {
+    setDraftSettings((prev) => ({
+      ...(prev ?? settings ?? {}),
+      ...patch,
+    }));
+  };
+
+  const saveDraft = async (nextSettings = draftSettings) => {
+    if (!nextSettings || saving) return false;
+    setSaving(true);
+    try {
+      await onPatchSettings(nextSettings);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      setSaving(false);
     }
-    if (initialView === "runModeGuide") {
+  };
+
+  const handleSave = async () => {
+    if (!dirty) {
       onClose();
+      return;
+    }
+    const saved = await saveDraft();
+    if (saved) onClose();
+  };
+
+  const handleDoneRunMode = async () => {
+    const nextSettings = {
+      ...(draftSettings ?? settings ?? {}),
+      runMode: draftRunMode,
+    };
+    setDraftSettings(nextSettings);
+    if (initialView === "runModeGuide") {
+      const saved = await saveDraft(nextSettings);
+      if (saved) onClose();
     } else {
       setView("settings");
     }
@@ -1123,28 +1176,33 @@ function RuntimeConfigModal({
               <RuntimeSettingsForm
                 runtime={runtime}
                 schema={schema}
-                settings={settings}
+                settings={draftSettings}
                 scope="device"
                 className="kl-dev-agent-settings kl-runtime-settings-form"
-                disabled={!settings}
+                disabled={!draftSettings || saving}
                 onExplainRunMode={
                   runtime === "claude" ? () => setView("runModeGuide") : undefined
                 }
-                onPatch={onPatchSettings}
+                onPatch={patchDraftSettings}
               />
               {settingsError && (
                 <div className="kl-dev-agent-error">{settingsError}</div>
               )}
               <div className="kl-modal-actions">
-                <button type="button" className="kl-btn ghost" onClick={onClose}>
-                  Save
+                <button
+                  type="button"
+                  className="kl-btn ghost"
+                  onClick={handleSave}
+                  disabled={!draftSettings || !dirty || saving}
+                >
+                  {saving ? "Saving..." : "Save"}
                 </button>
               </div>
             </div>
             <div className="kl-runtime-config-page">
               <RunModeGuide
                 value={draftRunMode}
-                disabled={!settings}
+                disabled={!draftSettings || saving}
                 showBack={initialView !== "runModeGuide"}
                 onBack={() => setView("settings")}
                 onClose={onClose}

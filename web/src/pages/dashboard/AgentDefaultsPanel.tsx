@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Icons } from "../../components/Icons";
 import {
   api,
@@ -148,15 +148,42 @@ function ModelCatalogEditor({
   entries: AgentCatalogEntry[];
   onChange: (entries: AgentCatalogEntry[]) => void;
 }) {
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [revealModelKey, setRevealModelKey] = useState(0);
+  const selectedRowRef = useRef<HTMLButtonElement | null>(null);
+  const selectedModel = entries[selectedIndex] ?? null;
+
+  useEffect(() => {
+    if (entries.length === 0) {
+      setSelectedIndex(0);
+      return;
+    }
+    if (selectedIndex > entries.length - 1) {
+      setSelectedIndex(entries.length - 1);
+    }
+  }, [entries.length, selectedIndex]);
+
+  useEffect(() => {
+    if (revealModelKey === 0) return;
+    selectedRowRef.current?.scrollIntoView({ block: "nearest" });
+  }, [revealModelKey]);
+
   const update = (index: number, patch: Partial<AgentCatalogEntry>) => {
     onChange(entries.map((entry, i) => (i === index ? { ...entry, ...patch } : entry)));
   };
   const remove = (index: number) => {
-    onChange(entries.filter((_, i) => i !== index));
+    const nextEntries = entries.filter((_, i) => i !== index);
+    onChange(nextEntries);
+    setSelectedIndex((current) => {
+      if (nextEntries.length === 0) return 0;
+      if (index < current) return current - 1;
+      if (index === current) return Math.min(current, nextEntries.length - 1);
+      return current;
+    });
   };
   const add = () => {
     const next = entries.length + 1;
-    onChange([
+    const nextEntries = [
       ...entries,
       {
         runtime,
@@ -167,7 +194,10 @@ function ModelCatalogEditor({
         sortOrder: next,
         efforts: [],
       },
-    ]);
+    ];
+    onChange(nextEntries);
+    setSelectedIndex(nextEntries.length - 1);
+    setRevealModelKey((key) => key + 1);
   };
 
   return (
@@ -179,31 +209,73 @@ function ModelCatalogEditor({
           Add model
         </button>
       </div>
-      <div className="aa-agent-catalog-list">
-        {entries.map((entry, index) => (
-          <div className="aa-agent-model-card" key={`${entry.key}-${index}`}>
-            <div className="aa-agent-catalog-row aa-agent-model-row">
-              <LabeledInput
-                label="Model ID"
-                value={entry.key}
-                onChange={(value) => update(index, { key: value })}
-              />
-              <LabeledInput
-                label="Display label"
-                value={entry.displayLabel}
-                onChange={(value) => update(index, { displayLabel: value })}
-              />
-              <button type="button" className="aa-agent-icon-btn" onClick={() => remove(index)}>
-                <Icons.Trash size={13} />
+      <div className="aa-agent-catalog-layout">
+        <div className="aa-agent-model-list" role="listbox" aria-label={`${runtime} models`}>
+          {entries.length === 0 ? (
+            <div className="aa-agent-detail-empty">No models configured.</div>
+          ) : (
+            entries.map((entry, index) => (
+              <button
+                type="button"
+                className={`aa-agent-model-list-row${index === selectedIndex ? " on" : ""}`}
+                key={`${entry.key}-${index}`}
+                ref={index === selectedIndex ? selectedRowRef : undefined}
+                onClick={() => setSelectedIndex(index)}
+                role="option"
+                aria-selected={index === selectedIndex}
+              >
+                <span className="aa-agent-model-list-copy">
+                  <strong>{entry.displayLabel || entry.key || "Untitled model"}</strong>
+                  <span>{entry.key || "No model ID"}</span>
+                </span>
+                <span className="aa-agent-model-count">
+                  {(entry.efforts ?? []).length}
+                </span>
               </button>
-            </div>
-            <EffortCatalogEditor
-              runtime={runtime}
-              model={entry}
-              onChange={(efforts) => update(index, { efforts })}
-            />
-          </div>
-        ))}
+            ))
+          )}
+        </div>
+
+        <div className="aa-agent-model-detail">
+          {selectedModel ? (
+            <>
+              <div className="aa-agent-model-detail-head">
+                <div>
+                  <strong>{selectedModel.displayLabel || selectedModel.key || "Model"}</strong>
+                  <span>{(selectedModel.efforts ?? []).length} efforts</span>
+                </div>
+                <button
+                  type="button"
+                  className="aa-agent-icon-btn"
+                  onClick={() => remove(selectedIndex)}
+                  aria-label="Delete model"
+                  title="Delete model"
+                >
+                  <Icons.Trash size={13} />
+                </button>
+              </div>
+              <div className="aa-agent-model-fields">
+                <LabeledInput
+                  label="Model ID"
+                  value={selectedModel.key}
+                  onChange={(value) => update(selectedIndex, { key: value })}
+                />
+                <LabeledInput
+                  label="Display label"
+                  value={selectedModel.displayLabel}
+                  onChange={(value) => update(selectedIndex, { displayLabel: value })}
+                />
+              </div>
+              <EffortCatalogEditor
+                runtime={runtime}
+                model={selectedModel}
+                onChange={(efforts) => update(selectedIndex, { efforts })}
+              />
+            </>
+          ) : (
+            <div className="aa-agent-detail-empty">Add a model to configure efforts.</div>
+          )}
+        </div>
       </div>
     </div>
   );

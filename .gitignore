@@ -6,9 +6,12 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .venv/
+.env.local
+.env.*.local
 
 # Local Claude tooling (launch.json, transcripts, worktree metadata)
 .claude/
+.codex-run/
 agent-server/*-review.html
 
 # Local runtime state
