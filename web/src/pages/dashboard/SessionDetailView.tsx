@@ -504,19 +504,6 @@ export function SessionDetailView({
     state.itemsById,
   ]);
 
-  const approvalByTarget = useMemo(() => {
-    const map: Record<string, Approval> = {};
-    for (const approval of state.approvals) {
-      if (approval.targetItemId) map[approval.targetItemId] = approval;
-    }
-    return map;
-  }, [state.approvals]);
-
-  const detachedApprovals = useMemo(
-    () => state.approvals.filter((a) => !a.targetItemId),
-    [state.approvals],
-  );
-
   const pendingApprovals = useMemo(
     () =>
       state.approvals
@@ -903,15 +890,10 @@ export function SessionDetailView({
         />
         <Timeline
           items={items}
-          approvalByTarget={approvalByTarget}
           loading={loadingFirstBatch}
           sessionId={sessionId}
           sessionStatus={session.status}
           runtime={session.runtime}
-          onResolveApproval={handleResolveApproval}
-          resolvingApprovalId={resolvingApprovalId}
-          resolvingApprovalStatus={resolvingApprovalStatus}
-          detachedApprovals={detachedApprovals}
           onOpenFile={handleOpenFile}
         />
         <Composer
@@ -1216,27 +1198,17 @@ function TakeoverConfirmModal({
 
 function Timeline({
   items,
-  approvalByTarget,
   loading,
   sessionId,
   sessionStatus,
   runtime,
-  onResolveApproval,
-  resolvingApprovalId,
-  resolvingApprovalStatus,
-  detachedApprovals,
   onOpenFile,
 }: {
   items: TimelineItem[];
-  approvalByTarget: Record<string, Approval>;
   loading: boolean;
   sessionId: string;
   sessionStatus: SessionView["status"];
   runtime: string;
-  onResolveApproval: (id: string, status: ApprovalResolveStatus) => void;
-  resolvingApprovalId: string | null;
-  resolvingApprovalStatus: ApprovalResolveStatus | null;
-  detachedApprovals: Approval[];
   onOpenFile?: (path: string) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -1254,9 +1226,7 @@ function Timeline({
       : null;
   const scrollKey = `${sessionId}:${items.length}:${lastItem?.id ?? ""}:${
     lastItem?.updatedSeq ?? 0
-  }:${lastItem?.contentHash ?? ""}:${Object.keys(approvalByTarget).length}:${
-    detachedApprovals.length
-  }:${sessionStatus}`;
+  }:${lastItem?.contentHash ?? ""}:${sessionStatus}`;
 
   // Codex emits multiple assistant `message` items within a single turn (one
   // per streaming chunk / continuation). The avatar+name header should only
@@ -1353,23 +1323,10 @@ function Timeline({
             <TimelineEntry
               key={item.id}
               item={item}
-              approval={approvalByTarget[item.id]}
-              onResolveApproval={onResolveApproval}
-              resolvingApprovalId={resolvingApprovalId}
-              resolvingApprovalStatus={resolvingApprovalStatus}
               hideAssistantHeader={hideAssistantHeaderIds.has(item.id)}
               smoothStreaming={item.id === streamingAssistantItemId}
               onStreamingFrame={keepBottomPinned}
               onOpenFile={onOpenFile}
-            />
-          ))}
-          {detachedApprovals.map((approval) => (
-            <DetachedApproval
-              key={approval.id}
-              approval={approval}
-              onResolveApproval={onResolveApproval}
-              resolvingApprovalId={resolvingApprovalId}
-              resolvingApprovalStatus={resolvingApprovalStatus}
             />
           ))}
           {sessionStatus === "running" && (
@@ -1419,20 +1376,12 @@ function TimelineSkeleton() {
 
 function TimelineEntry({
   item,
-  approval,
-  onResolveApproval,
-  resolvingApprovalId,
-  resolvingApprovalStatus,
   hideAssistantHeader,
   smoothStreaming,
   onStreamingFrame,
   onOpenFile,
 }: {
   item: TimelineItem;
-  approval?: Approval;
-  onResolveApproval: (id: string, status: ApprovalResolveStatus) => void;
-  resolvingApprovalId: string | null;
-  resolvingApprovalStatus: ApprovalResolveStatus | null;
   hideAssistantHeader?: boolean;
   smoothStreaming?: boolean;
   onStreamingFrame?: () => void;
@@ -1450,15 +1399,7 @@ function TimelineEntry({
     );
   }
   if (item.type === "tool") {
-    return (
-      <ToolEntry
-        item={item}
-        approval={approval}
-        onResolveApproval={onResolveApproval}
-        resolvingApprovalId={resolvingApprovalId}
-        resolvingApprovalStatus={resolvingApprovalStatus}
-      />
-    );
+    return <ToolEntry item={item} />;
   }
   if (item.type === "artifact") {
     // Codex emits a "turn diff" artifact alongside each apply_patch tool call.
@@ -1751,31 +1692,15 @@ function StreamingMessageMarkdown({
 
 function ToolEntry({
   item,
-  approval,
-  onResolveApproval,
-  resolvingApprovalId,
-  resolvingApprovalStatus,
 }: {
   item: TimelineItem;
-  approval?: Approval;
-  onResolveApproval: (id: string, status: ApprovalResolveStatus) => void;
-  resolvingApprovalId: string | null;
-  resolvingApprovalStatus: ApprovalResolveStatus | null;
 }) {
   const kind = textOf(item.content.kind) || "tool";
   if (kind === "command") {
     return <BashToolCard item={item} />;
   }
   if (kind === "file_change") {
-    return (
-      <EditToolCard
-        item={item}
-        approval={approval}
-        onResolveApproval={onResolveApproval}
-        resolvingApprovalId={resolvingApprovalId}
-        resolvingApprovalStatus={resolvingApprovalStatus}
-      />
-    );
+    return <EditToolCard item={item} />;
   }
   if (kind === "web_search") {
     const action = recordOf(item.content.action);
@@ -1867,18 +1792,10 @@ function scrollInlineOnWheel(event: WheelEvent<HTMLDivElement>) {
 
 function EditToolCard({
   item,
-  approval,
-  onResolveApproval,
-  resolvingApprovalId,
-  resolvingApprovalStatus,
 }: {
   item: TimelineItem;
-  approval?: Approval;
-  onResolveApproval: (id: string, status: ApprovalResolveStatus) => void;
-  resolvingApprovalId: string | null;
-  resolvingApprovalStatus: ApprovalResolveStatus | null;
 }) {
-  const [open, setOpen] = useState(Boolean(approval));
+  const [open, setOpen] = useState(false);
   const changes = recordsOf(item.content.changes);
   const targetPath = changes[0] ? textOf(changes[0].path) : "";
   const filename = targetPath ? targetPath.split("/").pop() : "files";
@@ -1889,7 +1806,7 @@ function EditToolCard({
     verbs.find((v) => v === "Added") ??
     verbs.find((v) => v === "Deleted") ??
     verbs[0] ??
-    (approval ? "Editing" : "Edited");
+    "Edited";
   return (
     <div className={`kl-edit${open ? " open" : ""}`}>
       <button
@@ -1902,7 +1819,7 @@ function EditToolCard({
           <Icons.ChevRight size={12} />
         </span>
         <span>
-          {approval ? "Editing" : headVerb} <em>{filename}</em>
+          {headVerb} <em>{filename}</em>
         </span>
         <span className="stat add">
           {changes.length} file{changes.length === 1 ? "" : "s"}
@@ -1933,16 +1850,6 @@ function EditToolCard({
               />
             );
           })}
-          {approval && (
-            <div style={{ padding: "10px 12px 12px" }}>
-              <ApprovalButtons
-                approval={approval}
-                onResolveApproval={onResolveApproval}
-                resolvingApprovalId={resolvingApprovalId}
-                resolvingApprovalStatus={resolvingApprovalStatus}
-              />
-            </div>
-          )}
         </div>
       )}
     </div>
@@ -2106,104 +2013,6 @@ function safeJson(v: unknown): string {
   } catch {
     return String(v);
   }
-}
-
-
-
-function DetachedApproval({
-  approval,
-  onResolveApproval,
-  resolvingApprovalId,
-  resolvingApprovalStatus,
-}: {
-  approval: Approval;
-  onResolveApproval: (id: string, status: ApprovalResolveStatus) => void;
-  resolvingApprovalId: string | null;
-  resolvingApprovalStatus: ApprovalResolveStatus | null;
-}) {
-  return (
-    <div className="kl-edit open">
-      <div className="title">
-        <Icons.Shield size={12} />
-        <span>{approval.title || "Approval requested"}</span>
-      </div>
-      <div className="body">
-        {approval.description && (
-          <div
-            className="filelist"
-            style={{ whiteSpace: "pre-wrap" } as CSSProperties}
-          >
-            {approval.description}
-          </div>
-        )}
-        <div style={{ padding: "10px 12px 12px" }}>
-          <ApprovalButtons
-            approval={approval}
-            onResolveApproval={onResolveApproval}
-            resolvingApprovalId={resolvingApprovalId}
-            resolvingApprovalStatus={resolvingApprovalStatus}
-          />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ApprovalButtons({
-  approval,
-  onResolveApproval,
-  resolvingApprovalId,
-  resolvingApprovalStatus,
-}: {
-  approval: Approval;
-  onResolveApproval: (id: string, status: ApprovalResolveStatus) => void;
-  resolvingApprovalId: string | null;
-  resolvingApprovalStatus: ApprovalResolveStatus | null;
-}) {
-  if (approval.status !== "pending") {
-    return (
-      <div className="kl-notice">
-        <Icons.Check size={12} />
-        <em>{approval.status.replace("_", " ")}</em>
-      </div>
-    );
-  }
-  const resolving = resolvingApprovalId === approval.id;
-  const disabled = resolvingApprovalId !== null;
-  return (
-    <div style={{ display: "flex", gap: 8 }}>
-      <button
-        className="kl-btn ghost"
-        disabled={disabled}
-        onClick={() => onResolveApproval(approval.id, "rejected")}
-      >
-        {resolving && resolvingApprovalStatus === "rejected" ? (
-          <Icons.Loader size={12} className="spin" />
-        ) : null}
-        Deny
-      </button>
-      <button
-        className="kl-btn ghost"
-        disabled={disabled}
-        onClick={() => onResolveApproval(approval.id, "approved_for_session")}
-      >
-        {resolving && resolvingApprovalStatus === "approved_for_session" ? (
-          <Icons.Loader size={12} className="spin" />
-        ) : null}
-        Always allow
-      </button>
-      <button
-        className="kl-btn primary"
-        disabled={disabled}
-        onClick={() => onResolveApproval(approval.id, "approved")}
-      >
-        {resolving && resolvingApprovalStatus === "approved" ? (
-          <Icons.Loader size={12} className="spin" />
-        ) : null}
-        Allow once
-      </button>
-    </div>
-  );
 }
 
 // ─── Composer ─────────────────────────────────────────────────────────────
