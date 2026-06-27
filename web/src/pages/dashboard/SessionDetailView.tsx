@@ -937,6 +937,7 @@ export function SessionDetailView({
         {takeoverConfirm && (
           <TakeoverConfirmModal
             mode={takeoverConfirm}
+            agentLabel={runtimeLabel(session.runtime)}
             busy={takeoverInFlight}
             onCancel={() => {
               if (!takeoverInFlight) setTakeoverConfirm(null);
@@ -1159,16 +1160,21 @@ function SessionRuntimeBadge({
 
 function TakeoverConfirmModal({
   mode,
+  agentLabel,
   busy,
   onCancel,
   onConfirm,
 }: {
   mode: "enable" | "disable";
+  agentLabel: string;
   busy: boolean;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
   const enabling = mode === "enable";
+  const body = enabling
+    ? `Take over this session from your phone. Messages may not sync to ${agentLabel} desktop app/CLI right away. Sending while ${agentLabel} desktop app/CLI is still running may cause unexpected results.`
+    : "This session will become read-only. You won't be able to send messages.";
   return (
     <div className="kl-modal-backdrop" onClick={onCancel}>
       <div
@@ -1178,11 +1184,7 @@ function TakeoverConfirmModal({
         onClick={(event) => event.stopPropagation()}
       >
         <h3>{enabling ? "Enable takeover?" : "Disable takeover?"}</h3>
-        <p>
-          {enabling
-            ? "Takeover makes this session writable from the web UI. Messages and interrupts will be sent to the remote agent."
-            : "Disabling takeover returns this session to read-only mode. Existing agent work keeps running unless you interrupt it first."}
-        </p>
+        <p>{body}</p>
         <div className="kl-modal-actions">
           <button
             type="button"
