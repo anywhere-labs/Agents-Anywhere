@@ -458,12 +458,17 @@ function AgentTab({ token }: { token: string }) {
   const t = useTranslations("pages.settings")
   const [models, setModels] = React.useState<AgentCatalogEntry[]>([])
   const [savedModels, setSavedModels] = React.useState<AgentCatalogEntry[]>([])
+  const [defaultModelKey, setDefaultModelKey] = React.useState("")
+  const [savedDefaultModelKey, setSavedDefaultModelKey] = React.useState("")
   const [loading, setLoading] = React.useState(true)
   const [saving, setSaving] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const dirty = React.useMemo(
-    () => JSON.stringify(toAgentDefaultsPayload(models)) !== JSON.stringify(toAgentDefaultsPayload(savedModels)),
-    [models, savedModels],
+    () =>
+      defaultModelKey !== savedDefaultModelKey ||
+      JSON.stringify(toAgentDefaultsPayload(models, defaultModelKey)) !==
+        JSON.stringify(toAgentDefaultsPayload(savedModels, savedDefaultModelKey)),
+    [defaultModelKey, models, savedDefaultModelKey, savedModels],
   )
 
   React.useEffect(() => {
@@ -478,8 +483,11 @@ function AgentTab({ token }: { token: string }) {
       .then((defaultsResponse) => {
         if (cancelled) return
         const nextModels = defaultsResponse.runtimes[CODEX_RUNTIME]?.models ?? []
+        const nextDefaultModelKey = nextModels.find((model) => model.isDefault)?.key ?? nextModels[0]?.key ?? ""
         setModels(nextModels)
         setSavedModels(nextModels)
+        setDefaultModelKey(nextDefaultModelKey)
+        setSavedDefaultModelKey(nextDefaultModelKey)
       })
       .catch((err) => {
         if (!cancelled) setError(err instanceof Error ? err.message : t("agentDefaultsLoadFailed"))
@@ -499,12 +507,14 @@ function AgentTab({ token }: { token: string }) {
     try {
       const response = await dashboardApi.updateAgentDefaults(token, {
         [CODEX_RUNTIME]: {
-          models: toAgentDefaultsPayload(models),
+          models: toAgentDefaultsPayload(models, defaultModelKey),
         },
       })
       const nextModels = response.runtimes[CODEX_RUNTIME]?.models ?? models
-      setModels(nextModels)
-      setSavedModels(nextModels)
+      const nextDefaultModelKey = nextModels.find((model) => model.isDefault)?.key ?? defaultModelKey
+      setSavedModels(models)
+      setSavedDefaultModelKey(nextDefaultModelKey)
+      setDefaultModelKey(nextDefaultModelKey)
     } catch (err) {
       setError(err instanceof Error ? err.message : t("agentDefaultsSaveFailed"))
     } finally {
@@ -514,10 +524,6 @@ function AgentTab({ token }: { token: string }) {
 
   const moveModel = (index: number, direction: -1 | 1) => {
     setModels((current) => moveEntry(current, index, direction))
-  }
-
-  const makeDefaultModel = (index: number) => {
-    setModels((current) => moveToFront(current, index))
   }
 
   const moveEffort = (modelIndex: number, effortIndex: number, direction: -1 | 1) => {
@@ -547,108 +553,112 @@ function AgentTab({ token }: { token: string }) {
         ) : models.length === 0 ? (
           <p className="px-6 py-8 text-sm text-muted-foreground">{t("agentDefaultsLoadFailed")}</p>
         ) : (
-          <Accordion type="multiple" className="divide-y divide-border">
-            {models.map((model, modelIndex) => (
-              <AccordionItem key={model.key} value={model.key} className="border-0">
-                <AccordionTrigger className="px-6 py-4 hover:no-underline">
-                  <div className="flex min-w-0 flex-1 items-center gap-3">
-                    <RadioGroup value={models[0]?.key ?? ""} onValueChange={() => makeDefaultModel(modelIndex)}>
+          <RadioGroup
+            value={defaultModelKey}
+            onValueChange={setDefaultModelKey}
+            className="gap-0"
+          >
+            <Accordion type="multiple" className="rounded-none border-0">
+              {models.map((model, modelIndex) => (
+                <AccordionItem key={model.key} value={model.key} className="border-0 data-open:bg-transparent">
+                  <AccordionTrigger className="min-h-20 px-6 py-4 hover:no-underline">
+                    <div className="flex min-w-0 flex-1 items-center gap-3">
                       <RadioGroupItem
                         value={model.key}
                         aria-label={t("defaultModel")}
                         onClick={(event) => event.stopPropagation()}
                       />
-                    </RadioGroup>
-                    <div className="min-w-0 text-left">
-                      <div className="flex min-w-0 items-center gap-2">
-                        <span className="truncate text-sm font-medium">{model.displayLabel}</span>
-                        {modelIndex === 0 ? <Badge variant="secondary">{t("defaultModel")}</Badge> : null}
-                      </div>
-                      <div className="mt-1 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-                        <span className="truncate">{model.key}</span>
-                        <span>{model.efforts.length} {t("reasoningEffort")}</span>
+                      <div className="min-w-0 flex-1 text-left">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <span className="truncate text-sm font-medium">{model.displayLabel}</span>
+                          {defaultModelKey === model.key ? <Badge variant="secondary">{t("defaultModel")}</Badge> : null}
+                        </div>
+                        <div className="mt-1 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+                          <span className="truncate">{model.key}</span>
+                          <span>{model.efforts.length} {t("reasoningEffort")}</span>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                  <div className="mr-3 flex items-center gap-1">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="size-7"
-                      disabled={modelIndex === 0}
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        moveModel(modelIndex, -1)
-                      }}
-                    >
-                      <ArrowUp className="size-3.5" />
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="size-7"
-                      disabled={modelIndex === models.length - 1}
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        moveModel(modelIndex, 1)
-                      }}
-                    >
-                      <ArrowDown className="size-3.5" />
-                    </Button>
-                  </div>
-                </AccordionTrigger>
-                <AccordionContent className="px-6 pb-5">
-                  {model.description ? <p className="mb-3 text-sm text-muted-foreground">{model.description}</p> : null}
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>{t("reasoningEffort")}</TableHead>
-                        <TableHead>Key</TableHead>
-                        <TableHead className="w-24 text-right">Order</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {model.efforts.map((effort, effortIndex) => (
-                        <TableRow key={effort.key}>
-                          <TableCell>
-                            <div className="font-medium">{effort.displayLabel}</div>
-                            {effort.description ? <div className="text-xs text-muted-foreground">{effort.description}</div> : null}
-                          </TableCell>
-                          <TableCell className="font-mono text-xs text-muted-foreground">{effort.key}</TableCell>
-                          <TableCell>
-                            <div className="flex justify-end gap-1">
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                className="size-7"
-                                disabled={effortIndex === 0}
-                                onClick={() => moveEffort(modelIndex, effortIndex, -1)}
-                              >
-                                <ArrowUp className="size-3.5" />
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                className="size-7"
-                                disabled={effortIndex === model.efforts.length - 1}
-                                onClick={() => moveEffort(modelIndex, effortIndex, 1)}
-                              >
-                                <ArrowDown className="size-3.5" />
-                              </Button>
-                            </div>
-                          </TableCell>
+                    <div className="mr-3 flex items-center gap-1">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="size-7"
+                        disabled={modelIndex === 0}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          moveModel(modelIndex, -1)
+                        }}
+                      >
+                        <ArrowUp className="size-3.5" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="size-7"
+                        disabled={modelIndex === models.length - 1}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          moveModel(modelIndex, 1)
+                        }}
+                      >
+                        <ArrowDown className="size-3.5" />
+                      </Button>
+                    </div>
+                  </AccordionTrigger>
+                  <AccordionContent className="px-6 pb-5">
+                    {model.description ? <p className="mb-3 text-sm text-muted-foreground">{model.description}</p> : null}
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>{t("reasoningEffort")}</TableHead>
+                          <TableHead>Key</TableHead>
+                          <TableHead className="w-24 text-right">Order</TableHead>
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </AccordionContent>
-              </AccordionItem>
-            ))}
-          </Accordion>
+                      </TableHeader>
+                      <TableBody>
+                        {model.efforts.map((effort, effortIndex) => (
+                          <TableRow key={effort.key}>
+                            <TableCell>
+                              <div className="font-medium">{effort.displayLabel}</div>
+                              {effort.description ? <div className="text-xs text-muted-foreground">{effort.description}</div> : null}
+                            </TableCell>
+                            <TableCell className="font-mono text-xs text-muted-foreground">{effort.key}</TableCell>
+                            <TableCell>
+                              <div className="flex justify-end gap-1">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="size-7"
+                                  disabled={effortIndex === 0}
+                                  onClick={() => moveEffort(modelIndex, effortIndex, -1)}
+                                >
+                                  <ArrowUp className="size-3.5" />
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="size-7"
+                                  disabled={effortIndex === model.efforts.length - 1}
+                                  onClick={() => moveEffort(modelIndex, effortIndex, 1)}
+                                >
+                                  <ArrowDown className="size-3.5" />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </AccordionContent>
+                </AccordionItem>
+              ))}
+            </Accordion>
+          </RadioGroup>
         )}
         {(error || saving) ? (
           <>
@@ -676,16 +686,14 @@ function moveEntry<T>(items: T[], index: number, direction: -1 | 1): T[] {
   return next
 }
 
-function moveToFront<T>(items: T[], index: number): T[] {
-  if (index <= 0 || index >= items.length) return items
-  const next = [...items]
-  const [item] = next.splice(index, 1)
-  if (item === undefined) return items
-  return [item, ...next]
-}
-
-function toAgentDefaultsPayload(models: AgentCatalogEntry[]) {
-  return models.map((model, modelIndex) => ({
+function toAgentDefaultsPayload(models: AgentCatalogEntry[], defaultModelKey: string) {
+  const orderedModels = defaultModelKey
+    ? [
+        ...models.filter((model) => model.key === defaultModelKey),
+        ...models.filter((model) => model.key !== defaultModelKey),
+      ]
+    : models
+  return orderedModels.map((model, modelIndex) => ({
     key: model.key,
     displayLabel: model.displayLabel,
     description: model.description ?? null,
