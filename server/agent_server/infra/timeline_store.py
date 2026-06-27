@@ -122,6 +122,49 @@ class SqlTimelineStore:
         items = [TimelineItem.model_validate_json(row["payload_json"]) for row in rows[:limit]]
         return items, has_more
 
+    async def list_latest(self, session_id: str, *, limit: int) -> tuple[list[TimelineItem], bool]:
+        async with self._engine.connect() as conn:
+            rows = (
+                await conn.execute(
+                    timeline_items.select()
+                    .where(timeline_items.c.session_id == session_id)
+                    .order_by(
+                        timeline_items.c.order_seq.desc(),
+                        timeline_items.c.updated_seq.desc(),
+                        timeline_items.c.id.desc(),
+                    )
+                    .limit(limit + 1)
+                )
+            ).mappings().all()
+        has_more = len(rows) > limit
+        items = [TimelineItem.model_validate_json(row["payload_json"]) for row in rows[:limit]]
+        items.reverse()
+        return items, has_more
+
+    async def list_before_order_seq(
+        self, session_id: str, *, before_order_seq: int, limit: int
+    ) -> tuple[list[TimelineItem], bool]:
+        async with self._engine.connect() as conn:
+            rows = (
+                await conn.execute(
+                    timeline_items.select()
+                    .where(
+                        timeline_items.c.session_id == session_id,
+                        timeline_items.c.order_seq < before_order_seq,
+                    )
+                    .order_by(
+                        timeline_items.c.order_seq.desc(),
+                        timeline_items.c.updated_seq.desc(),
+                        timeline_items.c.id.desc(),
+                    )
+                    .limit(limit + 1)
+                )
+            ).mappings().all()
+        has_more = len(rows) > limit
+        items = [TimelineItem.model_validate_json(row["payload_json"]) for row in rows[:limit]]
+        items.reverse()
+        return items, has_more
+
     def _row_values(self, item: TimelineItem) -> dict[str, Any]:
         return {
             "session_id": item.sessionId,

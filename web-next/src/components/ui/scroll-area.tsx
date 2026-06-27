@@ -29,7 +29,7 @@ function ScrollArea({
         data-slot="scroll-area-viewport"
         {...restViewportProps}
         className={cn(
-          "size-full min-w-0 max-w-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1",
+          "size-full min-w-0 max-w-full overscroll-y-contain rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1",
           // Radix wraps viewport children in a measurement div with
           // `display: table`; that can make vertical scroll areas expand
           // horizontally when descendants contain long unbroken content.

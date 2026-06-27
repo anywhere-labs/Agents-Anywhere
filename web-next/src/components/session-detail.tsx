@@ -58,7 +58,9 @@ type SessionEventEnvelope = Partial<SessionStateResponse> & {
 
 const AUTO_SCROLL_BOTTOM_DISTANCE = 180
 const SCROLL_TO_BOTTOM_INTERVAL_MS = 1000
-const SESSION_STATE_PAGE_LIMIT = 500
+const INITIAL_TIMELINE_LIMIT = 100
+const TIMELINE_PAGE_LIMIT = 100
+const LOAD_OLDER_SCROLL_THRESHOLD = 96
 const COMPOSER_BLUR_LAYERS = buildComposerBlurLayers({
   height: 144,
   layerCount: 10,
@@ -116,25 +118,8 @@ function buildComposerBlurLayers({
   })
 }
 
-async function loadCompleteSessionState(token: string, sessionId: string): Promise<SessionStateResponse> {
-  const firstPage = await dashboardApi.getSessionState(token, sessionId, 0, SESSION_STATE_PAGE_LIMIT)
-  if (!firstPage.hasMore) return firstPage
-
-  const items = [...firstPage.items]
-  let latestPage = firstPage
-
-  while (latestPage.hasMore) {
-    const lastItem = latestPage.items.at(-1)
-    if (!lastItem) break
-    latestPage = await dashboardApi.getSessionState(token, sessionId, lastItem.updatedSeq, SESSION_STATE_PAGE_LIMIT)
-    items.push(...latestPage.items)
-  }
-
-  return {
-    ...latestPage,
-    items,
-    hasMore: latestPage.hasMore && latestPage.items.length > 0,
-  }
+async function loadInitialSessionState(token: string, sessionId: string): Promise<SessionStateResponse> {
+  return dashboardApi.getLatestSessionState(token, sessionId, INITIAL_TIMELINE_LIMIT)
 }
 
 export function SessionDetail({
@@ -158,12 +143,14 @@ export function SessionDetail({
   const [runtimeSettings, setRuntimeSettings] = React.useState<Record<string, unknown> | null>(null)
   const [runtimeSettingsBusy, setRuntimeSettingsBusy] = React.useState(false)
   const [showScrollBottom, setShowScrollBottom] = React.useState(false)
+  const [loadingOlder, setLoadingOlder] = React.useState(false)
   const [pendingTakeover, setPendingTakeover] = React.useState<boolean | null>(null)
   const timelineRef = React.useRef<HTMLDivElement | null>(null)
   const nextSeqRef = React.useRef(0)
   const autoScrollOnNextUpdateRef = React.useRef(false)
   const forceScrollOnNextUpdateRef = React.useRef(false)
   const initialScrollDoneRef = React.useRef(false)
+  const loadingOlderRef = React.useRef(false)
   const lastScrollToBottomAtRef = React.useRef(0)
   const scrollToBottomTimerRef = React.useRef<number | null>(null)
 
@@ -243,11 +230,60 @@ export function SessionDetail({
     if (options.preserveBottom ?? true) markAutoScrollIfNearBottom()
     if (options.scrollToBottom) forceScrollOnNextUpdateRef.current = true
     setError(null)
-    const next = await loadCompleteSessionState(token, sessionId)
+    const next = await loadInitialSessionState(token, sessionId)
     setState(next)
     nextSeqRef.current = Math.max(nextSeqRef.current, next.nextSeq)
     onSessionUpdated?.(next.session)
   }, [markAutoScrollIfNearBottom, onSessionUpdated, sessionId, token])
+
+  const loadOlderTimeline = React.useCallback(async () => {
+    if (loadingOlderRef.current || loadingOlder || !state?.hasMore) return
+    const oldestItem = state.items[0]
+    if (!oldestItem) return
+
+    const viewport = timelineRef.current
+    const previousScrollHeight = viewport?.scrollHeight ?? 0
+    const previousScrollTop = viewport?.scrollTop ?? 0
+
+    loadingOlderRef.current = true
+    setLoadingOlder(true)
+    try {
+      const older = await dashboardApi.getSessionStateBefore(
+        token,
+        sessionId,
+        oldestItem.orderSeq,
+        TIMELINE_PAGE_LIMIT,
+      )
+      setState((current) => {
+        if (!current) return current
+        const items = mergeTimelineItems(older.items, current.items)
+        return {
+          ...current,
+          items,
+          hasMore: older.hasMore,
+          nextSeq: Math.max(current.nextSeq, older.nextSeq),
+          serverTime: older.serverTime,
+        }
+      })
+      window.requestAnimationFrame(() => {
+        const nextViewport = timelineRef.current
+        if (!nextViewport) return
+        nextViewport.scrollTop = nextViewport.scrollHeight - previousScrollHeight + previousScrollTop
+      })
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : tSession("loadFailed"))
+    } finally {
+      loadingOlderRef.current = false
+      setLoadingOlder(false)
+    }
+  }, [loadingOlder, sessionId, state?.hasMore, state?.items, tSession, token])
+
+  const handleTimelineScroll = React.useCallback(() => {
+    const viewport = timelineRef.current
+    updateScrollBottomState()
+    if (!viewport || viewport.scrollTop > LOAD_OLDER_SCROLL_THRESHOLD) return
+    void loadOlderTimeline()
+  }, [loadOlderTimeline, updateScrollBottomState])
 
   React.useEffect(() => {
     let cancelled = false
@@ -255,7 +291,7 @@ export function SessionDetail({
     setLoading(true)
     setState(null)
     setError(null)
-    loadCompleteSessionState(token, sessionId)
+    loadInitialSessionState(token, sessionId)
       .then((next) => {
         if (cancelled) return
         setState(next)
@@ -303,7 +339,7 @@ export function SessionDetail({
     let eventSource: EventSource | null = null
     const refetch = () => {
       markAutoScrollIfNearBottom()
-      loadCompleteSessionState(token, sessionId)
+      loadInitialSessionState(token, sessionId)
         .then((next) => {
           if (cancelled) return
           nextSeqRef.current = Math.max(nextSeqRef.current, next.nextSeq)
@@ -448,7 +484,19 @@ export function SessionDetail({
     updateScrollBottomState()
   }, [scrollToBottomThrottled, session?.status, state?.approvals.length, state?.items.length, updateScrollBottomState])
 
+  const scrollToBottomWithoutPruning = React.useCallback(() => {
+    scrollToBottomThrottled()
+  }, [scrollToBottomThrottled])
+
   const scrollToBottom = React.useCallback(() => {
+    setState((current) => {
+      if (!current || current.items.length <= INITIAL_TIMELINE_LIMIT) return current
+      return {
+        ...current,
+        items: current.items.slice(-INITIAL_TIMELINE_LIMIT),
+      }
+    })
+    forceScrollOnNextUpdateRef.current = true
     scrollToBottomThrottled()
   }, [scrollToBottomThrottled])
 
@@ -500,7 +548,7 @@ export function SessionDetail({
         <ScrollArea
           viewportRef={timelineRef}
           className="h-full"
-          viewportProps={{ onScroll: updateScrollBottomState }}
+          viewportProps={{ onScroll: handleTimelineScroll }}
         >
           <div
             className={cn(
@@ -508,6 +556,11 @@ export function SessionDetail({
               pendingApprovals.length > 0 && "pt-32",
             )}
           >
+            {loadingOlder ? (
+              <div className="flex justify-center py-2 text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" />
+              </div>
+            ) : null}
             {loading && !state ? <SessionSkeletonInline /> : null}
             {state && state.items.length === 0 && detachedApprovals.length === 0 ? (
               <p className="py-12 text-center text-sm text-muted-foreground">{tSession("noActivity")}</p>
@@ -569,7 +622,7 @@ export function SessionDetail({
       </div>
 
       {pendingApprovals.length > 0 ? (
-        <ApprovalHeaderNotice pendingApprovalCount={pendingApprovals.length} onResolveClick={scrollToBottom} />
+        <ApprovalHeaderNotice pendingApprovalCount={pendingApprovals.length} onResolveClick={scrollToBottomWithoutPruning} />
       ) : null}
 
       <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 overflow-hidden">
@@ -767,7 +820,7 @@ function mergeSessionState(
     if (envelope.session && envelope.items && envelope.approvals && typeof envelope.nextSeq === "number") {
       return {
         session: envelope.session,
-        items: envelope.items,
+        items: sortTimelineItems(envelope.items),
         approvals: envelope.approvals,
         nextSeq: envelope.nextSeq,
         hasMore: Boolean(envelope.hasMore),
@@ -777,19 +830,30 @@ function mergeSessionState(
     return current
   }
 
-  const byId = new Map(current.items.map((item) => [item.id, item]))
-  for (const item of envelope.items ?? []) {
-    const existing = byId.get(item.id)
-    if (!existing || existing.updatedSeq <= item.updatedSeq) byId.set(item.id, item)
-  }
-
   return {
     ...current,
     session: envelope.session ?? current.session,
-    items: Array.from(byId.values()).sort((a, b) => a.orderSeq - b.orderSeq || a.updatedSeq - b.updatedSeq),
+    items: mergeTimelineItems(current.items, envelope.items ?? []),
     approvals: envelope.approvals ?? current.approvals,
     nextSeq: Math.max(current.nextSeq, envelope.nextSeq ?? current.nextSeq),
     hasMore: envelope.hasMore ?? current.hasMore,
     serverTime: envelope.serverTime ?? current.serverTime,
   }
+}
+
+function mergeTimelineItems(
+  currentItems: TimelineItem[],
+  incomingItems: TimelineItem[],
+): TimelineItem[] {
+  if (incomingItems.length === 0) return currentItems
+  const byId = new Map(currentItems.map((item) => [item.id, item]))
+  for (const item of incomingItems) {
+    const existing = byId.get(item.id)
+    if (!existing || existing.updatedSeq <= item.updatedSeq) byId.set(item.id, item)
+  }
+  return sortTimelineItems(Array.from(byId.values()))
+}
+
+function sortTimelineItems(items: TimelineItem[]): TimelineItem[] {
+  return [...items].sort((a, b) => a.orderSeq - b.orderSeq || a.updatedSeq - b.updatedSeq || a.id.localeCompare(b.id))
 }

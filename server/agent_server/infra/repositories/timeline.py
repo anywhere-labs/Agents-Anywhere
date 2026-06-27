@@ -216,6 +216,29 @@ class TimelineRepositoryMixin:
         return await self.timeline.list_since(session_id, after_seq=after_seq, limit=limit)
 
 
+    async def list_timeline_latest(
+        self,
+        *,
+        session_id: str,
+        limit: int,
+    ) -> tuple[list[TimelineItem], bool]:
+        return await self.timeline.list_latest(session_id, limit=limit)
+
+
+    async def list_timeline_before_order_seq(
+        self,
+        *,
+        session_id: str,
+        before_order_seq: int,
+        limit: int,
+    ) -> tuple[list[TimelineItem], bool]:
+        return await self.timeline.list_before_order_seq(
+            session_id,
+            before_order_seq=before_order_seq,
+            limit=limit,
+        )
+
+
     @asynccontextmanager
     async def timeline_writer_lock(self, session_id: str) -> AsyncIterator[None]:
         async with self._timeline_lock(session_id):
