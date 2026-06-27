@@ -176,8 +176,7 @@ function AttachmentTile({
     );
   }
 
-  // Non-image OR no IndexedDB hit. Show name + size, and open the durable
-  // platform file through the authenticated backend route.
+  // Non-image files are display-only until backend preview/download is reliable.
   const body = (
     <>
       <span className="kl-msg-att-icon">
@@ -189,21 +188,15 @@ function AttachmentTile({
           {attachmentMetaLabel(mediaType, sizeBytes)}
         </span>
       </span>
-      <span className="kl-msg-att-open">
-        <Icons.External size={13} />
-      </span>
     </>
   );
   return (
-    <a
+    <div
       className={`kl-msg-att file${cached ? "" : " missing"}`}
-      href={platformUrl}
-      target="_blank"
-      rel="noreferrer"
-      onClick={openPlatformFile(platformUrl)}
+      title={name ?? descriptor.fileId}
     >
       {body}
-    </a>
+    </div>
   );
 }
 
@@ -229,13 +222,6 @@ async function fetchAttachmentBlob(
   };
   await putAttachment(entry);
   return entry;
-}
-
-function openPlatformFile(url: string) {
-  return async (event: MouseEvent<HTMLAnchorElement>) => {
-    event.preventDefault();
-    window.open(authenticatedOpenUrl(url), "_blank", "noopener,noreferrer");
-  };
 }
 
 function openPlatformImage(

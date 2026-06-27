@@ -1558,18 +1558,9 @@
   min-height: 52px;
   padding: 8px 10px 8px 8px;
   text-decoration: none;
-  transition:
-    border-color 0.15s ease,
-    background-color 0.15s ease,
-    transform 0.15s ease;
 }
 .kl-msg-att.file.missing {
   background: var(--bg);
-}
-.kl-msg-att.file:hover {
-  background: var(--bg-hover);
-  border-color: var(--border-strong);
-  transform: translateY(-1px);
 }
 .kl-msg-att.image {
   padding: 0;
@@ -1615,19 +1606,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.kl-msg-att-open {
-  display: grid;
-  place-items: center;
-  flex: 0 0 auto;
-  width: 24px;
-  height: 24px;
-  color: var(--text-faint);
-  border-radius: 6px;
-}
-.kl-msg-att.file:hover .kl-msg-att-open {
-  color: var(--text);
-  background: var(--bg-panel);
 }
 .kl-msg-att.skeleton {
   width: 220px;
