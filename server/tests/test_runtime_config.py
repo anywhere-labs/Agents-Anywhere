@@ -85,7 +85,7 @@ def test_runtime_config_schema_is_seeded_and_readable(tmp_path):
     assert body["runtime"] == "claude"
     assert body["schema"]["runtime"] == "claude"
     fields = {field["key"]: field for field in body["schema"]["fields"]}
-    assert fields["runMode"]["allowSessionOverride"] is False
+    assert "runMode" not in fields
     assert fields["permissionMode"]["allowSessionOverride"] is True
 
 
@@ -96,7 +96,7 @@ def test_user_agent_defaults_customize_schema_and_new_connectors(tmp_path):
     defaults = client.get("/agents/defaults", headers=headers)
     assert defaults.status_code == 200, defaults.text
     assert defaults.json()["runtimes"]["codex"]["enabled"] is True
-    assert defaults.json()["runtimes"]["claude"]["settings"]["runMode"] == "chat"
+    assert "runMode" not in defaults.json()["runtimes"]["claude"]["settings"]
 
     updated = client.patch(
         "/agents/defaults",
@@ -170,7 +170,7 @@ def test_user_agent_defaults_customize_schema_and_new_connectors(tmp_path):
         headers=headers,
     )
     assert claude_settings.status_code == 200, claude_settings.text
-    assert claude_settings.json()["settings"]["runMode"] == "chat"
+    assert "runMode" not in claude_settings.json()["settings"]
     assert claude_settings.json()["settings"]["permissionMode"] == "acceptEdits"
 
 
@@ -272,8 +272,8 @@ def test_device_agent_settings_patch_and_read(tmp_path):
         headers=headers,
     )
     assert initial.status_code == 200, initial.text
-    assert initial.json()["settings"]["runMode"] == "chat"
-    assert initial.json()["defaultRunModeConfigured"] is False
+    assert "runMode" not in initial.json()["settings"]
+    assert "defaultRunModeConfigured" not in initial.json()
 
     model_only = client.patch(
         f"/connectors/{connector_id}/agents/claude/settings",
@@ -281,14 +281,20 @@ def test_device_agent_settings_patch_and_read(tmp_path):
         json={"settings": {"model": "claude-sonnet-4-6"}},
     )
     assert model_only.status_code == 200, model_only.text
-    assert model_only.json()["defaultRunModeConfigured"] is False
+    assert "defaultRunModeConfigured" not in model_only.json()
+
+    invalid = client.patch(
+        f"/connectors/{connector_id}/agents/claude/settings",
+        headers=headers,
+        json={"settings": {"runMode": "terminal"}},
+    )
+    assert invalid.status_code == 422
 
     response = client.patch(
         f"/connectors/{connector_id}/agents/claude/settings",
         headers=headers,
         json={
             "settings": {
-                "runMode": "terminal",
                 "permissionMode": "plan",
                 "model": "claude-sonnet-4-6",
                 "effort": "high",
@@ -298,11 +304,11 @@ def test_device_agent_settings_patch_and_read(tmp_path):
 
     assert response.status_code == 200, response.text
     settings = response.json()["settings"]
-    assert settings["runMode"] == "terminal"
+    assert "runMode" not in settings
     assert settings["permissionMode"] == "plan"
     assert settings["model"] == "claude-sonnet-4-6"
     assert settings["effort"] == "high"
-    assert response.json()["defaultRunModeConfigured"] is True
+    assert "defaultRunModeConfigured" not in response.json()
 
     read_back = client.get(
         f"/connectors/{connector_id}/agents/claude/settings",
@@ -310,10 +316,10 @@ def test_device_agent_settings_patch_and_read(tmp_path):
     )
     assert read_back.status_code == 200
     assert read_back.json()["settings"] == settings
-    assert read_back.json()["defaultRunModeConfigured"] is True
+    assert "defaultRunModeConfigured" not in read_back.json()
 
 
-def test_session_runtime_settings_exposes_default_run_mode_configured(tmp_path):
+def test_session_runtime_settings_rejects_claude_run_mode(tmp_path):
     client = make_client(tmp_path)
     headers = auth_headers(client)
     connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
@@ -332,20 +338,20 @@ def test_session_runtime_settings_exposes_default_run_mode_configured(tmp_path):
 
     initial = client.get(f"/sessions/{session.id}/runtime-settings", headers=headers)
     assert initial.status_code == 200, initial.text
-    assert initial.json()["runtimeSettings"]["runMode"] == "chat"
-    assert initial.json()["defaultRunModeConfigured"] is False
+    assert "runMode" not in initial.json()["runtimeSettings"]
+    assert "defaultRunModeConfigured" not in initial.json()
 
-    configured = client.patch(
+    rejected = client.patch(
         f"/connectors/{connector_id}/agents/claude/settings",
         headers=headers,
         json={"settings": {"runMode": "terminal"}},
     )
-    assert configured.status_code == 200, configured.text
+    assert rejected.status_code == 422
 
     after = client.get(f"/sessions/{session.id}/runtime-settings", headers=headers)
     assert after.status_code == 200, after.text
-    assert after.json()["runtimeSettings"]["runMode"] == "chat"
-    assert after.json()["defaultRunModeConfigured"] is True
+    assert "runMode" not in after.json()["runtimeSettings"]
+    assert "defaultRunModeConfigured" not in after.json()
 
 
 def test_claude_effort_options_are_constrained_by_model(tmp_path):
@@ -355,7 +361,7 @@ def test_claude_effort_options_are_constrained_by_model(tmp_path):
     opus = client.patch(
         f"/connectors/{connector_id}/agents/claude/settings",
         headers=headers,
-        json={"settings": {"model": "claude-opus-4-8", "effort": "xhigh"}},
+        json={"settings": {"model": "claude-opus-4-7[1m]", "effort": "xhigh"}},
     )
     assert opus.status_code == 200, opus.text
     assert opus.json()["settings"]["effort"] == "xhigh"
@@ -492,7 +498,7 @@ def test_session_claude_effort_patch_uses_effective_model(tmp_path):
         client.app.state.store.patch_device_agent_settings(
             connector_id,
             "claude",
-            {"model": "claude-opus-4-8"},
+            {"model": "claude-opus-4-7[1m]"},
         )
     )
     session = asyncio.run(
@@ -514,11 +520,11 @@ def test_session_claude_effort_patch_uses_effective_model(tmp_path):
     )
     assert effort.status_code == 200, effort.text
     assert effort.json()["runtimeSettingsOverride"] == {
-        "runMode": "chat",
         "permissionMode": "acceptEdits",
-        "model": "claude-opus-4-8",
+        "model": "claude-opus-4-7[1m]",
         "effort": "xhigh",
     }
+    assert effort.json()["runtimeSettings"]["model"] == "claude-opus-4-7[1m]"
     assert effort.json()["runtimeSettings"]["effort"] == "xhigh"
 
     sonnet = client.patch(
@@ -528,10 +534,10 @@ def test_session_claude_effort_patch_uses_effective_model(tmp_path):
     )
     assert sonnet.status_code == 200, sonnet.text
     assert sonnet.json()["runtimeSettingsOverride"] == {
-        "runMode": "chat",
         "permissionMode": "acceptEdits",
         "model": "claude-sonnet-4-6"
     }
+    assert sonnet.json()["runtimeSettings"]["model"] == "claude-sonnet-4-6"
     assert sonnet.json()["runtimeSettings"]["effort"] is None
 
     asyncio.run(
@@ -560,24 +566,12 @@ def test_session_claude_effort_patch_uses_effective_model(tmp_path):
     assert haiku_bad.status_code == 422
 
 
-def test_effective_runtime_settings_priority_and_claude_run_mode(tmp_path):
+def test_effective_runtime_settings_priority_and_effort_constraints(tmp_path):
     client = make_client(tmp_path)
     headers = auth_headers(client)
     connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
     connector_id = connector_response.json()["connector"]["id"]
 
-    asyncio.run(
-        client.app.state.store.patch_device_agent_settings(
-            connector_id,
-            "claude",
-            {
-                "runMode": "terminal",
-                "permissionMode": "plan",
-                "model": "claude-opus-4-8",
-                "effort": "xhigh",
-            },
-        )
-    )
     session = asyncio.run(
         client.app.state.store.upsert_connector_session(
             connector_id=connector_id,
@@ -605,14 +599,14 @@ def test_effective_runtime_settings_priority_and_claude_run_mode(tmp_path):
     state = client.get(f"/sessions/{session.id}/runtime-settings", headers=headers)
     assert state.status_code == 200
     body = state.json()
-    assert body["effectiveRunMode"] == "terminal"
-    assert body["runtimeSettings"]["runMode"] == "terminal"
+    assert "effectiveRunMode" not in body
+    assert "runMode" not in body["runtimeSettings"]
     assert body["runtimeSettings"]["permissionMode"] == "default"
     assert body["runtimeSettings"]["model"] == "claude-sonnet-4-6"
     assert body["runtimeSettings"]["effort"] is None
 
 
-def test_changing_claude_run_mode_interrupts_running_sessions_first(tmp_path):
+def test_changing_claude_settings_does_not_interrupt_running_sessions(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, _, headers = create_connector_and_session(client)
     fake_rpc = FakeRpc()
@@ -642,13 +636,10 @@ def test_changing_claude_run_mode_interrupts_running_sessions_first(tmp_path):
     response = client.patch(
         f"/connectors/{connector_id}/agents/claude/settings",
         headers=headers,
-        json={"settings": {"runMode": "terminal"}},
+        json={"settings": {"model": "claude-opus-4-7[1m]", "effort": "xhigh"}},
     )
 
     assert response.status_code == 200, response.text
-    assert response.json()["settings"]["runMode"] == "terminal"
-    assert fake_rpc.requests
-    assert fake_rpc.requests[0][1] == "turn.interrupt"
-    assert fake_rpc.requests[0][2]["sessionId"] == session_id
-    assert fake_rpc.requests[0][2]["turnId"] == "turn_running_1"
-    assert fake_rpc.requests[0][2]["externalSessionId"] == "uuid-claude-running"
+    assert response.json()["settings"]["model"] == "claude-opus-4-7[1m]"
+    assert response.json()["settings"]["effort"] == "xhigh"
+    assert fake_rpc.requests == []

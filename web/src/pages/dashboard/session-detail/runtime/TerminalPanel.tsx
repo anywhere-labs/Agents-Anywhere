@@ -9,7 +9,6 @@ type Props = {
   // a panel toggle). The panel doesn't currently need this — included for
   // future use.
   hostKey?: string;
-  primary?: boolean;
   showClose?: boolean;
   title?: string;
   onPopOut?: () => void;
@@ -29,7 +28,6 @@ function makeTerminalGroupId() {
 export function TerminalPanel({
   api,
   onClose,
-  primary = false,
   showClose = true,
   title = "Terminal",
   onPopOut,
@@ -72,13 +70,6 @@ export function TerminalPanel({
     let cancelled = false;
     (async () => {
       try {
-        if (primary) {
-          const created = await api.ensurePrimaryTerminal();
-          if (cancelled) return;
-          setTerms([created.terminal]);
-          setActiveId(created.terminal.terminalId);
-          return;
-        }
         const created = await api.createTerminal({
           cols: 80,
           rows: 24,
@@ -94,13 +85,11 @@ export function TerminalPanel({
     })();
     return () => {
       cancelled = true;
-      if (!primary) {
-        for (const term of termsRef.current) {
-          void api.closeTerminal(term.terminalId).catch(() => undefined);
-        }
+      for (const term of termsRef.current) {
+        void api.closeTerminal(term.terminalId).catch(() => undefined);
       }
     };
-  }, [api, primary]);
+  }, [api]);
 
   const addTerminal = useCallback(async () => {
     setBusy(true);
@@ -168,7 +157,7 @@ export function TerminalPanel({
         <div className="title">
           <Icons.Terminal size={14} /> {title}
         </div>
-        {!primary && <div
+        <div
           className="kl-term-tabs"
           role="tablist"
           onWheel={(e) => {
@@ -247,7 +236,7 @@ export function TerminalPanel({
           >
             <Icons.Plus size={14} />
           </button>
-        </div>}
+        </div>
         <span className="sep" />
         <div className="acts">
           {onPopOut && (
@@ -255,7 +244,7 @@ export function TerminalPanel({
               <Icons.External size={13} />
             </button>
           )}
-          {!primary && showClose && (
+          {showClose && (
             <button className="iconbtn" title="Close panel" onClick={onClose}>
               <Icons.X size={13} />
             </button>
@@ -276,10 +265,9 @@ export function TerminalPanel({
               terminal={term}
               active={activeId === term.terminalId}
               api={api}
-              streamScope={primary ? "session" : "workspace"}
+              streamScope="workspace"
               onError={(m) => setError(m)}
               onClosed={() => {
-                if (primary) return;
                 setTerms((prev) => {
                   const next = prev.filter((item) => item.terminalId !== term.terminalId);
                   setActiveId((cur) => (cur === term.terminalId ? next[0]?.terminalId ?? null : cur));

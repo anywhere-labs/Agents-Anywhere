@@ -62,20 +62,6 @@ class RuntimeConfigRepositoryMixin:
         )
 
 
-    async def is_default_run_mode_configured(
-        self,
-        connector_id: str,
-        runtime: str,
-        *,
-        user_id: str | None = None,
-    ) -> bool:
-        return await self.runtime_config.is_default_run_mode_configured(
-            connector_id,
-            runtime,
-            user_id=user_id,
-        )
-
-
     async def get_session_runtime_settings_override(
         self,
         session_id: str,

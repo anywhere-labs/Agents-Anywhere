@@ -20,7 +20,6 @@ class ActiveRunRepository:
         status: str,
         started_at: str,
         updated_at: str,
-        run_mode: str | None = None,
         external_session_id: str | None = None,
         turn_id: str | None = None,
         params_json: str | None = None,
@@ -33,7 +32,6 @@ class ActiveRunRepository:
             ).first()
             values = {
                 "runtime": runtime,
-                "run_mode": run_mode,
                 "external_session_id": external_session_id,
                 "turn_id": turn_id,
                 "status": status,

@@ -57,18 +57,6 @@ async def terminal_create(
         _raise_terminal_service_error(exc)
 
 
-@router.post("/{session_id}/terminal/ensure-primary", response_model=TerminalResponse)
-async def terminal_ensure_primary(
-    session_id: str,
-    user_id: str = Depends(current_user_id),
-    terminal_service: TerminalService = Depends(get_terminal_service),
-) -> TerminalResponse:
-    try:
-        return await terminal_service.ensure_primary_claude(session_id, user_id=user_id)
-    except TerminalServiceError as exc:
-        _raise_terminal_service_error(exc)
-
-
 @router.get("/{session_id}/terminals", response_model=TerminalListResponse)
 async def terminal_list(
     session_id: str,

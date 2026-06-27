@@ -709,12 +709,8 @@ class SessionRepositoryMixin:
         override = _json_loads(row["runtime_settings_override"])
         runtime_override = override if isinstance(override, dict) else {}
         runtime_settings: dict[str, Any] | None = None
-        effective_run_mode: str | None = None
         try:
             runtime_settings = await self.get_effective_runtime_settings(session_id)
-            if runtime == "claude":
-                mode = runtime_settings.get("runMode")
-                effective_run_mode = mode if mode in {"chat", "terminal"} else "chat"
         except (KeyError, ValueError):
             runtime_settings = None
         title = row["title"]
@@ -750,7 +746,6 @@ class SessionRepositoryMixin:
             lastItemOrderSeq=latest.orderSeq if latest else None,
             sortAt=sort_at,
             updatedSeq=updated_seq,
-            effectiveRunMode=effective_run_mode,
             runtimeSettings=runtime_settings,
             runtimeSettingsOverride=runtime_override or None,
         )

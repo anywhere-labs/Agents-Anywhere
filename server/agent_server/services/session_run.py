@@ -150,11 +150,6 @@ class SessionRunService:
                 update={
                     "runtimeSettings": runtime_settings_override,
                     "runtimeSettingsOverride": runtime_settings_override,
-                    "effectiveRunMode": (
-                        runtime_settings_override.get("runMode")
-                        if payload.runtime == "claude"
-                        else session.effectiveRunMode
-                    ),
                 }
             )
         return {"session": session, "connectorResult": connector_result}
@@ -177,9 +172,6 @@ class SessionRunService:
             raise SessionRunConflictError("connector is offline")
         if session.status not in {"idle", "error"}:
             raise SessionRunConflictError(f"session is {session.status}")
-        if session.runtime == "claude" and session.effectiveRunMode == "terminal":
-            raise SessionRunConflictError("terminal_mode_uses_terminal")
-
         try:
             effective_settings = await self._store.get_effective_runtime_settings(
                 session_id,
@@ -225,7 +217,6 @@ class SessionRunService:
         await self._store.start_active_run(
             session_id=session_id,
             runtime=session.runtime,
-            run_mode=session.effectiveRunMode,
             external_session_id=session.externalSessionId,
             params=params,
         )

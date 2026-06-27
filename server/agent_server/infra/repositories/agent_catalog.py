@@ -153,7 +153,6 @@ class AgentCatalogRepositoryMixin:
                         connector_id=connector_id,
                         runtime=runtime,
                         settings_json=_json_dumps(settings),
-                        default_run_mode_configured=0,
                         schema_version=schema.schemaVersion,
                         updated_at=now,
                     )

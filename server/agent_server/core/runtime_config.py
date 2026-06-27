@@ -61,8 +61,6 @@ class RuntimeSettingsResponse(BaseModel):
     settings: dict[str, Any]
     runtimeSettings: dict[str, Any] | None = None
     runtimeSettingsOverride: dict[str, Any] | None = None
-    effectiveRunMode: Literal["chat", "terminal"] | None = None
-    defaultRunModeConfigured: bool = False
     schemaVersion: int
     serverTime: str
 
@@ -77,7 +75,6 @@ class RuntimeConfigSchemaResponse(BaseModel):
 
 DEFAULT_RUNTIME_SETTINGS: dict[str, dict[str, Any]] = {
     "claude": {
-        "runMode": "chat",
         "permissionMode": "acceptEdits",
         "model": None,
         "effort": None,
@@ -93,18 +90,8 @@ DEFAULT_RUNTIME_SETTINGS: dict[str, dict[str, Any]] = {
 DEFAULT_RUNTIME_CONFIG_SCHEMAS: dict[str, RuntimeConfigSchema] = {
     "claude": RuntimeConfigSchema(
         runtime="claude",
-        schemaVersion=3,
+        schemaVersion=4,
         fields=[
-            RuntimeConfigField(
-                key="runMode",
-                label="Run mode",
-                type="enum",
-                allowSessionOverride=False,
-                options=[
-                    RuntimeConfigOption(value="chat", label="Chat"),
-                    RuntimeConfigOption(value="terminal", label="Terminal"),
-                ],
-            ),
             RuntimeConfigField(
                 key="permissionMode",
                 label="Permission mode",
@@ -239,6 +226,16 @@ def normalize_runtime_settings(runtime: str, settings: dict[str, Any]) -> dict[s
     for key in ("approvalPolicy", "approvalsReviewer", "sandboxPolicy"):
         result.pop(key, None)
     return result
+
+
+def filter_runtime_settings(
+    settings: dict[str, Any],
+    schema: RuntimeConfigSchema,
+    *,
+    session_override: bool,
+) -> dict[str, Any]:
+    allowed_paths = _field_paths(schema.fields, session_override=session_override)
+    return {key: value for key, value in settings.items() if key in allowed_paths}
 
 
 def validate_runtime_schema(runtime: str, raw: Any) -> RuntimeConfigSchema:

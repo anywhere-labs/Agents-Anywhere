@@ -258,7 +258,6 @@ export type SessionView = {
   lastItemOrderSeq: number | null;
   sortAt: string | null;
   updatedSeq: number;
-  effectiveRunMode?: "chat" | "terminal" | null;
   runtimeSettings?: Record<string, unknown> | null;
   runtimeSettingsOverride?: Record<string, unknown> | null;
 };
@@ -346,8 +345,6 @@ export type RuntimeSettingsResponse = {
   settings: Record<string, unknown>;
   runtimeSettings?: Record<string, unknown> | null;
   runtimeSettingsOverride?: Record<string, unknown> | null;
-  effectiveRunMode?: "chat" | "terminal" | null;
-  defaultRunModeConfigured: boolean;
   schemaVersion: number;
   serverTime: string;
 };

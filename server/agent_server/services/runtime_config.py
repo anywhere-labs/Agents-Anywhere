@@ -15,6 +15,7 @@ from agent_server.core.runtime_config import (
     RuntimeConfigSchema,
     apply_settings_patch,
     default_runtime_settings,
+    filter_runtime_settings,
     merge_settings,
     normalize_runtime_settings,
     normalize_setting_constraints,
@@ -104,12 +105,16 @@ class RuntimeConfigService:
         user_id: str | None = None,
     ) -> dict[str, Any]:
         await self._runtime_settings.require_connector(connector_id, user_id=user_id)
+        schema = await self.get_runtime_config_schema_for_user(runtime, user_id=user_id)
         value = _json_loads(
             await self._runtime_settings.get_device_settings_json(connector_id, runtime)
         )
-        settings = normalize_runtime_settings(runtime, value if isinstance(value, dict) else {})
+        settings = filter_runtime_settings(
+            normalize_runtime_settings(runtime, value if isinstance(value, dict) else {}),
+            schema,
+            session_override=False,
+        )
         effective = merge_settings(default_runtime_settings(runtime), settings)
-        schema = await self.get_runtime_config_schema_for_user(runtime, user_id=user_id)
         return normalize_setting_constraints(
             runtime,
             effective,
@@ -153,29 +158,10 @@ class RuntimeConfigService:
             connector_id,
             runtime,
             settings_json=_json_dumps(next_settings),
-            default_run_mode_configured=(
-                runtime == "claude" and "runMode" in normalized_patch
-            )
-            or None,
             schema_version=schema.schemaVersion,
             updated_at=utc_now(),
         )
         return next_settings
-
-    async def is_default_run_mode_configured(
-        self,
-        connector_id: str,
-        runtime: str,
-        *,
-        user_id: str | None = None,
-    ) -> bool:
-        await self._runtime_settings.require_connector(connector_id, user_id=user_id)
-        if runtime != "claude":
-            return True
-        return await self._runtime_settings.is_default_run_mode_configured(
-            connector_id,
-            runtime,
-        )
 
     async def get_session_runtime_settings_override(
         self,
@@ -184,10 +170,19 @@ class RuntimeConfigService:
         user_id: str | None = None,
     ) -> dict[str, Any]:
         row = await self._runtime_settings.get_session_runtime_row(session_id, user_id=user_id)
+        runtime = str(row["runtime"])
+        schema = await self.get_runtime_config_schema_for_user(
+            runtime,
+            user_id=user_id or str(row["connector_user_id"]),
+        )
         value = _json_loads(row["runtime_settings_override"])
-        return normalize_runtime_settings(
-            str(row["runtime"]),
-            value if isinstance(value, dict) else {},
+        return filter_runtime_settings(
+            normalize_runtime_settings(
+                runtime,
+                value if isinstance(value, dict) else {},
+            ),
+            schema,
+            session_override=True,
         )
 
     async def patch_session_runtime_settings(
@@ -210,9 +205,13 @@ class RuntimeConfigService:
             session_override=True,
         )
         current = _json_loads(row["runtime_settings_override"])
-        current_settings = normalize_runtime_settings(
-            runtime,
-            current if isinstance(current, dict) else {},
+        current_settings = filter_runtime_settings(
+            normalize_runtime_settings(
+                runtime,
+                current if isinstance(current, dict) else {},
+            ),
+            schema,
+            session_override=True,
         )
         current_effective = merge_settings(default_runtime_settings(runtime), current_settings)
         next_effective = apply_settings_patch(
@@ -244,23 +243,26 @@ class RuntimeConfigService:
     ) -> dict[str, Any]:
         row = await self._runtime_settings.get_session_runtime_row(session_id, user_id=user_id)
         runtime = str(row["runtime"])
-        override = _json_loads(row["runtime_settings_override"])
-        override_settings = normalize_runtime_settings(
+        schema = await self.get_runtime_config_schema_for_user(
             runtime,
-            override if isinstance(override, dict) else {},
+            user_id=user_id or str(row["connector_user_id"]),
+        )
+        override = _json_loads(row["runtime_settings_override"])
+        override_settings = filter_runtime_settings(
+            normalize_runtime_settings(
+                runtime,
+                override if isinstance(override, dict) else {},
+            ),
+            schema,
+            session_override=True,
         )
         effective = merge_settings(default_runtime_settings(runtime), override_settings)
         effective = normalize_setting_constraints(
             runtime,
             effective,
             explicit_keys=set(),
-            schema=await self.get_runtime_config_schema_for_user(
-                runtime,
-                user_id=user_id or str(row["connector_user_id"]),
-            ),
+            schema=schema,
         )
-        if runtime == "claude":
-            effective["runMode"] = effective.get("runMode") or "chat"
         return effective
 
     async def get_initial_runtime_settings_for_connector_agent(

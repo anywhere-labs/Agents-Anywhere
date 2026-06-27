@@ -454,7 +454,6 @@ class SessionView(BaseModel):
     lastItemOrderSeq: int | None = None
     sortAt: str | None = None
     updatedSeq: int
-    effectiveRunMode: Literal["chat", "terminal"] | None = None
     runtimeSettings: dict[str, Any] | None = None
     runtimeSettingsOverride: dict[str, Any] | None = None
 
@@ -769,7 +768,7 @@ class TerminalView(BaseModel):
     cwd: str
     cols: int
     rows: int
-    purpose: Literal["user", "primary_claude"] = "user"
+    purpose: Literal["user"] = "user"
     pid: int | None = None
     status: Literal["starting", "running", "exited"] = "running"
     exitCode: int | None = None
