@@ -1198,7 +1198,7 @@ export function SettingsPage() {
         <p className="mt-1 text-sm text-muted-foreground">{t("description")}</p>
       </div>
 
-      <div className="flex flex-1 gap-8 overflow-hidden px-8 py-8">
+      <div className="flex min-h-0 flex-1 gap-8 overflow-hidden px-8 py-8">
         <nav className="flex w-52 shrink-0 flex-col gap-0.5">
           {navItems.map((item) => {
             const Icon = item.icon
@@ -1221,7 +1221,7 @@ export function SettingsPage() {
           })}
         </nav>
 
-        <ScrollArea className="flex-1">
+        <ScrollArea className="h-full min-h-0 flex-1" viewportProps={{ className: "pb-8" }}>
           {tab === "account" && (
             loadingMe ? (
               <LoadingState className="h-full" />
