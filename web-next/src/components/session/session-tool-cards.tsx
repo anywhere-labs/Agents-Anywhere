@@ -5,6 +5,7 @@ import { Check, ChevronDown, Code2, Copy, FilePenLine, Hammer, Loader2, Terminal
 
 import { Badge } from "@/components/ui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
 import { ApprovalCard } from "@/components/session/session-approval-card"
 import { MonacoCodeView, monacoLanguageForFile } from "@/components/monaco-code-view"
 import { openSessionFilePreview } from "@/components/markdown-text"
@@ -208,11 +209,12 @@ function CodePanelFrame({
 
 function HighlightedCodeContent({ code, language, maxHeight }: { code: string; language: string; maxHeight: number }) {
   return (
-    <div className="min-w-0 overflow-auto" style={{ maxHeight }}>
+    <ScrollArea contentWide className="min-w-0" style={{ maxHeight }}>
       <pre className="code-mono min-w-full w-max px-3 py-2 text-xs leading-relaxed">
         <code className="code-mono whitespace-pre">{highlightCode(code, language)}</code>
       </pre>
-    </div>
+      <ScrollBar orientation="horizontal" />
+    </ScrollArea>
   )
 }
 
@@ -223,7 +225,7 @@ export function JsonBlock({ value }: { value: unknown }) {
 function DiffPanel({ code, maxHeight }: { code: string; maxHeight: number }) {
   const rows = React.useMemo(() => buildDiffRows(code), [code])
   return (
-    <div className="min-w-0 overflow-auto" style={{ maxHeight }}>
+    <ScrollArea contentWide className="min-w-0" style={{ maxHeight }}>
       <div className="code-mono w-max min-w-full py-2 text-xs">
         {rows.map((row, index) => (
           <div
@@ -252,7 +254,8 @@ function DiffPanel({ code, maxHeight }: { code: string; maxHeight: number }) {
           </div>
         ))}
       </div>
-    </div>
+      <ScrollBar orientation="horizontal" />
+    </ScrollArea>
   )
 }
 

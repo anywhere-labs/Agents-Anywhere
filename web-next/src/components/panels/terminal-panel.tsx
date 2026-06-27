@@ -8,6 +8,7 @@ import "./runtime-panel.css"
 import { ChevronExternal } from "./runtime-icons"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { dashboardApi } from "@/features/dashboard/api"
 import type { TerminalView } from "@/features/dashboard/types"
@@ -181,88 +182,94 @@ export function TerminalPanelBody({ token, connectorId, root, onClose, onPopOut 
           <SquareTerminal className="size-3.5" />
           {t("title")}
         </CardTitle>
-        <div
-          className="aa-term-tabs"
-          role="tablist"
-          onWheel={(event) => {
-            const scroll = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX
-            if (!scroll) return
-            event.currentTarget.scrollLeft += scroll
-            event.preventDefault()
+        <ScrollArea
+          className="aa-term-tabs-scroll"
+          contentWide
+          viewportProps={{
+            role: "tablist",
+            onWheel: (event) => {
+              const scroll = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX
+              if (!scroll) return
+              event.currentTarget.scrollLeft += scroll
+              event.preventDefault()
+            },
           }}
         >
-          {terms.map((term) =>
-            renamingId === term.terminalId ? (
-              <input
-                key={term.terminalId}
-                className="aa-term-tab active"
-                value={renameText}
-                autoFocus
-                onChange={(event) => setRenameText(event.target.value)}
-                onBlur={() => void renameTerminal(term.terminalId, renameText || term.label)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") void renameTerminal(term.terminalId, renameText || term.label)
-                  if (event.key === "Escape") setRenamingId(null)
-                }}
-                style={{ width: 120, padding: "0 8px" }}
-              />
-            ) : (
-              <button
-                key={term.terminalId}
-                role="tab"
-                type="button"
-                className={cn(
-                  "aa-term-tab",
-                  activeId === term.terminalId && "active",
-                  term.status === "exited" && "exited",
-                )}
-                onClick={(event) => {
-                  if (event.detail >= 3) {
-                    cancelScheduledRename()
-                    void closeTerminal(term.terminalId)
-                    return
-                  }
-                  setActiveId(term.terminalId)
-                }}
-                onAuxClick={(event) => {
-                  if (event.button !== 1) return
-                  event.preventDefault()
-                  void closeTerminal(term.terminalId)
-                }}
-                onMouseDown={(event) => {
-                  if (event.button === 1) event.preventDefault()
-                }}
-                onDoubleClick={() => scheduleRename(term)}
-                title={`${term.label} · ${t("pid")} ${term.pid ?? "?"}${
-                  term.status === "exited" ? ` (${t("exitCode", { code: term.exitCode ?? "?" })})` : ""
-                }`}
-              >
-                <span className="dot" />
-                <span className="label">{term.label}</span>
-                <span
-                  className="close"
+          <div className="aa-term-tabs">
+            {terms.map((term) =>
+              renamingId === term.terminalId ? (
+                <input
+                  key={term.terminalId}
+                  className="aa-term-tab active"
+                  value={renameText}
+                  autoFocus
+                  onChange={(event) => setRenameText(event.target.value)}
+                  onBlur={() => void renameTerminal(term.terminalId, renameText || term.label)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") void renameTerminal(term.terminalId, renameText || term.label)
+                    if (event.key === "Escape") setRenamingId(null)
+                  }}
+                  style={{ width: 120, padding: "0 8px" }}
+                />
+              ) : (
+                <button
+                  key={term.terminalId}
+                  role="tab"
+                  type="button"
+                  className={cn(
+                    "aa-term-tab",
+                    activeId === term.terminalId && "active",
+                    term.status === "exited" && "exited",
+                  )}
                   onClick={(event) => {
-                    event.stopPropagation()
+                    if (event.detail >= 3) {
+                      cancelScheduledRename()
+                      void closeTerminal(term.terminalId)
+                      return
+                    }
+                    setActiveId(term.terminalId)
+                  }}
+                  onAuxClick={(event) => {
+                    if (event.button !== 1) return
+                    event.preventDefault()
                     void closeTerminal(term.terminalId)
                   }}
-                  aria-label={t("closeTerminal", { label: term.label })}
+                  onMouseDown={(event) => {
+                    if (event.button === 1) event.preventDefault()
+                  }}
+                  onDoubleClick={() => scheduleRename(term)}
+                  title={`${term.label} · ${t("pid")} ${term.pid ?? "?"}${
+                    term.status === "exited" ? ` (${t("exitCode", { code: term.exitCode ?? "?" })})` : ""
+                  }`}
                 >
-                  <X className="size-3" />
-                </span>
-              </button>
-            ),
-          )}
-          <button
-            className="aa-term-add"
-            type="button"
-            onClick={addTerminal}
-            disabled={!canConnect || busy}
-            title={t("newTerminal")}
-            aria-label={t("newTerminal")}
-          >
-            <Plus className="size-3.5" />
-          </button>
-        </div>
+                  <span className="dot" />
+                  <span className="label">{term.label}</span>
+                  <span
+                    className="close"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      void closeTerminal(term.terminalId)
+                    }}
+                    aria-label={t("closeTerminal", { label: term.label })}
+                  >
+                    <X className="size-3" />
+                  </span>
+                </button>
+              ),
+            )}
+            <button
+              className="aa-term-add"
+              type="button"
+              onClick={addTerminal}
+              disabled={!canConnect || busy}
+              title={t("newTerminal")}
+              aria-label={t("newTerminal")}
+            >
+              <Plus className="size-3.5" />
+            </button>
+          </div>
+          <ScrollBar orientation="horizontal" />
+        </ScrollArea>
         <Separator orientation="vertical" className="aa-rt-sep" />
         <div className="aa-rt-acts">
           {onPopOut ? (

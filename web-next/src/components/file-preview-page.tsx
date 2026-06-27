@@ -19,6 +19,7 @@ import { useTranslations } from "next-intl"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
 import { Spinner } from "@/components/ui/spinner"
 import { MonacoCodeView, type MonacoCodeViewApi } from "@/components/monaco-code-view"
 import { dashboardApi } from "@/features/dashboard/api"
@@ -360,7 +361,14 @@ function BinaryPreview({
   const t = useTranslations("preview")
   const kind = previewKind(file.mediaType, file.name)
   if (objectUrl && kind === "image") {
-    return <div className="flex h-full items-center justify-center overflow-auto bg-muted/20 p-4"><img src={objectUrl} alt={file.name} className="max-h-full max-w-full object-contain" /></div>
+    return (
+      <ScrollArea className="h-full bg-muted/20" contentWide>
+        <div className="flex min-h-full min-w-full items-center justify-center p-4">
+          <img src={objectUrl} alt={file.name} className="max-h-full max-w-full object-contain" />
+        </div>
+        <ScrollBar orientation="horizontal" />
+      </ScrollArea>
+    )
   }
   if (objectUrl && kind === "video") {
     return <div className="flex h-full items-center justify-center bg-black p-4"><video src={objectUrl} controls className="max-h-full max-w-full" /></div>
