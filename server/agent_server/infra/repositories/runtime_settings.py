@@ -21,8 +21,8 @@ class RuntimeSettingsRepository:
         connector_id: str,
         *,
         user_id: str | None = None,
-    ) -> None:
-        query = select(connectors_t.c.id).where(
+    ) -> str:
+        query = select(connectors_t.c.id, connectors_t.c.user_id).where(
             connectors_t.c.id == connector_id,
             connectors_t.c.revoked == 0,
         )
@@ -32,6 +32,7 @@ class RuntimeSettingsRepository:
             row = (await conn.execute(query)).first()
         if row is None:
             raise KeyError(connector_id)
+        return str(row.user_id)
 
     async def get_device_settings_json(
         self,
@@ -49,29 +50,12 @@ class RuntimeSettingsRepository:
             ).first()
         return row.settings_json if row is not None else None
 
-    async def is_default_run_mode_configured(
-        self,
-        connector_id: str,
-        runtime: str,
-    ) -> bool:
-        async with self._engine.connect() as conn:
-            row = (
-                await conn.execute(
-                    select(device_agent_settings_t.c.default_run_mode_configured).where(
-                        device_agent_settings_t.c.connector_id == connector_id,
-                        device_agent_settings_t.c.runtime == runtime,
-                    )
-                )
-            ).first()
-        return bool(row.default_run_mode_configured) if row is not None else False
-
     async def upsert_device_settings_json(
         self,
         connector_id: str,
         runtime: str,
         *,
         settings_json: str,
-        default_run_mode_configured: bool | None = None,
         schema_version: int,
         updated_at: str,
     ) -> None:
@@ -89,8 +73,6 @@ class RuntimeSettingsRepository:
                 "schema_version": schema_version,
                 "updated_at": updated_at,
             }
-            if default_run_mode_configured is not None:
-                values["default_run_mode_configured"] = int(default_run_mode_configured)
             if existing is None:
                 await conn.execute(
                     insert(device_agent_settings_t).values(
@@ -121,6 +103,7 @@ class RuntimeSettingsRepository:
                 sessions_t.c.connector_id,
                 sessions_t.c.runtime,
                 sessions_t.c.runtime_settings_override,
+                connectors_t.c.user_id.label("connector_user_id"),
             )
             .join(connectors_t, connectors_t.c.id == sessions_t.c.connector_id)
             .where(sessions_t.c.id == session_id, connectors_t.c.revoked == 0)

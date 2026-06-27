@@ -62,6 +62,7 @@ class Store(
         self.runtime_config = RuntimeConfigService(
             self.instance_settings,
             self.runtime_settings,
+            self,
         )
 
         self._timeline_locks: dict[str, asyncio.Lock] = {}

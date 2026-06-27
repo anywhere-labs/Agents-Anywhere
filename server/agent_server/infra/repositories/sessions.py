@@ -13,6 +13,7 @@ class SessionRepositoryMixin:
         external_session_id: str | None,
         title: str | None,
         cwd: str | None,
+        runtime_settings_override: dict[str, Any] | None = None,
     ) -> SessionView:
         session_id = f"sess_{secrets.token_urlsafe(10)}"
         now = utc_now()
@@ -25,11 +26,22 @@ class SessionRepositoryMixin:
             connector = (await conn.execute(connector_q)).first()
             if connector is None:
                 raise KeyError(connector_id)
+            if runtime_settings_override is None and runtime in {"codex", "claude"}:
+                runtime_settings_override = await self.get_initial_runtime_settings_for_connector_agent(
+                    connector_id,
+                    runtime,
+                    user_id=user_id,
+                )
             await conn.execute(
                 insert(sessions_t).values(
                     id=session_id,
                     connector_id=connector_id,
                     runtime=runtime,
+                    runtime_settings_override=(
+                        _json_dumps(runtime_settings_override)
+                        if runtime_settings_override is not None
+                        else None
+                    ),
                     external_session_id=external_session_id,
                     title=title,
                     cwd=cwd,
@@ -57,7 +69,9 @@ class SessionRepositoryMixin:
         last_synced_at: str | None = None,
         source_observed_at: str | None = None,
         last_activity_at: str | None = None,
+        runtime_settings_override: dict[str, Any] | None = None,
     ) -> SessionView:
+        has_runtime_settings_override = runtime_settings_override is not None
         now = utc_now()
         async with self._engine.begin() as conn:
             connector = (
@@ -87,11 +101,21 @@ class SessionRepositoryMixin:
                 if existing is not None:
                     session_id = existing.id
             if existing is None:
+                if runtime_settings_override is None and runtime in {"codex", "claude"}:
+                    runtime_settings_override = await self.get_initial_runtime_settings_for_connector_agent(
+                        connector_id,
+                        runtime,
+                    )
                 await conn.execute(
                     insert(sessions_t).values(
                         id=session_id,
                         connector_id=connector_id,
                         runtime=runtime,
+                        runtime_settings_override=(
+                            _json_dumps(runtime_settings_override)
+                            if runtime_settings_override is not None
+                            else None
+                        ),
                         external_session_id=external_session_id,
                         title=title,
                         cwd=cwd,
@@ -139,6 +163,12 @@ class SessionRepositoryMixin:
                     values["source_observed_at"] = source_observed_at
                 if last_activity_at is not None:
                     values["last_activity_at"] = last_activity_at
+                if has_runtime_settings_override:
+                    values["runtime_settings_override"] = (
+                        _json_dumps(runtime_settings_override)
+                        if runtime_settings_override is not None
+                        else None
+                    )
                 semantic_changed = any(
                     field in values and values[field] != getattr(current, field)
                     for field in (
@@ -679,12 +709,8 @@ class SessionRepositoryMixin:
         override = _json_loads(row["runtime_settings_override"])
         runtime_override = override if isinstance(override, dict) else {}
         runtime_settings: dict[str, Any] | None = None
-        effective_run_mode: str | None = None
         try:
             runtime_settings = await self.get_effective_runtime_settings(session_id)
-            if runtime == "claude":
-                mode = runtime_settings.get("runMode")
-                effective_run_mode = mode if mode in {"chat", "terminal"} else "chat"
         except (KeyError, ValueError):
             runtime_settings = None
         title = row["title"]
@@ -720,7 +746,6 @@ class SessionRepositoryMixin:
             lastItemOrderSeq=latest.orderSeq if latest else None,
             sortAt=sort_at,
             updatedSeq=updated_seq,
-            effectiveRunMode=effective_run_mode,
             runtimeSettings=runtime_settings,
             runtimeSettingsOverride=runtime_override or None,
         )

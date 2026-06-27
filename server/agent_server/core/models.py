@@ -423,6 +423,7 @@ class SessionCreateRequest(BaseModel):
     externalSessionId: str | None = None
     title: str | None = None
     cwd: str | None = None
+    runtimeSettings: dict[str, Any] | None = None
     # Forwarded to the connector's runtime-create RPC. For codex these map to
     # `thread/start.approvalPolicy` and `thread/start.sandbox` — set to
     # "never"/"danger-full-access" to disable approval prompts during testing.
@@ -453,7 +454,6 @@ class SessionView(BaseModel):
     lastItemOrderSeq: int | None = None
     sortAt: str | None = None
     updatedSeq: int
-    effectiveRunMode: Literal["chat", "terminal"] | None = None
     runtimeSettings: dict[str, Any] | None = None
     runtimeSettingsOverride: dict[str, Any] | None = None
 
@@ -597,6 +597,7 @@ class AgentCatalogEntry(BaseModel):
     description: str | None = None
     isDefault: bool
     sortOrder: int
+    efforts: list["AgentCatalogEntry"] = Field(default_factory=list)
 
 
 class AgentCatalogResponse(BaseModel):
@@ -610,7 +611,6 @@ class UserAgentDefaultRuntime(BaseModel):
     enabled: bool = True
     settings: dict[str, Any] = Field(default_factory=dict)
     models: list[AgentCatalogEntry] = Field(default_factory=list)
-    efforts: list[AgentCatalogEntry] = Field(default_factory=list)
 
 
 class UserAgentDefaultsResponse(BaseModel):
@@ -622,15 +622,12 @@ class AgentCatalogEntryUpdate(BaseModel):
     key: str = Field(min_length=1)
     displayLabel: str = Field(min_length=1)
     description: str | None = None
-    isDefault: bool = False
     sortOrder: int = 0
+    efforts: list["AgentCatalogEntryUpdate"] | None = None
 
 
 class UserAgentDefaultRuntimeUpdate(BaseModel):
-    enabled: bool | None = None
-    settings: dict[str, Any] | None = None
     models: list[AgentCatalogEntryUpdate] | None = None
-    efforts: list[AgentCatalogEntryUpdate] | None = None
 
 
 class UserAgentDefaultsUpdateRequest(BaseModel):
@@ -771,7 +768,7 @@ class TerminalView(BaseModel):
     cwd: str
     cols: int
     rows: int
-    purpose: Literal["user", "primary_claude"] = "user"
+    purpose: Literal["user"] = "user"
     pid: int | None = None
     status: Literal["starting", "running", "exited"] = "running"
     exitCode: int | None = None

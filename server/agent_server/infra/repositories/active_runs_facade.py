@@ -10,7 +10,6 @@ class ActiveRunRepositoryMixin:
         session_id: str,
         runtime: str,
         status: str = "running",
-        run_mode: str | None = None,
         external_session_id: str | None = None,
         turn_id: str | None = None,
         params: dict[str, Any] | None = None,
@@ -19,7 +18,6 @@ class ActiveRunRepositoryMixin:
         await self.active_runs.upsert(
             session_id=session_id,
             runtime=runtime,
-            run_mode=run_mode,
             external_session_id=external_session_id,
             turn_id=turn_id,
             status=status,
@@ -45,7 +43,6 @@ class ActiveRunRepositoryMixin:
         return {
             "sessionId": row["session_id"],
             "runtime": row["runtime"],
-            "runMode": row["run_mode"],
             "externalSessionId": row["external_session_id"],
             "turnId": row["turn_id"],
             "status": row["status"],

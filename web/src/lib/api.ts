@@ -258,7 +258,6 @@ export type SessionView = {
   lastItemOrderSeq: number | null;
   sortAt: string | null;
   updatedSeq: number;
-  effectiveRunMode?: "chat" | "terminal" | null;
   runtimeSettings?: Record<string, unknown> | null;
   runtimeSettingsOverride?: Record<string, unknown> | null;
 };
@@ -270,6 +269,7 @@ export type AgentCatalogEntry = {
   description: string | null;
   isDefault: boolean;
   sortOrder: number;
+  efforts: AgentCatalogEntry[];
 };
 
 export type AgentCatalogResponse = {
@@ -283,7 +283,6 @@ export type UserAgentDefaultRuntime = {
   enabled: boolean;
   settings: Record<string, unknown>;
   models: AgentCatalogEntry[];
-  efforts: AgentCatalogEntry[];
 };
 
 export type UserAgentDefaultsResponse = {
@@ -295,15 +294,12 @@ export type AgentCatalogEntryUpdate = {
   key: string;
   displayLabel: string;
   description?: string | null;
-  isDefault?: boolean;
   sortOrder?: number;
+  efforts?: AgentCatalogEntryUpdate[];
 };
 
 export type UserAgentDefaultRuntimeUpdate = {
-  enabled?: boolean;
-  settings?: Record<string, unknown>;
   models?: AgentCatalogEntryUpdate[];
-  efforts?: AgentCatalogEntryUpdate[];
 };
 
 export type UserAgentDefaultsUpdate = {
@@ -314,6 +310,7 @@ export type RuntimeConfigOption = {
   value: string | boolean;
   label: string;
   description?: string | null;
+  efforts?: RuntimeConfigOption[] | null;
 };
 
 export type RuntimeConfigField = {
@@ -348,8 +345,6 @@ export type RuntimeSettingsResponse = {
   settings: Record<string, unknown>;
   runtimeSettings?: Record<string, unknown> | null;
   runtimeSettingsOverride?: Record<string, unknown> | null;
-  effectiveRunMode?: "chat" | "terminal" | null;
-  defaultRunModeConfigured: boolean;
   schemaVersion: number;
   serverTime: string;
 };
@@ -781,6 +776,7 @@ export const api = {
       runtime: string;
       title?: string;
       cwd?: string;
+      runtimeSettings?: Record<string, unknown> | null;
       approvalPolicy?: string;
       sandbox?: string;
     },

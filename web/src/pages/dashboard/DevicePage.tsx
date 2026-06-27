@@ -15,7 +15,6 @@ import { reportIsHealthy, runtimeAccent, runtimeLabel } from "../../lib/runtime"
 import { ConfirmModal } from "./ConfirmModal";
 import { AddAgentModal } from "./AddAgentModal";
 import { RuntimeSettingsForm } from "./RuntimeSettingsForm";
-import { RunModeGuide } from "./RunModeGuide";
 
 type SessionFilter = "active" | "archived" | "all";
 
@@ -85,7 +84,6 @@ export function DevicePage({
   // Agents-section state — kept lean now that there's no Refresh button.
   const [addOpen, setAddOpen] = useState(false);
   const [confirmRuntime, setConfirmRuntime] = useState<string | null>(null);
-  const [runModePromptOpen, setRunModePromptOpen] = useState(false);
   const [runtimeDeleteError, setRuntimeDeleteError] = useState<string | null>(
     null,
   );
@@ -115,7 +113,6 @@ export function DevicePage({
     setRenameError(null);
     setAddOpen(false);
     setConfirmRuntime(null);
-    setRunModePromptOpen(false);
     setRuntimeDeleteError(null);
     setConfirmRotate(false);
     setRotateBusy(false);
@@ -141,13 +138,6 @@ export function DevicePage({
     () => buildAgentRows(device.runtimeCapabilities),
     [device.runtimeCapabilities],
   );
-  const hasClaudeAgent = agentRows.some((row) => row.runtime === "claude");
-  const claudeSettingsResponse = agentSettings.claude;
-  const showClaudeRunModePrompt =
-    hasClaudeAgent && claudeSettingsResponse?.defaultRunModeConfigured === false;
-  const claudeSettings = agentSettings.claude?.settings ?? null;
-  const claudeSchema = agentSchemas.claude ?? null;
-  const claudeSettingsError = agentSettingsError.claude ?? null;
   const agentRuntimeKey = useMemo(
     () => agentRows.map((row) => row.runtime).join("\n"),
     [agentRows],
@@ -190,22 +180,29 @@ export function DevicePage({
     };
   }, [agentRuntimeKey, device.id, token]);
 
-  const patchAgentSettings = (runtime: string, settings: Record<string, unknown>) => {
+  const patchAgentSettings = async (
+    runtime: string,
+    settings: Record<string, unknown>,
+  ) => {
     setAgentSettingsError((prev) => ({ ...prev, [runtime]: null }));
-    api
-      .patchConnectorAgentSettings(token, device.id, runtime, settings)
-      .then((res) => {
-        setAgentSettings((prev) => ({ ...prev, [runtime]: res }));
-      })
-      .catch((err: unknown) => {
-        const msg =
-          err instanceof ApiError
-            ? err.detail
-            : err instanceof Error
-              ? err.message
-              : "Failed to save settings.";
-        setAgentSettingsError((prev) => ({ ...prev, [runtime]: msg }));
-      });
+    try {
+      const res = await api.patchConnectorAgentSettings(
+        token,
+        device.id,
+        runtime,
+        settings,
+      );
+      setAgentSettings((prev) => ({ ...prev, [runtime]: res }));
+    } catch (err) {
+      const msg =
+        err instanceof ApiError
+          ? err.detail
+          : err instanceof Error
+            ? err.message
+            : "Failed to save settings.";
+      setAgentSettingsError((prev) => ({ ...prev, [runtime]: msg }));
+      throw err;
+    }
   };
 
   const deviceSessions = sessions
@@ -493,22 +490,6 @@ export function DevicePage({
           >
             <span className="dot" />
             <span>{renameError}</span>
-          </div>
-        )}
-
-        {showClaudeRunModePrompt && (
-          <div className="kl-runmode-alert kl-dev-runmode-alert" role="alert">
-            <Icons.AlertCircle size={15} />
-            <div className="kl-runmode-alert-copy">
-              <strong>Set your default Claude Code run mode</strong>
-              <span>
-                This can affect whether Claude Code uses API/relay billing or
-                your local Claude Code login.
-              </span>
-            </div>
-            <button type="button" onClick={() => setRunModePromptOpen(true)}>
-              Choose mode
-            </button>
           </div>
         )}
 
@@ -925,17 +906,6 @@ export function DevicePage({
           <span>{deleteError}</span>
         </div>
       )}
-      {runModePromptOpen && (
-        <RuntimeConfigModal
-          runtime="claude"
-          schema={claudeSchema}
-          settings={claudeSettings}
-          settingsError={claudeSettingsError}
-          initialView="runModeGuide"
-          onClose={() => setRunModePromptOpen(false)}
-          onPatchSettings={(settings) => patchAgentSettings("claude", settings)}
-        />
-      )}
       {confirmArchiveAllOpen &&
         (() => {
           const verb = targetArchivedForAll ? "Archive" : "Unarchive";
@@ -978,14 +948,10 @@ function AgentRowView({
   settings: Record<string, unknown> | null;
   schema: RuntimeConfigSchema | null;
   settingsError: string | null;
-  onPatchSettings: (settings: Record<string, unknown>) => void;
+  onPatchSettings: (settings: Record<string, unknown>) => Promise<void>;
   onDelete: () => void;
 }) {
   const [configOpen, setConfigOpen] = useState(false);
-  const runMode =
-    row.runtime === "claude" && settings?.runMode === "terminal"
-      ? "terminal"
-      : "chat";
   return (
     <div className="kl-dev-agent-card">
       <div className="kl-dev-item kl-dev-agent-row">
@@ -1002,11 +968,6 @@ function AgentRowView({
           />
         </span>
         <span className="title">{runtimeLabel(row.runtime)}</span>
-        {row.runtime === "claude" && settings && (
-          <span className="kl-dev-agent-chip">
-            {runMode === "terminal" ? "Terminal mode" : "Chat mode"}
-          </span>
-        )}
         {!row.healthy && row.reason && (
           <span
             className="kl-dev-agent-warn"
@@ -1057,7 +1018,6 @@ function RuntimeConfigModal({
   schema,
   settings,
   settingsError,
-  initialView = "settings",
   onClose,
   onPatchSettings,
 }: {
@@ -1065,51 +1025,61 @@ function RuntimeConfigModal({
   schema: RuntimeConfigSchema | null;
   settings: Record<string, unknown> | null;
   settingsError: string | null;
-  initialView?: "settings" | "runModeGuide";
   onClose: () => void;
-  onPatchSettings: (settings: Record<string, unknown>) => void;
+  onPatchSettings: (settings: Record<string, unknown>) => Promise<void>;
 }) {
-  const [view, setView] = useState<"settings" | "runModeGuide">(initialView);
-  const savedRunMode = settings?.runMode === "terminal" ? "terminal" : "chat";
-  const [draftRunMode, setDraftRunMode] = useState<"chat" | "terminal">(
-    savedRunMode,
+  const [draftSettings, setDraftSettings] = useState<Record<string, unknown> | null>(
+    settings ? { ...settings } : null,
   );
-  const isRunModeGuide = runtime === "claude" && view === "runModeGuide";
-  useEffect(() => {
-    setDraftRunMode(savedRunMode);
-  }, [savedRunMode, isRunModeGuide]);
+  const [saving, setSaving] = useState(false);
+  const dirty = useMemo(
+    () => JSON.stringify(draftSettings ?? null) !== JSON.stringify(settings ?? null),
+    [draftSettings, settings],
+  );
 
-  const handleDoneRunMode = () => {
-    if (settings) {
-      onPatchSettings({ runMode: draftRunMode });
+  useEffect(() => {
+    setDraftSettings(settings ? { ...settings } : null);
+  }, [settings]);
+
+  const patchDraftSettings = (patch: Record<string, unknown>) => {
+    setDraftSettings((prev) => ({
+      ...(prev ?? settings ?? {}),
+      ...patch,
+    }));
+  };
+
+  const saveDraft = async (nextSettings = draftSettings) => {
+    if (!nextSettings || saving) return false;
+    setSaving(true);
+    try {
+      await onPatchSettings(nextSettings);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      setSaving(false);
     }
-    if (initialView === "runModeGuide") {
+  };
+
+  const handleSave = async () => {
+    if (!dirty) {
       onClose();
-    } else {
-      setView("settings");
+      return;
     }
+    const saved = await saveDraft();
+    if (saved) onClose();
   };
 
   return (
     <div className="kl-modal-backdrop" onClick={onClose}>
       <div
-        className={
-          isRunModeGuide
-            ? "kl-modal kl-runtime-config-modal guide-open"
-            : "kl-modal kl-runtime-config-modal"
-        }
+        className="kl-modal kl-runtime-config-modal"
         role="dialog"
         aria-label={`${runtimeLabel(runtime)} configuration`}
         onClick={(event) => event.stopPropagation()}
       >
         <div className="kl-runtime-config-viewport">
-          <div
-            className={
-              isRunModeGuide
-                ? "kl-runtime-config-pages show-guide"
-                : "kl-runtime-config-pages"
-            }
-          >
+          <div className="kl-runtime-config-pages">
             <div className="kl-runtime-config-page">
               <div className="kl-runtime-config-hd">
                 <div>
@@ -1123,34 +1093,25 @@ function RuntimeConfigModal({
               <RuntimeSettingsForm
                 runtime={runtime}
                 schema={schema}
-                settings={settings}
+                settings={draftSettings}
                 scope="device"
                 className="kl-dev-agent-settings kl-runtime-settings-form"
-                disabled={!settings}
-                onExplainRunMode={
-                  runtime === "claude" ? () => setView("runModeGuide") : undefined
-                }
-                onPatch={onPatchSettings}
+                disabled={!draftSettings || saving}
+                onPatch={patchDraftSettings}
               />
               {settingsError && (
                 <div className="kl-dev-agent-error">{settingsError}</div>
               )}
               <div className="kl-modal-actions">
-                <button type="button" className="kl-btn ghost" onClick={onClose}>
-                  Save
+                <button
+                  type="button"
+                  className="kl-btn ghost"
+                  onClick={handleSave}
+                  disabled={!draftSettings || !dirty || saving}
+                >
+                  {saving ? "Saving..." : "Save"}
                 </button>
               </div>
-            </div>
-            <div className="kl-runtime-config-page">
-              <RunModeGuide
-                value={draftRunMode}
-                disabled={!settings}
-                showBack={initialView !== "runModeGuide"}
-                onBack={() => setView("settings")}
-                onClose={onClose}
-                onDone={handleDoneRunMode}
-                onSelect={setDraftRunMode}
-              />
             </div>
           </div>
         </div>

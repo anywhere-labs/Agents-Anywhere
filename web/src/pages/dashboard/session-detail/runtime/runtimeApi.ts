@@ -70,7 +70,7 @@ export type TerminalView = {
   cwd: string;
   cols: number;
   rows: number;
-  purpose: "user" | "primary_claude";
+  purpose: "user";
   pid: number | null;
   status: "starting" | "running" | "exited";
   exitCode: number | null;
@@ -211,12 +211,6 @@ export function makeRuntimeApi(opts: {
       return call(`/sessions/${sessionId}/terminals`, {
         method: "POST",
         body: JSON.stringify(args),
-      });
-    },
-    ensurePrimaryTerminal(): Promise<{ terminal: TerminalView }> {
-      if (demo) return Promise.resolve(demoCreateTerminal({ cols: 120, rows: 36, label: "Claude" }));
-      return call(`/sessions/${sessionId}/terminal/ensure-primary`, {
-        method: "POST",
       });
     },
     renameTerminal(tid: string, label: string): Promise<{ terminal: TerminalView }> {

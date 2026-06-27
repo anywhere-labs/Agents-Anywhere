@@ -12,7 +12,6 @@ from agent_server.api.sessions_terminal import _send_terminal_ws_error
 from agent_server.app import create_app
 from agent_server.infra.connector_rpc import ConnectorOfflineError, ConnectorRpcError, ConnectorRpcManager
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
-from agent_server.services.terminal import TerminalService
 
 
 def make_client(tmp_path):
@@ -1442,15 +1441,23 @@ def test_agent_catalog_lists_seeded_claude_entries(tmp_path):
         "claude-haiku-4-5",
         "claude-opus-4-6",
     ]
-    assert next(e for e in models["entries"] if e["isDefault"])["key"] == "claude-opus-4-7"
+    assert next(e for e in models["entries"] if e["isDefault"])["key"] == "claude-opus-4-7[1m]"
+    assert [entry["key"] for entry in models["entries"][0]["efforts"]] == [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+    ]
+    assert models["entries"][3]["efforts"] == []
 
     efforts = client.get("/agents/claude/efforts", headers=headers).json()
     effort_keys = [entry["key"] for entry in efforts["entries"]]
     assert effort_keys == ["low", "medium", "high", "xhigh", "max"]
-    assert next(e for e in efforts["entries"] if e["isDefault"])["key"] == "xhigh"
+    assert next(e for e in efforts["entries"] if e["isDefault"])["key"] == "max"
 
 
-def test_codex_agent_catalog_uses_user_default_schema_options(tmp_path):
+def test_codex_agent_catalog_lists_seeded_entries(tmp_path):
     client = make_client(tmp_path)
     headers = auth_headers(client)
 
@@ -1467,6 +1474,7 @@ def test_codex_agent_catalog_uses_user_default_schema_options(tmp_path):
         "gpt-5.3-codex",
         "gpt-5.2",
     ]
+    assert next(e for e in models["entries"] if e["isDefault"])["key"] == "gpt-5.5"
 
     efforts = client.get("/agents/codex/efforts", headers=headers).json()
     assert efforts["runtime"] == "codex"
@@ -1476,6 +1484,7 @@ def test_codex_agent_catalog_uses_user_default_schema_options(tmp_path):
         "high",
         "xhigh",
     ]
+    assert next(e for e in efforts["entries"] if e["isDefault"])["key"] == "xhigh"
 
 
 def test_agent_catalog_requires_authentication(tmp_path):
@@ -2638,7 +2647,6 @@ def test_interrupt_not_found_result_clears_stale_active_run(tmp_path):
         await client.app.state.store.start_active_run(
             session_id=session_id,
             runtime="codex",
-            run_mode="chat",
             external_session_id="thr_missing",
             params={"content": "hi"},
         )
@@ -2723,7 +2731,6 @@ def test_claude_chat_active_run_merges_history_timeline_sync(tmp_path):
     active = asyncio.run(client.app.state.store.get_active_run(session_id))
     assert active is not None
     assert active["runtime"] == "claude"
-    assert active["runMode"] == "chat"
 
     response = client.post(
         "/connector/ingest",
@@ -3000,124 +3007,6 @@ def test_timeline_sync_appends_when_connector_order_seq_restarts(tmp_path):
     assert [item["id"] for item in state["items"]] == ["tl_history", "tl_synced_new"]
 
 
-def test_claude_terminal_ensure_primary_creates_structured_resume_terminal(tmp_path):
-    client = make_client(tmp_path)
-    connector_id, _, _, headers = create_connector_and_session(client)
-    fake_rpc = FakeLocalRpc()
-    client.app.state.rpc = fake_rpc
-
-    async def seed() -> str:
-        await client.app.state.store.patch_device_agent_settings(
-            connector_id,
-            "claude",
-            {
-                "runMode": "terminal",
-                "permissionMode": "bypassPermissions",
-                "model": "claude-opus-4-8[1M]",
-                "effort": "max",
-            },
-        )
-        session = await client.app.state.store.upsert_connector_session(
-            connector_id=connector_id,
-            session_id="sess_claude_terminal",
-            runtime="claude",
-            external_session_id="uuid-claude-terminal",
-            title="Claude Terminal",
-            cwd="/repo",
-            status="idle",
-        )
-        await client.app.state.store.set_connector_status(connector_id, "online")
-        return session.id
-
-    session_id = asyncio.run(seed())
-
-    response = client.post(
-        f"/sessions/{session_id}/terminal/ensure-primary",
-        headers=headers,
-    )
-
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["terminal"]["label"] == "Claude"
-    assert body["terminal"]["purpose"] == "primary_claude"
-    assert fake_rpc.requests[-1][1] == "terminal.create"
-    params = fake_rpc.requests[-1][2]
-    assert params["command"] == "claude"
-    assert params["args"] == [
-        "--resume",
-        "uuid-claude-terminal",
-        "--permission-mode",
-        "bypassPermissions",
-        "--setting-sources",
-        "project,local",
-        "--model",
-        "claude-opus-4-8[1M]",
-        "--effort",
-        "max",
-    ]
-    assert params["profile"] == "claude"
-    assert params["cwd"] == "/repo"
-
-    again = client.post(
-        f"/sessions/{session_id}/terminal/ensure-primary",
-        headers=headers,
-    )
-    assert again.status_code == 200
-    assert again.json()["terminal"]["terminalId"] == body["terminal"]["terminalId"]
-    assert [request[1] for request in fake_rpc.requests].count("terminal.create") == 1
-
-
-def test_terminal_list_hides_primary_claude_terminal(tmp_path):
-    client = make_client(tmp_path)
-    connector_id, _, _, headers = create_connector_and_session(client)
-    fake_rpc = FakeLocalRpc()
-    client.app.state.rpc = fake_rpc
-
-    async def seed() -> str:
-        await client.app.state.store.patch_device_agent_settings(
-            connector_id,
-            "claude",
-            {"runMode": "terminal"},
-        )
-        session = await client.app.state.store.upsert_connector_session(
-            connector_id=connector_id,
-            session_id="sess_claude_terminal",
-            runtime="claude",
-            external_session_id="uuid-claude-terminal",
-            title="Claude Terminal",
-            cwd="/repo",
-            status="idle",
-        )
-        await client.app.state.store.set_connector_status(connector_id, "online")
-        return session.id
-
-    session_id = asyncio.run(seed())
-
-    primary = client.post(
-        f"/sessions/{session_id}/terminal/ensure-primary",
-        headers=headers,
-    )
-    assert primary.status_code == 200, primary.text
-
-    listing = client.get(f"/sessions/{session_id}/terminals", headers=headers)
-    assert listing.status_code == 200, listing.text
-    assert listing.json()["terminals"] == []
-
-    created = client.post(
-        f"/sessions/{session_id}/terminals",
-        headers=headers,
-        json={"cols": 80, "rows": 24},
-    )
-    assert created.status_code == 200, created.text
-    assert created.json()["terminal"]["purpose"] == "user"
-
-    listing = client.get(f"/sessions/{session_id}/terminals", headers=headers)
-    assert listing.status_code == 200, listing.text
-    assert [terminal["terminalId"] for terminal in listing.json()["terminals"]] == [
-        created.json()["terminal"]["terminalId"]
-    ]
-
-
 def test_user_terminal_create_cleans_stale_ephemeral_groups(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, session_id, headers = create_connector_and_session(client)
@@ -3136,7 +3025,7 @@ def test_user_terminal_create_cleans_stale_ephemeral_groups(tmp_path):
     )
     assert first.status_code == 200, first.text
     first_id = first.json()["terminal"]["terminalId"]
-    assert first.json()["terminal"]["label"] == "zsh"
+    assert first.json()["terminal"]["label"] == "Shell"
 
     second = client.post(
         f"/sessions/{session_id}/terminals",
@@ -3145,7 +3034,7 @@ def test_user_terminal_create_cleans_stale_ephemeral_groups(tmp_path):
     )
     assert second.status_code == 200, second.text
     second_id = second.json()["terminal"]["terminalId"]
-    assert second.json()["terminal"]["label"] == "zsh 2"
+    assert second.json()["terminal"]["label"] == "Shell 2"
     assert fake_rpc.terminals[first_id]["closed"] is False
 
     third = client.post(
@@ -3155,7 +3044,7 @@ def test_user_terminal_create_cleans_stale_ephemeral_groups(tmp_path):
     )
     assert third.status_code == 200, third.text
     third_id = third.json()["terminal"]["terminalId"]
-    assert third.json()["terminal"]["label"] == "zsh"
+    assert third.json()["terminal"]["label"] == "Shell"
 
     assert fake_rpc.terminals[first_id]["closed"] is True
     assert fake_rpc.terminals[second_id]["closed"] is True
@@ -3226,53 +3115,10 @@ def test_connector_terminal_lifecycle_uses_workspace_scope(tmp_path):
     assert listing.json()["terminals"] == []
 
 
-def test_user_terminal_cleanup_does_not_close_primary_claude_terminal(tmp_path):
-    client = make_client(tmp_path)
-    connector_id, _, _, headers = create_connector_and_session(client)
-    fake_rpc = FakeLocalRpc()
-    client.app.state.rpc = fake_rpc
-
-    async def seed() -> str:
-        await client.app.state.store.patch_device_agent_settings(
-            connector_id,
-            "claude",
-            {"runMode": "terminal"},
-        )
-        session = await client.app.state.store.upsert_connector_session(
-            connector_id=connector_id,
-            session_id="sess_claude_terminal_cleanup",
-            runtime="claude",
-            external_session_id="uuid-claude-terminal",
-            title="Claude Terminal",
-            cwd="/repo",
-            status="idle",
-        )
-        await client.app.state.store.set_connector_status(connector_id, "online")
-        return session.id
-
-    session_id = asyncio.run(seed())
-
-    primary = client.post(
-        f"/sessions/{session_id}/terminal/ensure-primary",
-        headers=headers,
-    )
-    assert primary.status_code == 200, primary.text
-    primary_id = primary.json()["terminal"]["terminalId"]
-
-    created = client.post(
-        f"/sessions/{session_id}/terminals",
-        headers=headers,
-        json={"cols": 80, "rows": 24, "ephemeralGroupId": "panel_a"},
-    )
-    assert created.status_code == 200, created.text
-
-    assert fake_rpc.terminals[primary_id]["closed"] is False
-    assert fake_rpc.terminals[created.json()["terminal"]["terminalId"]]["closed"] is False
-
-
-def test_terminal_broker_removes_connector_ephemeral_terminals_only(tmp_path):
+def test_terminal_broker_removes_connector_user_terminals_only(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, session_id, _ = create_connector_and_session(client)
+    other_connector_id, _, other_session_id, _ = create_connector_and_session(client)
 
     async def seed() -> tuple[str, str]:
         user_terminal = await client.app.state.terminal_broker.register(
@@ -3285,19 +3131,19 @@ def test_terminal_broker_removes_connector_ephemeral_terminals_only(tmp_path):
             rows=24,
             purpose="user",
         )
-        primary_terminal = await client.app.state.terminal_broker.register(
-            session_id=session_id,
-            connector_id=connector_id,
-            label="Claude",
-            cwd="/repo",
-            shell="",
-            cols=120,
-            rows=36,
-            purpose="primary_claude",
+        other_terminal = await client.app.state.terminal_broker.register(
+            session_id=other_session_id,
+            connector_id=other_connector_id,
+            label="zsh",
+            cwd="/other",
+            shell="zsh",
+            cols=80,
+            rows=24,
+            purpose="user",
         )
-        return user_terminal.id, primary_terminal.id
+        return user_terminal.id, other_terminal.id
 
-    user_terminal_id, primary_terminal_id = asyncio.run(seed())
+    user_terminal_id, other_terminal_id = asyncio.run(seed())
 
     removed = asyncio.run(
         client.app.state.terminal_broker.remove_ephemeral_for_connector(connector_id)
@@ -3305,7 +3151,7 @@ def test_terminal_broker_removes_connector_ephemeral_terminals_only(tmp_path):
 
     assert [terminal.id for terminal in removed] == [user_terminal_id]
     assert client.app.state.terminal_broker.get(user_terminal_id) is None
-    assert client.app.state.terminal_broker.get(primary_terminal_id) is not None
+    assert client.app.state.terminal_broker.get(other_terminal_id) is not None
 
 
 def test_terminal_broker_forwards_browser_events_to_connector_relay(tmp_path):
@@ -3368,346 +3214,6 @@ def test_user_terminal_resize_removes_terminal_missing_on_connector(tmp_path):
     listing = client.get(f"/sessions/{session_id}/terminals", headers=headers)
     assert listing.status_code == 200, listing.text
     assert listing.json()["terminals"] == []
-
-
-def test_claude_terminal_ensure_primary_recreates_missing_connector_terminal(tmp_path):
-    client = make_client(tmp_path)
-    connector_id, _, _, headers = create_connector_and_session(client)
-    fake_rpc = FakeLocalRpc()
-    client.app.state.rpc = fake_rpc
-
-    async def seed() -> str:
-        await client.app.state.store.patch_device_agent_settings(
-            connector_id,
-            "claude",
-            {"runMode": "terminal"},
-        )
-        session = await client.app.state.store.upsert_connector_session(
-            connector_id=connector_id,
-            session_id="sess_claude_terminal",
-            runtime="claude",
-            external_session_id="uuid-claude-terminal",
-            title="Claude Terminal",
-            cwd="/repo",
-            status="idle",
-        )
-        await client.app.state.store.set_connector_status(connector_id, "online")
-        return session.id
-
-    session_id = asyncio.run(seed())
-
-    first = client.post(
-        f"/sessions/{session_id}/terminal/ensure-primary",
-        headers=headers,
-    )
-    assert first.status_code == 200, first.text
-    old_terminal_id = first.json()["terminal"]["terminalId"]
-    fake_rpc.terminals.pop(old_terminal_id)
-
-    again = client.post(
-        f"/sessions/{session_id}/terminal/ensure-primary",
-        headers=headers,
-    )
-
-    assert again.status_code == 200, again.text
-    new_terminal_id = again.json()["terminal"]["terminalId"]
-    assert new_terminal_id != old_terminal_id
-    assert [request[1] for request in fake_rpc.requests] == [
-        "terminal.create",
-        "terminal.list",
-        "terminal.create",
-    ]
-    assert fake_rpc.requests[-1][2]["args"] == [
-        "--resume",
-        "uuid-claude-terminal",
-        "--permission-mode",
-        "acceptEdits",
-        "--setting-sources",
-        "project,local",
-    ]
-
-
-def test_claude_terminal_ensure_primary_reuses_local_terminal_when_list_times_out(tmp_path):
-    client = make_client(tmp_path)
-    connector_id, _, _, headers = create_connector_and_session(client)
-    fake_rpc = FakeLocalRpc()
-    client.app.state.rpc = fake_rpc
-
-    async def seed() -> str:
-        await client.app.state.store.patch_device_agent_settings(
-            connector_id,
-            "claude",
-            {"runMode": "terminal"},
-        )
-        session = await client.app.state.store.upsert_connector_session(
-            connector_id=connector_id,
-            session_id="sess_claude_terminal",
-            runtime="claude",
-            external_session_id="uuid-claude-terminal",
-            title="Claude Terminal",
-            cwd="/repo",
-            status="idle",
-        )
-        await client.app.state.store.set_connector_status(connector_id, "online")
-        return session.id
-
-    session_id = asyncio.run(seed())
-
-    first = client.post(
-        f"/sessions/{session_id}/terminal/ensure-primary",
-        headers=headers,
-    )
-    assert first.status_code == 200, first.text
-    terminal_id = first.json()["terminal"]["terminalId"]
-    fake_rpc.timeout_terminal_list = True
-
-    again = client.post(
-        f"/sessions/{session_id}/terminal/ensure-primary",
-        headers=headers,
-    )
-
-    assert again.status_code == 200, again.text
-    assert again.json()["terminal"]["terminalId"] == terminal_id
-    assert [request[1] for request in fake_rpc.requests] == [
-        "terminal.create",
-        "terminal.list",
-    ]
-
-
-def test_claude_terminal_ensure_primary_recreates_stale_starting_terminal(tmp_path):
-    client = make_client(tmp_path)
-    connector_id, _, _, _ = create_connector_and_session(client)
-    fake_rpc = FakeLocalRpc()
-
-    async def seed() -> str:
-        await client.app.state.store.patch_device_agent_settings(
-            connector_id,
-            "claude",
-            {"runMode": "terminal"},
-        )
-        session = await client.app.state.store.upsert_connector_session(
-            connector_id=connector_id,
-            session_id="sess_claude_terminal",
-            runtime="claude",
-            external_session_id="uuid-claude-terminal",
-            title="Claude Terminal",
-            cwd="/repo",
-            status="idle",
-        )
-        await client.app.state.store.set_connector_status(connector_id, "online")
-        return session.id
-
-    async def exercise() -> tuple[str, str]:
-        session_id = await seed()
-        stale = await client.app.state.terminal_broker.register(
-            session_id=session_id,
-            connector_id=connector_id,
-            label="Claude",
-            cwd="/repo",
-            shell="",
-            cols=120,
-            rows=36,
-            purpose="primary_claude",
-            launch_signature='["claude",["--resume","uuid-claude-terminal","--permission-mode","acceptEdits","--setting-sources","project,local"]]',
-        )
-        service = TerminalService(
-            client.app.state.store,
-            fake_rpc,  # type: ignore[arg-type]
-            client.app.state.terminal_broker,
-        )
-        recreated = await service.ensure_primary_claude(session_id, user_id=ADMIN_USER)
-        return stale.id, recreated.terminal.terminalId
-
-    stale_id, recreated_id = asyncio.run(exercise())
-
-    assert recreated_id != stale_id
-    assert [request[1] for request in fake_rpc.requests] == [
-        "terminal.list",
-        "terminal.close",
-        "terminal.create",
-    ]
-    assert fake_rpc.requests[-1][2]["terminalId"] == recreated_id
-
-
-def test_claude_terminal_ensure_primary_recreates_when_launch_settings_change(tmp_path):
-    client = make_client(tmp_path)
-    connector_id, _, _, headers = create_connector_and_session(client)
-    fake_rpc = FakeLocalRpc()
-    client.app.state.rpc = fake_rpc
-
-    async def seed() -> str:
-        await client.app.state.store.patch_device_agent_settings(
-            connector_id,
-            "claude",
-            {
-                "runMode": "terminal",
-                "permissionMode": "acceptEdits",
-                "model": "claude-sonnet-4-6",
-                "effort": "low",
-            },
-        )
-        session = await client.app.state.store.upsert_connector_session(
-            connector_id=connector_id,
-            session_id="sess_claude_terminal",
-            runtime="claude",
-            external_session_id="uuid-claude-terminal",
-            title="Claude Terminal",
-            cwd="/repo",
-            status="idle",
-        )
-        await client.app.state.store.set_connector_status(connector_id, "online")
-        return session.id
-
-    session_id = asyncio.run(seed())
-
-    first = client.post(
-        f"/sessions/{session_id}/terminal/ensure-primary",
-        headers=headers,
-    )
-    assert first.status_code == 200, first.text
-    old_terminal_id = first.json()["terminal"]["terminalId"]
-
-    async def update_settings() -> None:
-        await client.app.state.store.patch_device_agent_settings(
-            connector_id,
-            "claude",
-            {
-                "permissionMode": "bypassPermissions",
-                "model": "claude-opus-4-8[1M]",
-                "effort": "max",
-            },
-        )
-
-    asyncio.run(update_settings())
-
-    again = client.post(
-        f"/sessions/{session_id}/terminal/ensure-primary",
-        headers=headers,
-    )
-
-    assert again.status_code == 200, again.text
-    new_terminal_id = again.json()["terminal"]["terminalId"]
-    assert new_terminal_id != old_terminal_id
-    assert [request[1] for request in fake_rpc.requests] == [
-        "terminal.create",
-        "terminal.close",
-        "terminal.create",
-    ]
-    assert fake_rpc.requests[1][2]["terminalId"] == old_terminal_id
-    assert fake_rpc.requests[-1][2]["args"] == [
-        "--resume",
-        "uuid-claude-terminal",
-        "--permission-mode",
-        "bypassPermissions",
-        "--setting-sources",
-        "project,local",
-        "--model",
-        "claude-opus-4-8[1M]",
-        "--effort",
-        "max",
-    ]
-
-
-def test_claude_terminal_ensure_primary_serializes_concurrent_launch_recreate(tmp_path):
-    client = make_client(tmp_path)
-    connector_id, _, _, _ = create_connector_and_session(client)
-    fake_rpc = FakeLocalRpc()
-    fake_rpc.delay_terminal_close = 0.01
-    client.app.state.rpc = fake_rpc
-
-    async def seed() -> str:
-        await client.app.state.store.patch_device_agent_settings(
-            connector_id,
-            "claude",
-            {
-                "runMode": "terminal",
-                "permissionMode": "acceptEdits",
-                "model": "claude-sonnet-4-6",
-                "effort": "low",
-            },
-        )
-        session = await client.app.state.store.upsert_connector_session(
-            connector_id=connector_id,
-            session_id="sess_claude_terminal",
-            runtime="claude",
-            external_session_id="uuid-claude-terminal",
-            title="Claude Terminal",
-            cwd="/repo",
-            status="idle",
-        )
-        await client.app.state.store.set_connector_status(connector_id, "online")
-        return session.id
-
-    async def exercise() -> list[str]:
-        session_id = await seed()
-        service = TerminalService(
-            client.app.state.store,
-            fake_rpc,  # type: ignore[arg-type]
-            client.app.state.terminal_broker,
-        )
-        first = await service.ensure_primary_claude(session_id, user_id=ADMIN_USER)
-        old_terminal_id = first.terminal.terminalId
-        await client.app.state.store.patch_device_agent_settings(
-            connector_id,
-            "claude",
-            {
-                "permissionMode": "bypassPermissions",
-                "model": "claude-opus-4-8[1M]",
-                "effort": "max",
-            },
-        )
-
-        recreated = await asyncio.gather(
-            service.ensure_primary_claude(session_id, user_id=ADMIN_USER),
-            service.ensure_primary_claude(session_id, user_id=ADMIN_USER),
-        )
-        return [
-            old_terminal_id,
-            recreated[0].terminal.terminalId,
-            recreated[1].terminal.terminalId,
-        ]
-
-    old_terminal_id, first_new_id, second_new_id = asyncio.run(exercise())
-
-    assert first_new_id == second_new_id
-    assert first_new_id != old_terminal_id
-    assert [request[1] for request in fake_rpc.requests] == [
-        "terminal.create",
-        "terminal.close",
-        "terminal.create",
-        "terminal.list",
-    ]
-    assert [request[1] for request in fake_rpc.requests].count("terminal.close") == 1
-    assert [request[1] for request in fake_rpc.requests].count("terminal.create") == 2
-    assert fake_rpc.requests[1][2]["terminalId"] == old_terminal_id
-    assert fake_rpc.requests[2][2]["args"] == [
-        "--resume",
-        "uuid-claude-terminal",
-        "--permission-mode",
-        "bypassPermissions",
-        "--setting-sources",
-        "project,local",
-        "--model",
-        "claude-opus-4-8[1M]",
-        "--effort",
-        "max",
-    ]
-
-
-def test_claude_terminal_ensure_primary_rejects_chat_mode(tmp_path):
-    client = make_client(tmp_path)
-    connector_id, _, _, headers = create_connector_and_session(client)
-    fake_rpc = FakeLocalRpc()
-    client.app.state.rpc = fake_rpc
-    session_id = _create_claude_session(client, connector_id, headers, fake_rpc)
-
-    response = client.post(
-        f"/sessions/{session_id}/terminal/ensure-primary",
-        headers=headers,
-    )
-
-    assert response.status_code == 409
-    assert response.json()["detail"] == "session is not in Claude terminal mode"
 
 
 def test_interrupt_does_not_mark_session_idle_before_turn_end(tmp_path):
