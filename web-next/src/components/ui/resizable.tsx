@@ -30,7 +30,7 @@ function ResizablePanelGroup({
 }
 
 function ResizablePanel({ className, ...props }: React.ComponentProps<typeof Panel>) {
-  return <Panel data-slot="resizable-panel" className={cn("min-w-0 min-h-0 overscroll-contain", className)} {...props} />
+  return <Panel data-slot="resizable-panel" className={cn("min-w-0 min-h-0", className)} {...props} />
 }
 
 function ResizableHandle({
