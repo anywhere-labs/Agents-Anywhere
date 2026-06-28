@@ -16,7 +16,7 @@ Run agents on your own laptop, remote devbox, or cloud sandbox. Control sessions
 ![Yarn](https://img.shields.io/badge/Yarn-4.6-2C8EBB)
 ![Docker](https://img.shields.io/badge/Docker-ready-2496ED)
 
-[Docker Quickstart](#quickstart-run-the-full-app-with-docker) · [Pair Connector](#pair-and-start-the-connector) · [Docker Docs](docker/README.md) · [简体中文](README.zh-CN.md)
+[Docker Quickstart](#quickstart-run-the-full-app-with-docker) · [Onboarding](#onboarding) · [Android APK](https://github.com/anywhere-labs/Agents-Anywhere/releases/tag/v0.1.0) · [Connector App](https://github.com/anywhere-labs/Agents-Anywhere/releases) · [Docker Docs](docker/README.md) · [简体中文](README.zh-CN.md)
 
 ![Agents Anywhere session workspace](docs/screenshots/hero.png)
 
@@ -28,8 +28,11 @@ Watch long-running sessions, approve actions, inspect files, and open a terminal
 
 ---
 
+> [!IMPORTANT]
+> 中国区 Beta 已上线，目前免费试用，仅对中国用户开放。想申请试用，请跳转到 [Beta Access And Contact](#beta-access-and-contact)，扫码进群并联系管理员。
+
 > **Status: open-source development.**
-> This repository contains the full Web frontend, FastAPI backend, and Python Connector CLI. It can run locally or be self-hosted with Docker. The primary client today is the Web console; mobile browsers are supported, and native mobile/desktop clients are in development.
+> This repository contains the full Web frontend, FastAPI backend, Python Connector CLI, Windows/macOS Connector app, and Android native client. It can run locally or be self-hosted with Docker. The primary clients today are the Web console and the Android app; iOS is still in development.
 
 ## What Is Agents Anywhere?
 
@@ -39,7 +42,7 @@ Agents Anywhere adds a remote control plane:
 
 - The agent still runs on your machine, with your local account, local files, and local permissions.
 - The Connector runs next to the agent and syncs runtime state, safe filesystem operations, shell/terminal capabilities, and approval requests to the backend.
-- The Web console connects to the backend so you can inspect sessions, take over work, approve actions, browse files, and open terminals.
+- The Web console and Android app connect to the backend so you can chat with sessions, take over work, approve actions, browse files, and open terminals.
 
 **It is the remote, not a new agent host.** Your code is not moved into the relay service for execution, and your model accounts and model bills remain with your own Claude Code / Codex toolchain.
 
@@ -53,7 +56,7 @@ Without a remote control plane:
 - If you walk away, the task can block on an approval or error.
 - Multiple machines, sessions, and runtimes become hard to manage together.
 
-Agents Anywhere turns those long-running tasks into a workspace you can reopen at any time: check state, inspect files, watch output, approve, interrupt, continue, and switch devices from the same Web UI.
+Agents Anywhere turns those long-running tasks into a workspace you can reopen at any time: check state, inspect files, watch output, approve, interrupt, continue, and switch devices from the Web console or Android app.
 
 ## Product Preview
 
@@ -71,7 +74,7 @@ Devices and sessions are collected in one workspace, so you can switch across ma
 
 > This screenshot reflects the product direction at the time it was captured. Agents Anywhere is iterating quickly, so the actual UI may differ.
 
-Native mobile clients are in development. Today, you can also use the Web console from a mobile browser for status checks, device management, and lightweight approvals.
+The Android native client is a full first-class client for mobile access to sessions, devices, approvals, files, terminals, and runtime state. iOS is still in development. You can also use the Web console from a mobile browser when you prefer a browser-based mobile workflow.
 
 ## Current Capabilities
 
@@ -80,9 +83,9 @@ Native mobile clients are in development. Today, you can also use the Web consol
 - **Approvals and sync.** Supports interrupt, sync, approval resolution, and timeline polling/SSE.
 - **Local file access.** Browse workspaces, read/write files, upload content, and download content through an online Connector.
 - **Remote shell and terminal.** Run one-shot shell commands, shell tasks, and interactive terminals.
-- **Device pairing.** Start from a Web-generated token command or from `uvx anywhere-cli pair` with a pairing code.
+- **Device pairing.** Pair the machine that owns your workspace through the Windows/macOS Connector app or the Linux Connector CLI.
 - **Self-hosted backend.** The FastAPI backend supports SQLite for local development and PostgreSQL for production-style deployments.
-- **Web console.** Next.js + shadcn frontend for auth, devices, workspaces, runtime settings, team/admin management, and session detail.
+- **Web and Android clients.** Use the Web console or Android app to manage sessions, devices, approvals, files, terminals, and remote control workflows.
 
 ## Supported Agents And Runtimes
 
@@ -102,25 +105,24 @@ Agents Anywhere does not replace your agent. It runs next to an existing runtime
 
 Connector adapters are extensible. New runtimes should reuse the existing session, timeline, approval, filesystem, and terminal capabilities where possible.
 
-## Supported Client Platforms
+## Supported Client And Connector Platforms
 
 ![Web](https://img.shields.io/badge/Web-primary%20client-111111)
 ![iOS](https://img.shields.io/badge/iOS-in%20development-lightgrey)
-![Android](https://img.shields.io/badge/Android-in%20development-lightgrey)
-![Desktop](https://img.shields.io/badge/Desktop-coming%20soon-lightgrey)
+![Android](https://img.shields.io/badge/Android-available-3DDC84)
+![Desktop Connector](https://img.shields.io/badge/Desktop%20Connector-available-111111)
 
 | Platform / surface | Current status | Notes |
 | --- | --- | --- |
-| Web console | Primary supported client | Desktop browsers are the main target today. Mobile browsers are usable for status checks, approvals, device management, and lightweight session control. |
-| Connector CLI | Primary runtime bridge | Runs on the machine that owns the workspace and local agent runtime. Platform behavior depends on the local shell, filesystem, and installed Codex / Claude toolchain. |
-| iOS | Native client in development | The native client is being built for mobile session/device workflows and lightweight control. |
-| Android | Native client in development | The native client is being built for mobile session/device workflows and lightweight control. |
-| macOS desktop | Coming soon | Native desktop packaging is planned after the Web and Connector flows stabilize. |
-| Windows desktop | Coming soon | Native desktop packaging is planned after the Web and Connector flows stabilize. |
+| Web console | Primary supported client | Full browser-based control plane for sessions, devices, approvals, files, terminals, runtime settings, team/admin management, and session detail. |
+| Android | Primary supported client | Download the APK from [GitHub Release v0.1.0](https://github.com/anywhere-labs/Agents-Anywhere/releases/tag/v0.1.0). The Android app is a full native client for sessions, devices, approvals, files, terminals, and mobile control workflows. |
+| iOS | Native client in development | The native client is being built for mobile session/device workflows. |
+| Windows / macOS Connector app | Available | Download the Connector app from [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases). It runs the local Connector as a background desktop process, with pairing, logs, tray behavior, and startup controls. |
+| Linux Connector CLI | Available | Use the Python CLI from `connector/` or `uvx anywhere-cli`. This is the recommended Connector path on Linux servers, devboxes, and headless machines. |
 
-This repository currently includes the Web frontends, FastAPI backend, Connector CLI, and native mobile work in progress. The Web console remains the reference client while native clients mature.
+This repository currently includes the Web frontends, FastAPI backend, Connector CLI, Windows/macOS Connector app, the Android native client, and iOS work in progress. Web and Android are the main supported client surfaces today; the Connector app/CLI is what links your own machines into the control plane.
 
-Want to run it now? Jump to [Docker Quickstart](#quickstart-run-the-full-app-with-docker). If you want to connect your own machine, continue to [Pair And Start The Connector](#pair-and-start-the-connector).
+Want to run it now? Jump to [Docker Quickstart](#quickstart-run-the-full-app-with-docker). After the server is running, continue to [Onboarding](#onboarding).
 
 ## FAQ
 
@@ -128,7 +130,7 @@ Want to run it now? Jump to [Docker Quickstart](#quickstart-run-the-full-app-wit
 On the machine running the Connector. The backend handles auth, state, file metadata, and RPC routing; it does not execute your code on the server.
 
 **What do I install on my dev machine?**
-Run the Python CLI in `connector/`. It should live on the same machine as Codex / Claude and the workspace you want to control.
+Install the Connector on the machine that owns your workspace and local agent runtime. On Windows and macOS, use the Agents Anywhere Connector desktop app. On Linux, use the Python CLI in `connector/` or `uvx anywhere-cli`.
 
 **Do my model accounts go through Agents Anywhere?**
 No. The Connector uses the Codex / Claude runtime and login state already present on your machine. Agents Anywhere does not proxy model account credentials.
@@ -144,7 +146,7 @@ The current code focuses on Codex and Claude. Codex is the most complete adapter
 
 ## Technical Guide
 
-The sections above describe the product: Agents Anywhere solves the problem of agents running elsewhere while humans still need to take over. The sections below cover the architecture, Docker quickstart, and Connector pairing flow. For detailed Docker deployment options, local development images, environment variables, and verification commands, see [docker/README.md](docker/README.md).
+The sections above describe the product: Agents Anywhere solves the problem of agents running elsewhere while humans still need to take over. The sections below cover the architecture, Docker quickstart, onboarding, and Connector platform choices. For detailed Docker deployment options, local development images, environment variables, and verification commands, see [docker/README.md](docker/README.md).
 
 ## Architecture
 
@@ -152,7 +154,7 @@ The sections above describe the product: Agents Anywhere solves the problem of a
 flowchart LR
     Web["Web Console<br/>browser client"]
     Server["FastAPI Server<br/>auth / sessions / RPC broker / files"]
-    Connector["Connector<br/>local daemon + CLI"]
+    Connector["Connector<br/>desktop app or CLI"]
     Runtime["Local Agent Runtime<br/>Codex / Claude today<br/>more coming soon"]
     Workspace["Local Workspace<br/>files / shell / terminal"]
 
@@ -172,6 +174,7 @@ Repository layout:
 ```text
 server/      FastAPI backend, SQLite/PostgreSQL storage, Connector RPC broker
 connector/   Local daemon and CLI for Codex / Claude runtime integration
+desktop/     Windows/macOS Electron app for running the local Connector
 web-next/    Next.js + shadcn Web console
 web/         Legacy React + Vite frontend kept as a fallback/reference
 docker/      Development, production, and PostgreSQL compose deployment files
@@ -182,6 +185,7 @@ Package-specific docs:
 
 - [Server](server/README.md)
 - [Connector](connector/README.md)
+- [Desktop Connector](desktop/README.md)
 - [Web Next](web-next/)
 - [Docker](docker/README.md)
 
@@ -211,59 +215,36 @@ The first startup on an empty database logs a bootstrap token. Use it in the Web
 
 For custom ports, production secrets, SQLite/manual Docker runs, mirrors, connector images, and local development containers, see [docker/README.md](docker/README.md).
 
-## Pair And Start The Connector
+## Onboarding
 
-The Connector should run on the machine that actually owns the workspace and agent runtime. It uses that machine's local filesystem permissions, shell permissions, and Codex / Claude login state.
+After the Docker stack or server is running, start from the Web console. The initial setup token flow is Web-only.
 
-### Option A: Start From The Web Console
+1. Open the Web console, paste the bootstrap token from the server logs, and create the first account. That account becomes the administrator.
+2. Add the first Device from the Web console. This is the machine that owns your workspace and local Codex / Claude runtime.
+3. Choose the Connector for that machine:
 
-Add a device in the Web UI, copy the generated command, and run it on the target machine. The command shape is:
+| Target machine | Recommended Connector | Notes |
+| --- | --- | --- |
+| Windows | Agents Anywhere Connector app | Download the desktop Connector app from [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases). The app keeps the Connector running in the background and guides pairing. |
+| macOS | Agents Anywhere Connector app | Download the desktop Connector app from [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases). The app keeps the Connector running in the background and guides pairing. |
+| Linux | Connector CLI | Use `uvx anywhere-cli` or the CLI in `connector/`. The Web UI and CLI pairing flow show the exact command or pairing code. |
 
-```bash
-cd connector
-uv sync
-uvx anywhere-cli start \
-  --server-url http://127.0.0.1:8000 \
-  --connector-id conn_xxx \
-  --connector-token cxt_xxx
-```
+The Web and Android clients already provide the pairing UI, so this README only calls out the platform choice. After the first Device is online, use either the Web console or Android app for daily work: chat with sessions, manage Devices, handle approvals, browse remote files, open terminals, and pair additional Devices.
 
-You can also save the config first, then start:
+For advanced Connector commands, Dockerized Connector images, SSH-enabled development containers, and agent installer images, see [connector/README.md](connector/README.md) and [docker/README.md](docker/README.md).
 
-```bash
-cd connector
-uvx anywhere-cli configure \
-  --server-url http://127.0.0.1:8000 \
-  --connector-id conn_xxx \
-  --connector-token cxt_xxx
+## Beta Access And Contact
 
-uvx anywhere-cli start
-```
+Agents Anywhere now provides a hosted beta service. The service is currently free, in beta, and open by application for users in China only.
 
-The default config path is `~/.agent-server/connector.json`. Override it with `--config` or `AGENT_CONNECTOR_CONFIG`.
+If you want to try it, scan the WeChat or Feishu QR code below, join the group, and contact an admin.
 
-### Option B: Start Pairing From The CLI
+| WeChat | Feishu | Discord |
+| --- | --- | --- |
+| <img src="docs/contact/wechat-beta.jpeg" alt="WeChat beta access group QR code" width="180"> | <img src="docs/contact/feishu-beta.jpeg" alt="Feishu beta access group QR code" width="180"> | <img src="docs/contact/discord-beta.jpeg" alt="Discord community QR code" width="180"> |
+| China beta access group | China beta access group | International community |
 
-```bash
-uvx anywhere-cli pair anywhere.example.com
-```
-
-The terminal prints a pairing code. Enter that code in the Web UI pairing dialog; the Connector saves its config and starts. To save the config without starting immediately:
-
-```bash
-uvx anywhere-cli pair anywhere.example.com --no-start
-```
-
-The server address can be a bare host, host with port, or a full URL. When the scheme is omitted, the CLI tries HTTPS first and then HTTP.
-
-If `codex` or `claude` is not on `PATH`, configure the runtime path from the UI or set these before starting the Connector:
-
-```bash
-CODEX_BIN=/path/to/codex
-CLAUDE_BIN=/path/to/claude
-```
-
-For Dockerized Connector images, SSH-enabled development containers, and agent installer images, see [docker/README.md](docker/README.md).
+For overseas users, the hosted beta is not open yet. Join Discord for community updates.
 
 ## License
 
