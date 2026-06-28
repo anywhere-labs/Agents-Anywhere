@@ -30,6 +30,7 @@ const state = {
   settingsPath: "",
   connectorDir: "",
   uvPath: "",
+  locale: "system",
   openAtLogin: false,
   startConnectorOnLaunch: false,
 };
@@ -130,12 +131,14 @@ function trayIcon() {
 function loadDesktopSettings() {
   const settings = readJson(state.settingsPath, {});
   state.uvPath = resolveExecutablePath(settings.uvPath) || resolveExecutablePath(settings.uvCommand) || defaultUvPath();
+  if (typeof settings.locale === "string" && ["system", "en", "zh"].includes(settings.locale)) state.locale = settings.locale;
   if (typeof settings.startConnectorOnLaunch === "boolean") state.startConnectorOnLaunch = settings.startConnectorOnLaunch;
   state.openAtLogin = app.getLoginItemSettings().openAtLogin;
 }
 
 function saveDesktopSettings(next = {}) {
   if (typeof next.uvPath === "string") state.uvPath = resolveExecutablePath(next.uvPath) || next.uvPath.trim();
+  if (typeof next.locale === "string" && ["system", "en", "zh"].includes(next.locale)) state.locale = next.locale;
   if (typeof next.startConnectorOnLaunch === "boolean") state.startConnectorOnLaunch = next.startConnectorOnLaunch;
   if (typeof next.openAtLogin === "boolean") {
     app.setLoginItemSettings({ openAtLogin: next.openAtLogin, openAsHidden: true });
@@ -143,6 +146,7 @@ function saveDesktopSettings(next = {}) {
   }
   writeJson(state.settingsPath, {
     uvPath: state.uvPath,
+    locale: state.locale,
     startConnectorOnLaunch: state.startConnectorOnLaunch,
   });
   const nextState = publicState();

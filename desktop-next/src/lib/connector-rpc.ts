@@ -15,6 +15,7 @@ export type ConnectorState = {
   openAtLogin?: boolean
   startConnectorOnLaunch?: boolean
   uvPath?: string
+  locale?: "system" | "en" | "zh" | string
   logs?: ConnectorLog[]
 }
 
@@ -51,6 +52,7 @@ export type DesktopSettings = {
   openAtLogin?: boolean
   startConnectorOnLaunch?: boolean
   uvPath?: string
+  locale?: "system" | "en" | "zh"
 }
 
 export type ConnectorDesktopApi = {

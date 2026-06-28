@@ -8,12 +8,14 @@ import { cn } from '@/lib/utils'
 function ScrollArea({
   className,
   contentWide,
+  horizontal,
   children,
   viewportRef,
   viewportProps,
   ...props
 }: React.ComponentProps<typeof ScrollAreaPrimitive.Root> & {
   contentWide?: boolean
+  horizontal?: boolean
   viewportRef?: React.Ref<HTMLDivElement>
   viewportProps?: React.ComponentProps<typeof ScrollAreaPrimitive.Viewport>
 }) {
@@ -41,6 +43,7 @@ function ScrollArea({
         {children}
       </ScrollAreaPrimitive.Viewport>
       <ScrollBar />
+      {horizontal ? <ScrollBar orientation="horizontal" /> : null}
       <ScrollAreaPrimitive.Corner />
     </ScrollAreaPrimitive.Root>
   )

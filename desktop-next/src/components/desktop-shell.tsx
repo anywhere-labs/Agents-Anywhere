@@ -4,11 +4,13 @@ import * as React from "react"
 import {
   Check,
   CheckCircle2,
+  ChevronDown,
   CircleAlert,
   Clipboard,
   Copy,
   FolderOpen,
   Gauge,
+  Globe2,
   KeyRound,
   Loader2,
   Logs,
@@ -17,6 +19,7 @@ import {
   RotateCcw,
   Settings,
   Square,
+  Languages,
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -36,6 +39,13 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { Field, FieldContent, FieldDescription, FieldGroup, FieldTitle } from "@/components/ui/field"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
 import {
   connectorDesktop,
@@ -83,12 +93,18 @@ const desktopMessages = {
     settings: "Settings",
     settingsDescription: "Startup and local connector options.",
     startupTitle: "Startup",
+    appearanceTitle: "Appearance",
     localFilesTitle: "Local files",
     credentialsSectionTitle: "Credentials",
     launchAtLogin: "Open at login",
     launchAtLoginHint: "Open the desktop app when you sign in.",
     startOnLaunch: "Start connector on launch",
     startOnLaunchHint: "Start automatically when credentials are saved.",
+    language: "Language",
+    languageDescription: "Choose the interface language for this desktop app.",
+    systemLanguage: "System",
+    english: "English",
+    simplifiedChinese: "Simplified Chinese",
     uvPath: "uv path",
     configPath: "Config path",
     settingsPath: "Settings path",
@@ -160,12 +176,18 @@ const desktopMessages = {
     settings: "设置",
     settingsDescription: "启动项和本机连接器选项。",
     startupTitle: "启动",
+    appearanceTitle: "外观",
     localFilesTitle: "本机文件",
     credentialsSectionTitle: "凭据",
     launchAtLogin: "登录时打开",
     launchAtLoginHint: "登录系统后打开桌面应用。",
     startOnLaunch: "打开应用后启动连接器",
     startOnLaunchHint: "已保存凭据时自动启动。",
+    language: "语言",
+    languageDescription: "选择此桌面应用的界面语言。",
+    systemLanguage: "跟随系统",
+    english: "English",
+    simplifiedChinese: "简体中文",
     uvPath: "uv 路径",
     configPath: "配置路径",
     settingsPath: "设置路径",
@@ -222,13 +244,17 @@ const desktopMessages = {
 type DesktopMessageKey = keyof typeof desktopMessages.en
 type DesktopMessages = Record<DesktopMessageKey, string>
 
-function useDesktopMessages(): DesktopMessages {
+function useDesktopMessages(preferredLocale: string | undefined): DesktopMessages {
   const [locale, setLocale] = React.useState<keyof typeof desktopMessages>("en")
 
   React.useEffect(() => {
+    if (preferredLocale === "en" || preferredLocale === "zh") {
+      setLocale(preferredLocale)
+      return
+    }
     const language = navigator.language.toLowerCase()
     setLocale(language.startsWith("zh") ? "zh" : "en")
-  }, [])
+  }, [preferredLocale])
 
   return desktopMessages[locale] as DesktopMessages
 }
@@ -264,9 +290,11 @@ function credentialStatusView(
 }
 
 export function DesktopShell() {
-  const t = useDesktopMessages()
-  const [view, setView] = React.useState<View>("overview")
   const [state, setState] = React.useState<ConnectorState | null>(null)
+  const [localeOverride, setLocaleOverride] = React.useState<"system" | "en" | "zh" | null>(null)
+  const effectiveLocale = localeOverride ?? state?.locale
+  const t = useDesktopMessages(effectiveLocale)
+  const [view, setView] = React.useState<View>("overview")
   const [config, setConfig] = React.useState<ConnectorConfig>(defaultConfig)
   const [logs, setLogs] = React.useState<ConnectorLog[]>([])
   const [pairing, setPairing] = React.useState<PairingState | null>(null)
@@ -377,6 +405,11 @@ export function DesktopShell() {
     if (next) setState(next)
   }
 
+  function saveLocale(locale: "system" | "en" | "zh") {
+    setLocaleOverride(locale)
+    void saveSettings({ locale })
+  }
+
   function openPairDialog() {
     setPairOpen(true)
     setPairStep(pairing?.code ? "waiting" : "input")
@@ -474,9 +507,11 @@ export function DesktopShell() {
                 t={t}
                 state={state}
                 config={config}
+                locale={effectiveLocale}
                 setConfig={setConfig}
                 saveConfig={saveConfig}
                 saveSettings={saveSettings}
+                saveLocale={saveLocale}
               />
             ) : null}
           </div>
@@ -560,16 +595,20 @@ function SettingsView({
   t,
   state,
   config,
+  locale,
   setConfig,
   saveConfig,
   saveSettings,
+  saveLocale,
 }: {
   t: DesktopMessages
   state: ConnectorState | null
   config: ConnectorConfig
+  locale: string | undefined
   setConfig: React.Dispatch<React.SetStateAction<ConnectorConfig>>
   saveConfig: (config: ConnectorConfig) => Promise<ConnectorConfig | null>
   saveSettings: (settings: DesktopSettings) => Promise<void>
+  saveLocale: (locale: "system" | "en" | "zh") => void
 }) {
   const [uvPath, setUvPath] = React.useState(state?.uvPath || "")
 
@@ -616,6 +655,23 @@ function SettingsView({
       </Card>
       <Card>
         <CardHeader>
+          <CardTitle>{t.appearanceTitle}</CardTitle>
+          <CardAction>
+            <Languages className="size-5" />
+          </CardAction>
+        </CardHeader>
+        <CardContent>
+          <FieldGroup>
+            <LanguageField
+              t={t}
+              value={(locale === "en" || locale === "zh" || locale === "system") ? locale : "system"}
+              onValueChange={saveLocale}
+            />
+          </FieldGroup>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
           <CardTitle>{t.localFilesTitle}</CardTitle>
           <CardAction>
             <FolderOpen className="size-5" />
@@ -623,8 +679,8 @@ function SettingsView({
         </CardHeader>
         <CardContent className="px-0">
           <FieldGroup>
-            <InfoRow label={t.configPath} value={<code className="code-mono truncate text-sm">{state?.configPath || "-"}</code>} />
-            <InfoRow label={t.settingsPath} value={<code className="code-mono truncate text-sm">{state?.settingsPath || "-"}</code>} />
+            <InfoRow label={t.configPath} value={<ScrollableCode value={state?.configPath || "-"} />} />
+            <InfoRow label={t.settingsPath} value={<ScrollableCode value={state?.settingsPath || "-"} />} />
             <SettingActionField
               label={t.openConfigFolder}
               last
@@ -662,6 +718,7 @@ function SettingsView({
               label={t.connectorToken}
               value={config.connectorToken}
               onChange={(value) => setConfig((current) => ({ ...current, connectorToken: value }))}
+              maskWhenBlurred
             />
             <div className="flex justify-end">
               <Button onClick={() => void saveConfig(config)}>
@@ -958,8 +1015,60 @@ function InfoRow({
   )
 }
 
+function ScrollableCode({ value }: { value: string }) {
+  return (
+    <ScrollArea className="w-full" contentWide horizontal>
+      <code className="code-mono block whitespace-nowrap pb-2 text-sm">{value}</code>
+    </ScrollArea>
+  )
+}
+
 function SettingActionField({ label, action, last = false }: { label: string; action: React.ReactNode; last?: boolean }) {
   return <InfoRow label={label} value={<span />} action={action} last={last} />
+}
+
+function LanguageField({
+  t,
+  value,
+  onValueChange,
+}: {
+  t: DesktopMessages
+  value: "system" | "en" | "zh"
+  onValueChange: (value: "system" | "en" | "zh") => void
+}) {
+  const languages: Array<{ id: "system" | "en" | "zh"; label: string }> = [
+    { id: "system", label: t.systemLanguage },
+    { id: "en", label: t.english },
+    { id: "zh", label: t.simplifiedChinese },
+  ]
+  const currentLabel = languages.find((language) => language.id === value)?.label ?? t.systemLanguage
+
+  return (
+    <Field orientation="horizontal">
+      <FieldContent>
+        <FieldTitle>{t.language}</FieldTitle>
+        <FieldDescription>{t.languageDescription}</FieldDescription>
+      </FieldContent>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button type="button" variant="outline" className="min-w-40 justify-between">
+            <Globe2 data-icon="inline-start" />
+            {currentLabel}
+            <ChevronDown data-icon="inline-end" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-48">
+          <DropdownMenuRadioGroup value={value} onValueChange={(next) => onValueChange(next as "system" | "en" | "zh")}>
+            {languages.map((language) => (
+              <DropdownMenuRadioItem key={language.id} value={language.id}>
+                {language.label}
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </Field>
+  )
 }
 
 function SettingInputField({
@@ -982,16 +1091,21 @@ function SettingInputField({
   )
 }
 
-function SettingTextAreaField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+function SettingTextAreaField({ label, value, onChange, maskWhenBlurred = false }: { label: string; value: string; onChange: (value: string) => void; maskWhenBlurred?: boolean }) {
   const id = React.useId()
+  const [focused, setFocused] = React.useState(false)
+  const displayValue = maskWhenBlurred && !focused && value ? "•".repeat(Math.min(Math.max(value.length, 12), 48)) : value
   return (
     <Field>
       <Label htmlFor={id}>{label}</Label>
       <Textarea
         id={id}
         className="min-h-24 font-mono text-xs"
-        value={value}
+        value={displayValue}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
         onChange={(event) => onChange(event.target.value)}
+        readOnly={maskWhenBlurred && !focused}
       />
     </Field>
   )
