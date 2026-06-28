@@ -1,0 +1,7 @@
+.next/
+out/
+node_modules/
+.yarn/
+tsconfig.tsbuildinfo
+release/
+dist/

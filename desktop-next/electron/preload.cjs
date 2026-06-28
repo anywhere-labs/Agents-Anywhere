@@ -4,12 +4,11 @@ contextBridge.exposeInMainWorld("connectorDesktop", {
   getState: () => ipcRenderer.invoke("connector:getState"),
   getConfig: () => ipcRenderer.invoke("connector:getConfig"),
   saveConfig: (config) => ipcRenderer.invoke("connector:saveConfig", config),
-  start: () => ipcRenderer.invoke("connector:start"),
+  start: (config) => ipcRenderer.invoke("connector:start", config),
   stop: () => ipcRenderer.invoke("connector:stop"),
   restart: () => ipcRenderer.invoke("connector:restart"),
   startPairing: (input) => ipcRenderer.invoke("connector:startPairing", input),
   cancelPairing: () => ipcRenderer.invoke("connector:cancelPairing"),
-  startFromCommand: (input, options) => ipcRenderer.invoke("connector:startFromCommand", input, options),
   saveSettings: (settings) => ipcRenderer.invoke("connector:saveSettings", settings),
   openConfigFolder: () => ipcRenderer.invoke("connector:openConfigFolder"),
   onState: (callback) => {
@@ -18,7 +17,7 @@ contextBridge.exposeInMainWorld("connectorDesktop", {
     return () => ipcRenderer.removeListener("connector:state", listener);
   },
   onLog: (callback) => {
-    const listener = (_event, line) => callback(line);
+    const listener = (_event, log) => callback(log);
     ipcRenderer.on("connector:log", listener);
     return () => ipcRenderer.removeListener("connector:log", listener);
   },
