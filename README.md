@@ -24,7 +24,7 @@ Run Codex, Claude Code, and more agents on your Mac, Windows PC, Linux devbox, o
 ---
 
 > [!IMPORTANT]
-> 中国区 Beta 已上线，目前免费试用，仅对中国用户开放。想申请试用，请跳转到 [Beta Access And Contact](#beta-access-and-contact)，扫码进群并联系管理员。
+> 中国区 Beta 已上线，目前免费试用，仅对中国用户开放。想申请试用，请跳转到 [Beta Access And Contact](#beta-access-and-contact)加入交流群。
 
 ## What Is Agents Anywhere?
 
