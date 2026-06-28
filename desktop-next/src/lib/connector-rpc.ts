@@ -17,6 +17,7 @@ export type ConnectorState = {
   startConnectorOnLaunch?: boolean
   uvPath?: string
   locale?: "system" | "en" | "zh" | string
+  appearance?: "system" | "light" | "dark" | string
   usingTemporaryCredential?: boolean
   logPath?: string
   logChunkSizeKb?: number
@@ -59,6 +60,7 @@ export type DesktopSettings = {
   startConnectorOnLaunch?: boolean
   uvPath?: string
   locale?: "system" | "en" | "zh"
+  appearance?: "system" | "light" | "dark"
   logChunkSizeKb?: number
   logRetainChunks?: number
   logRetentionDays?: number

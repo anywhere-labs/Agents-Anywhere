@@ -20,6 +20,7 @@ let rpcReader = null;
 let nextRequestId = 1;
 let nextLogSeq = 1;
 let pending = new Map();
+const isDev = Boolean(process.env.NEXT_DEV_SERVER_URL);
 
 const state = {
   platform: process.platform,
@@ -35,6 +36,7 @@ const state = {
   connectorDir: "",
   uvPath: "",
   locale: "system",
+  appearance: "system",
   usingTemporaryCredential: false,
   logPath: "",
   logChunkSizeKb: DEFAULT_LOG_CHUNK_SIZE_KB,
@@ -147,6 +149,7 @@ function loadDesktopSettings() {
   const settings = readJson(state.settingsPath, {});
   state.uvPath = resolveExecutablePath(settings.uvPath) || resolveExecutablePath(settings.uvCommand) || defaultUvPath();
   if (typeof settings.locale === "string" && ["system", "en", "zh"].includes(settings.locale)) state.locale = settings.locale;
+  if (typeof settings.appearance === "string" && ["system", "light", "dark"].includes(settings.appearance)) state.appearance = settings.appearance;
   state.logChunkSizeKb = clampNumber(settings.logChunkSizeKb, DEFAULT_LOG_CHUNK_SIZE_KB, 64, 10240);
   state.logRetainChunks = clampNumber(settings.logRetainChunks, DEFAULT_LOG_RETAIN_CHUNKS, 1, 200);
   state.logRetentionDays = clampNumber(settings.logRetentionDays, DEFAULT_LOG_RETENTION_DAYS, 1, 365);
@@ -158,6 +161,7 @@ function loadDesktopSettings() {
 function saveDesktopSettings(next = {}) {
   if (typeof next.uvPath === "string") state.uvPath = resolveExecutablePath(next.uvPath) || next.uvPath.trim();
   if (typeof next.locale === "string" && ["system", "en", "zh"].includes(next.locale)) state.locale = next.locale;
+  if (typeof next.appearance === "string" && ["system", "light", "dark"].includes(next.appearance)) state.appearance = next.appearance;
   if (next.logChunkSizeKb != null) state.logChunkSizeKb = clampNumber(next.logChunkSizeKb, state.logChunkSizeKb, 64, 10240);
   if (next.logRetainChunks != null) state.logRetainChunks = clampNumber(next.logRetainChunks, state.logRetainChunks, 1, 200);
   if (next.logRetentionDays != null) state.logRetentionDays = clampNumber(next.logRetentionDays, state.logRetentionDays, 1, 365);
@@ -169,6 +173,7 @@ function saveDesktopSettings(next = {}) {
   writeJson(state.settingsPath, {
     uvPath: state.uvPath,
     locale: state.locale,
+    appearance: state.appearance,
     logChunkSizeKb: state.logChunkSizeKb,
     logRetainChunks: state.logRetainChunks,
     logRetentionDays: state.logRetentionDays,
@@ -494,14 +499,35 @@ function createMainWindow() {
     if (!app.isQuitting) {
       event.preventDefault();
       mainWindow.hide();
+      hideDockIfIdle();
     }
   });
 }
 
-function showWindow() {
+async function showWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) createMainWindow();
+  showDockForWindow();
+  if (process.platform === "darwin") {
+    app.focus({ steal: true });
+  }
   mainWindow.show();
   mainWindow.focus();
+}
+
+function hasVisibleWindow() {
+  return Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible());
+}
+
+function hideDockIfIdle() {
+  if (!isDev && process.platform === "darwin" && !hasVisibleWindow()) {
+    app.setActivationPolicy("accessory");
+  }
+}
+
+function showDockForWindow() {
+  if (process.platform !== "darwin") return;
+  app.setActivationPolicy("regular");
+  if (app.dock && !app.dock.isVisible()) void app.dock.show();
 }
 
 function updateNativeIcons() {
@@ -517,7 +543,7 @@ function updateTrayMenu() {
     Menu.buildFromTemplate([
       { label: `Status: ${state.status}`, enabled: false },
       { type: "separator" },
-      { label: "Open", click: () => showWindow() },
+      { label: "Open", click: () => void showWindow() },
       { label: "Start Connector", enabled: !state.running, click: () => rpcRequest("connector.start").catch((error) => appendLog({ level: "ERROR", message: error.message, time: new Date().toISOString() })) },
       { label: "Stop Connector", enabled: state.running, click: () => rpcRequest("connector.stop").catch((error) => appendLog({ level: "ERROR", message: error.message, time: new Date().toISOString() })) },
       { type: "separator" },
@@ -528,7 +554,7 @@ function updateTrayMenu() {
 
 function createTray() {
   tray = new Tray(trayIcon());
-  tray.on("click", () => showWindow());
+  tray.on("click", () => void showWindow());
   updateTrayMenu();
 }
 
@@ -586,7 +612,7 @@ ipcMain.handle("connector:clearLogs", () => clearLogFiles());
 
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
-  if (process.platform === "darwin" && app.dock) app.dock.hide();
+  if (!isDev && process.platform === "darwin") app.setActivationPolicy("accessory");
   state.configPath = userDataPath("connector.json");
   state.settingsPath = userDataPath("desktop-settings.json");
   state.logPath = userDataPath("logs");
@@ -594,6 +620,7 @@ app.whenReady().then(() => {
   loadDesktopSettings();
   initLogSeq();
   createTray();
+  if (isDev) void showWindow();
   updateNativeIcons();
   startRpcProcess();
   rpcRequest("connector.getState")
@@ -609,7 +636,7 @@ app.whenReady().then(() => {
 });
 
 app.on("activate", () => {
-  if (process.platform !== "darwin" || !app.dock || app.dock.isVisible()) showWindow();
+  void showWindow();
 });
 app.on("window-all-closed", (event) => event.preventDefault());
 app.on("before-quit", () => {

@@ -2,7 +2,7 @@ import type { NextConfig } from "next"
 
 const nextConfig: NextConfig = {
   devIndicators: false,
-  assetPrefix: "./",
+  assetPrefix: process.env.NODE_ENV === "production" ? "./" : undefined,
   output: "export",
   trailingSlash: true,
   images: {

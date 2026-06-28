@@ -15,6 +15,7 @@ import {
   KeyRound,
   Loader2,
   Logs,
+  Monitor,
   Pause,
   Plus,
   Play,
@@ -24,7 +25,10 @@ import {
   Square,
   Trash2,
   Languages,
+  Moon,
+  Sun,
 } from "lucide-react"
+import { useTheme } from "next-themes"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
@@ -70,6 +74,17 @@ type ParsedConnectorCommand =
   | { kind: "pair"; server: string }
 const LOG_PAGE_SIZE_OPTIONS = [100, 300, 1000, 3000] as const
 const SYNC_INTERVAL_OPTIONS = [15, 30, 60, 300] as const
+type AppearanceMode = "system" | "light" | "dark"
+type AppearanceOption = {
+  id: AppearanceMode
+  messageKey: "systemTheme" | "lightTheme" | "darkTheme"
+  icon: React.ComponentType<{ className?: string; "data-icon"?: string }>
+}
+const APPEARANCE_OPTIONS: [AppearanceOption, AppearanceOption, AppearanceOption] = [
+  { id: "system", messageKey: "systemTheme", icon: Monitor },
+  { id: "light", messageKey: "lightTheme", icon: Sun },
+  { id: "dark", messageKey: "darkTheme", icon: Moon },
+]
 
 const defaultConfig: ConnectorConfig = {
   serverUrl: "",
@@ -114,6 +129,11 @@ const desktopMessages = {
     settingsDescription: "Startup and local connector options.",
     startupTitle: "Startup",
     appearanceTitle: "Appearance",
+    theme: "Theme",
+    themeDescription: "Choose the color theme for this desktop app.",
+    systemTheme: "System",
+    lightTheme: "Light",
+    darkTheme: "Dark",
     localFilesTitle: "Local files",
     credentialsSectionTitle: "Credentials",
     syncSectionTitle: "Sync",
@@ -214,6 +234,11 @@ const desktopMessages = {
     settingsDescription: "启动项和本机连接器选项。",
     startupTitle: "启动",
     appearanceTitle: "外观",
+    theme: "主题",
+    themeDescription: "选择此桌面应用的颜色主题。",
+    systemTheme: "跟随系统",
+    lightTheme: "浅色",
+    darkTheme: "深色",
     localFilesTitle: "本机文件",
     credentialsSectionTitle: "凭据",
     syncSectionTitle: "同步",
@@ -334,6 +359,7 @@ function credentialStatusView(
 }
 
 export function DesktopShell() {
+  const { setTheme } = useTheme()
   const [state, setState] = React.useState<ConnectorState | null>(null)
   const [localeOverride, setLocaleOverride] = React.useState<"system" | "en" | "zh" | null>(null)
   const effectiveLocale = localeOverride ?? state?.locale
@@ -423,6 +449,12 @@ export function DesktopShell() {
     }
     authFailedToastShown.current = false
   }, [state?.authFailed, t.credentialExpiredToast])
+
+  React.useEffect(() => {
+    if (state?.appearance === "light" || state?.appearance === "dark" || state?.appearance === "system") {
+      setTheme(state.appearance)
+    }
+  }, [setTheme, state?.appearance])
 
   async function run<T>(label: string, action: () => Promise<T>, success?: string): Promise<T | null> {
     setBusy(label)
@@ -574,6 +606,11 @@ export function DesktopShell() {
     void saveSettings({ locale })
   }
 
+  function saveAppearance(appearance: AppearanceMode) {
+    setTheme(appearance)
+    void saveSettings({ appearance })
+  }
+
   async function openAgentsAnywhere() {
     const serverUrl = state?.serverUrl || config.serverUrl
     if (!serverUrl) return
@@ -635,8 +672,8 @@ export function DesktopShell() {
 
   return (
     <div className="flex h-screen min-h-0 bg-background text-foreground">
-      <aside className="drag-region flex w-64 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground">
-        <div className={cn("flex px-5", isMac ? "h-20 items-end pb-4" : "h-16 items-center")}>
+      <aside className="flex w-64 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground">
+        <div className={cn("drag-region flex px-5", isMac ? "h-20 items-end pb-4" : "h-16 items-center")}>
           <div className="min-w-0">
             <div className="aa-wordmark text-xl">{t.appName}</div>
           </div>
@@ -772,6 +809,7 @@ export function DesktopShell() {
                 isRunning={isRunning}
                 saveSettings={saveSettings}
                 saveLocale={saveLocale}
+                saveAppearance={saveAppearance}
               />
             ) : null}
           </div>
@@ -862,6 +900,7 @@ function SettingsView({
   isRunning,
   saveSettings,
   saveLocale,
+  saveAppearance,
 }: {
   t: DesktopMessages
   state: ConnectorState | null
@@ -873,6 +912,7 @@ function SettingsView({
   isRunning: boolean
   saveSettings: (settings: DesktopSettings) => Promise<void>
   saveLocale: (locale: "system" | "en" | "zh") => void
+  saveAppearance: (appearance: AppearanceMode) => void
 }) {
   const [uvPath, setUvPath] = React.useState(state?.uvPath || "")
 
@@ -984,6 +1024,11 @@ function SettingsView({
         </CardHeader>
         <CardContent>
           <FieldGroup>
+            <AppearanceField
+              t={t}
+              value={(state?.appearance === "light" || state?.appearance === "dark" || state?.appearance === "system") ? state.appearance : "system"}
+              onValueChange={saveAppearance}
+            />
             <LanguageField
               t={t}
               value={(locale === "en" || locale === "zh" || locale === "system") ? locale : "system"}
@@ -1419,6 +1464,50 @@ function ScrollableCode({ value }: { value: string }) {
 
 function SettingActionField({ label, action, last = false }: { label: string; action: React.ReactNode; last?: boolean }) {
   return <InfoRow label={label} value={<span />} action={action} last={last} />
+}
+
+function AppearanceField({
+  t,
+  value,
+  onValueChange,
+}: {
+  t: DesktopMessages
+  value: AppearanceMode
+  onValueChange: (value: AppearanceMode) => void
+}) {
+  const current = APPEARANCE_OPTIONS.find((theme) => theme.id === value) ?? APPEARANCE_OPTIONS[0]
+  const CurrentIcon = current.icon
+
+  return (
+    <Field orientation="horizontal">
+      <FieldContent>
+        <FieldTitle>{t.theme}</FieldTitle>
+        <FieldDescription>{t.themeDescription}</FieldDescription>
+      </FieldContent>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button type="button" variant="outline" className="min-w-40 justify-between">
+            <CurrentIcon data-icon="inline-start" />
+            {t[current.messageKey]}
+            <ChevronDown data-icon="inline-end" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-48">
+          <DropdownMenuRadioGroup value={value} onValueChange={(next) => onValueChange(next as AppearanceMode)}>
+            {APPEARANCE_OPTIONS.map((theme) => {
+              const Icon = theme.icon
+              return (
+                <DropdownMenuRadioItem key={theme.id} value={theme.id}>
+                  <Icon data-icon="inline-start" />
+                  {t[theme.messageKey]}
+                </DropdownMenuRadioItem>
+              )
+            })}
+          </DropdownMenuRadioGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </Field>
+  )
 }
 
 function LanguageField({
