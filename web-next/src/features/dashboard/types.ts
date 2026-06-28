@@ -380,6 +380,7 @@ export type RuntimeConfigOption = {
   value: string | boolean;
   label: string;
   description?: string | null;
+  efforts?: RuntimeConfigOption[] | null;
 };
 
 export type RuntimeConfigField = {
@@ -427,6 +428,7 @@ export type AgentCatalogEntry = {
   description?: string | null;
   isDefault: boolean;
   sortOrder: number;
+  efforts: AgentCatalogEntry[];
 };
 
 export type AgentCatalogResponse = {
@@ -440,7 +442,6 @@ export type UserAgentDefaultRuntime = {
   enabled: boolean;
   settings: Record<string, unknown>;
   models: AgentCatalogEntry[];
-  efforts: AgentCatalogEntry[];
 };
 
 export type UserAgentDefaultsResponse = {

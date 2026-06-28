@@ -35,6 +35,13 @@ import type {
   UserAgentDefaultsResponse
 } from "@/features/dashboard/types";
 
+export type SessionStateQuery = {
+  afterSeq?: number;
+  beforeOrderSeq?: number;
+  mode?: "since" | "latest" | "before";
+  limit?: number;
+};
+
 export class DashboardApi {
   constructor(private readonly client: ApiClient = apiClient) {}
 
@@ -163,13 +170,38 @@ export class DashboardApi {
   getSessionState(
     token: string,
     sessionId: string,
-    afterSeq = 0,
+    afterSeqOrQuery: number | SessionStateQuery = 0,
     limit = 500,
   ): Promise<SessionStateResponse> {
+    const query =
+      typeof afterSeqOrQuery === "number"
+        ? { afterSeq: afterSeqOrQuery, limit }
+        : { ...afterSeqOrQuery, limit: afterSeqOrQuery.limit ?? limit };
     return this.client.get<SessionStateResponse>(
       `/sessions/${encodeURIComponent(sessionId)}/state`,
-      { token, query: { afterSeq, limit } },
+      { token, query },
     );
+  }
+
+  getLatestSessionState(
+    token: string,
+    sessionId: string,
+    limit = 100,
+  ): Promise<SessionStateResponse> {
+    return this.getSessionState(token, sessionId, { mode: "latest", limit });
+  }
+
+  getSessionStateBefore(
+    token: string,
+    sessionId: string,
+    beforeOrderSeq: number,
+    limit = 100,
+  ): Promise<SessionStateResponse> {
+    return this.getSessionState(token, sessionId, {
+      mode: "before",
+      beforeOrderSeq,
+      limit,
+    });
   }
 
   sessionEventsUrl(token: string, sessionId: string): string {
@@ -405,7 +437,18 @@ export class DashboardApi {
 
   updateAgentDefaults(
     token: string,
-    runtimes: Record<string, { enabled?: boolean; settings?: Record<string, unknown> }>,
+    runtimes: Record<string, { models?: Array<{
+      key: string;
+      displayLabel: string;
+      description?: string | null;
+      sortOrder?: number;
+      efforts?: Array<{
+        key: string;
+        displayLabel: string;
+        description?: string | null;
+        sortOrder?: number;
+      }>;
+    }> }>,
   ): Promise<UserAgentDefaultsResponse> {
     return this.client.patch<UserAgentDefaultsResponse>(
       "/agents/defaults",

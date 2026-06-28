@@ -123,24 +123,39 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         if not static_path.is_dir():
             raise RuntimeError(f"AGENT_SERVER_STATIC_DIR does not exist: {static_path}")
         logger.info("serving web static files from {}", static_path)
-        app.mount("/assets", StaticFiles(directory=static_path / "assets"), name="web-assets")
+        for mount_name in ("_next", "assets", "brand"):
+            mount_path = static_path / mount_name
+            if mount_path.is_dir():
+                app.mount(f"/{mount_name}", StaticFiles(directory=mount_path), name=f"web-{mount_name}")
+
+        def _static_index(path: str = "") -> FileResponse:
+            relative = path.strip("/")
+            default_locale = os.environ.get("AGENT_SERVER_STATIC_DEFAULT_LOCALE", "en")
+            if relative:
+                candidate = static_path / relative
+                if candidate.is_dir() and (candidate / "index.html").is_file():
+                    return FileResponse(candidate / "index.html")
+                if candidate.is_file():
+                    return FileResponse(candidate)
+                html_candidate = static_path / f"{relative}.html"
+                if html_candidate.is_file():
+                    return FileResponse(html_candidate)
+                default_locale_candidate = static_path / default_locale / relative
+                if default_locale_candidate.is_dir() and (default_locale_candidate / "index.html").is_file():
+                    return FileResponse(default_locale_candidate / "index.html")
+
+            default_index = static_path / default_locale / "index.html"
+            if default_index.is_file():
+                return FileResponse(default_index)
+            return FileResponse(static_path / "index.html")
 
         @app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
         def web_index() -> FileResponse:
-            return FileResponse(static_path / "index.html")
+            return _static_index()
 
-        @app.api_route("/{asset_name}", methods=["GET", "HEAD"], include_in_schema=False)
-        def web_root_asset(asset_name: str) -> FileResponse:
-            if asset_name not in {
-                "apple-touch-icon.png",
-                "favicon-dark-mode.png",
-                "favicon-light-mode.png",
-                "icon-192.png",
-                "icon-512.png",
-                "site.webmanifest",
-            }:
-                return FileResponse(static_path / "index.html")
-            return FileResponse(static_path / asset_name)
+        @app.api_route("/{path:path}", methods=["GET", "HEAD"], include_in_schema=False)
+        def web_static(path: str) -> FileResponse:
+            return _static_index(path)
 
     return app
 

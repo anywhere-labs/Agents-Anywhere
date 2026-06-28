@@ -23,6 +23,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { LoadingState } from "@/components/loading-state"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import {
   Dialog,
   DialogContent,
@@ -61,11 +62,13 @@ import { dashboardApi } from "@/features/dashboard/api"
 import { PairDeviceDialog } from "@/components/pair-device-dialog"
 import type { ConnectorRevokeResponse } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
+import { toast } from "sonner"
 import {
+  effortFieldForModel,
   effectiveFieldValue,
-  filterClaudeEffortField,
   optionLabel,
   runtimeConfigFields,
+  validEffortValue,
 } from "@/features/dashboard/runtime-config"
 
 type DeviceConnector = ReturnType<typeof useWorkspace>["connectors"][number]
@@ -112,8 +115,8 @@ type DeviceSession = {
 }
 
 function isConfigurableField(
-  field: ReturnType<typeof filterClaudeEffortField>,
-): field is NonNullable<ReturnType<typeof filterClaudeEffortField>> {
+  field: ReturnType<typeof effortFieldForModel>,
+): field is NonNullable<ReturnType<typeof effortFieldForModel>> {
   return field !== null && field.type !== "object"
 }
 
@@ -147,12 +150,22 @@ function AgentConfigDialog({
   }, [open, settings])
 
   const fields = React.useMemo(() => runtimeConfigFields(schema, draft, "device"), [draft, schema])
+  const modelField = fields.find((field) => field.key === "model")
   const visibleFields = fields
-    .map((field) => field.key === "effort" ? filterClaudeEffortField(runtime, field, draft.model) : field)
+    .map((field) => field.key === "effort" ? effortFieldForModel(modelField, field, draft.model) : field)
     .filter(isConfigurableField)
 
   const patch = (key: string, value: unknown) => {
-    setDraft((prev) => ({ ...prev, [key]: value }))
+    setDraft((prev) => {
+      const next = { ...prev, [key]: value }
+      if (key === "model") {
+        const nextEffortField = effortFieldForModel(modelField, fields.find((field) => field.key === "effort"), value)
+        const nextEffort = validEffortValue(nextEffortField, prev.effort)
+        if (nextEffort) next.effort = nextEffort
+        else delete next.effort
+      }
+      return next
+    })
   }
 
   const submit = async () => {
@@ -479,20 +492,16 @@ export function DevicePage() {
   const [agentSettingsError, setAgentSettingsError] = React.useState<Record<string, string | null>>({})
   const [savingAgentRuntime, setSavingAgentRuntime] = React.useState<string | null>(null)
   const [removeAgentRuntime, setRemoveAgentRuntime] = React.useState<string | null>(null)
-  const [removeAgentError, setRemoveAgentError] = React.useState<string | null>(null)
   const [revokeOpen, setRevokeOpen] = React.useState(false)
   const [deleteOpen, setDeleteOpen] = React.useState(false)
   const [setupCredential, setSetupCredential] = React.useState<ConnectorRevokeResponse | null>(null)
   const [setupOpen, setSetupOpen] = React.useState(false)
   const [tokenActionBusy, setTokenActionBusy] = React.useState(false)
-  const [tokenActionError, setTokenActionError] = React.useState<string | null>(null)
   const [editingName, setEditingName] = React.useState(false)
   const [nameDraft, setNameDraft] = React.useState("")
-  const [renameError, setRenameError] = React.useState<string | null>(null)
   const [selectMode, setSelectMode] = React.useState(false)
   const [selectedSessionIds, setSelectedSessionIds] = React.useState<Set<string>>(() => new Set())
   const [bulkBusy, setBulkBusy] = React.useState(false)
-  const [bulkError, setBulkError] = React.useState<string | null>(null)
   const [archiveAllOpen, setArchiveAllOpen] = React.useState(false)
 
   React.useEffect(() => {
@@ -506,7 +515,6 @@ export function DevicePage() {
     setConnector(currentConnector)
     setNameDraft(currentConnector?.name ?? "")
     setEditingName(false)
-    setRenameError(null)
     setSessions(connectorSessions)
     setWorkspaces(workspacesFromSessions(connectorSessions))
     setAgents(agentsFromConnector(currentConnector))
@@ -517,7 +525,6 @@ export function DevicePage() {
     setRemoveAgentRuntime(null)
     setSelectMode(false)
     setSelectedSessionIds(new Set())
-    setBulkError(null)
     setLoading(false)
   }, [activeConnectorId, connectors, allSessions])
 
@@ -572,7 +579,6 @@ export function DevicePage() {
   const handleRevoke = async () => {
     if (!authSession?.accessToken) return
     setTokenActionBusy(true)
-    setTokenActionError(null)
     try {
       const result = await dashboardApi.revokeConnector(authSession.accessToken, connector.id)
       setConnector((prev) => (prev ? { ...prev, status: "offline" } : prev))
@@ -583,7 +589,7 @@ export function DevicePage() {
       }
       refreshData()
     } catch (err) {
-      setTokenActionError(err instanceof Error ? err.message : t("setupFailed"))
+      toast.error(err instanceof Error ? err.message : t("setupFailed"))
     } finally {
       setTokenActionBusy(false)
     }
@@ -595,11 +601,9 @@ export function DevicePage() {
     if (!nextName || nextName === connector.name) {
       setNameDraft(connector.name)
       setEditingName(false)
-      setRenameError(null)
       return
     }
 
-    setRenameError(null)
     try {
       const result = await dashboardApi.updateConnector(authSession.accessToken, connector.id, { name: nextName })
       setConnector(result.connector)
@@ -607,7 +611,7 @@ export function DevicePage() {
       setEditingName(false)
       refreshData()
     } catch (err) {
-      setRenameError(err instanceof Error ? err.message : t("renameFailed"))
+      toast.error(err instanceof Error ? err.message : t("renameFailed"))
       setNameDraft(connector.name)
       setEditingName(false)
     }
@@ -631,7 +635,7 @@ export function DevicePage() {
       refreshData()
     } catch (err) {
       const message = err instanceof Error ? err.message : t("saveAgentSettingsFailed")
-      setAgentSettingsError((prev) => ({ ...prev, [runtime]: message }))
+      toast.error(message)
       throw err
     } finally {
       setSavingAgentRuntime(null)
@@ -640,7 +644,6 @@ export function DevicePage() {
 
   const removeAgent = async () => {
     if (!authSession?.accessToken || !removeAgentRuntime) return
-    setRemoveAgentError(null)
     try {
       const response = await dashboardApi.deleteConnectorRuntime(authSession.accessToken, connector.id, removeAgentRuntime)
       setConnector((prev) => prev ? { ...prev, runtimeCapabilities: response.runtimeCapabilities } : prev)
@@ -649,7 +652,7 @@ export function DevicePage() {
       setRemoveAgentRuntime(null)
       refreshData()
     } catch (err) {
-      setRemoveAgentError(err instanceof Error ? err.message : t("removeAgentFailed"))
+      toast.error(err instanceof Error ? err.message : t("removeAgentFailed"))
     }
   }
 
@@ -676,20 +679,18 @@ export function DevicePage() {
   const closeSelectMode = () => {
     setSelectMode(false)
     setSelectedSessionIds(new Set())
-    setBulkError(null)
   }
 
   const bulkArchiveSelected = async () => {
     if (!authSession?.accessToken || selectedSessionIds.size === 0) return
     setBulkBusy(true)
-    setBulkError(null)
     try {
       const response = await dashboardApi.bulkArchiveSessions(authSession.accessToken, Array.from(selectedSessionIds), targetArchiveSelected)
       setSessions((prev) => mergeRealSessions(prev, response.sessions))
       closeSelectMode()
       refreshData()
     } catch (err) {
-      setBulkError(err instanceof Error ? err.message : t("bulkArchiveFailed"))
+      toast.error(err instanceof Error ? err.message : t("bulkArchiveFailed"))
     } finally {
       setBulkBusy(false)
     }
@@ -698,7 +699,6 @@ export function DevicePage() {
   const archiveAll = async () => {
     if (!authSession?.accessToken) return
     setBulkBusy(true)
-    setBulkError(null)
     try {
       const response = await dashboardApi.archiveConnectorSessions(authSession.accessToken, connector.id, {
         archived: targetArchiveAll,
@@ -709,7 +709,7 @@ export function DevicePage() {
       closeSelectMode()
       refreshData()
     } catch (err) {
-      setBulkError(err instanceof Error ? err.message : t("bulkArchiveFailed"))
+      toast.error(err instanceof Error ? err.message : t("bulkArchiveFailed"))
     } finally {
       setBulkBusy(false)
     }
@@ -731,7 +731,6 @@ export function DevicePage() {
                 if (event.key === "Escape") {
                   setNameDraft(connector.name)
                   setEditingName(false)
-                  setRenameError(null)
                 }
               }}
               className="h-9 max-w-xs rounded-lg px-2 text-2xl font-semibold tracking-tight"
@@ -771,7 +770,6 @@ export function DevicePage() {
               variant="outline"
               size="sm"
               onClick={() => {
-                setTokenActionError(null)
                 if (connector.status === "offline") {
                   void handleRevoke()
                 } else {
@@ -794,8 +792,6 @@ export function DevicePage() {
             </Button>
           </div>
         </div>
-        {renameError && <p className="mt-3 text-sm text-destructive">{renameError}</p>}
-        {tokenActionError && <p className="mt-3 text-sm text-destructive">{tokenActionError}</p>}
 
         <Separator className="my-6" />
 
@@ -855,7 +851,6 @@ export function DevicePage() {
                       size="icon"
                       className="text-muted-foreground hover:text-destructive"
                       onClick={() => {
-                        setRemoveAgentError(null)
                         setRemoveAgentRuntime(agent.runtime)
                       }}
                       aria-label={t("removeAgent", { name: agent.runtime })}
@@ -937,7 +932,6 @@ export function DevicePage() {
                   size="sm"
                   onClick={() => {
                     setSelectMode(true)
-                    setBulkError(null)
                   }}
                   disabled={filteredSessions.length === 0}
                 >
@@ -957,27 +951,24 @@ export function DevicePage() {
             </div>
           </div>
 
-          <div className="mb-3 flex items-center gap-1">
+          <ToggleGroup
+            type="single"
+            value={sessionTab}
+            onValueChange={(value) => {
+              if (value) setSessionTab(value as SessionTabId)
+            }}
+            size="sm"
+            className="mb-3"
+          >
             {SESSION_TABS.map((tab) => (
-              <button
+              <ToggleGroupItem
                 key={tab.value}
-                type="button"
-                onClick={() => setSessionTab(tab.value)}
-                className={cn(
-                  "rounded-full px-3 py-1 text-xs font-medium transition-colors",
-                  sessionTab === tab.value
-                    ? "bg-foreground text-background"
-                    : "text-muted-foreground hover:bg-accent hover:text-foreground",
-                )}
+                value={tab.value}
               >
-                  {t(tab.labelKey)}
-              </button>
+                {t(tab.labelKey)}
+              </ToggleGroupItem>
             ))}
-          </div>
-
-          {bulkError ? (
-            <p className="mb-3 text-sm text-destructive">{bulkError}</p>
-          ) : null}
+          </ToggleGroup>
 
           {selectMode ? (
             <div className="mb-3 flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2 text-sm">
@@ -1050,7 +1041,6 @@ export function DevicePage() {
             <AlertDialogDescription>
               {t("revokeDescription", { name: connector.name })}
             </AlertDialogDescription>
-            {tokenActionError && <p className="text-sm text-destructive">{tokenActionError}</p>}
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{tCommon("cancel")}</AlertDialogCancel>
@@ -1091,7 +1081,6 @@ export function DevicePage() {
             <AlertDialogDescription>
               {t("removeAgentDescription", { name: removeAgentRuntime ?? "" })}
             </AlertDialogDescription>
-            {removeAgentError ? <p className="text-sm text-destructive">{removeAgentError}</p> : null}
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{tCommon("cancel")}</AlertDialogCancel>

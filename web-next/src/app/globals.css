@@ -164,6 +164,15 @@ body {
   font-family: inherit;
 }
 
+.aa-monaco-code-view,
+.aa-monaco-code-view .monaco-editor,
+.aa-monaco-code-view .overflow-guard,
+.aa-monaco-code-view .monaco-scrollable-element,
+.aa-monaco-code-view .monaco-editor-background,
+.aa-monaco-code-view .view-lines {
+  overscroll-behavior: contain;
+}
+
 .hljs-keyword,
 .hljs-selector-tag,
 .hljs-built_in,

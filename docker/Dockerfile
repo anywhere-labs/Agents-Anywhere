@@ -1,3 +1,23 @@
+FROM node:22-bookworm-slim AS web-static
+
+ARG YARN_REGISTRY=
+
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    NEXT_OUTPUT=export \
+    AGENTS_ANYWHERE_API=
+
+WORKDIR /app/web-next
+
+COPY web-next/package.json web-next/yarn.lock ./
+RUN corepack enable \
+    && if [ -n "$YARN_REGISTRY" ]; then yarn config set npmRegistryServer "$YARN_REGISTRY"; fi \
+    && yarn
+
+COPY web-next ./
+RUN yarn install --immutable && yarn build
+
+
 FROM python:3.12-slim AS server
 
 ARG APT_MIRROR=
@@ -7,7 +27,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_PROJECT_ENVIRONMENT=/opt/venv \
     PYTHONPATH=/app/server \
-    AGENT_SERVER_DB=/data/agent-server.sqlite3
+    AGENT_SERVER_DB=/data/agent-server.sqlite3 \
+    AGENT_SERVER_STATIC_DIR=/app/web-static
 
 WORKDIR /app
 
@@ -25,6 +46,7 @@ RUN if [ -n "$PIP_INDEX_URL" ]; then export UV_INDEX_URL="$PIP_INDEX_URL"; fi \
     && cd server && uv sync --no-dev --no-install-project
 
 COPY server ./server
+COPY --from=web-static /app/web-next/out ./web-static
 
 RUN mkdir -p /data
 VOLUME ["/data"]
@@ -32,26 +54,3 @@ VOLUME ["/data"]
 EXPOSE 8000
 ENTRYPOINT ["tini", "--"]
 CMD ["sh", "-c", "cd /app/server && uv run --no-sync uvicorn agent_server.app:create_app --factory --host 0.0.0.0 --port 8000"]
-
-
-FROM node:22-bookworm-slim AS web-next
-
-ARG AGENTS_ANYWHERE_API=http://server-next:8000
-ARG YARN_REGISTRY=
-
-ENV NODE_ENV=production \
-    NEXT_TELEMETRY_DISABLED=1 \
-    AGENTS_ANYWHERE_API=$AGENTS_ANYWHERE_API
-
-WORKDIR /app/web-next
-
-COPY web-next/package.json web-next/yarn.lock ./
-RUN corepack enable \
-    && if [ -n "$YARN_REGISTRY" ]; then yarn config set npmRegistryServer "$YARN_REGISTRY"; fi \
-    && yarn
-
-COPY web-next ./
-RUN yarn && yarn build
-
-EXPOSE 5174
-CMD ["yarn", "start", "--hostname", "0.0.0.0", "--port", "5174"]

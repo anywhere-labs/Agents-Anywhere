@@ -25,11 +25,12 @@ import {
 } from "@/components/attachment-input"
 import {
   composerMenuOptions,
+  effortFieldForModel,
   effectiveFieldValue,
-  filterClaudeEffortField,
   optionLabel,
   permissionLabelKey,
   runtimeConfigFields,
+  validEffortValue,
 } from "@/features/dashboard/runtime-config"
 import { cn } from "@/lib/utils"
 import type { RuntimeConfigSchema, SessionView } from "@/features/dashboard/types"
@@ -41,14 +42,11 @@ export type { AttachedFile }
 export function SessionComposer({
   session,
   pendingApprovalCount,
-  error,
   sending,
   takeoverBusy,
   runtimeSchema,
   runtimeSettings,
-  runtimeSettingsError,
   runtimeSettingsBusy,
-  onDismissError,
   onPatchRuntimeSettings,
   onSend,
   onInterrupt,
@@ -56,14 +54,11 @@ export function SessionComposer({
 }: {
   session: SessionView
   pendingApprovalCount: number
-  error: string | null
   sending: boolean
   takeoverBusy: boolean
   runtimeSchema: RuntimeConfigSchema | null
   runtimeSettings: Record<string, unknown> | null
-  runtimeSettingsError: string | null
   runtimeSettingsBusy: boolean
-  onDismissError: () => void
   onPatchRuntimeSettings: (settings: Record<string, unknown>) => void
   onSend: (content: string, attachments: AttachedFile[]) => void
   onInterrupt: () => void
@@ -86,11 +81,24 @@ export function SessionComposer({
   const settingsFields = runtimeConfigFields(runtimeSchema, runtimeSettings, "session")
   const permissionField = settingsFields.find((field) => field.key === "permissionMode")
   const modelField = settingsFields.find((field) => field.key === "model")
-  const effortField = filterClaudeEffortField(
-    session.runtime,
-    settingsFields.find((field) => field.key === "effort"),
+  const rawEffortField = settingsFields.find((field) => field.key === "effort")
+  const effortField = effortFieldForModel(
+    modelField,
+    rawEffortField,
     runtimeSettings?.model,
   )
+  const effortFieldFor = (model: string) => effortFieldForModel(
+    modelField,
+    rawEffortField,
+    model,
+  )
+  const patchModel = (model: string) => {
+    const nextEffort = validEffortValue(effortFieldFor(model), runtimeSettings?.effort)
+    onPatchRuntimeSettings(nextEffort ? { model, effort: nextEffort } : { model, effort: null })
+  }
+  const patchModelEffort = (model: string, effort: string) => {
+    onPatchRuntimeSettings({ model, effort })
+  }
   const permissionItems = composerMenuOptions(permissionField)
   const modelItems = composerMenuOptions(modelField)
   const effortItems = composerMenuOptions(effortField)
@@ -135,11 +143,6 @@ export function SessionComposer({
     >
       <DragOverlay isDragging={isDragging} />
       <div className="mx-auto w-full max-w-3xl space-y-2">
-        {error ? (
-          <button type="button" className="block text-left text-sm text-destructive" onClick={onDismissError}>
-            {error}
-          </button>
-        ) : null}
         <div
           className={cn(
             "relative rounded-2xl border border-border bg-card/85 shadow-sm backdrop-blur-xl transition-colors supports-backdrop-filter:bg-card/70 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20",
@@ -225,40 +228,59 @@ export function SessionComposer({
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="start" className="w-56">
-                      {effortItems.length > 0 ? (
-                        <>
-                          {effortItems.map((item) => (
-                            <DropdownMenuItem
-                              key={item.id}
-                              className="gap-2"
-                              onSelect={() => onPatchRuntimeSettings({ effort: item.id })}
-                            >
-                              <Check className={cn("size-3.5", effortValue === item.id ? "opacity-100" : "opacity-0")} />
-                              <span>{item.label}</span>
-                            </DropdownMenuItem>
-                          ))}
-                        </>
+                      {!modelField && effortItems.length > 0 ? (
+                        effortItems.map((item) => (
+                          <DropdownMenuItem
+                            key={item.id}
+                            className="gap-2"
+                            onSelect={() => onPatchRuntimeSettings({ effort: item.id })}
+                          >
+                            <Check className={cn("size-3.5", effortValue === item.id ? "opacity-100" : "opacity-0")} />
+                            <span>{item.label}</span>
+                          </DropdownMenuItem>
+                        ))
                       ) : null}
-                      {effortItems.length > 0 && modelItems.length > 0 ? <DropdownMenuSeparator /> : null}
+                      {!modelField && effortItems.length > 0 && modelItems.length > 0 ? <DropdownMenuSeparator /> : null}
                       {modelItems.length > 0 ? (
-                        <DropdownMenuSub>
-                          <DropdownMenuSubTrigger className="gap-2">
-                            <span className="size-3.5" />
-                            <span className="max-w-40 truncate">{modelLabel}</span>
-                          </DropdownMenuSubTrigger>
-                          <DropdownMenuSubContent className="w-56">
-                            {modelItems.map((item) => (
+                        modelItems.map((modelItem) => {
+                          const modelEffortField = effortFieldFor(modelItem.id)
+                          const modelEfforts = composerMenuOptions(modelEffortField)
+                          if (modelEfforts.length === 0) {
+                            return (
                               <DropdownMenuItem
-                                key={item.id}
+                                key={modelItem.id}
                                 className="gap-2"
-                                onSelect={() => onPatchRuntimeSettings({ model: item.id })}
+                                onSelect={() => patchModel(modelItem.id)}
                               >
-                                <Check className={cn("size-3.5", modelValue === item.id ? "opacity-100" : "opacity-0")} />
-                                <span className="truncate">{item.label}</span>
+                                <Check className={cn("size-3.5", modelValue === modelItem.id ? "opacity-100" : "opacity-0")} />
+                                <span className="truncate">{modelItem.label}</span>
                               </DropdownMenuItem>
-                            ))}
-                          </DropdownMenuSubContent>
-                        </DropdownMenuSub>
+                            )
+                          }
+                          return (
+                            <DropdownMenuSub key={modelItem.id}>
+                              <DropdownMenuSubTrigger className="gap-2">
+                                <Check className={cn("size-3.5", modelValue === modelItem.id ? "opacity-100" : "opacity-0")} />
+                                <span className="max-w-40 truncate">{modelItem.label}</span>
+                              </DropdownMenuSubTrigger>
+                              <DropdownMenuSubContent className="w-56">
+                                {modelEfforts.map((item) => (
+                                  <DropdownMenuItem
+                                    key={item.id}
+                                    className="gap-2"
+                                    onSelect={() => patchModelEffort(modelItem.id, item.id)}
+                                  >
+                                    <Check className={cn(
+                                      "size-3.5",
+                                      modelValue === modelItem.id && effortValue === item.id ? "opacity-100" : "opacity-0",
+                                    )} />
+                                    <span className="truncate">{item.label}</span>
+                                  </DropdownMenuItem>
+                                ))}
+                              </DropdownMenuSubContent>
+                            </DropdownMenuSub>
+                          )
+                        })
                       ) : null}
                     </DropdownMenuContent>
                   </DropdownMenu>
@@ -320,11 +342,7 @@ export function SessionComposer({
             </Button>
           </div>
         </div>
-        {runtimeSettingsError ? (
-          <div className="text-xs text-destructive">{runtimeSettingsError}</div>
-        ) : null}
       </div>
     </div>
   )
 }
-

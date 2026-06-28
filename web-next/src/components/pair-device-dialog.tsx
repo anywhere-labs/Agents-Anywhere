@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import { Copy, Check, Loader2, CheckCircle2, ArrowLeft } from "lucide-react"
+import { toast } from "sonner"
 import {
   Dialog,
   DialogContent,
@@ -96,14 +97,16 @@ function CodeBlock({ code }: { code: string }) {
         <ScrollBar orientation="horizontal" />
       </ScrollArea>
       {/* copy button: outside scroll area, always visible, same vertical padding */}
-      <button
+      <Button
         type="button"
+        variant="ghost"
+        size="icon"
         onClick={copy}
         aria-label={t("copyCommand")}
-        className="flex items-center px-4 py-3 text-muted-foreground transition-colors hover:text-foreground"
+        className="m-2 self-center text-muted-foreground"
       >
         {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-      </button>
+      </Button>
     </div>
   )
 }
@@ -128,7 +131,6 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
   const [connectorId, setConnectorId] = React.useState<string | null>(() => setupCredential?.connector.id ?? null)
   const [token, setToken] = React.useState<string | null>(() => setupCredential?.connectorToken ?? null)
   const [pairCode, setPairCode] = React.useState("")
-  const [error, setError] = React.useState<string | null>(null)
   const [creating, setCreating] = React.useState(false)
   const [claiming, setClaiming] = React.useState(false)
   const [polling, setPolling] = React.useState(false)
@@ -147,7 +149,6 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
       setName(setupCredential.connector.name)
       setConnectorId(setupCredential.connector.id)
       setToken(setupCredential.connectorToken)
-      setError(null)
     }
   }, [open, setupCredential])
 
@@ -187,7 +188,6 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
     setConnectorId(setupCredential?.connector.id ?? null)
     setToken(setupCredential?.connectorToken ?? null)
     setPairCode("")
-    setError(null)
     setCreating(false)
     setClaiming(false)
     setPolling(false)
@@ -214,7 +214,6 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
   const handleCreate = async () => {
     if (!name.trim() || !session?.accessToken) return
     setCreating(true)
-    setError(null)
     try {
       const result = await dashboardApi.createConnector(session.accessToken, name.trim())
       setConnectorId(result.connector.id)
@@ -222,7 +221,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
       setName(result.connector.name)
       setStep("method")
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("errors.createFailed"))
+      toast.error(err instanceof Error ? err.message : t("errors.createFailed"))
     } finally {
       setCreating(false)
     }
@@ -230,13 +229,11 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
 
   const handleSelectToken = () => {
     if (!connectorId) return
-    setError(null)
     setStep("token")
     startConnectorPolling(connectorId)
   }
 
   const handleSelectPairCode = () => {
-    setError(null)
     setStep("paircode")
   }
 
@@ -244,7 +241,6 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
     const code = pairCode
     if (code.length < 6 || !session?.accessToken || !connectorId || !token) return
     setClaiming(true)
-    setError(null)
     try {
       const result = await dashboardApi.claimPairing(session.accessToken, {
         code,
@@ -257,7 +253,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
       onConnectorCreated?.()
       setStep("success")
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("errors.claimFailed"))
+      toast.error(err instanceof Error ? err.message : t("errors.claimFailed"))
     } finally {
       setClaiming(false)
     }
@@ -313,7 +309,6 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
                   onKeyDown={(e) => e.key === "Enter" && handleCreate()}
                   autoFocus
                 />
-                {error && <p className="text-sm text-destructive">{error}</p>}
               </div>
               <DialogFooter>
                 <Button onClick={handleCreate} disabled={!name.trim() || creating} className="w-full">
@@ -334,23 +329,24 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
                 </DialogDescription>
               </DialogHeader>
               <div className="flex flex-col gap-3 py-2">
-                {error && <p className="text-sm text-destructive">{error}</p>}
-                <button
+                <Button
                   type="button"
+                  variant="outline"
                   onClick={handleSelectToken}
-                  className="flex flex-col gap-0.5 rounded-lg border border-border px-4 py-3 text-left transition-colors hover:bg-accent"
+                  className="h-auto w-full flex-col items-start gap-0.5 px-4 py-3 text-left"
                 >
                   <span className="font-medium">{t("tokenTitle")}</span>
                   <span className="text-sm text-muted-foreground">{t("tokenDescription")}</span>
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
+                  variant="outline"
                   onClick={handleSelectPairCode}
-                  className="flex flex-col gap-0.5 rounded-lg border border-border px-4 py-3 text-left transition-colors hover:bg-accent"
+                  className="h-auto w-full flex-col items-start gap-0.5 px-4 py-3 text-left"
                 >
                   <span className="font-medium">{t("pairCodeTitle")}</span>
                   <span className="text-sm text-muted-foreground">{t("pairCodeDescription")}</span>
-                </button>
+                </Button>
               </div>
             </>
           )}
@@ -366,7 +362,6 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
               </DialogHeader>
               <div className="flex flex-col gap-3 py-2">
                 <CodeBlock code={tokenCommand} />
-                {error && <p className="text-sm text-destructive">{error}</p>}
                 <PollingIndicator label={t("waitingOnline")} />
               </div>
               <DialogFooter>
@@ -412,7 +407,6 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
                     </InputOTPGroup>
                   </InputOTP>
                 </div>
-                {error && <p className="text-sm text-destructive">{error}</p>}
                 {polling && <PollingIndicator label={t("confirming")} />}
               </div>
               <DialogFooter className="gap-2 sm:gap-2">

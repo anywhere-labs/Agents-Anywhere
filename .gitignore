@@ -7,6 +7,7 @@ __pycache__/
 .ruff_cache/
 .venv/
 .next/
+web-next/out/
 .env.local
 .env.*.local
 

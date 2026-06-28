@@ -208,6 +208,8 @@ async def mark_session_read(
 async def session_state(
     session_id: str,
     after_seq: int = Query(0, alias="afterSeq", ge=0),
+    before_order_seq: int | None = Query(None, alias="beforeOrderSeq", ge=1),
+    mode: str = Query("since", pattern="^(since|latest|before)$"),
     limit: int = Query(200, ge=1, le=500),
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
@@ -215,9 +217,20 @@ async def session_state(
 ) -> SessionStateResponse:
     try:
         session = await db.get_session(session_id, user_id=user_id)
-        items, has_more = await db.list_timeline_since(
-            session_id=session_id, after_seq=after_seq, limit=limit
-        )
+        if mode == "latest":
+            items, has_more = await db.list_timeline_latest(session_id=session_id, limit=limit)
+        elif mode == "before" or before_order_seq is not None:
+            if before_order_seq is None:
+                raise HTTPException(status_code=422, detail="beforeOrderSeq is required for before mode")
+            items, has_more = await db.list_timeline_before_order_seq(
+                session_id=session_id,
+                before_order_seq=before_order_seq,
+                limit=limit,
+            )
+        else:
+            items, has_more = await db.list_timeline_since(
+                session_id=session_id, after_seq=after_seq, limit=limit
+            )
         approvals = await db.list_pending_approvals(session_id)
         next_seq = await db.get_session_seq(session_id)
     except KeyError:

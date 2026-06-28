@@ -824,6 +824,104 @@ def test_state_polling_and_timeline_item_upsert(tmp_path):
         assert empty_increment["items"] == []
 
 
+def test_server_serves_next_static_export(tmp_path, monkeypatch):
+    static_dir = tmp_path / "web-static"
+    (static_dir / "_next" / "static").mkdir(parents=True)
+    (static_dir / "brand").mkdir()
+    (static_dir / "en" / "preview").mkdir(parents=True)
+    (static_dir / "zh-CN").mkdir()
+    (static_dir / "_next" / "static" / "app.js").write_text("console.log('ok')", encoding="utf-8")
+    (static_dir / "brand" / "aa-logo-dark-mode.png").write_bytes(b"brand")
+    (static_dir / "en" / "index.html").write_text("<main>en home</main>", encoding="utf-8")
+    (static_dir / "en" / "preview" / "index.html").write_text("<main>preview</main>", encoding="utf-8")
+    (static_dir / "zh-CN" / "index.html").write_text("<main>zh home</main>", encoding="utf-8")
+    (static_dir / "favicon-dark-mode.png").write_bytes(b"favicon")
+
+    monkeypatch.setenv("AGENT_SERVER_STATIC_DIR", str(static_dir))
+    client = make_client(tmp_path)
+
+    assert "<main>en home</main>" in client.get("/").text
+    assert "<main>preview</main>" in client.get("/en/preview").text
+    assert "<main>preview</main>" in client.get("/preview").text
+    assert client.get("/_next/static/app.js").text == "console.log('ok')"
+    assert client.get("/brand/aa-logo-dark-mode.png").content == b"brand"
+    assert client.get("/favicon-dark-mode.png").content == b"favicon"
+    assert client.get("/auth/config").headers["content-type"].startswith("application/json")
+
+
+def test_session_state_supports_latest_and_before_timeline_windows(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+
+    with client.websocket_connect(
+        "/connector/ws",
+        headers={"Authorization": f"Bearer {access_token}"},
+    ) as ws:
+        for order_seq in range(1, 6):
+            ws.send_json(
+                {
+                    "type": "notification",
+                    "method": "timeline.itemUpsert",
+                    "params": {
+                        "sessionId": session_id,
+                        "item": {
+                            "id": f"tl_{order_seq}",
+                            "sessionId": session_id,
+                            "turnId": "turn_1",
+                            "type": "message",
+                            "status": "done",
+                            "role": "assistant",
+                            "content": {"text": f"item {order_seq}", "format": "markdown"},
+                            "source": {
+                                "runtime": "codex",
+                                "sessionId": "thr_1",
+                                "turnId": "turn_1",
+                                "itemId": f"item_{order_seq}",
+                                "itemType": "agentMessage",
+                            },
+                            "orderSeq": order_seq,
+                            "revision": 1,
+                            "contentHash": f"sha256:{order_seq}",
+                        },
+                    },
+                }
+            )
+
+        def read_latest_five():
+            body = client.get(
+                f"/sessions/{session_id}/state",
+                headers=headers,
+                params={"mode": "latest", "limit": 5},
+            ).json()
+            return body if len(body["items"]) == 5 else None
+
+        assert wait_for(read_latest_five) is not None
+
+        latest = client.get(
+            f"/sessions/{session_id}/state",
+            headers=headers,
+            params={"mode": "latest", "limit": 2},
+        ).json()
+        assert [item["id"] for item in latest["items"]] == ["tl_4", "tl_5"]
+        assert latest["hasMore"] is True
+
+        older = client.get(
+            f"/sessions/{session_id}/state",
+            headers=headers,
+            params={"mode": "before", "beforeOrderSeq": 4, "limit": 2},
+        ).json()
+        assert [item["id"] for item in older["items"]] == ["tl_2", "tl_3"]
+        assert older["hasMore"] is True
+
+        oldest = client.get(
+            f"/sessions/{session_id}/state",
+            headers=headers,
+            params={"mode": "before", "beforeOrderSeq": 2, "limit": 2},
+        ).json()
+        assert [item["id"] for item in oldest["items"]] == ["tl_1"]
+        assert oldest["hasMore"] is False
+
+
 def test_session_status_is_derived_from_turn_ledger(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)

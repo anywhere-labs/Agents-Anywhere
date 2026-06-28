@@ -2,9 +2,9 @@
 
 Docker files for Agents Anywhere.
 
-The current Web console lives in `web-next/` and runs as a Next.js server. The
-FastAPI backend is a separate API service. In Docker, access the Web container;
-it rewrites API and WebSocket traffic to the backend.
+The current Web console lives in `web-next/`. Production Docker builds export it
+as static files and the FastAPI backend serves those files and API/WebSocket
+paths from the same origin.
 
 ## Quickstart
 
@@ -55,34 +55,20 @@ Inside the container:
 
 ## Production Images
 
-`docker/Dockerfile` has two targets:
+`docker/Dockerfile` builds the `web-next` static export in an intermediate
+stage and copies it into the final `server` image.
 
-- `server`: FastAPI API service.
-- `web-next`: Next.js Web console.
-
-Build and run SQLite-backed services manually:
+Build and run a SQLite-backed service manually:
 
 ```bash
-docker network create agents-anywhere-net
-
 docker build -f docker/Dockerfile --target server -t agents-anywhere-server:latest .
-docker build -f docker/Dockerfile --target web-next \
-  --build-arg AGENTS_ANYWHERE_API=http://agents-anywhere-server:8000 \
-  -t agents-anywhere-web-next:latest .
 
 docker run -d \
   --name agents-anywhere-server \
-  --network agents-anywhere-net \
+  -p 5174:8000 \
   -v agents-anywhere-data:/data \
   -e AGENT_SERVER_SECRET=change-me-before-production \
   agents-anywhere-server:latest
-
-docker run --rm -it \
-  --name agents-anywhere-web \
-  --network agents-anywhere-net \
-  -p 5174:5174 \
-  -e AGENTS_ANYWHERE_API=http://agents-anywhere-server:8000 \
-  agents-anywhere-web-next:latest
 ```
 
 Persistent server data under `/data`:
@@ -100,13 +86,15 @@ Use Debian apt and PyPI mirrors when official sources are slow:
 docker build -f docker/Dockerfile --target server -t agents-anywhere-server:latest \
   --build-arg APT_MIRROR=https://mirrors.ustc.edu.cn/debian \
   --build-arg PIP_INDEX_URL=https://mirrors.ustc.edu.cn/pypi/simple \
+  --build-arg YARN_REGISTRY=https://registry.npmmirror.com \
   .
 ```
 
 ## PostgreSQL Compose
 
-`docker/docker-compose.postgres.yml` runs PostgreSQL, the FastAPI server, and
-the Next.js Web console.
+`docker/docker-compose.postgres.yml` runs PostgreSQL and the FastAPI server under
+the fixed Compose project name `agents-anywhere`. The server image includes the
+statically exported Web console.
 
 ```bash
 POSTGRES_PASSWORD=change-me \
@@ -116,11 +104,12 @@ docker compose -f docker/docker-compose.postgres.yml up --build
 
 The compose file uses:
 
+- `postgres-next` service for PostgreSQL 17
+- `server-next` service for the FastAPI backend and statically exported Web UI
 - `agents-anywhere-pg-next` volume for PostgreSQL data
 - `agents-anywhere-files-next` volume mounted at `/data` for uploads / attachments
-- internal backend URL `http://server-next:8000`
 - public Web port `${AGENTS_ANYWHERE_WEB_PORT:-5174}`
-- `AGENTS_ANYWHERE_API=http://server-next:8000` for Next rewrites
+- static `web-next` files served by FastAPI from the same origin as the API
 - optional `AGENT_SERVER_PUBLIC_ORIGIN=https://agents.example.com` for OAuth redirect URLs behind a reverse proxy
 
 Publish the Web console on a different host port:
@@ -134,6 +123,9 @@ docker compose -f docker/docker-compose.postgres.yml up --build
 
 Use a non-default `AGENT_SERVER_SECRET` and database password outside local
 development. Put HTTPS in front of the Web service for production.
+
+The first startup on an empty database logs a bootstrap token in the
+`server-next` logs. Use it in the Web UI to create the first admin user.
 
 ## Connector Ubuntu Image
 

@@ -1,3 +1,5 @@
+name: agents-anywhere
+
 services:
   postgres-next:
     image: postgres:17-alpine
@@ -34,24 +36,8 @@ services:
       AGENT_SERVER_CORS_ORIGINS: ${AGENT_SERVER_CORS_ORIGINS:-http://127.0.0.1:${AGENTS_ANYWHERE_WEB_PORT:-5174},http://localhost:${AGENTS_ANYWHERE_WEB_PORT:-5174}}
     volumes:
       - agents-anywhere-files-next:/data
-    expose:
-      - "8000"
-
-  web-next:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-      target: web-next
-      args:
-        AGENTS_ANYWHERE_API: ${AGENTS_ANYWHERE_API:-http://server-next:8000}
-    image: agents-anywhere-web-next:postgres
-    restart: unless-stopped
-    depends_on:
-      - server-next
-    environment:
-      AGENTS_ANYWHERE_API: ${AGENTS_ANYWHERE_API:-http://server-next:8000}
     ports:
-      - "${AGENTS_ANYWHERE_WEB_PORT:-5174}:5174"
+      - "${AGENTS_ANYWHERE_WEB_PORT:-5174}:8000"
 
 volumes:
   agents-anywhere-pg-next:

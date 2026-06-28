@@ -99,11 +99,12 @@ export function MarkdownText({
           },
           table({ children, ...props }) {
             return (
-              <div className="my-3 min-w-0 max-w-full overflow-x-auto rounded-xl border border-border">
+              <ScrollArea contentWide className="my-3 min-w-0 max-w-full rounded-xl border border-border">
                 <table className="w-full min-w-max border-collapse text-sm" {...props}>
                   {children}
                 </table>
-              </div>
+                <ScrollBar orientation="horizontal" />
+              </ScrollArea>
             )
           },
           thead({ children, ...props }) {

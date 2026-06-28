@@ -27,6 +27,7 @@ const PANEL_META: Record<PanelId, { titleKey: "panelFiles" | "panelShell"; icon:
 
 const VERTICAL_LAYOUT_KEY_PREFIX = "aa-session-runtime-vertical-layout"
 const RUNTIME_PANEL_ID = "runtime-dock"
+const CANONICAL_VERTICAL_PANEL_IDS = ["runtime-files", "runtime-terminal"]
 
 type SessionRuntimePanelsProps = {
   token: string | null
@@ -42,14 +43,14 @@ export function SessionRuntimePanels({
   dockedPanels,
 }: SessionRuntimePanelsProps) {
   const dockedPanelKey = dockedPanels.join("-")
-  const verticalLayoutKey = `${VERTICAL_LAYOUT_KEY_PREFIX}:${dockedPanelKey}`
+  const verticalLayoutKey = `${VERTICAL_LAYOUT_KEY_PREFIX}:files-terminal`
   const verticalPanelIds = React.useMemo(
     () => dockedPanelKey.split("-").filter(Boolean).map((id) => `runtime-${id}`),
     [dockedPanelKey],
   )
   const verticalDefaultLayout = React.useMemo(() => createEvenLayout(verticalPanelIds), [verticalPanelIds])
   const savedVerticalDefaultLayout = React.useMemo(
-    () => readSavedLayout(verticalLayoutKey, verticalPanelIds, verticalDefaultLayout),
+    () => readSavedLayout(verticalLayoutKey, verticalPanelIds, verticalDefaultLayout, CANONICAL_VERTICAL_PANEL_IDS),
     [verticalLayoutKey, verticalPanelIds, verticalDefaultLayout],
   )
   const renderRuntimePanel = useRuntimePanelRenderer({ token, connectorId, root })
@@ -64,7 +65,7 @@ export function SessionRuntimePanels({
           key={dockedPanelKey}
           direction="vertical"
           defaultLayout={savedVerticalDefaultLayout}
-          onLayoutChanged={(layout) => writeSavedLayout(verticalLayoutKey, verticalPanelIds, layout)}
+          onLayoutChanged={(layout) => writeSavedLayout(verticalLayoutKey, verticalPanelIds, layout, CANONICAL_VERTICAL_PANEL_IDS)}
           className="h-full min-h-0 overflow-hidden"
         >
           {dockedPanels.map((id, index) => (
@@ -203,23 +204,55 @@ function normalizeLayout(layout: unknown, panelIds: string[], fallback: Layout):
   return next
 }
 
-export function readSavedLayout(key: string, panelIds: string[], fallback: Layout): Layout {
+export function readSavedLayout(
+  key: string,
+  panelIds: string[],
+  fallback: Layout,
+  storagePanelIds: string[] = panelIds,
+): Layout {
   if (typeof window === "undefined") return fallback
 
   try {
     const raw = window.localStorage.getItem(key)
     if (!raw) return fallback
-    return normalizeLayout(JSON.parse(raw), panelIds, fallback)
+    const parsed = JSON.parse(raw)
+    const stored = normalizeLayout(parsed, storagePanelIds, fallback)
+    const scoped: Layout = {}
+    for (const id of panelIds) {
+      const value = stored[id]
+      if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return fallback
+      scoped[id] = value
+    }
+    return scoped
   } catch {
     return fallback
   }
 }
 
-export function writeSavedLayout(key: string, panelIds: string[], layout: Layout) {
+export function writeSavedLayout(
+  key: string,
+  panelIds: string[],
+  layout: Layout,
+  storagePanelIds: string[] = panelIds,
+) {
   if (typeof window === "undefined") return
 
   const normalized = normalizeLayout(layout, panelIds, layout)
-  const payload = JSON.stringify(normalized)
+  let storageLayout: Layout = normalized
+  if (storagePanelIds.length !== panelIds.length || storagePanelIds.some((id) => !panelIds.includes(id))) {
+    try {
+      const existing = window.localStorage.getItem(key)
+      const parsed = existing ? JSON.parse(existing) : {}
+      storageLayout = {
+        ...(parsed && typeof parsed === "object" ? parsed as Layout : {}),
+        ...normalized,
+      }
+      storageLayout = normalizeLayout(storageLayout, storagePanelIds, storageLayout)
+    } catch {
+      storageLayout = normalized
+    }
+  }
+  const payload = JSON.stringify(storageLayout)
 
   if (typeof requestIdleCallback === "function") {
     requestIdleCallback(() => {

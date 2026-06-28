@@ -3,6 +3,7 @@
 import type { LucideIcon } from "lucide-react"
 import { ExternalLink, RotateCw, X } from "lucide-react"
 
+import { Button } from "@/components/ui/button"
 
 type PanelHeaderProps = {
   icon: LucideIcon
@@ -58,13 +59,15 @@ function PanelButton({
   children: React.ReactNode
 }) {
   return (
-    <button
+    <Button
       type="button"
+      variant="ghost"
+      size="icon-sm"
       aria-label={label}
       onClick={onClick}
-      className="rounded-md p-1.5 transition-colors hover:bg-accent hover:text-foreground"
+      className="text-muted-foreground"
     >
       {children}
-    </button>
+    </Button>
   )
 }

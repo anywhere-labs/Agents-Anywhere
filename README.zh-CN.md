@@ -66,7 +66,7 @@ Agents Anywhere 是遥控器，不是新的 Agent 运行环境。你的代码仍
 - **远程 shell 与终端。** 支持一次性 shell 命令、shell task 和交互式 terminal。
 - **设备配对。** 通过 Windows/macOS Connector App 或 Linux Connector CLI，把真正拥有工作区的机器接入控制面。
 - **自托管后端。** FastAPI 后端支持 SQLite 本地开发和 PostgreSQL 生产风格部署。
-- **Web 和 Android 客户端。** 使用 Web 控制台或 Android App 管理 Session、Device、审批、文件、终端和远程控制工作流。
+- **Web 控制台。** `web-next` 使用 Next.js、shadcn 和 Tailwind，提供登录、设备、工作区、Runtime 设置、团队/管理员和 Session 详情页；生产 Docker 中由 FastAPI 同源托管静态导出产物。
 
 ## 支持的 Agent 与 Runtime
 
@@ -172,7 +172,7 @@ docs/        共享参考文档
 
 ## Quickstart：Docker 启动完整应用
 
-从仓库根目录运行 PostgreSQL-backed stack：
+从仓库根目录运行 PostgreSQL compose：
 
 ```bash
 POSTGRES_PASSWORD=change-me \
@@ -185,12 +185,6 @@ docker compose -f docker/docker-compose.postgres.yml up --build
 ```text
 http://127.0.0.1:5174
 ```
-
-它会启动三个服务：
-
-- `postgres`：带持久化 Docker volume 的 PostgreSQL 17。
-- `server`：FastAPI 后端，在 compose 内部网络中监听 `http://server:8000`。
-- `web`：Next.js `web-next` 控制台，对宿主机暴露 `5174` 端口，并把 API / WebSocket 流量转发到后端。
 
 首次启动空数据库时，服务日志会输出 bootstrap token。用它在 Web UI 中创建第一个管理员用户。
 
@@ -205,7 +199,7 @@ AGENT_SERVER_DB=agent-server.sqlite3 \
   uv run uvicorn agent_server.app:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
-前端使用 Next.js，推荐用 `yarn`：
+前端使用 Next.js + shadcn，推荐用 `yarn`：
 
 ```bash
 cd web-next
@@ -213,7 +207,7 @@ yarn install
 yarn dev
 ```
 
-Next.js 默认监听 `127.0.0.1:5174`，并把 API / WebSocket 请求代理到 `http://127.0.0.1:8000`。需要换后端地址时：
+Next dev 默认监听 `127.0.0.1:3000`。需要指定后端地址时：
 
 ```bash
 cd web-next
@@ -282,17 +276,17 @@ docker compose -f docker/docker-compose.postgres.yml up --build
 docker compose -f docker/docker-compose.postgres.yml build \
   --build-arg APT_MIRROR=https://mirrors.ustc.edu.cn/debian \
   --build-arg PIP_INDEX_URL=https://mirrors.ustc.edu.cn/pypi/simple \
-  server
+  --build-arg YARN_REGISTRY=https://registry.npmmirror.com
 ```
 
-compose 会启动 PostgreSQL 和生产风格 server 镜像：
+compose 使用固定 project name `agents-anywhere`，会启动 PostgreSQL 和生产风格 server 镜像：
 
-- 后端和前端默认通过 `8000` 端口访问。
-- 设置 `AGENTS_ANYWHERE_PORT=18000` 可以改用其他宿主机端口。
-- PostgreSQL 数据使用 `agents-anywhere-pg` volume。
-- 上传文件和附件使用挂载到 `/data` 的持久化 volume。
-- 后端会从 `/app/web-dist` 托管构建后的 Web UI，包括 `/site.webmanifest`
-  这类根路径静态资源。
+- `postgres-next` 服务运行 PostgreSQL 17。
+- `server-next` 服务运行 FastAPI 后端，并同源托管静态导出的 `web-next` UI。
+- 默认通过宿主机 `5174` 端口访问；设置 `AGENTS_ANYWHERE_WEB_PORT=18000` 可以改用其他宿主机端口。
+- PostgreSQL 数据使用 `agents-anywhere-pg-next` volume。
+- 上传文件和附件使用 `agents-anywhere-files-next` volume，挂载到 `/data`。
+- 后端会从 `/app/web-static` 托管构建后的 Web UI，包括 `/site.webmanifest` 这类根路径静态资源。
 
 生产环境请至少修改 `AGENT_SERVER_SECRET` 和数据库密码，并在反向代理层配置 HTTPS。
 
@@ -337,7 +331,7 @@ cd ../connector
 uv run ruff check connector tests
 uv run pytest -q
 
-cd ../web
+cd ../web-next
 yarn build
 ```
 
