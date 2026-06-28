@@ -1,16 +1,30 @@
-const { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, nativeTheme, shell } = require("electron");
+const { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, nativeTheme, net, protocol, shell } = require("electron");
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const readline = require("node:readline");
+const { pathToFileURL } = require("node:url");
 
 const APP_NAME = "Agents Anywhere Connector";
 const DEFAULT_LOG_CHUNK_SIZE_KB = 512;
 const DEFAULT_LOG_RETAIN_CHUNKS = 20;
 const DEFAULT_LOG_RETENTION_DAYS = 14;
 const DEFAULT_LOG_PAGE_SIZE = 100;
+const isDev = Boolean(process.env.NEXT_DEV_SERVER_URL);
+const APP_PROTOCOL = "app";
+const APP_HOST = "desktop";
 
 app.setName(APP_NAME);
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: APP_PROTOCOL,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+    },
+  },
+]);
 
 let mainWindow = null;
 let tray = null;
@@ -20,7 +34,6 @@ let rpcReader = null;
 let nextRequestId = 1;
 let nextLogSeq = 1;
 let pending = new Map();
-const isDev = Boolean(process.env.NEXT_DEV_SERVER_URL);
 
 const state = {
   platform: process.platform,
@@ -61,6 +74,33 @@ function readJson(filePath, fallback) {
 function writeJson(filePath, value) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+function exportedAppDir() {
+  return path.resolve(__dirname, "..", "out");
+}
+
+function exportedAppUrl(route = "/") {
+  return `${APP_PROTOCOL}://${APP_HOST}${route}`;
+}
+
+function registerExportedAppProtocol() {
+  if (isDev) return;
+  protocol.handle(APP_PROTOCOL, (request) => {
+    const url = new URL(request.url);
+    if (url.hostname !== APP_HOST) return new Response("Not found", { status: 404 });
+
+    const rawPath = decodeURIComponent(url.pathname);
+    const relativePath = rawPath === "/" ? "index.html" : rawPath.replace(/^\/+/, "");
+    const filePath = path.resolve(exportedAppDir(), relativePath);
+    const appDir = exportedAppDir();
+
+    if (filePath !== appDir && !filePath.startsWith(`${appDir}${path.sep}`)) {
+      return new Response("Not found", { status: 404 });
+    }
+
+    return net.fetch(pathToFileURL(filePath).toString());
+  });
 }
 
 function clampNumber(value, fallback, min, max) {
@@ -493,7 +533,15 @@ function createMainWindow() {
 
   const devServer = process.env.NEXT_DEV_SERVER_URL;
   if (devServer) mainWindow.loadURL(devServer);
-  else mainWindow.loadFile(path.join(__dirname, "..", "out", "index.html"));
+  else mainWindow.loadURL(exportedAppUrl("/"));
+
+  mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedUrl) => {
+    appendLog({
+      level: "ERROR",
+      message: `Desktop UI failed to load ${validatedUrl}: ${errorCode} ${errorDescription}`,
+      time: new Date().toISOString(),
+    });
+  });
 
   mainWindow.on("close", (event) => {
     if (!app.isQuitting) {
@@ -613,6 +661,7 @@ ipcMain.handle("connector:clearLogs", () => clearLogFiles());
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
   if (!isDev && process.platform === "darwin") app.setActivationPolicy("accessory");
+  registerExportedAppProtocol();
   state.configPath = userDataPath("connector.json");
   state.settingsPath = userDataPath("desktop-settings.json");
   state.logPath = userDataPath("logs");
