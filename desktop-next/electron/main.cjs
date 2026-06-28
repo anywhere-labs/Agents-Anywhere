@@ -490,7 +490,6 @@ function createMainWindow() {
   if (devServer) mainWindow.loadURL(devServer);
   else mainWindow.loadFile(path.join(__dirname, "..", "out", "index.html"));
 
-  mainWindow.once("ready-to-show", () => mainWindow.show());
   mainWindow.on("close", (event) => {
     if (!app.isQuitting) {
       event.preventDefault();
@@ -508,7 +507,7 @@ function showWindow() {
 function updateNativeIcons() {
   if (tray) tray.setImage(trayIcon());
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setIcon(appIconPath());
-  if (process.platform === "darwin" && app.dock) app.dock.setIcon(appIconPath());
+  if (process.platform === "darwin" && app.dock && app.dock.isVisible()) app.dock.setIcon(appIconPath());
 }
 
 function updateTrayMenu() {
@@ -587,6 +586,7 @@ ipcMain.handle("connector:clearLogs", () => clearLogFiles());
 
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
+  if (process.platform === "darwin" && app.dock) app.dock.hide();
   state.configPath = userDataPath("connector.json");
   state.settingsPath = userDataPath("desktop-settings.json");
   state.logPath = userDataPath("logs");
@@ -594,7 +594,6 @@ app.whenReady().then(() => {
   loadDesktopSettings();
   initLogSeq();
   createTray();
-  createMainWindow();
   updateNativeIcons();
   startRpcProcess();
   rpcRequest("connector.getState")
@@ -609,7 +608,9 @@ app.whenReady().then(() => {
   nativeTheme.on("updated", updateNativeIcons);
 });
 
-app.on("activate", () => showWindow());
+app.on("activate", () => {
+  if (process.platform !== "darwin" || !app.dock || app.dock.isVisible()) showWindow();
+});
 app.on("window-all-closed", (event) => event.preventDefault());
 app.on("before-quit", () => {
   app.isQuitting = true;

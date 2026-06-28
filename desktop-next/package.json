@@ -110,6 +110,9 @@
       "identity": "-",
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
+      "extendInfo": {
+        "LSUIElement": true
+      },
       "target": "dmg"
     },
     "linux": {
