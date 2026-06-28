@@ -70,12 +70,11 @@ import {
 } from "@/features/dashboard/new-session-preferences"
 import { permissionLabelKey } from "@/features/dashboard/runtime-config"
 import type { AgentCatalogEntry, RuntimeConfigOption } from "@/features/dashboard/types"
-import { routing } from "@/i18n/routing"
+import { isAppLocale, writeStoredLocale, type AppLocale } from "@/i18n/client-locale"
 import { cn } from "@/lib/utils"
 
 type SettingsTab = "account" | "agent" | "appearance"
 type AppearanceMode = "light" | "dark" | "auto"
-type AppLocale = (typeof routing.locales)[number]
 
 const CODEX_RUNTIME = "codex"
 const AGENT_RUNTIMES = ["codex", "claude"] as const
@@ -1052,11 +1051,12 @@ function AppearanceTab() {
   }
 
   const handleLocaleChange = (value: string) => {
-    if (!routing.locales.includes(value as AppLocale) || value === locale) return
+    if (!isAppLocale(value) || value === locale) return
+    writeStoredLocale(value)
 
     const url = new URL(window.location.href)
     const segments = url.pathname.split("/")
-    if (routing.locales.includes(segments[1] as AppLocale)) {
+    if (isAppLocale(segments[1])) {
       segments[1] = value
     } else {
       segments.splice(1, 0, value)
