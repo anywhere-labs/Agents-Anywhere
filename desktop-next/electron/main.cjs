@@ -19,6 +19,7 @@ let pending = new Map();
 let logs = [];
 
 const state = {
+  platform: process.platform,
   status: "stopped",
   running: false,
   pairing: false,
@@ -126,7 +127,9 @@ function saveDesktopSettings(next = {}) {
     uvCommand: state.uvCommand,
     startConnectorOnLaunch: state.startConnectorOnLaunch,
   });
-  return publicState();
+  const nextState = publicState();
+  sendToWindow("connector:state", nextState);
+  return nextState;
 }
 
 function publicState() {
@@ -229,6 +232,9 @@ function handleRpcLine(line) {
     return;
   }
   if (payload.method === "connector/pairing") {
+    if (payload.params && typeof payload.params.status === "string") {
+      state.pairing = payload.params.status === "starting" || payload.params.status === "waiting";
+    }
     sendToWindow("connector:pairing", payload.params || {});
     return;
   }
@@ -364,6 +370,15 @@ app.whenReady().then(() => {
   createMainWindow();
   updateNativeIcons();
   startRpcProcess();
+  rpcRequest("connector.getState")
+    .then((next) => {
+      mergeConnectorState(next);
+      if (state.startConnectorOnLaunch && state.hasConfig) {
+        return rpcRequest("connector.start").then(mergeConnectorState);
+      }
+      return null;
+    })
+    .catch((error) => appendLog({ level: "ERROR", message: error.message, time: new Date().toISOString() }));
   nativeTheme.on("updated", updateNativeIcons);
 });
 

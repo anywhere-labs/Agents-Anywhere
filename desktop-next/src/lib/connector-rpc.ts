@@ -3,13 +3,19 @@
 export type ConnectorStatus = "stopped" | "running" | "error" | "expired credential" | string
 
 export type ConnectorState = {
+  platform?: NodeJS.Platform | string
   status: ConnectorStatus
   running: boolean
   pairing: boolean
   authFailed: boolean
   lastError: string | null
   configPath: string
+  settingsPath?: string
   hasConfig: boolean
+  openAtLogin?: boolean
+  startConnectorOnLaunch?: boolean
+  uvCommand?: string
+  logs?: ConnectorLog[]
 }
 
 export type ConnectorConfig = {
