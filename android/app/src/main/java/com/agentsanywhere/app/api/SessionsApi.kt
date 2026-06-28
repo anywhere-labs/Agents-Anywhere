@@ -285,7 +285,6 @@ class SessionsApi(
             lastItemAt = optNullableString("lastItemAt"),
             sortAt = optNullableString("sortAt"),
             updatedSeq = optInt("updatedSeq", 0),
-            effectiveRunMode = optNullableString("effectiveRunMode"),
             runtimeSettings = optJSONObject("runtimeSettings").toMap(),
             runtimeSettingsOverride = optJSONObject("runtimeSettingsOverride").toMap(),
         )
@@ -327,6 +326,11 @@ class SessionsApi(
             value = opt("value")?.toString().orEmpty(),
             label = optString("label", ""),
             description = optNullableString("description"),
+            efforts = if (has("efforts") && !isNull("efforts")) {
+                optJSONArray("efforts").toObjectList { toRemoteRuntimeConfigOption() }
+            } else {
+                null
+            },
         )
     }
 
@@ -335,8 +339,6 @@ class SessionsApi(
             runtime = optString("runtime", ""),
             settings = (optJSONObject("runtimeSettings") ?: optJSONObject("settings")).toMap(),
             runtimeSettingsOverride = optJSONObject("runtimeSettingsOverride").toMap(),
-            effectiveRunMode = optNullableString("effectiveRunMode"),
-            defaultRunModeConfigured = optBoolean("defaultRunModeConfigured", false),
             schemaVersion = optInt("schemaVersion", 0),
         )
     }

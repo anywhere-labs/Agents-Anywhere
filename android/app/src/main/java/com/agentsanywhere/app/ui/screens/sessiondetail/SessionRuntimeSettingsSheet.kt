@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeConfigField
+import com.agentsanywhere.app.feature.sessiondetail.RuntimeConfigOption
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeSettingsState
 import com.agentsanywhere.app.model.AgentSession
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
@@ -485,12 +486,12 @@ private fun RuntimeSettingsState.sessionField(key: String): RuntimeConfigField? 
 
 private fun RuntimeSettingsState.filteredEffortField(): RuntimeConfigField? {
     val field = sessionField("effort") ?: return null
-    val model = settings["model"] as? String
-    if (schema?.runtime != "claude") return field
-    val allowed = claudeEffortValuesForModel(model)
-    if (allowed.isEmpty()) return null
-    return field.copy(options = field.options.filter { it.value in allowed })
-        .takeIf { it.options.isNotEmpty() }
+    val modelField = sessionField("model")
+    val modelEfforts = modelField?.effortsForModel(settings["model"])
+    if (modelEfforts != null) {
+        return field.copy(options = modelEfforts).takeIf { it.options.isNotEmpty() }
+    }
+    return field
 }
 
 private fun RuntimeSettingsState.visible(field: RuntimeConfigField): Boolean {
@@ -504,6 +505,17 @@ private fun RuntimeSettingsState.value(key: String, field: RuntimeConfigField): 
         ?: ""
 }
 
+private fun RuntimeConfigField.effortsForModel(model: Any?): List<RuntimeConfigOption>? {
+    val modelKey = model as? String
+    val selected = if (!modelKey.isNullOrBlank()) {
+        options.firstOrNull { it.value == modelKey }
+    } else {
+        options.firstOrNull()
+    }
+    selected?.efforts?.let { return it }
+    return if (options.any { it.efforts != null }) emptyList() else null
+}
+
 @Composable
 private fun labelFor(field: RuntimeConfigField, value: String): String {
     val option = field.options.firstOrNull { it.value == value }
@@ -512,18 +524,6 @@ private fun labelFor(field: RuntimeConfigField, value: String): String {
     } else {
         value.ifBlank { field.options.firstOrNull()?.let { localizedRuntimeOptionLabel(field, it) }.orEmpty() }
     }
-}
-
-private fun claudeEffortValuesForModel(model: String?): Set<String> {
-    val key = model.orEmpty()
-    if (key == "claude-haiku-4-5") return emptySet()
-    if (key.startsWith("claude-opus-4-8") || key.startsWith("claude-opus-4-7")) {
-        return setOf("low", "medium", "high", "xhigh", "max")
-    }
-    if (key.startsWith("claude-opus-4-6") || key.startsWith("claude-sonnet-4-6")) {
-        return setOf("low", "medium", "high", "max")
-    }
-    return setOf("low", "medium", "high", "max")
 }
 
 private data class RuntimeSheetPalette(

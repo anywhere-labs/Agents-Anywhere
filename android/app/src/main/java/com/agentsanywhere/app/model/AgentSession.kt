@@ -19,7 +19,6 @@ data class AgentSession(
     val unread: Boolean,
     val takeover: Boolean,
     val connectorOnline: Boolean,
-    val effectiveRunMode: String?,
     val runtimeSettings: Map<String, Any?> = emptyMap(),
     val runtimeSettingsOverride: Map<String, Any?> = emptyMap(),
     val live: Boolean,

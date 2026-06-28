@@ -47,6 +47,7 @@ data class RuntimeConfigOption(
     val value: String,
     val label: String,
     val description: String?,
+    val efforts: List<RuntimeConfigOption>? = null,
 )
 
 data class TimelineMessage(
