@@ -11,6 +11,7 @@ import {
   FolderOpen,
   Gauge,
   Globe2,
+  ExternalLink,
   KeyRound,
   Loader2,
   Logs,
@@ -86,6 +87,7 @@ const desktopMessages = {
     navOverview: "Overview",
     navLogs: "Logs",
     navSettings: "Settings",
+    openAgentsAnywhere: "Open Agents Anywhere",
     headerTitle: "Desktop Connector",
     headerSubtitle: "Connect this computer to Agents Anywhere.",
     runtimeStatus: "Connector",
@@ -180,6 +182,7 @@ const desktopMessages = {
     navOverview: "概览",
     navLogs: "日志",
     navSettings: "设置",
+    openAgentsAnywhere: "打开 Agents Anywhere",
     headerTitle: "Desktop Connector",
     headerSubtitle: "把这台电脑连接到 Agents Anywhere。",
     runtimeStatus: "连接器",
@@ -491,6 +494,12 @@ export function DesktopShell() {
     void saveSettings({ locale })
   }
 
+  async function openAgentsAnywhere() {
+    const serverUrl = state?.serverUrl || config.serverUrl
+    if (!serverUrl) return
+    await run("openServer", () => connectorDesktop().openServer(serverUrl))
+  }
+
   function openPairDialog() {
     setPairOpen(true)
     setPairStep(pairing?.code ? "waiting" : "input")
@@ -539,6 +548,8 @@ export function DesktopShell() {
   const connectorView = connectorStatusView(state, isRunning, t)
   const credentialView = credentialStatusView(state, config, isRunning, t)
   const isMac = state?.platform === "darwin"
+  const serverUrl = state?.serverUrl || config.serverUrl
+  const canOpenServer = isRunning && Boolean(serverUrl)
   const pageTitle = view === "logs" ? t.logs : view === "settings" ? t.settings : t.navOverview
   const pageDescription = view === "logs" ? t.logsDescription : view === "settings" ? t.settingsDescription : t.headerSubtitle
 
@@ -554,7 +565,17 @@ export function DesktopShell() {
           <NavItem icon={Gauge} label={t.navOverview} active={view === "overview"} onClick={() => setView("overview")} />
           <NavItem icon={Logs} label={t.navLogs} active={view === "logs"} onClick={() => setView("logs")} />
         </nav>
-        <div className="no-drag p-3">
+        <div className="no-drag flex flex-col gap-1 p-3">
+          <Button
+            type="button"
+            variant="ghost"
+            className="h-9 justify-start rounded-md px-3 text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+            disabled={!canOpenServer}
+            onClick={() => void openAgentsAnywhere()}
+          >
+            <ExternalLink className="size-4" />
+            {t.openAgentsAnywhere}
+          </Button>
           <NavItem icon={Settings} label={t.navSettings} active={view === "settings"} onClick={() => setView("settings")} />
         </div>
       </aside>

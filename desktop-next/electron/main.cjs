@@ -28,6 +28,7 @@ const state = {
   authFailed: false,
   lastError: null,
   hasConfig: false,
+  serverUrl: "",
   configPath: "",
   settingsPath: "",
   connectorDir: "",
@@ -514,14 +515,19 @@ ipcMain.handle("connector:getState", async () => {
   mergeConnectorState(next);
   return publicState();
 });
-ipcMain.handle("connector:getConfig", () => rpcRequest("connector.getConfig"));
+ipcMain.handle("connector:getConfig", async () => {
+  const config = await rpcRequest("connector.getConfig");
+  if (config && typeof config.serverUrl === "string") state.serverUrl = config.serverUrl;
+  return config;
+});
 ipcMain.handle("connector:saveConfig", async (_event, config) => {
   const saved = await rpcRequest("connector.saveConfig", config);
-  mergeConnectorState({ hasConfig: true, authFailed: false, usingTemporaryCredential: false });
+  mergeConnectorState({ hasConfig: true, authFailed: false, usingTemporaryCredential: false, serverUrl: saved?.serverUrl || config?.serverUrl || "" });
   return saved;
 });
 ipcMain.handle("connector:start", async (_event, config) => {
   state.usingTemporaryCredential = Boolean(config);
+  if (config && typeof config.serverUrl === "string") state.serverUrl = config.serverUrl;
   const next = await rpcRequest("connector.start", config);
   mergeConnectorState(next);
   return publicState();
@@ -542,6 +548,11 @@ ipcMain.handle("connector:startPairing", (_event, input) => rpcRequest("connecto
 ipcMain.handle("connector:cancelPairing", () => rpcRequest("connector.cancelPairing"));
 ipcMain.handle("connector:saveSettings", (_event, settings) => saveDesktopSettings(settings));
 ipcMain.handle("connector:openConfigFolder", () => shell.openPath(path.dirname(state.configPath)));
+ipcMain.handle("connector:openServer", async (_event, serverUrl) => {
+  const url = String(serverUrl || "").trim();
+  if (!/^https?:\/\//i.test(url)) throw new Error("Server URL is not configured.");
+  return shell.openExternal(url);
+});
 ipcMain.handle("connector:getLogs", (_event, options) => readLogPage(options));
 ipcMain.handle("connector:clearLogs", () => clearLogFiles());
 

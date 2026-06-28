@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld("connectorDesktop", {
   cancelPairing: () => ipcRenderer.invoke("connector:cancelPairing"),
   saveSettings: (settings) => ipcRenderer.invoke("connector:saveSettings", settings),
   openConfigFolder: () => ipcRenderer.invoke("connector:openConfigFolder"),
+  openServer: (serverUrl) => ipcRenderer.invoke("connector:openServer", serverUrl),
   getLogs: (options) => ipcRenderer.invoke("connector:getLogs", options),
   clearLogs: () => ipcRenderer.invoke("connector:clearLogs"),
   onState: (callback) => {

@@ -9,6 +9,7 @@ export type ConnectorState = {
   pairing: boolean
   authFailed: boolean
   lastError: string | null
+  serverUrl?: string
   configPath: string
   settingsPath?: string
   hasConfig: boolean
@@ -79,6 +80,7 @@ export type ConnectorDesktopApi = {
   cancelPairing: () => Promise<PairingState>
   saveSettings: (settings: DesktopSettings) => Promise<ConnectorState>
   openConfigFolder: () => Promise<string>
+  openServer: (serverUrl: string) => Promise<void>
   getLogs: (options?: { cursor?: number | null; pageSize?: number; newestFirst?: boolean }) => Promise<LogPage>
   clearLogs: () => Promise<LogPage>
   onState: (callback: (state: ConnectorState) => void) => () => void
