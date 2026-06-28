@@ -203,8 +203,8 @@ http://127.0.0.1:5174
 
 This starts two services:
 
-- `postgres`: PostgreSQL 17 with a persistent Docker volume.
-- `server`: FastAPI backend published on host port `5174`; it serves the statically exported `web-next` UI and handles API/WebSocket paths from the same origin.
+- `postgres-next`: PostgreSQL 17 with a persistent Docker volume.
+- `server-next`: FastAPI backend published on host port `5174`; it serves the statically exported `web-next` UI and handles API/WebSocket paths from the same origin.
 
 The first startup on an empty database logs a bootstrap token. Use it in the Web UI to create the first admin user.
 

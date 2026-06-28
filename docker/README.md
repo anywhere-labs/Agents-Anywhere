@@ -86,13 +86,15 @@ Use Debian apt and PyPI mirrors when official sources are slow:
 docker build -f docker/Dockerfile --target server -t agents-anywhere-server:latest \
   --build-arg APT_MIRROR=https://mirrors.ustc.edu.cn/debian \
   --build-arg PIP_INDEX_URL=https://mirrors.ustc.edu.cn/pypi/simple \
+  --build-arg YARN_REGISTRY=https://registry.npmmirror.com \
   .
 ```
 
 ## PostgreSQL Compose
 
-`docker/docker-compose.postgres.yml` runs PostgreSQL and the FastAPI server. The
-server image includes the statically exported Web console.
+`docker/docker-compose.postgres.yml` runs PostgreSQL and the FastAPI server under
+the fixed Compose project name `agents-anywhere`. The server image includes the
+statically exported Web console.
 
 ```bash
 POSTGRES_PASSWORD=change-me \
@@ -102,6 +104,8 @@ docker compose -f docker/docker-compose.postgres.yml up --build
 
 The compose file uses:
 
+- `postgres-next` service for PostgreSQL 17
+- `server-next` service for the FastAPI backend and statically exported Web UI
 - `agents-anywhere-pg-next` volume for PostgreSQL data
 - `agents-anywhere-files-next` volume mounted at `/data` for uploads / attachments
 - public Web port `${AGENTS_ANYWHERE_WEB_PORT:-5174}`
@@ -119,6 +123,9 @@ docker compose -f docker/docker-compose.postgres.yml up --build
 
 Use a non-default `AGENT_SERVER_SECRET` and database password outside local
 development. Put HTTPS in front of the Web service for production.
+
+The first startup on an empty database logs a bootstrap token in the
+`server-next` logs. Use it in the Web UI to create the first admin user.
 
 ## Connector Ubuntu Image
 

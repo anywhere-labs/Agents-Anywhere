@@ -1,3 +1,5 @@
+name: agents-anywhere
+
 services:
   postgres-next:
     image: postgres:17-alpine
