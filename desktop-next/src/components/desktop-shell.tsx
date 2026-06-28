@@ -129,7 +129,7 @@ const desktopMessages = {
     logPath: "Log path",
     openConfigFolder: "Open config folder",
     pairingTitle: "Pair this machine",
-    pairingDescription: "Enter your server address to get a pairing code.",
+    pairingDescription: "Enter a server address or paste a pairing command.",
     pairingComplete: "Pairing complete",
     pairingCode: "Pairing code",
     pairingWaiting: "Waiting for claim in the web console.",
@@ -224,7 +224,7 @@ const desktopMessages = {
     logPath: "日志路径",
     openConfigFolder: "打开配置文件夹",
     pairingTitle: "配对这台电脑",
-    pairingDescription: "输入服务器地址，生成配对码。",
+    pairingDescription: "输入服务器地址，也可以粘贴配对命令。",
     pairingComplete: "配对完成",
     pairingCode: "配对码",
     pairingWaiting: "等待在 Web 控制台认领。",
@@ -949,7 +949,7 @@ function PairingDialog({
                 id="pair-server"
                 value={server}
                 onChange={(event) => onServerChange(event.target.value)}
-                placeholder="uvx anywhere-cli pair https://example.com"
+                placeholder="https://example.com"
                 autoFocus
               />
             </div>
