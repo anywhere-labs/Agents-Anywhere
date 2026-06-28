@@ -17,7 +17,7 @@ Run Codex, Claude Code, and more agents on your Mac, Windows PC, Linux devbox, o
 ![Yarn](https://img.shields.io/badge/Yarn-4.6-2C8EBB)
 ![Docker](https://img.shields.io/badge/Docker-ready-2496ED)
 
-[Docker Quickstart](#quickstart-run-the-full-app-with-docker) · [Onboarding](#onboarding) · [Android APK](https://github.com/anywhere-labs/Agents-Anywhere/releases/tag/v0.1.0) · [Connector App](https://github.com/anywhere-labs/Agents-Anywhere/releases) · [Docker Docs](docker/README.md) · [简体中文](README.zh-CN.md)
+[Docker Quickstart](#quickstart-run-the-full-app-with-docker) · [Onboarding](#onboarding) · [Downloads](https://github.com/anywhere-labs/Agents-Anywhere/releases) · [Docker Docs](docker/README.md) · [简体中文](README.zh-CN.md)
 
 </div>
 
@@ -96,7 +96,7 @@ Connector adapters are extensible. New runtimes should reuse the existing sessio
 | Platform / surface | Status | Notes |
 | --- | --- | --- |
 | Web console | ✅ | Supports sessions, devices, approvals, files, terminals, runtime settings, team/admin management, and session detail. |
-| Android | ✅ | Download the APK from [GitHub Release v0.1.0](https://github.com/anywhere-labs/Agents-Anywhere/releases/tag/v0.1.0). Supports sessions, devices, approvals, files, terminals, and mobile control workflows. |
+| Android | ✅ | Download the APK from [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases). Supports sessions, devices, approvals, files, terminals, and mobile control workflows. |
 | iOS | Coming soon | In development. |
 | Windows / macOS Connector app | ✅ | Download from [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases). Supports pairing, logs, tray behavior, and startup controls. |
 | Linux Connector CLI | ✅ | Use the Python CLI from `connector/` or `uvx anywhere-cli` for Linux servers, devboxes, and headless machines. |
@@ -198,21 +198,29 @@ For custom ports, production secrets, SQLite/manual Docker runs, mirrors, connec
 
 ## Onboarding
 
-After the Docker stack or server is running, start from the Web console. The initial setup token flow is Web-only.
+After the Docker stack or server is running, follow these steps.
 
-1. Open the Web console, paste the bootstrap token from the server logs, and create the first account. That account becomes the administrator.
-2. Add the first Device from the Web console. This is the machine that owns your workspace and local Codex / Claude runtime.
-3. Choose the Connector for that machine:
+### Step 1: Create The Admin Account
 
-| Target machine | Recommended Connector | Notes |
+Open the Web console, paste the setup token from the server logs, and create the first account. This account becomes the default administrator.
+
+### Step 2: Prepare The Connector
+
+Prepare the device that will run Codex / Claude Code.
+
+| OS | Version | Action |
 | --- | --- | --- |
-| Windows | Agents Anywhere Connector app | Download the desktop Connector app from [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases). The app keeps the Connector running in the background and guides pairing. |
-| macOS | Agents Anywhere Connector app | Download the desktop Connector app from [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases). The app keeps the Connector running in the background and guides pairing. |
-| Linux | Connector CLI | Use `uvx anywhere-cli` or the CLI in `connector/`. The Web UI and CLI pairing flow show the exact command or pairing code. |
+| Windows | Latest | Download the Connector App from [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases) |
+| macOS | Latest | Download the Connector App from [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases) |
+| Linux | 0.1.3 | Copy the command shown in the pairing UI |
 
-The Web and Android clients already provide the pairing UI, so this README only calls out the platform choice. After the first Device is online, use either the Web console or Android app for daily work: chat with sessions, manage Devices, handle approvals, browse remote files, open terminals, and pair additional Devices.
+### Step 3: Pair The Device
 
-For advanced Connector commands, Dockerized Connector images, SSH-enabled development containers, and agent installer images, see [connector/README.md](connector/README.md) and [docker/README.md](docker/README.md).
+Follow the Web UI to add and pair the device. You can also complete pairing from the mobile app.
+
+### Step 4: Start Chatting
+
+Once the device is online, start chatting with your agent from the mobile app or the Web console.
 
 ## Beta Access And Contact
 
