@@ -47,21 +47,17 @@ When you are at a desktop, you can also use the Web console. It provides the sam
 
 ## Product Preview
 
-**Desktop: unified control plane**
+**Web**
 
-![Unified control plane](docs/screenshots/control-plane.png)
+![Web console](docs/screenshots/web-console.png)
 
-> This screenshot reflects the product direction at the time it was captured. Agents Anywhere is iterating quickly, so the actual UI may differ.
+**Mobile**
 
-Devices and sessions are collected in one workspace, so you can switch across machines, runtimes, and tasks.
+![Mobile sessions](docs/screenshots/mobile-sessions.png)
 
-**Mobile: sessions and devices**
+**Mobile: files and terminal**
 
-![Mobile sessions and devices](docs/screenshots/mobile.png)
-
-> This screenshot reflects the product direction at the time it was captured. Agents Anywhere is iterating quickly, so the actual UI may differ.
-
-The Android native client is a full first-class client for mobile access to sessions, devices, approvals, files, terminals, and runtime state. iOS is still in development. You can also use the Web console from a mobile browser when you prefer a browser-based mobile workflow.
+![Mobile files and terminal](docs/screenshots/mobile-files-terminal.png)
 
 ## Current Capabilities
 

@@ -47,21 +47,17 @@ Agents Anywhere 是遥控器，不是新的 Agent 运行环境。你的代码仍
 
 ## 产品预览
 
-**桌面端：统一控制台**
+**Web**
 
-![统一控制台](docs/screenshots/control-plane.png)
+![Web 控制台](docs/screenshots/web-console.png)
 
-> 该截图代表截取时的产品方向。Agents Anywhere 正在快速迭代，实际界面可能有所不同。
+**移动端**
 
-所有设备和 Session 集中在一个工作台里，便于在不同机器、不同 Runtime 和不同任务之间切换。
+![移动端 Session](docs/screenshots/mobile-sessions.png)
 
-**移动端：Sessions 与 Devices**
+**移动端：文件与终端**
 
-![移动端 Sessions 与 Devices](docs/screenshots/mobile.png)
-
-> 该截图代表截取时的产品方向。Agents Anywhere 正在快速迭代，实际界面可能有所不同。
-
-Android 原生客户端是正式可用的一等客户端，支持在移动端访问 Session、Device、审批、文件、终端和 Runtime 状态。iOS 仍在开发中。如果你更偏好浏览器工作流，也可以通过移动浏览器访问 Web 控制台。
+![移动端文件与终端](docs/screenshots/mobile-files-terminal.png)
 
 ## 当前能力
 
