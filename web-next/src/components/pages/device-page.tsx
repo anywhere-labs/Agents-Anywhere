@@ -52,6 +52,7 @@ import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
 import type {
   AttachedAgent,
+  RuntimeReport,
   RuntimeConfigSchema,
   RuntimeSettingsResponse,
   SessionView as RealSessionView,
@@ -453,7 +454,7 @@ function agentsFromConnector(connector: DeviceConnector | null): AgentRow[] {
       runtime,
       agent,
       healthy: reportIsHealthy(agent),
-      reason: agent.report.error?.message ?? agent.report.checked?.find((entry) => entry.status !== "ok")?.reason ?? null,
+      reason: runtimeIssueReason(agent.report),
     }))
     .sort((a, b) => a.runtime.localeCompare(b.runtime))
 }
@@ -461,7 +462,18 @@ function agentsFromConnector(connector: DeviceConnector | null): AgentRow[] {
 function reportIsHealthy(agent: AttachedAgent) {
   if (agent.report.error) return false
   if (!agent.report.selected) return false
+  if (agent.report.execution === "ok") return true
   return !(agent.report.checked ?? []).some((entry) => entry.status === "failed")
+}
+
+function runtimeIssueReason(report: RuntimeReport) {
+  if (report.error?.message) return report.error.message
+  if (report.selected && report.execution === "ok") return null
+  return (
+    report.checked?.find((entry) => entry.status === "failed")?.reason ??
+    report.checked?.find((entry) => entry.status !== "ok")?.reason ??
+    null
+  )
 }
 
 export function DevicePage() {
