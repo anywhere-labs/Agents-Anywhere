@@ -151,6 +151,7 @@ export function SessionDetail({
   const forceScrollOnNextUpdateRef = React.useRef(false)
   const initialScrollDoneRef = React.useRef(false)
   const loadingOlderRef = React.useRef(false)
+  const pendingPrependScrollRestoreRef = React.useRef<{ scrollHeight: number; scrollTop: number } | null>(null)
   const lastScrollToBottomAtRef = React.useRef(0)
   const scrollToBottomTimerRef = React.useRef<number | null>(null)
 
@@ -256,7 +257,12 @@ export function SessionDetail({
       )
       setState((current) => {
         if (!current) return current
+        if (older.items.length === 0) return { ...current, hasMore: older.hasMore, serverTime: older.serverTime }
         const items = mergeTimelineItems(older.items, current.items)
+        pendingPrependScrollRestoreRef.current = {
+          scrollHeight: previousScrollHeight,
+          scrollTop: previousScrollTop,
+        }
         return {
           ...current,
           items,
@@ -264,11 +270,6 @@ export function SessionDetail({
           nextSeq: Math.max(current.nextSeq, older.nextSeq),
           serverTime: older.serverTime,
         }
-      })
-      window.requestAnimationFrame(() => {
-        const nextViewport = timelineRef.current
-        if (!nextViewport) return
-        nextViewport.scrollTop = nextViewport.scrollHeight - previousScrollHeight + previousScrollTop
       })
     } catch (err) {
       toast.error(err instanceof Error ? err.message : tSession("loadFailed"))
@@ -466,6 +467,17 @@ export function SessionDetail({
   }
 
   React.useLayoutEffect(() => {
+    const pendingPrependScrollRestore = pendingPrependScrollRestoreRef.current
+    if (pendingPrependScrollRestore) {
+      pendingPrependScrollRestoreRef.current = null
+      const viewport = timelineRef.current
+      if (viewport) {
+        viewport.scrollTop =
+          viewport.scrollHeight - pendingPrependScrollRestore.scrollHeight + pendingPrependScrollRestore.scrollTop
+      }
+      updateScrollBottomState()
+      return
+    }
     if (!initialScrollDoneRef.current && state) {
       initialScrollDoneRef.current = true
       const viewport = timelineRef.current
