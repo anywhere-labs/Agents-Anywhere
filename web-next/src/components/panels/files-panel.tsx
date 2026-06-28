@@ -11,6 +11,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { dashboardApi } from "@/features/dashboard/api"
 import type { FsEntry } from "@/features/dashboard/types"
+import { localeFromPathname, readStoredLocale } from "@/i18n/client-locale"
 import { cn } from "@/lib/utils"
 import { useTranslations } from "next-intl"
 
@@ -270,8 +271,7 @@ export function openNativeFilePreviewWindow({
 }
 
 function previewLocale() {
-  const firstSegment = window.location.pathname.split("/").filter(Boolean)[0]
-  return firstSegment === "zh-CN" || firstSegment === "en" ? firstSegment : "en"
+  return localeFromPathname(window.location.pathname) ?? readStoredLocale() ?? "en"
 }
 
 function parentOf(rawPath: string): string {

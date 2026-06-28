@@ -1,6 +1,9 @@
 import { routing } from "@/i18n/routing"
 
 export const LOCALE_STORAGE_KEY = "agents-anywhere.locale"
+const LOCALE_SOURCE_STORAGE_KEY = "agents-anywhere.locale.source"
+const LOCALE_COOKIE_NAME = "NEXT_LOCALE"
+const LOCALE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365
 
 export type AppLocale = (typeof routing.locales)[number]
 
@@ -23,12 +26,26 @@ export function readStoredLocale(): AppLocale | null {
   }
 }
 
-export function writeStoredLocale(locale: AppLocale) {
+export function hasManualStoredLocale() {
+  try {
+    return window.localStorage.getItem(LOCALE_SOURCE_STORAGE_KEY) === "manual"
+  } catch {
+    return false
+  }
+}
+
+export function writeStoredLocale(locale: AppLocale, options: { manual?: boolean } = {}) {
   try {
     window.localStorage.setItem(LOCALE_STORAGE_KEY, locale)
+    if (options.manual) {
+      window.localStorage.setItem(LOCALE_SOURCE_STORAGE_KEY, "manual")
+    } else if (!window.localStorage.getItem(LOCALE_SOURCE_STORAGE_KEY)) {
+      window.localStorage.setItem(LOCALE_SOURCE_STORAGE_KEY, "auto")
+    }
   } catch {
     // localStorage can be unavailable in private contexts. Locale routing still works.
   }
+  writeLocaleCookie(locale)
 }
 
 export function detectBrowserLocale(): AppLocale {
@@ -43,4 +60,12 @@ export function detectBrowserLocale(): AppLocale {
     }
   }
   return routing.defaultLocale
+}
+
+function writeLocaleCookie(locale: AppLocale) {
+  try {
+    document.cookie = `${LOCALE_COOKIE_NAME}=${encodeURIComponent(locale)}; path=/; max-age=${LOCALE_MAX_AGE_SECONDS}; SameSite=Lax`
+  } catch {
+    // Cookies can be unavailable in restricted contexts. Client-side routing still works.
+  }
 }

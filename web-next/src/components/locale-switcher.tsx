@@ -31,7 +31,7 @@ export function LocaleSwitcher({ className, size = "default", variant = "outline
 
   const handleLocaleChange = (value: string) => {
     if (!isAppLocale(value) || value === locale) return
-    writeStoredLocale(value)
+    writeStoredLocale(value, { manual: true })
 
     const url = new URL(window.location.href)
     const segments = url.pathname.split("/")
