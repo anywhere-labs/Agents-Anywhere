@@ -4,6 +4,7 @@ import asyncio
 from typing import Any
 
 from connector.control import ConnectorController, config_to_payload
+from connector.json_rpc import JsonRpcStdioServer
 from connector.runtime import ConnectorConfig
 
 
@@ -16,6 +17,19 @@ class FakeBackendRpcClient:
     async def run_forever(self) -> None:
         self.started.append(self.config)
         await asyncio.Event().wait()
+
+
+class MemoryWriter:
+    def __init__(self) -> None:
+        self.lines: list[dict[str, Any]] = []
+
+    def write(self, data: bytes) -> None:
+        import json
+
+        self.lines.append(json.loads(data))
+
+    async def drain(self) -> None:
+        return None
 
 
 def test_connector_controller_saves_config_and_starts_runtime(tmp_path) -> None:
@@ -57,6 +71,30 @@ def test_connector_controller_returns_default_config_when_missing(tmp_path) -> N
 
     assert config["serverUrl"] == ""
     assert config["heartbeatSeconds"] == 20
+
+
+def test_connector_controller_getters_accept_json_rpc_params(tmp_path) -> None:
+    async def exercise() -> list[dict[str, Any]]:
+        reader = asyncio.StreamReader()
+        writer = MemoryWriter()
+        controller = ConnectorController(config_path=tmp_path / "missing.json")
+        server = JsonRpcStdioServer(
+            reader,
+            writer,  # type: ignore[arg-type]
+            {
+                "connector.getState": controller.get_state,
+                "connector.getConfig": controller.get_config,
+            },
+        )
+
+        await server.handle_line(b'{"jsonrpc":"2.0","id":1,"method":"connector.getState","params":{}}\n')
+        await server.handle_line(b'{"jsonrpc":"2.0","id":2,"method":"connector.getConfig","params":{}}\n')
+        return writer.lines
+
+    lines = asyncio.run(exercise())
+
+    assert lines[0]["result"]["status"] == "stopped"
+    assert lines[1]["result"]["serverUrl"] == ""
 
 
 def test_config_to_payload_keeps_optional_state_db_path() -> None:

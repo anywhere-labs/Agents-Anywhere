@@ -30,7 +30,7 @@ class ConnectorController:
         self._last_error: str | None = None
         self._auth_failed = False
 
-    def get_state(self) -> dict[str, Any]:
+    def get_state(self, _params: Any = None) -> dict[str, Any]:
         return {
             "status": self._status(),
             "running": self._runtime_task is not None and not self._runtime_task.done(),
@@ -41,13 +41,13 @@ class ConnectorController:
             "hasConfig": self.config_path.exists(),
         }
 
-    def get_paths(self) -> dict[str, str]:
+    def get_paths(self, _params: Any = None) -> dict[str, str]:
         return {
             "configPath": str(self.config_path),
             "configDir": str(self.config_path.parent),
         }
 
-    def get_config(self) -> dict[str, Any]:
+    def get_config(self, _params: Any = None) -> dict[str, Any]:
         if not self.config_path.exists():
             return default_config_payload()
         return config_to_payload(ConnectorConfig.load(self.config_path))
