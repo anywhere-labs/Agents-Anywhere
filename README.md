@@ -4,9 +4,9 @@
 
 # Agents Anywhere
 
-<h3>Remote control plane for Claude Code, Codex, and more coding agents.</h3>
+<h3>Control coding agents on any device from your phone.</h3>
 
-Run agents on your own laptop, remote devbox, or cloud sandbox. Control sessions, approvals, files, terminals, and runtime state from one self-hostable web workspace.
+Run Codex, Claude Code, and more agents on your Mac, Windows PC, Linux devbox, or cloud sandbox. Use the mobile app to chat with sessions, preview files and code, approve actions, and open a terminal on that device.
 
 ![Python](https://img.shields.io/badge/Python-3.12+-3776AB)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.136+-009688)
@@ -17,12 +17,6 @@ Run agents on your own laptop, remote devbox, or cloud sandbox. Control sessions
 ![Docker](https://img.shields.io/badge/Docker-ready-2496ED)
 
 [Docker Quickstart](#quickstart-run-the-full-app-with-docker) · [Onboarding](#onboarding) · [Android APK](https://github.com/anywhere-labs/Agents-Anywhere/releases/tag/v0.1.0) · [Connector App](https://github.com/anywhere-labs/Agents-Anywhere/releases) · [Docker Docs](docker/README.md) · [简体中文](README.zh-CN.md)
-
-![Agents Anywhere session workspace](docs/screenshots/hero.png)
-
-> Screenshots are taken from a fast-moving product surface. UI details may change quickly; use the running app as the source of truth.
-
-Watch long-running sessions, approve actions, inspect files, and open a terminal without moving the agent out of its original machine. To run the current open-source stack, start with [Docker Quickstart](#quickstart-run-the-full-app-with-docker).
 
 </div>
 
@@ -36,27 +30,20 @@ Watch long-running sessions, approve actions, inspect files, and open a terminal
 
 ## What Is Agents Anywhere?
 
-You start a Claude Code or Codex task in a terminal. It runs for a while: reading files, editing code, running tests, waiting for you to approve an operation. When the agent blocks on an approval, an error, or a quick correction from you, you have to get back to that machine.
+Agents Anywhere lets you control coding agents running on another device from your phone.
 
-Agents Anywhere adds a remote control plane:
+Run Codex, Claude Code, and more agents on a Mac, Windows PC, Linux server, remote devbox, or cloud sandbox. Agents Anywhere connects your phone to those devices, so you can view and control the agent sessions running there.
 
-- The agent still runs on your machine, with your local account, local files, and local permissions.
-- The Connector runs next to the agent and syncs runtime state, safe filesystem operations, shell/terminal capabilities, and approval requests to the backend.
-- The Web console and Android app connect to the backend so you can chat with sessions, take over work, approve actions, browse files, and open terminals.
+From your phone, you can:
 
-**It is the remote, not a new agent host.** Your code is not moved into the relay service for execution, and your model accounts and model bills remain with your own Claude Code / Codex toolchain.
+- Talk to the running session and take over when it needs direction.
+- Preview files, code, logs, and runtime state from the remote device.
+- Approve, interrupt, continue, or sync long-running work.
+- Open a remote terminal on the device where the agent is actually running.
 
-## Why It Exists
+Agents Anywhere is the remote, not a new agent host. Your code stays on the original device, your agent uses that device's local files and permissions, and your model accounts remain with your own Claude Code / Codex toolchain.
 
-Coding agents are no longer just one-off chat windows. They can run for minutes or longer, change files across a workspace, call tools, and pause at the exact moment a human decision is needed.
-
-Without a remote control plane:
-
-- You have to stay at the machine running the agent.
-- If you walk away, the task can block on an approval or error.
-- Multiple machines, sessions, and runtimes become hard to manage together.
-
-Agents Anywhere turns those long-running tasks into a workspace you can reopen at any time: check state, inspect files, watch output, approve, interrupt, continue, and switch devices from the Web console or Android app.
+When you are at a desktop, you can also use the Web console. It provides the same session, device, approval, file, and terminal controls for browser-based and self-hosted team workflows.
 
 ## Product Preview
 
@@ -95,13 +82,13 @@ Agents Anywhere does not replace your agent. It runs next to an existing runtime
 ![Claude](https://img.shields.io/badge/Claude-basic%20support-666666)
 ![More agents](https://img.shields.io/badge/more%20agents-coming%20soon-lightgrey)
 
-| Runtime | Vendor | Current status | Notes |
-| --- | --- | --- | --- |
-| Codex | OpenAI | Best supported today | Most core capabilities are supported, including runtime discovery, session sync, timeline updates, approvals, interrupt/takeover, filesystem access, shell tasks, interactive terminals, and runtime settings. Some vendor-specific or advanced auxiliary features are still being polished. |
-| Claude Code | Anthropic | Basic support | The current code supports discovery and the basic session/control flow. Deeper parity with Codex, richer history/timeline handling, and advanced runtime behavior are still being improved. |
-| Cursor | Anysphere | Coming soon | Not yet available as a usable adapter. |
-| OpenCode | SST | Coming soon | Not yet available as a usable adapter. |
-| Gemini CLI | Google | Coming soon | Not yet available as a usable adapter. |
+| Runtime | Status | Notes |
+| --- | --- | --- |
+| Codex | ✅ | Supports runtime discovery, session sync, timeline updates, approvals, interrupt/takeover, filesystem access, shell tasks, interactive terminals, and runtime settings. |
+| Claude Code | ✅ | Supports discovery and the basic session/control flow. Deeper capabilities are still being improved. |
+| Cursor | Coming soon | Not yet available as a usable adapter. |
+| OpenCode | Coming soon | Not yet available as a usable adapter. |
+| Gemini CLI | Coming soon | Not yet available as a usable adapter. |
 
 Connector adapters are extensible. New runtimes should reuse the existing session, timeline, approval, filesystem, and terminal capabilities where possible.
 
@@ -112,13 +99,13 @@ Connector adapters are extensible. New runtimes should reuse the existing sessio
 ![Android](https://img.shields.io/badge/Android-available-3DDC84)
 ![Desktop Connector](https://img.shields.io/badge/Desktop%20Connector-available-111111)
 
-| Platform / surface | Current status | Notes |
+| Platform / surface | Status | Notes |
 | --- | --- | --- |
-| Web console | Primary supported client | Full browser-based control plane for sessions, devices, approvals, files, terminals, runtime settings, team/admin management, and session detail. |
-| Android | Primary supported client | Download the APK from [GitHub Release v0.1.0](https://github.com/anywhere-labs/Agents-Anywhere/releases/tag/v0.1.0). The Android app is a full native client for sessions, devices, approvals, files, terminals, and mobile control workflows. |
-| iOS | Native client in development | The native client is being built for mobile session/device workflows. |
-| Windows / macOS Connector app | Available | Download the Connector app from [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases). It runs the local Connector as a background desktop process, with pairing, logs, tray behavior, and startup controls. |
-| Linux Connector CLI | Available | Use the Python CLI from `connector/` or `uvx anywhere-cli`. This is the recommended Connector path on Linux servers, devboxes, and headless machines. |
+| Web console | ✅ | Supports sessions, devices, approvals, files, terminals, runtime settings, team/admin management, and session detail. |
+| Android | ✅ | Download the APK from [GitHub Release v0.1.0](https://github.com/anywhere-labs/Agents-Anywhere/releases/tag/v0.1.0). Supports sessions, devices, approvals, files, terminals, and mobile control workflows. |
+| iOS | Coming soon | In development. |
+| Windows / macOS Connector app | ✅ | Download from [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases). Supports pairing, logs, tray behavior, and startup controls. |
+| Linux Connector CLI | ✅ | Use the Python CLI from `connector/` or `uvx anywhere-cli` for Linux servers, devboxes, and headless machines. |
 
 This repository currently includes the Web frontends, FastAPI backend, Connector CLI, Windows/macOS Connector app, the Android native client, and iOS work in progress. Web and Android are the main supported client surfaces today; the Connector app/CLI is what links your own machines into the control plane.
 
