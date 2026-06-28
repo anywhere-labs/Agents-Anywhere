@@ -11,7 +11,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.12+-3776AB)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.136+-009688)
-![Connector](https://img.shields.io/badge/anywhere--cli-0.1.3-111111)
+![Connector](https://img.shields.io/badge/anywhere--cli-0.1.5-111111)
 ![Next.js](https://img.shields.io/badge/Next.js-16.2-000000)
 ![Node](https://img.shields.io/badge/Node.js-22-5FA04E)
 ![Yarn](https://img.shields.io/badge/Yarn-4.6-2C8EBB)
@@ -230,7 +230,7 @@ Docker stack 或 server 启动后，按下面四步走。
 | --- | --- | --- |
 | Windows | Latest | 从 [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases) 下载 Connector App |
 | macOS | Latest | 从 [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases) 下载 Connector App |
-| Linux | 0.1.3 | 复制配对 UI 里显示的命令 |
+| Linux | 0.1.5 | 复制配对 UI 里显示的命令 |
 
 ### Step 3：配对 Device
 

@@ -11,7 +11,7 @@ Run Codex, Claude Code, and more agents on your Mac, Windows PC, Linux devbox, o
 
 ![Python](https://img.shields.io/badge/Python-3.12+-3776AB)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.136+-009688)
-![Connector](https://img.shields.io/badge/anywhere--cli-0.1.3-111111)
+![Connector](https://img.shields.io/badge/anywhere--cli-0.1.5-111111)
 ![Next.js](https://img.shields.io/badge/Next.js-16.2-000000)
 ![Node](https://img.shields.io/badge/Node.js-22-5FA04E)
 ![Yarn](https://img.shields.io/badge/Yarn-4.6-2C8EBB)
@@ -211,7 +211,7 @@ Prepare the device that will run Codex / Claude Code.
 | --- | --- | --- |
 | Windows | Latest | Download the Connector App from [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases) |
 | macOS | Latest | Download the Connector App from [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases) |
-| Linux | 0.1.3 | Copy the command shown in the pairing UI |
+| Linux | 0.1.5 | Copy the command shown in the pairing UI |
 
 ### Step 3: Pair The Device
 

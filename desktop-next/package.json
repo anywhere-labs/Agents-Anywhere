@@ -1,7 +1,7 @@
 {
   "name": "agents-anywhere-desktop-next",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.5",
   "description": "Next.js desktop connector controller for Agents Anywhere",
   "packageManager": "yarn@4.6.0",
   "type": "module",

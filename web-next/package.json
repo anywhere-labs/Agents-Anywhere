@@ -1,6 +1,7 @@
 {
   "name": "agents-anywhere-web-next",
   "private": true,
+  "version": "0.1.5",
   "packageManager": "yarn@4.6.0",
   "type": "module",
   "scripts": {
