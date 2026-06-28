@@ -129,6 +129,8 @@ class ConnectorController:
             self._last_error = str(exc) or exc.__class__.__name__
             logger.exception("connector runtime failed")
         finally:
+            if self._runtime_task is asyncio.current_task():
+                self._runtime_task = None
             await self._emit_state()
 
     async def _run_pairing(self, server_url: str, *, timeout: float, poll_interval: float) -> None:

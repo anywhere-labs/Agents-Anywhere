@@ -426,7 +426,12 @@ async def _exercise_websocket_auth_close_stops(monkeypatch) -> None:
 
     monkeypatch.setattr(client, "run_once", fake_run_once)
 
-    await client.run_forever()
+    try:
+        await client.run_forever()
+    except ConnectorAuthenticationError as exc:
+        assert "credential" in str(exc)
+    else:
+        raise AssertionError("expected ConnectorAuthenticationError")
 
     assert calls == 1
 

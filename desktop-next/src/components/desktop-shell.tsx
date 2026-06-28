@@ -8,18 +8,20 @@ import {
   Clipboard,
   Copy,
   FolderOpen,
+  Gauge,
+  KeyRound,
   Loader2,
+  Logs,
+  Plus,
   Play,
   RotateCcw,
-  Settings2,
+  Settings,
   Square,
-  Terminal,
-  Wifi,
 } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
@@ -33,6 +35,7 @@ import { Label } from "@/components/ui/label"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
+import { Field, FieldContent, FieldDescription, FieldGroup, FieldTitle } from "@/components/ui/field"
 import { cn } from "@/lib/utils"
 import {
   connectorDesktop,
@@ -68,7 +71,7 @@ const desktopMessages = {
     headerTitle: "Desktop Connector",
     headerSubtitle: "Connect this computer to Agents Anywhere.",
     runtimeStatus: "Connector",
-    pairingStatus: "Pairing",
+    pairingStatus: "Credential",
     start: "Start",
     stop: "Stop",
     restart: "Restart",
@@ -79,11 +82,14 @@ const desktopMessages = {
     clear: "Clear",
     settings: "Settings",
     settingsDescription: "Startup and local connector options.",
+    startupTitle: "Startup",
+    localFilesTitle: "Local files",
+    credentialsSectionTitle: "Credentials",
     launchAtLogin: "Open at login",
     launchAtLoginHint: "Open the desktop app when you sign in.",
     startOnLaunch: "Start connector on launch",
     startOnLaunchHint: "Start automatically when credentials are saved.",
-    uvCommand: "uv command",
+    uvPath: "uv path",
     configPath: "Config path",
     settingsPath: "Settings path",
     openConfigFolder: "Open config folder",
@@ -107,7 +113,16 @@ const desktopMessages = {
     bridgeUnavailable: "Desktop bridge unavailable",
     runtimeConnected: "Connected",
     runtimeIdle: "Not running",
-    noPairingCode: "No active code",
+    runtimeError: "Error",
+    credentialExpired: "Credential expired",
+    fixCredential: "Pair again or paste a new start command.",
+    credentialExpiredToast: "Credential expired. Pair again or paste a new start command.",
+    credentialPaired: "Paired",
+    credentialOneTime: "Using one-time credential",
+    credentialMissing: "Not paired",
+    credentialReadyDetail: "Saved credentials are ready.",
+    credentialOneTimeDetail: "This run uses pasted credentials.",
+    credentialMissingDetail: "Pair this machine or paste a start command.",
     pairActionDescription: "Get a code and finish setup in the web console.",
     commandActionDescription: "Use the start command generated in the web console.",
     credentialsTitle: "Connector credentials",
@@ -133,7 +148,7 @@ const desktopMessages = {
     headerTitle: "Desktop Connector",
     headerSubtitle: "把这台电脑连接到 Agents Anywhere。",
     runtimeStatus: "连接器",
-    pairingStatus: "配对",
+    pairingStatus: "凭据",
     start: "启动",
     stop: "停止",
     restart: "重启",
@@ -144,11 +159,14 @@ const desktopMessages = {
     clear: "清空",
     settings: "设置",
     settingsDescription: "启动项和本机连接器选项。",
+    startupTitle: "启动",
+    localFilesTitle: "本机文件",
+    credentialsSectionTitle: "凭据",
     launchAtLogin: "登录时打开",
     launchAtLoginHint: "登录系统后打开桌面应用。",
     startOnLaunch: "打开应用后启动连接器",
     startOnLaunchHint: "已保存凭据时自动启动。",
-    uvCommand: "uv 命令",
+    uvPath: "uv 路径",
     configPath: "配置路径",
     settingsPath: "设置路径",
     openConfigFolder: "打开配置文件夹",
@@ -172,7 +190,16 @@ const desktopMessages = {
     bridgeUnavailable: "桌面桥接不可用",
     runtimeConnected: "已连接",
     runtimeIdle: "未运行",
-    noPairingCode: "没有配对码",
+    runtimeError: "错误",
+    credentialExpired: "凭据已失效",
+    fixCredential: "重新配对，或粘贴新的启动命令。",
+    credentialExpiredToast: "凭据已失效。请重新配对，或粘贴新的启动命令。",
+    credentialPaired: "已配对",
+    credentialOneTime: "正在使用一次性凭据",
+    credentialMissing: "未配对",
+    credentialReadyDetail: "已保存凭据。",
+    credentialOneTimeDetail: "本次运行使用粘贴的凭据。",
+    credentialMissingDetail: "配对这台电脑，或粘贴启动命令。",
     pairActionDescription: "生成配对码，然后在 Web 控制台完成设置。",
     commandActionDescription: "使用 Web 控制台生成的启动命令。",
     credentialsTitle: "连接器凭据",
@@ -206,6 +233,36 @@ function useDesktopMessages(): DesktopMessages {
   return desktopMessages[locale] as DesktopMessages
 }
 
+type MetricTone = "default" | "success" | "error"
+
+function connectorStatusView(state: ConnectorState | null, isRunning: boolean, t: DesktopMessages): { value: string; detail: string; tone: MetricTone } {
+  if (state?.lastError && !state.authFailed) {
+    return { value: t.runtimeError, detail: state.lastError, tone: "error" }
+  }
+  if (isRunning) {
+    return { value: t.runtimeConnected, detail: t.runtimeConnected, tone: "success" }
+  }
+  return { value: t.runtimeIdle, detail: t.runtimeIdle, tone: "default" }
+}
+
+function credentialStatusView(
+  state: ConnectorState | null,
+  config: ConnectorConfig,
+  isRunning: boolean,
+  t: DesktopMessages,
+): { value: string; detail: string; tone: MetricTone } {
+  if (state?.authFailed) {
+    return { value: t.credentialExpired, detail: t.fixCredential, tone: "error" }
+  }
+  if (isRunning && !state?.hasConfig) {
+    return { value: t.credentialOneTime, detail: t.credentialOneTimeDetail, tone: "success" }
+  }
+  if (state?.hasConfig || Boolean(config.connectorId && config.connectorToken)) {
+    return { value: t.credentialPaired, detail: t.credentialReadyDetail, tone: "success" }
+  }
+  return { value: t.credentialMissing, detail: t.credentialMissingDetail, tone: "default" }
+}
+
 export function DesktopShell() {
   const t = useDesktopMessages()
   const [view, setView] = React.useState<View>("overview")
@@ -222,6 +279,7 @@ export function DesktopShell() {
   const [commandStep, setCommandStep] = React.useState<CommandDialogStep>("input")
   const [commandInput, setCommandInput] = React.useState("")
   const [parsedCommand, setParsedCommand] = React.useState<ConnectorConfig | null>(null)
+  const authFailedToastShown = React.useRef(false)
 
   React.useEffect(() => {
     let cleanup: Array<() => void> = []
@@ -251,6 +309,17 @@ export function DesktopShell() {
       for (const dispose of cleanup) dispose()
     }
   }, [])
+
+  React.useEffect(() => {
+    if (state?.authFailed) {
+      if (!authFailedToastShown.current) {
+        toast.error(t.credentialExpiredToast)
+        authFailedToastShown.current = true
+      }
+      return
+    }
+    authFailedToastShown.current = false
+  }, [state?.authFailed, t.credentialExpiredToast])
 
   async function run<T>(label: string, action: () => Promise<T>, success?: string): Promise<T | null> {
     setBusy(label)
@@ -337,8 +406,8 @@ export function DesktopShell() {
   }
 
   const isRunning = Boolean(state?.running)
-  const status = state?.status ?? "loading"
-  const activePairing = pairing?.status || (state?.pairing ? "active" : "idle")
+  const connectorView = connectorStatusView(state, isRunning, t)
+  const credentialView = credentialStatusView(state, config, isRunning, t)
   const isMac = state?.platform === "darwin"
 
   return (
@@ -350,11 +419,11 @@ export function DesktopShell() {
           </div>
         </div>
         <nav className="no-drag flex flex-1 flex-col gap-1 px-3 py-2 text-sm">
-          <NavItem icon={Wifi} label={t.navOverview} active={view === "overview"} onClick={() => setView("overview")} />
-          <NavItem icon={Terminal} label={t.navLogs} active={view === "logs"} onClick={() => setView("logs")} />
+          <NavItem icon={Gauge} label={t.navOverview} active={view === "overview"} onClick={() => setView("overview")} />
+          <NavItem icon={Logs} label={t.navLogs} active={view === "logs"} onClick={() => setView("logs")} />
         </nav>
-        <div className="no-drag border-t p-3">
-          <NavItem icon={Settings2} label={t.navSettings} active={view === "settings"} onClick={() => setView("settings")} />
+        <div className="no-drag p-3">
+          <NavItem icon={Settings} label={t.navSettings} active={view === "settings"} onClick={() => setView("settings")} />
         </div>
       </aside>
 
@@ -389,10 +458,12 @@ export function DesktopShell() {
             {view === "overview" ? (
               <Overview
                 t={t}
-                runtimeStatus={status}
-                runtimeDetail={state?.lastError || (isRunning ? t.runtimeConnected : t.runtimeIdle)}
-                pairingStatus={activePairing}
-                pairingDetail={pairing?.code ? `${t.pairingCode} ${pairing.code}` : t.noPairingCode}
+                runtimeStatus={connectorView.value}
+                runtimeDetail={connectorView.detail}
+                runtimeTone={connectorView.tone}
+                pairingStatus={credentialView.value}
+                pairingDetail={credentialView.detail}
+                pairingTone={credentialView.tone}
                 onPair={openPairDialog}
                 onCommand={openCommandDialog}
               />
@@ -444,28 +515,32 @@ function Overview({
   t,
   runtimeStatus,
   runtimeDetail,
+  runtimeTone,
   pairingStatus,
   pairingDetail,
+  pairingTone,
   onPair,
   onCommand,
 }: {
   t: DesktopMessages
   runtimeStatus: string
   runtimeDetail: string
+  runtimeTone: "default" | "success" | "error"
   pairingStatus: string
   pairingDetail: string
+  pairingTone: "default" | "success" | "error"
   onPair: () => void
   onCommand: () => void
 }) {
   return (
     <>
       <section className="grid gap-4 md:grid-cols-2">
-        <Metric title={t.runtimeStatus} value={runtimeStatus} detail={runtimeDetail} />
-        <Metric title={t.pairingStatus} value={pairingStatus} detail={pairingDetail} />
+        <Metric title={t.runtimeStatus} value={runtimeStatus} detail={runtimeDetail} tone={runtimeTone} />
+        <Metric title={t.pairingStatus} value={pairingStatus} detail={pairingDetail} tone={pairingTone} />
       </section>
       <section className="grid gap-4 md:grid-cols-2">
         <ActionCard
-          icon={Wifi}
+          icon={Plus}
           title={t.startPairing}
           description={t.pairActionDescription}
           onClick={onPair}
@@ -496,76 +571,105 @@ function SettingsView({
   saveConfig: (config: ConnectorConfig) => Promise<ConnectorConfig | null>
   saveSettings: (settings: DesktopSettings) => Promise<void>
 }) {
-  const [uvCommand, setUvCommand] = React.useState(state?.uvCommand || "uv")
+  const [uvPath, setUvPath] = React.useState(state?.uvPath || "")
 
   React.useEffect(() => {
-    setUvCommand(state?.uvCommand || "uv")
-  }, [state?.uvCommand])
+    setUvPath(state?.uvPath || "")
+  }, [state?.uvPath])
 
   return (
-    <div className="grid gap-5">
+    <div className="grid gap-6">
+      <div>
+        <h2 className="text-2xl font-semibold">{t.settings}</h2>
+        <p className="mt-1 text-sm text-muted-foreground">{t.settingsDescription}</p>
+      </div>
       <Card>
         <CardHeader>
-          <CardTitle>{t.settings}</CardTitle>
+          <CardTitle>{t.startupTitle}</CardTitle>
           <CardDescription>{t.settingsDescription}</CardDescription>
+          <CardAction>
+            <Settings className="size-5" />
+          </CardAction>
         </CardHeader>
-        <CardContent className="grid gap-4">
-          <SettingToggle
-            title={t.launchAtLogin}
-            description={t.launchAtLoginHint}
-            checked={Boolean(state?.openAtLogin)}
-            onCheckedChange={(openAtLogin) => saveSettings({ openAtLogin })}
-          />
-          <SettingToggle
-            title={t.startOnLaunch}
-            description={t.startOnLaunchHint}
-            checked={state?.startConnectorOnLaunch !== false}
-            onCheckedChange={(startConnectorOnLaunch) => saveSettings({ startConnectorOnLaunch })}
-          />
-          <div className="grid gap-2">
-            <Label htmlFor="uv-command">{t.uvCommand}</Label>
-            <Input
-              id="uv-command"
-              value={uvCommand}
-              onChange={(event) => setUvCommand(event.target.value)}
-              onBlur={(event) => saveSettings({ uvCommand: event.target.value })}
+        <CardContent>
+          <FieldGroup>
+            <SettingSwitchField
+              label={t.launchAtLogin}
+              description={t.launchAtLoginHint}
+              checked={Boolean(state?.openAtLogin)}
+              onCheckedChange={(openAtLogin) => saveSettings({ openAtLogin })}
             />
-          </div>
-          <PathRow label={t.configPath} value={state?.configPath || "-"} />
-          <PathRow label={t.settingsPath} value={state?.settingsPath || "-"} />
-          <div>
-            <Button variant="outline" onClick={() => void connectorDesktop().openConfigFolder()}>
-              <FolderOpen className="size-4" />
-              {t.openConfigFolder}
-            </Button>
-          </div>
+            <SettingSwitchField
+              label={t.startOnLaunch}
+              description={t.startOnLaunchHint}
+              checked={state?.startConnectorOnLaunch !== false}
+              onCheckedChange={(startConnectorOnLaunch) => saveSettings({ startConnectorOnLaunch })}
+            />
+            <SettingInputField
+              label={t.uvPath}
+              value={uvPath}
+              onChange={setUvPath}
+              onBlur={(value) => saveSettings({ uvPath: value })}
+            />
+          </FieldGroup>
         </CardContent>
       </Card>
       <Card>
         <CardHeader>
-          <CardTitle>{t.credentialsTitle}</CardTitle>
-          <CardDescription>{t.credentialsDescription}</CardDescription>
+          <CardTitle>{t.localFilesTitle}</CardTitle>
+          <CardAction>
+            <FolderOpen className="size-5" />
+          </CardAction>
         </CardHeader>
-        <CardContent className="grid gap-4">
-          <div className="grid gap-4 md:grid-cols-2">
-            <Field label={t.serverUrl} value={config.serverUrl} onChange={(value) => setConfig((current) => ({ ...current, serverUrl: value }))} />
-            <Field label={t.connectorId} value={config.connectorId} onChange={(value) => setConfig((current) => ({ ...current, connectorId: value }))} />
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="token">{t.connectorToken}</Label>
-            <Textarea
-              id="token"
-              className="min-h-24 font-mono text-xs"
-              value={config.connectorToken}
-              onChange={(event) => setConfig((current) => ({ ...current, connectorToken: event.target.value }))}
+        <CardContent className="px-0">
+          <FieldGroup>
+            <InfoRow label={t.configPath} value={<code className="code-mono truncate text-sm">{state?.configPath || "-"}</code>} />
+            <InfoRow label={t.settingsPath} value={<code className="code-mono truncate text-sm">{state?.settingsPath || "-"}</code>} />
+            <SettingActionField
+              label={t.openConfigFolder}
+              last
+              action={
+                <Button variant="outline" size="sm" onClick={() => void connectorDesktop().openConfigFolder()}>
+                  <FolderOpen className="size-4" />
+                  {t.openConfigFolder}
+                </Button>
+              }
             />
-          </div>
-          <div className="flex justify-end">
-            <Button onClick={() => void saveConfig(config)}>
-              <CheckCircle2 className="size-4" />
-              {t.saveConfig}
-            </Button>
-          </div>
+          </FieldGroup>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>{t.credentialsSectionTitle}</CardTitle>
+          <CardDescription>{t.credentialsDescription}</CardDescription>
+          <CardAction>
+            <KeyRound className="size-5" />
+          </CardAction>
+        </CardHeader>
+        <CardContent>
+          <FieldGroup>
+            <SettingInputField
+              label={t.serverUrl}
+              value={config.serverUrl}
+              onChange={(value) => setConfig((current) => ({ ...current, serverUrl: value }))}
+            />
+            <SettingInputField
+              label={t.connectorId}
+              value={config.connectorId}
+              onChange={(value) => setConfig((current) => ({ ...current, connectorId: value }))}
+            />
+            <SettingTextAreaField
+              label={t.connectorToken}
+              value={config.connectorToken}
+              onChange={(value) => setConfig((current) => ({ ...current, connectorToken: value }))}
+            />
+            <div className="flex justify-end">
+              <Button onClick={() => void saveConfig(config)}>
+                <CheckCircle2 className="size-4" />
+                {t.saveConfig}
+              </Button>
+            </div>
+          </FieldGroup>
         </CardContent>
       </Card>
     </div>
@@ -619,7 +723,7 @@ function PairingDialog({
                 {t.cancel}
               </Button>
               <Button onClick={onStart} disabled={!server.trim() || Boolean(busy)}>
-                {busy === "pairing" ? <Loader2 className="size-4 animate-spin" /> : <Wifi className="size-4" />}
+                {busy === "pairing" ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
                 {t.startPairing}
               </Button>
             </DialogFooter>
@@ -748,12 +852,22 @@ function NavItem({
   )
 }
 
-function Metric({ title, value, detail }: { title: string; value: string; detail: string }) {
+function Metric({
+  title,
+  value,
+  detail,
+  tone = "default",
+}: {
+  title: string
+  value: string
+  detail: string
+  tone?: "default" | "success" | "error"
+}) {
   return (
-    <Card>
+    <Card className={cn(tone === "error" && "border-destructive/50", tone === "success" && "border-emerald-500/30")}>
       <CardHeader className="pb-2">
         <CardDescription>{title}</CardDescription>
-        <CardTitle className="text-xl">{value}</CardTitle>
+        <CardTitle className={cn("text-xl", tone === "error" && "text-destructive")}>{value}</CardTitle>
       </CardHeader>
       <CardContent>
         <p className="truncate text-xs text-muted-foreground">{detail}</p>
@@ -824,44 +938,84 @@ function LogList({ t, logs }: { t: DesktopMessages; logs: ConnectorLog[] }) {
   )
 }
 
-function Field({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
-  const id = React.useId()
+function InfoRow({
+  label,
+  value,
+  action,
+  last = false,
+}: {
+  label: string
+  value: React.ReactNode
+  action?: React.ReactNode
+  last?: boolean
+}) {
   return (
-    <div className="grid gap-2">
-      <Label htmlFor={id}>{label}</Label>
-      <Input id={id} value={value} onChange={(event) => onChange(event.target.value)} />
+    <div className={cn("flex items-center gap-4 px-5 py-3", !last && "border-b border-border")}>
+      <div className="w-32 shrink-0 text-sm text-muted-foreground">{label}</div>
+      <div className="min-w-0 flex-1 text-sm">{value}</div>
+      {action}
     </div>
   )
 }
 
-function SettingToggle({
-  title,
+function SettingActionField({ label, action, last = false }: { label: string; action: React.ReactNode; last?: boolean }) {
+  return <InfoRow label={label} value={<span />} action={action} last={last} />
+}
+
+function SettingInputField({
+  label,
+  value,
+  onChange,
+  onBlur,
+}: {
+  label: string
+  value: string
+  onChange: (value: string) => void
+  onBlur?: (value: string) => void
+}) {
+  const id = React.useId()
+  return (
+    <Field>
+      <Label htmlFor={id}>{label}</Label>
+      <Input id={id} value={value} onChange={(event) => onChange(event.target.value)} onBlur={(event) => onBlur?.(event.target.value)} />
+    </Field>
+  )
+}
+
+function SettingTextAreaField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  const id = React.useId()
+  return (
+    <Field>
+      <Label htmlFor={id}>{label}</Label>
+      <Textarea
+        id={id}
+        className="min-h-24 font-mono text-xs"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </Field>
+  )
+}
+
+function SettingSwitchField({
+  label,
   description,
   checked,
   onCheckedChange,
 }: {
-  title: string
+  label: string
   description: string
   checked: boolean
   onCheckedChange: (checked: boolean) => void
 }) {
   return (
-    <div className="flex items-center justify-between rounded-lg border px-3 py-2">
-      <div>
-        <div className="text-sm font-medium">{title}</div>
-        <div className="text-xs text-muted-foreground">{description}</div>
-      </div>
+    <Field orientation="horizontal">
+      <FieldContent>
+        <FieldTitle>{label}</FieldTitle>
+        <FieldDescription>{description}</FieldDescription>
+      </FieldContent>
       <Switch checked={checked} onCheckedChange={onCheckedChange} />
-    </div>
-  )
-}
-
-function PathRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="grid gap-1">
-      <div className="text-xs font-medium text-muted-foreground">{label}</div>
-      <code className="block truncate rounded-md border bg-muted/30 px-3 py-2 text-xs">{value}</code>
-    </div>
+    </Field>
   )
 }
 

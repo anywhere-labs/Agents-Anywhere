@@ -207,7 +207,7 @@ class BackendRpcClient:
                     raise
                 except ConnectorAuthenticationError as exc:
                     logger.error("connector authentication failed; stopping: {}", exc)
-                    return
+                    raise
                 except ConnectionClosed as exc:
                     close_code = _close_code(exc)
                     close_reason = _close_reason(exc)
@@ -217,7 +217,7 @@ class BackendRpcClient:
                             close_code,
                             close_reason,
                         )
-                        return
+                        raise ConnectorAuthenticationError("connector credential no longer valid")
                     logger.warning(
                         "backend websocket closed code={} reason={!r}; reconnecting in {}s",
                         close_code,

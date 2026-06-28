@@ -16,7 +16,9 @@ class RpcLogSink:
         self._tasks: set[asyncio.Task[None]] = set()
         self._sink_id: int | None = None
 
-    def install(self, *, level: str = "TRACE") -> RpcLogSink:
+    def install(self, *, level: str = "TRACE", remove_default_sink: bool = False) -> RpcLogSink:
+        if remove_default_sink:
+            logger.remove()
         self._sink_id = logger.add(self._write, level=level, format="{message}")
         return self
 
@@ -44,5 +46,5 @@ class RpcLogSink:
         task.add_done_callback(self._tasks.discard)
 
 
-def install_rpc_log_sink(notifier: RpcLogNotifier, *, level: str = "TRACE") -> RpcLogSink:
-    return RpcLogSink(notifier).install(level=level)
+def install_rpc_log_sink(notifier: RpcLogNotifier, *, level: str = "TRACE", remove_default_sink: bool = False) -> RpcLogSink:
+    return RpcLogSink(notifier).install(level=level, remove_default_sink=remove_default_sink)

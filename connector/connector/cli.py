@@ -123,7 +123,7 @@ async def _rpc(args: argparse.Namespace) -> None:
         "connector.startPairing": controller.start_pairing,
         "connector.cancelPairing": controller.cancel_pairing,
     }
-    log_sink = install_rpc_log_sink(notify)
+    log_sink = install_rpc_log_sink(notify, remove_default_sink=True)
     server = await open_stdio_server(handlers)
     try:
         await server.serve_forever()

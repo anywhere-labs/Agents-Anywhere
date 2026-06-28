@@ -14,7 +14,7 @@ export type ConnectorState = {
   hasConfig: boolean
   openAtLogin?: boolean
   startConnectorOnLaunch?: boolean
-  uvCommand?: string
+  uvPath?: string
   logs?: ConnectorLog[]
 }
 
@@ -50,7 +50,7 @@ export type PairingState = {
 export type DesktopSettings = {
   openAtLogin?: boolean
   startConnectorOnLaunch?: boolean
-  uvCommand?: string
+  uvPath?: string
 }
 
 export type ConnectorDesktopApi = {

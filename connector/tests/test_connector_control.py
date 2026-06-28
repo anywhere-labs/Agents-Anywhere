@@ -5,7 +5,7 @@ from typing import Any
 
 from connector.control import ConnectorController, config_to_payload
 from connector.json_rpc import JsonRpcStdioServer
-from connector.runtime import ConnectorConfig
+from connector.runtime import ConnectorAuthenticationError, ConnectorConfig
 
 
 class FakeBackendRpcClient:
@@ -17,6 +17,14 @@ class FakeBackendRpcClient:
     async def run_forever(self) -> None:
         self.started.append(self.config)
         await asyncio.Event().wait()
+
+
+class FailingAuthBackendRpcClient:
+    def __init__(self, config: ConnectorConfig) -> None:
+        self.config = config
+
+    async def run_forever(self) -> None:
+        raise ConnectorAuthenticationError("connector credential no longer valid")
 
 
 class MemoryWriter:
@@ -71,6 +79,39 @@ def test_connector_controller_returns_default_config_when_missing(tmp_path) -> N
 
     assert config["serverUrl"] == ""
     assert config["heartbeatSeconds"] == 20
+
+
+def test_connector_controller_marks_auth_failure(tmp_path) -> None:
+    async def exercise() -> dict[str, Any]:
+        events: list[tuple[str, Any]] = []
+
+        async def notify(method: str, params: Any) -> None:
+            events.append((method, params))
+
+        controller = ConnectorController(
+            config_path=tmp_path / "connector.json",
+            notifier=notify,
+            client_factory=FailingAuthBackendRpcClient,  # type: ignore[arg-type]
+        )
+        await controller.save_config(
+            {
+                "serverUrl": "http://127.0.0.1:8000/",
+                "connectorId": "conn_1",
+                "connectorToken": "cxt_secret",
+            }
+        )
+        await controller.start()
+        for _ in range(10):
+            await asyncio.sleep(0)
+            if events[-1][1]["status"] != "running":
+                break
+        return events[-1][1]
+
+    state = asyncio.run(exercise())
+
+    assert state["status"] == "expired credential"
+    assert state["authFailed"] is True
+    assert "credential" in state["lastError"]
 
 
 def test_connector_controller_getters_accept_json_rpc_params(tmp_path) -> None:

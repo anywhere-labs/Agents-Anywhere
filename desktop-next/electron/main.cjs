@@ -29,7 +29,7 @@ const state = {
   configPath: "",
   settingsPath: "",
   connectorDir: "",
-  uvCommand: process.platform === "win32" ? "uv.exe" : "uv",
+  uvPath: "",
   openAtLogin: false,
   startConnectorOnLaunch: false,
 };
@@ -66,6 +66,24 @@ function defaultPathEntries() {
     );
   }
   return [...new Set(entries.filter(Boolean))];
+}
+
+function resolveExecutablePath(command) {
+  const trimmed = typeof command === "string" ? command.trim() : "";
+  if (!trimmed) return "";
+  if (path.isAbsolute(trimmed)) return trimmed;
+  for (const entry of defaultPathEntries()) {
+    const candidate = path.join(entry, trimmed);
+    if (fs.existsSync(candidate)) return candidate;
+    if (process.platform === "win32" && !candidate.toLowerCase().endsWith(".exe") && fs.existsSync(`${candidate}.exe`)) {
+      return `${candidate}.exe`;
+    }
+  }
+  return "";
+}
+
+function defaultUvPath() {
+  return resolveExecutablePath(process.platform === "win32" ? "uv.exe" : "uv");
 }
 
 function connectorEnv() {
@@ -111,20 +129,20 @@ function trayIcon() {
 
 function loadDesktopSettings() {
   const settings = readJson(state.settingsPath, {});
-  if (typeof settings.uvCommand === "string" && settings.uvCommand.trim()) state.uvCommand = settings.uvCommand.trim();
+  state.uvPath = resolveExecutablePath(settings.uvPath) || resolveExecutablePath(settings.uvCommand) || defaultUvPath();
   if (typeof settings.startConnectorOnLaunch === "boolean") state.startConnectorOnLaunch = settings.startConnectorOnLaunch;
   state.openAtLogin = app.getLoginItemSettings().openAtLogin;
 }
 
 function saveDesktopSettings(next = {}) {
-  if (typeof next.uvCommand === "string" && next.uvCommand.trim()) state.uvCommand = next.uvCommand.trim();
+  if (typeof next.uvPath === "string") state.uvPath = resolveExecutablePath(next.uvPath) || next.uvPath.trim();
   if (typeof next.startConnectorOnLaunch === "boolean") state.startConnectorOnLaunch = next.startConnectorOnLaunch;
   if (typeof next.openAtLogin === "boolean") {
     app.setLoginItemSettings({ openAtLogin: next.openAtLogin, openAsHidden: true });
     state.openAtLogin = next.openAtLogin;
   }
   writeJson(state.settingsPath, {
-    uvCommand: state.uvCommand,
+    uvPath: state.uvPath,
     startConnectorOnLaunch: state.startConnectorOnLaunch,
   });
   const nextState = publicState();
@@ -141,6 +159,23 @@ function appendLog(entry) {
   logs.push(log);
   if (logs.length > MAX_LOGS) logs = logs.slice(logs.length - MAX_LOGS);
   sendToWindow("connector:log", log);
+}
+
+function appendStderrLog(chunk) {
+  const text = chunk.toString().trimEnd();
+  if (!text) return;
+  for (const line of text.split(/\r?\n/)) {
+    appendLog(parseStderrLogLine(line));
+  }
+}
+
+function parseStderrLogLine(line) {
+  const match = line.match(/\|\s*(TRACE|DEBUG|INFO|SUCCESS|WARNING|ERROR|CRITICAL)\s*\|/);
+  return {
+    level: match ? match[1] : "ERROR",
+    message: line,
+    time: new Date().toISOString(),
+  };
 }
 
 function mergeConnectorState(next) {
@@ -163,7 +198,13 @@ function startRpcProcess() {
   }
 
   const args = ["run", "--project", state.connectorDir, "anywhere-cli", "rpc", "--config", state.configPath];
-  rpcProcess = spawn(state.uvCommand, args, {
+  const uvPath = resolveExecutablePath(state.uvPath);
+  if (!uvPath || !path.isAbsolute(uvPath)) {
+    appendLog({ level: "ERROR", message: "uv executable path is not configured.", time: new Date().toISOString() });
+    return;
+  }
+  state.uvPath = uvPath;
+  rpcProcess = spawn(uvPath, args, {
     cwd: state.connectorDir,
     env: connectorEnv(),
     detached: process.platform !== "win32",
@@ -171,11 +212,11 @@ function startRpcProcess() {
     stdio: ["pipe", "pipe", "pipe"],
   });
   rpcProcessGroupPid = process.platform === "win32" ? null : rpcProcess.pid;
-  appendLog(`Starting connector RPC with ${state.uvCommand} run --project ${state.connectorDir}`);
+  appendLog(`Starting connector RPC with ${uvPath} run --project ${state.connectorDir}`);
 
   rpcReader = readline.createInterface({ input: rpcProcess.stdout });
   rpcReader.on("line", handleRpcLine);
-  rpcProcess.stderr.on("data", (chunk) => appendLog({ level: "ERROR", message: chunk.toString().trimEnd(), time: new Date().toISOString() }));
+  rpcProcess.stderr.on("data", appendStderrLog);
   rpcProcess.on("error", (error) => {
     appendLog({ level: "ERROR", message: `Connector RPC failed to start: ${error.message}`, time: new Date().toISOString() });
     rejectAllPending(error);
