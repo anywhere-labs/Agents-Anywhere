@@ -157,6 +157,15 @@ def test_login_alias_is_still_accepted() -> None:
     assert args.no_start is True
 
 
+def test_rpc_command_uses_config_path(tmp_path) -> None:
+    config_path = tmp_path / "connector.json"
+
+    args = cli_module._build_parser().parse_args(["rpc", "--config", str(config_path)])
+
+    assert args.command == "rpc"
+    assert args.config == str(config_path)
+
+
 def test_pair_server_without_scheme_falls_back_to_http(monkeypatch) -> None:
     FakeFallbackHttpClient.calls = []
     monkeypatch.setattr(cli_module.httpx, "AsyncClient", FakeFallbackHttpClient)

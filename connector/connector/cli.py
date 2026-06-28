@@ -10,6 +10,8 @@ from urllib.parse import urlparse
 
 import httpx
 
+from connector.control import ConnectorController
+from connector.json_rpc import JsonRpcStdioServer, open_stdio_server
 from connector.runtime import BackendRpcClient, ConnectorConfig
 
 
@@ -23,6 +25,8 @@ def main(argv: list[str] | None = None) -> None:
             _configure(args)
         elif args.command == "start":
             asyncio.run(_start(args))
+        elif args.command == "rpc":
+            asyncio.run(_rpc(args))
         else:
             parser.print_help()
     except CliError as exc:
@@ -51,7 +55,7 @@ class CliError(RuntimeError):
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="anywhere-cli", description="Agent Server Codex connector CLI")
-    subparsers = parser.add_subparsers(dest="command", metavar="{start,pair,configure}")
+    subparsers = parser.add_subparsers(dest="command", metavar="{start,pair,configure,rpc}")
 
     start = subparsers.add_parser("start", help="start the connector")
     _add_config_args(start)
@@ -71,6 +75,9 @@ def _build_parser() -> argparse.ArgumentParser:
     configure.add_argument("--server-url", required=True, help="backend server URL")
     configure.add_argument("--connector-id", required=True, help="connector id")
     configure.add_argument("--connector-token", required=True, help="connector token")
+
+    rpc = subparsers.add_parser("rpc", help="serve the desktop connector JSON-RPC API over stdio")
+    _add_config_args(rpc)
     return parser
 
 
@@ -94,6 +101,33 @@ def _add_pair_args(parser: argparse.ArgumentParser) -> None:
 async def _start(args: argparse.Namespace) -> None:
     config = _resolve_config(args)
     await BackendRpcClient(config).run_forever()
+
+
+async def _rpc(args: argparse.Namespace) -> None:
+    server: JsonRpcStdioServer | None = None
+
+    async def notify(method: str, params: object) -> None:
+        if server is not None:
+            await server.notify(method, params)
+
+    controller = ConnectorController(config_path=args.config, notifier=notify)
+    handlers = {
+        "connector.getState": controller.get_state,
+        "connector.getPaths": controller.get_paths,
+        "connector.getConfig": controller.get_config,
+        "connector.saveConfig": controller.save_config,
+        "connector.start": controller.start,
+        "connector.stop": controller.stop,
+        "connector.restart": controller.restart,
+        "connector.startPairing": controller.start_pairing,
+        "connector.cancelPairing": controller.cancel_pairing,
+        "connector.startFromCommand": controller.start_from_command,
+    }
+    server = await open_stdio_server(handlers)
+    try:
+        await server.serve_forever()
+    finally:
+        await controller.shutdown()
 
 
 async def _pair(args: argparse.Namespace) -> None:
