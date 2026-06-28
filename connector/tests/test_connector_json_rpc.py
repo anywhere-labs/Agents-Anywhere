@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 from typing import Any
 
+from connector import json_rpc
 from connector.json_rpc import JsonRpcError, JsonRpcStdioServer
 
 
@@ -55,3 +57,25 @@ def test_json_rpc_server_handles_request_notification_and_errors() -> None:
     assert lines[1]["error"]["code"] == -32601
     assert lines[2]["error"] == {"code": -32010, "message": "custom failure", "data": {"reason": "test"}}
     assert lines[3]["error"]["code"] == -32700
+
+
+def test_open_stdio_server_uses_threaded_stdio_on_windows(monkeypatch) -> None:
+    class FakeStdin:
+        buffer = io.BytesIO(b'{"jsonrpc":"2.0","id":1,"method":"echo","params":{"ok":true}}\n')
+
+    class FakeStdout:
+        buffer = io.BytesIO()
+
+    async def exercise() -> list[dict[str, Any]]:
+        stdout = FakeStdout()
+        monkeypatch.setattr(json_rpc.sys, "platform", "win32")
+        monkeypatch.setattr(json_rpc.sys, "stdin", FakeStdin())
+        monkeypatch.setattr(json_rpc.sys, "stdout", stdout)
+
+        server = await json_rpc.open_stdio_server({"echo": lambda params: {"params": params}})
+        await asyncio.wait_for(server.serve_forever(), timeout=1)
+        return [json.loads(line) for line in stdout.buffer.getvalue().splitlines()]
+
+    lines = asyncio.run(exercise())
+
+    assert lines == [{"jsonrpc": "2.0", "id": 1, "result": {"params": {"ok": True}}}]

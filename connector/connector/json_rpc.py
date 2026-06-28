@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import sys
+import threading
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -93,11 +95,47 @@ class JsonRpcStdioServer:
         await self.write({"jsonrpc": "2.0", "id": request_id, "error": error})
 
 
-async def open_stdio_server(handlers: dict[str, JsonRpcHandler]) -> JsonRpcStdioServer:
-    import sys
+class ThreadedStdioWriter:
+    def __init__(self, stream: Any) -> None:
+        self._stream = stream
+        self._lock = threading.Lock()
 
+    def write(self, data: bytes) -> None:
+        self._data = data
+
+    async def drain(self) -> None:
+        data = self._data
+        await asyncio.to_thread(self._write_sync, data)
+
+    def _write_sync(self, data: bytes) -> None:
+        with self._lock:
+            self._stream.write(data)
+            self._stream.flush()
+
+
+def _start_threaded_stdin_reader(reader: asyncio.StreamReader, stream: Any) -> None:
+    loop = asyncio.get_running_loop()
+
+    def read_stdin() -> None:
+        try:
+            while line := stream.readline():
+                loop.call_soon_threadsafe(reader.feed_data, line)
+        except BaseException as exc:  # noqa: BLE001 - forward fatal pipe failures into the async reader.
+            loop.call_soon_threadsafe(reader.set_exception, exc)
+            return
+        loop.call_soon_threadsafe(reader.feed_eof)
+
+    thread = threading.Thread(target=read_stdin, name="json-rpc-stdio-reader", daemon=True)
+    thread.start()
+
+
+async def open_stdio_server(handlers: dict[str, JsonRpcHandler]) -> JsonRpcStdioServer:
     loop = asyncio.get_running_loop()
     reader = asyncio.StreamReader()
+    if sys.platform == "win32":
+        _start_threaded_stdin_reader(reader, sys.stdin.buffer)
+        return JsonRpcStdioServer(reader, ThreadedStdioWriter(sys.stdout.buffer), handlers)  # type: ignore[arg-type]
+
     reader_protocol = asyncio.StreamReaderProtocol(reader)
     await loop.connect_read_pipe(lambda: reader_protocol, sys.stdin.buffer)
     writer_transport, writer_protocol = await loop.connect_write_pipe(asyncio.streams.FlowControlMixin, sys.stdout.buffer)
