@@ -824,6 +824,31 @@ def test_state_polling_and_timeline_item_upsert(tmp_path):
         assert empty_increment["items"] == []
 
 
+def test_server_serves_next_static_export(tmp_path, monkeypatch):
+    static_dir = tmp_path / "web-static"
+    (static_dir / "_next" / "static").mkdir(parents=True)
+    (static_dir / "brand").mkdir()
+    (static_dir / "en" / "preview").mkdir(parents=True)
+    (static_dir / "zh-CN").mkdir()
+    (static_dir / "_next" / "static" / "app.js").write_text("console.log('ok')", encoding="utf-8")
+    (static_dir / "brand" / "aa-logo-dark-mode.png").write_bytes(b"brand")
+    (static_dir / "en" / "index.html").write_text("<main>en home</main>", encoding="utf-8")
+    (static_dir / "en" / "preview" / "index.html").write_text("<main>preview</main>", encoding="utf-8")
+    (static_dir / "zh-CN" / "index.html").write_text("<main>zh home</main>", encoding="utf-8")
+    (static_dir / "favicon-dark-mode.png").write_bytes(b"favicon")
+
+    monkeypatch.setenv("AGENT_SERVER_STATIC_DIR", str(static_dir))
+    client = make_client(tmp_path)
+
+    assert "<main>en home</main>" in client.get("/").text
+    assert "<main>preview</main>" in client.get("/en/preview").text
+    assert "<main>preview</main>" in client.get("/preview").text
+    assert client.get("/_next/static/app.js").text == "console.log('ok')"
+    assert client.get("/brand/aa-logo-dark-mode.png").content == b"brand"
+    assert client.get("/favicon-dark-mode.png").content == b"favicon"
+    assert client.get("/auth/config").headers["content-type"].startswith("application/json")
+
+
 def test_session_state_supports_latest_and_before_timeline_windows(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
