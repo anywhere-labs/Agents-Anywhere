@@ -8,8 +8,7 @@ remains the primary session UI.
 
 ## Run
 
-Use Node.js 22 LTS. The desktop app currently tracks `package-lock.json`, so use
-`npm` for this package.
+Use Node.js 22 LTS. This package uses `npm` scripts and does not commit lockfiles.
 
 ```bash
 nvm use

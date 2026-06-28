@@ -6,6 +6,10 @@
 **/.ruff_cache/
 **/.venv/
 **/node_modules/
+**/uv.lock
+**/yarn.lock
+**/package-lock.json
+**/pnpm-lock.yaml
 web/dist/
 web/.vite/
 web/.yarn/

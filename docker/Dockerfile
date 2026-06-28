@@ -9,13 +9,13 @@ ENV NODE_ENV=production \
 
 WORKDIR /app/web-next
 
-COPY web-next/package.json web-next/yarn.lock ./
+COPY web-next/package.json ./
 RUN corepack enable \
     && if [ -n "$YARN_REGISTRY" ]; then yarn config set npmRegistryServer "$YARN_REGISTRY"; fi \
-    && yarn
+    && YARN_ENABLE_IMMUTABLE_INSTALLS=false yarn install
 
 COPY web-next ./
-RUN yarn install --immutable && yarn build
+RUN yarn build
 
 
 FROM python:3.12-slim AS server
@@ -41,7 +41,7 @@ RUN if [ -n "$APT_MIRROR" ]; then \
     && if [ -n "$PIP_INDEX_URL" ]; then pip config set global.index-url "$PIP_INDEX_URL"; fi \
     && pip install --no-cache-dir uv
 
-COPY server/pyproject.toml server/uv.lock ./server/
+COPY server/pyproject.toml ./server/
 RUN if [ -n "$PIP_INDEX_URL" ]; then export UV_INDEX_URL="$PIP_INDEX_URL"; fi \
     && cd server && uv sync --no-dev --no-install-project
 

@@ -26,12 +26,12 @@ RUN if [ -n "$APT_MIRROR" ]; then \
 COPY --from=node /usr/local /usr/local
 COPY --from=node /opt/yarn-v1.22.22 /opt/yarn-v1.22.22
 
-COPY server/pyproject.toml server/uv.lock ./server/
+COPY server/pyproject.toml ./server/
 RUN if [ -n "$PIP_INDEX_URL" ]; then export UV_INDEX_URL="$PIP_INDEX_URL"; fi \
     && cd server && uv sync --no-install-project
 
-COPY web-next/package.json web-next/yarn.lock ./web-next/
-RUN corepack enable && cd web-next && yarn install --immutable
+COPY web-next/package.json ./web-next/
+RUN corepack enable && cd web-next && YARN_ENABLE_IMMUTABLE_INSTALLS=false yarn install
 
 COPY server ./server
 COPY web-next ./web-next

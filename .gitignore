@@ -11,6 +11,13 @@ web-next/out/
 .env.local
 .env.*.local
 
+# Dependency lockfiles are intentionally not committed in this repo.
+# Cross-platform package managers rewrite them frequently, creating noise.
+uv.lock
+yarn.lock
+package-lock.json
+pnpm-lock.yaml
+
 # Local Claude tooling (launch.json, transcripts, worktree metadata)
 .claude/
 .codex-run/
