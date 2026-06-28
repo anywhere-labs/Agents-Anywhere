@@ -36,6 +36,7 @@ export type ConnectorConfig = {
 }
 
 export type ConnectorLog = {
+  seq?: number
   time?: string
   level?: string
   name?: string
@@ -65,7 +66,9 @@ export type DesktopSettings = {
 
 export type LogPage = {
   items: ConnectorLog[]
-  nextCursor: number | null
+  firstSeq: number | null
+  lastSeq: number | null
+  hasMoreBefore: boolean
   total: number
 }
 
@@ -81,7 +84,7 @@ export type ConnectorDesktopApi = {
   saveSettings: (settings: DesktopSettings) => Promise<ConnectorState>
   openConfigFolder: () => Promise<string>
   openServer: (serverUrl: string) => Promise<void>
-  getLogs: (options?: { cursor?: number | null; pageSize?: number; newestFirst?: boolean }) => Promise<LogPage>
+  getLogs: (options?: { beforeSeq?: number | null; afterSeq?: number | null; pageSize?: number }) => Promise<LogPage>
   clearLogs: () => Promise<LogPage>
   onState: (callback: (state: ConnectorState) => void) => () => void
   onLog: (callback: (log: ConnectorLog) => void) => () => void

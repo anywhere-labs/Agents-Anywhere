@@ -18,6 +18,7 @@ let rpcProcess = null;
 let rpcProcessGroupPid = null;
 let rpcReader = null;
 let nextRequestId = 1;
+let nextLogSeq = 1;
 let pending = new Map();
 
 const state = {
@@ -186,6 +187,7 @@ function publicState() {
 function appendLog(entry) {
   const log = typeof entry === "string" ? { level: "INFO", message: entry, time: new Date().toISOString() } : entry;
   if (!log.time) log.time = new Date().toISOString();
+  if (!Number.isInteger(log.seq)) log.seq = nextLogSeq++;
   writeLogEntry(log);
   sendToWindow("connector:log", log);
 }
@@ -207,6 +209,14 @@ function logChunkFiles() {
   } catch {
     return [];
   }
+}
+
+function initLogSeq() {
+  let maxSeq = 0;
+  for (const row of readAllLogRows()) {
+    if (Number.isInteger(row.seq)) maxSeq = Math.max(maxSeq, row.seq);
+  }
+  nextLogSeq = maxSeq + 1;
 }
 
 function activeLogChunkPath() {
@@ -257,32 +267,51 @@ function pruneLogChunks() {
   });
 }
 
-function readLogPage(options = {}) {
-  const pageSize = clampNumber(options.pageSize, DEFAULT_LOG_PAGE_SIZE, 20, 500);
-  const newestFirst = options.newestFirst !== false;
-  const cursor = Number.isInteger(options.cursor) ? options.cursor : 0;
+function readAllLogRows() {
   const files = logChunkFiles();
   const rows = [];
+  let fallbackSeq = 1;
   for (const file of files) {
     try {
       const text = fs.readFileSync(file, "utf8").trim();
       if (!text) continue;
       for (const line of text.split(/\r?\n/)) {
         try {
-          rows.push(JSON.parse(line));
+          const row = JSON.parse(line);
+          if (!Number.isInteger(row.seq)) row.seq = fallbackSeq;
+          fallbackSeq = Math.max(fallbackSeq + 1, row.seq + 1);
+          rows.push(row);
         } catch {
-          rows.push({ level: "WARNING", message: line, time: new Date(fs.statSync(file).mtimeMs).toISOString() });
+          rows.push({ seq: fallbackSeq++, level: "WARNING", message: line, time: new Date(fs.statSync(file).mtimeMs).toISOString() });
         }
       }
     } catch {
       // Skip unreadable chunks.
     }
   }
-  if (newestFirst) rows.reverse();
-  const start = Math.max(0, cursor);
-  const items = rows.slice(start, start + pageSize);
-  const nextCursor = start + items.length < rows.length ? start + items.length : null;
-  return { items, nextCursor, total: rows.length };
+  return rows.sort((a, b) => Number(a.seq || 0) - Number(b.seq || 0));
+}
+
+function readLogPage(options = {}) {
+  const pageSize = clampNumber(options.pageSize, DEFAULT_LOG_PAGE_SIZE, 20, 5000);
+  const rows = readAllLogRows();
+  let windowRows;
+  if (Number.isInteger(options.afterSeq)) {
+    windowRows = rows.filter((row) => Number(row.seq || 0) > options.afterSeq).slice(-pageSize);
+  } else if (Number.isInteger(options.beforeSeq)) {
+    windowRows = rows.filter((row) => Number(row.seq || 0) < options.beforeSeq).slice(-pageSize);
+  } else {
+    windowRows = rows.slice(-pageSize);
+  }
+  const firstSeq = rows[0]?.seq ?? null;
+  const lastSeq = rows.at(-1)?.seq ?? null;
+  return {
+    items: windowRows,
+    firstSeq,
+    lastSeq,
+    hasMoreBefore: windowRows.length > 0 && firstSeq != null && Number(windowRows[0].seq) > Number(firstSeq),
+    total: rows.length,
+  };
 }
 
 function clearLogFiles() {
@@ -563,6 +592,7 @@ app.whenReady().then(() => {
   state.logPath = userDataPath("logs");
   state.connectorDir = resolveConnectorDir();
   loadDesktopSettings();
+  initLogSeq();
   createTray();
   createMainWindow();
   updateNativeIcons();

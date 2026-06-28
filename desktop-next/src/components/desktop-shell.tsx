@@ -68,7 +68,8 @@ type CommandDialogStep = "input" | "confirm"
 type ParsedConnectorCommand =
   | { kind: "start"; config: ConnectorConfig }
   | { kind: "pair"; server: string }
-const LOG_PAGE_SIZE = 120
+const LOG_PAGE_SIZE_OPTIONS = [100, 300, 1000, 3000] as const
+const SYNC_INTERVAL_OPTIONS = [15, 30, 60, 300] as const
 
 const defaultConfig: ConnectorConfig = {
   serverUrl: "",
@@ -102,7 +103,8 @@ const desktopMessages = {
     liveLogs: "Live",
     pausedLogs: "Paused",
     refresh: "Refresh",
-    loadMore: "Load more",
+    loadMore: "Load earlier logs",
+    logRows: "Rows",
     logStorageTitle: "Logs",
     logChunkSize: "Chunk size",
     logRetainChunks: "Retained chunks",
@@ -114,6 +116,7 @@ const desktopMessages = {
     appearanceTitle: "Appearance",
     localFilesTitle: "Local files",
     credentialsSectionTitle: "Credentials",
+    syncSectionTitle: "Sync",
     launchAtLogin: "Open at login",
     launchAtLoginHint: "Open the desktop app when you sign in.",
     startOnLaunch: "Start connector on launch",
@@ -167,7 +170,10 @@ const desktopMessages = {
     serverUrl: "Server URL",
     connectorId: "Connector ID",
     connectorToken: "Connector token",
+    syncInterval: "Sync interval",
+    syncIntervalDescription: "How often the connector syncs local sessions.",
     saveConfig: "Save config",
+    saveAndRestart: "Save and restart",
     savedStarting: "Saved. Starting connector.",
     parseStartCommand: "Paste a start or pair command.",
     parseMissingValues: "This command is missing required values.",
@@ -197,7 +203,8 @@ const desktopMessages = {
     liveLogs: "实时",
     pausedLogs: "暂停",
     refresh: "刷新",
-    loadMore: "加载更多",
+    loadMore: "加载更早日志",
+    logRows: "行数",
     logStorageTitle: "日志",
     logChunkSize: "分块大小",
     logRetainChunks: "保留分块",
@@ -209,6 +216,7 @@ const desktopMessages = {
     appearanceTitle: "外观",
     localFilesTitle: "本机文件",
     credentialsSectionTitle: "凭据",
+    syncSectionTitle: "同步",
     launchAtLogin: "登录时打开",
     launchAtLoginHint: "登录系统后打开桌面应用。",
     startOnLaunch: "打开应用后启动连接器",
@@ -262,7 +270,10 @@ const desktopMessages = {
     serverUrl: "服务器 URL",
     connectorId: "连接器 ID",
     connectorToken: "连接器 token",
+    syncInterval: "同步间隔",
+    syncIntervalDescription: "连接器同步本机会话的频率。",
     saveConfig: "保存配置",
+    saveAndRestart: "保存并重启",
     savedStarting: "已保存，正在启动连接器。",
     parseStartCommand: "请粘贴启动或配对命令。",
     parseMissingValues: "这条命令缺少必要信息。",
@@ -330,9 +341,11 @@ export function DesktopShell() {
   const [view, setView] = React.useState<View>("overview")
   const [config, setConfig] = React.useState<ConnectorConfig>(defaultConfig)
   const [logs, setLogs] = React.useState<ConnectorLog[]>([])
-  const [logCursor, setLogCursor] = React.useState<number | null>(null)
+  const [hasMoreLogsBefore, setHasMoreLogsBefore] = React.useState(false)
   const [logTotal, setLogTotal] = React.useState(0)
+  const [logPageSize, setLogPageSize] = React.useState<(typeof LOG_PAGE_SIZE_OPTIONS)[number]>(300)
   const [liveLogs, setLiveLogs] = React.useState(true)
+  const [stickToLogBottom, setStickToLogBottom] = React.useState(false)
   const [pairing, setPairing] = React.useState<PairingState | null>(null)
   const [busy, setBusy] = React.useState<string | null>(null)
   const [bridgeError, setBridgeError] = React.useState<string | null>(null)
@@ -344,7 +357,8 @@ export function DesktopShell() {
   const [commandInput, setCommandInput] = React.useState("")
   const [parsedCommand, setParsedCommand] = React.useState<ParsedConnectorCommand | null>(null)
   const authFailedToastShown = React.useRef(false)
-  const liveLogsRef = React.useRef(liveLogs)
+  const minLogSeqRef = React.useRef<number | null>(null)
+  const maxLogSeqRef = React.useRef<number | null>(null)
 
   React.useEffect(() => {
     let cleanup: Array<() => void> = []
@@ -354,7 +368,6 @@ export function DesktopShell() {
         const [nextState, nextConfig] = await Promise.all([api.getState(), api.getConfig()])
         setState(nextState)
         setConfig({ ...defaultConfig, ...nextConfig })
-        void loadLogs({ reset: true })
         cleanup = [
           api.onState((next) => setState(next)),
           api.onPairing((next) => {
@@ -364,15 +377,12 @@ export function DesktopShell() {
             if (next.status === "error") setPairStep("error")
             if (next.config) setConfig({ ...defaultConfig, ...next.config })
           }),
-          api.onLog((entry) => {
-            if (!liveLogsRef.current) return
-            setLogs((current) => [entry, ...current].slice(0, LOG_PAGE_SIZE))
-            setLogTotal((current) => current + 1)
-          }),
+          api.onLog(() => undefined),
           api.onLogsCleared(() => {
             setLogs([])
-            setLogCursor(null)
+            setHasMoreLogsBefore(false)
             setLogTotal(0)
+            updateLogSeqRefs([])
           }),
         ]
       } catch (error) {
@@ -386,8 +396,22 @@ export function DesktopShell() {
   }, [])
 
   React.useEffect(() => {
-    liveLogsRef.current = liveLogs
-  }, [liveLogs])
+    if (view === "logs") {
+      void loadLogs({ reset: true, pageSize: logPageSize })
+      return
+    }
+    setLogs([])
+    setHasMoreLogsBefore(false)
+    setLogTotal(0)
+  }, [view, logPageSize])
+
+  React.useEffect(() => {
+    if (view !== "logs" || !liveLogs) return
+    const id = window.setInterval(() => {
+      void syncLatestLogs()
+    }, 1000)
+    return () => window.clearInterval(id)
+  }, [view, liveLogs])
 
   React.useEffect(() => {
     if (state?.authFailed) {
@@ -436,21 +460,77 @@ export function DesktopShell() {
     return saved
   }
 
-  async function loadLogs(options: { reset?: boolean } = {}) {
-    const cursor = options.reset ? null : logCursor
-    const page = await run("logs", () => connectorDesktop().getLogs({ cursor, pageSize: LOG_PAGE_SIZE, newestFirst: true }))
+  async function loadLogs(options: { reset?: boolean; pageSize?: number } = {}) {
+    const pageSize = options.pageSize ?? logPageSize
+    const page = await run("logs", () => connectorDesktop().getLogs({ pageSize }))
     if (!page) return
-    setLogs((current) => (options.reset ? page.items : [...current, ...page.items]))
-    setLogCursor(page.nextCursor)
+    setLogs(page.items)
+    updateLogSeqRefs(page.items)
+    setHasMoreLogsBefore(page.hasMoreBefore)
     setLogTotal(page.total)
+    if (options.reset) setStickToLogBottom(true)
+  }
+
+  async function loadEarlierLogs() {
+    const beforeSeq = minLogSeqRef.current
+    if (beforeSeq == null) return
+    const page = await run("logs", () => connectorDesktop().getLogs({ beforeSeq, pageSize: logPageSize }))
+    if (!page || page.items.length === 0) return
+    setLogs((current) => {
+      const next = mergeLogsBySeq(page.items, current)
+      updateLogSeqRefs(next)
+      return next
+    })
+    setHasMoreLogsBefore(page.hasMoreBefore)
+    setLogTotal(page.total)
+  }
+
+  async function syncLatestLogs() {
+    const afterSeq = maxLogSeqRef.current
+    if (afterSeq == null) {
+      await loadLogs({ reset: true, pageSize: logPageSize })
+      return
+    }
+    const page = await connectorDesktop().getLogs({ afterSeq, pageSize: logPageSize })
+    if (page.items.length === 0) {
+      setLogTotal(page.total)
+      return
+    }
+    setLogs((current) => {
+      const next = mergeLogsBySeq(current, page.items)
+      updateLogSeqRefs(next)
+      return next
+    })
+    setHasMoreLogsBefore((current) => current || page.hasMoreBefore)
+    setLogTotal(page.total)
+    setStickToLogBottom(true)
   }
 
   async function clearLogs() {
     const page = await run("clearLogs", () => connectorDesktop().clearLogs())
     if (!page) return
     setLogs(page.items)
-    setLogCursor(page.nextCursor)
+    updateLogSeqRefs(page.items)
+    setHasMoreLogsBefore(page.hasMoreBefore)
     setLogTotal(page.total)
+  }
+
+  function updateLogSeqRefs(items: ConnectorLog[]) {
+    const seqs = items.map((item) => item.seq).filter((seq): seq is number => typeof seq === "number")
+    minLogSeqRef.current = seqs.length ? Math.min(...seqs) : null
+    maxLogSeqRef.current = seqs.length ? Math.max(...seqs) : null
+  }
+
+  function mergeLogsBySeq(...groups: ConnectorLog[][]) {
+    const map = new Map<number, ConnectorLog>()
+    const withoutSeq: ConnectorLog[] = []
+    for (const group of groups) {
+      for (const item of group) {
+        if (typeof item.seq === "number") map.set(item.seq, item)
+        else withoutSeq.push(item)
+      }
+    }
+    return [...withoutSeq, ...Array.from(map.values()).sort((a, b) => Number(a.seq || 0) - Number(b.seq || 0))]
   }
 
   async function startPairing() {
@@ -566,6 +646,9 @@ export function DesktopShell() {
           <NavItem icon={Logs} label={t.navLogs} active={view === "logs"} onClick={() => setView("logs")} />
         </nav>
         <div className="no-drag flex flex-col gap-1 p-3">
+          <div className="px-3 pb-2">
+            <StatusPill label={connectorView.value} tone={connectorView.tone} />
+          </div>
           <Button
             type="button"
             variant="ghost"
@@ -599,7 +682,27 @@ export function DesktopShell() {
                   {liveLogs ? <RefreshCw className="size-4" /> : <Pause className="size-4" />}
                   {liveLogs ? t.liveLogs : t.pausedLogs}
                 </Toggle>
-                <Button variant="outline" size="sm" onClick={() => void loadLogs({ reset: true })} disabled={Boolean(busy)}>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm" className="min-w-24 justify-between">
+                      {logPageSize}
+                      <ChevronDown className="size-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-36">
+                    <DropdownMenuRadioGroup
+                      value={String(logPageSize)}
+                      onValueChange={(next) => setLogPageSize(Number(next) as (typeof LOG_PAGE_SIZE_OPTIONS)[number])}
+                    >
+                      {LOG_PAGE_SIZE_OPTIONS.map((count) => (
+                        <DropdownMenuRadioItem key={count} value={String(count)}>
+                          {count} {t.logRows}
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <Button variant="outline" size="sm" onClick={() => void loadLogs({ reset: true, pageSize: logPageSize })} disabled={Boolean(busy)}>
                   <RefreshCw className="size-4" />
                   {t.refresh}
                 </Button>
@@ -651,8 +754,10 @@ export function DesktopShell() {
                 t={t}
                 logs={logs}
                 total={logTotal}
-                hasMore={logCursor != null}
-                onLoadMore={() => void loadLogs()}
+                hasMore={hasMoreLogsBefore}
+                stickToBottom={stickToLogBottom}
+                onStickHandled={() => setStickToLogBottom(false)}
+                onLoadMore={() => void loadEarlierLogs()}
               />
             ) : null}
             {view === "settings" ? (
@@ -663,6 +768,8 @@ export function DesktopShell() {
                 locale={effectiveLocale}
                 setConfig={setConfig}
                 saveConfig={saveConfig}
+                restartConnector={restartConnector}
+                isRunning={isRunning}
                 saveSettings={saveSettings}
                 saveLocale={saveLocale}
               />
@@ -751,6 +858,8 @@ function SettingsView({
   locale,
   setConfig,
   saveConfig,
+  restartConnector,
+  isRunning,
   saveSettings,
   saveLocale,
 }: {
@@ -760,6 +869,8 @@ function SettingsView({
   locale: string | undefined
   setConfig: React.Dispatch<React.SetStateAction<ConnectorConfig>>
   saveConfig: (config: ConnectorConfig) => Promise<ConnectorConfig | null>
+  restartConnector: () => Promise<void>
+  isRunning: boolean
   saveSettings: (settings: DesktopSettings) => Promise<void>
   saveLocale: (locale: "system" | "en" | "zh") => void
 }) {
@@ -827,6 +938,40 @@ function SettingsView({
               value={String(state?.logRetentionDays ?? 14)}
               onBlur={(value) => saveSettings({ logRetentionDays: Number(value) })}
             />
+          </FieldGroup>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>{t.syncSectionTitle}</CardTitle>
+          <CardAction>
+            <RefreshCw className="size-5" />
+          </CardAction>
+        </CardHeader>
+        <CardContent>
+          <FieldGroup>
+            <SyncIntervalField
+              t={t}
+              value={Number(config.syncIntervalSeconds ?? 30)}
+              onValueChange={(syncIntervalSeconds) => setConfig((current) => ({ ...current, syncIntervalSeconds }))}
+            />
+            <div className="flex justify-end gap-2">
+              <Button onClick={() => void saveConfig(config)}>
+                <CheckCircle2 className="size-4" />
+                {t.saveConfig}
+              </Button>
+              <Button
+                variant="outline"
+                disabled={!isRunning}
+                onClick={async () => {
+                  const saved = await saveConfig(config)
+                  if (saved) await restartConnector()
+                }}
+              >
+                <RotateCcw className="size-4" />
+                {t.saveAndRestart}
+              </Button>
+            </div>
           </FieldGroup>
         </CardContent>
       </Card>
@@ -1101,6 +1246,29 @@ function NavItem({
   )
 }
 
+function StatusPill({ label, tone }: { label: string; tone: MetricTone }) {
+  return (
+    <div
+      className={cn(
+        "inline-flex h-6 items-center gap-1.5 rounded-full px-2 text-xs font-medium",
+        tone === "success" && "bg-emerald-500/15 text-emerald-500",
+        tone === "error" && "bg-destructive/15 text-destructive",
+        tone === "default" && "bg-muted text-muted-foreground",
+      )}
+    >
+      <span
+        className={cn(
+          "size-1.5 rounded-full",
+          tone === "success" && "bg-emerald-500",
+          tone === "error" && "bg-destructive",
+          tone === "default" && "bg-muted-foreground",
+        )}
+      />
+      {label}
+    </div>
+  )
+}
+
 function Metric({
   title,
   value,
@@ -1116,7 +1284,7 @@ function Metric({
     <Card className={cn(tone === "error" && "border-destructive/50", tone === "success" && "border-emerald-500/30")}>
       <CardHeader className="pb-2">
         <CardDescription>{title}</CardDescription>
-        <CardTitle className={cn("text-xl", tone === "error" && "text-destructive")}>{value}</CardTitle>
+        <CardTitle className={cn("text-xl", tone === "error" && "text-destructive", tone === "success" && "text-emerald-500")}>{value}</CardTitle>
       </CardHeader>
       <CardContent>
         <p className="truncate text-xs text-muted-foreground">{detail}</p>
@@ -1156,14 +1324,41 @@ function LogsView({
   logs,
   total,
   hasMore,
+  stickToBottom,
+  onStickHandled,
   onLoadMore,
 }: {
   t: DesktopMessages
   logs: ConnectorLog[]
   total: number
   hasMore: boolean
+  stickToBottom: boolean
+  onStickHandled: () => void
   onLoadMore: () => void
 }) {
+  const viewportRef = React.useRef<HTMLDivElement | null>(null)
+  const loadingMoreRef = React.useRef(false)
+
+  React.useEffect(() => {
+    if (!stickToBottom) return
+    const viewport = viewportRef.current
+    if (!viewport) return
+    requestAnimationFrame(() => {
+      viewport.scrollTop = viewport.scrollHeight
+      onStickHandled()
+    })
+  }, [logs, stickToBottom, onStickHandled])
+
+  function handleScroll(event: React.UIEvent<HTMLDivElement>) {
+    if (!hasMore || loadingMoreRef.current) return
+    if (event.currentTarget.scrollTop > 24) return
+    loadingMoreRef.current = true
+    onLoadMore()
+    window.setTimeout(() => {
+      loadingMoreRef.current = false
+    }, 500)
+  }
+
   if (logs.length === 0) {
     return <div className="flex h-[calc(100vh-4rem)] items-center justify-center text-sm text-muted-foreground">{t.noLogs}</div>
   }
@@ -1172,8 +1367,15 @@ function LogsView({
       <div className="border-b px-5 py-2 text-xs text-muted-foreground">
         {logs.length} / {total}
       </div>
-      <ScrollArea className="min-h-0 flex-1">
+      <ScrollArea className="min-h-0 flex-1" viewportRef={viewportRef} viewportProps={{ onScroll: handleScroll }}>
         <div className="px-5 py-3 font-mono text-xs">
+          {hasMore ? (
+            <div className="flex justify-center pb-3">
+              <Button variant="outline" size="sm" onClick={onLoadMore}>
+                {t.loadMore}
+              </Button>
+            </div>
+          ) : null}
           {logs.map((log, index) => (
             <div key={`${log.time || index}-${index}`} className="grid grid-cols-[88px_72px_1fr] gap-2 py-0.5">
               <span className="text-muted-foreground">{log.time ? new Date(log.time).toLocaleTimeString() : "--:--:--"}</span>
@@ -1183,13 +1385,6 @@ function LogsView({
           ))}
         </div>
       </ScrollArea>
-      {hasMore ? (
-        <div className="flex justify-center border-t p-2">
-          <Button variant="outline" size="sm" onClick={onLoadMore}>
-            {t.loadMore}
-          </Button>
-        </div>
-      ) : null}
     </div>
   )
 }
@@ -1261,6 +1456,44 @@ function LanguageField({
             {languages.map((language) => (
               <DropdownMenuRadioItem key={language.id} value={language.id}>
                 {language.label}
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </Field>
+  )
+}
+
+function SyncIntervalField({
+  t,
+  value,
+  onValueChange,
+}: {
+  t: DesktopMessages
+  value: number
+  onValueChange: (value: number) => void
+}) {
+  const normalized = SYNC_INTERVAL_OPTIONS.includes(value as (typeof SYNC_INTERVAL_OPTIONS)[number]) ? value : 30
+
+  return (
+    <Field orientation="horizontal">
+      <FieldContent>
+        <FieldTitle>{t.syncInterval}</FieldTitle>
+        <FieldDescription>{t.syncIntervalDescription}</FieldDescription>
+      </FieldContent>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button type="button" variant="outline" className="min-w-32 justify-between">
+            {normalized}s
+            <ChevronDown data-icon="inline-end" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-40">
+          <DropdownMenuRadioGroup value={String(normalized)} onValueChange={(next) => onValueChange(Number(next))}>
+            {SYNC_INTERVAL_OPTIONS.map((interval) => (
+              <DropdownMenuRadioItem key={interval} value={String(interval)}>
+                {interval}s
               </DropdownMenuRadioItem>
             ))}
           </DropdownMenuRadioGroup>
