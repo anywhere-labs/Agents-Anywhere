@@ -60,6 +60,9 @@ import {
 type View = "overview" | "logs" | "settings"
 type PairDialogStep = "input" | "waiting" | "claimed" | "error"
 type CommandDialogStep = "input" | "confirm"
+type ParsedConnectorCommand =
+  | { kind: "start"; config: ConnectorConfig }
+  | { kind: "pair"; server: string }
 
 const defaultConfig: ConnectorConfig = {
   serverUrl: "",
@@ -117,8 +120,10 @@ const desktopMessages = {
     pairingFailed: "Pairing failed",
     server: "Server",
     commandTitle: "Start from command",
-    commandDescription: "Paste the start command from the web console.",
-    commandLabel: "Start command",
+    commandDescription: "Paste the command from the web console.",
+    commandLabel: "Connector command",
+    pairCommandReady: "This command starts pairing.",
+    startCommandReady: "This command contains connector credentials.",
     continue: "Continue",
     cancel: "Cancel",
     done: "Done",
@@ -148,7 +153,7 @@ const desktopMessages = {
     connectorToken: "Connector token",
     saveConfig: "Save config",
     savedStarting: "Saved. Starting connector.",
-    parseStartCommand: "Paste a start command.",
+    parseStartCommand: "Paste a start or pair command.",
     parseMissingValues: "This command is missing required values.",
     connectorStarted: "Connector started",
     connectorStopped: "Connector stopped",
@@ -200,8 +205,10 @@ const desktopMessages = {
     pairingFailed: "配对失败",
     server: "服务器",
     commandTitle: "从命令启动",
-    commandDescription: "粘贴 Web 控制台生成的启动命令。",
-    commandLabel: "启动命令",
+    commandDescription: "粘贴 Web 控制台生成的命令。",
+    commandLabel: "连接器命令",
+    pairCommandReady: "这条命令会开始配对。",
+    startCommandReady: "这条命令包含连接器凭据。",
     continue: "继续",
     cancel: "取消",
     done: "完成",
@@ -231,7 +238,7 @@ const desktopMessages = {
     connectorToken: "连接器 token",
     saveConfig: "保存配置",
     savedStarting: "已保存，正在启动连接器。",
-    parseStartCommand: "请粘贴启动命令。",
+    parseStartCommand: "请粘贴启动或配对命令。",
     parseMissingValues: "这条命令缺少必要信息。",
     connectorStarted: "连接器已启动",
     connectorStopped: "连接器已停止",
@@ -306,7 +313,7 @@ export function DesktopShell() {
   const [commandOpen, setCommandOpen] = React.useState(false)
   const [commandStep, setCommandStep] = React.useState<CommandDialogStep>("input")
   const [commandInput, setCommandInput] = React.useState("")
-  const [parsedCommand, setParsedCommand] = React.useState<ConnectorConfig | null>(null)
+  const [parsedCommand, setParsedCommand] = React.useState<ParsedConnectorCommand | null>(null)
   const authFailedToastShown = React.useRef(false)
 
   React.useEffect(() => {
@@ -386,7 +393,23 @@ export function DesktopShell() {
   }
 
   async function startPairing() {
-    const next = await run("pairing", () => connectorDesktop().startPairing({ server: pairServer }), t.pairingStarted)
+    let server = pairServer
+    try {
+      const parsed = parseConnectorCommand(pairServer, t)
+      if (parsed.kind === "start") {
+        setParsedCommand(parsed)
+        setPairOpen(false)
+        setCommandOpen(true)
+        setCommandStep("confirm")
+        return
+      }
+      server = parsed.server
+      setPairServer(server)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error))
+      return
+    }
+    const next = await run("pairing", () => connectorDesktop().startPairing({ server }), t.pairingStarted)
     if (next) {
       setPairing(next)
       setPairStep(next.status === "waiting" ? "waiting" : "input")
@@ -433,8 +456,20 @@ export function DesktopShell() {
 
   async function runParsedCommand(save: boolean) {
     if (!parsedCommand) return
-    if (save) await saveConfig(parsedCommand)
-    await startConnector(parsedCommand)
+    if (parsedCommand.kind === "pair") {
+      setCommandOpen(false)
+      setPairOpen(true)
+      setPairStep("input")
+      setPairServer(parsedCommand.server)
+      const next = await run("pairing", () => connectorDesktop().startPairing({ server: parsedCommand.server }), t.pairingStarted)
+      if (next) {
+        setPairing(next)
+        setPairStep(next.status === "waiting" ? "waiting" : "input")
+      }
+      return
+    }
+    if (save) await saveConfig(parsedCommand.config)
+    await startConnector(parsedCommand.config)
     setCommandOpen(false)
   }
 
@@ -572,7 +607,7 @@ function Overview({
         <Metric title={t.runtimeStatus} value={runtimeStatus} detail={runtimeDetail} tone={runtimeTone} />
         <Metric title={t.pairingStatus} value={pairingStatus} detail={pairingDetail} tone={pairingTone} />
       </section>
-      <section className="grid gap-4 md:grid-cols-2">
+      <section className="mt-3 grid gap-3 border-t pt-5">
         <ActionCard
           icon={Plus}
           title={t.startPairing}
@@ -770,7 +805,7 @@ function PairingDialog({
                 id="pair-server"
                 value={server}
                 onChange={(event) => onServerChange(event.target.value)}
-                placeholder="https://agents-anywhere.example"
+                placeholder="uvx anywhere-cli pair https://example.com"
                 autoFocus
               />
             </div>
@@ -825,7 +860,7 @@ function CommandDialog({
   open: boolean
   step: CommandDialogStep
   command: string
-  parsed: ConnectorConfig | null
+  parsed: ParsedConnectorCommand | null
   busy: string | null
   onCommandChange: (value: string) => void
   onOpenChange: (open: boolean) => void
@@ -864,16 +899,30 @@ function CommandDialog({
         ) : (
           <>
             <div className="rounded-lg border bg-muted/30 p-4 text-sm">
-              <div className="font-medium">{parsed?.serverUrl}</div>
-              <div className="mt-1 font-mono text-xs text-muted-foreground">{parsed?.connectorId}</div>
+              <div className="font-medium">{parsed?.kind === "pair" ? t.pairCommandReady : t.startCommandReady}</div>
+              <div className="mt-2 font-mono text-xs text-muted-foreground">
+                {parsed?.kind === "pair" ? parsed.server : parsed?.config.serverUrl}
+              </div>
+              {parsed?.kind === "start" ? (
+                <div className="mt-1 font-mono text-xs text-muted-foreground">{parsed.config.connectorId}</div>
+              ) : null}
             </div>
             <DialogFooter>
-              <Button variant="outline" onClick={() => onRun(false)} disabled={Boolean(busy)}>
-                {t.runOnce}
-              </Button>
-              <Button onClick={() => onRun(true)} disabled={Boolean(busy)}>
-                {t.saveAndStart}
-              </Button>
+              {parsed?.kind === "pair" ? (
+                <Button onClick={() => onRun(false)} disabled={Boolean(busy)}>
+                  {busy === "pairing" ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
+                  {t.startPairing}
+                </Button>
+              ) : (
+                <>
+                  <Button variant="outline" onClick={() => onRun(false)} disabled={Boolean(busy)}>
+                    {t.runOnce}
+                  </Button>
+                  <Button onClick={() => onRun(true)} disabled={Boolean(busy)}>
+                    {t.saveAndStart}
+                  </Button>
+                </>
+              )}
             </DialogFooter>
           </>
         )}
@@ -1179,13 +1228,21 @@ function BridgeError({ t, message }: { t: DesktopMessages; message: string }) {
   )
 }
 
-function parseConnectorCommand(input: string, t: DesktopMessages): ConnectorConfig {
-  const parts = splitShell(input.trim())
-  const commandIndex = parts.findIndex((part) => part === "start")
-  if (commandIndex < 0) throw new Error(t.parseStartCommand)
+function parseConnectorCommand(input: string, t: DesktopMessages): ParsedConnectorCommand {
+  const text = input.trim()
+  if (!text) throw new Error(t.parseStartCommand)
+  const parts = splitShell(text)
+  const commandIndex = parts.findIndex((part) => part === "start" || part === "pair" || part === "login")
+  if (commandIndex < 0) return { kind: "pair", server: text }
+  const command = parts[commandIndex]
   const arg = (name: string) => {
     const index = parts.indexOf(name)
     return index >= 0 ? parts[index + 1] : undefined
+  }
+  if (command !== "start") {
+    const server = arg("--server-url") || parts[commandIndex + 1] || ""
+    if (!server) throw new Error(t.parseMissingValues)
+    return { kind: "pair", server }
   }
   const serverUrl = arg("--server-url")?.replace(/\/+$/, "") || ""
   const connectorId = arg("--connector-id") || ""
@@ -1194,10 +1251,13 @@ function parseConnectorCommand(input: string, t: DesktopMessages): ConnectorConf
     throw new Error(t.parseMissingValues)
   }
   return {
-    ...defaultConfig,
-    serverUrl,
-    connectorId,
-    connectorToken,
+    kind: "start",
+    config: {
+      ...defaultConfig,
+      serverUrl,
+      connectorId,
+      connectorToken,
+    },
   }
 }
 
