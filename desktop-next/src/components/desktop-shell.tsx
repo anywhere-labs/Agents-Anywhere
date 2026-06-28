@@ -448,7 +448,7 @@ export function DesktopShell() {
       <aside className="drag-region flex w-64 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground">
         <div className={cn("flex px-5", isMac ? "h-20 items-end pb-4" : "h-16 items-center")}>
           <div className="min-w-0">
-            <div className="aa-wordmark truncate text-xl">{t.appName}</div>
+            <div className="aa-wordmark text-xl">{t.appName}</div>
           </div>
         </div>
         <nav className="no-drag flex flex-1 flex-col gap-1 px-3 py-2 text-sm">
@@ -463,8 +463,7 @@ export function DesktopShell() {
       <main className="flex min-w-0 flex-1 flex-col">
         <header className="drag-region flex h-16 shrink-0 items-center justify-between border-b px-5">
           <div>
-            <h1 className="text-sm font-semibold">{t.headerTitle}</h1>
-            <p className="text-xs text-muted-foreground">{t.headerSubtitle}</p>
+            <h1 className="text-lg font-semibold">{t.headerTitle}</h1>
           </div>
           <div className="no-drag flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={restartConnector} disabled={Boolean(busy)}>
