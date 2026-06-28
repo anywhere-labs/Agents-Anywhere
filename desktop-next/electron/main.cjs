@@ -13,6 +13,7 @@ const DEFAULT_LOG_PAGE_SIZE = 100;
 const isDev = Boolean(process.env.NEXT_DEV_SERVER_URL);
 const APP_PROTOCOL = "app";
 const APP_HOST = "desktop";
+const ENV_SNAPSHOT_TIMEOUT_MS = 3500;
 
 app.setName(APP_NAME);
 protocol.registerSchemesAsPrivileged([
@@ -34,6 +35,7 @@ let rpcReader = null;
 let nextRequestId = 1;
 let nextLogSeq = 1;
 let pending = new Map();
+let shellEnvironment = {};
 
 const state = {
   platform: process.platform,
@@ -111,7 +113,10 @@ function clampNumber(value, fallback, min, max) {
 
 function defaultPathEntries() {
   const entries = [];
-  if (process.env.PATH) entries.push(...process.env.PATH.split(path.delimiter));
+  const processPath = environmentPathValue(process.env);
+  const shellPath = environmentPathValue(shellEnvironment);
+  if (processPath) entries.push(...processPath.split(path.delimiter));
+  if (shellPath) entries.push(...String(shellPath).split(path.delimiter));
   if (process.platform === "darwin") {
     entries.push(
       path.join(app.getPath("home"), ".local", "bin"),
@@ -122,6 +127,19 @@ function defaultPathEntries() {
       "/usr/sbin",
       "/sbin",
     );
+  }
+  if (process.platform === "win32") {
+    const home = app.getPath("home");
+    const appData = process.env.APPDATA || path.join(home, "AppData", "Roaming");
+    const localAppData = process.env.LOCALAPPDATA || path.join(home, "AppData", "Local");
+    entries.push(
+      path.join(home, "scoop", "shims"),
+      path.join(localAppData, "Microsoft", "WinGet", "Packages"),
+      path.join(appData, "npm"),
+    );
+    for (const root of [process.env.NVM_HOME, process.env.NVM_SYMLINK]) {
+      if (root) entries.push(root);
+    }
   }
   return [...new Set(entries.filter(Boolean))];
 }
@@ -145,12 +163,107 @@ function defaultUvPath() {
 }
 
 function connectorEnv() {
-  return {
+  const env = {
     ...process.env,
+    ...shellEnvironment,
     PATH: defaultPathEntries().join(path.delimiter),
     PYTHONUNBUFFERED: "1",
     FORCE_COLOR: "0",
   };
+  if (process.platform === "win32") {
+    delete env.Path;
+    delete env.path;
+    env.Path = env.PATH;
+  }
+  return env;
+}
+
+function environmentPathValue(env) {
+  return env.PATH || env.Path || env.path || "";
+}
+
+function candidateShellCommands() {
+  if (process.platform === "win32") {
+    return [
+      ["powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "[Console]::OutputEncoding=[Text.UTF8Encoding]::UTF8; Get-ChildItem Env: | ConvertTo-Json -Compress"]],
+    ];
+  }
+  return [
+    [process.env.SHELL || "/bin/zsh", ["-lic", "env"]],
+    ["/bin/zsh", ["-lic", "env"]],
+    ["/bin/bash", ["-lc", "env"]],
+  ];
+}
+
+function readShellEnvironment() {
+  return new Promise((resolve) => {
+    const commands = candidateShellCommands();
+    let index = 0;
+
+    function tryNext() {
+      const command = commands[index++];
+      if (!command) {
+        resolve({});
+        return;
+      }
+      const [executable, args] = command;
+      const child = spawn(executable, args, { windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
+      let output = "";
+      const timer = setTimeout(() => {
+        child.kill();
+        tryNext();
+      }, ENV_SNAPSHOT_TIMEOUT_MS);
+      child.stdout.on("data", (chunk) => {
+        output += chunk.toString("utf8");
+      });
+      child.on("error", () => {
+        clearTimeout(timer);
+        tryNext();
+      });
+      child.on("exit", (code) => {
+        clearTimeout(timer);
+        if (code !== 0 || !output.trim()) {
+          tryNext();
+          return;
+        }
+        const env = process.platform === "win32" ? parsePowerShellEnvironment(output) : parseEnvOutput(output);
+        if (Object.keys(env).length > 0) resolve(env);
+        else tryNext();
+      });
+    }
+
+    tryNext();
+  });
+}
+
+function parsePowerShellEnvironment(output) {
+  try {
+    return normalizeShellEnvironment(JSON.parse(output));
+  } catch {
+    return {};
+  }
+}
+
+function parseEnvOutput(output) {
+  const env = {};
+  for (const line of output.split(/\r?\n/)) {
+    const index = line.indexOf("=");
+    if (index > 0) env[line.slice(0, index)] = line.slice(index + 1);
+  }
+  return env;
+}
+
+function normalizeShellEnvironment(value) {
+  if (Array.isArray(value)) {
+    const env = {};
+    for (const item of value) {
+      if (item && typeof item.Name === "string" && typeof item.Value === "string") env[item.Name] = item.Value;
+    }
+    return env;
+  }
+  if (value && typeof value.Name === "string" && typeof value.Value === "string") return { [value.Name]: value.Value };
+  if (value && typeof value === "object") return value;
+  return {};
 }
 
 function resolveConnectorDir() {
@@ -660,7 +773,7 @@ ipcMain.handle("connector:openServer", async (_event, serverUrl) => {
 ipcMain.handle("connector:getLogs", (_event, options) => readLogPage(options));
 ipcMain.handle("connector:clearLogs", () => clearLogFiles());
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   Menu.setApplicationMenu(null);
   if (!isDev && process.platform === "darwin") app.setActivationPolicy("accessory");
   registerExportedAppProtocol();
@@ -669,6 +782,7 @@ app.whenReady().then(() => {
   state.logPath = userDataPath("logs");
   state.connectorDir = resolveConnectorDir();
   loadDesktopSettings();
+  shellEnvironment = await readShellEnvironment();
   initLogSeq();
   createTray();
   if (isDev) void showWindow();
