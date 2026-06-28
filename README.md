@@ -1,8 +1,9 @@
 <div align="center">
 
-<img src="logo/ios-dark%20Exports/ios-dark-iOS-Dark-1024@1x.png" alt="Agents Anywhere logo" width="104" height="104">
-
-# Agents Anywhere
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/brand/agents-anywhere-wordmark-dark.png">
+  <img src="docs/brand/agents-anywhere-wordmark-light.png" alt="Agents Anywhere" width="420">
+</picture>
 
 <h3>Control coding agents on any device from your phone.</h3>
 
@@ -24,9 +25,6 @@ Run Codex, Claude Code, and more agents on your Mac, Windows PC, Linux devbox, o
 
 > [!IMPORTANT]
 > 中国区 Beta 已上线，目前免费试用，仅对中国用户开放。想申请试用，请跳转到 [Beta Access And Contact](#beta-access-and-contact)，扫码进群并联系管理员。
-
-> **Status: open-source development.**
-> This repository contains the full Web frontend, FastAPI backend, Python Connector CLI, Windows/macOS Connector app, and Android native client. It can run locally or be self-hosted with Docker. The primary clients today are the Web console and the Android app; iOS is still in development.
 
 ## What Is Agents Anywhere?
 

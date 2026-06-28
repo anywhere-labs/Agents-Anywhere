@@ -1,8 +1,9 @@
 <div align="center">
 
-<img src="logo/ios-dark%20Exports/ios-dark-iOS-Dark-1024@1x.png" alt="Agents Anywhere logo" width="104" height="104">
-
-# Agents Anywhere
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/brand/agents-anywhere-wordmark-dark.png">
+  <img src="docs/brand/agents-anywhere-wordmark-light.png" alt="Agents Anywhere" width="420">
+</picture>
 
 <h3>用手机控制任何设备上的编程 Agent。</h3>
 
@@ -24,9 +25,6 @@
 
 > [!IMPORTANT]
 > 中国区 Beta 已上线，目前免费试用，仅对中国用户开放。想申请试用，请跳转到 [试用与联系方式](#试用与联系方式)，扫码进群并联系管理员。
-
-> **当前状态：开源开发中。**
-> 当前仓库包含完整的 Web 前端、FastAPI 后端、Python Connector CLI、Windows/macOS Connector App 和 Android 原生客户端，可本地运行，也可通过 Docker 自托管。当前主要客户端是 Web 控制台和 Android App；iOS 仍在开发中。
 
 ## Agents Anywhere 是什么？
 
