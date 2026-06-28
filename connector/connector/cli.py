@@ -122,7 +122,6 @@ async def _rpc(args: argparse.Namespace) -> None:
         "connector.restart": controller.restart,
         "connector.startPairing": controller.start_pairing,
         "connector.cancelPairing": controller.cancel_pairing,
-        "connector.startFromCommand": controller.start_from_command,
     }
     log_sink = install_rpc_log_sink(notify)
     server = await open_stdio_server(handlers)

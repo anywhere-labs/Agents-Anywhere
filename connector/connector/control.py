@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import shlex
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -89,16 +88,6 @@ class ConnectorController:
     async def restart(self, params: Any = None) -> dict[str, Any]:
         await self.stop()
         return await self.start(params)
-
-    async def start_from_command(self, params: Any) -> dict[str, Any]:
-        parsed = parse_connector_command(str_param(params, "command") or str_param(params, "input"))
-        if parsed["kind"] == "pair":
-            return await self.start_pairing({"server": parsed["server"]})
-        config = parsed["config"]
-        if bool_param(params, "save"):
-            await self.save_config(config)
-            return await self.start()
-        return await self.start(config)
 
     async def start_pairing(self, params: Any) -> dict[str, Any]:
         if self._pairing_task is not None and not self._pairing_task.done():
@@ -252,39 +241,6 @@ def config_from_params(params: Any) -> ConnectorConfig:
     )
 
 
-def parse_connector_command(input_text: str | None) -> dict[str, Any]:
-    text = str(input_text or "").strip()
-    if not text:
-        raise ValueError("command is required")
-    parts = split_command(text)
-    command_index = next((index for index, part in enumerate(parts) if part in {"start", "pair", "login"}), -1)
-    if command_index < 0:
-        return {"kind": "pair", "server": text}
-    command = parts[command_index]
-
-    def arg(name: str) -> str | None:
-        try:
-            index = parts.index(name)
-        except ValueError:
-            return None
-        return parts[index + 1] if index + 1 < len(parts) else None
-
-    if command == "start":
-        return {
-            "kind": "start",
-            "config": {
-                "serverUrl": (arg("--server-url") or "").rstrip("/"),
-                "connectorId": arg("--connector-id"),
-                "connectorToken": arg("--connector-token"),
-            },
-        }
-    return {"kind": "pair", "server": arg("--server-url") or (parts[command_index + 1] if command_index + 1 < len(parts) else "")}
-
-
-def split_command(text: str) -> list[str]:
-    return shlex.split(text)
-
-
 async def resolve_pair_server_url(value: str | None, *, timeout: float = 10) -> str:
     normalized = str(value or "").strip().rstrip("/")
     if not normalized:
@@ -310,10 +266,6 @@ def str_param(params: Any, key: str) -> str | None:
         return None
     value = params.get(key)
     return value if isinstance(value, str) and value.strip() else None
-
-
-def bool_param(params: Any, key: str) -> bool:
-    return bool(isinstance(params, dict) and params.get(key))
 
 
 def float_param(params: Any, key: str, default: float) -> float:

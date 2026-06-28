@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from connector.control import ConnectorController, config_to_payload, parse_connector_command
+from connector.control import ConnectorController, config_to_payload
 from connector.runtime import ConnectorConfig
 
 
@@ -57,23 +57,6 @@ def test_connector_controller_returns_default_config_when_missing(tmp_path) -> N
 
     assert config["serverUrl"] == ""
     assert config["heartbeatSeconds"] == 20
-
-
-def test_parse_connector_command_supports_start_and_pair() -> None:
-    start = parse_connector_command(
-        'uvx anywhere-cli start --server-url "http://127.0.0.1:8000/" --connector-id conn_1 --connector-token cxt_secret'
-    )
-    pair = parse_connector_command("anywhere-cli pair anywhere.test:6664")
-
-    assert start == {
-        "kind": "start",
-        "config": {
-            "serverUrl": "http://127.0.0.1:8000",
-            "connectorId": "conn_1",
-            "connectorToken": "cxt_secret",
-        },
-    }
-    assert pair == {"kind": "pair", "server": "anywhere.test:6664"}
 
 
 def test_config_to_payload_keeps_optional_state_db_path() -> None:
