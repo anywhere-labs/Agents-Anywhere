@@ -9,7 +9,7 @@ ENV NODE_ENV=production \
 
 WORKDIR /app/web-next
 
-COPY web-next/package.json ./
+COPY web-next/package.json web-next/.yarnrc.yml ./
 RUN corepack enable \
     && if [ -n "$YARN_REGISTRY" ]; then yarn config set npmRegistryServer "$YARN_REGISTRY"; fi \
     && YARN_ENABLE_IMMUTABLE_INSTALLS=false yarn install

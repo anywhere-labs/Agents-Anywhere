@@ -30,7 +30,7 @@ COPY server/pyproject.toml ./server/
 RUN if [ -n "$PIP_INDEX_URL" ]; then export UV_INDEX_URL="$PIP_INDEX_URL"; fi \
     && cd server && uv sync --no-install-project
 
-COPY web-next/package.json ./web-next/
+COPY web-next/package.json web-next/.yarnrc.yml ./web-next/
 RUN corepack enable && cd web-next && YARN_ENABLE_IMMUTABLE_INSTALLS=false yarn install
 
 COPY server ./server
