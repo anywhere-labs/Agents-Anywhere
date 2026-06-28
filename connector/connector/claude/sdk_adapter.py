@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from loguru import logger
+from connector.logging import logger
 
 from connector.attachments import attachment_target
 from connector.adapter import NotificationSink

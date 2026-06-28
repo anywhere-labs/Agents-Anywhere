@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
-from loguru import logger
+from connector.logging import logger
 
 from connector.launch import launch_target
 

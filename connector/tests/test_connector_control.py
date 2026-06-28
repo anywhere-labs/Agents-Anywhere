@@ -48,7 +48,6 @@ def test_connector_controller_saves_config_and_starts_runtime(tmp_path) -> None:
 
     assert saved["serverUrl"] == "http://127.0.0.1:8000"
     assert [method for method, _params in events].count("connector/state") >= 2
-    assert any(method == "connector/log" for method, _params in events)
 
 
 def test_connector_controller_returns_default_config_when_missing(tmp_path) -> None:

@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from loguru import logger
+from connector.logging import logger
 
 from connector.claude.normalizers import ClaudeTranscriptNormalizer
 from connector.claude.path_utils import stable_claude_session_id

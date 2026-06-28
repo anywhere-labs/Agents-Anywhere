@@ -12,6 +12,7 @@ import httpx
 
 from connector.control import ConnectorController
 from connector.json_rpc import JsonRpcStdioServer, open_stdio_server
+from connector.logging import install_rpc_log_sink
 from connector.runtime import BackendRpcClient, ConnectorConfig
 
 
@@ -123,11 +124,13 @@ async def _rpc(args: argparse.Namespace) -> None:
         "connector.cancelPairing": controller.cancel_pairing,
         "connector.startFromCommand": controller.start_from_command,
     }
+    log_sink = install_rpc_log_sink(notify)
     server = await open_stdio_server(handlers)
     try:
         await server.serve_forever()
     finally:
         await controller.shutdown()
+        await log_sink.close()
 
 
 async def _pair(args: argparse.Namespace) -> None:

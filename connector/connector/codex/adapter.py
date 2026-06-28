@@ -9,7 +9,7 @@ import json
 import time
 from typing import Any
 
-from loguru import logger
+from connector.logging import logger
 
 from connector.attachments import attachment_target
 from connector.codex.reducer import CODEX_APPROVAL_METHODS, ReductionResult, TimelineReducer

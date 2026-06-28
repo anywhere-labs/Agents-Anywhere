@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from loguru import logger
+from connector.logging import logger
 
 
 CODEX_HISTORY_ITEM_TYPES = {

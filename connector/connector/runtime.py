@@ -13,7 +13,7 @@ from urllib.parse import urljoin, urlparse, urlunparse
 
 import httpx
 import websockets
-from loguru import logger
+from connector.logging import logger
 from websockets.exceptions import ConnectionClosed
 from websockets.asyncio.client import ClientConnection
 

@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from loguru import logger
+from connector.logging import logger
 
 
 def _claude_config_path() -> Path:

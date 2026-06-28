@@ -8,6 +8,7 @@ from typing import Any
 
 import httpx
 
+from connector.logging import logger
 from connector.runtime import BackendRpcClient, ConnectorAuthenticationError, ConnectorConfig
 
 
@@ -57,7 +58,7 @@ class ConnectorController:
         saved_path = config.save(self.config_path)
         self._auth_failed = False
         self._last_error = None
-        await self._emit_log(f"Saved connector config: {saved_path}")
+        logger.info("saved connector config path={}", saved_path)
         await self._emit_state()
         return config_to_payload(config)
 
@@ -69,7 +70,7 @@ class ConnectorController:
         self._last_error = None
         self._auth_failed = False
         self._runtime_task = asyncio.create_task(self._run_runtime(config))
-        await self._emit_log("Starting connector runtime")
+        logger.info("starting connector runtime")
         await self._emit_state()
         return self.get_state()
 
@@ -81,7 +82,7 @@ class ConnectorController:
             except asyncio.CancelledError:
                 pass
         self._runtime_task = None
-        await self._emit_log("Stopped connector runtime")
+        logger.info("stopped connector runtime")
         await self._emit_state()
         return self.get_state()
 
@@ -134,10 +135,10 @@ class ConnectorController:
         except ConnectorAuthenticationError as exc:
             self._auth_failed = True
             self._last_error = str(exc)
-            await self._emit_log(f"Connector authentication failed: {exc}")
+            logger.error("connector authentication failed: {}", exc)
         except Exception as exc:
             self._last_error = str(exc) or exc.__class__.__name__
-            await self._emit_log(f"Connector runtime failed: {self._last_error}")
+            logger.exception("connector runtime failed")
         finally:
             await self._emit_state()
 
@@ -196,9 +197,6 @@ class ConnectorController:
 
     async def _emit_state(self) -> None:
         await self._notify("connector/state", self.get_state())
-
-    async def _emit_log(self, line: str) -> None:
-        await self._notify("connector/log", {"line": line})
 
     async def _emit_pairing(self, payload: dict[str, Any]) -> None:
         await self._notify("connector/pairing", payload)
