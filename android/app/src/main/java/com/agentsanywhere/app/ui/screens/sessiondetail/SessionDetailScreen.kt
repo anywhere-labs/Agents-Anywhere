@@ -451,7 +451,6 @@ fun SessionDetailScreen(
                     val currentSchema = state.runtimeSettings.schema
                     val nextRuntimeSettings = result.settings.copy(schema = currentSchema)
                     val nextSession = state.session?.copy(
-                        effectiveRunMode = result.effectiveRunMode ?: state.session?.effectiveRunMode,
                         runtimeSettings = nextRuntimeSettings.settings,
                         runtimeSettingsOverride = nextRuntimeSettings.overrideSettings,
                     )
@@ -623,8 +622,7 @@ fun SessionDetailScreen(
     }
     val connectorOnline = state.session?.connectorOnline == true
     val takeoverEnabled = state.session?.takeover == true
-    val terminalMode = state.session?.runtime == "claude" && state.session?.effectiveRunMode == "terminal"
-    val inputEnabled = takeoverEnabled && connectorOnline && !terminalMode
+    val inputEnabled = takeoverEnabled && connectorOnline
     val attachmentsReady = attachments.all { it.uploadState == AttachmentUploadState.Uploaded }
     val canSend = inputEnabled &&
         !state.sending &&

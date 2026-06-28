@@ -194,8 +194,6 @@ class DevicesApi(
             runtime = optString("runtime", ""),
             settings = (optJSONObject("runtimeSettings") ?: optJSONObject("settings")).toMap(),
             runtimeSettingsOverride = optJSONObject("runtimeSettingsOverride").toMap(),
-            effectiveRunMode = optNullableString("effectiveRunMode"),
-            defaultRunModeConfigured = optBoolean("defaultRunModeConfigured", false),
             schemaVersion = optInt("schemaVersion", 0),
         )
     }

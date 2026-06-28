@@ -21,7 +21,6 @@ data class RemoteSession(
     val lastItemAt: String?,
     val sortAt: String?,
     val updatedSeq: Int,
-    val effectiveRunMode: String?,
     val runtimeSettings: Map<String, Any?>,
     val runtimeSettingsOverride: Map<String, Any?>,
 )
@@ -47,14 +46,13 @@ data class RemoteRuntimeConfigOption(
     val value: String,
     val label: String,
     val description: String?,
+    val efforts: List<RemoteRuntimeConfigOption>?,
 )
 
 data class RemoteRuntimeSettings(
     val runtime: String,
     val settings: Map<String, Any?>,
     val runtimeSettingsOverride: Map<String, Any?>,
-    val effectiveRunMode: String?,
-    val defaultRunModeConfigured: Boolean,
     val schemaVersion: Int,
 )
 

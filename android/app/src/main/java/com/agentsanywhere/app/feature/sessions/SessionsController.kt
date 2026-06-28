@@ -306,7 +306,6 @@ class SessionsController(
             unread = unread,
             takeover = takeover,
             connectorOnline = connectorStatus == "online",
-            effectiveRunMode = effectiveRunMode,
             runtimeSettings = runtimeSettings,
             runtimeSettingsOverride = runtimeSettingsOverride,
             live = statusValue == SessionStatus.Running || statusValue == SessionStatus.WaitingApproval,

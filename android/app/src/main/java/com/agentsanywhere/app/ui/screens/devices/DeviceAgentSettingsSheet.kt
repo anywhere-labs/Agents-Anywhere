@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.feature.devices.DeviceDetailAgent
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeConfigField
+import com.agentsanywhere.app.feature.sessiondetail.RuntimeConfigOption
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeSettingsState
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
@@ -94,7 +95,7 @@ internal fun DeviceAgentSettingsSheet(
     }
 
     fun patch(key: String, value: String?) {
-        if (savingKey != null || key in hiddenMobileAgentSettingKeys) return
+        if (savingKey != null) return
         val currentSchema = state.schema
         savingKey = key
         savingValue = value
@@ -190,7 +191,6 @@ internal fun DeviceAgentSettingsSheet(
         }
     }
 }
-
 @Composable
 private fun AgentSettingsBody(
     state: RuntimeSettingsState,
@@ -529,18 +529,18 @@ private fun CircleGlyph(color: Color) = Canvas(modifier = Modifier.size(10.dp)) 
 
 private fun RuntimeSettingsState.mobileAgentField(key: String): RuntimeConfigField? {
     return schema?.fields
-        ?.filter { !it.hidden && it.type == "enum" && visible(it) && it.key !in hiddenMobileAgentSettingKeys }
+        ?.filter { !it.hidden && it.type == "enum" && visible(it) }
         ?.firstOrNull { it.key == key && it.options.isNotEmpty() }
 }
 
 private fun RuntimeSettingsState.filteredEffortField(): RuntimeConfigField? {
     val field = mobileAgentField("effort") ?: return null
-    val model = settings["model"] as? String
-    if (schema?.runtime != "claude") return field
-    val allowed = claudeEffortValuesForModel(model)
-    if (allowed.isEmpty()) return null
-    return field.copy(options = field.options.filter { it.value in allowed })
-        .takeIf { it.options.isNotEmpty() }
+    val modelField = mobileAgentField("model")
+    val modelEfforts = modelField?.effortsForModel(settings["model"])
+    if (modelEfforts != null) {
+        return field.copy(options = modelEfforts).takeIf { it.options.isNotEmpty() }
+    }
+    return field
 }
 
 private fun RuntimeSettingsState.visible(field: RuntimeConfigField): Boolean {
@@ -553,17 +553,15 @@ private fun RuntimeSettingsState.value(key: String, field: RuntimeConfigField): 
         ?: field.options.firstOrNull { it.value.isNotBlank() }?.value
         ?: ""
 }
-
-private fun claudeEffortValuesForModel(model: String?): Set<String> {
-    val key = model.orEmpty()
-    if (key == "claude-haiku-4-5") return emptySet()
-    if (key.startsWith("claude-opus-4-8") || key.startsWith("claude-opus-4-7")) {
-        return setOf("low", "medium", "high", "xhigh", "max")
+private fun RuntimeConfigField.effortsForModel(model: Any?): List<RuntimeConfigOption>? {
+    val modelKey = model as? String
+    val selected = if (!modelKey.isNullOrBlank()) {
+        options.firstOrNull { it.value == modelKey }
+    } else {
+        options.firstOrNull()
     }
-    if (key.startsWith("claude-opus-4-6") || key.startsWith("claude-sonnet-4-6")) {
-        return setOf("low", "medium", "high", "max")
-    }
-    return setOf("low", "medium", "high", "max")
+    selected?.efforts?.let { return it }
+    return if (options.any { it.efforts != null }) emptyList() else null
 }
 
 private data class AgentSettingsPalette(
@@ -638,5 +636,3 @@ private fun agentSettingsPalette(darkMode: Boolean): AgentSettingsPalette {
         )
     }
 }
-
-private val hiddenMobileAgentSettingKeys = setOf("runMode")

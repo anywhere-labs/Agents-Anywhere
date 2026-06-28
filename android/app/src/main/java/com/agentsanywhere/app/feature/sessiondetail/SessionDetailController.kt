@@ -230,7 +230,6 @@ class SessionDetailController(
                 )
                 RuntimeSettingsPatchResult(
                     settings = settings.toRuntimeSettingsState(schema = null),
-                    effectiveRunMode = settings.effectiveRunMode,
                 )
             }
         }
@@ -403,6 +402,7 @@ class SessionDetailController(
             value = value,
             label = label,
             description = description,
+            efforts = efforts?.map { it.toRuntimeConfigOption() },
         )
     }
 
@@ -672,7 +672,6 @@ class SessionDetailController(
             unread = unread,
             takeover = takeover,
             connectorOnline = connectorStatus == "online",
-            effectiveRunMode = effectiveRunMode,
             runtimeSettings = runtimeSettings,
             runtimeSettingsOverride = runtimeSettingsOverride,
             live = statusValue == SessionStatus.Running || statusValue == SessionStatus.WaitingApproval,
@@ -774,5 +773,4 @@ data class SendMessageResult(
 
 data class RuntimeSettingsPatchResult(
     val settings: RuntimeSettingsState,
-    val effectiveRunMode: String?,
 )

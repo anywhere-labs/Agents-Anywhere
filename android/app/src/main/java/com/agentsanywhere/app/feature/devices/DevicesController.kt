@@ -222,8 +222,7 @@ class DevicesController(
     ): Result<RuntimeSettingsState> {
         val auth = authSession()
             ?: return Result.failure(IllegalStateException("Sign in again to save agent settings."))
-        val mobileSettings = settings.filterKeys { it !in mobileHiddenAgentSettingKeys }
-        if (mobileSettings.isEmpty()) {
+        if (settings.isEmpty()) {
             return Result.failure(IllegalArgumentException("No supported settings to save."))
         }
 
@@ -234,7 +233,7 @@ class DevicesController(
                     authorizationToken = auth.accessToken,
                     deviceId = connectorId,
                     runtime = runtime,
-                    settings = mobileSettings,
+                    settings = settings,
                 ).toRuntimeSettingsState(schema = null)
             }.recoverCatching { error ->
                 if (error is ApiException) throw error
@@ -297,11 +296,10 @@ class DevicesController(
             value = value,
             label = label,
             description = description,
+            efforts = efforts?.map { it.toRuntimeConfigOption() },
         )
     }
 }
-
-private val mobileHiddenAgentSettingKeys = setOf("runMode")
 
 data class DeviceSetupCredential(
     val device: AgentDevice,
