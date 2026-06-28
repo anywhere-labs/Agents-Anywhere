@@ -73,6 +73,9 @@
     },
     "mac": {
       "icon": "build/icon.icns",
+      "identity": "-",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
       "target": "dmg"
     },
     "linux": {
