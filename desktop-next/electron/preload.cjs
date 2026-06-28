@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld("connectorDesktop", {
   cancelPairing: () => ipcRenderer.invoke("connector:cancelPairing"),
   saveSettings: (settings) => ipcRenderer.invoke("connector:saveSettings", settings),
   openConfigFolder: () => ipcRenderer.invoke("connector:openConfigFolder"),
+  getLogs: (options) => ipcRenderer.invoke("connector:getLogs", options),
+  clearLogs: () => ipcRenderer.invoke("connector:clearLogs"),
   onState: (callback) => {
     const listener = (_event, state) => callback(state);
     ipcRenderer.on("connector:state", listener);
@@ -25,5 +27,10 @@ contextBridge.exposeInMainWorld("connectorDesktop", {
     const listener = (_event, state) => callback(state);
     ipcRenderer.on("connector:pairing", listener);
     return () => ipcRenderer.removeListener("connector:pairing", listener);
+  },
+  onLogsCleared: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on("connector:logsCleared", listener);
+    return () => ipcRenderer.removeListener("connector:logsCleared", listener);
   },
 });

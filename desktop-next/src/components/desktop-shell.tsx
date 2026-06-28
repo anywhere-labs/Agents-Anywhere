@@ -14,11 +14,14 @@ import {
   KeyRound,
   Loader2,
   Logs,
+  Pause,
   Plus,
   Play,
+  RefreshCw,
   RotateCcw,
   Settings,
   Square,
+  Trash2,
   Languages,
 } from "lucide-react"
 import { toast } from "sonner"
@@ -38,6 +41,7 @@ import { Label } from "@/components/ui/label"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
+import { Toggle } from "@/components/ui/toggle"
 import { Field, FieldContent, FieldDescription, FieldGroup, FieldTitle } from "@/components/ui/field"
 import {
   DropdownMenu,
@@ -63,6 +67,7 @@ type CommandDialogStep = "input" | "confirm"
 type ParsedConnectorCommand =
   | { kind: "start"; config: ConnectorConfig }
   | { kind: "pair"; server: string }
+const LOG_PAGE_SIZE = 120
 
 const defaultConfig: ConnectorConfig = {
   serverUrl: "",
@@ -92,6 +97,14 @@ const desktopMessages = {
     startFromCommand: "Start from command",
     logs: "Logs",
     logsDescription: "Recent connector activity.",
+    liveLogs: "Live",
+    pausedLogs: "Paused",
+    refresh: "Refresh",
+    loadMore: "Load more",
+    logStorageTitle: "Logs",
+    logChunkSize: "Chunk size",
+    logRetainChunks: "Retained chunks",
+    logRetentionDays: "Retention days",
     clear: "Clear",
     settings: "Settings",
     settingsDescription: "Startup and local connector options.",
@@ -111,6 +124,7 @@ const desktopMessages = {
     uvPath: "uv path",
     configPath: "Config path",
     settingsPath: "Settings path",
+    logPath: "Log path",
     openConfigFolder: "Open config folder",
     pairingTitle: "Pair this machine",
     pairingDescription: "Enter your server address to get a pairing code.",
@@ -177,6 +191,14 @@ const desktopMessages = {
     startFromCommand: "从命令启动",
     logs: "日志",
     logsDescription: "最近的连接器活动。",
+    liveLogs: "实时",
+    pausedLogs: "暂停",
+    refresh: "刷新",
+    loadMore: "加载更多",
+    logStorageTitle: "日志",
+    logChunkSize: "分块大小",
+    logRetainChunks: "保留分块",
+    logRetentionDays: "保留天数",
     clear: "清空",
     settings: "设置",
     settingsDescription: "启动项和本机连接器选项。",
@@ -196,6 +218,7 @@ const desktopMessages = {
     uvPath: "uv 路径",
     configPath: "配置路径",
     settingsPath: "设置路径",
+    logPath: "日志路径",
     openConfigFolder: "打开配置文件夹",
     pairingTitle: "配对这台电脑",
     pairingDescription: "输入服务器地址，生成配对码。",
@@ -287,7 +310,7 @@ function credentialStatusView(
   if (state?.authFailed) {
     return { value: t.credentialExpired, detail: t.fixCredential, tone: "error" }
   }
-  if (isRunning && !state?.hasConfig) {
+  if (isRunning && state?.usingTemporaryCredential) {
     return { value: t.credentialOneTime, detail: t.credentialOneTimeDetail, tone: "success" }
   }
   if (state?.hasConfig || Boolean(config.connectorId && config.connectorToken)) {
@@ -304,6 +327,9 @@ export function DesktopShell() {
   const [view, setView] = React.useState<View>("overview")
   const [config, setConfig] = React.useState<ConnectorConfig>(defaultConfig)
   const [logs, setLogs] = React.useState<ConnectorLog[]>([])
+  const [logCursor, setLogCursor] = React.useState<number | null>(null)
+  const [logTotal, setLogTotal] = React.useState(0)
+  const [liveLogs, setLiveLogs] = React.useState(true)
   const [pairing, setPairing] = React.useState<PairingState | null>(null)
   const [busy, setBusy] = React.useState<string | null>(null)
   const [bridgeError, setBridgeError] = React.useState<string | null>(null)
@@ -315,6 +341,7 @@ export function DesktopShell() {
   const [commandInput, setCommandInput] = React.useState("")
   const [parsedCommand, setParsedCommand] = React.useState<ParsedConnectorCommand | null>(null)
   const authFailedToastShown = React.useRef(false)
+  const liveLogsRef = React.useRef(liveLogs)
 
   React.useEffect(() => {
     let cleanup: Array<() => void> = []
@@ -324,6 +351,7 @@ export function DesktopShell() {
         const [nextState, nextConfig] = await Promise.all([api.getState(), api.getConfig()])
         setState(nextState)
         setConfig({ ...defaultConfig, ...nextConfig })
+        void loadLogs({ reset: true })
         cleanup = [
           api.onState((next) => setState(next)),
           api.onPairing((next) => {
@@ -333,7 +361,16 @@ export function DesktopShell() {
             if (next.status === "error") setPairStep("error")
             if (next.config) setConfig({ ...defaultConfig, ...next.config })
           }),
-          api.onLog((entry) => setLogs((current) => [...current.slice(-399), entry])),
+          api.onLog((entry) => {
+            if (!liveLogsRef.current) return
+            setLogs((current) => [entry, ...current].slice(0, LOG_PAGE_SIZE))
+            setLogTotal((current) => current + 1)
+          }),
+          api.onLogsCleared(() => {
+            setLogs([])
+            setLogCursor(null)
+            setLogTotal(0)
+          }),
         ]
       } catch (error) {
         setBridgeError(error instanceof Error ? error.message : String(error))
@@ -344,6 +381,10 @@ export function DesktopShell() {
       for (const dispose of cleanup) dispose()
     }
   }, [])
+
+  React.useEffect(() => {
+    liveLogsRef.current = liveLogs
+  }, [liveLogs])
 
   React.useEffect(() => {
     if (state?.authFailed) {
@@ -390,6 +431,23 @@ export function DesktopShell() {
     const saved = await run("save", () => connectorDesktop().saveConfig(nextConfig), t.configSaved)
     if (saved) setConfig({ ...defaultConfig, ...saved })
     return saved
+  }
+
+  async function loadLogs(options: { reset?: boolean } = {}) {
+    const cursor = options.reset ? null : logCursor
+    const page = await run("logs", () => connectorDesktop().getLogs({ cursor, pageSize: LOG_PAGE_SIZE, newestFirst: true }))
+    if (!page) return
+    setLogs((current) => (options.reset ? page.items : [...current, ...page.items]))
+    setLogCursor(page.nextCursor)
+    setLogTotal(page.total)
+  }
+
+  async function clearLogs() {
+    const page = await run("clearLogs", () => connectorDesktop().clearLogs())
+    if (!page) return
+    setLogs(page.items)
+    setLogCursor(page.nextCursor)
+    setLogTotal(page.total)
   }
 
   async function startPairing() {
@@ -468,8 +526,12 @@ export function DesktopShell() {
       }
       return
     }
-    if (save) await saveConfig(parsedCommand.config)
-    await startConnector(parsedCommand.config)
+    if (save) {
+      const saved = await saveConfig(parsedCommand.config)
+      if (saved) await startConnector()
+    } else {
+      await startConnector(parsedCommand.config)
+    }
     setCommandOpen(false)
   }
 
@@ -477,6 +539,8 @@ export function DesktopShell() {
   const connectorView = connectorStatusView(state, isRunning, t)
   const credentialView = credentialStatusView(state, config, isRunning, t)
   const isMac = state?.platform === "darwin"
+  const pageTitle = view === "logs" ? t.logs : view === "settings" ? t.settings : t.headerTitle
+  const pageDescription = view === "logs" ? t.logsDescription : view === "settings" ? t.settingsDescription : ""
 
   return (
     <div className="flex h-screen min-h-0 bg-background text-foreground">
@@ -498,29 +562,55 @@ export function DesktopShell() {
       <main className="flex min-w-0 flex-1 flex-col">
         <header className="drag-region flex h-16 shrink-0 items-center justify-between border-b px-5">
           <div>
-            <h1 className="text-lg font-semibold">{t.headerTitle}</h1>
+            <h1 className="text-lg font-semibold">{pageTitle}</h1>
+            {pageDescription ? <p className="text-xs text-muted-foreground">{pageDescription}</p> : null}
           </div>
           <div className="no-drag flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={restartConnector} disabled={Boolean(busy)}>
-              <RotateCcw className="size-4" />
-              {t.restart}
-            </Button>
-            {isRunning ? (
-              <Button variant="destructive" size="sm" onClick={stopConnector} disabled={Boolean(busy)}>
-                <Square className="size-4" />
-                {t.stop}
-              </Button>
+            {view === "logs" ? (
+              <>
+                <Toggle
+                  pressed={liveLogs}
+                  onPressedChange={setLiveLogs}
+                  variant="outline"
+                  size="sm"
+                  aria-label={t.liveLogs}
+                >
+                  {liveLogs ? <RefreshCw className="size-4" /> : <Pause className="size-4" />}
+                  {liveLogs ? t.liveLogs : t.pausedLogs}
+                </Toggle>
+                <Button variant="outline" size="sm" onClick={() => void loadLogs({ reset: true })} disabled={Boolean(busy)}>
+                  <RefreshCw className="size-4" />
+                  {t.refresh}
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => void clearLogs()} disabled={Boolean(busy)}>
+                  <Trash2 className="size-4" />
+                  {t.clear}
+                </Button>
+              </>
             ) : (
-              <Button size="sm" onClick={() => startConnector()} disabled={Boolean(busy) || !state?.hasConfig}>
-                <Play className="size-4" />
-                {t.start}
-              </Button>
+              <>
+                <Button variant="outline" size="sm" onClick={restartConnector} disabled={Boolean(busy)}>
+                  <RotateCcw className="size-4" />
+                  {t.restart}
+                </Button>
+                {isRunning ? (
+                  <Button variant="destructive" size="sm" onClick={stopConnector} disabled={Boolean(busy)}>
+                    <Square className="size-4" />
+                    {t.stop}
+                  </Button>
+                ) : (
+                  <Button size="sm" onClick={() => startConnector()} disabled={Boolean(busy) || !state?.hasConfig}>
+                    <Play className="size-4" />
+                    {t.start}
+                  </Button>
+                )}
+              </>
             )}
           </div>
         </header>
 
         <ScrollArea className="min-h-0 flex-1">
-          <div className="mx-auto flex w-full max-w-5xl flex-col gap-5 p-5">
+          <div className={cn("mx-auto flex w-full flex-col", view === "logs" ? "max-w-none" : "max-w-5xl gap-5 p-5")}>
             {bridgeError ? <BridgeError t={t} message={bridgeError} /> : null}
             {view === "overview" ? (
               <Overview
@@ -535,7 +625,15 @@ export function DesktopShell() {
                 onCommand={openCommandDialog}
               />
             ) : null}
-            {view === "logs" ? <LogsView t={t} logs={logs} onClear={() => setLogs([])} /> : null}
+            {view === "logs" ? (
+              <LogsView
+                t={t}
+                logs={logs}
+                total={logTotal}
+                hasMore={logCursor != null}
+                onLoadMore={() => void loadLogs()}
+              />
+            ) : null}
             {view === "settings" ? (
               <SettingsView
                 t={t}
@@ -652,10 +750,6 @@ function SettingsView({
 
   return (
     <div className="grid gap-6">
-      <div>
-        <h2 className="text-2xl font-semibold">{t.settings}</h2>
-        <p className="mt-1 text-sm text-muted-foreground">{t.settingsDescription}</p>
-      </div>
       <Card>
         <CardHeader>
           <CardTitle>{t.startupTitle}</CardTitle>
@@ -689,6 +783,34 @@ function SettingsView({
       </Card>
       <Card>
         <CardHeader>
+          <CardTitle>{t.logStorageTitle}</CardTitle>
+          <CardDescription>{t.logsDescription}</CardDescription>
+          <CardAction>
+            <Logs className="size-5" />
+          </CardAction>
+        </CardHeader>
+        <CardContent>
+          <FieldGroup>
+            <SettingNumberField
+              label={t.logChunkSize}
+              value={String(state?.logChunkSizeKb ?? 512)}
+              onBlur={(value) => saveSettings({ logChunkSizeKb: Number(value) })}
+            />
+            <SettingNumberField
+              label={t.logRetainChunks}
+              value={String(state?.logRetainChunks ?? 20)}
+              onBlur={(value) => saveSettings({ logRetainChunks: Number(value) })}
+            />
+            <SettingNumberField
+              label={t.logRetentionDays}
+              value={String(state?.logRetentionDays ?? 14)}
+              onBlur={(value) => saveSettings({ logRetentionDays: Number(value) })}
+            />
+          </FieldGroup>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
           <CardTitle>{t.appearanceTitle}</CardTitle>
           <CardAction>
             <Languages className="size-5" />
@@ -715,6 +837,7 @@ function SettingsView({
           <FieldGroup>
             <InfoRow label={t.configPath} value={<ScrollableCode value={state?.configPath || "-"} />} />
             <InfoRow label={t.settingsPath} value={<ScrollableCode value={state?.settingsPath || "-"} />} />
+            <InfoRow label={t.logPath} value={<ScrollableCode value={state?.logPath || "-"} />} />
             <SettingActionField
               label={t.openConfigFolder}
               last
@@ -1007,38 +1130,45 @@ function ActionCard({
   )
 }
 
-function LogsView({ t, logs, onClear }: { t: DesktopMessages; logs: ConnectorLog[]; onClear: () => void }) {
-  return (
-    <Card>
-      <CardHeader className="flex-row items-center justify-between space-y-0">
-        <div>
-          <CardTitle>{t.logs}</CardTitle>
-          <CardDescription>{t.logsDescription}</CardDescription>
-        </div>
-        <Button variant="outline" size="sm" onClick={onClear}>
-          {t.clear}
-        </Button>
-      </CardHeader>
-      <CardContent>
-        <LogList t={t} logs={logs} />
-      </CardContent>
-    </Card>
-  )
-}
-
-function LogList({ t, logs }: { t: DesktopMessages; logs: ConnectorLog[] }) {
+function LogsView({
+  t,
+  logs,
+  total,
+  hasMore,
+  onLoadMore,
+}: {
+  t: DesktopMessages
+  logs: ConnectorLog[]
+  total: number
+  hasMore: boolean
+  onLoadMore: () => void
+}) {
   if (logs.length === 0) {
-    return <div className="flex h-72 items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground">{t.noLogs}</div>
+    return <div className="flex h-[calc(100vh-4rem)] items-center justify-center text-sm text-muted-foreground">{t.noLogs}</div>
   }
   return (
-    <div className="h-[520px] overflow-auto rounded-lg border bg-muted/20 p-3 font-mono text-xs">
-      {logs.map((log, index) => (
-        <div key={`${log.time || index}-${index}`} className="grid grid-cols-[88px_72px_1fr] gap-2 py-0.5">
-          <span className="text-muted-foreground">{log.time ? new Date(log.time).toLocaleTimeString() : "--:--:--"}</span>
-          <span className={cn("text-muted-foreground", log.level === "ERROR" && "text-destructive", log.level === "WARNING" && "text-yellow-600")}>{log.level || "INFO"}</span>
-          <span className="min-w-0 break-words">{logMessage(log)}</span>
+    <div className="flex h-[calc(100vh-4rem)] min-h-0 flex-col">
+      <div className="border-b px-5 py-2 text-xs text-muted-foreground">
+        {logs.length} / {total}
+      </div>
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="px-5 py-3 font-mono text-xs">
+          {logs.map((log, index) => (
+            <div key={`${log.time || index}-${index}`} className="grid grid-cols-[88px_72px_1fr] gap-2 py-0.5">
+              <span className="text-muted-foreground">{log.time ? new Date(log.time).toLocaleTimeString() : "--:--:--"}</span>
+              <span className={cn("text-muted-foreground", log.level === "ERROR" && "text-destructive", log.level === "WARNING" && "text-yellow-600")}>{log.level || "INFO"}</span>
+              <span className="min-w-0 break-words">{logMessage(log)}</span>
+            </div>
+          ))}
         </div>
-      ))}
+      </ScrollArea>
+      {hasMore ? (
+        <div className="flex justify-center border-t p-2">
+          <Button variant="outline" size="sm" onClick={onLoadMore}>
+            {t.loadMore}
+          </Button>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -1135,6 +1265,36 @@ function SettingInputField({
     <Field>
       <Label htmlFor={id}>{label}</Label>
       <Input id={id} value={value} onChange={(event) => onChange(event.target.value)} onBlur={(event) => onBlur?.(event.target.value)} />
+    </Field>
+  )
+}
+
+function SettingNumberField({
+  label,
+  value,
+  onBlur,
+}: {
+  label: string
+  value: string
+  onBlur: (value: string) => void
+}) {
+  const id = React.useId()
+  const [draft, setDraft] = React.useState(value)
+
+  React.useEffect(() => {
+    setDraft(value)
+  }, [value])
+
+  return (
+    <Field>
+      <Label htmlFor={id}>{label}</Label>
+      <Input
+        id={id}
+        type="number"
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={(event) => onBlur(event.target.value)}
+      />
     </Field>
   )
 }

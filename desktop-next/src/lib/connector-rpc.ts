@@ -16,7 +16,11 @@ export type ConnectorState = {
   startConnectorOnLaunch?: boolean
   uvPath?: string
   locale?: "system" | "en" | "zh" | string
-  logs?: ConnectorLog[]
+  usingTemporaryCredential?: boolean
+  logPath?: string
+  logChunkSizeKb?: number
+  logRetainChunks?: number
+  logRetentionDays?: number
 }
 
 export type ConnectorConfig = {
@@ -53,6 +57,15 @@ export type DesktopSettings = {
   startConnectorOnLaunch?: boolean
   uvPath?: string
   locale?: "system" | "en" | "zh"
+  logChunkSizeKb?: number
+  logRetainChunks?: number
+  logRetentionDays?: number
+}
+
+export type LogPage = {
+  items: ConnectorLog[]
+  nextCursor: number | null
+  total: number
 }
 
 export type ConnectorDesktopApi = {
@@ -66,9 +79,12 @@ export type ConnectorDesktopApi = {
   cancelPairing: () => Promise<PairingState>
   saveSettings: (settings: DesktopSettings) => Promise<ConnectorState>
   openConfigFolder: () => Promise<string>
+  getLogs: (options?: { cursor?: number | null; pageSize?: number; newestFirst?: boolean }) => Promise<LogPage>
+  clearLogs: () => Promise<LogPage>
   onState: (callback: (state: ConnectorState) => void) => () => void
   onLog: (callback: (log: ConnectorLog) => void) => () => void
   onPairing: (callback: (state: PairingState) => void) => () => void
+  onLogsCleared: (callback: () => void) => () => void
 }
 
 declare global {

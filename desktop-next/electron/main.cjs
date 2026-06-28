@@ -5,7 +5,10 @@ const path = require("node:path");
 const readline = require("node:readline");
 
 const APP_NAME = "Agents Anywhere Connector";
-const MAX_LOGS = 500;
+const DEFAULT_LOG_CHUNK_SIZE_KB = 512;
+const DEFAULT_LOG_RETAIN_CHUNKS = 20;
+const DEFAULT_LOG_RETENTION_DAYS = 14;
+const DEFAULT_LOG_PAGE_SIZE = 100;
 
 app.setName(APP_NAME);
 
@@ -16,7 +19,6 @@ let rpcProcessGroupPid = null;
 let rpcReader = null;
 let nextRequestId = 1;
 let pending = new Map();
-let logs = [];
 
 const state = {
   platform: process.platform,
@@ -31,6 +33,11 @@ const state = {
   connectorDir: "",
   uvPath: "",
   locale: "system",
+  usingTemporaryCredential: false,
+  logPath: "",
+  logChunkSizeKb: DEFAULT_LOG_CHUNK_SIZE_KB,
+  logRetainChunks: DEFAULT_LOG_RETAIN_CHUNKS,
+  logRetentionDays: DEFAULT_LOG_RETENTION_DAYS,
   openAtLogin: false,
   startConnectorOnLaunch: false,
 };
@@ -50,6 +57,12 @@ function readJson(filePath, fallback) {
 function writeJson(filePath, value) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+function clampNumber(value, fallback, min, max) {
+  const next = Number(value);
+  if (!Number.isFinite(next)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(next)));
 }
 
 function defaultPathEntries() {
@@ -132,13 +145,20 @@ function loadDesktopSettings() {
   const settings = readJson(state.settingsPath, {});
   state.uvPath = resolveExecutablePath(settings.uvPath) || resolveExecutablePath(settings.uvCommand) || defaultUvPath();
   if (typeof settings.locale === "string" && ["system", "en", "zh"].includes(settings.locale)) state.locale = settings.locale;
+  state.logChunkSizeKb = clampNumber(settings.logChunkSizeKb, DEFAULT_LOG_CHUNK_SIZE_KB, 64, 10240);
+  state.logRetainChunks = clampNumber(settings.logRetainChunks, DEFAULT_LOG_RETAIN_CHUNKS, 1, 200);
+  state.logRetentionDays = clampNumber(settings.logRetentionDays, DEFAULT_LOG_RETENTION_DAYS, 1, 365);
   if (typeof settings.startConnectorOnLaunch === "boolean") state.startConnectorOnLaunch = settings.startConnectorOnLaunch;
   state.openAtLogin = app.getLoginItemSettings().openAtLogin;
+  pruneLogChunks();
 }
 
 function saveDesktopSettings(next = {}) {
   if (typeof next.uvPath === "string") state.uvPath = resolveExecutablePath(next.uvPath) || next.uvPath.trim();
   if (typeof next.locale === "string" && ["system", "en", "zh"].includes(next.locale)) state.locale = next.locale;
+  if (next.logChunkSizeKb != null) state.logChunkSizeKb = clampNumber(next.logChunkSizeKb, state.logChunkSizeKb, 64, 10240);
+  if (next.logRetainChunks != null) state.logRetainChunks = clampNumber(next.logRetainChunks, state.logRetainChunks, 1, 200);
+  if (next.logRetentionDays != null) state.logRetentionDays = clampNumber(next.logRetentionDays, state.logRetentionDays, 1, 365);
   if (typeof next.startConnectorOnLaunch === "boolean") state.startConnectorOnLaunch = next.startConnectorOnLaunch;
   if (typeof next.openAtLogin === "boolean") {
     app.setLoginItemSettings({ openAtLogin: next.openAtLogin, openAsHidden: true });
@@ -147,22 +167,133 @@ function saveDesktopSettings(next = {}) {
   writeJson(state.settingsPath, {
     uvPath: state.uvPath,
     locale: state.locale,
+    logChunkSizeKb: state.logChunkSizeKb,
+    logRetainChunks: state.logRetainChunks,
+    logRetentionDays: state.logRetentionDays,
     startConnectorOnLaunch: state.startConnectorOnLaunch,
   });
+  pruneLogChunks();
   const nextState = publicState();
   sendToWindow("connector:state", nextState);
   return nextState;
 }
 
 function publicState() {
-  return { ...state, logs };
+  return { ...state };
 }
 
 function appendLog(entry) {
   const log = typeof entry === "string" ? { level: "INFO", message: entry, time: new Date().toISOString() } : entry;
-  logs.push(log);
-  if (logs.length > MAX_LOGS) logs = logs.slice(logs.length - MAX_LOGS);
+  if (!log.time) log.time = new Date().toISOString();
+  writeLogEntry(log);
   sendToWindow("connector:log", log);
+}
+
+function logDir() {
+  return state.logPath || userDataPath("logs");
+}
+
+function logChunkPrefix() {
+  return "connector-";
+}
+
+function logChunkFiles() {
+  try {
+    return fs.readdirSync(logDir())
+      .filter((name) => name.startsWith(logChunkPrefix()) && name.endsWith(".jsonl"))
+      .sort()
+      .map((name) => path.join(logDir(), name));
+  } catch {
+    return [];
+  }
+}
+
+function activeLogChunkPath() {
+  fs.mkdirSync(logDir(), { recursive: true });
+  const files = logChunkFiles();
+  const latest = files.at(-1);
+  const maxBytes = state.logChunkSizeKb * 1024;
+  if (latest) {
+    try {
+      if (fs.statSync(latest).size < maxBytes) return latest;
+    } catch {
+      // Create a new chunk below.
+    }
+  }
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  return path.join(logDir(), `${logChunkPrefix()}${stamp}.jsonl`);
+}
+
+function writeLogEntry(log) {
+  try {
+    fs.appendFileSync(activeLogChunkPath(), `${JSON.stringify(log)}\n`, "utf8");
+    pruneLogChunks();
+  } catch (error) {
+    console.error("Failed to write connector log", error);
+  }
+}
+
+function pruneLogChunks() {
+  const files = logChunkFiles();
+  const now = Date.now();
+  const maxAgeMs = state.logRetentionDays * 24 * 60 * 60 * 1000;
+  const removable = new Set();
+  files.forEach((file) => {
+    try {
+      const stat = fs.statSync(file);
+      if (now - stat.mtimeMs > maxAgeMs) removable.add(file);
+    } catch {
+      removable.add(file);
+    }
+  });
+  files.slice(0, Math.max(0, files.length - state.logRetainChunks)).forEach((file) => removable.add(file));
+  removable.forEach((file) => {
+    try {
+      fs.unlinkSync(file);
+    } catch {
+      // Ignore cleanup failures; logging must not break the connector.
+    }
+  });
+}
+
+function readLogPage(options = {}) {
+  const pageSize = clampNumber(options.pageSize, DEFAULT_LOG_PAGE_SIZE, 20, 500);
+  const newestFirst = options.newestFirst !== false;
+  const cursor = Number.isInteger(options.cursor) ? options.cursor : 0;
+  const files = logChunkFiles();
+  const rows = [];
+  for (const file of files) {
+    try {
+      const text = fs.readFileSync(file, "utf8").trim();
+      if (!text) continue;
+      for (const line of text.split(/\r?\n/)) {
+        try {
+          rows.push(JSON.parse(line));
+        } catch {
+          rows.push({ level: "WARNING", message: line, time: new Date(fs.statSync(file).mtimeMs).toISOString() });
+        }
+      }
+    } catch {
+      // Skip unreadable chunks.
+    }
+  }
+  if (newestFirst) rows.reverse();
+  const start = Math.max(0, cursor);
+  const items = rows.slice(start, start + pageSize);
+  const nextCursor = start + items.length < rows.length ? start + items.length : null;
+  return { items, nextCursor, total: rows.length };
+}
+
+function clearLogFiles() {
+  for (const file of logChunkFiles()) {
+    try {
+      fs.unlinkSync(file);
+    } catch {
+      // Ignore per-file cleanup failures.
+    }
+  }
+  sendToWindow("connector:logsCleared", null);
+  return readLogPage();
 }
 
 function appendStderrLog(chunk) {
@@ -384,18 +515,25 @@ ipcMain.handle("connector:getState", async () => {
   return publicState();
 });
 ipcMain.handle("connector:getConfig", () => rpcRequest("connector.getConfig"));
-ipcMain.handle("connector:saveConfig", (_event, config) => rpcRequest("connector.saveConfig", config));
+ipcMain.handle("connector:saveConfig", async (_event, config) => {
+  const saved = await rpcRequest("connector.saveConfig", config);
+  mergeConnectorState({ hasConfig: true, authFailed: false, usingTemporaryCredential: false });
+  return saved;
+});
 ipcMain.handle("connector:start", async (_event, config) => {
+  state.usingTemporaryCredential = Boolean(config);
   const next = await rpcRequest("connector.start", config);
   mergeConnectorState(next);
   return publicState();
 });
 ipcMain.handle("connector:stop", async () => {
+  state.usingTemporaryCredential = false;
   const next = await rpcRequest("connector.stop");
   mergeConnectorState(next);
   return publicState();
 });
 ipcMain.handle("connector:restart", async () => {
+  state.usingTemporaryCredential = false;
   const next = await rpcRequest("connector.restart");
   mergeConnectorState(next);
   return publicState();
@@ -404,11 +542,14 @@ ipcMain.handle("connector:startPairing", (_event, input) => rpcRequest("connecto
 ipcMain.handle("connector:cancelPairing", () => rpcRequest("connector.cancelPairing"));
 ipcMain.handle("connector:saveSettings", (_event, settings) => saveDesktopSettings(settings));
 ipcMain.handle("connector:openConfigFolder", () => shell.openPath(path.dirname(state.configPath)));
+ipcMain.handle("connector:getLogs", (_event, options) => readLogPage(options));
+ipcMain.handle("connector:clearLogs", () => clearLogFiles());
 
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
   state.configPath = userDataPath("connector.json");
   state.settingsPath = userDataPath("desktop-settings.json");
+  state.logPath = userDataPath("logs");
   state.connectorDir = resolveConnectorDir();
   loadDesktopSettings();
   createTray();
