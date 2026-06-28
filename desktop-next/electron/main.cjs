@@ -381,8 +381,10 @@ function appendStderrLog(chunk) {
 
 function parseStderrLogLine(line) {
   const match = line.match(/\|\s*(TRACE|DEBUG|INFO|SUCCESS|WARNING|ERROR|CRITICAL)\s*\|/);
+  const plain = line.replace(/\u001b\[[0-9;]*m/g, "").trim();
+  const uvInfoPattern = /^(Using CPython|Creating virtual environment|Building |Built |Downloading |Downloaded |Installed |Resolved |Prepared |Audited )/;
   return {
-    level: match ? match[1] : "ERROR",
+    level: match ? match[1] : uvInfoPattern.test(plain) ? "INFO" : "ERROR",
     message: line,
     time: new Date().toISOString(),
   };
