@@ -58,6 +58,7 @@ type SessionEventEnvelope = Partial<SessionStateResponse> & {
 
 const AUTO_SCROLL_BOTTOM_DISTANCE = 180
 const SCROLL_TO_BOTTOM_INTERVAL_MS = 1000
+const SCROLL_TO_BOTTOM_PRUNE_FALLBACK_MS = 900
 const INITIAL_TIMELINE_LIMIT = 100
 const TIMELINE_PAGE_LIMIT = 100
 const LOAD_OLDER_SCROLL_THRESHOLD = 96
@@ -154,6 +155,7 @@ export function SessionDetail({
   const pendingPrependScrollRestoreRef = React.useRef<{ scrollHeight: number; scrollTop: number } | null>(null)
   const lastScrollToBottomAtRef = React.useRef(0)
   const scrollToBottomTimerRef = React.useRef<number | null>(null)
+  const pruneAfterScrollTimerRef = React.useRef<number | null>(null)
 
   const session = state?.session ?? fallbackSession
 
@@ -223,6 +225,9 @@ export function SessionDetail({
     return () => {
       if (scrollToBottomTimerRef.current !== null) {
         window.clearTimeout(scrollToBottomTimerRef.current)
+      }
+      if (pruneAfterScrollTimerRef.current !== null) {
+        window.clearTimeout(pruneAfterScrollTimerRef.current)
       }
     }
   }, [])
@@ -501,16 +506,52 @@ export function SessionDetail({
   }, [scrollToBottomThrottled])
 
   const scrollToBottom = React.useCallback(() => {
-    setState((current) => {
-      if (!current || current.items.length <= INITIAL_TIMELINE_LIMIT) return current
-      return {
-        ...current,
-        items: current.items.slice(-INITIAL_TIMELINE_LIMIT),
+    const viewport = timelineRef.current
+    const shouldPrune = (state?.items.length ?? 0) > INITIAL_TIMELINE_LIMIT
+    if (!viewport) {
+      if (shouldPrune) {
+        setState((current) =>
+          current && current.items.length > INITIAL_TIMELINE_LIMIT
+            ? { ...current, items: current.items.slice(-INITIAL_TIMELINE_LIMIT) }
+            : current,
+        )
       }
-    })
-    forceScrollOnNextUpdateRef.current = true
-    scrollToBottomThrottled()
-  }, [scrollToBottomThrottled])
+      return
+    }
+
+    if (pruneAfterScrollTimerRef.current !== null) {
+      window.clearTimeout(pruneAfterScrollTimerRef.current)
+      pruneAfterScrollTimerRef.current = null
+    }
+
+    let completed = false
+    const finish = () => {
+      if (completed) return
+      completed = true
+      viewport.removeEventListener("scrollend", finish)
+      if (pruneAfterScrollTimerRef.current !== null) {
+        window.clearTimeout(pruneAfterScrollTimerRef.current)
+        pruneAfterScrollTimerRef.current = null
+      }
+      if (shouldPrune && distanceFromBottom() <= AUTO_SCROLL_BOTTOM_DISTANCE) {
+        forceScrollOnNextUpdateRef.current = true
+        setState((current) =>
+          current && current.items.length > INITIAL_TIMELINE_LIMIT
+            ? { ...current, items: current.items.slice(-INITIAL_TIMELINE_LIMIT) }
+            : current,
+        )
+        return
+      }
+      updateScrollBottomState()
+    }
+
+    if (shouldPrune) {
+      viewport.addEventListener("scrollend", finish, { once: true })
+      pruneAfterScrollTimerRef.current = window.setTimeout(finish, SCROLL_TO_BOTTOM_PRUNE_FALLBACK_MS)
+    }
+    viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" })
+    setShowScrollBottom(false)
+  }, [distanceFromBottom, state?.items.length, updateScrollBottomState])
 
   const approvals = state?.approvals ?? []
   const approvalByTarget = React.useMemo(
