@@ -539,8 +539,8 @@ export function DesktopShell() {
   const connectorView = connectorStatusView(state, isRunning, t)
   const credentialView = credentialStatusView(state, config, isRunning, t)
   const isMac = state?.platform === "darwin"
-  const pageTitle = view === "logs" ? t.logs : view === "settings" ? t.settings : t.headerTitle
-  const pageDescription = view === "logs" ? t.logsDescription : view === "settings" ? t.settingsDescription : ""
+  const pageTitle = view === "logs" ? t.logs : view === "settings" ? t.settings : t.navOverview
+  const pageDescription = view === "logs" ? t.logsDescription : view === "settings" ? t.settingsDescription : t.headerSubtitle
 
   return (
     <div className="flex h-screen min-h-0 bg-background text-foreground">
