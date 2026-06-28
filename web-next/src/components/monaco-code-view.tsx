@@ -133,14 +133,12 @@ function isMonacoCanceledError(error: unknown) {
 
 function containMonacoWheel(host: HTMLElement, editor: import("monaco-editor").editor.IStandaloneCodeEditor) {
   const handleWheel = (event: WheelEvent) => {
-    const scrollable = host.querySelector<HTMLElement>(".monaco-scrollable-element")
-    if (!scrollable) return
-
-    const hasVerticalScroll = scrollable.scrollHeight > scrollable.clientHeight + 1
+    const layout = editor.getLayoutInfo()
+    const scrollTop = editor.getScrollTop()
+    const maxScrollTop = Math.max(0, editor.getScrollHeight() - layout.height)
+    const hasVerticalScroll = maxScrollTop > 1
     if (!hasVerticalScroll || event.deltaY === 0) return
 
-    const scrollTop = scrollable.scrollTop
-    const maxScrollTop = scrollable.scrollHeight - scrollable.clientHeight
     const atTop = scrollTop <= 0
     const atBottom = scrollTop >= maxScrollTop - 1
     const scrollingPastTop = event.deltaY < 0 && atTop
@@ -149,7 +147,6 @@ function containMonacoWheel(host: HTMLElement, editor: import("monaco-editor").e
 
     event.preventDefault()
     event.stopPropagation()
-    editor.setScrollTop(scrollingPastTop ? 0 : editor.getScrollHeight())
   }
 
   host.addEventListener("wheel", handleWheel, { capture: true, passive: false })
