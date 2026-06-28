@@ -6,11 +6,9 @@ import {
   ArrowDown,
   ArrowUp,
   Camera,
-  ChevronDown,
   ChevronLeft,
   Pencil,
   Plus,
-  Globe2,
   RotateCw,
   Save,
   Settings,
@@ -19,7 +17,7 @@ import {
   Upload,
   User,
 } from "lucide-react"
-import { useLocale, useTranslations } from "next-intl"
+import { useTranslations } from "next-intl"
 import { useTheme } from "next-themes"
 import { toast } from "sonner"
 
@@ -35,13 +33,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import {
   Field,
   FieldContent,
@@ -59,6 +50,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { MobileSignInPanel } from "@/components/pages/mobile-signin-panel"
 import { useAuth } from "@/components/auth/auth-context"
+import { LocaleSwitcher } from "@/components/locale-switcher"
 import { LoadingState } from "@/components/loading-state"
 import { useWorkspace } from "@/components/workspace-context"
 import { authApi } from "@/features/auth/api"
@@ -70,7 +62,6 @@ import {
 } from "@/features/dashboard/new-session-preferences"
 import { permissionLabelKey } from "@/features/dashboard/runtime-config"
 import type { AgentCatalogEntry, RuntimeConfigOption } from "@/features/dashboard/types"
-import { isAppLocale, writeStoredLocale, type AppLocale } from "@/i18n/client-locale"
 import { cn } from "@/lib/utils"
 
 type SettingsTab = "account" | "agent" | "appearance"
@@ -1034,35 +1025,14 @@ const themes: { id: AppearanceMode; labelKey: string; descKey: string }[] = [
   { id: "auto", labelKey: "auto", descKey: "autoDescription" },
 ]
 
-const languages: { id: AppLocale; labelKey: "english" | "simplifiedChinese" }[] = [
-  { id: "en", labelKey: "english" },
-  { id: "zh-CN", labelKey: "simplifiedChinese" },
-]
-
 function AppearanceTab() {
   const t = useTranslations("pages.settings")
-  const locale = useLocale() as AppLocale
   const { theme, setTheme } = useTheme()
   const selected: AppearanceMode = theme === "light" || theme === "dark" ? theme : "auto"
 
   const handleThemeChange = (value: string) => {
     const nextTheme = value as AppearanceMode
     setTheme(nextTheme === "auto" ? "system" : nextTheme)
-  }
-
-  const handleLocaleChange = (value: string) => {
-    if (!isAppLocale(value) || value === locale) return
-    writeStoredLocale(value)
-
-    const url = new URL(window.location.href)
-    const segments = url.pathname.split("/")
-    if (isAppLocale(segments[1])) {
-      segments[1] = value
-    } else {
-      segments.splice(1, 0, value)
-    }
-    url.pathname = segments.join("/") || "/"
-    window.location.assign(`${url.pathname}${url.search}${url.hash}`)
   }
 
   return (
@@ -1098,24 +1068,7 @@ function AppearanceTab() {
             <h2 className="text-base font-semibold">{t("language")}</h2>
             <p className="mt-0.5 text-sm text-muted-foreground">{t("languageDescription")}</p>
           </div>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" className="min-w-40 justify-between">
-                <Globe2 data-icon="inline-start" />
-                {t(languages.find((language) => language.id === locale)?.labelKey ?? "english")}
-                <ChevronDown data-icon="inline-end" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-48">
-              <DropdownMenuRadioGroup value={locale} onValueChange={handleLocaleChange}>
-                {languages.map((language) => (
-                  <DropdownMenuRadioItem key={language.id} value={language.id}>
-                    {t(language.labelKey)}
-                  </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <LocaleSwitcher />
         </div>
       </section>
     </div>

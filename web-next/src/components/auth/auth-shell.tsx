@@ -1,5 +1,7 @@
 "use client"
 
+import { LocaleSwitcher } from "@/components/locale-switcher"
+
 export function AuthShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col bg-background">
@@ -9,6 +11,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
         <nav className="flex items-center gap-4 text-sm text-muted-foreground">
           <a href="#" className="transition-colors hover:text-foreground">GitHub</a>
           <a href="#" className="transition-colors hover:text-foreground">Docs</a>
+          <LocaleSwitcher size="sm" variant="ghost" className="text-foreground" />
         </nav>
       </header>
 
