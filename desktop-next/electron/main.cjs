@@ -60,6 +60,7 @@ const state = {
   settingsPath: "",
   connectorDir: "",
   uvPath: "",
+  resolvedUvPath: "",
   uvMissing: false,
   uvPypiIndexUrl: "",
   locale: "system",
@@ -181,7 +182,13 @@ function defaultPathEntries() {
 function resolveExecutablePath(command) {
   const trimmed = typeof command === "string" ? command.trim() : "";
   if (!trimmed) return "";
-  if (path.isAbsolute(trimmed)) return trimmed;
+  if (path.isAbsolute(trimmed)) {
+    if (fs.existsSync(trimmed)) return trimmed;
+    if (process.platform === "win32" && !trimmed.toLowerCase().endsWith(".exe") && fs.existsSync(`${trimmed}.exe`)) {
+      return `${trimmed}.exe`;
+    }
+    return "";
+  }
   for (const entry of defaultPathEntries()) {
     const candidate = path.join(entry, trimmed);
     if (fs.existsSync(candidate)) return candidate;
@@ -197,9 +204,9 @@ function defaultUvPath() {
 }
 
 function refreshUvState() {
-  const uvPath = resolveExecutablePath(state.uvPath) || defaultUvPath();
+  const uvPath = state.uvPath.trim() ? resolveExecutablePath(state.uvPath) : defaultUvPath();
+  state.resolvedUvPath = uvPath;
   state.uvMissing = !uvPath;
-  if (uvPath) state.uvPath = uvPath;
   return uvPath;
 }
 
@@ -386,8 +393,8 @@ function trayIcon() {
 
 function loadDesktopSettings() {
   const settings = readJson(state.settingsPath, {});
-  state.uvPath = resolveExecutablePath(settings.uvPath) || resolveExecutablePath(settings.uvCommand) || defaultUvPath();
-  state.uvMissing = !state.uvPath;
+  state.uvPath = typeof settings.uvPath === "string" ? settings.uvPath.trim() : typeof settings.uvCommand === "string" ? settings.uvCommand.trim() : "";
+  refreshUvState();
   state.uvPypiIndexUrl = typeof settings.uvPypiIndexUrl === "string" ? settings.uvPypiIndexUrl.trim() : "";
   if (typeof settings.locale === "string" && ["system", "en", "zh"].includes(settings.locale)) state.locale = settings.locale;
   if (typeof settings.appearance === "string" && ["system", "light", "dark"].includes(settings.appearance)) state.appearance = settings.appearance;
@@ -400,9 +407,9 @@ function loadDesktopSettings() {
 }
 
 function saveDesktopSettings(next = {}) {
-  if (typeof next.uvPath === "string") state.uvPath = resolveExecutablePath(next.uvPath) || next.uvPath.trim();
+  if (typeof next.uvPath === "string") state.uvPath = next.uvPath.trim();
   if (typeof next.uvPypiIndexUrl === "string") state.uvPypiIndexUrl = next.uvPypiIndexUrl.trim();
-  refreshUvState();
+  refreshLocalSetupState();
   if (typeof next.locale === "string" && ["system", "en", "zh"].includes(next.locale)) state.locale = next.locale;
   if (typeof next.appearance === "string" && ["system", "light", "dark"].includes(next.appearance)) state.appearance = next.appearance;
   if (next.logChunkSizeKb != null) state.logChunkSizeKb = clampNumber(next.logChunkSizeKb, state.logChunkSizeKb, 64, 10240);
@@ -735,7 +742,6 @@ function startRpcProcess(options = {}) {
     appendLog({ level: "ERROR", message: "uv executable is not installed or could not be found.", time: new Date().toISOString() });
     return;
   }
-  state.uvPath = uvPath;
   rpcProcess = spawn(uvPath, args, {
     cwd: state.connectorDir,
     env: connectorEnv(),

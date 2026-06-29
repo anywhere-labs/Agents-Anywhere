@@ -18,6 +18,7 @@ export type ConnectorState = {
   openAtLogin?: boolean
   startConnectorOnLaunch?: boolean
   uvPath?: string
+  resolvedUvPath?: string
   uvMissing?: boolean
   uvPypiIndexUrl?: string
   locale?: "system" | "en" | "zh" | string

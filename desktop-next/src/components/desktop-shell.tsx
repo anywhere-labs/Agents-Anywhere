@@ -172,6 +172,8 @@ const desktopMessages = {
     english: "English",
     simplifiedChinese: "Simplified Chinese",
     uvPath: "uv path",
+    uvResolvedPath: "Resolved uv",
+    uvResolvedMissing: "Not found",
     uvMissingTitle: "uv is required",
     uvMissingDescription: "The desktop connector needs uv to run the local Python connector. Install uv, then restart the desktop app or set the uv path in Settings.",
     installUv: "Install uv",
@@ -300,6 +302,8 @@ const desktopMessages = {
     english: "English",
     simplifiedChinese: "简体中文",
     uvPath: "uv 路径",
+    uvResolvedPath: "实际 uv",
+    uvResolvedMissing: "未找到",
     uvMissingTitle: "需要安装 uv",
     uvMissingDescription: "桌面连接器需要 uv 来运行本机 Python 连接器。请安装 uv，然后重启桌面应用，或在设置里指定 uv 路径。",
     installUv: "安装 uv",
@@ -1185,6 +1189,7 @@ function SettingsView({
               onChange={setUvPath}
               onBlur={(value) => saveSettings({ uvPath: value })}
             />
+            <InfoRow label={t.uvResolvedPath} value={<ScrollableCode value={state?.resolvedUvPath || t.uvResolvedMissing} />} />
             <PypiMirrorField
               t={t}
               value={state?.uvPypiIndexUrl || ""}
