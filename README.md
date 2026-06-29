@@ -197,29 +197,56 @@ For custom ports, production secrets, SQLite/manual Docker runs, mirrors, connec
 
 ## Onboarding
 
-After the Docker stack or server is running, follow these steps.
+After the Docker stack or server is running, follow the four steps below.
+
+### Step 0: Understand The Three Parts
+
+Agents Anywhere has three main parts:
+
+- **Client**: The entry point you use directly, including the Web console, iOS app, and Android app.
+- **Server**: The middle service that handles accounts, devices, session state, and command routing.
+- **Connector App**: The local app running on the controlled device, such as your Mac, Windows PC, Linux server, or devbox.
+
+In short: you send a command from a Client, the command goes to the Server first, and then the Server forwards it to the Connector App on the controlled device. The Connector App operates the local Codex / Claude Code runtime on that device to complete the task. Your code, terminal, and agent runtime all stay on the controlled device.
 
 ### Step 1: Create The Admin Account
 
 Open the Web console, paste the setup token from the server logs, and create the first account. This account becomes the default administrator.
 
+> [!TIP]
+> What is a setup token?
+>
+> On a new deployment, there are no users yet, and the first successful registration becomes the administrator. To prevent someone else from claiming a public instance before you do, Agents Anywhere requires the first registration to include the setup token printed by the backend.
+>
+> Look for a log block like this in the backend service startup logs:
+>
+> ```text
+> AGENT SERVER  ·  first-run setup required
+> Paste this token into the setup page to create the admin:
+>
+>   setup-token: xxxxxxxxxxxxxxxxxxxxxxxx
+> ```
+>
+> Copy the value after `setup-token:` and paste it into the Web registration page.
+
 ### Step 2: Prepare The Connector
 
-Prepare the device that will run Codex / Claude Code.
+Prepare the Connector on the device that runs Codex / Claude Code.
 
 | OS | Version | Action |
 | --- | --- | --- |
-| Windows | Latest | Download the Connector App from [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases) |
-| macOS | Latest | Download the Connector App from [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases) |
+| Windows | 0.1.6 | Download the Connector App from [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases) |
+| macOS | 0.1.6 | Download the Connector App from [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases) |
 | Linux | 0.1.6 | Copy the command shown in the pairing UI |
 
 ### Step 3: Pair The Device
 
-Follow the Web UI to add and pair the device. You can also complete pairing from the mobile app.
+Follow the Web UI to start pairing the device. You can also start pairing from the mobile app.
 
 ### Step 4: Start Chatting
 
-Once the device is online, start chatting with your agent from the mobile app or the Web console.
+Once the Device is online, you can start chatting with the Agent from the mobile app or the Web console.
+
 
 ## Beta Access And Contact
 
