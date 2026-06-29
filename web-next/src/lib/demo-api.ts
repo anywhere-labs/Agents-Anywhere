@@ -314,7 +314,7 @@ let mockInstanceSettings: InstanceSettings = {
 
 const mockServiceInfo: ServiceInfo = {
   endpoint: "https://anywhere.t4wefan.pub",
-  version: "0.1.0",
+  version: "0.1.6",
   database: "PostgreSQL",
   databasePath: "postgres:5432/agents_anywhere",
   startedAt: new Date(Date.now() - 86400000 * 7).toISOString(),

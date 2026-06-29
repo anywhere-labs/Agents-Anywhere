@@ -1063,5 +1063,5 @@ private suspend fun Context.avatarDataUrl(uri: Uri): String? = withContext(Dispa
 private fun Context.appVersionName(): String {
     return runCatching {
         packageManager.getPackageInfo(packageName, 0).versionName.orEmpty()
-    }.getOrDefault("0.1.0")
+    }.getOrDefault("0.1.6")
 }

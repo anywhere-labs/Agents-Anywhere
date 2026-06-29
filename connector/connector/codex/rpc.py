@@ -57,7 +57,7 @@ class JsonRpcStdioClient:
                     "clientInfo": {
                         "name": "agent-server-connector",
                         "title": "Agent Server Connector",
-                        "version": "0.1.0",
+                        "version": "0.1.6",
                     },
                     "capabilities": {
                         "experimentalApi": True,
