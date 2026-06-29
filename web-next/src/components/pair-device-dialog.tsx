@@ -33,8 +33,26 @@ import type { ConnectorCreateResponse, ConnectorRevokeResponse } from "@/feature
 import { useTranslations } from "next-intl"
 
 // ── Readable name generator ────────────────────────────────
-const ADJECTIVES = ["amber", "brisk", "calm", "deft", "eager", "fair", "gilt", "hale", "jade", "keen", "lush", "mild", "neat", "opal", "pine", "rose", "sage", "teal", "umber", "vivid"]
-const NOUNS = ["badger", "birch", "brook", "canopy", "cedar", "clover", "cobalt", "condor", "creek", "daisy", "falcon", "fern", "finch", "glade", "harbor", "heron", "linden", "magpie", "maple", "marsh"]
+const ADJECTIVES = [
+  "amber", "azure", "brisk", "calm", "clear", "clever", "copper", "crisp", "deft", "eager",
+  "fair", "fleet", "fresh", "gentle", "gilt", "golden", "hale", "happy", "honest", "jade",
+  "keen", "light", "lively", "lucky", "lunar", "lush", "mellow", "mild", "nimble", "neat",
+  "noble", "opal", "pearl", "pine", "plucky", "quiet", "rapid", "ready", "rose", "ruby",
+  "sage", "silver", "smart", "solar", "spry", "steady", "swift", "teal", "tidy", "umber",
+  "vivid", "warm", "witty", "zesty", "bright", "cosmic", "dapper", "ember", "frosty", "glossy",
+  "hearty", "ivory", "jolly", "lucid", "misty", "modern", "plush", "polite", "proud", "quick",
+  "rustic", "sunny", "tidal", "velvet", "verdant", "violet", "wavy", "wise", "young", "zen",
+]
+const NOUNS = [
+  "acorn", "anchor", "ash", "badger", "bamboo", "beacon", "birch", "brook", "canopy", "cedar",
+  "cliff", "clover", "cobalt", "comet", "condor", "cove", "creek", "daisy", "delta", "falcon",
+  "fern", "finch", "fjord", "forest", "garden", "glade", "grove", "harbor", "heron", "hill",
+  "island", "juniper", "lagoon", "lantern", "laurel", "linden", "lotus", "magpie", "maple", "marble",
+  "marsh", "meadow", "meteor", "mesa", "moss", "nebula", "orchid", "otter", "pebble", "phoenix",
+  "prairie", "quartz", "raven", "reef", "ridge", "river", "rocket", "sequoia", "shore", "sparrow",
+  "spruce", "summit", "thistle", "tulip", "valley", "violet", "willow", "zephyr", "aurora", "breeze",
+  "canyon", "drift", "ember", "granite", "hazel", "iris", "kernel", "oasis", "orbit", "ripple",
+]
 const GITHUB_RELEASES_URL = "https://github.com/anywhere-labs/Agents-Anywhere/releases"
 
 function randomName(): string {
