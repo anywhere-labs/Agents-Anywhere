@@ -79,6 +79,11 @@ function sharedConnectorConfigPath() {
   return path.join(app.getPath("home"), ".agent-server", "connector.json");
 }
 
+function sharedConnectorRuntimePath() {
+  const configPath = state.configPath || sharedConnectorConfigPath();
+  return path.join(path.dirname(configPath), "connector-runtime.json");
+}
+
 function readJson(filePath, fallback) {
   try {
     return JSON.parse(fs.readFileSync(filePath, "utf8"));
@@ -506,6 +511,42 @@ function clearLogFiles() {
   return readLogPage();
 }
 
+async function clearConnectorCredentials() {
+  try {
+    await rpcRequest("connector.stop");
+  } catch (error) {
+    appendLog({
+      level: "WARNING",
+      message: `Failed to stop connector before clearing credentials: ${error instanceof Error ? error.message : String(error)}`,
+      time: new Date().toISOString(),
+    });
+  }
+  for (const file of [state.configPath, state.runtimePath || sharedConnectorRuntimePath()]) {
+    if (!file) continue;
+    try {
+      fs.rmSync(file, { force: true });
+    } catch (error) {
+      appendLog({
+        level: "WARNING",
+        message: `Failed to remove ${file}: ${error instanceof Error ? error.message : String(error)}`,
+        time: new Date().toISOString(),
+      });
+    }
+  }
+  mergeConnectorState({
+    status: "stopped",
+    running: false,
+    pairing: false,
+    authFailed: false,
+    lastError: null,
+    hasConfig: false,
+    serverUrl: "",
+    usingTemporaryCredential: false,
+  });
+  appendLog("Cleared local connector credentials.");
+  return publicState();
+}
+
 function appendStderrLog(chunk) {
   const text = chunk.toString().trimEnd();
   if (!text) return;
@@ -849,6 +890,7 @@ ipcMain.handle("connector:restart", async () => {
 ipcMain.handle("connector:startPairing", (_event, input) => rpcRequest("connector.startPairing", input));
 ipcMain.handle("connector:cancelPairing", () => rpcRequest("connector.cancelPairing"));
 ipcMain.handle("connector:saveSettings", (_event, settings) => saveDesktopSettings(settings));
+ipcMain.handle("connector:clearCredentials", () => clearConnectorCredentials());
 ipcMain.handle("connector:openConfigFolder", () => shell.openPath(path.dirname(state.configPath)));
 ipcMain.handle("connector:openServer", async (_event, serverUrl) => {
   const url = String(serverUrl || "").trim();

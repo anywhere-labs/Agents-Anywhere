@@ -85,6 +85,7 @@ export type ConnectorDesktopApi = {
   startPairing: (input: { server: string; timeout?: number; pollInterval?: number }) => Promise<PairingState>
   cancelPairing: () => Promise<PairingState>
   saveSettings: (settings: DesktopSettings) => Promise<ConnectorState>
+  clearCredentials: () => Promise<ConnectorState>
   openConfigFolder: () => Promise<string>
   openServer: (serverUrl: string) => Promise<void>
   getLogs: (options?: { beforeSeq?: number | null; afterSeq?: number | null; pageSize?: number }) => Promise<LogPage>

@@ -34,6 +34,17 @@ import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -187,6 +198,10 @@ const desktopMessages = {
     commandActionDescription: "Use the start command generated in the web console.",
     credentialsTitle: "Connector credentials",
     credentialsDescription: "Saved by pairing or command setup.",
+    clearCredentials: "Clear local credentials",
+    clearCredentialsConfirmTitle: "Clear local credentials?",
+    clearCredentialsConfirmDescription: "This stops the connector and removes the saved connector config from this computer. It does not delete the connector in Agents Anywhere.",
+    clearCredentialsDone: "Local connector credentials cleared",
     serverUrl: "Server URL",
     connectorId: "Connector ID",
     connectorToken: "Connector token",
@@ -292,6 +307,10 @@ const desktopMessages = {
     commandActionDescription: "使用 Web 控制台生成的启动命令。",
     credentialsTitle: "连接器凭据",
     credentialsDescription: "通常由配对或启动命令保存。",
+    clearCredentials: "清除本地凭据",
+    clearCredentialsConfirmTitle: "清除本地凭据？",
+    clearCredentialsConfirmDescription: "这会停止连接器，并删除这台电脑上保存的连接器配置。不会删除 Agents Anywhere 中的连接器。",
+    clearCredentialsDone: "已清除本地连接器凭据",
     serverUrl: "服务器 URL",
     connectorId: "连接器 ID",
     connectorToken: "连接器 token",
@@ -490,6 +509,13 @@ export function DesktopShell() {
     const saved = await run("save", () => connectorDesktop().saveConfig(nextConfig), t.configSaved)
     if (saved) setConfig({ ...defaultConfig, ...saved })
     return saved
+  }
+
+  async function clearCredentials() {
+    const next = await run("clearCredentials", () => connectorDesktop().clearCredentials(), t.clearCredentialsDone)
+    if (!next) return
+    setState(next)
+    setConfig(defaultConfig)
   }
 
   async function loadLogs(options: { reset?: boolean; pageSize?: number } = {}) {
@@ -807,6 +833,8 @@ export function DesktopShell() {
                 saveConfig={saveConfig}
                 restartConnector={restartConnector}
                 isRunning={isRunning}
+                busy={busy}
+                clearCredentials={clearCredentials}
                 saveSettings={saveSettings}
                 saveLocale={saveLocale}
                 saveAppearance={saveAppearance}
@@ -898,6 +926,8 @@ function SettingsView({
   saveConfig,
   restartConnector,
   isRunning,
+  busy,
+  clearCredentials,
   saveSettings,
   saveLocale,
   saveAppearance,
@@ -910,11 +940,14 @@ function SettingsView({
   saveConfig: (config: ConnectorConfig) => Promise<ConnectorConfig | null>
   restartConnector: () => Promise<void>
   isRunning: boolean
+  busy: string | null
+  clearCredentials: () => Promise<void>
   saveSettings: (settings: DesktopSettings) => Promise<void>
   saveLocale: (locale: "system" | "en" | "zh") => void
   saveAppearance: (appearance: AppearanceMode) => void
 }) {
   const [uvPath, setUvPath] = React.useState(state?.uvPath || "")
+  const hasCredential = Boolean(state?.hasConfig || config.connectorId || config.connectorToken || config.serverUrl)
 
   React.useEffect(() => {
     setUvPath(state?.uvPath || "")
@@ -1088,7 +1121,27 @@ function SettingsView({
               onChange={(value) => setConfig((current) => ({ ...current, connectorToken: value }))}
               maskWhenBlurred
             />
-            <div className="flex justify-end">
+            <div className="flex justify-end gap-2">
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="destructive" disabled={Boolean(busy) || !hasCredential}>
+                    <Trash2 className="size-4" />
+                    {t.clearCredentials}
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>{t.clearCredentialsConfirmTitle}</AlertDialogTitle>
+                    <AlertDialogDescription>{t.clearCredentialsConfirmDescription}</AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>{t.cancel}</AlertDialogCancel>
+                    <AlertDialogAction variant="destructive" onClick={() => void clearCredentials()}>
+                      {t.clearCredentials}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
               <Button onClick={() => void saveConfig(config)}>
                 <CheckCircle2 className="size-4" />
                 {t.saveConfig}
