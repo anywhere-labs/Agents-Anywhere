@@ -13,6 +13,7 @@ const DEFAULT_LOG_PAGE_SIZE = 100;
 const isDev = Boolean(process.env.NEXT_DEV_SERVER_URL);
 const APP_PROTOCOL = "app";
 const APP_HOST = "desktop";
+const DEEP_LINK_PROTOCOL = "agents-anywhere";
 const ENV_SNAPSHOT_TIMEOUT_MS = 3500;
 
 app.setName(APP_NAME);
@@ -36,6 +37,14 @@ let nextRequestId = 1;
 let nextLogSeq = 1;
 let pending = new Map();
 let shellEnvironment = {};
+let pendingDeepLinks = [];
+
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  queueDeepLink(extractDeepLinkFromArgv(process.argv));
+}
 
 const state = {
   platform: process.platform,
@@ -63,6 +72,11 @@ const state = {
 
 function userDataPath(name) {
   return path.join(app.getPath("userData"), name);
+}
+
+function sharedConnectorConfigPath() {
+  if (process.env.AGENT_CONNECTOR_CONFIG) return process.env.AGENT_CONNECTOR_CONFIG;
+  return path.join(app.getPath("home"), ".agent-server", "connector.json");
 }
 
 function readJson(filePath, fallback) {
@@ -103,6 +117,14 @@ function registerExportedAppProtocol() {
 
     return net.fetch(pathToFileURL(filePath).toString());
   });
+}
+
+function registerDeepLinkProtocol() {
+  if (isDev) {
+    app.setAsDefaultProtocolClient(DEEP_LINK_PROTOCOL, process.execPath, [process.argv[1]]);
+    return;
+  }
+  app.setAsDefaultProtocolClient(DEEP_LINK_PROTOCOL);
 }
 
 function clampNumber(value, fallback, min, max) {
@@ -509,6 +531,69 @@ function mergeConnectorState(next) {
   sendToWindow("connector:state", publicState());
 }
 
+function queueDeepLink(rawUrl) {
+  if (typeof rawUrl !== "string" || !rawUrl.startsWith(`${DEEP_LINK_PROTOCOL}:`)) return;
+  pendingDeepLinks.push(rawUrl);
+  if (app.isReady()) void drainDeepLinks();
+}
+
+async function drainDeepLinks() {
+  const links = pendingDeepLinks.splice(0);
+  for (const rawUrl of links) {
+    await handleDeepLink(rawUrl);
+  }
+}
+
+function extractDeepLinkFromArgv(argv) {
+  return argv.find((arg) => typeof arg === "string" && arg.startsWith(`${DEEP_LINK_PROTOCOL}:`));
+}
+
+async function handleDeepLink(rawUrl) {
+  let url;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    appendLog({ level: "ERROR", message: `Invalid desktop launch URL: ${rawUrl}`, time: new Date().toISOString() });
+    return;
+  }
+  const action = url.hostname || url.pathname.replace(/^\/+/, "");
+  if (action !== "start") {
+    appendLog({ level: "WARNING", message: `Unsupported desktop launch action: ${action || "(none)"}`, time: new Date().toISOString() });
+    return;
+  }
+  const config = configFromDeepLink(url);
+  if (!config) {
+    appendLog({ level: "ERROR", message: "Desktop launch URL is missing connector credentials.", time: new Date().toISOString() });
+    return;
+  }
+  try {
+    await rpcRequest("connector.saveConfig", config);
+    const next = await rpcRequest("connector.start");
+    mergeConnectorState({
+      ...next,
+      hasConfig: true,
+      authFailed: false,
+      usingTemporaryCredential: false,
+      serverUrl: config.serverUrl,
+    });
+    appendLog(`Started connector from ${DEEP_LINK_PROTOCOL}://start`);
+  } catch (error) {
+    appendLog({ level: "ERROR", message: error instanceof Error ? error.message : String(error), time: new Date().toISOString() });
+  }
+}
+
+function configFromDeepLink(url) {
+  const serverUrl = (url.searchParams.get("serverUrl") || url.searchParams.get("server") || "").trim().replace(/\/+$/, "");
+  const connectorId = (url.searchParams.get("connectorId") || url.searchParams.get("id") || "").trim();
+  const connectorToken = (url.searchParams.get("connectorToken") || url.searchParams.get("token") || "").trim();
+  if (!/^https?:\/\//i.test(serverUrl) || !connectorId || !connectorToken) return null;
+  return {
+    serverUrl,
+    connectorId,
+    connectorToken,
+  };
+}
+
 function sendToWindow(channel, payload) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(channel, payload);
@@ -777,7 +862,8 @@ app.whenReady().then(async () => {
   Menu.setApplicationMenu(null);
   if (!isDev && process.platform === "darwin") app.setActivationPolicy("accessory");
   registerExportedAppProtocol();
-  state.configPath = userDataPath("connector.json");
+  registerDeepLinkProtocol();
+  state.configPath = sharedConnectorConfigPath();
   state.settingsPath = userDataPath("desktop-settings.json");
   state.logPath = userDataPath("logs");
   state.connectorDir = resolveConnectorDir();
@@ -797,11 +883,20 @@ app.whenReady().then(async () => {
       return null;
     })
     .catch((error) => appendLog({ level: "ERROR", message: error.message, time: new Date().toISOString() }));
+  await drainDeepLinks();
   nativeTheme.on("updated", updateNativeIcons);
 });
 
 app.on("activate", () => {
   void showWindow();
+});
+app.on("open-url", (event, rawUrl) => {
+  event.preventDefault();
+  queueDeepLink(rawUrl);
+});
+app.on("second-instance", (_event, argv) => {
+  const rawUrl = extractDeepLinkFromArgv(argv);
+  if (rawUrl) queueDeepLink(rawUrl);
 });
 app.on("window-all-closed", (event) => event.preventDefault());
 app.on("before-quit", () => {

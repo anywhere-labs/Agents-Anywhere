@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Copy, Check, Loader2, CheckCircle2, ArrowLeft } from "lucide-react"
+import { Copy, Check, Loader2, CheckCircle2, ArrowLeft, MonitorUp } from "lucide-react"
 import { toast } from "sonner"
 import {
   Dialog,
@@ -66,6 +66,15 @@ function pairServerAddress(serverUrl: string): string {
 function shellQuote(value: string): string {
   if (/^[A-Za-z0-9_./:=@%+-]+$/.test(value)) return value
   return `'${value.replace(/'/g, "'\\''")}'`
+}
+
+function desktopConnectorUrl(serverUrl: string, connectorId: string, connectorToken: string): string {
+  const params = new URLSearchParams({
+    serverUrl,
+    connectorId,
+    connectorToken,
+  })
+  return `agents-anywhere://start?${params.toString()}`
 }
 
 // ── Types ──────────────────────────────────────────────────
@@ -283,6 +292,12 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
     : ""
 
   const pairCodeCommand = `uvx anywhere-cli pair ${shellQuote(pairServerAddress(serverUrl))}`
+  const desktopLaunchUrl = connectorId && token ? desktopConnectorUrl(serverUrl, connectorId, token) : ""
+
+  const openDesktopConnector = () => {
+    if (!desktopLaunchUrl) return
+    window.location.href = desktopLaunchUrl
+  }
 
   return (
     <>
@@ -361,6 +376,15 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
                 </DialogDescription>
               </DialogHeader>
               <div className="flex flex-col gap-3 py-2">
+                <Button
+                  type="button"
+                  onClick={openDesktopConnector}
+                  disabled={!desktopLaunchUrl}
+                  className="w-full justify-start"
+                >
+                  <MonitorUp className="size-4" />
+                  {t("openDesktopConnector")}
+                </Button>
                 <CodeBlock code={tokenCommand} />
                 <PollingIndicator label={t("waitingOnline")} />
               </div>

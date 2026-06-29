@@ -13,6 +13,10 @@ class ConnectorOfflineError(RuntimeError):
     pass
 
 
+class DuplicateConnectorConnectionError(RuntimeError):
+    pass
+
+
 class ConnectorRpcError(RuntimeError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
@@ -49,15 +53,17 @@ class ConnectorRpcManager:
 
     def register(self, connector_id: str, websocket: WebSocket) -> ConnectorConnection:
         now = self._clock()
+        old = self._connections.get(connector_id)
+        if old is not None:
+            if now - old.last_seen_monotonic <= self._heartbeat_timeout_seconds:
+                raise DuplicateConnectorConnectionError("connector is already connected")
+            self._fail_pending(old, "connector heartbeat timed out")
         connection = ConnectorConnection(
             connector_id=connector_id,
             websocket=websocket,
             connected_at_monotonic=now,
             last_seen_monotonic=now,
         )
-        old = self._connections.get(connector_id)
-        if old is not None:
-            self._fail_pending(old, "connector connection replaced")
         self._connections[connector_id] = connection
         return connection
 

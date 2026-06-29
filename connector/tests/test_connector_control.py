@@ -70,6 +70,7 @@ def test_connector_controller_saves_config_and_starts_runtime(tmp_path) -> None:
 
     assert saved["serverUrl"] == "http://127.0.0.1:8000"
     assert [method for method, _params in events].count("connector/state") >= 2
+    assert not (tmp_path / "connector-runtime.json").exists()
 
 
 def test_connector_controller_returns_default_config_when_missing(tmp_path) -> None:
@@ -149,3 +150,30 @@ def test_config_to_payload_keeps_optional_state_db_path() -> None:
     )
 
     assert payload["stateDbPath"] == "/tmp/state.db"
+
+
+def test_connector_controller_rejects_existing_runtime_owner(tmp_path) -> None:
+    from connector.local_runtime import write_runtime
+
+    async def exercise() -> dict[str, Any]:
+        controller = ConnectorController(
+            config_path=tmp_path / "connector.json",
+            client_factory=FakeBackendRpcClient,  # type: ignore[arg-type]
+        )
+        config = ConnectorConfig(
+            server_url="http://127.0.0.1:8000",
+            connector_id="conn_1",
+            connector_token="cxt_secret",
+        )
+        config.save(tmp_path / "connector.json")
+        write_runtime(tmp_path / "connector-runtime.json", config, kind="cli")
+        try:
+            await controller.start()
+        except RuntimeError:
+            return controller.get_state()
+        raise AssertionError("expected runtime owner rejection")
+
+    state = asyncio.run(exercise())
+
+    assert state["status"] == "error"
+    assert "already running" in state["lastError"]

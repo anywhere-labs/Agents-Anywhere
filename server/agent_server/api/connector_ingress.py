@@ -22,7 +22,7 @@ from agent_server.core.auth import (
     create_connector_access_token,
     verify_connector_access_token,
 )
-from agent_server.infra.connector_rpc import ConnectorRpcManager
+from agent_server.infra.connector_rpc import DuplicateConnectorConnectionError, ConnectorRpcManager
 from agent_server.deps import (
     get_attachment_service,
     get_connector_ingest_service,
@@ -245,7 +245,12 @@ async def connector_ws(
         return
 
     await websocket.accept()
-    connection = manager.register(connector_id, websocket)
+    try:
+        connection = manager.register(connector_id, websocket)
+    except DuplicateConnectorConnectionError:
+        await websocket.close(code=4409, reason="connector id already connected")
+        logger.warning("rejected duplicate connector websocket: {}", connector_id)
+        return
     await db.set_connector_status(
         connector_id,
         "online",

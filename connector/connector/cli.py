@@ -12,6 +12,12 @@ import httpx
 
 from connector.control import ConnectorController
 from connector.json_rpc import JsonRpcStdioServer, open_stdio_server
+from connector.local_runtime import (
+    assert_can_start,
+    clear_runtime,
+    runtime_path,
+    write_runtime,
+)
 from connector.logging import install_rpc_log_sink
 from connector.runtime import BackendRpcClient, ConnectorConfig
 
@@ -101,7 +107,7 @@ def _add_pair_args(parser: argparse.ArgumentParser) -> None:
 
 async def _start(args: argparse.Namespace) -> None:
     config = _resolve_config(args)
-    await BackendRpcClient(config).run_forever()
+    await _run_cli_connector(config, config_path=args.config)
 
 
 async def _rpc(args: argparse.Namespace) -> None:
@@ -166,13 +172,23 @@ async def _pair(args: argparse.Namespace) -> None:
                 if args.no_start:
                     return
                 print("Starting connector...")
-                await BackendRpcClient(config).run_forever()
+                await _run_cli_connector(config, config_path=args.config)
                 return
             if payload["status"] in {"expired", "consumed"}:
                 raise RuntimeError(f"pairing ended with status: {payload['status']}")
             await asyncio.sleep(args.poll_interval)
 
     raise TimeoutError("pairing timed out")
+
+
+async def _run_cli_connector(config: ConnectorConfig, *, config_path: str | Path | None) -> None:
+    runtime_file = runtime_path(config_path)
+    assert_can_start(runtime_file, config)
+    write_runtime(runtime_file, config, kind="cli")
+    try:
+        await BackendRpcClient(config).run_forever()
+    finally:
+        clear_runtime(runtime_file)
 
 
 async def _resolve_server_url_for_pair(value: str | None, *, timeout: float = 10) -> str:

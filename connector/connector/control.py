@@ -7,6 +7,13 @@ from typing import Any
 
 import httpx
 
+from connector.local_runtime import (
+    ConnectorAlreadyRunningError,
+    assert_can_start,
+    clear_runtime,
+    runtime_path,
+    write_runtime,
+)
 from connector.logging import logger
 from connector.runtime import BackendRpcClient, ConnectorAuthenticationError, ConnectorConfig
 
@@ -25,6 +32,7 @@ class ConnectorController:
         self.config_path = Path(config_path) if config_path is not None else ConnectorConfig.default_path()
         self.notifier = notifier
         self.client_factory = client_factory
+        self.runtime_path = runtime_path(self.config_path)
         self._runtime_task: asyncio.Task[None] | None = None
         self._pairing_task: asyncio.Task[None] | None = None
         self._last_error: str | None = None
@@ -38,6 +46,7 @@ class ConnectorController:
             "authFailed": self._auth_failed,
             "lastError": self._last_error,
             "configPath": str(self.config_path),
+            "runtimePath": str(self.runtime_path),
             "hasConfig": self.config_path.exists(),
         }
 
@@ -45,6 +54,7 @@ class ConnectorController:
         return {
             "configPath": str(self.config_path),
             "configDir": str(self.config_path.parent),
+            "runtimePath": str(self.runtime_path),
         }
 
     def get_config(self, _params: Any = None) -> dict[str, Any]:
@@ -68,6 +78,13 @@ class ConnectorController:
         config = config_from_params(params) if isinstance(params, dict) and params else ConnectorConfig.load(self.config_path)
         self._last_error = None
         self._auth_failed = False
+        try:
+            assert_can_start(self.runtime_path, config)
+        except ConnectorAlreadyRunningError as exc:
+            self._last_error = str(exc)
+            await self._emit_state()
+            raise
+        write_runtime(self.runtime_path, config, kind="desktop")
         self._runtime_task = asyncio.create_task(self._run_runtime(config))
         logger.info("starting connector runtime")
         await self._emit_state()
@@ -81,6 +98,7 @@ class ConnectorController:
             except asyncio.CancelledError:
                 pass
         self._runtime_task = None
+        clear_runtime(self.runtime_path)
         logger.info("stopped connector runtime")
         await self._emit_state()
         return self.get_state()
@@ -129,6 +147,7 @@ class ConnectorController:
             self._last_error = str(exc) or exc.__class__.__name__
             logger.exception("connector runtime failed")
         finally:
+            clear_runtime(self.runtime_path)
             if self._runtime_task is asyncio.current_task():
                 self._runtime_task = None
             await self._emit_state()

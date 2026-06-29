@@ -631,6 +631,7 @@
       "pairCodeDescription": "在待连接的设备上运行命令或在桌面连接器中启动配对，然后把生成的 6 位配对码输入到这里。",
       "tokenStepTitle": "使用 token 配对",
       "tokenStepDescription": "在 {name} 的终端或者桌面连接器应用中运行这条命令。设备会自动上线。",
+      "openDesktopConnector": "打开桌面连接器",
       "waitingOnline": "等待设备上线...",
       "codeStepTitle": "使用配对码配对",
       "codeStepDescription": "在 {name} 上运行这条命令或在桌面连接器应用中启动配对，然后输入输出的 6 位配对码。",

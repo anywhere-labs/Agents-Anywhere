@@ -112,6 +112,14 @@
       "gatekeeperAssess": false,
       "target": "dmg"
     },
+    "protocols": [
+      {
+        "name": "Agents Anywhere Connector",
+        "schemes": [
+          "agents-anywhere"
+        ]
+      }
+    ],
     "linux": {
       "target": "AppImage"
     }

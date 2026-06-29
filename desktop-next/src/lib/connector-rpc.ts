@@ -11,6 +11,7 @@ export type ConnectorState = {
   lastError: string | null
   serverUrl?: string
   configPath: string
+  runtimePath?: string
   settingsPath?: string
   hasConfig: boolean
   openAtLogin?: boolean
