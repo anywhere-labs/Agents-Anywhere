@@ -408,10 +408,10 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
                 <Button
                   type="button"
                   onClick={openDesktopConnector}
-                  disabled={!desktopLaunchUrl || polling}
+                  disabled={!desktopLaunchUrl}
                   className="w-full justify-start"
                 >
-                  {polling ? <Loader2 className="size-4 animate-spin" /> : <MonitorUp className="size-4" />}
+                  <MonitorUp className="size-4" />
                   {t("desktopStarted")}
                 </Button>
                 {polling ? <PollingIndicator label={t("waitingOnline")} /> : null}
