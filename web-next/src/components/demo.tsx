@@ -2,11 +2,9 @@
 
 import * as React from "react"
 import type { PanelImperativeHandle } from "react-resizable-panels"
-import { PanelLeft } from "lucide-react"
 
 import { SidebarProvider, SidebarInset, useSidebar } from "@/components/ui/sidebar"
 import { AppSidebar } from "@/components/app-sidebar"
-import { Button } from "@/components/ui/button"
 import { TaskComposer } from "@/components/task-composer"
 import { SessionView } from "@/components/session-view"
 import { SettingsPage } from "@/components/pages/settings-page"
@@ -83,7 +81,6 @@ function DashboardShell() {
 
 function DesktopResizableShell() {
   const { open, setOpen } = useSidebar()
-  const tActions = useTranslations("dashboard.actions")
   const sidebarPanelRef = React.useRef<PanelImperativeHandle | null>(null)
   const [defaultLayout] = React.useState(() => {
     if (typeof window === "undefined") return DEFAULT_DESKTOP_LAYOUT
@@ -178,18 +175,6 @@ function DesktopResizableShell() {
         <ResizableHandle className="bg-transparent transition-colors hover:bg-border/40 focus-visible:bg-border/60" />
         <ResizablePanel id="dashboard-main" minSize={0} className="min-w-0">
           <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-none bg-background">
-            {!open ? (
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                type="button"
-                aria-label={tActions("expand")}
-                onClick={toggleSidebar}
-                className="fixed left-2 top-2 z-50 text-muted-foreground hover:text-foreground"
-              >
-                <PanelLeft className="size-4" />
-              </Button>
-            ) : null}
             <WorkspaceMain />
           </SidebarInset>
         </ResizablePanel>
