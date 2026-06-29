@@ -56,18 +56,12 @@ import { useWorkspace } from "@/components/workspace-context"
 import { authApi } from "@/features/auth/api"
 import type { AuthMe } from "@/features/auth/types"
 import { dashboardApi } from "@/features/dashboard/api"
-import {
-  readNewSessionPermissionMode,
-  writeNewSessionPermissionMode,
-} from "@/features/dashboard/new-session-preferences"
-import { permissionLabelKey } from "@/features/dashboard/runtime-config"
-import type { AgentCatalogEntry, RuntimeConfigOption } from "@/features/dashboard/types"
+import type { AgentCatalogEntry } from "@/features/dashboard/types"
 import { cn } from "@/lib/utils"
 
 type SettingsTab = "account" | "agent" | "appearance"
 type AppearanceMode = "light" | "dark" | "auto"
 
-const CODEX_RUNTIME = "codex"
 const AGENT_RUNTIMES = ["codex", "claude"] as const
 const AVATAR_OUTPUT_SIZE = 256
 const AVATAR_MAX_FILE_SIZE = 8 * 1024 * 1024
@@ -453,9 +447,6 @@ function AvatarCropDialog({
 
 function AgentTab({ token }: { token: string }) {
   const t = useTranslations("pages.settings")
-  const [permissionOptions, setPermissionOptions] = React.useState<RuntimeConfigOption[]>([])
-  const [selectedPermissionMode, setSelectedPermissionMode] = React.useState("")
-  const [savedPermissionMode, setSavedPermissionMode] = React.useState("")
   const [selectedRuntime, setSelectedRuntime] = React.useState<(typeof AGENT_RUNTIMES)[number]>("codex")
   const [modelsByRuntime, setModelsByRuntime] = React.useState<Record<string, AgentCatalogEntry[]>>({})
   const [savedModelsByRuntime, setSavedModelsByRuntime] = React.useState<Record<string, AgentCatalogEntry[]>>({})
@@ -466,10 +457,9 @@ function AgentTab({ token }: { token: string }) {
   const [error, setError] = React.useState<string | null>(null)
   const dirty = React.useMemo(
     () =>
-      selectedPermissionMode !== savedPermissionMode ||
       JSON.stringify(toAgentDefaultsPayloadByRuntime(modelsByRuntime)) !==
         JSON.stringify(toAgentDefaultsPayloadByRuntime(savedModelsByRuntime)),
-    [modelsByRuntime, savedModelsByRuntime, savedPermissionMode, selectedPermissionMode],
+    [modelsByRuntime, savedModelsByRuntime],
   )
 
   React.useEffect(() => {
@@ -480,28 +470,12 @@ function AgentTab({ token }: { token: string }) {
     let cancelled = false
     setLoading(true)
     setError(null)
-    Promise.all([
-      dashboardApi.getRuntimeConfigSchema(token, CODEX_RUNTIME),
-      dashboardApi.getAgentDefaults(token),
-    ])
-      .then(([schemaResponse, defaultsResponse]) => {
+    dashboardApi.getAgentDefaults(token)
+      .then((defaultsResponse) => {
         if (cancelled) return
-        const permissionField = schemaResponse.schema.fields.find((field) => field.key === "permissionMode")
-        const nextPermissionOptions = permissionField?.options ?? []
-        const serverPermissionMode = defaultsResponse.runtimes[CODEX_RUNTIME]?.settings.permissionMode
-        const localPermissionMode = readNewSessionPermissionMode()
-        const nextPermissionMode =
-          localPermissionMode && nextPermissionOptions.some((option) => option.value === localPermissionMode)
-            ? localPermissionMode
-            : typeof serverPermissionMode === "string" && nextPermissionOptions.some((option) => option.value === serverPermissionMode)
-              ? serverPermissionMode
-              : String(nextPermissionOptions[0]?.value ?? "")
         const nextModelsByRuntime = Object.fromEntries(
           AGENT_RUNTIMES.map((runtime) => [runtime, defaultsResponse.runtimes[runtime]?.models ?? []]),
         )
-        setPermissionOptions(nextPermissionOptions)
-        setSelectedPermissionMode(nextPermissionMode)
-        setSavedPermissionMode(nextPermissionMode)
         setModelsByRuntime(nextModelsByRuntime)
         setSavedModelsByRuntime(nextModelsByRuntime)
       })
@@ -521,10 +495,6 @@ function AgentTab({ token }: { token: string }) {
     setSaving(true)
     setError(null)
     try {
-      if (selectedPermissionMode) {
-        writeNewSessionPermissionMode(selectedPermissionMode)
-        setSavedPermissionMode(selectedPermissionMode)
-      }
       const response = await dashboardApi.updateAgentDefaults(token, {
         ...Object.fromEntries(
           AGENT_RUNTIMES.map((runtime) => [
@@ -593,49 +563,6 @@ function AgentTab({ token }: { token: string }) {
 
   return (
     <div className="flex flex-col gap-4">
-      <section className="rounded-xl border border-border bg-card">
-        <div className="px-6 py-5">
-          <h2 className="text-base font-semibold">{t("defaultPermission")}</h2>
-          <p className="mt-0.5 text-sm text-muted-foreground">{t("defaultPermissionDescription")}</p>
-        </div>
-        <Separator />
-        {loading ? (
-          <LoadingState className="min-h-48" />
-        ) : error ? (
-          <div className="px-6 py-8 text-sm text-destructive">{error}</div>
-        ) : (
-          <RadioGroup value={selectedPermissionMode} onValueChange={setSelectedPermissionMode} className="p-2">
-            {permissionOptions.map((option) => {
-              const value = String(option.value)
-              const labelKey = permissionLabelKey(value)
-              const descriptionKey = permissionDescriptionKey(value)
-              return (
-                <FieldLabel
-                  key={value}
-                  htmlFor={`default-permission-${value}`}
-                  className={cn(
-                    "flex w-full cursor-pointer flex-row items-center gap-3 rounded-lg px-4 py-3 transition-colors hover:bg-accent/50",
-                    selectedPermissionMode === value && "bg-accent",
-                  )}
-                >
-                  <RadioGroupItem id={`default-permission-${value}`} value={value} />
-                  <FieldContent>
-                    <span className="text-sm font-medium">
-                      {labelKey ? t(labelKey) : option.label}
-                    </span>
-                    {(descriptionKey || option.description) ? (
-                      <span className="text-xs text-muted-foreground">
-                        {descriptionKey ? t(descriptionKey) : option.description}
-                      </span>
-                    ) : null}
-                  </FieldContent>
-                </FieldLabel>
-              )
-            })}
-          </RadioGroup>
-        )}
-      </section>
-
       <section className="rounded-xl border border-border bg-card">
         <div className="flex items-center justify-between gap-4 px-6 py-5">
           <div className="min-w-0">
@@ -735,13 +662,6 @@ function moveEntry<T>(items: T[], index: number, direction: -1 | 1): T[] {
   next[index] = target
   next[nextIndex] = current
   return next
-}
-
-function permissionDescriptionKey(value: string): "askApprovalPermissionDescription" | "autoApprovePermissionDescription" | "fullAccessPermissionDescription" | null {
-  if (value === "ask") return "askApprovalPermissionDescription"
-  if (value === "auto") return "autoApprovePermissionDescription"
-  if (value === "fullAccess") return "fullAccessPermissionDescription"
-  return null
 }
 
 function AgentModelCatalog({
