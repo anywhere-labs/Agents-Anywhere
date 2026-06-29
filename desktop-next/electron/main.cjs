@@ -808,6 +808,16 @@ function handleRpcLine(line) {
     if (payload.params && typeof payload.params.status === "string") {
       state.pairing = payload.params.status === "starting" || payload.params.status === "waiting";
     }
+    if (payload.params?.status === "claimed" && payload.params?.config) {
+      refreshLocalSetupState();
+      mergeConnectorState({
+        hasConfig: true,
+        setupIssue: "",
+        lastError: null,
+        authFailed: false,
+        serverUrl: payload.params.config.serverUrl || state.serverUrl,
+      });
+    }
     sendToWindow("connector:pairing", payload.params || {});
     return;
   }
