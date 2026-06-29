@@ -191,13 +191,13 @@ This starts two services:
 - `postgres-next`: PostgreSQL 17 with a persistent Docker volume.
 - `server-next`: FastAPI backend published on host port `5174`; it serves the statically exported `web-next` UI and handles API/WebSocket paths from the same origin.
 
-The first startup on an empty database logs a bootstrap token. Use it in the Web UI to create the first admin user.
+The first startup on an empty database logs a setup token. Use it in the Web UI to create the first admin user.
 
 For custom ports, production secrets, SQLite/manual Docker runs, mirrors, connector images, and local development containers, see [docker/README.md](docker/README.md).
 
 ## Onboarding
 
-After the Docker stack or server is running, follow the four steps below.
+After the Docker stack or server is running, follow this first-run flow.
 
 ### Step 0: Understand The Three Parts
 
@@ -245,8 +245,9 @@ Follow the Web UI to start pairing the device. You can also start pairing from t
 
 ### Step 4: Start Chatting
 
-Once the Device is online, you can start chatting with the Agent from the mobile app or the Web console.
+Once the Device is online, you can start chatting with the Agent from the Web console or the mobile app.
 
+For Android, download the APK from [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases). iOS is still in development.
 
 ## Beta Access And Contact
 
