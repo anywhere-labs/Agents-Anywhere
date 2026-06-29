@@ -216,7 +216,7 @@ AGENTS_ANYWHERE_API=http://127.0.0.1:8000 yarn dev
 
 ## 首次使用流程
 
-Docker stack 或 server 启动后，按下面四步走。
+Docker stack 或 server 启动后，按下面五步走。
 
 ### Step 0：先理解三个部分
 
