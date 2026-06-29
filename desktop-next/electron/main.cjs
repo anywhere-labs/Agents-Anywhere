@@ -53,6 +53,7 @@ const state = {
   pairing: false,
   authFailed: false,
   lastError: null,
+  setupIssue: "",
   hasConfig: false,
   serverUrl: "",
   configPath: "",
@@ -92,6 +93,10 @@ function readJson(filePath, fallback) {
   } catch {
     return fallback;
   }
+}
+
+function readJsonStrict(filePath) {
+  return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
 
 function writeJson(filePath, value) {
@@ -196,6 +201,46 @@ function refreshUvState() {
   state.uvMissing = !uvPath;
   if (uvPath) state.uvPath = uvPath;
   return uvPath;
+}
+
+function validateConnectorConfigPayload(value) {
+  if (!value || typeof value !== "object") return "invalid";
+  const required = ["serverUrl", "connectorId", "connectorToken"];
+  for (const key of required) {
+    if (typeof value[key] !== "string" || !value[key].trim()) return "incomplete";
+  }
+  if (!/^https?:\/\//i.test(value.serverUrl.trim())) return "invalid";
+  return "";
+}
+
+function refreshLocalSetupState() {
+  refreshUvState();
+  if (!fs.existsSync(path.join(state.connectorDir, "pyproject.toml"))) {
+    state.setupIssue = "connectorSourceMissing";
+    state.hasConfig = fs.existsSync(state.configPath);
+    return state.setupIssue;
+  }
+  if (state.uvMissing) {
+    state.setupIssue = "uvMissing";
+    state.hasConfig = fs.existsSync(state.configPath);
+    return state.setupIssue;
+  }
+  if (!fs.existsSync(state.configPath)) {
+    state.setupIssue = "configMissing";
+    state.hasConfig = false;
+    return state.setupIssue;
+  }
+  try {
+    const config = readJsonStrict(state.configPath);
+    const issue = validateConnectorConfigPayload(config);
+    state.setupIssue = issue ? `config:${issue}` : "";
+    state.hasConfig = !issue;
+    if (!issue && typeof config.serverUrl === "string") state.serverUrl = config.serverUrl;
+  } catch {
+    state.setupIssue = "configInvalidJson";
+    state.hasConfig = false;
+  }
+  return state.setupIssue;
 }
 
 function connectorEnv() {
@@ -558,6 +603,7 @@ async function clearConnectorCredentials() {
     pairing: false,
     authFailed: false,
     lastError: null,
+    setupIssue: "configMissing",
     hasConfig: false,
     serverUrl: "",
     usingTemporaryCredential: false,
@@ -627,7 +673,7 @@ async function handleDeepLink(rawUrl) {
     return;
   }
   try {
-    await rpcRequest("connector.saveConfig", config);
+    await rpcRequest("connector.saveConfig", config, { requiresConfig: false });
     const next = await rpcRequest("connector.start");
     mergeConnectorState({
       ...next,
@@ -660,8 +706,23 @@ function sendToWindow(channel, payload) {
   }
 }
 
-function startRpcProcess() {
+function startRpcProcess(options = {}) {
   if (rpcProcess) return;
+  const requiresConfig = options.requiresConfig !== false;
+  const setupIssue = refreshLocalSetupState();
+  if (setupIssue && (requiresConfig || setupIssue !== "configMissing")) {
+    mergeConnectorState({
+      status: "stopped",
+      running: false,
+      pairing: false,
+      lastError: setupIssue,
+      setupIssue,
+      hasConfig: state.hasConfig,
+      uvMissing: state.uvMissing,
+    });
+    appendLog({ level: "ERROR", message: `Connector setup is not ready: ${setupIssue}`, time: new Date().toISOString() });
+    return;
+  }
   if (!fs.existsSync(path.join(state.connectorDir, "pyproject.toml"))) {
     appendLog({ level: "ERROR", message: `Connector source is missing pyproject.toml: ${state.connectorDir}`, time: new Date().toISOString() });
     return;
@@ -757,8 +818,8 @@ function rejectAllPending(error) {
   pending = new Map();
 }
 
-function rpcRequest(method, params) {
-  startRpcProcess();
+function rpcRequest(method, params, options = {}) {
+  startRpcProcess(options);
   if (!rpcProcess || !rpcProcess.stdin) return Promise.reject(new Error("Connector RPC is not available."));
   const id = nextRequestId++;
   const payload = { jsonrpc: "2.0", id, method };
@@ -847,13 +908,14 @@ function updateNativeIcons() {
 
 function updateTrayMenu() {
   if (!tray) return;
+  const canStartConnector = !state.running && state.hasConfig && !state.setupIssue && !state.uvMissing;
   tray.setToolTip(`${APP_NAME}: ${state.status}`);
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: `Status: ${state.status}`, enabled: false },
       { type: "separator" },
       { label: "Open", click: () => void showWindow() },
-      { label: "Start Connector", enabled: !state.running, click: () => rpcRequest("connector.start").catch((error) => appendLog({ level: "ERROR", message: error.message, time: new Date().toISOString() })) },
+      { label: "Start Connector", enabled: canStartConnector, click: () => rpcRequest("connector.start").catch((error) => appendLog({ level: "ERROR", message: error.message, time: new Date().toISOString() })) },
       { label: "Stop Connector", enabled: state.running, click: () => rpcRequest("connector.stop").catch((error) => appendLog({ level: "ERROR", message: error.message, time: new Date().toISOString() })) },
       { type: "separator" },
       { label: "Quit", click: () => quitApp() },
@@ -874,29 +936,31 @@ function quitApp() {
 }
 
 ipcMain.handle("connector:getState", async () => {
-  if (state.uvMissing) return publicState();
-  const next = await rpcRequest("connector.getState");
-  mergeConnectorState(next);
+  const setupIssue = refreshLocalSetupState();
+  if (!setupIssue) {
+    try {
+      const next = await rpcRequest("connector.getState");
+      mergeConnectorState(next);
+    } catch (error) {
+      appendLog({ level: "ERROR", message: error instanceof Error ? error.message : String(error), time: new Date().toISOString() });
+    }
+  }
   return publicState();
 });
 ipcMain.handle("connector:getConfig", async () => {
-  if (state.uvMissing) {
-    if (fs.existsSync(state.configPath)) return readJson(state.configPath, {});
-    return {};
-  }
-  const config = await rpcRequest("connector.getConfig");
-  if (config && typeof config.serverUrl === "string") state.serverUrl = config.serverUrl;
-  return config;
+  refreshLocalSetupState();
+  if (!fs.existsSync(state.configPath)) return {};
+  return readJson(state.configPath, {});
 });
 ipcMain.handle("connector:saveConfig", async (_event, config) => {
-  const saved = await rpcRequest("connector.saveConfig", config);
-  mergeConnectorState({ hasConfig: true, authFailed: false, usingTemporaryCredential: false, serverUrl: saved?.serverUrl || config?.serverUrl || "" });
+  const saved = await rpcRequest("connector.saveConfig", config, { requiresConfig: false });
+  mergeConnectorState({ hasConfig: true, setupIssue: "", lastError: null, authFailed: false, usingTemporaryCredential: false, serverUrl: saved?.serverUrl || config?.serverUrl || "" });
   return saved;
 });
 ipcMain.handle("connector:start", async (_event, config) => {
   state.usingTemporaryCredential = Boolean(config);
   if (config && typeof config.serverUrl === "string") state.serverUrl = config.serverUrl;
-  const next = await rpcRequest("connector.start", config);
+  const next = await rpcRequest("connector.start", config, { requiresConfig: !config });
   mergeConnectorState(next);
   return publicState();
 });
@@ -912,7 +976,7 @@ ipcMain.handle("connector:restart", async () => {
   mergeConnectorState(next);
   return publicState();
 });
-ipcMain.handle("connector:startPairing", (_event, input) => rpcRequest("connector.startPairing", input));
+ipcMain.handle("connector:startPairing", (_event, input) => rpcRequest("connector.startPairing", input, { requiresConfig: false }));
 ipcMain.handle("connector:cancelPairing", () => rpcRequest("connector.cancelPairing"));
 ipcMain.handle("connector:saveSettings", (_event, settings) => saveDesktopSettings(settings));
 ipcMain.handle("connector:clearCredentials", () => clearConnectorCredentials());
@@ -941,16 +1005,19 @@ app.whenReady().then(async () => {
   createTray();
   if (isDev) void showWindow();
   updateNativeIcons();
-  startRpcProcess();
-  rpcRequest("connector.getState")
-    .then((next) => {
-      mergeConnectorState(next);
-      if (state.startConnectorOnLaunch && state.hasConfig) {
-        return rpcRequest("connector.start").then(mergeConnectorState);
-      }
-      return null;
-    })
-    .catch((error) => appendLog({ level: "ERROR", message: error.message, time: new Date().toISOString() }));
+  refreshLocalSetupState();
+  sendToWindow("connector:state", publicState());
+  if (!state.setupIssue || state.setupIssue === "") {
+    rpcRequest("connector.getState")
+      .then((next) => {
+        mergeConnectorState(next);
+        if (state.startConnectorOnLaunch && state.hasConfig) {
+          return rpcRequest("connector.start").then(mergeConnectorState);
+        }
+        return null;
+      })
+      .catch((error) => appendLog({ level: "ERROR", message: error.message, time: new Date().toISOString() }));
+  }
   await drainDeepLinks();
   nativeTheme.on("updated", updateNativeIcons);
 });

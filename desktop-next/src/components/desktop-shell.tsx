@@ -210,6 +210,12 @@ const desktopMessages = {
     runtimeConnected: "Connected",
     runtimeIdle: "Not running",
     runtimeError: "Error",
+    setupRequired: "Setup required",
+    configMissingDetail: "Pair this machine or paste a start command before starting the connector.",
+    configInvalidDetail: "The saved connector config is invalid. Clear local credentials, then pair this machine again.",
+    connectorSourceMissingDetail: "The bundled connector files are missing or incomplete. Reinstall the desktop app.",
+    uvMissingDetail: "Install uv or set a valid uv path in Settings.",
+    rpcUnavailableDetail: "The connector runtime is unavailable. Check uv, the PyPI mirror, and recent logs.",
     credentialExpired: "Credential expired",
     fixCredential: "Pair again or paste a new start command.",
     credentialExpiredToast: "Credential expired. Pair again or paste a new start command.",
@@ -331,6 +337,12 @@ const desktopMessages = {
     runtimeConnected: "已连接",
     runtimeIdle: "未运行",
     runtimeError: "错误",
+    setupRequired: "需要设置",
+    configMissingDetail: "请先配对这台电脑，或粘贴启动命令，然后再启动连接器。",
+    configInvalidDetail: "已保存的连接器配置无效。请清除本地凭据，然后重新配对。",
+    connectorSourceMissingDetail: "内置连接器文件缺失或不完整。请重新安装桌面应用。",
+    uvMissingDetail: "请安装 uv，或在设置中指定有效的 uv 路径。",
+    rpcUnavailableDetail: "连接器运行时不可用。请检查 uv、PyPI 镜像和最近日志。",
     credentialExpired: "凭据已失效",
     fixCredential: "重新配对，或粘贴新的启动命令。",
     credentialExpiredToast: "凭据已失效。请重新配对，或粘贴新的启动命令。",
@@ -386,9 +398,36 @@ function useDesktopMessages(preferredLocale: string | undefined): DesktopMessage
 
 type MetricTone = "default" | "success" | "error"
 
+function isConfigBrokenIssue(issue: string | undefined): boolean {
+  return issue === "configInvalidJson" || issue === "config:invalid" || issue === "config:incomplete"
+}
+
+function setupIssueDetail(state: ConnectorState | null, t: DesktopMessages): string | null {
+  const issue = state?.setupIssue || (state?.uvMissing ? "uvMissing" : "")
+  if (issue === "uvMissing") return t.uvMissingDetail
+  if (issue === "connectorSourceMissing") return t.connectorSourceMissingDetail
+  if (issue === "configMissing") return t.configMissingDetail
+  if (isConfigBrokenIssue(issue)) return t.configInvalidDetail
+  return null
+}
+
+function canRunLocalSetup(state: ConnectorState | null): boolean {
+  const issue = state?.setupIssue || ""
+  return !state?.uvMissing && issue !== "connectorSourceMissing" && !isConfigBrokenIssue(issue)
+}
+
+function canStartSavedConnector(state: ConnectorState | null): boolean {
+  return Boolean(canRunLocalSetup(state) && state?.hasConfig && !state?.setupIssue)
+}
+
 function connectorStatusView(state: ConnectorState | null, isRunning: boolean, t: DesktopMessages): { value: string; detail: string; tone: MetricTone } {
+  const setupDetail = setupIssueDetail(state, t)
+  const setupIssue = state?.setupIssue || ""
+  if (setupDetail && (setupIssue === "uvMissing" || setupIssue === "connectorSourceMissing")) {
+    return { value: t.setupRequired, detail: setupDetail, tone: "error" }
+  }
   if (state?.lastError && !state.authFailed) {
-    return { value: t.runtimeError, detail: state.lastError, tone: "error" }
+    return { value: t.runtimeError, detail: setupDetail || state.lastError, tone: "error" }
   }
   if (isRunning) {
     return { value: t.runtimeConnected, detail: t.runtimeConnected, tone: "success" }
@@ -404,6 +443,9 @@ function credentialStatusView(
 ): { value: string; detail: string; tone: MetricTone } {
   if (state?.authFailed) {
     return { value: t.credentialExpired, detail: t.fixCredential, tone: "error" }
+  }
+  if (isConfigBrokenIssue(state?.setupIssue)) {
+    return { value: t.setupRequired, detail: t.configInvalidDetail, tone: "error" }
   }
   if (isRunning && state?.usingTemporaryCredential) {
     return { value: t.credentialOneTime, detail: t.credentialOneTimeDetail, tone: "success" }
@@ -540,7 +582,28 @@ export function DesktopShell() {
     }
   }
 
+  function showSetupBlock(): boolean {
+    const detail = setupIssueDetail(state, t)
+    if (state?.setupIssue === "uvMissing" || state?.uvMissing) {
+      setUvInstallPromptOpen(true)
+      return true
+    }
+    if (detail && (state?.setupIssue === "connectorSourceMissing" || isConfigBrokenIssue(state?.setupIssue))) {
+      toast.error(detail)
+      return true
+    }
+    return false
+  }
+
   async function startConnector(runtimeConfig?: ConnectorConfig) {
+    if (!runtimeConfig && !canStartSavedConnector(state)) {
+      if (!showSetupBlock()) toast.error(t.configMissingDetail)
+      return
+    }
+    if (runtimeConfig && !canRunLocalSetup(state)) {
+      showSetupBlock()
+      return
+    }
     const next = await run("start", () => connectorDesktop().start(runtimeConfig), t.connectorStarted)
     if (next) setState(next)
   }
@@ -551,6 +614,10 @@ export function DesktopShell() {
   }
 
   async function restartConnector() {
+    if (!canStartSavedConnector(state)) {
+      if (!showSetupBlock()) toast.error(t.configMissingDetail)
+      return
+    }
     const next = await run("restart", () => connectorDesktop().restart(), t.connectorRestarted)
     if (next) setState(next)
   }
@@ -599,7 +666,13 @@ export function DesktopShell() {
       await loadLogs({ reset: true, pageSize: logPageSize })
       return
     }
-    const page = await connectorDesktop().getLogs({ afterSeq, pageSize: logPageSize })
+    let page
+    try {
+      page = await connectorDesktop().getLogs({ afterSeq, pageSize: logPageSize })
+    } catch {
+      setLiveLogs(false)
+      return
+    }
     if (page.items.length === 0) {
       setLogTotal(page.total)
       return
@@ -642,6 +715,10 @@ export function DesktopShell() {
   }
 
   async function startPairing() {
+    if (!canRunLocalSetup(state)) {
+      showSetupBlock()
+      return
+    }
     let server = pairServer
     try {
       const parsed = parseConnectorCommand(pairServer, t)
@@ -716,6 +793,10 @@ export function DesktopShell() {
 
   async function runParsedCommand(save: boolean) {
     if (!parsedCommand) return
+    if (!canRunLocalSetup(state)) {
+      showSetupBlock()
+      return
+    }
     if (parsedCommand.kind === "pair") {
       setCommandOpen(false)
       setPairOpen(true)
@@ -740,6 +821,10 @@ export function DesktopShell() {
   const isRunning = Boolean(state?.running)
   const connectorView = connectorStatusView(state, isRunning, t)
   const credentialView = credentialStatusView(state, config, isRunning, t)
+  const setupDetail = setupIssueDetail(state, t)
+  const showSetupNotice = Boolean(setupDetail && state?.setupIssue !== "configMissing")
+  const startSavedEnabled = canStartSavedConnector(state)
+  const setupActionsEnabled = canRunLocalSetup(state)
   const isMac = state?.platform === "darwin"
   const serverUrl = state?.serverUrl || config.serverUrl
   const canOpenServer = isRunning && Boolean(serverUrl)
@@ -826,7 +911,7 @@ export function DesktopShell() {
               </>
             ) : (
               <>
-                <Button variant="outline" size="sm" onClick={restartConnector} disabled={Boolean(busy)}>
+                <Button variant="outline" size="sm" onClick={restartConnector} disabled={Boolean(busy) || !startSavedEnabled}>
                   <RotateCcw className="size-4" />
                   {t.restart}
                 </Button>
@@ -836,7 +921,7 @@ export function DesktopShell() {
                     {t.stop}
                   </Button>
                 ) : (
-                  <Button size="sm" onClick={() => startConnector()} disabled={Boolean(busy) || !state?.hasConfig}>
+                  <Button size="sm" onClick={() => startConnector()} disabled={Boolean(busy) || !startSavedEnabled}>
                     <Play className="size-4" />
                     {t.start}
                   </Button>
@@ -849,6 +934,15 @@ export function DesktopShell() {
         <ScrollArea className="min-h-0 flex-1">
           <div className={cn("mx-auto flex w-full flex-col", view === "logs" ? "max-w-none" : "max-w-5xl gap-5 p-5")}>
             {bridgeError ? <BridgeError t={t} message={bridgeError} /> : null}
+            {showSetupNotice ? (
+              <SetupNotice
+                t={t}
+                detail={setupDetail || t.rpcUnavailableDetail}
+                issue={state?.setupIssue || ""}
+                onInstallUv={() => setUvInstallPromptOpen(true)}
+                onClearCredentials={() => void clearCredentials()}
+              />
+            ) : null}
             {view === "overview" ? (
               <Overview
                 t={t}
@@ -860,6 +954,8 @@ export function DesktopShell() {
                 pairingTone={credentialView.tone}
                 onPair={openPairDialog}
                 onCommand={openCommandDialog}
+                setupActionsEnabled={setupActionsEnabled}
+                onSetupBlocked={showSetupBlock}
               />
             ) : null}
             {view === "logs" ? (
@@ -946,6 +1042,8 @@ function Overview({
   pairingTone,
   onPair,
   onCommand,
+  setupActionsEnabled,
+  onSetupBlocked,
 }: {
   t: DesktopMessages
   runtimeStatus: string
@@ -956,7 +1054,17 @@ function Overview({
   pairingTone: "default" | "success" | "error"
   onPair: () => void
   onCommand: () => void
+  setupActionsEnabled: boolean
+  onSetupBlocked: () => boolean
 }) {
+  function runIfReady(action: () => void) {
+    if (!setupActionsEnabled) {
+      onSetupBlocked()
+      return
+    }
+    action()
+  }
+
   return (
     <>
       <section className="grid gap-4 md:grid-cols-2">
@@ -968,13 +1076,13 @@ function Overview({
           icon={Plus}
           title={t.startPairing}
           description={t.pairActionDescription}
-          onClick={onPair}
+          onClick={() => runIfReady(onPair)}
         />
         <ActionCard
           icon={Clipboard}
           title={t.startFromCommand}
           description={t.commandActionDescription}
-          onClick={onCommand}
+          onClick={() => runIfReady(onCommand)}
         />
       </section>
     </>
@@ -1876,7 +1984,7 @@ function PairingCode({ t, code }: { t: DesktopMessages; code: string }) {
 
 function SuccessNote({ t }: { t: DesktopMessages }) {
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm">
+    <div className="flex items-center gap-2 rounded-md border border-emerald-500/25 bg-emerald-500/5 px-3 py-2 text-sm">
       <CheckCircle2 className="size-4 text-emerald-500" />
       {t.savedStarting}
     </div>
@@ -1885,19 +1993,77 @@ function SuccessNote({ t }: { t: DesktopMessages }) {
 
 function ErrorNote({ message }: { message: string }) {
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
-      <CircleAlert className="size-4" />
-      {message}
+    <div className="flex items-start gap-2 rounded-md border border-destructive/25 bg-card px-3 py-2 text-sm">
+      <CircleAlert className="mt-0.5 size-4 shrink-0 text-destructive" />
+      <span className="text-muted-foreground">{message}</span>
     </div>
   )
 }
 
 function BridgeError({ t, message }: { t: DesktopMessages; message: string }) {
   return (
-    <Card className="border-destructive/50">
-      <CardHeader>
-        <CardTitle>{t.bridgeUnavailable}</CardTitle>
+    <Card className="border-destructive/25">
+      <CardHeader className="gap-2">
+        <div className="flex items-center gap-2">
+          <CircleAlert className="size-4 text-destructive" />
+          <CardTitle className="text-base">{t.bridgeUnavailable}</CardTitle>
+        </div>
         <CardDescription>{message}</CardDescription>
+      </CardHeader>
+    </Card>
+  )
+}
+
+function SetupNotice({
+  t,
+  detail,
+  issue,
+  onInstallUv,
+  onClearCredentials,
+}: {
+  t: DesktopMessages
+  detail: string
+  issue: string
+  onInstallUv: () => void
+  onClearCredentials: () => void
+}) {
+  return (
+    <Card className="border-destructive/25">
+      <CardHeader className="gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <CircleAlert className="size-4 text-destructive" />
+            <CardTitle className="text-base">{t.setupRequired}</CardTitle>
+          </div>
+          <CardDescription className="mt-1">{detail}</CardDescription>
+        </div>
+        {issue === "uvMissing" ? (
+          <Button size="sm" variant="outline" onClick={onInstallUv}>
+            {t.installUv}
+          </Button>
+        ) : null}
+        {isConfigBrokenIssue(issue) ? (
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button size="sm" variant="outline">
+                <Trash2 className="size-4" />
+                {t.clearCredentials}
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>{t.clearCredentialsConfirmTitle}</AlertDialogTitle>
+                <AlertDialogDescription>{t.clearCredentialsConfirmDescription}</AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>{t.cancel}</AlertDialogCancel>
+                <AlertDialogAction variant="destructive" onClick={onClearCredentials}>
+                  {t.clearCredentials}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        ) : null}
       </CardHeader>
     </Card>
   )

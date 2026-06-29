@@ -9,6 +9,7 @@ export type ConnectorState = {
   pairing: boolean
   authFailed: boolean
   lastError: string | null
+  setupIssue?: string
   serverUrl?: string
   configPath: string
   runtimePath?: string
