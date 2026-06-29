@@ -336,7 +336,11 @@ function SessionSidebarItem({
       <SidebarMenuButton
         isActive={isActive}
         onClick={onOpen}
-        className="text-muted-foreground data-[active=true]:text-foreground"
+        className={cn(
+          "text-muted-foreground data-[active=true]:text-foreground",
+          "group-hover/session:pr-[4.25rem] group-focus-within/session:pr-[4.25rem]",
+          isActive && "pr-[4.25rem]",
+        )}
       >
         <span
           className={cn(
@@ -355,7 +359,13 @@ function SessionSidebarItem({
         <span className="truncate">{item.title}</span>
       </SidebarMenuButton>
 
-      <div className="absolute right-1 top-1/2 -translate-y-1/2 hidden items-center gap-0.5 group-hover/session:flex">
+      <div
+        className={cn(
+          "absolute right-1 top-1/2 hidden -translate-y-1/2 items-center gap-0.5",
+          "group-hover/session:flex group-focus-within/session:flex",
+          isActive && "flex",
+        )}
+      >
         <button
           type="button"
           aria-label={item.pinned ? t("actions.unpin") : t("actions.pin")}
@@ -364,7 +374,7 @@ function SessionSidebarItem({
             onTogglePin()
           }}
           className={cn(
-            "rounded p-1 transition-colors hover:bg-sidebar-accent",
+            "rounded p-1 transition-colors hover:bg-sidebar-accent/65 hover:text-foreground",
             item.pinned ? "text-primary" : "text-muted-foreground",
           )}
         >
@@ -377,7 +387,7 @@ function SessionSidebarItem({
             e.stopPropagation()
             onToggleArchive()
           }}
-          className="rounded p-1 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground"
+          className="rounded p-1 text-muted-foreground transition-colors hover:bg-sidebar-accent/65 hover:text-foreground"
         >
           <Archive className="size-3" />
         </button>

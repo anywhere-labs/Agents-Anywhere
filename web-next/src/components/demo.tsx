@@ -113,14 +113,14 @@ function DesktopResizableShell() {
       <ResizablePanel
         id="dashboard-sidebar"
         panelRef={sidebarPanelRef}
-        collapsible
+        collapsible={false}
         collapsedSize={0}
         defaultSize="16rem"
         minSize="14rem"
         maxSize="28rem"
         onResize={(size) => {
           const nextOpen = size.inPixels > 1
-          if (nextOpen !== open) {
+          if (nextOpen && nextOpen !== open) {
             setOpen(nextOpen)
           }
         }}
