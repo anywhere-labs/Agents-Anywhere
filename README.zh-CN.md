@@ -218,23 +218,49 @@ AGENTS_ANYWHERE_API=http://127.0.0.1:8000 yarn dev
 
 Docker stack 或 server 启动后，按下面四步走。
 
+### Step 0：先理解三个部分
+
+Agents Anywhere 由三个部分组成：
+
+- **Client**：你直接使用的入口，包括 Web 控制台、iOS App 和 Android App。
+- **Server**：中间服务，负责账号、设备、Session 状态和指令转发。
+- **Connector App**：运行在被控设备上的本地程序，比如你的 Mac、Windows 电脑、Linux 服务器或 devbox。
+
+简单来说：你在 Client 上发出指令，指令先到 Server，再转发给被控设备上的 Connector App。Connector App 会在那台设备上操作本地的 Codex / Claude Code 等 Agent，完成任务。你的代码、终端和 Agent 运行环境仍然都在被控设备本地。
+
 ### Step 1：创建 Admin 账号
 
 打开 Web 控制台，填入服务端日志里的 setup token，创建第一个账号。这个账号会成为默认管理员。
 
-### Step 2：准备 Connector
+> [!TIP] 
+> setup token 是什么？
+>
+> 新部署的服务还没有用户时，第一个注册成功的人会成为管理员。为了避免服务暴露到公网后被别人抢先注册，Agents Anywhere 要求第一次注册必须填写后端日志里打印出来的 setup token。
+>
+> 请在后端服务启动日志中查找类似下面的内容：
+>
+> ```text
+> AGENT SERVER  ·  first-run setup required
+> Paste this token into the setup page to create the admin:
+>
+>   setup-token: xxxxxxxxxxxxxxxxxxxxxxxx
+> ```
+>
+> 复制 `setup-token:` 后面的值，粘贴到 Web 注册页即可。
+
+### Step 2：准备 Connector 
 
 在运行 Codex / Claude Code 的设备上准备 Connector。
 
 | OS | 版本 | 操作 |
 | --- | --- | --- |
-| Windows | Latest | 从 [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases) 下载 Connector App |
-| macOS | Latest | 从 [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases) 下载 Connector App |
+| Windows | 0.1.6 | 从 [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases) 下载 Connector App |
+| macOS | 0.1.6 | 从 [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases) 下载 Connector App |
 | Linux | 0.1.6 | 复制配对 UI 里显示的命令 |
 
 ### Step 3：配对 Device
 
-按照 Web 端 UI 引导完成配对。你也可以在手机端完成配对操作。
+按照 Web 端 UI 引导发起配对。你也可以在手机端发起配对。
 
 ### Step 4：开始聊天
 
