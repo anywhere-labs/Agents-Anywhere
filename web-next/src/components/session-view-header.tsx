@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
 import { useSidebar } from "@/components/ui/sidebar"
+import { useDashboardSidebarControls } from "@/components/demo"
 import { useWorkspace, type PanelId } from "@/components/workspace-context"
 import type { SessionMemorySnapshot } from "@/components/session-detail"
 import { cn } from "@/lib/utils"
@@ -49,8 +50,16 @@ export function SessionViewHeader({
   onExportRemoteTimeline,
   exporting,
 }: SessionViewHeaderProps) {
-  const { toggleSidebar } = useSidebar()
+  const { isMobile, toggleSidebar } = useSidebar()
+  const sidebarControls = useDashboardSidebarControls()
   const tActions = useTranslations("dashboard.actions")
+  const collapseSidebar = React.useCallback(() => {
+    if (isMobile) {
+      toggleSidebar()
+      return
+    }
+    sidebarControls?.collapseSidebar()
+  }, [isMobile, sidebarControls, toggleSidebar])
 
   return (
     <header className="pointer-events-none absolute inset-x-0 top-0 z-10 h-14 overflow-hidden">
@@ -63,8 +72,8 @@ export function SessionViewHeader({
           variant="ghost"
           size="icon-sm"
           type="button"
-          aria-label={tActions("expand")}
-          onClick={toggleSidebar}
+          aria-label={tActions("collapse")}
+          onClick={collapseSidebar}
           className="shrink-0 text-muted-foreground hover:text-foreground"
         >
           <PanelLeft className="size-4" />

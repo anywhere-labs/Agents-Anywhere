@@ -40,6 +40,16 @@ const DEFAULT_DESKTOP_LAYOUT = {
   "dashboard-main": 1024,
 }
 
+type DashboardSidebarControls = {
+  collapseSidebar: () => void
+}
+
+const DashboardSidebarControlsContext = React.createContext<DashboardSidebarControls | null>(null)
+
+export function useDashboardSidebarControls() {
+  return React.useContext(DashboardSidebarControlsContext)
+}
+
 export function Demo() {
   return (
     <WorkspaceProvider>
@@ -100,41 +110,51 @@ function DesktopResizableShell() {
     }
   }, [open])
 
+  const collapseSidebar = React.useCallback(() => {
+    const panel = sidebarPanelRef.current
+    setOpen(false)
+    panel?.collapse()
+  }, [setOpen])
+
+  const sidebarControls = React.useMemo(() => ({ collapseSidebar }), [collapseSidebar])
+
   return (
-    <ResizablePanelGroup
-      id="agents-anywhere-dashboard-sidebar"
-      defaultLayout={defaultLayout}
-      onLayoutChanged={(layout) => {
-        window.localStorage.setItem(SIDEBAR_LAYOUT_STORAGE_KEY, JSON.stringify(layout))
-      }}
-      direction="horizontal"
-      className="h-svh min-h-0 w-full overflow-hidden overscroll-none bg-background"
-    >
-      <ResizablePanel
-        id="dashboard-sidebar"
-        panelRef={sidebarPanelRef}
-        collapsible={false}
-        collapsedSize={0}
-        defaultSize="16rem"
-        minSize="14rem"
-        maxSize="28rem"
-        onResize={(size) => {
-          const nextOpen = size.inPixels > 1
-          if (nextOpen && nextOpen !== open) {
-            setOpen(nextOpen)
-          }
+    <DashboardSidebarControlsContext.Provider value={sidebarControls}>
+      <ResizablePanelGroup
+        id="agents-anywhere-dashboard-sidebar"
+        defaultLayout={defaultLayout}
+        onLayoutChanged={(layout) => {
+          window.localStorage.setItem(SIDEBAR_LAYOUT_STORAGE_KEY, JSON.stringify(layout))
         }}
-        className="min-w-0"
+        direction="horizontal"
+        className="h-svh min-h-0 w-full overflow-hidden overscroll-none bg-background"
       >
-        <AppSidebar contained />
-      </ResizablePanel>
-      <ResizableHandle className="bg-transparent transition-colors hover:bg-border/40 focus-visible:bg-border/60" />
-      <ResizablePanel id="dashboard-main" minSize={0} className="min-w-0">
-        <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-none bg-background">
-          <WorkspaceMain />
-        </SidebarInset>
-      </ResizablePanel>
-    </ResizablePanelGroup>
+        <ResizablePanel
+          id="dashboard-sidebar"
+          panelRef={sidebarPanelRef}
+          collapsible
+          collapsedSize={0}
+          defaultSize="16rem"
+          minSize="14rem"
+          maxSize="28rem"
+          onResize={(size) => {
+            const nextOpen = size.inPixels > 1
+            if (nextOpen !== open) {
+              setOpen(nextOpen)
+            }
+          }}
+          className="min-w-0"
+        >
+          <AppSidebar contained />
+        </ResizablePanel>
+        <ResizableHandle className="bg-transparent transition-colors hover:bg-border/40 focus-visible:bg-border/60" />
+        <ResizablePanel id="dashboard-main" minSize={0} className="min-w-0">
+          <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-none bg-background">
+            <WorkspaceMain />
+          </SidebarInset>
+        </ResizablePanel>
+      </ResizablePanelGroup>
+    </DashboardSidebarControlsContext.Provider>
   )
 }
 
