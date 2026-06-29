@@ -287,7 +287,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
   return (
     <>
       <Dialog open={open} onOpenChange={handleOpenChange}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-2xl">
 
           {/* ── Step: Name ── */}
           {step === "name" && (
@@ -333,19 +333,19 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
                   type="button"
                   variant="outline"
                   onClick={handleSelectToken}
-                  className="h-auto w-full flex-col items-start gap-0.5 px-4 py-3 text-left"
+                  className="h-auto w-full min-w-0 flex-col items-start gap-0.5 whitespace-normal px-4 py-3 text-left"
                 >
-                  <span className="font-medium">{t("tokenTitle")}</span>
-                  <span className="text-sm text-muted-foreground">{t("tokenDescription")}</span>
+                  <span className="min-w-0 font-medium">{t("tokenTitle")}</span>
+                  <span className="min-w-0 break-words text-sm text-muted-foreground">{t("tokenDescription")}</span>
                 </Button>
                 <Button
                   type="button"
                   variant="outline"
                   onClick={handleSelectPairCode}
-                  className="h-auto w-full flex-col items-start gap-0.5 px-4 py-3 text-left"
+                  className="h-auto w-full min-w-0 flex-col items-start gap-0.5 whitespace-normal px-4 py-3 text-left"
                 >
-                  <span className="font-medium">{t("pairCodeTitle")}</span>
-                  <span className="text-sm text-muted-foreground">{t("pairCodeDescription")}</span>
+                  <span className="min-w-0 font-medium">{t("pairCodeTitle")}</span>
+                  <span className="min-w-0 break-words text-sm text-muted-foreground">{t("pairCodeDescription")}</span>
                 </Button>
               </div>
             </>
