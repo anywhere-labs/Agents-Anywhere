@@ -142,6 +142,7 @@ const desktopMessages = {
     liveLogs: "Live",
     pausedLogs: "Paused",
     refresh: "Refresh",
+    refreshed: "Refreshed",
     loadMore: "Load earlier logs",
     logRows: "Rows",
     logStorageTitle: "Logs",
@@ -269,6 +270,7 @@ const desktopMessages = {
     liveLogs: "实时",
     pausedLogs: "暂停",
     refresh: "刷新",
+    refreshed: "已刷新",
     loadMore: "加载更早日志",
     logRows: "行数",
     logStorageTitle: "日志",
@@ -486,14 +488,21 @@ export function DesktopShell() {
   const minLogSeqRef = React.useRef<number | null>(null)
   const maxLogSeqRef = React.useRef<number | null>(null)
 
+  const refreshLocalSnapshot = React.useCallback(async () => {
+    const api = connectorDesktop()
+    const [nextState, nextConfig] = await Promise.all([api.getState(), api.getConfig()])
+    setState(nextState)
+    setConfig({ ...defaultConfig, ...nextConfig })
+    setBridgeError(null)
+    return nextState
+  }, [])
+
   React.useEffect(() => {
     let cleanup: Array<() => void> = []
     async function boot() {
       try {
         const api = connectorDesktop()
-        const [nextState, nextConfig] = await Promise.all([api.getState(), api.getConfig()])
-        setState(nextState)
-        setConfig({ ...defaultConfig, ...nextConfig })
+        await refreshLocalSnapshot()
         cleanup = [
           api.onState((next) => setState(next)),
           api.onPairing((next) => {
@@ -519,7 +528,19 @@ export function DesktopShell() {
     return () => {
       for (const dispose of cleanup) dispose()
     }
-  }, [])
+  }, [refreshLocalSnapshot])
+
+  React.useEffect(() => {
+    function refreshWhenVisible() {
+      if (document.visibilityState === "visible") void refreshLocalSnapshot().catch(() => undefined)
+    }
+    window.addEventListener("focus", refreshWhenVisible)
+    document.addEventListener("visibilitychange", refreshWhenVisible)
+    return () => {
+      window.removeEventListener("focus", refreshWhenVisible)
+      document.removeEventListener("visibilitychange", refreshWhenVisible)
+    }
+  }, [refreshLocalSnapshot])
 
   React.useEffect(() => {
     if (view === "logs") {
@@ -580,6 +601,11 @@ export function DesktopShell() {
     } finally {
       setBusy(null)
     }
+  }
+
+  async function refreshConnectorSnapshot() {
+    const next = await run("refreshState", refreshLocalSnapshot)
+    if (next) toast.success(t.refreshed)
   }
 
   function showSetupBlock(): boolean {
@@ -911,6 +937,10 @@ export function DesktopShell() {
               </>
             ) : (
               <>
+                <Button variant="outline" size="sm" onClick={() => void refreshConnectorSnapshot()} disabled={Boolean(busy)}>
+                  <RefreshCw className={cn("size-4", busy === "refreshState" && "animate-spin")} />
+                  {t.refresh}
+                </Button>
                 <Button variant="outline" size="sm" onClick={restartConnector} disabled={Boolean(busy) || !startSavedEnabled}>
                   <RotateCcw className="size-4" />
                   {t.restart}

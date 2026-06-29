@@ -808,6 +808,7 @@ function handleRpcLine(line) {
     if (payload.params && typeof payload.params.status === "string") {
       state.pairing = payload.params.status === "starting" || payload.params.status === "waiting";
     }
+    sendToWindow("connector:pairing", payload.params || {});
     if (payload.params?.status === "claimed" && payload.params?.config) {
       refreshLocalSetupState();
       mergeConnectorState({
@@ -818,7 +819,6 @@ function handleRpcLine(line) {
         serverUrl: payload.params.config.serverUrl || state.serverUrl,
       });
     }
-    sendToWindow("connector:pairing", payload.params || {});
     return;
   }
 }
@@ -955,6 +955,7 @@ ipcMain.handle("connector:getState", async () => {
       appendLog({ level: "ERROR", message: error instanceof Error ? error.message : String(error), time: new Date().toISOString() });
     }
   }
+  sendToWindow("connector:state", publicState());
   return publicState();
 });
 ipcMain.handle("connector:getConfig", async () => {
