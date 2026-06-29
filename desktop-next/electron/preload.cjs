@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld("connectorDesktop", {
   clearCredentials: () => ipcRenderer.invoke("connector:clearCredentials"),
   openConfigFolder: () => ipcRenderer.invoke("connector:openConfigFolder"),
   openServer: (serverUrl) => ipcRenderer.invoke("connector:openServer", serverUrl),
+  openUvInstall: () => ipcRenderer.invoke("connector:openUvInstall"),
   getLogs: (options) => ipcRenderer.invoke("connector:getLogs", options),
   clearLogs: () => ipcRenderer.invoke("connector:clearLogs"),
   onState: (callback) => {

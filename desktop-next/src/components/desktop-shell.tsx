@@ -91,10 +91,23 @@ type AppearanceOption = {
   messageKey: "systemTheme" | "lightTheme" | "darkTheme"
   icon: React.ComponentType<{ className?: string; "data-icon"?: string }>
 }
+type PypiMirrorOption = {
+  id: string
+  url: string
+}
 const APPEARANCE_OPTIONS: [AppearanceOption, AppearanceOption, AppearanceOption] = [
   { id: "system", messageKey: "systemTheme", icon: Monitor },
   { id: "light", messageKey: "lightTheme", icon: Sun },
   { id: "dark", messageKey: "darkTheme", icon: Moon },
+]
+const PYPI_MIRROR_OPTIONS: readonly PypiMirrorOption[] = [
+  { id: "default", url: "" },
+  { id: "tsinghua", url: "https://pypi.tuna.tsinghua.edu.cn/simple" },
+  { id: "ustc", url: "https://mirrors.ustc.edu.cn/pypi/simple" },
+  { id: "bfsu", url: "https://mirrors.bfsu.edu.cn/pypi/web/simple" },
+  { id: "aliyun", url: "https://mirrors.aliyun.com/pypi/simple" },
+  { id: "tencent", url: "https://mirrors.cloud.tencent.com/pypi/simple" },
+  { id: "huawei", url: "https://repo.huaweicloud.com/repository/pypi/simple" },
 ]
 
 const defaultConfig: ConnectorConfig = {
@@ -158,6 +171,18 @@ const desktopMessages = {
     english: "English",
     simplifiedChinese: "Simplified Chinese",
     uvPath: "uv path",
+    uvMissingTitle: "uv is required",
+    uvMissingDescription: "The desktop connector needs uv to run the local Python connector. Install uv, then restart the desktop app or set the uv path in Settings.",
+    installUv: "Install uv",
+    uvPypiMirror: "uv PyPI mirror",
+    uvPypiMirrorDescription: "Used when uv installs or syncs Python packages.",
+    pypiDefault: "Default",
+    pypiTsinghua: "Tsinghua",
+    pypiUstc: "USTC",
+    pypiBfsu: "BFSU",
+    pypiAliyun: "Aliyun",
+    pypiTencent: "Tencent Cloud",
+    pypiHuawei: "Huawei Cloud",
     configPath: "Config path",
     settingsPath: "Settings path",
     logPath: "Log path",
@@ -267,6 +292,18 @@ const desktopMessages = {
     english: "English",
     simplifiedChinese: "简体中文",
     uvPath: "uv 路径",
+    uvMissingTitle: "需要安装 uv",
+    uvMissingDescription: "桌面连接器需要 uv 来运行本机 Python 连接器。请安装 uv，然后重启桌面应用，或在设置里指定 uv 路径。",
+    installUv: "安装 uv",
+    uvPypiMirror: "uv PyPI 镜像",
+    uvPypiMirrorDescription: "uv 安装或同步 Python 包时使用。",
+    pypiDefault: "默认",
+    pypiTsinghua: "清华",
+    pypiUstc: "中科大",
+    pypiBfsu: "北外",
+    pypiAliyun: "阿里云",
+    pypiTencent: "腾讯云",
+    pypiHuawei: "华为云",
     configPath: "配置路径",
     settingsPath: "设置路径",
     logPath: "日志路径",
@@ -401,7 +438,9 @@ export function DesktopShell() {
   const [commandStep, setCommandStep] = React.useState<CommandDialogStep>("input")
   const [commandInput, setCommandInput] = React.useState("")
   const [parsedCommand, setParsedCommand] = React.useState<ParsedConnectorCommand | null>(null)
+  const [uvInstallPromptOpen, setUvInstallPromptOpen] = React.useState(false)
   const authFailedToastShown = React.useRef(false)
+  const uvMissingPromptShown = React.useRef(false)
   const minLogSeqRef = React.useRef<number | null>(null)
   const maxLogSeqRef = React.useRef<number | null>(null)
 
@@ -474,6 +513,17 @@ export function DesktopShell() {
       setTheme(state.appearance)
     }
   }, [setTheme, state?.appearance])
+
+  React.useEffect(() => {
+    if (state?.uvMissing) {
+      if (!uvMissingPromptShown.current) {
+        uvMissingPromptShown.current = true
+        setUvInstallPromptOpen(true)
+      }
+      return
+    }
+    uvMissingPromptShown.current = false
+  }, [state?.uvMissing])
 
   async function run<T>(label: string, action: () => Promise<T>, success?: string): Promise<T | null> {
     setBusy(label)
@@ -868,6 +918,20 @@ export function DesktopShell() {
         onParse={parseCommand}
         onRun={runParsedCommand}
       />
+      <AlertDialog open={uvInstallPromptOpen} onOpenChange={setUvInstallPromptOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t.uvMissingTitle}</AlertDialogTitle>
+            <AlertDialogDescription>{t.uvMissingDescription}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t.cancel}</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void connectorDesktop().openUvInstall()}>
+              {t.installUv}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
@@ -982,6 +1046,11 @@ function SettingsView({
               value={uvPath}
               onChange={setUvPath}
               onBlur={(value) => saveSettings({ uvPath: value })}
+            />
+            <PypiMirrorField
+              t={t}
+              value={state?.uvPypiIndexUrl || ""}
+              onValueChange={(uvPypiIndexUrl) => saveSettings({ uvPypiIndexUrl })}
             />
           </FieldGroup>
         </CardContent>
@@ -1643,6 +1712,56 @@ function SyncIntervalField({
       </DropdownMenu>
     </Field>
   )
+}
+
+function PypiMirrorField({
+  t,
+  value,
+  onValueChange,
+}: {
+  t: DesktopMessages
+  value: string
+  onValueChange: (value: string) => void
+}) {
+  const defaultOption = PYPI_MIRROR_OPTIONS[0]!
+  const current = PYPI_MIRROR_OPTIONS.find((option) => option.url === value) ?? defaultOption
+  const label = pypiMirrorLabel(t, current.id)
+
+  return (
+    <Field orientation="horizontal">
+      <FieldContent>
+        <FieldTitle>{t.uvPypiMirror}</FieldTitle>
+        <FieldDescription>{t.uvPypiMirrorDescription}</FieldDescription>
+      </FieldContent>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button type="button" variant="outline" className="min-w-44 justify-between">
+            {label}
+            <ChevronDown data-icon="inline-end" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-64">
+          <DropdownMenuRadioGroup value={current.url} onValueChange={onValueChange}>
+            {PYPI_MIRROR_OPTIONS.map((option) => (
+              <DropdownMenuRadioItem key={option.id} value={option.url}>
+                <span>{pypiMirrorLabel(t, option.id)}</span>
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </Field>
+  )
+}
+
+function pypiMirrorLabel(t: DesktopMessages, id: string): string {
+  if (id === "tsinghua") return t.pypiTsinghua
+  if (id === "ustc") return t.pypiUstc
+  if (id === "bfsu") return t.pypiBfsu
+  if (id === "aliyun") return t.pypiAliyun
+  if (id === "tencent") return t.pypiTencent
+  if (id === "huawei") return t.pypiHuawei
+  return t.pypiDefault
 }
 
 function SettingInputField({

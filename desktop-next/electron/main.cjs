@@ -59,6 +59,8 @@ const state = {
   settingsPath: "",
   connectorDir: "",
   uvPath: "",
+  uvMissing: false,
+  uvPypiIndexUrl: "",
   locale: "system",
   appearance: "system",
   usingTemporaryCredential: false,
@@ -189,6 +191,13 @@ function defaultUvPath() {
   return resolveExecutablePath(process.platform === "win32" ? "uv.exe" : "uv");
 }
 
+function refreshUvState() {
+  const uvPath = resolveExecutablePath(state.uvPath) || defaultUvPath();
+  state.uvMissing = !uvPath;
+  if (uvPath) state.uvPath = uvPath;
+  return uvPath;
+}
+
 function connectorEnv() {
   const env = {
     ...process.env,
@@ -197,6 +206,11 @@ function connectorEnv() {
     PYTHONUNBUFFERED: "1",
     FORCE_COLOR: "0",
   };
+  const pypiIndexUrl = typeof state.uvPypiIndexUrl === "string" ? state.uvPypiIndexUrl.trim() : "";
+  if (pypiIndexUrl) {
+    env.UV_INDEX_URL = pypiIndexUrl;
+    env.PIP_INDEX_URL = pypiIndexUrl;
+  }
   if (process.platform === "win32") {
     delete env.Path;
     delete env.path;
@@ -328,6 +342,8 @@ function trayIcon() {
 function loadDesktopSettings() {
   const settings = readJson(state.settingsPath, {});
   state.uvPath = resolveExecutablePath(settings.uvPath) || resolveExecutablePath(settings.uvCommand) || defaultUvPath();
+  state.uvMissing = !state.uvPath;
+  state.uvPypiIndexUrl = typeof settings.uvPypiIndexUrl === "string" ? settings.uvPypiIndexUrl.trim() : "";
   if (typeof settings.locale === "string" && ["system", "en", "zh"].includes(settings.locale)) state.locale = settings.locale;
   if (typeof settings.appearance === "string" && ["system", "light", "dark"].includes(settings.appearance)) state.appearance = settings.appearance;
   state.logChunkSizeKb = clampNumber(settings.logChunkSizeKb, DEFAULT_LOG_CHUNK_SIZE_KB, 64, 10240);
@@ -340,6 +356,8 @@ function loadDesktopSettings() {
 
 function saveDesktopSettings(next = {}) {
   if (typeof next.uvPath === "string") state.uvPath = resolveExecutablePath(next.uvPath) || next.uvPath.trim();
+  if (typeof next.uvPypiIndexUrl === "string") state.uvPypiIndexUrl = next.uvPypiIndexUrl.trim();
+  refreshUvState();
   if (typeof next.locale === "string" && ["system", "en", "zh"].includes(next.locale)) state.locale = next.locale;
   if (typeof next.appearance === "string" && ["system", "light", "dark"].includes(next.appearance)) state.appearance = next.appearance;
   if (next.logChunkSizeKb != null) state.logChunkSizeKb = clampNumber(next.logChunkSizeKb, state.logChunkSizeKb, 64, 10240);
@@ -352,6 +370,7 @@ function saveDesktopSettings(next = {}) {
   }
   writeJson(state.settingsPath, {
     uvPath: state.uvPath,
+    uvPypiIndexUrl: state.uvPypiIndexUrl,
     locale: state.locale,
     appearance: state.appearance,
     logChunkSizeKb: state.logChunkSizeKb,
@@ -649,9 +668,10 @@ function startRpcProcess() {
   }
 
   const args = ["run", "--project", state.connectorDir, "anywhere-cli", "rpc", "--config", state.configPath];
-  const uvPath = resolveExecutablePath(state.uvPath);
+  const uvPath = refreshUvState();
   if (!uvPath || !path.isAbsolute(uvPath)) {
-    appendLog({ level: "ERROR", message: "uv executable path is not configured.", time: new Date().toISOString() });
+    mergeConnectorState({ status: "stopped", running: false, pairing: false, uvMissing: true });
+    appendLog({ level: "ERROR", message: "uv executable is not installed or could not be found.", time: new Date().toISOString() });
     return;
   }
   state.uvPath = uvPath;
@@ -854,11 +874,16 @@ function quitApp() {
 }
 
 ipcMain.handle("connector:getState", async () => {
+  if (state.uvMissing) return publicState();
   const next = await rpcRequest("connector.getState");
   mergeConnectorState(next);
   return publicState();
 });
 ipcMain.handle("connector:getConfig", async () => {
+  if (state.uvMissing) {
+    if (fs.existsSync(state.configPath)) return readJson(state.configPath, {});
+    return {};
+  }
   const config = await rpcRequest("connector.getConfig");
   if (config && typeof config.serverUrl === "string") state.serverUrl = config.serverUrl;
   return config;
@@ -897,6 +922,7 @@ ipcMain.handle("connector:openServer", async (_event, serverUrl) => {
   if (!/^https?:\/\//i.test(url)) throw new Error("Server URL is not configured.");
   return shell.openExternal(url);
 });
+ipcMain.handle("connector:openUvInstall", () => shell.openExternal("https://docs.astral.sh/uv/getting-started/installation/"));
 ipcMain.handle("connector:getLogs", (_event, options) => readLogPage(options));
 ipcMain.handle("connector:clearLogs", () => clearLogFiles());
 

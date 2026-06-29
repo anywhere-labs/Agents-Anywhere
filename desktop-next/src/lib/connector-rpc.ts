@@ -17,6 +17,8 @@ export type ConnectorState = {
   openAtLogin?: boolean
   startConnectorOnLaunch?: boolean
   uvPath?: string
+  uvMissing?: boolean
+  uvPypiIndexUrl?: string
   locale?: "system" | "en" | "zh" | string
   appearance?: "system" | "light" | "dark" | string
   usingTemporaryCredential?: boolean
@@ -60,6 +62,7 @@ export type DesktopSettings = {
   openAtLogin?: boolean
   startConnectorOnLaunch?: boolean
   uvPath?: string
+  uvPypiIndexUrl?: string
   locale?: "system" | "en" | "zh"
   appearance?: "system" | "light" | "dark"
   logChunkSizeKb?: number
@@ -88,6 +91,7 @@ export type ConnectorDesktopApi = {
   clearCredentials: () => Promise<ConnectorState>
   openConfigFolder: () => Promise<string>
   openServer: (serverUrl: string) => Promise<void>
+  openUvInstall: () => Promise<void>
   getLogs: (options?: { beforeSeq?: number | null; afterSeq?: number | null; pageSize?: number }) => Promise<LogPage>
   clearLogs: () => Promise<LogPage>
   onState: (callback: (state: ConnectorState) => void) => () => void
