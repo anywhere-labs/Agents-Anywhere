@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Copy, Check, Loader2, CheckCircle2, ArrowLeft, MonitorUp } from "lucide-react"
+import { Copy, Check, Loader2, CheckCircle2, ArrowLeft, ExternalLink, MonitorUp } from "lucide-react"
 import { toast } from "sonner"
 import {
   Dialog,
@@ -35,6 +35,7 @@ import { useTranslations } from "next-intl"
 // ── Readable name generator ────────────────────────────────
 const ADJECTIVES = ["amber", "brisk", "calm", "deft", "eager", "fair", "gilt", "hale", "jade", "keen", "lush", "mild", "neat", "opal", "pine", "rose", "sage", "teal", "umber", "vivid"]
 const NOUNS = ["badger", "birch", "brook", "canopy", "cedar", "clover", "cobalt", "condor", "creek", "daisy", "falcon", "fern", "finch", "glade", "harbor", "heron", "linden", "magpie", "maple", "marsh"]
+const GITHUB_RELEASES_URL = "https://github.com/anywhere-labs/Agents-Anywhere/releases"
 
 function randomName(): string {
   const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)]
@@ -78,7 +79,7 @@ function desktopConnectorUrl(serverUrl: string, connectorId: string, connectorTo
 }
 
 // ── Types ──────────────────────────────────────────────────
-type Step = "name" | "method" | "token" | "paircode" | "success"
+type Step = "name" | "method" | "desktop" | "token" | "paircode" | "success"
 
 interface Props {
   open: boolean
@@ -242,6 +243,12 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
     startConnectorPolling(connectorId)
   }
 
+  const handleSelectDesktop = () => {
+    if (!connectorId) return
+    stopPolling()
+    setStep("desktop")
+  }
+
   const handleSelectPairCode = () => {
     setStep("paircode")
   }
@@ -295,7 +302,8 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
   const desktopLaunchUrl = connectorId && token ? desktopConnectorUrl(serverUrl, connectorId, token) : ""
 
   const openDesktopConnector = () => {
-    if (!desktopLaunchUrl) return
+    if (!desktopLaunchUrl || !connectorId) return
+    startConnectorPolling(connectorId)
     window.location.href = desktopLaunchUrl
   }
 
@@ -347,6 +355,18 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
                 <Button
                   type="button"
                   variant="outline"
+                  onClick={handleSelectDesktop}
+                  className="h-auto w-full min-w-0 flex-col items-start gap-0.5 whitespace-normal px-4 py-3 text-left"
+                >
+                  <span className="flex min-w-0 items-center gap-2 font-medium">
+                    <MonitorUp className="size-4" />
+                    {t("desktopTitle")}
+                  </span>
+                  <span className="min-w-0 break-words text-sm text-muted-foreground">{t("desktopDescription")}</span>
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
                   onClick={handleSelectToken}
                   className="h-auto w-full min-w-0 flex-col items-start gap-0.5 whitespace-normal px-4 py-3 text-left"
                 >
@@ -366,6 +386,50 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
             </>
           )}
 
+          {/* ── Step: Desktop ── */}
+          {step === "desktop" && (
+            <>
+              <DialogHeader>
+                <DialogTitle>{t("desktopStepTitle")}</DialogTitle>
+                <DialogDescription>
+                  {t("desktopStepDescription", { name })}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="flex flex-col gap-3 py-2">
+                <div className="rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">
+                  <p>{t("desktopInstallHint")}</p>
+                  <Button type="button" variant="link" className="mt-2 h-auto p-0" asChild>
+                    <a href={GITHUB_RELEASES_URL} target="_blank" rel="noreferrer">
+                      {t("githubReleases")}
+                      <ExternalLink className="size-3.5" />
+                    </a>
+                  </Button>
+                </div>
+                <Button
+                  type="button"
+                  onClick={openDesktopConnector}
+                  disabled={!desktopLaunchUrl || polling}
+                  className="w-full justify-start"
+                >
+                  {polling ? <Loader2 className="size-4 animate-spin" /> : <MonitorUp className="size-4" />}
+                  {t("desktopStarted")}
+                </Button>
+                {polling ? <PollingIndicator label={t("waitingOnline")} /> : null}
+              </div>
+              <DialogFooter>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => { stopPolling(); setStep("method") }}
+                  className="gap-1.5"
+                >
+                  <ArrowLeft className="size-3.5" />
+                  {tCommon("back")}
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+
           {/* ── Step: Token ── */}
           {step === "token" && (
             <>
@@ -376,15 +440,6 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
                 </DialogDescription>
               </DialogHeader>
               <div className="flex flex-col gap-3 py-2">
-                <Button
-                  type="button"
-                  onClick={openDesktopConnector}
-                  disabled={!desktopLaunchUrl}
-                  className="w-full justify-start"
-                >
-                  <MonitorUp className="size-4" />
-                  {t("openDesktopConnector")}
-                </Button>
                 <CodeBlock code={tokenCommand} />
                 <PollingIndicator label={t("waitingOnline")} />
               </div>
