@@ -112,8 +112,10 @@ function DesktopResizableShell() {
 
   const collapseSidebar = React.useCallback(() => {
     const panel = sidebarPanelRef.current
-    setOpen(false)
-    panel?.collapse()
+    if (panel && !panel.isCollapsed()) {
+      panel.collapse()
+    }
+    setOpen(false, { persist: false })
   }, [setOpen])
 
   const sidebarControls = React.useMemo(() => ({ collapseSidebar }), [collapseSidebar])
@@ -123,8 +125,10 @@ function DesktopResizableShell() {
       <ResizablePanelGroup
         id="agents-anywhere-dashboard-sidebar"
         defaultLayout={defaultLayout}
-        onLayoutChanged={(layout) => {
-          window.localStorage.setItem(SIDEBAR_LAYOUT_STORAGE_KEY, JSON.stringify(layout))
+        onLayoutChanged={(layout, meta) => {
+          if (meta.isUserInteraction) {
+            window.localStorage.setItem(SIDEBAR_LAYOUT_STORAGE_KEY, JSON.stringify(layout))
+          }
         }}
         direction="horizontal"
         className="h-svh min-h-0 w-full overflow-hidden overscroll-none bg-background"
@@ -140,7 +144,7 @@ function DesktopResizableShell() {
           onResize={(size) => {
             const nextOpen = size.inPixels > 1
             if (nextOpen !== open) {
-              setOpen(nextOpen)
+              setOpen(nextOpen, { persist: false })
             }
           }}
           className="min-w-0"
