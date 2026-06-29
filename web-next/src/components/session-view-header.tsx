@@ -53,12 +53,12 @@ export function SessionViewHeader({
   const { isMobile, toggleSidebar } = useSidebar()
   const sidebarControls = useDashboardSidebarControls()
   const tActions = useTranslations("dashboard.actions")
-  const collapseSidebar = React.useCallback(() => {
+  const toggleDashboardSidebar = React.useCallback(() => {
     if (isMobile) {
       toggleSidebar()
       return
     }
-    sidebarControls?.collapseSidebar()
+    sidebarControls?.toggleSidebar()
   }, [isMobile, sidebarControls, toggleSidebar])
 
   return (
@@ -72,8 +72,8 @@ export function SessionViewHeader({
           variant="ghost"
           size="icon-sm"
           type="button"
-          aria-label={tActions("collapse")}
-          onClick={collapseSidebar}
+          aria-label={sidebarControls?.open === false ? tActions("expand") : tActions("collapse")}
+          onClick={toggleDashboardSidebar}
           className="shrink-0 text-muted-foreground hover:text-foreground"
         >
           <PanelLeft className="size-4" />
