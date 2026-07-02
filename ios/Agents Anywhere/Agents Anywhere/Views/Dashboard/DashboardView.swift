@@ -389,7 +389,6 @@ private struct NewSessionSheet: View {
     let onCreated: (SessionSummary) -> Void
 
     @State private var prompt = ""
-    @State private var isPromptFocused = false
     @State private var selectedConnectorId: String?
     @State private var selectedRuntime = ""
     @State private var homeWorkspacePath: String?
@@ -542,9 +541,6 @@ private struct NewSessionSheet: View {
             children: menuActions(for: field, selected: runtimeSettings[key]) { value in
                 runtimeSettings[key] = value
             },
-            handler: {
-                loadRuntimeSettingsIfNeeded()
-            },
         )
     }
 
@@ -678,7 +674,6 @@ private struct NewSessionSheet: View {
 
                     LiquidGlassMessageInputBar(
                         text: $prompt,
-                        isFocused: $isPromptFocused,
                         isSending: isCreating,
                         hasPendingAttachments: !pendingUploads.isEmpty,
                         placeholder: selectedConnector == nil ? "No online agent" : "Message to agent",

@@ -19,7 +19,7 @@ struct SessionDetailView: View {
     @State private var isSending = false
     @State private var isInterrupting = false
     @State private var messageText = ""
-    @State private var isComposerFocused = false
+    @State private var composerDismissRequest = 0
     @State private var errorMessage: String?
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var pendingUploads: [AttachmentUpload] = []
@@ -159,13 +159,6 @@ struct SessionDetailView: View {
                     dismissComposerKeyboard()
                 },
             )
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 12).onChanged { value in
-                    if value.translation.height > 8 {
-                        dismissComposerKeyboard()
-                    }
-                },
-            )
             .onChange(of: displayEntries.last?.id) { _, _ in
                 guard !displayEntries.isEmpty else { return }
                 if hasPositionedInitialScroll {
@@ -240,7 +233,7 @@ struct SessionDetailView: View {
                 }
                 LiquidGlassMessageInputBar(
                     text: $messageText,
-                    isFocused: $isComposerFocused,
+                    dismissRequest: composerDismissRequest,
                     isSending: isSending,
                     hasPendingAttachments: !pendingUploads.isEmpty,
                     placeholder: messageInputPlaceholder,
@@ -399,9 +392,6 @@ struct SessionDetailView: View {
             children: menuActions(for: field, selected: runtimeSettingsObject[key]) { value in
                 Task { await patchRuntimeSetting(key: key, value: value) }
             },
-            handler: {
-                Task { await loadRuntimeSettingsIfNeeded() }
-            },
         )
     }
 
@@ -453,8 +443,7 @@ struct SessionDetailView: View {
     }
 
     private func dismissComposerKeyboard() {
-        guard isComposerFocused else { return }
-        isComposerFocused = false
+        composerDismissRequest += 1
     }
 
     private func markRead() async {
@@ -2483,17 +2472,14 @@ private struct MessageInputActionMenuContent: View {
                 Label(action.title, systemImage: action.systemImage)
             }
             .disabled(isDisabled)
-            .onAppear {
-                action.handler()
-            }
         }
     }
 }
 
 struct LiquidGlassMessageInputBar: View {
     @Binding var text: String
-    @Binding var isFocused: Bool
 
+    var dismissRequest = 0
     var isSending = false
     var hasPendingAttachments = false
     var placeholder = "Message"
@@ -2504,30 +2490,17 @@ struct LiquidGlassMessageInputBar: View {
     var interrupt: MessageInputInterrupt?
 
     @FocusState private var editorFocused: Bool
-    @State private var measuredEditorTextHeight: CGFloat = 0
     @Environment(\.colorScheme) private var colorScheme
 
     private let composerHeight: CGFloat = 50
     private let composerCornerRadius: CGFloat = 25
     private let composerVerticalPadding: CGFloat = 8
-    private let editorVerticalPadding: CGFloat = 8
+    private let editorVerticalPadding: CGFloat = 3
     private let maxEditorHeight: CGFloat = 116
     private let restingGap: CGFloat = 8
 
     private var restingEditorHeight: CGFloat {
         composerHeight - composerVerticalPadding * 2 - editorVerticalPadding * 2
-    }
-
-    private var editorHeight: CGFloat {
-        min(max(restingEditorHeight, measuredEditorTextHeight), maxEditorHeight)
-    }
-
-    private var editorMeasurementText: String {
-        guard !text.isEmpty else { return " " }
-        if text.hasSuffix("\n") || text.hasSuffix("\r") {
-            return text + " "
-        }
-        return text
     }
 
     private var submitContext: MessageInputSubmitContext {
@@ -2556,19 +2529,9 @@ struct LiquidGlassMessageInputBar: View {
         .padding(.bottom, 2)
         .animation(.smooth(duration: 0.22), value: canPerformSubmit)
         .animation(.smooth(duration: 0.22), value: showInterrupt)
-        .animation(.smooth(duration: 0.18), value: isFocused)
-        .onChange(of: editorFocused) { _, focused in
-            if isFocused != focused {
-                isFocused = focused
-            }
-        }
-        .onChange(of: isFocused) { _, focused in
-            if editorFocused != focused {
-                editorFocused = focused
-            }
-        }
-        .onPreferenceChange(ComposerTextHeightPreferenceKey.self) { height in
-            measuredEditorTextHeight = height
+        .animation(.smooth(duration: 0.18), value: editorFocused)
+        .onChange(of: dismissRequest) { _, _ in
+            editorFocused = false
         }
     }
 
@@ -2602,51 +2565,15 @@ struct LiquidGlassMessageInputBar: View {
 
     private var inputGlassField: some View {
         HStack(alignment: .bottom, spacing: 8) {
-            ZStack(alignment: .topLeading) {
-                TextEditor(text: $text)
-                    .focused($editorFocused)
-                    .scrollContentBackground(.hidden)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .frame(height: editorHeight)
-                    .padding(.vertical, editorVerticalPadding)
-                    .background(Color.clear)
-                    .background(alignment: .topLeading) {
-                        Text(editorMeasurementText)
-                            .font(.body)
-                            .lineLimit(nil)
-                            .padding(.horizontal, 5)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .opacity(0)
-                            .background {
-                                GeometryReader { proxy in
-                                    Color.clear.preference(
-                                        key: ComposerTextHeightPreferenceKey.self,
-                                        value: proxy.size.height,
-                                    )
-                                }
-                            }
-                            .allowsHitTesting(false)
-                            .accessibilityHidden(true)
-                    }
-                    .overlay(alignment: .topLeading) {
-                        if text.isEmpty {
-                            Text(placeholder)
-                                .font(.body)
-                                .lineLimit(1)
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 8)
-                                .allowsHitTesting(false)
-                        }
-                    }
-                    .simultaneousGesture(
-                        TapGesture().onEnded {
-                            focusEditor()
-                        },
-                    )
-            }
+            ComposerGrowingTextEditor(
+                text: $text,
+                isFocused: $editorFocused,
+                placeholder: placeholder,
+                minHeight: restingEditorHeight,
+                maxHeight: maxEditorHeight,
+                verticalPadding: editorVerticalPadding,
+                onTap: focusEditor,
+            )
             .contentShape(Rectangle())
             .onTapGesture {
                 focusEditor()
@@ -2727,9 +2654,82 @@ struct LiquidGlassMessageInputBar: View {
 
     private func focusEditor() {
         editorFocused = true
-        isFocused = true
-        DispatchQueue.main.async {
-            editorFocused = true
+    }
+}
+
+private struct ComposerGrowingTextEditor: View {
+    @Binding var text: String
+    var isFocused: FocusState<Bool>.Binding
+    let placeholder: String
+    let minHeight: CGFloat
+    let maxHeight: CGFloat
+    let verticalPadding: CGFloat
+    let onTap: () -> Void
+
+    @ScaledMetric(relativeTo: .body) private var minimumSingleLineHeight: CGFloat = 28
+    @State private var measuredTextHeight: CGFloat = 0
+
+    private var editorHeight: CGFloat {
+        let singleLineHeight = max(minHeight, minimumSingleLineHeight)
+        return min(max(singleLineHeight, measuredTextHeight), maxHeight)
+    }
+
+    private var measurementText: String {
+        guard !text.isEmpty else { return " " }
+        if text.hasSuffix("\n") || text.hasSuffix("\r") {
+            return text + " "
+        }
+        return text
+    }
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            TextEditor(text: $text)
+                .focused(isFocused)
+                .scrollContentBackground(.hidden)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .frame(height: editorHeight)
+                .padding(.vertical, verticalPadding)
+                .background(Color.clear)
+                .background(alignment: .topLeading) {
+                    Text(measurementText)
+                        .font(.body)
+                        .lineLimit(nil)
+                        .padding(.horizontal, 5)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .opacity(0)
+                        .background {
+                            GeometryReader { proxy in
+                                Color.clear.preference(
+                                    key: ComposerTextHeightPreferenceKey.self,
+                                    value: proxy.size.height,
+                                )
+                            }
+                        }
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+                .overlay(alignment: .topLeading) {
+                    if text.isEmpty {
+                        Text(placeholder)
+                            .font(.body)
+                            .lineLimit(1)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, verticalPadding)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .simultaneousGesture(
+                    TapGesture().onEnded {
+                        onTap()
+                    },
+                )
+        }
+        .onPreferenceChange(ComposerTextHeightPreferenceKey.self) { height in
+            measuredTextHeight = height
         }
     }
 }
