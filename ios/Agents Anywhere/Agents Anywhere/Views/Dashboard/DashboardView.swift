@@ -4,6 +4,13 @@ import UIKit
 
 private let newSessionAttachmentOnlyPrompt = "Please review the attached file."
 
+private enum RootTab {
+    static let sessions = "sessions"
+    static let devices = "devices"
+    static let me = "me"
+    static let newSession = "newSession"
+}
+
 struct DashboardView: View {
     @EnvironmentObject private var appState: AppState
     @State private var isShowingNewSession = false
@@ -33,9 +40,10 @@ private struct RootTabsView: View {
     let onNewSession: () -> Void
 
     @SceneStorage("selectedRootTab")
-    private var selectedTab: String = "sessions"
+    private var selectedTab: String = RootTab.sessions
     @State private var sessionPath: [SessionSummary] = []
-    @State private var previousTab: String = "sessions"
+    @State private var previousTab: String = RootTab.sessions
+    @State private var isRestoringFromActionTab = false
 
     private var tabTransition: AnyTransition {
         let edge: Edge = selectedTabSortOrder >= previousTabSortOrder ? .trailing : .leading
@@ -55,43 +63,72 @@ private struct RootTabsView: View {
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            Tab("Sessions", systemImage: "rectangle.stack.fill", value: "sessions") {
+            Tab("Sessions", systemImage: "rectangle.stack.fill", value: RootTab.sessions) {
                 NavigationStack(path: $sessionPath) {
-                    SessionsView(onNewSession: onNewSession)
+                    SessionsView {
+                        selectedTab = RootTab.me
+                    }
                         .navigationDestination(for: SessionSummary.self) { session in
                             SessionDetailView(initialSession: session)
                         }
                 }
-                .id("sessions")
+                .id(RootTab.sessions)
                 .transition(tabTransition)
             }
 
-            Tab("Devices", systemImage: "desktopcomputer", value: "devices") {
+            Tab("Devices", systemImage: "desktopcomputer", value: RootTab.devices) {
                 NavigationStack {
                     DevicesView()
                         .navigationTitle("Devices")
                 }
-                .id("devices")
+                .id(RootTab.devices)
                 .transition(tabTransition)
             }
 
-            Tab("Me", systemImage: "person.crop.circle.fill", value: "me") {
+            Tab("Me", systemImage: "person.crop.circle.fill", value: RootTab.me) {
                 NavigationStack {
                     MeView()
                         .navigationTitle("Me")
                 }
-                .id("me")
+                .id(RootTab.me)
                 .transition(tabTransition)
+            }
+
+            if #available(iOS 27.0, *) {
+                Tab("New", systemImage: "plus", value: RootTab.newSession, role: .prominent) {
+                    Color.clear
+                }
+            } else {
+                Tab("New", systemImage: "plus", value: RootTab.newSession) {
+                    Color.clear
+                }
             }
         }
         .animation(.smooth(duration: 0.22), value: selectedTab)
-        .onChange(of: selectedTab) { oldValue, _ in
+        .onAppear {
+            if selectedTab == RootTab.newSession {
+                selectedTab = RootTab.sessions
+            }
+        }
+        .onChange(of: selectedTab) { oldValue, newValue in
+            if isRestoringFromActionTab {
+                isRestoringFromActionTab = false
+                return
+            }
+
+            if newValue == RootTab.newSession {
+                isRestoringFromActionTab = true
+                selectedTab = oldValue == RootTab.newSession ? RootTab.sessions : oldValue
+                onNewSession()
+                return
+            }
+
             previousTab = oldValue
         }
         .onChange(of: sessionToOpen) { _, session in
             guard let session else { return }
             previousTab = selectedTab
-            selectedTab = "sessions"
+            selectedTab = RootTab.sessions
             sessionPath = [session]
             sessionToOpen = nil
         }
@@ -99,11 +136,11 @@ private struct RootTabsView: View {
 
     private func tabSortOrder(_ tab: String) -> Int {
         switch tab {
-        case "sessions":
+        case RootTab.sessions:
             return 0
-        case "devices":
+        case RootTab.devices:
             return 1
-        case "me":
+        case RootTab.me:
             return 2
         default:
             return 0
@@ -115,7 +152,7 @@ private struct SessionsView: View {
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var appState: AppState
 
-    let onNewSession: () -> Void
+    let onShowMe: () -> Void
 
     @State private var activeFilter: SessionFilter?
     @State private var selectedStatus = "All"
@@ -160,9 +197,11 @@ private struct SessionsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button(action: onNewSession) {
-                    Image(systemName: "plus")
+                Button(action: onShowMe) {
+                    UserAvatarView(me: appState.me, size: 28)
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Account")
             }
         }
         .onAppear {
@@ -325,9 +364,7 @@ private struct MeView: View {
             } else {
                 Section {
                     HStack(spacing: 14) {
-                        Image(systemName: "person.crop.circle.fill")
-                            .font(.system(size: 48))
-                            .foregroundStyle(.secondary)
+                        UserAvatarView(me: appState.me, size: 52)
 
                         VStack(alignment: .leading, spacing: 4) {
                             Text(appState.me?.userId ?? "")
@@ -354,6 +391,89 @@ private struct MeView: View {
                 }
             }
         }
+    }
+}
+
+private struct UserAvatarView: View {
+    let me: AuthMe?
+    let size: CGFloat
+
+    private var initials: String {
+        let value = me?.userId.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let prefix = value.prefix(2)
+        return prefix.isEmpty ? "AA" : String(prefix).uppercased()
+    }
+
+    var body: some View {
+        ZStack {
+            if let image = UIImage.avatarImage(from: me?.avatar) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else if let url = URL.avatarURL(from: me?.avatar) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case let .success(image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    default:
+                        fallback
+                    }
+                }
+            } else {
+                fallback
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(Circle())
+        .overlay {
+            Circle()
+                .strokeBorder(.quaternary, lineWidth: 1)
+        }
+    }
+
+    private var fallback: some View {
+        ZStack {
+            Circle()
+                .fill(.primary)
+            Text(initials)
+                .font(.system(size: max(11, size * 0.36), weight: .semibold))
+                .foregroundStyle(Color(.systemBackground))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
+    }
+}
+
+private extension UIImage {
+    static func avatarImage(from source: String?) -> UIImage? {
+        guard let source else { return nil }
+        let value = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+
+        if let comma = value.firstIndex(of: ",") {
+            let metadata = value[..<comma].lowercased()
+            guard metadata.hasPrefix("data:image"), metadata.contains("base64") else {
+                return nil
+            }
+            let payload = String(value[value.index(after: comma)...]).removingPercentEncoding
+                ?? String(value[value.index(after: comma)...])
+            guard let data = Data(base64Encoded: payload) else { return nil }
+            return UIImage(data: data)
+        }
+
+        guard let data = Data(base64Encoded: value) else { return nil }
+        return UIImage(data: data)
+    }
+}
+
+private extension URL {
+    static func avatarURL(from source: String?) -> URL? {
+        guard let source else { return nil }
+        let value = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, !value.lowercased().hasPrefix("data:") else { return nil }
+        return URL(string: value)
     }
 }
 
