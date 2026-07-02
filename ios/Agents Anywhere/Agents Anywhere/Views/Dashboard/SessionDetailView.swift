@@ -14,10 +14,7 @@ struct SessionDetailView: View {
     let initialSession: SessionSummary
 
     @State private var session: SessionSummary
-    @State private var itemsById: [String: TimelineItem] = [:]
-    @State private var approvals: [Approval] = []
-    @State private var optimisticItems: [TimelineItem] = []
-    @State private var nextSeq = 0
+    @State private var timeline = SessionTimelineState()
     @State private var isLoading = true
     @State private var isSending = false
     @State private var isInterrupting = false
@@ -46,43 +43,7 @@ struct SessionDetailView: View {
     @State private var sseTask: Task<Void, Never>?
     @State private var pollTask: Task<Void, Never>?
 
-    private var timelineItems: [TimelineItem] {
-        let real = itemsById.values.sorted { lhs, rhs in
-            lhs.orderSeq == rhs.orderSeq ? lhs.updatedSeq < rhs.updatedSeq : lhs.orderSeq < rhs.orderSeq
-        }
-        return mergeOptimisticItems(real: real, optimistic: optimisticItems)
-    }
-
-    private var displayEntries: [ChatEntry] {
-        let pendingApprovals = approvals.filter { $0.status == "pending" }
-        let approvalsByTarget = Dictionary(
-            pendingApprovals.compactMap { approval -> (String, Approval)? in
-                guard let targetItemId = approval.targetItemId else { return nil }
-                return (targetItemId, approval)
-            },
-            uniquingKeysWith: { first, _ in first },
-        )
-        var entries = timelineItems.compactMap { item -> ChatEntry? in
-            if item.type == "message", item.role == "user" || item.role == "assistant" {
-                return .message(item)
-            }
-            if item.type == "tool" {
-                return .tool(item, approvalsByTarget[item.id])
-            }
-            if item.type == "artifact" {
-                if item.kind == "diff" { return nil }
-                return .artifact(item)
-            }
-            if item.type == "system" {
-                return .system(item)
-            }
-            return nil
-        }
-        entries.append(contentsOf: pendingApprovals.filter { $0.targetItemId == nil }.map(ChatEntry.approval))
-        return entries.sorted { lhs, rhs in
-            lhs.sortKey < rhs.sortKey
-        }
-    }
+    private var displayEntries: [ChatEntry] { timeline.displayEntries }
 
     private var canSend: Bool {
         return !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingUploads.isEmpty
@@ -592,11 +553,11 @@ struct SessionDetailView: View {
             }
         }
         do {
-            var afterSeq = replace ? 0 : nextSeq
+            var afterSeq = replace ? 0 : timeline.nextSeq
             var collected: [TimelineItem] = []
             var latestApprovals: [Approval]?
             var latestSession: SessionSummary?
-            var latestNextSeq = nextSeq
+            var latestNextSeq = timeline.nextSeq
             var hasMore = true
 
             while hasMore {
@@ -699,25 +660,15 @@ struct SessionDetailView: View {
         nextSeq newNextSeq: Int?,
         replaceItems: Bool,
     ) {
-        if replaceItems {
-            itemsById = [:]
-        }
-        for item in newItems {
-            let existing = itemsById[item.id]
-            if existing != item, existing == nil || existing!.updatedSeq <= item.updatedSeq {
-                itemsById[item.id] = item
-            }
-        }
-        if let newApprovals, approvals != newApprovals {
-            approvals = newApprovals
-        }
+        timeline.applyDelta(
+            items: newItems,
+            approvals: newApprovals,
+            nextSeq: newNextSeq,
+            replaceItems: replaceItems,
+        )
         if let newSession, session != newSession {
             session = newSession
         }
-        if let newNextSeq {
-            nextSeq = max(nextSeq, newNextSeq)
-        }
-        pruneOptimisticItems()
     }
 
     private func sendMessage() async {
@@ -762,7 +713,7 @@ struct SessionDetailView: View {
                 attachments: uploaded,
                 createdAt: now,
             )
-            optimisticItems.append(optimistic)
+            timeline.appendOptimistic(optimistic)
             messageText = ""
             pendingUploads = []
 
@@ -774,14 +725,10 @@ struct SessionDetailView: View {
                 clientMessageId: tempId,
             )
 
-            optimisticItems = optimisticItems.map {
-                $0.id == tempId ? $0.withStatus("running") : $0
-            }
+            timeline.updateOptimisticStatus(id: tempId, status: "running")
             errorMessage = nil
         } catch {
-            optimisticItems = optimisticItems.map {
-                $0.id == tempId ? $0.withStatus("failed") : $0
-            }
+            timeline.updateOptimisticStatus(id: tempId, status: "failed")
             errorMessage = error.localizedDescription
         }
         isSending = false
@@ -810,7 +757,7 @@ struct SessionDetailView: View {
 
         do {
             _ = try await api.resolveApproval(token: token, approvalId: approval.id, status: status)
-            approvals.removeAll { $0.id == approval.id }
+            timeline.removeApproval(id: approval.id)
             errorMessage = nil
             await loadState(replace: false)
         } catch {
@@ -835,12 +782,6 @@ struct SessionDetailView: View {
         }
     }
 
-    private func pruneOptimisticItems() {
-        optimisticItems.removeAll { optimistic in
-            guard optimistic.status != "failed" else { return false }
-            return itemsById.values.contains { $0.matchesOptimisticMessage(optimistic.id) }
-        }
-    }
 }
 
 private enum TakeoverIntent {
@@ -890,6 +831,96 @@ private enum ChatEntry: Identifiable {
         }
     }
 
+}
+
+private struct SessionTimelineState {
+    private var itemsById: [String: TimelineItem] = [:]
+    private var approvals: [Approval] = []
+    private var optimisticItems: [TimelineItem] = []
+    private(set) var nextSeq = 0
+
+    var timelineItems: [TimelineItem] {
+        let real = itemsById.values.sorted { lhs, rhs in
+            lhs.orderSeq == rhs.orderSeq ? lhs.updatedSeq < rhs.updatedSeq : lhs.orderSeq < rhs.orderSeq
+        }
+        return mergeOptimisticItems(real: real, optimistic: optimisticItems)
+    }
+
+    var displayEntries: [ChatEntry] {
+        let pendingApprovals = approvals.filter { $0.status == "pending" }
+        let approvalsByTarget = Dictionary(
+            pendingApprovals.compactMap { approval -> (String, Approval)? in
+                guard let targetItemId = approval.targetItemId else { return nil }
+                return (targetItemId, approval)
+            },
+            uniquingKeysWith: { first, _ in first },
+        )
+        var entries = timelineItems.compactMap { item -> ChatEntry? in
+            if item.type == "message", item.role == "user" || item.role == "assistant" {
+                return .message(item)
+            }
+            if item.type == "tool" {
+                return .tool(item, approvalsByTarget[item.id])
+            }
+            if item.type == "artifact" {
+                if item.kind == "diff" { return nil }
+                return .artifact(item)
+            }
+            if item.type == "system" {
+                return .system(item)
+            }
+            return nil
+        }
+        entries.append(contentsOf: pendingApprovals.filter { $0.targetItemId == nil }.map(ChatEntry.approval))
+        return entries.sorted { lhs, rhs in
+            lhs.sortKey < rhs.sortKey
+        }
+    }
+
+    mutating func applyDelta(
+        items newItems: [TimelineItem],
+        approvals newApprovals: [Approval]?,
+        nextSeq newNextSeq: Int?,
+        replaceItems: Bool,
+    ) {
+        if replaceItems {
+            itemsById = [:]
+        }
+        for item in newItems {
+            let existing = itemsById[item.id]
+            if existing != item, existing == nil || existing!.updatedSeq <= item.updatedSeq {
+                itemsById[item.id] = item
+            }
+        }
+        if let newApprovals, approvals != newApprovals {
+            approvals = newApprovals
+        }
+        if let newNextSeq {
+            nextSeq = max(nextSeq, newNextSeq)
+        }
+        pruneOptimisticItems()
+    }
+
+    mutating func appendOptimistic(_ item: TimelineItem) {
+        optimisticItems.append(item)
+    }
+
+    mutating func updateOptimisticStatus(id: String, status: String) {
+        optimisticItems = optimisticItems.map {
+            $0.id == id ? $0.withStatus(status) : $0
+        }
+    }
+
+    mutating func removeApproval(id: String) {
+        approvals.removeAll { $0.id == id }
+    }
+
+    private mutating func pruneOptimisticItems() {
+        optimisticItems.removeAll { optimistic in
+            guard optimistic.status != "failed" else { return false }
+            return itemsById.values.contains { $0.matchesOptimisticMessage(optimistic.id) }
+        }
+    }
 }
 
 private struct ChatEntryView: View {
