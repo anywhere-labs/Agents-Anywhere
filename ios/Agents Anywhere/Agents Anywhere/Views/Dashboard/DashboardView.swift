@@ -76,7 +76,6 @@ private struct RootTabsView: View {
             Tab("Devices", systemImage: "desktopcomputer", value: RootTab.devices) {
                 NavigationStack {
                     DevicesView()
-                        .navigationTitle("Devices")
                 }
                 .id(RootTab.devices)
                 .transition(tabTransition)
@@ -188,17 +187,6 @@ private struct SessionsView: View {
             MeView()
                 .navigationTitle("Me")
         }
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    isShowingAccount = true
-                } label: {
-                    UserAvatarView(me: appState.me, size: 28)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Account")
-            }
-        }
         .onAppear {
             Task { await appState.refreshDashboardIfStale() }
         }
@@ -224,9 +212,10 @@ private struct SessionsView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Sessions")
-                .font(.largeTitle.weight(.bold))
+        VStack(alignment: .leading, spacing: 12) {
+            DashboardPageHeader(title: "Sessions", me: appState.me) {
+                isShowingAccount = true
+            }
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
@@ -316,32 +305,89 @@ private struct SessionsView: View {
 
 private struct DevicesView: View {
     @EnvironmentObject private var appState: AppState
+    @State private var isShowingAccount = false
 
     var body: some View {
-        List {
-            if !appState.hasLoadedConnectors, let connectorsError = appState.connectorsError {
-                DashboardErrorView(message: connectorsError)
-                    .listRowSeparator(.hidden)
-            } else if !appState.hasLoadedConnectors {
-                DashboardLoadingView()
-                    .listRowSeparator(.hidden)
-            } else if appState.connectors.isEmpty {
-                ContentUnavailableView(
-                    "No Devices",
-                    systemImage: "desktopcomputer",
-                    description: Text("Pair a connector from the web console to see it here."),
-                )
-            } else {
-                Section("Devices") {
-                    ForEach(appState.connectors) { connector in
-                        DeviceRow(connector: connector)
-                    }
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 20) {
+                DashboardPageHeader(title: "Devices", me: appState.me) {
+                    isShowingAccount = true
                 }
+                .padding(.horizontal, 20)
+                .padding(.top, 24)
+
+                deviceList
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.bottom, 32)
+        }
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(isPresented: $isShowingAccount) {
+            MeView()
+                .navigationTitle("Me")
         }
         .refreshable {
             await appState.refreshDashboard()
         }
+    }
+
+    @ViewBuilder
+    private var deviceList: some View {
+        if !appState.hasLoadedConnectors, let connectorsError = appState.connectorsError {
+            DashboardErrorView(message: connectorsError)
+                .padding(.top, 80)
+        } else if !appState.hasLoadedConnectors {
+            DashboardLoadingView()
+                .padding(.top, 80)
+        } else if appState.connectors.isEmpty {
+            ContentUnavailableView(
+                "No Devices",
+                systemImage: "desktopcomputer",
+                description: Text("Pair a connector from the web console to see it here."),
+            )
+            .frame(maxWidth: .infinity)
+            .padding(.top, 80)
+        } else {
+            VStack(spacing: 0) {
+                ForEach(Array(appState.connectors.enumerated()), id: \.element.id) { index, connector in
+                    DeviceRow(connector: connector)
+                        .padding(.vertical, 13)
+
+                    if index < appState.connectors.count - 1 {
+                        Divider()
+                            .padding(.leading, 34)
+                    }
+                }
+            }
+            .padding(.horizontal, 20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+private struct DashboardPageHeader: View {
+    let title: String
+    let me: AuthMe?
+    let onAccount: () -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 16) {
+            Text(title)
+                .font(.largeTitle.weight(.bold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+
+            Spacer(minLength: 12)
+
+            Button {
+                onAccount()
+            } label: {
+                UserAvatarView(me: me, size: 34)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Account")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -1437,17 +1483,11 @@ private struct SessionRow: View {
         VStack(spacing: 0) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 VStack(alignment: .leading, spacing: 6) {
-                    ViewThatFits(in: .horizontal) {
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            title
+                    title
 
-                            HStack(spacing: 6) {
-                                SessionMetadataPill(title: deviceName)
-                                SessionMetadataPill(title: session.runtime)
-                            }
-                        }
-
-                        title
+                    HStack(spacing: 6) {
+                        SessionMetadataPill(title: deviceName)
+                        SessionMetadataPill(title: session.runtime)
                     }
 
                     Text(subtitle)
