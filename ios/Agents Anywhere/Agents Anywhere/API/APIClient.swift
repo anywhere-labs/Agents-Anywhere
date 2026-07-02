@@ -227,6 +227,31 @@ struct APIClient {
         )
     }
 
+    func getLatestSessionState(
+        token: String,
+        sessionId: String,
+        limit: Int = 100,
+    ) async throws -> SessionStateResponse {
+        let id = sessionId.urlPathComponentEncoded
+        return try await request(
+            "/sessions/\(id)/state?mode=latest&limit=\(limit)",
+            token: token,
+        )
+    }
+
+    func getSessionStateBefore(
+        token: String,
+        sessionId: String,
+        beforeOrderSeq: Int,
+        limit: Int = 100,
+    ) async throws -> SessionStateResponse {
+        let id = sessionId.urlPathComponentEncoded
+        return try await request(
+            "/sessions/\(id)/state?mode=before&beforeOrderSeq=\(beforeOrderSeq)&limit=\(limit)",
+            token: token,
+        )
+    }
+
     func sendSessionMessage(
         token: String,
         sessionId: String,

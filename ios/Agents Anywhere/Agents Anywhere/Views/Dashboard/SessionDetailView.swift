@@ -588,38 +588,36 @@ struct SessionDetailView: View {
             }
         }
         do {
-            var afterSeq = replace ? 0 : timeline.nextSeq
-            var collected: [TimelineItem] = []
-            var latestApprovals: [Approval]?
-            var latestSession: SessionSummary?
-            var latestNextSeq = timeline.nextSeq
-            var hasMore = true
-
-            while hasMore {
-                let response = try await api.getSessionState(
+            if replace {
+                let response = try await api.getLatestSessionState(
                     token: token,
                     sessionId: initialSession.id,
-                    afterSeq: afterSeq,
-                    limit: 500,
+                    limit: 100,
                 )
-                collected.append(contentsOf: response.items)
-                latestApprovals = response.approvals
-                latestSession = response.session
-                latestNextSeq = max(latestNextSeq, response.nextSeq)
-                hasMore = response.hasMore
-
-                guard let last = response.items.last, last.updatedSeq > afterSeq else {
-                    break
-                }
-                afterSeq = last.updatedSeq
+                applyDelta(
+                    items: response.items,
+                    approvals: response.approvals,
+                    session: response.session,
+                    nextSeq: response.nextSeq,
+                    hasMore: response.hasMore,
+                    replaceItems: true,
+                )
+                return
             }
 
+            let response = try await api.getSessionState(
+                token: token,
+                sessionId: initialSession.id,
+                afterSeq: timeline.nextSeq,
+                limit: 500,
+            )
             applyDelta(
-                items: collected,
-                approvals: latestApprovals,
-                session: latestSession,
-                nextSeq: latestNextSeq,
-                replaceItems: replace,
+                items: response.items,
+                approvals: response.approvals,
+                session: response.session,
+                nextSeq: response.nextSeq,
+                hasMore: response.hasMore,
+                replaceItems: false,
             )
         } catch {
             errorMessage = error.localizedDescription
@@ -659,6 +657,7 @@ struct SessionDetailView: View {
                                     approvals: event.approvals,
                                     session: event.session,
                                     nextSeq: event.nextSeq,
+                                    hasMore: nil,
                                     replaceItems: false,
                                 )
                             }
@@ -693,12 +692,14 @@ struct SessionDetailView: View {
         approvals newApprovals: [Approval]?,
         session newSession: SessionSummary?,
         nextSeq newNextSeq: Int?,
+        hasMore newHasMore: Bool?,
         replaceItems: Bool,
     ) {
         timeline.applyDelta(
             items: newItems,
             approvals: newApprovals,
             nextSeq: newNextSeq,
+            hasMore: newHasMore,
             replaceItems: replaceItems,
         )
         if let newSession, session != newSession {
@@ -894,6 +895,7 @@ private struct SessionTimelineState {
     private var approvals: [Approval] = []
     private var optimisticItems: [TimelineItem] = []
     private(set) var nextSeq = 0
+    private(set) var hasMore = false
 
     var timelineItems: [TimelineItem] {
         let real = itemsById.values.sorted { lhs, rhs in
@@ -937,6 +939,7 @@ private struct SessionTimelineState {
         items newItems: [TimelineItem],
         approvals newApprovals: [Approval]?,
         nextSeq newNextSeq: Int?,
+        hasMore newHasMore: Bool?,
         replaceItems: Bool,
     ) {
         if replaceItems {
@@ -953,6 +956,9 @@ private struct SessionTimelineState {
         }
         if let newNextSeq {
             nextSeq = max(nextSeq, newNextSeq)
+        }
+        if let newHasMore {
+            hasMore = newHasMore
         }
         pruneOptimisticItems()
     }
