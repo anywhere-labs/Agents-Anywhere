@@ -136,6 +136,22 @@ struct APIClient {
         )
     }
 
+    func patchSession(
+        token: String,
+        sessionId: String,
+        title: String? = nil,
+        pinned: Bool? = nil,
+        archived: Bool? = nil,
+    ) async throws -> SessionResponse {
+        let id = sessionId.urlPathComponentEncoded
+        return try await request(
+            "/sessions/\(id)",
+            method: "PATCH",
+            body: SessionPatchRequest(title: title, pinned: pinned, archived: archived),
+            token: token,
+        )
+    }
+
     func enableTakeover(token: String, sessionId: String) async throws -> TakeoverResponse {
         let id = sessionId.urlPathComponentEncoded
         return try await request(

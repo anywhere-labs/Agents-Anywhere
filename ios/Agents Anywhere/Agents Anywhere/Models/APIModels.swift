@@ -403,6 +403,12 @@ struct SessionResponse: Decodable {
     let serverTime: String
 }
 
+struct SessionPatchRequest: Encodable {
+    let title: String?
+    let pinned: Bool?
+    let archived: Bool?
+}
+
 struct SessionCreateRequest: Encodable {
     let connectorId: String
     let runtime: String

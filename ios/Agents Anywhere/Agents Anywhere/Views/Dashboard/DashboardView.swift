@@ -137,12 +137,42 @@ private struct RootTabsView: View {
     }
 }
 
+private struct SessionSection: Identifiable {
+    let id: String
+    let title: String
+    let sessions: [SessionSummary]
+
+    static func group(_ sessions: [SessionSummary]) -> [SessionSection] {
+        var assigned = Set<String>()
+
+        func take(_ id: String, title: String, where predicate: (SessionSummary) -> Bool) -> SessionSection? {
+            let matches = sessions.filter { session in
+                !assigned.contains(session.id) && predicate(session)
+            }
+            guard !matches.isEmpty else { return nil }
+            assigned.formUnion(matches.map(\.id))
+            return SessionSection(id: id, title: title, sessions: matches)
+        }
+
+        return [
+            take("running", title: "Running") { !$0.archived && $0.status == "running" },
+            take("waiting", title: "Waiting") { !$0.archived && $0.status == "waiting_approval" },
+            take("pinned", title: "Pinned") { !$0.archived && $0.pinned },
+            take("recent", title: "Recent") { !$0.archived },
+            take("archived", title: "Archived") { $0.archived },
+        ].compactMap { $0 }
+    }
+}
+
 private struct SessionsView: View {
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var appState: AppState
 
     @State private var activeFilter: SessionFilter?
     @State private var isShowingAccount = false
+    @State private var sessionBeingRenamed: SessionSummary?
+    @State private var renameText = ""
+    @State private var sessionActionError: String?
     @State private var selectedStatus = "All"
     @State private var selectedRuntime = "Any Runtime"
     @State private var selectedDevice = "Any Device"
@@ -173,6 +203,10 @@ private struct SessionsView: View {
         }
     }
 
+    private var groupedSessions: [SessionSection] {
+        SessionSection.group(filteredSessions)
+    }
+
     var body: some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 20) {
@@ -183,9 +217,20 @@ private struct SessionsView: View {
             .padding(.bottom, 32)
         }
         .navigationBarTitleDisplayMode(.inline)
-        .navigationDestination(isPresented: $isShowingAccount) {
-            MeView()
-                .navigationTitle("Me")
+        .sheet(isPresented: $isShowingAccount) {
+            NavigationStack {
+                MeView()
+                    .navigationTitle("Me")
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Done") {
+                                isShowingAccount = false
+                            }
+                        }
+                    }
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
         .onAppear {
             Task { await appState.refreshDashboardIfStale() }
@@ -208,6 +253,31 @@ private struct SessionsView: View {
             )
             .presentationDetents([.height(320), .medium])
             .presentationDragIndicator(.visible)
+        }
+        .alert("Rename Session", isPresented: Binding(
+            get: { sessionBeingRenamed != nil },
+            set: { if !$0 { sessionBeingRenamed = nil } },
+        )) {
+            TextField("Session title", text: $renameText)
+            Button("Cancel", role: .cancel) {
+                sessionBeingRenamed = nil
+            }
+            Button("Save") {
+                guard let session = sessionBeingRenamed else { return }
+                let title = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+                Task {
+                    await patchSession(session, title: title.isEmpty ? "" : title)
+                    sessionBeingRenamed = nil
+                }
+            }
+        }
+        .alert("Session Action Failed", isPresented: Binding(
+            get: { sessionActionError != nil },
+            set: { if !$0 { sessionActionError = nil } },
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(sessionActionError ?? "")
         }
     }
 
@@ -279,15 +349,43 @@ private struct SessionsView: View {
             .padding(.top, 80)
         } else {
             VStack(spacing: 0) {
-                ForEach(Array(filteredSessions.enumerated()), id: \.element.id) { index, session in
-                    NavigationLink(value: session) {
-                        SessionRow(
-                            session: session,
-                            deviceName: deviceName(for: session),
-                            showsDivider: index < filteredSessions.count - 1,
-                        )
+                ForEach(groupedSessions) { section in
+                    VStack(alignment: .leading, spacing: 0) {
+                        SessionSectionHeader(title: section.title)
+
+                        ForEach(Array(section.sessions.enumerated()), id: \.element.id) { index, session in
+                            NavigationLink(value: session) {
+                                SessionRow(
+                                    session: session,
+                                    deviceName: deviceName(for: session),
+                                    showsDivider: index < section.sessions.count - 1,
+                                )
+                            }
+                            .buttonStyle(SessionRowButtonStyle())
+                            .contextMenu {
+                                Button {
+                                    startRename(session)
+                                } label: {
+                                    Label("Rename", systemImage: "pencil")
+                                }
+
+                                Button {
+                                    Task { await patchSession(session, pinned: !session.pinned) }
+                                } label: {
+                                    Label(session.pinned ? "Unpin" : "Pin", systemImage: session.pinned ? "pin.slash" : "pin")
+                                }
+
+                                Button {
+                                    Task { await patchSession(session, archived: !session.archived) }
+                                } label: {
+                                    Label(
+                                        session.archived ? "Unarchive" : "Archive",
+                                        systemImage: session.archived ? "archivebox" : "archivebox.fill",
+                                    )
+                                }
+                            }
+                        }
                     }
-                    .buttonStyle(SessionRowButtonStyle())
                 }
             }
             .padding(.horizontal, 20)
@@ -300,6 +398,32 @@ private struct SessionsView: View {
             return connector.name
         }
         return session.connectorStatus.capitalized
+    }
+
+    private func startRename(_ session: SessionSummary) {
+        sessionBeingRenamed = session
+        renameText = session.title ?? ""
+    }
+
+    private func patchSession(
+        _ session: SessionSummary,
+        title: String? = nil,
+        pinned: Bool? = nil,
+        archived: Bool? = nil,
+    ) async {
+        guard let api = appState.api, let token = appState.accessToken() else { return }
+        do {
+            let response = try await api.patchSession(
+                token: token,
+                sessionId: session.id,
+                title: title,
+                pinned: pinned,
+                archived: archived,
+            )
+            appState.updateSession(response.session)
+        } catch {
+            sessionActionError = error.localizedDescription
+        }
     }
 }
 
@@ -322,9 +446,20 @@ private struct DevicesView: View {
             .padding(.bottom, 32)
         }
         .navigationBarTitleDisplayMode(.inline)
-        .navigationDestination(isPresented: $isShowingAccount) {
-            MeView()
-                .navigationTitle("Me")
+        .sheet(isPresented: $isShowingAccount) {
+            NavigationStack {
+                MeView()
+                    .navigationTitle("Me")
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Done") {
+                                isShowingAccount = false
+                            }
+                        }
+                    }
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
         .refreshable {
             await appState.refreshDashboard()
@@ -388,6 +523,19 @@ private struct DashboardPageHeader: View {
             .accessibilityLabel("Account")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct SessionSectionHeader: View {
+    let title: String
+
+    var body: some View {
+        Text(title)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .textCase(.uppercase)
+            .padding(.top, 14)
+            .padding(.bottom, 4)
     }
 }
 

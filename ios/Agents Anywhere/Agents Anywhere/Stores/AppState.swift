@@ -220,6 +220,14 @@ final class AppState: ObservableObject {
         dashboardError = sessionsError ?? connectorsError
     }
 
+    func updateSession(_ updated: SessionSummary) {
+        if let index = sessions.firstIndex(where: { $0.id == updated.id }) {
+            sessions[index] = updated
+        } else {
+            sessions.insert(updated, at: 0)
+        }
+    }
+
     func signOut() {
         try? keychain.delete(account: tokenAccount)
         me = nil
