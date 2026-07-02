@@ -2711,14 +2711,14 @@ private struct ComposerGrowingTextEditor: View {
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
                 }
-                .overlay(alignment: .topLeading) {
+                .overlay(alignment: .leading) {
                     if text.isEmpty {
                         Text(placeholder)
                             .font(.body)
                             .lineLimit(1)
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 5)
-                            .padding(.vertical, verticalPadding)
+                            .frame(height: editorHeight + verticalPadding * 2, alignment: .center)
                             .allowsHitTesting(false)
                     }
                 }
