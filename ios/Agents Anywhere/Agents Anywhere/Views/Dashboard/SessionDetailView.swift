@@ -2440,53 +2440,34 @@ struct MessageInputInterrupt {
     let handler: () -> Void
 }
 
-private struct MessageInputActionList: View {
-    let title: String
-    let actions: [MessageInputAction]
-    let onComplete: () -> Void
+private struct MessageInputActionMenuContent: View {
+    let action: MessageInputAction
 
     var body: some View {
-        List {
-            ForEach(actions) { action in
-                actionRow(action)
-            }
-        }
-        .navigationTitle(title)
-        .navigationBarTitleDisplayMode(.inline)
-    }
-
-    @ViewBuilder
-    private func actionRow(_ action: MessageInputAction) -> some View {
         switch action.kind {
         case .button:
             Button {
                 action.handler()
-                onComplete()
             } label: {
                 Label(action.title, systemImage: action.systemImage)
             }
         case let .toggle(isOn, isDisabled):
-            Button {
-                action.handler()
-                onComplete()
-            } label: {
-                HStack {
-                    Label(action.title, systemImage: action.systemImage)
-                    Spacer()
-                    if isOn {
-                        Image(systemName: "checkmark")
-                            .foregroundStyle(.secondary)
+            Toggle(isOn: Binding(
+                get: { isOn },
+                set: { newValue in
+                    if newValue != isOn {
+                        action.handler()
                     }
-                }
+                },
+            )) {
+                Label(action.title, systemImage: action.systemImage)
             }
             .disabled(isDisabled)
         case let .menu(children, isDisabled):
-            NavigationLink {
-                MessageInputActionList(
-                    title: action.title,
-                    actions: children,
-                    onComplete: onComplete,
-                )
+            Menu {
+                ForEach(children) { child in
+                    MessageInputActionMenuContent(action: child)
+                }
             } label: {
                 Label(action.title, systemImage: action.systemImage)
             }
@@ -2509,7 +2490,6 @@ struct LiquidGlassMessageInputBar: View {
     var interrupt: MessageInputInterrupt?
 
     @FocusState private var editorFocused: Bool
-    @State private var isShowingActions = false
     @Environment(\.colorScheme) private var colorScheme
 
     private let composerHeight: CGFloat = 50
@@ -2553,22 +2533,6 @@ struct LiquidGlassMessageInputBar: View {
         .onChange(of: dismissRequest) { _, _ in
             editorFocused = false
         }
-        .sheet(isPresented: $isShowingActions) {
-            NavigationStack {
-                MessageInputActionList(title: "More Content", actions: actions) {
-                    isShowingActions = false
-                }
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Done") {
-                            isShowingActions = false
-                        }
-                    }
-                }
-            }
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
-        }
     }
 
     private var composerRow: some View {
@@ -2584,8 +2548,10 @@ struct LiquidGlassMessageInputBar: View {
     }
 
     private var plusGlassButton: some View {
-        Button {
-            isShowingActions = true
+        Menu {
+            ForEach(actions) { action in
+                MessageInputActionMenuContent(action: action)
+            }
         } label: {
             Image(systemName: "plus")
                 .font(.system(size: 18, weight: .semibold))
@@ -2593,7 +2559,6 @@ struct LiquidGlassMessageInputBar: View {
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .disabled(actions.isEmpty)
         .composerGlassEffect(shape: Circle())
         .accessibilityLabel("More Content")
     }
