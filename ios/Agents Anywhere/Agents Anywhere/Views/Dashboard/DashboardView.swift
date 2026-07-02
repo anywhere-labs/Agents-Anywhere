@@ -7,7 +7,6 @@ private let newSessionAttachmentOnlyPrompt = "Please review the attached file."
 private enum RootTab {
     static let sessions = "sessions"
     static let devices = "devices"
-    static let me = "me"
     static let newSession = "newSession"
 }
 
@@ -65,9 +64,7 @@ private struct RootTabsView: View {
         TabView(selection: $selectedTab) {
             Tab("Sessions", systemImage: "rectangle.stack.fill", value: RootTab.sessions) {
                 NavigationStack(path: $sessionPath) {
-                    SessionsView {
-                        selectedTab = RootTab.me
-                    }
+                    SessionsView()
                         .navigationDestination(for: SessionSummary.self) { session in
                             SessionDetailView(initialSession: session)
                         }
@@ -85,15 +82,6 @@ private struct RootTabsView: View {
                 .transition(tabTransition)
             }
 
-            Tab("Me", systemImage: "person.crop.circle.fill", value: RootTab.me) {
-                NavigationStack {
-                    MeView()
-                        .navigationTitle("Me")
-                }
-                .id(RootTab.me)
-                .transition(tabTransition)
-            }
-
             if #available(iOS 27.0, *) {
                 Tab("New", systemImage: "plus", value: RootTab.newSession, role: .prominent) {
                     Color.clear
@@ -106,7 +94,7 @@ private struct RootTabsView: View {
         }
         .animation(.smooth(duration: 0.22), value: selectedTab)
         .onAppear {
-            if selectedTab == RootTab.newSession {
+            if selectedTab == RootTab.newSession || !isSelectableRootTab(selectedTab) {
                 selectedTab = RootTab.sessions
             }
         }
@@ -118,7 +106,7 @@ private struct RootTabsView: View {
 
             if newValue == RootTab.newSession {
                 isRestoringFromActionTab = true
-                selectedTab = oldValue == RootTab.newSession ? RootTab.sessions : oldValue
+                selectedTab = isSelectableRootTab(oldValue) ? oldValue : RootTab.sessions
                 onNewSession()
                 return
             }
@@ -140,11 +128,13 @@ private struct RootTabsView: View {
             return 0
         case RootTab.devices:
             return 1
-        case RootTab.me:
-            return 2
         default:
             return 0
         }
+    }
+
+    private func isSelectableRootTab(_ tab: String) -> Bool {
+        tab == RootTab.sessions || tab == RootTab.devices
     }
 }
 
@@ -152,9 +142,8 @@ private struct SessionsView: View {
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var appState: AppState
 
-    let onShowMe: () -> Void
-
     @State private var activeFilter: SessionFilter?
+    @State private var isShowingAccount = false
     @State private var selectedStatus = "All"
     @State private var selectedRuntime = "Any Runtime"
     @State private var selectedDevice = "Any Device"
@@ -195,9 +184,15 @@ private struct SessionsView: View {
             .padding(.bottom, 32)
         }
         .navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(isPresented: $isShowingAccount) {
+            MeView()
+                .navigationTitle("Me")
+        }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button(action: onShowMe) {
+                Button {
+                    isShowingAccount = true
+                } label: {
                     UserAvatarView(me: appState.me, size: 28)
                 }
                 .buttonStyle(.plain)
