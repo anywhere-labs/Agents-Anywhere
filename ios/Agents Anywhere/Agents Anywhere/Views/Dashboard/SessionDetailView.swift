@@ -158,7 +158,6 @@ struct SessionDetailView: View {
                     .padding(.horizontal, 16)
                     .padding(.top, 14)
                 }
-                .defaultScrollAnchor(.bottom)
                 .contentShape(Rectangle())
                 .simultaneousGesture(
                     TapGesture().onEnded {
@@ -195,20 +194,18 @@ struct SessionDetailView: View {
             .onChange(of: displayEntries.last?.id) { _, _ in
                 guard !displayEntries.isEmpty else { return }
                 if hasPositionedInitialScroll {
-                    scrollToBottom(proxy, animated: true)
-                } else {
-                    hasPositionedInitialScroll = true
-                    scrollToBottom(proxy, animated: false)
-                    DispatchQueue.main.async {
-                        scrollToBottom(proxy, animated: false)
+                    if isTimelineNearBottom {
+                        scrollToBottom(proxy, animated: true)
                     }
+                } else {
+                    positionInitialTimeline(proxy)
                 }
             }
             .onChange(of: session.status) { _, _ in
                 if isInterrupting && !serverBusy {
                     isInterrupting = false
                 }
-                if hasPositionedInitialScroll {
+                if hasPositionedInitialScroll && isTimelineNearBottom {
                     scrollToBottom(proxy, animated: true)
                 }
             }
@@ -218,13 +215,7 @@ struct SessionDetailView: View {
                 lastEntryRefreshAt = Date()
                 Task { await loadRuntimeSettingsIfNeeded() }
                 startEventStream()
-                scrollToBottom(proxy, animated: false)
-                DispatchQueue.main.async {
-                    scrollToBottom(proxy, animated: false)
-                }
-            }
-            .onAppear {
-                Task { await refreshOnEntry() }
+                positionInitialTimeline(proxy)
             }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active {
@@ -472,6 +463,20 @@ struct SessionDetailView: View {
             withAnimation(.easeOut(duration: 0.22), action)
         } else {
             action()
+        }
+        isTimelineNearBottom = true
+    }
+
+    private func positionInitialTimeline(_ proxy: ScrollViewProxy) {
+        guard !displayEntries.isEmpty, !hasPositionedInitialScroll else { return }
+        hasPositionedInitialScroll = true
+        isTimelineNearBottom = true
+
+        DispatchQueue.main.async {
+            scrollToBottom(proxy, animated: false)
+            DispatchQueue.main.async {
+                scrollToBottom(proxy, animated: false)
+            }
         }
     }
 
