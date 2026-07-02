@@ -45,8 +45,12 @@ struct SessionDetailView: View {
 
     private var displayEntries: [ChatEntry] { timeline.displayEntries }
 
+    private var currentComposerDraft: MessageComposerDraft {
+        MessageComposerDraft(text: messageText, uploads: pendingUploads)
+    }
+
     private var canSend: Bool {
-        return !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingUploads.isEmpty
+        canSubmitMessage(currentComposerDraft.submitContext)
     }
 
     private var serverBusy: Bool {
@@ -470,11 +474,15 @@ struct SessionDetailView: View {
         guard let data = image.jpegData(compressionQuality: 0.86) else { return }
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd-HHmmss"
-        pendingUploads.append(AttachmentUpload(
-            name: "camera-\(formatter.string(from: Date())).jpg",
-            mediaType: "image/jpeg",
-            data: data,
-        ))
+        do {
+            pendingUploads.append(try AttachmentUpload.temporary(
+                name: "camera-\(formatter.string(from: Date())).jpg",
+                mediaType: "image/jpeg",
+                data: data,
+            ))
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func applyTakeover() async {
@@ -672,35 +680,42 @@ struct SessionDetailView: View {
     }
 
     private func sendMessage() async {
-        guard canSend else { return }
+        let draft = currentComposerDraft
+        guard canSubmitMessage(draft.submitContext) else { return }
         if !session.takeover {
             isConfirmingTakeoverBeforeSend = true
             return
         }
-        await performSendMessage()
+        await performSendMessage(draft)
     }
 
     private func enableTakeoverAndSend() async {
-        guard canSend, let api = appState.api, let token = appState.accessToken() else { return }
+        let draft = currentComposerDraft
+        guard canSubmitMessage(draft.submitContext), let api = appState.api, let token = appState.accessToken() else { return }
         isApplyingTakeover = true
         defer { isApplyingTakeover = false }
         do {
             let response = try await api.enableTakeover(token: token, sessionId: initialSession.id)
             session = response.session
-            await performSendMessage()
+            await performSendMessage(draft, skipsSubmitValidation: true)
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
-    private func performSendMessage() async {
-        guard canSend, session.takeover, let api = appState.api, let token = appState.accessToken() else { return }
-        let visibleText = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let uploads = pendingUploads
+    private func performSendMessage(_ draft: MessageComposerDraft, skipsSubmitValidation: Bool = false) async {
+        if !skipsSubmitValidation {
+            guard canSubmitMessage(draft.submitContext) else { return }
+        }
+        guard !isSending, session.takeover, let api = appState.api, let token = appState.accessToken() else { return }
+        let visibleText = draft.trimmedText
+        let uploads = draft.uploads
         let tempId = "opt_\(UUID().uuidString)"
         let now = ISO8601DateFormatter().string(from: Date())
+        var didClearComposer = false
 
         isSending = true
+        defer { isSending = false }
         do {
             let uploaded = uploads.isEmpty
                 ? []
@@ -714,8 +729,7 @@ struct SessionDetailView: View {
                 createdAt: now,
             )
             timeline.appendOptimistic(optimistic)
-            messageText = ""
-            pendingUploads = []
+            didClearComposer = clearComposerDraft(matching: draft)
 
             _ = try await api.sendSessionMessage(
                 token: token,
@@ -729,9 +743,24 @@ struct SessionDetailView: View {
             errorMessage = nil
         } catch {
             timeline.updateOptimisticStatus(id: tempId, status: "failed")
+            if didClearComposer {
+                restoreComposerDraftIfEmpty(draft)
+            }
             errorMessage = error.localizedDescription
         }
-        isSending = false
+    }
+
+    private func clearComposerDraft(matching draft: MessageComposerDraft) -> Bool {
+        guard messageText == draft.text, pendingUploads == draft.uploads else { return false }
+        messageText = ""
+        pendingUploads = []
+        return true
+    }
+
+    private func restoreComposerDraftIfEmpty(_ draft: MessageComposerDraft) {
+        guard messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, pendingUploads.isEmpty else { return }
+        messageText = draft.text
+        pendingUploads = draft.uploads
     }
 
     private func interruptSession() async {
@@ -770,7 +799,7 @@ struct SessionDetailView: View {
         for item in items {
             do {
                 guard let data = try await item.loadTransferable(type: Data.self) else { continue }
-                let upload = AttachmentUpload(
+                let upload = try AttachmentUpload.temporary(
                     name: "photo-\(UUID().uuidString.prefix(8)).jpg",
                     mediaType: "image/jpeg",
                     data: data,
@@ -2020,7 +2049,7 @@ struct PendingAttachmentCard: View {
     let upload: AttachmentUpload
 
     var body: some View {
-        if upload.isImage, let image = UIImage(data: upload.data) {
+        if upload.isImage, let image = upload.previewImage {
             Image(uiImage: image)
                 .resizable()
                 .scaledToFill()
@@ -2273,6 +2302,19 @@ struct MessageInputSubmitContext {
     }
 }
 
+struct MessageComposerDraft: Hashable {
+    let text: String
+    let uploads: [AttachmentUpload]
+
+    var trimmedText: String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var submitContext: MessageInputSubmitContext {
+        MessageInputSubmitContext(text: text, hasPendingAttachments: !uploads.isEmpty)
+    }
+}
+
 func runtimeConfigFields(schema: RuntimeConfigSchema?, settings: JSONValue?) -> [RuntimeConfigField] {
     let settingsObject: [String: JSONValue]
     if case let .object(object) = settings {
@@ -2332,17 +2374,19 @@ struct MessageInputAction: Identifiable {
         case menu(children: [MessageInputAction], isDisabled: Bool)
     }
 
-    let id = UUID()
+    let id: String
     let title: String
     let systemImage: String
     let kind: Kind
     let handler: () -> Void
 
     init(
+        id: String? = nil,
         title: String,
         systemImage: String,
         handler: @escaping () -> Void
     ) {
+        self.id = id ?? Self.defaultId(title: title, systemImage: systemImage)
         self.title = title
         self.systemImage = systemImage
         self.kind = .button
@@ -2350,6 +2394,7 @@ struct MessageInputAction: Identifiable {
     }
 
     static func toggle(
+        id: String? = nil,
         title: String,
         systemImage: String,
         isOn: Bool,
@@ -2357,6 +2402,7 @@ struct MessageInputAction: Identifiable {
         handler: @escaping () -> Void
     ) -> MessageInputAction {
         MessageInputAction(
+            id: id,
             title: title,
             systemImage: systemImage,
             kind: .toggle(isOn: isOn, isDisabled: isDisabled),
@@ -2365,6 +2411,7 @@ struct MessageInputAction: Identifiable {
     }
 
     static func menu(
+        id: String? = nil,
         title: String,
         systemImage: String,
         isDisabled: Bool = false,
@@ -2372,6 +2419,7 @@ struct MessageInputAction: Identifiable {
         handler: @escaping () -> Void = {},
     ) -> MessageInputAction {
         MessageInputAction(
+            id: id,
             title: title,
             systemImage: systemImage,
             kind: .menu(children: children, isDisabled: isDisabled),
@@ -2380,15 +2428,21 @@ struct MessageInputAction: Identifiable {
     }
 
     private init(
+        id: String? = nil,
         title: String,
         systemImage: String,
         kind: Kind,
         handler: @escaping () -> Void
     ) {
+        self.id = id ?? Self.defaultId(title: title, systemImage: systemImage)
         self.title = title
         self.systemImage = systemImage
         self.kind = kind
         self.handler = handler
+    }
+
+    private static func defaultId(title: String, systemImage: String) -> String {
+        "\(systemImage):\(title)"
     }
 }
 
@@ -2806,7 +2860,12 @@ extension AttachmentUpload {
 
     var detailText: String {
         let type = mediaType.isEmpty ? "File" : mediaType
-        return "\(type) · \(data.count.formattedByteCount)"
+        return "\(type) · \(size.formattedByteCount)"
+    }
+
+    var previewImage: UIImage? {
+        guard isImage, let data = try? Data(contentsOf: fileURL) else { return nil }
+        return UIImage(data: data)
     }
 }
 

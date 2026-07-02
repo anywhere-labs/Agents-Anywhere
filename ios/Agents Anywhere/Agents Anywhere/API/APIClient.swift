@@ -267,7 +267,7 @@ struct APIClient {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        request.httpBody = uploads.multipartBody(boundary: boundary)
+        request.httpBody = try uploads.multipartBody(boundary: boundary)
 
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else {
@@ -451,13 +451,13 @@ private struct AnyEncodable: Encodable {
 private struct EmptyBody: Encodable {}
 
 private extension Array where Element == AttachmentUpload {
-    func multipartBody(boundary: String) -> Data {
+    func multipartBody(boundary: String) throws -> Data {
         var data = Data()
         for upload in self {
             data.append("--\(boundary)\r\n")
             data.append("Content-Disposition: form-data; name=\"files\"; filename=\"\(upload.name.escapedMultipartFilename)\"\r\n")
             data.append("Content-Type: \(upload.mediaType)\r\n\r\n")
-            data.append(upload.data)
+            data.append(try Data(contentsOf: upload.fileURL))
             data.append("\r\n")
         }
         data.append("--\(boundary)--\r\n")

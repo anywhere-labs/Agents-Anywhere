@@ -992,11 +992,15 @@ private struct NewSessionSheet: View {
         guard let data = image.jpegData(compressionQuality: 0.86) else { return }
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd-HHmmss"
-        pendingUploads.append(AttachmentUpload(
-            name: "camera-\(formatter.string(from: Date())).jpg",
-            mediaType: "image/jpeg",
-            data: data,
-        ))
+        do {
+            pendingUploads.append(try AttachmentUpload.temporary(
+                name: "camera-\(formatter.string(from: Date())).jpg",
+                mediaType: "image/jpeg",
+                data: data,
+            ))
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func importPhotos(_ items: [PhotosPickerItem]) async {
@@ -1004,7 +1008,7 @@ private struct NewSessionSheet: View {
         for item in items {
             do {
                 guard let data = try await item.loadTransferable(type: Data.self) else { continue }
-                pendingUploads.append(AttachmentUpload(
+                pendingUploads.append(try AttachmentUpload.temporary(
                     name: "photo-\(UUID().uuidString.prefix(8)).jpg",
                     mediaType: "image/jpeg",
                     data: data,

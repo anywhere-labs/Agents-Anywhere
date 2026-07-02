@@ -685,11 +685,39 @@ struct UserUploadResponse: Decodable {
     let serverTime: String
 }
 
-struct AttachmentUpload: Hashable {
-    let id = UUID()
+struct AttachmentUpload: Identifiable, Hashable {
+    let id: UUID
     let name: String
     let mediaType: String
-    let data: Data
+    let fileURL: URL
+    let size: Int
+
+    init(id: UUID = UUID(), name: String, mediaType: String, fileURL: URL, size: Int) {
+        self.id = id
+        self.name = name
+        self.mediaType = mediaType
+        self.fileURL = fileURL
+        self.size = size
+    }
+
+    static func temporary(name: String, mediaType: String, data: Data) throws -> AttachmentUpload {
+        let id = UUID()
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AgentsAnywhereUploads", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let fileURL = directory.appendingPathComponent("\(id.uuidString)-\(name.temporaryUploadFilename)")
+        try data.write(to: fileURL, options: [.atomic])
+        return AttachmentUpload(id: id, name: name, mediaType: mediaType, fileURL: fileURL, size: data.count)
+    }
+}
+
+private extension String {
+    var temporaryUploadFilename: String {
+        let disallowed = CharacterSet(charactersIn: "/\\:")
+        return components(separatedBy: disallowed)
+            .filter { !$0.isEmpty }
+            .joined(separator: "-")
+    }
 }
 
 struct MessageCreateRequest: Encodable {
