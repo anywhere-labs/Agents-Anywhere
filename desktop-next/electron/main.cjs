@@ -72,7 +72,12 @@ const state = {
   logRetentionDays: DEFAULT_LOG_RETENTION_DAYS,
   openAtLogin: false,
   startConnectorOnLaunch: false,
+  silentLaunch: false,
 };
+
+function launchedAsLoginItem() {
+  return process.argv.includes("--hidden") || process.argv.includes("--background") || process.argv.includes("--squirrel-firstrun");
+}
 
 function userDataPath(name) {
   return path.join(app.getPath("userData"), name);
@@ -402,6 +407,7 @@ function loadDesktopSettings() {
   state.logRetainChunks = clampNumber(settings.logRetainChunks, DEFAULT_LOG_RETAIN_CHUNKS, 1, 200);
   state.logRetentionDays = clampNumber(settings.logRetentionDays, DEFAULT_LOG_RETENTION_DAYS, 1, 365);
   if (typeof settings.startConnectorOnLaunch === "boolean") state.startConnectorOnLaunch = settings.startConnectorOnLaunch;
+  if (typeof settings.silentLaunch === "boolean") state.silentLaunch = settings.silentLaunch;
   state.openAtLogin = app.getLoginItemSettings().openAtLogin;
   pruneLogChunks();
 }
@@ -416,9 +422,13 @@ function saveDesktopSettings(next = {}) {
   if (next.logRetainChunks != null) state.logRetainChunks = clampNumber(next.logRetainChunks, state.logRetainChunks, 1, 200);
   if (next.logRetentionDays != null) state.logRetentionDays = clampNumber(next.logRetentionDays, state.logRetentionDays, 1, 365);
   if (typeof next.startConnectorOnLaunch === "boolean") state.startConnectorOnLaunch = next.startConnectorOnLaunch;
+  if (typeof next.silentLaunch === "boolean") state.silentLaunch = next.silentLaunch;
   if (typeof next.openAtLogin === "boolean") {
-    app.setLoginItemSettings({ openAtLogin: next.openAtLogin, openAsHidden: true });
+    app.setLoginItemSettings({ openAtLogin: next.openAtLogin, openAsHidden: state.silentLaunch });
     state.openAtLogin = next.openAtLogin;
+  }
+  if (typeof next.silentLaunch === "boolean" && state.openAtLogin) {
+    app.setLoginItemSettings({ openAtLogin: true, openAsHidden: state.silentLaunch });
   }
   writeJson(state.settingsPath, {
     uvPath: state.uvPath,
@@ -429,6 +439,7 @@ function saveDesktopSettings(next = {}) {
     logRetainChunks: state.logRetainChunks,
     logRetentionDays: state.logRetentionDays,
     startConnectorOnLaunch: state.startConnectorOnLaunch,
+    silentLaunch: state.silentLaunch,
   });
   pruneLogChunks();
   const nextState = publicState();
@@ -893,11 +904,13 @@ function createMainWindow() {
 async function showWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) createMainWindow();
   showDockForWindow();
-  if (process.platform === "darwin") {
-    app.focus({ steal: true });
-  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
+  mainWindow.moveTop();
+  if (process.platform === "darwin") app.focus({ steal: true });
+  else mainWindow.setAlwaysOnTop(true);
   mainWindow.focus();
+  if (process.platform !== "darwin") mainWindow.setAlwaysOnTop(false);
 }
 
 function hasVisibleWindow() {
@@ -1020,7 +1033,8 @@ app.whenReady().then(async () => {
   shellEnvironment = await readShellEnvironment();
   initLogSeq();
   createTray();
-  if (isDev) void showWindow();
+  const shouldOpenWindowOnLaunch = isDev || !state.silentLaunch || !launchedAsLoginItem();
+  if (shouldOpenWindowOnLaunch) void showWindow();
   updateNativeIcons();
   refreshLocalSetupState();
   sendToWindow("connector:state", publicState());
@@ -1049,6 +1063,7 @@ app.on("open-url", (event, rawUrl) => {
 app.on("second-instance", (_event, argv) => {
   const rawUrl = extractDeepLinkFromArgv(argv);
   if (rawUrl) queueDeepLink(rawUrl);
+  void showWindow();
 });
 app.on("window-all-closed", (event) => event.preventDefault());
 app.on("before-quit", () => {

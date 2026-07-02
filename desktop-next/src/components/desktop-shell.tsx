@@ -164,6 +164,8 @@ const desktopMessages = {
     syncSectionTitle: "Sync",
     launchAtLogin: "Open at login",
     launchAtLoginHint: "Open the desktop app when you sign in.",
+    silentLaunch: "Silent login launch",
+    silentLaunchHint: "When opened at login, keep the window hidden until you open it from the tray or launch the app again.",
     startOnLaunch: "Start connector on launch",
     startOnLaunchHint: "Start automatically when credentials are saved.",
     language: "Language",
@@ -294,6 +296,8 @@ const desktopMessages = {
     syncSectionTitle: "同步",
     launchAtLogin: "登录时打开",
     launchAtLoginHint: "登录系统后打开桌面应用。",
+    silentLaunch: "登录时静默启动",
+    silentLaunchHint: "通过登录项启动时不自动显示窗口，直到从托盘打开或再次启动应用。",
     startOnLaunch: "打开应用后启动连接器",
     startOnLaunchHint: "已保存凭据时自动启动。",
     language: "语言",
@@ -1176,6 +1180,12 @@ function SettingsView({
               description={t.launchAtLoginHint}
               checked={Boolean(state?.openAtLogin)}
               onCheckedChange={(openAtLogin) => saveSettings({ openAtLogin })}
+            />
+            <SettingSwitchField
+              label={t.silentLaunch}
+              description={t.silentLaunchHint}
+              checked={Boolean(state?.silentLaunch)}
+              onCheckedChange={(silentLaunch) => saveSettings({ silentLaunch })}
             />
             <SettingSwitchField
               label={t.startOnLaunch}

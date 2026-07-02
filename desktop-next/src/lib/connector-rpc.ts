@@ -17,6 +17,7 @@ export type ConnectorState = {
   hasConfig: boolean
   openAtLogin?: boolean
   startConnectorOnLaunch?: boolean
+  silentLaunch?: boolean
   uvPath?: string
   resolvedUvPath?: string
   uvMissing?: boolean
@@ -63,6 +64,7 @@ export type PairingState = {
 export type DesktopSettings = {
   openAtLogin?: boolean
   startConnectorOnLaunch?: boolean
+  silentLaunch?: boolean
   uvPath?: string
   uvPypiIndexUrl?: string
   locale?: "system" | "en" | "zh"
