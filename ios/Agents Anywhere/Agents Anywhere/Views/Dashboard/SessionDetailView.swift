@@ -1142,6 +1142,13 @@ private struct CommandToolCard: View {
 }
 
 private struct EditToolCard: View {
+    private struct ChangeRow: Identifiable {
+        let id: String
+        let verb: String
+        let path: String
+        let diff: String?
+    }
+
     let item: TimelineItem
     let approval: Approval?
     let resolvingApprovalId: String?
@@ -1166,12 +1173,28 @@ private struct EditToolCard: View {
     }
 
     private var changes: [[String: JSONValue]] { item.changeObjects }
+    private var changeRows: [ChangeRow] {
+        var seenIds: [String: Int] = [:]
+        return changes.map { change in
+            let verb = fileChangeVerb(change)
+            let path = change["path"]?.stringValue ?? "unknown path"
+            let baseId = "\(verb):\(path)"
+            let occurrence = seenIds[baseId, default: 0]
+            seenIds[baseId] = occurrence + 1
+            return ChangeRow(
+                id: occurrence == 0 ? baseId : "\(baseId)#\(occurrence)",
+                verb: verb,
+                path: path,
+                diff: change["diff"]?.stringValue,
+            )
+        }
+    }
     private var filename: String {
         guard let path = changes.first?["path"]?.stringValue else { return "files" }
         return URL(fileURLWithPath: path).lastPathComponent
     }
     private var headVerb: String {
-        let verbs = changes.map(fileChangeVerb)
+        let verbs = changeRows.map(\.verb)
         return verbs.first(where: { $0 == "Added" })
             ?? verbs.first(where: { $0 == "Deleted" })
             ?? verbs.first
@@ -1181,18 +1204,18 @@ private struct EditToolCard: View {
     var body: some View {
         DisclosureGroup(isExpanded: $isExpanded) {
             VStack(alignment: .leading, spacing: 10) {
-                ForEach(Array(changes.enumerated()), id: \.offset) { _, change in
+                ForEach(changeRows) { change in
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 8) {
-                            Text(fileChangeVerb(change))
+                            Text(change.verb)
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(.secondary)
-                            Text(change["path"]?.stringValue ?? "unknown path")
+                            Text(change.path)
                                 .font(.caption)
                                 .lineLimit(1)
                         }
-                        if let diff = change["diff"]?.stringValue, !diff.isEmpty {
-                            DiffPanel(diff: diff, added: fileChangeVerb(change) == "Added")
+                        if let diff = change.diff, !diff.isEmpty {
+                            DiffPanel(diff: diff, added: change.verb == "Added")
                         }
                     }
                 }
