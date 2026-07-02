@@ -39,11 +39,16 @@ struct SessionDetailView: View {
     @State private var isPatchingRuntimeSettings = false
     @State private var attachmentPreviewURL: URL?
     @State private var hasPositionedInitialScroll = false
+    @State private var isTimelineNearBottom = true
     @State private var lastEntryRefreshAt: Date?
     @State private var sseTask: Task<Void, Never>?
     @State private var pollTask: Task<Void, Never>?
 
     private var displayEntries: [ChatEntry] { timeline.displayEntries }
+
+    private var shouldShowScrollToBottomButton: Bool {
+        !displayEntries.isEmpty && !isTimelineNearBottom
+    }
 
     private var currentComposerDraft: MessageComposerDraft {
         MessageComposerDraft(text: messageText, uploads: pendingUploads)
@@ -108,57 +113,85 @@ struct SessionDetailView: View {
 
     var body: some View {
         ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 18) {
-                    if isLoading && displayEntries.isEmpty {
-                        ProgressView()
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 60)
-                    } else if displayEntries.isEmpty {
-                        ContentUnavailableView(
-                            "No Messages Yet",
-                            systemImage: "bubble.left.and.bubble.right",
-                            description: Text("Messages from this session will appear here."),
-                        )
-                        .padding(.top, 80)
-                    } else {
-                        ForEach(displayEntries) { entry in
-                            ChatEntryView(
-                                entry: entry,
-                                api: appState.api,
-                                token: appState.accessToken(),
-                                resolvingApprovalId: resolvingApprovalId,
-                                resolvingApprovalStatus: resolvingApprovalStatus,
-                                onResolveApproval: { approval, status in
-                                    Task { await resolveApproval(approval, status: status) }
-                                },
-                                onPreviewAttachment: { url in
-                                    attachmentPreviewURL = url
-                                },
+            ZStack(alignment: .bottomTrailing) {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 18) {
+                        if isLoading && displayEntries.isEmpty {
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 60)
+                        } else if displayEntries.isEmpty {
+                            ContentUnavailableView(
+                                "No Messages Yet",
+                                systemImage: "bubble.left.and.bubble.right",
+                                description: Text("Messages from this session will appear here."),
                             )
-                                .id(entry.id)
+                            .padding(.top, 80)
+                        } else {
+                            ForEach(displayEntries) { entry in
+                                ChatEntryView(
+                                    entry: entry,
+                                    api: appState.api,
+                                    token: appState.accessToken(),
+                                    resolvingApprovalId: resolvingApprovalId,
+                                    resolvingApprovalStatus: resolvingApprovalStatus,
+                                    onResolveApproval: { approval, status in
+                                        Task { await resolveApproval(approval, status: status) }
+                                    },
+                                    onPreviewAttachment: { url in
+                                        attachmentPreviewURL = url
+                                    },
+                                )
+                                    .id(entry.id)
+                            }
+
+                            if session.status == "running" {
+                                WorkingIndicator(runtime: session.runtime)
+                                    .id("working")
+                            }
                         }
 
-                        if session.status == "running" {
-                            WorkingIndicator(runtime: session.runtime)
-                                .id("working")
-                        }
+                        Color.clear
+                            .frame(height: 1)
+                            .id("bottom")
                     }
-
-                    Color.clear
-                        .frame(height: 1)
-                        .id("bottom")
+                    .padding(.horizontal, 16)
+                    .padding(.top, 14)
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 14)
+                .defaultScrollAnchor(.bottom)
+                .contentShape(Rectangle())
+                .simultaneousGesture(
+                    TapGesture().onEnded {
+                        dismissComposerKeyboard()
+                    },
+                )
+                .onScrollGeometryChange(for: Bool.self) { geometry in
+                    let distanceToBottom = geometry.contentSize.height
+                        - geometry.containerSize.height
+                        - geometry.contentOffset.y
+                    return distanceToBottom < 90
+                } action: { _, isNearBottom in
+                    isTimelineNearBottom = isNearBottom
+                }
+
+                if shouldShowScrollToBottomButton {
+                    Button {
+                        scrollToBottom(proxy, animated: true)
+                    } label: {
+                        Image(systemName: "arrow.down")
+                            .font(.system(size: 17, weight: .semibold))
+                            .frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.primary)
+                    .composerGlassEffect(shape: Circle())
+                    .accessibilityLabel("Scroll to Bottom")
+                    .padding(.trailing, 18)
+                    .padding(.bottom, 12)
+                    .transition(.scale(scale: 0.92).combined(with: .opacity))
+                }
             }
-            .defaultScrollAnchor(.bottom)
-            .contentShape(Rectangle())
-            .simultaneousGesture(
-                TapGesture().onEnded {
-                    dismissComposerKeyboard()
-                },
-            )
+            .animation(.smooth(duration: 0.18), value: shouldShowScrollToBottomButton)
             .onChange(of: displayEntries.last?.id) { _, _ in
                 guard !displayEntries.isEmpty else { return }
                 if hasPositionedInitialScroll {
