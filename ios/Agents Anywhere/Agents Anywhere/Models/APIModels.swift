@@ -106,6 +106,21 @@ struct DeviceAgentsState: Decodable, Hashable {
     let lastDiscoveredAt: String?
     let attached: [String: AttachedAgentView]
     let disabled: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case version
+        case lastDiscoveredAt
+        case attached
+        case disabled
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        version = try container.decodeIfPresent(Int.self, forKey: .version)
+        lastDiscoveredAt = try container.decodeIfPresent(String.self, forKey: .lastDiscoveredAt)
+        attached = try container.decodeOrDefault([String: AttachedAgentView].self, forKey: .attached, default: [:])
+        disabled = try container.decodeIfPresent([String].self, forKey: .disabled)
+    }
 }
 
 struct AttachedAgentView: Decodable, Hashable {
@@ -247,6 +262,79 @@ struct TimelineItem: Decodable, Identifiable, Hashable {
     let createdAt: String
     let updatedAt: String
     let completedAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case sessionId
+        case turnId
+        case type
+        case status
+        case role
+        case content
+        case source
+        case orderSeq
+        case revision
+        case contentHash
+        case updatedSeq
+        case createdAt
+        case updatedAt
+        case completedAt
+    }
+
+    init(
+        id: String,
+        sessionId: String,
+        turnId: String?,
+        type: String,
+        status: String,
+        role: String?,
+        content: JSONValue,
+        source: JSONValue,
+        orderSeq: Int,
+        revision: Int,
+        contentHash: String,
+        updatedSeq: Int,
+        createdAt: String,
+        updatedAt: String,
+        completedAt: String?,
+    ) {
+        self.id = id
+        self.sessionId = sessionId
+        self.turnId = turnId
+        self.type = type
+        self.status = status
+        self.role = role
+        self.content = content
+        self.source = source
+        self.orderSeq = orderSeq
+        self.revision = revision
+        self.contentHash = contentHash
+        self.updatedSeq = updatedSeq
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.completedAt = completedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        sessionId = try container.decode(String.self, forKey: .sessionId)
+        turnId = try container.decodeIfPresent(String.self, forKey: .turnId)
+        type = try container.decode(String.self, forKey: .type)
+        status = try container.decode(String.self, forKey: .status)
+        role = try container.decodeIfPresent(String.self, forKey: .role)
+        content = try container.decodeOrDefault(JSONValue.self, forKey: .content, default: .emptyObject)
+        source = try container.decodeOrDefault(JSONValue.self, forKey: .source, default: .emptyObject)
+        orderSeq = try container.decodeIfPresent(Int.self, forKey: .orderSeq)
+            ?? container.decodeIfPresent(Int.self, forKey: .updatedSeq)
+            ?? 0
+        revision = try container.decodeOrDefault(Int.self, forKey: .revision, default: 1)
+        contentHash = try container.decodeOrDefault(String.self, forKey: .contentHash, default: "")
+        updatedSeq = try container.decodeOrDefault(Int.self, forKey: .updatedSeq, default: 0)
+        createdAt = try container.decodeOrDefault(String.self, forKey: .createdAt, default: "")
+        updatedAt = try container.decodeOrDefault(String.self, forKey: .updatedAt, default: createdAt)
+        completedAt = try container.decodeIfPresent(String.self, forKey: .completedAt)
+    }
 }
 
 struct Approval: Decodable, Identifiable, Hashable {
@@ -264,6 +352,41 @@ struct Approval: Decodable, Identifiable, Hashable {
     let updatedSeq: Int
     let createdAt: String
     let resolvedAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case sessionId
+        case turnId
+        case status
+        case kind
+        case targetItemId
+        case title
+        case description
+        case payload
+        case choices
+        case source
+        case updatedSeq
+        case createdAt
+        case resolvedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        sessionId = try container.decode(String.self, forKey: .sessionId)
+        turnId = try container.decodeIfPresent(String.self, forKey: .turnId)
+        status = try container.decodeOrDefault(String.self, forKey: .status, default: "pending")
+        kind = try container.decodeOrDefault(String.self, forKey: .kind, default: "unknown")
+        targetItemId = try container.decodeIfPresent(String.self, forKey: .targetItemId)
+        title = try container.decodeOrDefault(String.self, forKey: .title, default: "Approval")
+        description = try container.decodeIfPresent(String.self, forKey: .description)
+        payload = try container.decodeOrDefault(JSONValue.self, forKey: .payload, default: .emptyObject)
+        choices = try container.decodeOrDefault([String].self, forKey: .choices, default: [])
+        source = try container.decodeOrDefault(JSONValue.self, forKey: .source, default: .emptyObject)
+        updatedSeq = try container.decodeOrDefault(Int.self, forKey: .updatedSeq, default: 0)
+        createdAt = try container.decodeOrDefault(String.self, forKey: .createdAt, default: "")
+        resolvedAt = try container.decodeIfPresent(String.self, forKey: .resolvedAt)
+    }
 }
 
 struct SessionStateResponse: Decodable {
@@ -309,6 +432,33 @@ struct RuntimeSettingsResponse: Decodable {
     let defaultRunModeConfigured: Bool
     let schemaVersion: Int
     let serverTime: String
+
+    enum CodingKeys: String, CodingKey {
+        case connectorId
+        case sessionId
+        case runtime
+        case settings
+        case runtimeSettings
+        case runtimeSettingsOverride
+        case effectiveRunMode
+        case defaultRunModeConfigured
+        case schemaVersion
+        case serverTime
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        connectorId = try container.decodeIfPresent(String.self, forKey: .connectorId)
+        sessionId = try container.decodeIfPresent(String.self, forKey: .sessionId)
+        runtime = try container.decodeOrDefault(String.self, forKey: .runtime, default: "")
+        settings = try container.decodeOrDefault(JSONValue.self, forKey: .settings, default: .emptyObject)
+        runtimeSettings = try container.decodeIfPresent(JSONValue.self, forKey: .runtimeSettings)
+        runtimeSettingsOverride = try container.decodeIfPresent(JSONValue.self, forKey: .runtimeSettingsOverride)
+        effectiveRunMode = try container.decodeIfPresent(String.self, forKey: .effectiveRunMode)
+        defaultRunModeConfigured = try container.decodeOrDefault(Bool.self, forKey: .defaultRunModeConfigured, default: false)
+        schemaVersion = try container.decodeOrDefault(Int.self, forKey: .schemaVersion, default: 0)
+        serverTime = try container.decodeOrDefault(String.self, forKey: .serverTime, default: "")
+    }
 }
 
 struct RuntimeSettingsPatchRequest: Encodable {
@@ -340,6 +490,57 @@ struct RuntimeConfigField: Decodable, Identifiable {
     let fields: [RuntimeConfigField]?
 
     var id: String { key }
+
+    enum CodingKeys: String, CodingKey {
+        case key
+        case label
+        case type
+        case description
+        case options
+        case runtimeOptionsSource
+        case visibleWhen
+        case allowSessionOverride
+        case hidden
+        case fields
+    }
+
+    init(
+        key: String,
+        label: String,
+        type: String,
+        description: String?,
+        options: [RuntimeConfigOption]?,
+        runtimeOptionsSource: String?,
+        visibleWhen: JSONValue?,
+        allowSessionOverride: Bool,
+        hidden: Bool?,
+        fields: [RuntimeConfigField]?,
+    ) {
+        self.key = key
+        self.label = label
+        self.type = type
+        self.description = description
+        self.options = options
+        self.runtimeOptionsSource = runtimeOptionsSource
+        self.visibleWhen = visibleWhen
+        self.allowSessionOverride = allowSessionOverride
+        self.hidden = hidden
+        self.fields = fields
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        key = try container.decodeOrDefault(String.self, forKey: .key, default: "")
+        label = try container.decodeOrDefault(String.self, forKey: .label, default: key)
+        type = try container.decodeOrDefault(String.self, forKey: .type, default: "string")
+        description = try container.decodeIfPresent(String.self, forKey: .description)
+        options = try container.decodeIfPresent([RuntimeConfigOption].self, forKey: .options)
+        runtimeOptionsSource = try container.decodeIfPresent(String.self, forKey: .runtimeOptionsSource)
+        visibleWhen = try container.decodeIfPresent(JSONValue.self, forKey: .visibleWhen)
+        allowSessionOverride = try container.decodeOrDefault(Bool.self, forKey: .allowSessionOverride, default: true)
+        hidden = try container.decodeIfPresent(Bool.self, forKey: .hidden)
+        fields = try container.decodeIfPresent([RuntimeConfigField].self, forKey: .fields)
+    }
 
     func withOptions(_ nextOptions: [RuntimeConfigOption]) -> RuntimeConfigField {
         RuntimeConfigField(
@@ -508,5 +709,19 @@ struct APIErrorResponse: Decodable {
 
     var message: String {
         return detail.displayString
+    }
+}
+
+private extension JSONValue {
+    static var emptyObject: JSONValue { .object([:]) }
+}
+
+private extension KeyedDecodingContainer {
+    func decodeOrDefault<Value: Decodable>(
+        _ type: Value.Type,
+        forKey key: Key,
+        default defaultValue: @autoclosure () -> Value,
+    ) throws -> Value {
+        try decodeIfPresent(type, forKey: key) ?? defaultValue()
     }
 }

@@ -4,6 +4,7 @@ enum APIClientError: LocalizedError {
     case invalidServerURL
     case invalidResponse
     case server(status: Int, detail: String)
+    case decoding(String)
 
     var errorDescription: String? {
         switch self {
@@ -12,6 +13,8 @@ enum APIClientError: LocalizedError {
         case .invalidResponse:
             return "The server returned an invalid response."
         case let .server(_, detail):
+            return detail
+        case let .decoding(detail):
             return detail
         }
     }
@@ -403,7 +406,33 @@ struct APIClient {
                 ?? HTTPURLResponse.localizedString(forStatusCode: http.statusCode)
             throw APIClientError.server(status: http.statusCode, detail: detail)
         }
-        return try JSONDecoder().decode(Response.self, from: data)
+        do {
+            return try JSONDecoder().decode(Response.self, from: data)
+        } catch let error as DecodingError {
+            throw APIClientError.decoding(error.agentsAnywhereDescription)
+        }
+    }
+}
+
+private extension DecodingError {
+    var agentsAnywhereDescription: String {
+        switch self {
+        case let .keyNotFound(key, context):
+            return "The server response is missing '\(path(context.codingPath + [key]))'."
+        case let .typeMismatch(type, context):
+            return "The server response has an invalid type at '\(path(context.codingPath))' for \(type)."
+        case let .valueNotFound(type, context):
+            return "The server response is missing a value at '\(path(context.codingPath))' for \(type)."
+        case let .dataCorrupted(context):
+            return "The server response could not be decoded at '\(path(context.codingPath))'."
+        @unknown default:
+            return "The server response could not be decoded."
+        }
+    }
+
+    private func path(_ codingPath: [CodingKey]) -> String {
+        let value = codingPath.map(\.stringValue).joined(separator: ".")
+        return value.isEmpty ? "<root>" : value
     }
 }
 
