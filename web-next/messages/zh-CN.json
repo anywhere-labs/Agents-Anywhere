@@ -650,7 +650,7 @@
       "pairCodeTitle": "使用配对码",
       "pairCodeDescription": "在目标设备的桌面连接器中输入服务器地址，再把生成的配对码填回这里。",
       "credentialsTitle": "复制凭据配对",
-      "credentialsDescription": "复制一段 base64 凭据到桌面程序，桌面程序会自动解码并保存。",
+      "credentialsDescription": "复制一段凭据文本到桌面程序，桌面程序会自动识别并保存。",
       "credentialsStepTitle": "复制凭据到桌面程序",
       "credentialsStepDescription": "把这段凭据复制到 {name} 的桌面连接器。保存后设备会自动上线。",
       "copyCredentials": "复制凭据",

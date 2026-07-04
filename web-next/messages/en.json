@@ -650,7 +650,7 @@
       "pairCodeTitle": "Use pair code",
       "pairCodeDescription": "Enter the server address in the target desktop connector, then enter its pair code here.",
       "credentialsTitle": "Copy credentials",
-      "credentialsDescription": "Copy a base64 credential payload into the desktop app so it can decode and save it.",
+      "credentialsDescription": "Copy a credential text into the desktop app so it can recognize and save it.",
       "credentialsStepTitle": "Copy credentials to desktop app",
       "credentialsStepDescription": "Paste this credential payload into the desktop connector on {name}. The device will come online after saving.",
       "copyCredentials": "Copy credentials",

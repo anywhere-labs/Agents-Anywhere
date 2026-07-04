@@ -205,7 +205,7 @@ const desktopMessages = {
     pairingFailed: "Pairing failed",
     server: "Server",
     commandTitle: "Start from command",
-    commandDescription: "Paste a command or base64 credential payload from the web console.",
+    commandDescription: "Paste a command or credential text from the web console.",
     externalLaunchPairTitle: "Use pairing request?",
     externalLaunchStartTitle: "Use connector credentials?",
     externalLaunchPairDescription: "A web page is asking this desktop app to start pairing with this server.",
@@ -261,7 +261,7 @@ const desktopMessages = {
     saveConfig: "Save config",
     saveAndRestart: "Save and restart",
     savedStarting: "Saved. Starting connector.",
-    parseStartCommand: "Paste a start command, pair command, server address, or base64 credential payload.",
+    parseStartCommand: "Paste a start command, pair command, server address, or credential text.",
     parseMissingValues: "This command is missing required values.",
     parseCredentialPayload: "This credential payload is invalid.",
     connectorStarted: "Connector started",
@@ -348,7 +348,7 @@ const desktopMessages = {
     pairingFailed: "配对失败",
     server: "服务器",
     commandTitle: "从命令启动",
-    commandDescription: "粘贴 Web 控制台生成的命令或 base64 凭据。",
+    commandDescription: "粘贴 Web 控制台生成的命令或凭据文本。",
     externalLaunchPairTitle: "使用配对请求？",
     externalLaunchStartTitle: "使用连接器凭据？",
     externalLaunchPairDescription: "网页正在请求此桌面应用与下面的服务器开始配对。",
@@ -404,7 +404,7 @@ const desktopMessages = {
     saveConfig: "保存配置",
     saveAndRestart: "保存并重启",
     savedStarting: "已保存，正在启动连接器。",
-    parseStartCommand: "请粘贴启动命令、配对命令、服务器地址或 base64 凭据。",
+    parseStartCommand: "请粘贴启动命令、配对命令、服务器地址或凭据文本。",
     parseMissingValues: "这条命令缺少必要信息。",
     parseCredentialPayload: "这段凭据无效。",
     connectorStarted: "连接器已启动",
@@ -1805,7 +1805,7 @@ function CommandDialog({
                 className="min-h-28 font-mono text-xs"
                 value={command}
                 onChange={(event) => onCommandChange(event.target.value)}
-                placeholder="uvx anywhere-cli start --server-url ... --connector-id ... --connector-token ...\n\nor paste base64 credentials"
+                placeholder="uvx anywhere-cli start --server-url ... --connector-id ... --connector-token ...\n\nor paste credential text"
                 autoFocus
               />
             </div>
