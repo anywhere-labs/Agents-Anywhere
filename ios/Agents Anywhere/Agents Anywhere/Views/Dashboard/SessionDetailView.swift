@@ -52,7 +52,7 @@ struct SessionDetailView: View {
     @State private var isLoadingOlder = false
     @State private var pendingPrependAnchorID: String?
     @State private var timelineScrollPosition = ScrollPosition()
-    @State private var isPinningInitialBottom = false
+    @State private var isTimelineReadyForDisplay = false
     @State private var lastEntryRefreshAt: Date?
     @State private var sseTask: Task<Void, Never>?
     @State private var pollTask: Task<Void, Never>?
@@ -178,6 +178,8 @@ struct SessionDetailView: View {
                     }
                     .padding(.horizontal, 16)
                     .padding(.top, 14)
+                    .opacity(isTimelineReadyForDisplay || displayEntries.isEmpty ? 1 : 0)
+                    .allowsHitTesting(isTimelineReadyForDisplay || displayEntries.isEmpty)
                 }
                 .contentShape(Rectangle())
                 .simultaneousGesture(
@@ -201,13 +203,6 @@ struct SessionDetailView: View {
                 } action: { _, isNearTop in
                     guard isNearTop, hasPositionedInitialScroll, !displayEntries.isEmpty else { return }
                     Task { await loadOlderTimeline(proxy) }
-                }
-                .onScrollGeometryChange(for: CGFloat.self) { geometry in
-                    geometry.contentSize.height
-                } action: { _, _ in
-                    guard hasPositionedInitialScroll, pendingPrependAnchorID == nil else { return }
-                    guard isPinningInitialBottom || isTimelineWithinAutoScrollDistance else { return }
-                    scrollToBottomAfterLayout(animated: false)
                 }
 
                 if shouldShowScrollToBottomButton {
@@ -243,6 +238,7 @@ struct SessionDetailView: View {
             }
             .task {
                 hasPositionedInitialScroll = false
+                isTimelineReadyForDisplay = false
                 shouldForceScrollOnTimelineUpdate = true
                 pendingPrependAnchorID = nil
                 await markRead()
@@ -526,13 +522,12 @@ struct SessionDetailView: View {
         }
     }
 
-    private func pinInitialBottomDuringLayout() {
-        isPinningInitialBottom = true
-        scrollToBottomAfterLayout(animated: false)
-        Task {
-            try? await Task.sleep(for: .milliseconds(600))
-            await MainActor.run {
-                isPinningInitialBottom = false
+    private func revealTimelineAtBottomAfterLayout() {
+        DispatchQueue.main.async {
+            scrollToBottom(animated: false)
+            DispatchQueue.main.async {
+                scrollToBottom(animated: false)
+                isTimelineReadyForDisplay = true
             }
         }
     }
@@ -554,7 +549,7 @@ struct SessionDetailView: View {
             hasPositionedInitialScroll = true
             shouldForceScrollOnTimelineUpdate = false
             shouldAutoScrollOnTimelineUpdate = false
-            pinInitialBottomDuringLayout()
+            revealTimelineAtBottomAfterLayout()
             return
         }
         if shouldForceScrollOnTimelineUpdate || shouldAutoScrollOnTimelineUpdate {
