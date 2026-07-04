@@ -58,6 +58,7 @@ function MessageCard({ token, session, item }: { token: string; session: Session
   const attachments = extractAttachments(item.content)
   const isUser = item.role === "user"
   const hasAttachments = attachments.length > 0
+  const showUserStatus = isUser && (item.status === "pending" || item.status === "failed")
   const content = text ? (
     <MarkdownText text={text} token={token} session={session} />
   ) : hasAttachments ? null : (
@@ -92,6 +93,7 @@ function MessageCard({ token, session, item }: { token: string; session: Session
             <JsonBlock value={item.content} />
           </div>
         ) : null}
+        {showUserStatus ? <TimelineStatusBadge status={item.status} /> : null}
       </div>
     </div>
   )

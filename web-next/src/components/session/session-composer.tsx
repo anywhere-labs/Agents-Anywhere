@@ -1,6 +1,5 @@
 "use client"
 
-import * as React from "react"
 import { ArrowUp, Check, ChevronDown, Loader2, Square } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -43,11 +42,14 @@ export function SessionComposer({
   session,
   pendingApprovalCount,
   sending,
+  interrupting,
   takeoverBusy,
+  value,
   runtimeSchema,
   runtimeSettings,
   runtimeSettingsBusy,
   onPatchRuntimeSettings,
+  onValueChange,
   onSend,
   onInterrupt,
   onToggleTakeover,
@@ -55,18 +57,20 @@ export function SessionComposer({
   session: SessionView
   pendingApprovalCount: number
   sending: boolean
+  interrupting: boolean
   takeoverBusy: boolean
+  value: string
   runtimeSchema: RuntimeConfigSchema | null
   runtimeSettings: Record<string, unknown> | null
   runtimeSettingsBusy: boolean
   onPatchRuntimeSettings: (settings: Record<string, unknown>) => void
-  onSend: (content: string, attachments: AttachedFile[]) => void
+  onValueChange: (value: string) => void
+  onSend: (content: string, attachments: AttachedFile[]) => Promise<boolean>
   onInterrupt: () => void
   onToggleTakeover: () => void
 }) {
   const tSession = useTranslations("dashboard.session")
   const tNew = useTranslations("dashboard.new")
-  const [value, setValue] = React.useState("")
   const { attachments, isDragging, add, remove, clear, onDragEnter, onDragLeave, onDragOver, onDrop } =
     useAttachments()
   const isBusy = session.status === "running" || session.status === "waiting_approval"
@@ -75,9 +79,10 @@ export function SessionComposer({
     connectorOnline &&
     session.takeover &&
     !sending &&
+    !interrupting &&
     (session.status === "idle" || session.status === "error")
   const hasInput = value.trim().length > 0 || attachments.length > 0
-  const showInterrupt = isBusy && !hasInput
+  const showInterrupt = isBusy
   const settingsFields = runtimeConfigFields(runtimeSchema, runtimeSettings, "session")
   const permissionField = settingsFields.find((field) => field.key === "permissionMode")
   const modelField = settingsFields.find((field) => field.key === "model")
@@ -124,13 +129,21 @@ export function SessionComposer({
             ? tSession("errorPlaceholder")
             : tSession("replyPlaceholder")
 
-  const submit = () => {
+  const submit = async () => {
     if (!canSend || !hasInput) return
     const text = value
-    setValue("")
     const files = attachments
+    onValueChange("")
     clear()
-    onSend(text, files)
+    await onSend(text, files)
+  }
+
+  const primaryAction = () => {
+    if (showInterrupt) {
+      onInterrupt()
+      return
+    }
+    void submit()
   }
 
   return (
@@ -158,12 +171,12 @@ export function SessionComposer({
             <AttachmentPreviewList attachments={attachments} onRemove={remove} />
             <Textarea
               value={value}
-              onChange={(event) => setValue(event.currentTarget.value)}
+              onChange={(event) => onValueChange(event.currentTarget.value)}
               onKeyDown={(event) => {
                 if (event.nativeEvent.isComposing) return
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault()
-                  submit()
+                  primaryAction()
                 }
               }}
               placeholder={placeholder}
@@ -329,10 +342,10 @@ export function SessionComposer({
               size="icon"
               aria-label={showInterrupt ? tSession("interrupt") : tSession("send")}
               className={cn("size-8 rounded-full", showInterrupt && "bg-destructive text-destructive-foreground hover:bg-destructive/90")}
-              disabled={showInterrupt ? !connectorOnline : !canSend || !hasInput}
-              onClick={showInterrupt ? onInterrupt : submit}
+              disabled={showInterrupt ? !connectorOnline || interrupting : !canSend || !hasInput}
+              onClick={primaryAction}
             >
-              {sending ? (
+              {sending || interrupting ? (
                 <Loader2 className="size-4 animate-spin" />
               ) : showInterrupt ? (
                 <Square className="size-4" />

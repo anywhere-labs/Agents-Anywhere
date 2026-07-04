@@ -62,6 +62,8 @@ const SCROLL_TO_BOTTOM_PRUNE_CHECK_MS = 120
 const INITIAL_TIMELINE_LIMIT = 100
 const TIMELINE_PAGE_LIMIT = 100
 const LOAD_OLDER_SCROLL_THRESHOLD = 96
+const COMPOSER_DRAFT_STORAGE_PREFIX = "agents-anywhere.sessionComposerDraft.v1."
+const OPTIMISTIC_ITEM_PREFIX = "optimistic-message:"
 const COMPOSER_BLUR_LAYERS = buildComposerBlurLayers({
   height: 144,
   layerCount: 10,
@@ -70,6 +72,11 @@ const COMPOSER_BLUR_LAYERS = buildComposerBlurLayers({
   overlap: 10,
   gamma: 1.8,
 })
+
+type ComposerDraftState = {
+  sessionId: string
+  value: string
+}
 
 type ComposerBlurLayerStyle = React.CSSProperties & {
   WebkitBackdropFilter?: string
@@ -127,6 +134,85 @@ async function loadInitialSessionState(token: string, sessionId: string): Promis
   }
 }
 
+function composerDraftStorageKey(sessionId: string): string {
+  return `${COMPOSER_DRAFT_STORAGE_PREFIX}${sessionId}`
+}
+
+function readComposerDraft(sessionId: string): string {
+  try {
+    return window.localStorage.getItem(composerDraftStorageKey(sessionId)) ?? ""
+  } catch {
+    return ""
+  }
+}
+
+function writeComposerDraft(sessionId: string, value: string) {
+  try {
+    const key = composerDraftStorageKey(sessionId)
+    if (value) window.localStorage.setItem(key, value)
+    else window.localStorage.removeItem(key)
+  } catch {
+    // Draft persistence is best-effort; private contexts can still use the composer.
+  }
+}
+
+function timelineClientMessageId(item: TimelineItem): string | null {
+  const value = item.source.clientMessageId
+  return typeof value === "string" ? value : null
+}
+
+function isOptimisticTimelineItem(item: TimelineItem): boolean {
+  return item.id.startsWith(OPTIMISTIC_ITEM_PREFIX) || item.source.optimistic === true
+}
+
+function hasTimelineItemForClientMessage(items: TimelineItem[], clientMessageId: string): boolean {
+  return items.some((item) => !isOptimisticTimelineItem(item) && timelineClientMessageId(item) === clientMessageId)
+}
+
+function preserveOptimisticItems(baseItems: TimelineItem[], previousItems: TimelineItem[]): TimelineItem[] {
+  const preserved = previousItems.filter((item) => {
+    if (!isOptimisticTimelineItem(item)) return false
+    const clientMessageId = timelineClientMessageId(item)
+    return !clientMessageId || !hasTimelineItemForClientMessage(baseItems, clientMessageId)
+  })
+  return preserved.length > 0 ? mergeTimelineItems(baseItems, preserved) : baseItems
+}
+
+function buildOptimisticUserMessage({
+  sessionId,
+  clientMessageId,
+  text,
+  items,
+  nextSeq,
+}: {
+  sessionId: string
+  clientMessageId: string
+  text: string
+  items: TimelineItem[]
+  nextSeq: number
+}): TimelineItem {
+  const now = new Date().toISOString()
+  const lastOrderSeq = items.reduce((max, item) => Math.max(max, item.orderSeq), 0)
+  const orderSeq = Math.max(lastOrderSeq + 1, nextSeq + 1)
+  return {
+    id: `${OPTIMISTIC_ITEM_PREFIX}${clientMessageId}`,
+    sessionId,
+    turnId: null,
+    type: "message",
+    status: "pending",
+    role: "user",
+    content: { text },
+    source: { clientMessageId, optimistic: true },
+    orderSeq,
+    revision: 0,
+    contentHash: clientMessageId,
+    updatedSeq: orderSeq,
+    createdAt: now,
+    updatedAt: now,
+    completedAt: null,
+  }
+}
+
 export function SessionDetail({
   token,
   sessionId,
@@ -141,6 +227,7 @@ export function SessionDetail({
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
   const [sending, setSending] = React.useState(false)
+  const [interrupting, setInterrupting] = React.useState(false)
   const [takeoverBusy, setTakeoverBusy] = React.useState(false)
   const [resolvingApprovalId, setResolvingApprovalId] = React.useState<string | null>(null)
   const [resolvingStatus, setResolvingStatus] = React.useState<ApprovalResolveStatus | null>(null)
@@ -150,6 +237,10 @@ export function SessionDetail({
   const [showScrollBottom, setShowScrollBottom] = React.useState(false)
   const [loadingOlder, setLoadingOlder] = React.useState(false)
   const [pendingTakeover, setPendingTakeover] = React.useState<boolean | null>(null)
+  const [composerDraftState, setComposerDraftState] = React.useState<ComposerDraftState>(() => ({
+    sessionId,
+    value: readComposerDraft(sessionId),
+  }))
   const timelineRef = React.useRef<HTMLDivElement | null>(null)
   const nextSeqRef = React.useRef(0)
   const autoScrollOnNextUpdateRef = React.useRef(false)
@@ -162,6 +253,19 @@ export function SessionDetail({
   const pruneAfterScrollTimerRef = React.useRef<number | null>(null)
 
   const session = state?.session ?? fallbackSession
+  const composerDraft = composerDraftState.sessionId === sessionId ? composerDraftState.value : ""
+
+  React.useEffect(() => {
+    setComposerDraftState({ sessionId, value: readComposerDraft(sessionId) })
+  }, [sessionId])
+
+  React.useEffect(() => {
+    writeComposerDraft(composerDraftState.sessionId, composerDraftState.value)
+  }, [composerDraftState])
+
+  const setComposerDraft = React.useCallback((value: string) => {
+    setComposerDraftState({ sessionId, value })
+  }, [sessionId])
 
   React.useEffect(() => {
     if (!state) {
@@ -241,7 +345,7 @@ export function SessionDetail({
     if (options.scrollToBottom) forceScrollOnNextUpdateRef.current = true
     setError(null)
     const next = await loadInitialSessionState(token, sessionId)
-    setState(next)
+    setState((current) => current ? { ...next, items: preserveOptimisticItems(next.items, current.items) } : next)
     nextSeqRef.current = Math.max(nextSeqRef.current, next.nextSeq)
     onSessionUpdated?.(next.session)
   }, [markAutoScrollIfNearBottom, onSessionUpdated, sessionId, token])
@@ -298,6 +402,8 @@ export function SessionDetail({
   React.useEffect(() => {
     let cancelled = false
     initialScrollDoneRef.current = false
+    setSending(false)
+    setInterrupting(false)
     setLoading(true)
     setState(null)
     setError(null)
@@ -353,7 +459,7 @@ export function SessionDetail({
         .then((next) => {
           if (cancelled) return
           nextSeqRef.current = Math.max(nextSeqRef.current, next.nextSeq)
-          setState(next)
+          setState((current) => current ? { ...next, items: preserveOptimisticItems(next.items, current.items) } : next)
           onSessionUpdated?.(next.session)
         })
         .catch(() => undefined)
@@ -395,22 +501,59 @@ export function SessionDetail({
     }
   }, [markAutoScrollIfNearBottom, onSessionUpdated, sessionId, token])
 
-  const handleSend = async (content: string, attachments: AttachedFile[]) => {
-    if (!session || (!content.trim() && attachments.length === 0)) return
+  const handleSend = async (content: string, attachments: AttachedFile[]): Promise<boolean> => {
+    if (!session || (!content.trim() && attachments.length === 0)) return false
+    const clientMessageId = crypto.randomUUID()
+    const messageText = content.trim() || tNew("attachmentOnlyPrompt")
+    forceScrollOnNextUpdateRef.current = true
+    setState((current) => {
+      if (!current) return current
+      return {
+        ...current,
+        items: mergeTimelineItems(current.items, [
+          buildOptimisticUserMessage({
+            sessionId: session.id,
+            clientMessageId,
+            text: messageText,
+            items: current.items,
+            nextSeq: current.nextSeq,
+          }),
+        ]),
+      }
+    })
     setSending(true)
     try {
       const files = attachments.map((attachment) => attachment.file)
       const upload = files.length > 0
         ? await dashboardApi.uploadSessionAttachments(token, session.id, files)
         : null
-      await dashboardApi.sendSessionMessage(token, session.id, content.trim() || tNew("attachmentOnlyPrompt"), {
+      await dashboardApi.sendSessionMessage(token, session.id, messageText, {
         attachments: upload?.attachments.map((attachment) => ({ fileId: attachment.fileId })) ?? [],
-        clientMessageId: crypto.randomUUID(),
+        clientMessageId,
       })
       await refresh({ scrollToBottom: true })
       scrollToBottomThrottled()
+      return true
     } catch (err) {
+      const message = err instanceof Error ? err.message : tSession("sendFailed")
+      setState((current) => {
+        if (!current) return current
+        return {
+          ...current,
+          items: current.items.map((item) =>
+            timelineClientMessageId(item) === clientMessageId && isOptimisticTimelineItem(item)
+              ? {
+                  ...item,
+                  status: "failed",
+                  content: { ...item.content, error: message },
+                  updatedAt: new Date().toISOString(),
+                }
+              : item,
+          ),
+        }
+      })
       toast.error(err instanceof Error ? err.message : tSession("sendFailed"))
+      return false
     } finally {
       setSending(false)
     }
@@ -435,12 +578,15 @@ export function SessionDetail({
   }
 
   const handleInterrupt = async () => {
-    if (!session) return
+    if (!session || interrupting) return
+    setInterrupting(true)
     try {
       await dashboardApi.interruptSession(token, session.id)
       await refresh()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : tSession("interruptFailed"))
+    } finally {
+      setInterrupting(false)
     }
   }
 
@@ -712,11 +858,14 @@ export function SessionDetail({
             session={session}
             pendingApprovalCount={pendingApprovals.length}
             sending={sending}
+            interrupting={interrupting}
             takeoverBusy={takeoverBusy}
+            value={composerDraft}
             runtimeSchema={runtimeSchema}
             runtimeSettings={runtimeSettings}
             runtimeSettingsBusy={runtimeSettingsBusy}
             onPatchRuntimeSettings={handlePatchRuntimeSettings}
+            onValueChange={setComposerDraft}
             onSend={handleSend}
             onInterrupt={handleInterrupt}
             onToggleTakeover={() => setPendingTakeover(!session.takeover)}
@@ -925,6 +1074,14 @@ function mergeTimelineItems(
   if (incomingItems.length === 0) return currentItems
   const byId = new Map(currentItems.map((item) => [item.id, item]))
   for (const item of incomingItems) {
+    const clientMessageId = timelineClientMessageId(item)
+    if (clientMessageId && !isOptimisticTimelineItem(item)) {
+      for (const [id, existing] of byId) {
+        if (isOptimisticTimelineItem(existing) && timelineClientMessageId(existing) === clientMessageId) {
+          byId.delete(id)
+        }
+      }
+    }
     const existing = byId.get(item.id)
     if (!existing || existing.updatedSeq <= item.updatedSeq) byId.set(item.id, item)
   }
