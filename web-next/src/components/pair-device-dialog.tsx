@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Copy, Check, Loader2, CheckCircle2, ArrowLeft, ExternalLink, MonitorUp } from "lucide-react"
+import { Copy, Check, Loader2, CheckCircle2, ArrowLeft, ExternalLink, MonitorUp, Terminal, KeyRound } from "lucide-react"
 import { toast } from "sonner"
 import {
   Dialog,
@@ -54,6 +54,8 @@ const NOUNS = [
   "canyon", "drift", "ember", "granite", "hazel", "iris", "kernel", "oasis", "orbit", "ripple",
 ]
 const GITHUB_RELEASES_URL = "https://github.com/anywhere-labs/Agents-Anywhere/releases"
+const COMMAND_WARNING_ACCEPTED_KEY = "agents-anywhere.pairDevice.commandWarningAccepted.v1"
+const COMMAND_WARNING_CANCEL_SECONDS = 3
 
 function randomName(): string {
   const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)]
@@ -96,8 +98,44 @@ function desktopConnectorUrl(serverUrl: string, connectorId: string, connectorTo
   return `agents-anywhere://start?${params.toString()}`
 }
 
+function encodeUtf8Base64(value: string): string {
+  const bytes = new TextEncoder().encode(value)
+  let binary = ""
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary)
+}
+
+function connectorCredentialsPayload(serverUrl: string, connectorId: string, connectorToken: string): string {
+  return encodeUtf8Base64(
+    JSON.stringify({
+      type: "agents-anywhere.connector-credentials",
+      version: 1,
+      serverUrl,
+      connectorId,
+      connectorToken,
+    }),
+  )
+}
+
+function readCommandWarningAccepted(): boolean {
+  if (typeof window === "undefined") return false
+  try {
+    return window.localStorage.getItem(COMMAND_WARNING_ACCEPTED_KEY) === "1"
+  } catch {
+    return false
+  }
+}
+
+function writeCommandWarningAccepted() {
+  try {
+    window.localStorage.setItem(COMMAND_WARNING_ACCEPTED_KEY, "1")
+  } catch {
+    // The in-memory state is enough when storage is unavailable.
+  }
+}
+
 // ── Types ──────────────────────────────────────────────────
-type Step = "name" | "method" | "desktop" | "token" | "paircode" | "success"
+type Step = "name" | "method" | "desktop-method" | "desktop-local" | "desktop-paircode" | "desktop-credentials" | "command" | "success"
 
 interface Props {
   open: boolean
@@ -108,7 +146,7 @@ interface Props {
 }
 
 // ── Inline code block ──────────────────────────────────────
-function CodeBlock({ code }: { code: string }) {
+function CodeBlock({ code, copyLabel }: { code: string; copyLabel?: string }) {
   const t = useTranslations("dashboard.pairDevice")
   const [copied, setCopied] = React.useState(false)
   const copy = () => {
@@ -130,7 +168,7 @@ function CodeBlock({ code }: { code: string }) {
         variant="ghost"
         size="icon"
         onClick={copy}
-        aria-label={t("copyCommand")}
+        aria-label={copyLabel ?? t("copyCommand")}
         className="m-2 self-center text-muted-foreground"
       >
         {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
@@ -163,7 +201,11 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
   const [claiming, setClaiming] = React.useState(false)
   const [polling, setPolling] = React.useState(false)
   const [exitGuardOpen, setExitGuardOpen] = React.useState(false)
+  const [commandWarningOpen, setCommandWarningOpen] = React.useState(false)
+  const [commandWarningAccepted, setCommandWarningAccepted] = React.useState(readCommandWarningAccepted)
+  const [commandCancelCountdown, setCommandCancelCountdown] = React.useState(COMMAND_WARNING_CANCEL_SECONDS)
   const pollingRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  const commandCountdownRef = React.useRef<number | null>(null)
   const suppressCloseGuardRef = React.useRef(false)
   const serverUrl = React.useMemo(resolvePairingServerUrl, [])
 
@@ -209,6 +251,29 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
     return () => stopPolling()
   }, [])
 
+  React.useEffect(() => {
+    if (!commandWarningOpen) {
+      if (commandCountdownRef.current) window.clearInterval(commandCountdownRef.current)
+      commandCountdownRef.current = null
+      return
+    }
+    setCommandCancelCountdown(COMMAND_WARNING_CANCEL_SECONDS)
+    commandCountdownRef.current = window.setInterval(() => {
+      setCommandCancelCountdown((current) => {
+        if (current <= 1) {
+          if (commandCountdownRef.current) window.clearInterval(commandCountdownRef.current)
+          commandCountdownRef.current = null
+          return 0
+        }
+        return current - 1
+      })
+    }, 1000)
+    return () => {
+      if (commandCountdownRef.current) window.clearInterval(commandCountdownRef.current)
+      commandCountdownRef.current = null
+    }
+  }, [commandWarningOpen])
+
   const reset = () => {
     stopPolling()
     setStep("name")
@@ -219,6 +284,8 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
     setCreating(false)
     setClaiming(false)
     setPolling(false)
+    setCommandWarningOpen(false)
+    setCommandCancelCountdown(COMMAND_WARNING_CANCEL_SECONDS)
   }
 
   const handleOpenChange = (next: boolean) => {
@@ -255,20 +322,50 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
     }
   }
 
-  const handleSelectToken = () => {
+  const enterCommandStep = () => {
     if (!connectorId) return
-    setStep("token")
+    setStep("command")
     startConnectorPolling(connectorId)
   }
 
   const handleSelectDesktop = () => {
     if (!connectorId) return
     stopPolling()
-    setStep("desktop")
+    setStep("desktop-method")
+  }
+
+  const handleSelectLocalDesktop = () => {
+    if (!connectorId) return
+    stopPolling()
+    setStep("desktop-local")
   }
 
   const handleSelectPairCode = () => {
-    setStep("paircode")
+    stopPolling()
+    setStep("desktop-paircode")
+  }
+
+  const handleSelectDesktopCredentials = () => {
+    if (!connectorId) return
+    setStep("desktop-credentials")
+    startConnectorPolling(connectorId)
+  }
+
+  const handleSelectCommand = () => {
+    if (!connectorId) return
+    if (commandWarningAccepted) {
+      enterCommandStep()
+      return
+    }
+    stopPolling()
+    setCommandWarningOpen(true)
+  }
+
+  const handleAcceptCommandWarning = () => {
+    writeCommandWarningAccepted()
+    setCommandWarningAccepted(true)
+    setCommandWarningOpen(false)
+    enterCommandStep()
   }
 
   const handleClaim = async () => {
@@ -316,8 +413,9 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
     ].join(" ")
     : ""
 
-  const pairCodeCommand = `uvx anywhere-cli pair ${shellQuote(pairServerAddress(serverUrl))}`
+  const pairServer = pairServerAddress(serverUrl)
   const desktopLaunchUrl = connectorId && token ? desktopConnectorUrl(serverUrl, connectorId, token) : ""
+  const desktopCredentials = connectorId && token ? connectorCredentialsPayload(serverUrl, connectorId, token) : ""
 
   const openDesktopConnector = () => {
     if (!desktopLaunchUrl || !connectorId) return
@@ -385,11 +483,40 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={handleSelectToken}
+                  onClick={handleSelectCommand}
                   className="h-auto w-full min-w-0 flex-col items-start gap-0.5 whitespace-normal px-4 py-3 text-left"
                 >
-                  <span className="min-w-0 font-medium">{t("tokenTitle")}</span>
-                  <span className="min-w-0 break-words text-sm text-muted-foreground">{t("tokenDescription")}</span>
+                  <span className="flex min-w-0 items-center gap-2 font-medium">
+                    <Terminal className="size-4" />
+                    {t("commandTitle")}
+                  </span>
+                  <span className="min-w-0 break-words text-sm text-muted-foreground">{t("commandDescription")}</span>
+                </Button>
+              </div>
+            </>
+          )}
+
+          {/* ── Step: Desktop method ── */}
+          {step === "desktop-method" && (
+            <>
+              <DialogHeader>
+                <DialogTitle>{t("desktopMethodTitle")}</DialogTitle>
+                <DialogDescription>
+                  {t("desktopMethodDescription", { name })}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="flex flex-col gap-3 py-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleSelectLocalDesktop}
+                  className="h-auto w-full min-w-0 flex-col items-start gap-0.5 whitespace-normal px-4 py-3 text-left"
+                >
+                  <span className="flex min-w-0 items-center gap-2 font-medium">
+                    <MonitorUp className="size-4" />
+                    {t("desktopLocalTitle")}
+                  </span>
+                  <span className="min-w-0 break-words text-sm text-muted-foreground">{t("desktopLocalDescription")}</span>
                 </Button>
                 <Button
                   type="button"
@@ -400,17 +527,40 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
                   <span className="min-w-0 font-medium">{t("pairCodeTitle")}</span>
                   <span className="min-w-0 break-words text-sm text-muted-foreground">{t("pairCodeDescription")}</span>
                 </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleSelectDesktopCredentials}
+                  className="h-auto w-full min-w-0 flex-col items-start gap-0.5 whitespace-normal px-4 py-3 text-left"
+                >
+                  <span className="flex min-w-0 items-center gap-2 font-medium">
+                    <KeyRound className="size-4" />
+                    {t("credentialsTitle")}
+                  </span>
+                  <span className="min-w-0 break-words text-sm text-muted-foreground">{t("credentialsDescription")}</span>
+                </Button>
               </div>
+              <DialogFooter>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => { stopPolling(); setStep("method") }}
+                  className="gap-1.5"
+                >
+                  <ArrowLeft className="size-3.5" />
+                  {tCommon("back")}
+                </Button>
+              </DialogFooter>
             </>
           )}
 
-          {/* ── Step: Desktop ── */}
-          {step === "desktop" && (
+          {/* ── Step: Local desktop ── */}
+          {step === "desktop-local" && (
             <>
               <DialogHeader>
-                <DialogTitle>{t("desktopStepTitle")}</DialogTitle>
+                <DialogTitle>{t("desktopLocalStepTitle")}</DialogTitle>
                 <DialogDescription>
-                  {t("desktopStepDescription", { name })}
+                  {t("desktopLocalStepDescription", { name })}
                 </DialogDescription>
               </DialogHeader>
               <div className="flex flex-col gap-3 py-2">
@@ -438,7 +588,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => { stopPolling(); setStep("method") }}
+                  onClick={() => { stopPolling(); setStep("desktop-method") }}
                   className="gap-1.5"
                 >
                   <ArrowLeft className="size-3.5" />
@@ -448,16 +598,19 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
             </>
           )}
 
-          {/* ── Step: Token ── */}
-          {step === "token" && (
+          {/* ── Step: Command ── */}
+          {step === "command" && (
             <>
               <DialogHeader>
-                <DialogTitle>{t("tokenStepTitle")}</DialogTitle>
+                <DialogTitle>{t("commandStepTitle")}</DialogTitle>
                 <DialogDescription>
-                  {t("tokenStepDescription", { name })}
+                  {t("commandStepDescription", { name })}
                 </DialogDescription>
               </DialogHeader>
               <div className="flex flex-col gap-3 py-2">
+                <div className="rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">
+                  {t("commandSkillReminder")}
+                </div>
                 <CodeBlock code={tokenCommand} />
                 <PollingIndicator label={t("waitingOnline")} />
               </div>
@@ -476,7 +629,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
           )}
 
           {/* ── Step: Pair code ── */}
-          {step === "paircode" && (
+          {step === "desktop-paircode" && (
             <>
               <DialogHeader>
                 <DialogTitle>{t("codeStepTitle")}</DialogTitle>
@@ -485,7 +638,11 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
                 </DialogDescription>
               </DialogHeader>
               <div className="flex flex-col gap-4 py-2">
-                <CodeBlock code={pairCodeCommand} />
+                <div className="rounded-lg border bg-muted/30 p-4 text-sm">
+                  <div className="font-medium">{t("serverAddress")}</div>
+                  <div className="mt-2 break-all font-mono text-xs text-muted-foreground">{pairServer}</div>
+                  <p className="mt-2 text-muted-foreground">{t("serverAddressHint")}</p>
+                </div>
                 <div className="flex flex-col gap-2">
                   <Label>{t("codeLabel")}</Label>
                   <InputOTP
@@ -510,7 +667,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => { stopPolling(); setStep("method") }}
+                  onClick={() => { stopPolling(); setStep("desktop-method") }}
                   className="gap-1.5"
                   disabled={polling}
                 >
@@ -524,6 +681,33 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
                 >
                   {claiming && <Loader2 className="mr-2 size-4 animate-spin" />}
                   {t("claim")}
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+
+          {/* ── Step: Copy credentials ── */}
+          {step === "desktop-credentials" && (
+            <>
+              <DialogHeader>
+                <DialogTitle>{t("credentialsStepTitle")}</DialogTitle>
+                <DialogDescription>
+                  {t("credentialsStepDescription", { name })}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="flex flex-col gap-3 py-2">
+                <CodeBlock code={desktopCredentials} copyLabel={t("copyCredentials")} />
+                <PollingIndicator label={t("waitingOnline")} />
+              </div>
+              <DialogFooter>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => { stopPolling(); setStep("desktop-method") }}
+                  className="gap-1.5"
+                >
+                  <ArrowLeft className="size-3.5" />
+                  {tCommon("back")}
                 </Button>
               </DialogFooter>
             </>
@@ -563,6 +747,32 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
             <AlertDialogCancel onClick={continuePairing}>{t("continuePairing")}</AlertDialogCancel>
             <AlertDialogAction onClick={handleForceClose}>
               {t("closeAnyway")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={commandWarningOpen}
+        onOpenChange={(next) => {
+          if (!next && commandCancelCountdown > 0) return
+          setCommandWarningOpen(next)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("commandWarningTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>{t("commandWarningDescription")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">
+            {t("commandWarningFallback")}
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={commandCancelCountdown > 0}>
+              {commandCancelCountdown > 0 ? t("commandWarningCancelCountdown", { seconds: commandCancelCountdown }) : tCommon("cancel")}
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={handleAcceptCommandWarning}>
+              {t("commandWarningConfirm")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

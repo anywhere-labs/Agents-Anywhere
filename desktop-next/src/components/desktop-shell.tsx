@@ -81,9 +81,13 @@ type View = "overview" | "logs" | "settings"
 type PairDialogStep = "input" | "waiting" | "claimed" | "error"
 type CommandDialogStep = "input" | "confirm"
 type ParsedConnectorCommand =
-  | { kind: "start"; config: ConnectorConfig }
+  | { kind: "start"; config: ConnectorConfig; source?: "command" | "payload" }
   | { kind: "pair"; server: string }
 type ExternalLaunchCommand = ParsedConnectorCommand & { rawUrl: string }
+type PendingCredentialAction =
+  | { kind: "start"; config: ConnectorConfig; source: "command" | "external" }
+  | { kind: "save"; config: ConnectorConfig; restart: boolean; source: "settings" }
+  | { kind: "pair"; server: string; source: "manual" | "command" | "external" }
 const LOG_PAGE_SIZE_OPTIONS = [100, 300, 1000, 3000] as const
 const SYNC_INTERVAL_OPTIONS = [15, 30, 60, 300] as const
 type AppearanceMode = "system" | "light" | "dark"
@@ -201,7 +205,7 @@ const desktopMessages = {
     pairingFailed: "Pairing failed",
     server: "Server",
     commandTitle: "Start from command",
-    commandDescription: "Paste the command from the web console.",
+    commandDescription: "Paste a command or base64 credential payload from the web console.",
     externalLaunchPairTitle: "Use pairing request?",
     externalLaunchStartTitle: "Use connector credentials?",
     externalLaunchPairDescription: "A web page is asking this desktop app to start pairing with this server.",
@@ -214,6 +218,7 @@ const desktopMessages = {
     commandLabel: "Connector command",
     pairCommandReady: "This command starts pairing.",
     startCommandReady: "This command contains connector credentials.",
+    credentialsPayloadReady: "This credential payload can be saved by the desktop connector.",
     continue: "Continue",
     cancel: "Cancel",
     done: "Done",
@@ -256,8 +261,9 @@ const desktopMessages = {
     saveConfig: "Save config",
     saveAndRestart: "Save and restart",
     savedStarting: "Saved. Starting connector.",
-    parseStartCommand: "Paste a start or pair command.",
+    parseStartCommand: "Paste a start command, pair command, server address, or base64 credential payload.",
     parseMissingValues: "This command is missing required values.",
+    parseCredentialPayload: "This credential payload is invalid.",
     connectorStarted: "Connector started",
     connectorStopped: "Connector stopped",
     connectorRestarted: "Connector restarted",
@@ -342,7 +348,7 @@ const desktopMessages = {
     pairingFailed: "配对失败",
     server: "服务器",
     commandTitle: "从命令启动",
-    commandDescription: "粘贴 Web 控制台生成的命令。",
+    commandDescription: "粘贴 Web 控制台生成的命令或 base64 凭据。",
     externalLaunchPairTitle: "使用配对请求？",
     externalLaunchStartTitle: "使用连接器凭据？",
     externalLaunchPairDescription: "网页正在请求此桌面应用与下面的服务器开始配对。",
@@ -355,6 +361,7 @@ const desktopMessages = {
     commandLabel: "连接器命令",
     pairCommandReady: "这条命令会开始配对。",
     startCommandReady: "这条命令包含连接器凭据。",
+    credentialsPayloadReady: "这段凭据可以由桌面连接器保存。",
     continue: "继续",
     cancel: "取消",
     done: "完成",
@@ -397,8 +404,9 @@ const desktopMessages = {
     saveConfig: "保存配置",
     saveAndRestart: "保存并重启",
     savedStarting: "已保存，正在启动连接器。",
-    parseStartCommand: "请粘贴启动或配对命令。",
+    parseStartCommand: "请粘贴启动命令、配对命令、服务器地址或 base64 凭据。",
     parseMissingValues: "这条命令缺少必要信息。",
+    parseCredentialPayload: "这段凭据无效。",
     connectorStarted: "连接器已启动",
     connectorStopped: "连接器已停止",
     connectorRestarted: "连接器已重启",
@@ -510,9 +518,11 @@ export function DesktopShell() {
   const [commandInput, setCommandInput] = React.useState("")
   const [parsedCommand, setParsedCommand] = React.useState<ParsedConnectorCommand | null>(null)
   const [externalLaunchCommand, setExternalLaunchCommand] = React.useState<ExternalLaunchCommand | null>(null)
+  const [pendingCredentialAction, setPendingCredentialAction] = React.useState<PendingCredentialAction | null>(null)
   const [uvInstallPromptOpen, setUvInstallPromptOpen] = React.useState(false)
   const authFailedToastShown = React.useRef(false)
   const uvMissingPromptShown = React.useRef(false)
+  const savedConfigRef = React.useRef<ConnectorConfig>(defaultConfig)
   const minLogSeqRef = React.useRef<number | null>(null)
   const maxLogSeqRef = React.useRef<number | null>(null)
 
@@ -520,7 +530,9 @@ export function DesktopShell() {
     const api = connectorDesktop()
     const [nextState, nextConfig] = await Promise.all([api.getState(), api.getConfig()])
     setState(nextState)
-    setConfig({ ...defaultConfig, ...nextConfig })
+    const normalizedConfig = { ...defaultConfig, ...nextConfig }
+    savedConfigRef.current = normalizedConfig
+    setConfig(normalizedConfig)
     setBridgeError(null)
     return nextState
   }, [])
@@ -551,7 +563,11 @@ export function DesktopShell() {
             if (next.status === "waiting") setPairStep("waiting")
             if (next.status === "claimed") setPairStep("claimed")
             if (next.status === "error") setPairStep("error")
-            if (next.config) setConfig({ ...defaultConfig, ...next.config })
+            if (next.config) {
+              const normalizedConfig = { ...defaultConfig, ...next.config }
+              savedConfigRef.current = normalizedConfig
+              setConfig(normalizedConfig)
+            }
           }),
           api.onDeepLink(() => {
             void drainDeepLinks().catch((error) => {
@@ -704,19 +720,99 @@ export function DesktopShell() {
       setState(next)
       return true
     }
-    return startConnector()
+    const next = await run("start", () => connectorDesktop().start(), t.connectorStarted)
+    if (!next) return false
+    setState(next)
+    return true
   }
 
   async function saveConfig(nextConfig: ConnectorConfig) {
     const saved = await run("save", () => connectorDesktop().saveConfig(nextConfig), t.configSaved)
-    if (saved) setConfig({ ...defaultConfig, ...saved })
+    if (saved) {
+      const normalizedConfig = { ...defaultConfig, ...saved }
+      savedConfigRef.current = normalizedConfig
+      setConfig(normalizedConfig)
+    }
     return saved
+  }
+
+  function hasSavedConnectorCredentials(): boolean {
+    const savedConfig = savedConfigRef.current
+    return Boolean(state?.hasConfig || savedConfig.connectorId || savedConfig.connectorToken)
+  }
+
+  function credentialIdentityChanged(nextConfig: ConnectorConfig): boolean {
+    if (!hasSavedConnectorCredentials()) return false
+    const savedConfig = savedConfigRef.current
+    return (
+      (nextConfig.serverUrl || "") !== (savedConfig.serverUrl || "") ||
+      (nextConfig.connectorId || "") !== (savedConfig.connectorId || "") ||
+      (nextConfig.connectorToken || "") !== (savedConfig.connectorToken || "")
+    )
+  }
+
+  function hasCompleteConnectorConfig(nextConfig: ConnectorConfig): boolean {
+    return Boolean(nextConfig.serverUrl && nextConfig.connectorId && nextConfig.connectorToken)
+  }
+
+  function shouldConfirmCredentialAction(action: PendingCredentialAction): boolean {
+    if (action.source === "external") return true
+    if (action.kind === "pair") return hasSavedConnectorCredentials()
+    return credentialIdentityChanged(action.config)
+  }
+
+  function requestCredentialAction(action: PendingCredentialAction) {
+    if (shouldConfirmCredentialAction(action)) {
+      setPendingCredentialAction(action)
+      return
+    }
+    void executeCredentialAction(action)
+  }
+
+  async function executeCredentialAction(action: PendingCredentialAction): Promise<boolean> {
+    if (!canRunLocalSetup(state)) {
+      showSetupBlock()
+      return false
+    }
+    if (action.kind === "pair") {
+      setPairServer(action.server)
+      const started = await beginPairing(action.server)
+      if (!started) return false
+      setCommandOpen(false)
+      setExternalLaunchCommand(null)
+      setPendingCredentialAction(null)
+      setPairOpen(true)
+      return true
+    }
+    const writesCredentialIdentity = hasCompleteConnectorConfig(action.config) && (!hasSavedConnectorCredentials() || credentialIdentityChanged(action.config))
+    const shouldActivateSavedConfig = action.kind === "start" || action.restart || writesCredentialIdentity
+    const saved = await saveConfig(action.config)
+    if (!saved) return false
+    if (action.kind === "save") {
+      if (shouldActivateSavedConfig) {
+        const activated = await startOrRestartSavedConnector()
+        if (!activated) return false
+      }
+      setPendingCredentialAction(null)
+      return true
+    }
+    const activated = await startOrRestartSavedConnector()
+    if (!activated) return false
+    setCommandOpen(false)
+    setExternalLaunchCommand(null)
+    setPendingCredentialAction(null)
+    return true
+  }
+
+  function requestSaveConfig(nextConfig: ConnectorConfig, restart = false) {
+    requestCredentialAction({ kind: "save", config: nextConfig, restart, source: "settings" })
   }
 
   async function clearCredentials() {
     const next = await run("clearCredentials", () => connectorDesktop().clearCredentials(), t.clearCredentialsDone)
     if (!next) return
     setState(next)
+    savedConfigRef.current = defaultConfig
     setConfig(defaultConfig)
   }
 
@@ -828,7 +924,7 @@ export function DesktopShell() {
       toast.error(error instanceof Error ? error.message : String(error))
       return
     }
-    await beginPairing(server)
+    requestCredentialAction({ kind: "pair", server, source: "manual" })
   }
 
   async function cancelPairing() {
@@ -887,16 +983,12 @@ export function DesktopShell() {
       return
     }
     if (parsedCommand.kind === "pair") {
-      setCommandOpen(false)
-      setPairOpen(true)
       setPairStep("input")
-      setPairServer(parsedCommand.server)
-      await beginPairing(parsedCommand.server)
+      requestCredentialAction({ kind: "pair", server: parsedCommand.server, source: "command" })
       return
     }
     if (save) {
-      const saved = await saveConfig(parsedCommand.config)
-      if (saved) await startOrRestartSavedConnector()
+      requestCredentialAction({ kind: "start", config: parsedCommand.config, source: "command" })
     } else {
       await startConnector(parsedCommand.config)
     }
@@ -910,27 +1002,18 @@ export function DesktopShell() {
       return
     }
     if (externalLaunchCommand.kind === "pair") {
-      setPairServer(externalLaunchCommand.server)
-      const started = await beginPairing(externalLaunchCommand.server)
-      if (started) {
-        setExternalLaunchCommand(null)
-        setPairOpen(true)
-      }
+      await executeCredentialAction({ kind: "pair", server: externalLaunchCommand.server, source: "external" })
       return
     }
-    const saved = await saveConfig(externalLaunchCommand.config)
-    if (!saved) return
-    const activated = await startOrRestartSavedConnector()
-    if (!activated) return
-    setExternalLaunchCommand(null)
+    await executeCredentialAction({ kind: "start", config: externalLaunchCommand.config, source: "external" })
   }
 
   const isRunning = Boolean(state?.running)
   const connectorView = connectorStatusView(state, isRunning, t)
   const credentialView = credentialStatusView(state, config, isRunning, t)
   const setupDetail = setupIssueDetail(state, t)
-  const savedCredentialServer = state?.serverUrl || config.serverUrl
-  const hasSavedCredentials = Boolean(state?.hasConfig || config.connectorId || config.connectorToken)
+  const savedCredentialServer = state?.serverUrl || savedConfigRef.current.serverUrl
+  const hasSavedCredentials = hasSavedConnectorCredentials()
   const showSetupNotice = Boolean(setupDetail && state?.setupIssue !== "configMissing")
   const startSavedEnabled = canStartSavedConnector(state)
   const setupActionsEnabled = canRunLocalSetup(state)
@@ -1089,8 +1172,7 @@ export function DesktopShell() {
                 config={config}
                 locale={effectiveLocale}
                 setConfig={setConfig}
-                saveConfig={saveConfig}
-                restartConnector={restartConnector}
+                saveConfig={requestSaveConfig}
                 isRunning={isRunning}
                 busy={busy}
                 clearCredentials={clearCredentials}
@@ -1139,6 +1221,19 @@ export function DesktopShell() {
           if (!open && !busy) setExternalLaunchCommand(null)
         }}
         onConfirm={confirmExternalLaunch}
+      />
+      <CredentialOverwriteDialog
+        t={t}
+        action={pendingCredentialAction}
+        busy={busy}
+        connectorRunning={isRunning}
+        savedCredentialServer={savedCredentialServer}
+        onOpenChange={(open) => {
+          if (!open && !busy) setPendingCredentialAction(null)
+        }}
+        onConfirm={async () => {
+          if (pendingCredentialAction) await executeCredentialAction(pendingCredentialAction)
+        }}
       />
       <AlertDialog open={uvInstallPromptOpen} onOpenChange={setUvInstallPromptOpen}>
         <AlertDialogContent>
@@ -1222,7 +1317,6 @@ function SettingsView({
   locale,
   setConfig,
   saveConfig,
-  restartConnector,
   isRunning,
   busy,
   clearCredentials,
@@ -1235,8 +1329,7 @@ function SettingsView({
   config: ConnectorConfig
   locale: string | undefined
   setConfig: React.Dispatch<React.SetStateAction<ConnectorConfig>>
-  saveConfig: (config: ConnectorConfig) => Promise<ConnectorConfig | null>
-  restartConnector: () => Promise<void>
+  saveConfig: (config: ConnectorConfig, restart?: boolean) => void
   isRunning: boolean
   busy: string | null
   clearCredentials: () => Promise<void>
@@ -1339,17 +1432,14 @@ function SettingsView({
               onValueChange={(syncIntervalSeconds) => setConfig((current) => ({ ...current, syncIntervalSeconds }))}
             />
             <div className="flex justify-end gap-2">
-              <Button onClick={() => void saveConfig(config)}>
+              <Button onClick={() => saveConfig(config)}>
                 <CheckCircle2 className="size-4" />
                 {t.saveConfig}
               </Button>
               <Button
                 variant="outline"
                 disabled={!isRunning}
-                onClick={async () => {
-                  const saved = await saveConfig(config)
-                  if (saved) await restartConnector()
-                }}
+                onClick={() => saveConfig(config, true)}
               >
                 <RotateCcw className="size-4" />
                 {t.saveAndRestart}
@@ -1452,7 +1542,7 @@ function SettingsView({
                   </AlertDialogFooter>
                 </AlertDialogContent>
               </AlertDialog>
-              <Button onClick={() => void saveConfig(config)}>
+              <Button onClick={() => saveConfig(config)}>
                 <CheckCircle2 className="size-4" />
                 {t.saveConfig}
               </Button>
@@ -1611,6 +1701,69 @@ function ExternalLaunchDialog({
   )
 }
 
+function CredentialOverwriteDialog({
+  t,
+  action,
+  busy,
+  connectorRunning,
+  savedCredentialServer,
+  onOpenChange,
+  onConfirm,
+}: {
+  t: DesktopMessages
+  action: PendingCredentialAction | null
+  busy: string | null
+  connectorRunning: boolean
+  savedCredentialServer: string
+  onOpenChange: (open: boolean) => void
+  onConfirm: () => Promise<void>
+}) {
+  const server = action?.kind === "pair" ? action.server : action?.config.serverUrl
+  const loading = Boolean(busy)
+  const confirmLabel = action?.kind === "pair" ? t.externalLaunchConfirmPair : action?.kind === "save" ? (action.restart || connectorRunning ? t.saveAndRestart : t.saveConfig) : (connectorRunning ? t.saveAndRestart : t.externalLaunchConfirmStart)
+
+  return (
+    <AlertDialog open={Boolean(action)} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{t.externalLaunchOverwriteTitle}</AlertDialogTitle>
+          <AlertDialogDescription>{t.externalLaunchOverwriteDescription}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <div className="grid gap-3 text-sm">
+          {server ? (
+            <div className="rounded-lg border bg-muted/30 p-3">
+              <div className="text-xs font-medium uppercase text-muted-foreground">{t.server}</div>
+              <div className="mt-1 break-all font-mono text-xs">{server}</div>
+            </div>
+          ) : null}
+          {savedCredentialServer ? (
+            <div className="rounded-lg border border-destructive/25 bg-destructive/5 p-3">
+              <div className="flex items-center gap-2 font-medium text-destructive">
+                <CircleAlert className="size-4" />
+                {t.externalLaunchOverwriteTitle}
+              </div>
+              <div className="mt-2 break-all font-mono text-xs text-muted-foreground">{savedCredentialServer}</div>
+            </div>
+          ) : null}
+        </div>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={loading}>{t.cancel}</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={(event) => {
+              event.preventDefault()
+              void onConfirm()
+            }}
+            disabled={loading}
+          >
+            {loading ? <Loader2 className="size-4 animate-spin" /> : action?.kind === "pair" ? <Plus className="size-4" /> : <Play className="size-4" />}
+            {confirmLabel}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
+}
+
 function CommandDialog({
   t,
   open,
@@ -1652,7 +1805,7 @@ function CommandDialog({
                 className="min-h-28 font-mono text-xs"
                 value={command}
                 onChange={(event) => onCommandChange(event.target.value)}
-                placeholder="uvx anywhere-cli start --server-url ... --connector-id ... --connector-token ..."
+                placeholder="uvx anywhere-cli start --server-url ... --connector-id ... --connector-token ...\n\nor paste base64 credentials"
                 autoFocus
               />
             </div>
@@ -1668,7 +1821,9 @@ function CommandDialog({
         ) : (
           <>
             <div className="rounded-lg border bg-muted/30 p-4 text-sm">
-              <div className="font-medium">{parsed?.kind === "pair" ? t.pairCommandReady : t.startCommandReady}</div>
+              <div className="font-medium">
+                {parsed?.kind === "pair" ? t.pairCommandReady : parsed?.source === "payload" ? t.credentialsPayloadReady : t.startCommandReady}
+              </div>
               <div className="mt-2 font-mono text-xs text-muted-foreground">
                 {parsed?.kind === "pair" ? parsed.server : parsed?.config.serverUrl}
               </div>
@@ -2311,6 +2466,9 @@ function parseDesktopLaunchUrl(rawUrl: string, t: DesktopMessages): ParsedConnec
 function parseConnectorCommand(input: string, t: DesktopMessages): ParsedConnectorCommand {
   const text = input.trim()
   if (!text) throw new Error(t.parseStartCommand)
+  const payloadConfig = parseConnectorCredentialsPayload(text)
+  if (payloadConfig === "invalid") throw new Error(t.parseCredentialPayload)
+  if (payloadConfig) return { kind: "start", config: payloadConfig, source: "payload" }
   const parts = splitShell(text)
   const commandIndex = parts.findIndex((part) => part === "start" || part === "pair" || part === "login")
   if (commandIndex < 0) return { kind: "pair", server: text }
@@ -2332,12 +2490,49 @@ function parseConnectorCommand(input: string, t: DesktopMessages): ParsedConnect
   }
   return {
     kind: "start",
+    source: "command",
     config: {
       ...defaultConfig,
       serverUrl,
       connectorId,
       connectorToken,
     },
+  }
+}
+
+function parseConnectorCredentialsPayload(input: string): ConnectorConfig | "invalid" | null {
+  const compact = input.replace(/\s/g, "")
+  if (!compact || compact.length % 4 === 1 || !/^[A-Za-z0-9+/]+={0,2}$/.test(compact)) return null
+  try {
+    const binary = atob(compact)
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0))
+    const payload = JSON.parse(new TextDecoder().decode(bytes)) as {
+      type?: unknown
+      version?: unknown
+      serverUrl?: unknown
+      connectorId?: unknown
+      connectorToken?: unknown
+    }
+    const serverUrl = typeof payload.serverUrl === "string" ? payload.serverUrl.trim().replace(/\/+$/, "") : ""
+    const connectorId = typeof payload.connectorId === "string" ? payload.connectorId.trim() : ""
+    const connectorToken = typeof payload.connectorToken === "string" ? payload.connectorToken.trim() : ""
+    if (
+      payload.type !== "agents-anywhere.connector-credentials" ||
+      payload.version !== 1 ||
+      !/^https?:\/\//i.test(serverUrl) ||
+      !connectorId ||
+      !connectorToken
+    ) {
+      return payload.type === "agents-anywhere.connector-credentials" ? "invalid" : null
+    }
+    return {
+      ...defaultConfig,
+      serverUrl,
+      connectorId,
+      connectorToken,
+    }
+  } catch {
+    return null
   }
 }
 
