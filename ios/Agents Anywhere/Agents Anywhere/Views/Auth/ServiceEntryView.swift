@@ -4,6 +4,7 @@ struct ServiceEntryView: View {
     @EnvironmentObject private var appState: AppState
     @State private var showingEnterServer = false
     @State private var showingQRCodeLogin = false
+    @State private var pendingSignedInRoute = false
 
     var body: some View {
         NavigationStack {
@@ -30,13 +31,25 @@ struct ServiceEntryView: View {
                 }
             }
             .navigationTitle("")
-            .sheet(isPresented: $showingEnterServer) {
-                EnterServerView()
+            .sheet(isPresented: $showingEnterServer, onDismiss: activateSignedInRouteIfNeeded) {
+                EnterServerView {
+                    pendingSignedInRoute = true
+                    showingEnterServer = false
+                }
             }
-            .sheet(isPresented: $showingQRCodeLogin) {
-                QRCodeLoginView()
+            .sheet(isPresented: $showingQRCodeLogin, onDismiss: activateSignedInRouteIfNeeded) {
+                QRCodeLoginView {
+                    pendingSignedInRoute = true
+                    showingQRCodeLogin = false
+                }
             }
         }
+    }
+
+    private func activateSignedInRouteIfNeeded() {
+        guard pendingSignedInRoute else { return }
+        pendingSignedInRoute = false
+        Task { await appState.showSignedInRoute() }
     }
 }
 

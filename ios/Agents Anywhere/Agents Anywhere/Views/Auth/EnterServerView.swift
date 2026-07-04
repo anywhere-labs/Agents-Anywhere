@@ -6,6 +6,8 @@ struct EnterServerView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var path: [ServerLoginRoute] = []
 
+    var onDashboardRequested: () -> Void = {}
+
     var body: some View {
         NavigationStack(path: $path) {
             ServerAddressView(
@@ -25,7 +27,7 @@ struct EnterServerView: View {
                         symbolName: "checkmark.circle.fill",
                         symbolColor: .green,
                     ) {
-                        finishLoginWithSheetDismissal(appState: appState, dismiss: dismiss)
+                        onDashboardRequested()
                     }
                     .navigationBarBackButtonHidden(true)
                 }

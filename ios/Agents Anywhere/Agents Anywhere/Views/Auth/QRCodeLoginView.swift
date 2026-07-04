@@ -5,6 +5,8 @@ struct QRCodeLoginView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var path: [QRLoginRoute] = []
 
+    var onDashboardRequested: () -> Void = {}
+
     var body: some View {
         NavigationStack(path: $path) {
             QRScanStepView(
@@ -40,7 +42,7 @@ struct QRCodeLoginView: View {
                         symbolName: "checkmark.circle.fill",
                         symbolColor: .green,
                     ) {
-                        finishLoginWithSheetDismissal(appState: appState, dismiss: dismiss)
+                        onDashboardRequested()
                     }
                     .navigationBarBackButtonHidden(true)
                 }

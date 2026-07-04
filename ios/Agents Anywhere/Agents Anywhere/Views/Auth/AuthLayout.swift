@@ -1,28 +1,5 @@
 import SwiftUI
 
-@MainActor
-func finishLoginWithSheetDismissal(appState: AppState, dismiss: DismissAction) {
-    dismiss()
-    Task {
-        try? await Task.sleep(for: .milliseconds(360))
-        await appState.showSignedInRoute()
-    }
-}
-
-@MainActor
-func finishSignOutWithSheetDismissal(
-    appState: AppState,
-    dismiss: DismissAction,
-    onDismiss: @escaping () -> Void
-) {
-    dismiss()
-    onDismiss()
-    Task {
-        try? await Task.sleep(for: .milliseconds(360))
-        appState.showSignedOutRoute()
-    }
-}
-
 struct AuthScreen<Content: View>: View {
     let title: String
     let onCancel: () -> Void

@@ -541,6 +541,7 @@ private struct DevicesView: View {
     @State private var isShowingAccount = false
     @State private var isShowingSignOut = false
     @State private var pendingSignOut = false
+    @State private var pendingSignedOutRoute = false
     @State private var mirrorScrollPosition = ScrollPosition()
 
     init(
@@ -599,8 +600,9 @@ private struct DevicesView: View {
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
         }
-        .fullScreenCover(isPresented: $isShowingSignOut) {
+        .fullScreenCover(isPresented: $isShowingSignOut, onDismiss: activateSignedOutRouteIfNeeded) {
             SignOutSheet {
+                pendingSignedOutRoute = true
                 isShowingSignOut = false
             }
         }
@@ -613,6 +615,12 @@ private struct DevicesView: View {
             guard !isMirror else { return }
             await appState.refreshDashboard()
         }
+    }
+
+    private func activateSignedOutRouteIfNeeded() {
+        guard pendingSignedOutRoute else { return }
+        pendingSignedOutRoute = false
+        appState.showSignedOutRoute()
     }
 
     private var mirrorScrollTarget: CGFloat {
@@ -774,11 +782,7 @@ private struct SignOutSheet: View {
                 switch route {
                 case .signedOut:
                     SignedOutConfirmationView {
-                        finishSignOutWithSheetDismissal(
-                            appState: appState,
-                            dismiss: dismiss,
-                            onDismiss: onDone,
-                        )
+                        onDone()
                     }
                     .navigationBarBackButtonHidden(true)
                 }
