@@ -27,14 +27,6 @@ struct QRCodeLoginView: View {
                     QRWaitingStepView(
                         payload: payload,
                         onCancel: { dismiss() },
-                        onReady: {
-                            path.append(.complete(payload))
-                        },
-                    )
-                case let .complete(payload):
-                    QRCompleteStepView(
-                        payload: payload,
-                        onCancel: { dismiss() },
                         onSignedIn: {
                             path.append(.success)
                         },
@@ -63,7 +55,6 @@ struct QRCodeLoginView: View {
 private enum QRLoginRoute: Hashable {
     case confirm(MobileLoginPayload)
     case waiting(MobileLoginPayload)
-    case complete(MobileLoginPayload)
     case success
 }
 
@@ -208,16 +199,18 @@ private struct QRWaitingStepView: View {
 
     let payload: MobileLoginPayload
     let onCancel: () -> Void
-    let onReady: () -> Void
+    let onSignedIn: () -> Void
 
     @State private var statusText = "Waiting for confirmation"
+    @State private var isFinishing = false
     @State private var alertMessage: String?
     @State private var pollingTask: Task<Void, Never>?
 
     var body: some View {
         AuthScreen(
-            title: "Confirm on Web",
-            subtitle: "Click confirm in the web console, then return here.",
+            title: isFinishing ? "Completing Login" : "Confirm on Web",
+            subtitle: isFinishing ? "The web console approved this iPhone. Finishing the secure login now." : "Click confirm in the web console, then return here.",
+            showsCancel: !isFinishing,
             onCancel: onCancel,
         ) {
             VStack(spacing: 24) {
@@ -244,6 +237,7 @@ private struct QRWaitingStepView: View {
         .onDisappear {
             stopPolling()
         }
+        .navigationBarBackButtonHidden(isFinishing)
         .alert("Login Status", isPresented: Binding(
             get: { alertMessage != nil },
             set: { if !$0 { alertMessage = nil } },
@@ -282,8 +276,7 @@ private struct QRWaitingStepView: View {
 
         switch status.status {
         case "approved":
-            statusText = "Login confirmed"
-            onReady()
+            await finishLogin()
             return false
         case "pending_web_confirm":
             statusText = "Waiting for confirmation"
@@ -302,67 +295,16 @@ private struct QRWaitingStepView: View {
             return false
         }
     }
-}
-
-private struct QRCompleteStepView: View {
-    @EnvironmentObject private var appState: AppState
-
-    let payload: MobileLoginPayload
-    let onCancel: () -> Void
-    let onSignedIn: () -> Void
-
-    @State private var isFinishing = false
-    @State private var didStartLogin = false
-    @State private var alertMessage: String?
-
-    var body: some View {
-        AuthScreen(
-            title: "Completing Login",
-            subtitle: "The web console approved this iPhone. Finishing the secure login now.",
-            showsCancel: alertMessage != nil,
-            onCancel: onCancel,
-        ) {
-            VStack(alignment: .leading, spacing: 24) {
-                LoginSummaryView(
-                    server: payload.webUrl,
-                    userId: payload.userId,
-                )
-
-                HStack(spacing: 12) {
-                    ProgressView()
-                        .controlSize(.regular)
-
-                    Text(isFinishing ? "Signing in..." : "Preparing login...")
-                        .font(.headline)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-        .alert("Login Failed", isPresented: Binding(
-            get: { alertMessage != nil },
-            set: { if !$0 { alertMessage = nil } },
-        )) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(alertMessage ?? "The login could not be completed.")
-        }
-        .task {
-            guard !didStartLogin else { return }
-            didStartLogin = true
-            await finishLogin()
-        }
-        .navigationBarBackButtonHidden(true)
-    }
 
     private func finishLogin() async {
         guard !isFinishing else { return }
         isFinishing = true
-        defer { isFinishing = false }
+        statusText = "Signing in..."
         await appState.exchangeMobileLogin(payload: payload, showSignedInRoute: false)
         if appState.me != nil {
             onSignedIn()
         } else {
+            isFinishing = false
             alertMessage = appState.authError ?? "The login could not be completed."
         }
     }
