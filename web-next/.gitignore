@@ -7,3 +7,4 @@ out
 .yarn/cache
 .pnp.*
 tsconfig.tsbuildinfo
+next-env.d.ts

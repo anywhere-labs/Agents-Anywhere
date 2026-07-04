@@ -260,6 +260,10 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
       commandCountdownRef.current = null
       return
     }
+    if (commandWarningAccepted) {
+      setCommandCountdown(0)
+      return
+    }
     setCommandCountdown(COMMAND_WARNING_WAIT_SECONDS)
     commandCountdownRef.current = window.setInterval(() => {
       setCommandCountdown((current) => {
@@ -356,10 +360,6 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
 
   const handleSelectCommand = () => {
     if (!connectorId) return
-    if (commandWarningAccepted) {
-      enterCommandStep()
-      return
-    }
     stopPolling()
     setCommandWarningOpen(true)
   }
