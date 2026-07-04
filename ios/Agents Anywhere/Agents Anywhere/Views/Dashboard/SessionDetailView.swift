@@ -196,7 +196,7 @@ struct SessionDetailView: View {
                     isTimelineWithinAutoScrollDistance = isNearEnoughForAutoScroll
                 }
                 .onScrollGeometryChange(for: Bool.self) { geometry in
-                    geometry.contentOffset.y + geometry.contentInsets.top <= loadOlderScrollThreshold
+                    geometry.visibleRect.minY <= loadOlderScrollThreshold
                 } action: { _, isNearTop in
                     guard isNearTop, hasPositionedInitialScroll, !displayEntries.isEmpty else { return }
                     Task { await loadOlderTimeline(proxy) }
@@ -483,10 +483,7 @@ struct SessionDetailView: View {
     private func distanceToBottom(_ geometry: ScrollGeometry) -> CGFloat {
         max(
             0,
-            geometry.contentSize.height
-                + geometry.contentInsets.bottom
-                - geometry.containerSize.height
-                - geometry.contentOffset.y,
+            geometry.contentSize.height - geometry.visibleRect.maxY,
         )
     }
 
