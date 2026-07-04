@@ -16,7 +16,7 @@ struct DashboardView: View {
     @State private var sessionToOpen: SessionSummary?
 
     var body: some View {
-        RootTabsView(sessionToOpen: $sessionToOpen) {
+        RootTabsView(sessionToOpen: $sessionToOpen, isNewSessionPresented: $isShowingNewSession) {
             isShowingNewSession = true
         }
         .task {
@@ -35,6 +35,7 @@ struct DashboardView: View {
 
 private struct RootTabsView: View {
     @Binding var sessionToOpen: SessionSummary?
+    @Binding var isNewSessionPresented: Bool
 
     let onNewSession: () -> Void
 
@@ -42,7 +43,8 @@ private struct RootTabsView: View {
     private var selectedTab: String = RootTab.sessions
     @State private var sessionPath: [SessionSummary] = []
     @State private var previousTab: String = RootTab.sessions
-    @State private var isRestoringFromActionTab = false
+    @State private var currentSelectableTab: String = RootTab.sessions
+    @State private var actionReturnTab: String?
 
     private var tabTransition: AnyTransition {
         let edge: Edge = selectedTabSortOrder >= previousTabSortOrder ? .trailing : .leading
@@ -63,31 +65,28 @@ private struct RootTabsView: View {
     var body: some View {
         TabView(selection: $selectedTab) {
             Tab("Sessions", systemImage: "rectangle.stack.fill", value: RootTab.sessions) {
-                NavigationStack(path: $sessionPath) {
-                    SessionsView()
-                        .navigationDestination(for: SessionSummary.self) { session in
-                            SessionDetailView(initialSession: session)
-                        }
-                }
+                sessionsRoot
                 .id(RootTab.sessions)
                 .transition(tabTransition)
             }
 
             Tab("Devices", systemImage: "desktopcomputer", value: RootTab.devices) {
-                NavigationStack {
-                    DevicesView()
-                }
+                devicesRoot
                 .id(RootTab.devices)
                 .transition(tabTransition)
             }
 
             if #available(iOS 27.0, *) {
                 Tab("New", systemImage: "plus", value: RootTab.newSession, role: .prominent) {
-                    Color.clear
+                    mirroredActionTabRoot
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
                 }
             } else {
                 Tab("New", systemImage: "plus", value: RootTab.newSession) {
-                    Color.clear
+                    mirroredActionTabRoot
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
                 }
             }
         }
@@ -96,28 +95,56 @@ private struct RootTabsView: View {
             if selectedTab == RootTab.newSession || !isSelectableRootTab(selectedTab) {
                 selectedTab = RootTab.sessions
             }
+            currentSelectableTab = selectedTab
         }
         .onChange(of: selectedTab) { oldValue, newValue in
-            if isRestoringFromActionTab {
-                isRestoringFromActionTab = false
-                return
-            }
-
             if newValue == RootTab.newSession {
-                isRestoringFromActionTab = true
-                selectedTab = isSelectableRootTab(oldValue) ? oldValue : RootTab.sessions
+                actionReturnTab = isSelectableRootTab(oldValue) ? oldValue : currentSelectableTab
                 onNewSession()
                 return
             }
 
-            previousTab = oldValue
+            previousTab = oldValue == RootTab.newSession ? actionReturnTab ?? currentSelectableTab : oldValue
+            currentSelectableTab = newValue
+        }
+        .onChange(of: isNewSessionPresented) { _, isPresented in
+            guard !isPresented, selectedTab == RootTab.newSession else { return }
+            selectedTab = actionReturnTab ?? currentSelectableTab
+            actionReturnTab = nil
         }
         .onChange(of: sessionToOpen) { _, session in
             guard let session else { return }
             previousTab = selectedTab
             selectedTab = RootTab.sessions
+            currentSelectableTab = RootTab.sessions
+            actionReturnTab = nil
             sessionPath = [session]
             sessionToOpen = nil
+        }
+    }
+
+    private var sessionsRoot: some View {
+        NavigationStack(path: $sessionPath) {
+            SessionsView()
+                .navigationDestination(for: SessionSummary.self) { session in
+                    SessionDetailView(initialSession: session)
+                }
+        }
+    }
+
+    private var devicesRoot: some View {
+        NavigationStack {
+            DevicesView()
+        }
+    }
+
+    @ViewBuilder
+    private var mirroredActionTabRoot: some View {
+        switch actionReturnTab ?? currentSelectableTab {
+        case RootTab.devices:
+            devicesRoot
+        default:
+            sessionsRoot
         }
     }
 
