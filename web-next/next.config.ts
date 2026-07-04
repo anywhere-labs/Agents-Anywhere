@@ -9,7 +9,7 @@ const browserApiTarget = staticExport ? "" : apiTarget;
 
 const nextConfig: NextConfig = {
   devIndicators: false,
-  allowedDevOrigins: ["127.0.0.1", "localhost"],
+  allowedDevOrigins: ["**.*", "localhost", "*.localhost"],
   output: staticExport ? "export" : undefined,
   trailingSlash: staticExport,
   env: {
