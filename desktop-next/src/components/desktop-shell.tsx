@@ -668,17 +668,19 @@ export function DesktopShell() {
     return false
   }
 
-  async function startConnector(runtimeConfig?: ConnectorConfig) {
+  async function startConnector(runtimeConfig?: ConnectorConfig): Promise<boolean> {
     if (!runtimeConfig && !canStartSavedConnector(state)) {
       if (!showSetupBlock()) toast.error(t.configMissingDetail)
-      return
+      return false
     }
     if (runtimeConfig && !canRunLocalSetup(state)) {
       showSetupBlock()
-      return
+      return false
     }
     const next = await run("start", () => connectorDesktop().start(runtimeConfig), t.connectorStarted)
-    if (next) setState(next)
+    if (!next) return false
+    setState(next)
+    return true
   }
 
   async function stopConnector() {
@@ -693,6 +695,16 @@ export function DesktopShell() {
     }
     const next = await run("restart", () => connectorDesktop().restart(), t.connectorRestarted)
     if (next) setState(next)
+  }
+
+  async function startOrRestartSavedConnector(): Promise<boolean> {
+    if (state?.running) {
+      const next = await run("restart", () => connectorDesktop().restart(), t.connectorRestarted)
+      if (!next) return false
+      setState(next)
+      return true
+    }
+    return startConnector()
   }
 
   async function saveConfig(nextConfig: ConnectorConfig) {
@@ -884,7 +896,7 @@ export function DesktopShell() {
     }
     if (save) {
       const saved = await saveConfig(parsedCommand.config)
-      if (saved) await startConnector()
+      if (saved) await startOrRestartSavedConnector()
     } else {
       await startConnector(parsedCommand.config)
     }
@@ -908,7 +920,8 @@ export function DesktopShell() {
     }
     const saved = await saveConfig(externalLaunchCommand.config)
     if (!saved) return
-    await startConnector()
+    const activated = await startOrRestartSavedConnector()
+    if (!activated) return
     setExternalLaunchCommand(null)
   }
 
@@ -1109,6 +1122,7 @@ export function DesktopShell() {
         command={commandInput}
         parsed={parsedCommand}
         busy={busy}
+        connectorRunning={isRunning}
         onCommandChange={setCommandInput}
         onOpenChange={setCommandOpen}
         onParse={parseCommand}
@@ -1118,6 +1132,7 @@ export function DesktopShell() {
         t={t}
         command={externalLaunchCommand}
         busy={busy}
+        connectorRunning={isRunning}
         hasSavedCredentials={hasSavedCredentials}
         savedCredentialServer={savedCredentialServer}
         onOpenChange={(open) => {
@@ -1530,6 +1545,7 @@ function ExternalLaunchDialog({
   t,
   command,
   busy,
+  connectorRunning,
   hasSavedCredentials,
   savedCredentialServer,
   onOpenChange,
@@ -1538,6 +1554,7 @@ function ExternalLaunchDialog({
   t: DesktopMessages
   command: ExternalLaunchCommand | null
   busy: string | null
+  connectorRunning: boolean
   hasSavedCredentials: boolean
   savedCredentialServer: string
   onOpenChange: (open: boolean) => void
@@ -1586,7 +1603,7 @@ function ExternalLaunchDialog({
             disabled={loading}
           >
             {loading ? <Loader2 className="size-4 animate-spin" /> : isStart ? <Play className="size-4" /> : <Plus className="size-4" />}
-            {isStart ? t.externalLaunchConfirmStart : t.externalLaunchConfirmPair}
+            {isStart ? (connectorRunning ? t.saveAndRestart : t.externalLaunchConfirmStart) : t.externalLaunchConfirmPair}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -1601,6 +1618,7 @@ function CommandDialog({
   command,
   parsed,
   busy,
+  connectorRunning,
   onCommandChange,
   onOpenChange,
   onParse,
@@ -1612,6 +1630,7 @@ function CommandDialog({
   command: string
   parsed: ParsedConnectorCommand | null
   busy: string | null
+  connectorRunning: boolean
   onCommandChange: (value: string) => void
   onOpenChange: (open: boolean) => void
   onParse: () => void
@@ -1669,7 +1688,7 @@ function CommandDialog({
                     {t.runOnce}
                   </Button>
                   <Button onClick={() => onRun(true)} disabled={Boolean(busy)}>
-                    {t.saveAndStart}
+                    {connectorRunning ? t.saveAndRestart : t.saveAndStart}
                   </Button>
                 </>
               )}
