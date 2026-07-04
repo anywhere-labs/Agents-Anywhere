@@ -774,9 +774,11 @@ private struct SignOutSheet: View {
                 switch route {
                 case .signedOut:
                     SignedOutConfirmationView {
-                        dismiss()
-                        onDone()
-                        appState.showSignedOutRoute()
+                        finishSignOutWithSheetDismissal(
+                            appState: appState,
+                            dismiss: dismiss,
+                            onDismiss: onDone,
+                        )
                     }
                     .navigationBarBackButtonHidden(true)
                 }

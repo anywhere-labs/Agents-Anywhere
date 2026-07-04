@@ -25,10 +25,7 @@ struct EnterServerView: View {
                         symbolName: "checkmark.circle.fill",
                         symbolColor: .green,
                     ) {
-                        Task {
-                            await appState.showSignedInRoute()
-                            dismiss()
-                        }
+                        finishLoginWithSheetDismissal(appState: appState, dismiss: dismiss)
                     }
                     .navigationBarBackButtonHidden(true)
                 }
