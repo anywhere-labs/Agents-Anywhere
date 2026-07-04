@@ -670,6 +670,7 @@
       "commandStepTitle": "使用命令启动",
       "commandStepDescription": "在 {name} 的终端中运行这条命令。设备会自动上线。",
       "commandSkillReminder": "此方式需要一定的计算机能力。请确认你能熟练使用终端，并且能够通过命令使用 uv/uvx 命令行工具。",
+      "commandBackgroundReminder": "如果不使用 systemd、tmux、screen、后台服务等工具运行，连接会在当前 shell 会话结束时中断。",
       "commandWarningTitle": "确认使用命令启动？",
       "commandWarningDescription": "使用命令启动需要你熟练使用终端，并且能够通过命令使用 uv/uvx 命令行工具。",
       "commandWarningFallback": "如果你不确定如何使用终端或 uv/uvx，请返回并使用桌面连接器程序。",

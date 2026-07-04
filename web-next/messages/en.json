@@ -670,6 +670,7 @@
       "commandStepTitle": "Start with command",
       "commandStepDescription": "Run this command in the terminal on {name}. The device will come online automatically.",
       "commandSkillReminder": "This method requires computer proficiency. Make sure you can use a terminal comfortably and run uv/uvx from the command line.",
+      "commandBackgroundReminder": "If you do not run it with a tool such as systemd, tmux, screen, or a background service, the connection will stop when this shell session ends.",
       "commandWarningTitle": "Use command startup?",
       "commandWarningDescription": "Command startup requires terminal proficiency and the ability to run uv/uvx from the command line.",
       "commandWarningFallback": "If you are not sure how to use a terminal or uv/uvx, go back and use the desktop connector app.",

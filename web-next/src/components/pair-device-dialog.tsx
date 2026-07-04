@@ -698,6 +698,9 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
                 <div className="rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">
                   {t("commandSkillReminder")}
                 </div>
+                <div className="rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">
+                  {t("commandBackgroundReminder")}
+                </div>
                 <CodeBlock code={tokenCommand} />
                 <PollingIndicator label={t("waitingOnline")} />
               </div>
