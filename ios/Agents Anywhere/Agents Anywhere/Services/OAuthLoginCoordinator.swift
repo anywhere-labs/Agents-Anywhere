@@ -35,7 +35,13 @@ final class OAuthLoginCoordinator: NSObject, ObservableObject, ASWebAuthenticati
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
         #if canImport(UIKit)
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-        return scenes.flatMap(\.windows).first(where: \.isKeyWindow) ?? ASPresentationAnchor()
+        if let keyWindow = scenes.flatMap(\.windows).first(where: \.isKeyWindow) {
+            return keyWindow
+        }
+        if let scene = scenes.first {
+            return ASPresentationAnchor(windowScene: scene)
+        }
+        return ASPresentationAnchor(frame: .zero)
         #elseif canImport(AppKit)
         return NSApplication.shared.windows.first ?? ASPresentationAnchor()
         #else
@@ -45,7 +51,7 @@ final class OAuthLoginCoordinator: NSObject, ObservableObject, ASWebAuthenticati
 
     private func callbackURL(for authURL: URL) async throws -> URL {
         let callback = OAuthCallbackContinuation()
-        try await withCheckedThrowingContinuation { continuation in
+        return try await withCheckedThrowingContinuation { continuation in
             callback.setContinuation(continuation)
             let authSession = ASWebAuthenticationSession(url: authURL, callbackURLScheme: callbackScheme) { [weak self] callbackURL, error in
                 Task { @MainActor in
