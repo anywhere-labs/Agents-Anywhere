@@ -51,6 +51,7 @@ struct SessionDetailView: View {
     @State private var shouldForceScrollOnTimelineUpdate = false
     @State private var isLoadingOlder = false
     @State private var pendingPrependAnchorID: String?
+    @State private var timelineScrollPosition = ScrollPosition()
     @State private var lastEntryRefreshAt: Date?
     @State private var sseTask: Task<Void, Never>?
     @State private var pollTask: Task<Void, Never>?
@@ -140,9 +141,10 @@ struct SessionDetailView: View {
                             .padding(.top, 80)
                         } else {
                             if timeline.hasMore || isLoadingOlder {
-                                LoadOlderTimelineButton(isLoading: isLoadingOlder) {
-                                    Task { await loadOlderTimeline(proxy) }
-                                }
+                                ProgressView()
+                                    .opacity(isLoadingOlder ? 1 : 0)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 12)
                                 .id("load-older")
                             }
 
@@ -182,24 +184,19 @@ struct SessionDetailView: View {
                         dismissComposerKeyboard()
                     },
                 )
+                .scrollPosition($timelineScrollPosition)
                 .onScrollGeometryChange(for: Bool.self) { geometry in
-                    let distanceToBottom = geometry.contentSize.height
-                        - geometry.containerSize.height
-                        - geometry.contentOffset.y
-                    return distanceToBottom <= scrollBottomButtonDistance
+                    distanceToBottom(geometry) <= scrollBottomButtonDistance
                 } action: { _, isNearBottom in
                     isTimelineNearBottom = isNearBottom
                 }
                 .onScrollGeometryChange(for: Bool.self) { geometry in
-                    let distanceToBottom = geometry.contentSize.height
-                        - geometry.containerSize.height
-                        - geometry.contentOffset.y
-                    return distanceToBottom <= autoScrollBottomDistance
+                    distanceToBottom(geometry) <= autoScrollBottomDistance
                 } action: { _, isNearEnoughForAutoScroll in
                     isTimelineWithinAutoScrollDistance = isNearEnoughForAutoScroll
                 }
                 .onScrollGeometryChange(for: Bool.self) { geometry in
-                    geometry.contentOffset.y <= loadOlderScrollThreshold
+                    geometry.contentOffset.y + geometry.contentInsets.top <= loadOlderScrollThreshold
                 } action: { _, isNearTop in
                     guard isNearTop, hasPositionedInitialScroll, !displayEntries.isEmpty else { return }
                     Task { await loadOlderTimeline(proxy) }
@@ -209,7 +206,7 @@ struct SessionDetailView: View {
                     Button {
                         shouldForceScrollOnTimelineUpdate = false
                         shouldAutoScrollOnTimelineUpdate = false
-                        scrollToBottom(proxy, animated: true)
+                        scrollToBottom(animated: true)
                     } label: {
                         Image(systemName: "arrow.down")
                             .font(.system(size: 17, weight: .semibold))
@@ -483,14 +480,23 @@ struct SessionDetailView: View {
         return session.status == "idle" || session.status == "error"
     }
 
-    private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool) {
-        let action = { proxy.scrollTo("bottom", anchor: .bottom) }
+    private func distanceToBottom(_ geometry: ScrollGeometry) -> CGFloat {
+        max(
+            0,
+            geometry.contentSize.height
+                + geometry.contentInsets.bottom
+                - geometry.containerSize.height
+                - geometry.contentOffset.y,
+        )
+    }
+
+    private func scrollToBottom(animated: Bool) {
+        let action = { timelineScrollPosition.scrollTo(edge: .bottom) }
         if animated {
             withAnimation(.easeOut(duration: 0.22), action)
         } else {
             action()
         }
-        isTimelineNearBottom = true
     }
 
     private func markAutoScrollIfNearBottom() {
@@ -499,14 +505,14 @@ struct SessionDetailView: View {
         }
     }
 
-    private func scrollToBottomAfterLayout(_ proxy: ScrollViewProxy, animated: Bool) {
+    private func scrollToBottomAfterLayout(animated: Bool) {
         DispatchQueue.main.async {
             if animated {
-                scrollToBottom(proxy, animated: true)
+                scrollToBottom(animated: true)
             } else {
-                scrollToBottom(proxy, animated: false)
+                scrollToBottom(animated: false)
                 DispatchQueue.main.async {
-                    scrollToBottom(proxy, animated: false)
+                    scrollToBottom(animated: false)
                 }
             }
         }
@@ -529,13 +535,13 @@ struct SessionDetailView: View {
             hasPositionedInitialScroll = true
             shouldForceScrollOnTimelineUpdate = false
             shouldAutoScrollOnTimelineUpdate = false
-            scrollToBottomAfterLayout(proxy, animated: false)
+            scrollToBottomAfterLayout(animated: false)
             return
         }
         if shouldForceScrollOnTimelineUpdate || shouldAutoScrollOnTimelineUpdate {
             shouldForceScrollOnTimelineUpdate = false
             shouldAutoScrollOnTimelineUpdate = false
-            scrollToBottomAfterLayout(proxy, animated: true)
+            scrollToBottomAfterLayout(animated: true)
         }
     }
 
@@ -991,33 +997,6 @@ private enum ChatEntry: Identifiable {
         }
     }
 
-}
-
-private struct LoadOlderTimelineButton: View {
-    let isLoading: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                if isLoading {
-                    ProgressView()
-                        .controlSize(.small)
-                } else {
-                    Image(systemName: "chevron.up")
-                        .font(.caption.weight(.semibold))
-                }
-                Text(isLoading ? "Loading earlier" : "Load earlier")
-                    .font(.footnote.weight(.medium))
-            }
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 8)
-        }
-        .buttonStyle(.plain)
-        .disabled(isLoading)
-        .accessibilityLabel(isLoading ? "Loading Earlier Messages" : "Load Earlier Messages")
-    }
 }
 
 private struct SessionTimelineState {
