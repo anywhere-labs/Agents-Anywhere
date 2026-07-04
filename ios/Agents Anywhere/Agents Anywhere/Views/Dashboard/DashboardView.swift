@@ -791,6 +791,8 @@ private enum SignOutRoute: Hashable {
 }
 
 private struct SignedOutConfirmationView: View {
+    @State private var isClosing = false
+
     let onContinue: () -> Void
 
     var body: some View {
@@ -801,8 +803,12 @@ private struct SignedOutConfirmationView: View {
             buttonSystemImage: "arrow.right",
             symbolName: "checkmark.circle.fill",
             symbolColor: .green,
-            action: onContinue,
-        )
+            isLoading: isClosing,
+        ) {
+            guard !isClosing else { return }
+            isClosing = true
+            onContinue()
+        }
     }
 }
 

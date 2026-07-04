@@ -219,6 +219,7 @@ struct AuthResultView: View {
     let buttonSystemImage: String
     let symbolName: String
     let symbolColor: Color
+    var isLoading = false
     let action: () -> Void
 
     var body: some View {
@@ -245,6 +246,8 @@ struct AuthResultView: View {
                 AuthPrimaryButton(
                     title: buttonTitle,
                     systemImage: buttonSystemImage,
+                    isLoading: isLoading,
+                    disabled: isLoading,
                     action: action,
                 )
             }

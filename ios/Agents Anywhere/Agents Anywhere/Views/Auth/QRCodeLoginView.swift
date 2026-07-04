@@ -4,6 +4,7 @@ struct QRCodeLoginView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
     @State private var path: [QRLoginRoute] = []
+    @State private var isClosing = false
 
     var onDashboardRequested: () -> Void = {}
 
@@ -41,7 +42,10 @@ struct QRCodeLoginView: View {
                         buttonSystemImage: "arrow.right",
                         symbolName: "checkmark.circle.fill",
                         symbolColor: .green,
+                        isLoading: isClosing,
                     ) {
+                        guard !isClosing else { return }
+                        isClosing = true
                         onDashboardRequested()
                     }
                     .navigationBarBackButtonHidden(true)
