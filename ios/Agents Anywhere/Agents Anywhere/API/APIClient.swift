@@ -172,7 +172,7 @@ struct APIClient {
 
     func filePreviewURL(previewToken: String, name: String? = nil) throws -> URL {
         guard var components = URLComponents(
-            url: URL(string: "/en/preview", relativeTo: serverURL)?.absoluteURL ?? serverURL,
+            url: URL(string: "/en", relativeTo: serverURL)?.absoluteURL ?? serverURL,
             resolvingAgainstBaseURL: false,
         ) else {
             throw APIClientError.invalidResponse
@@ -182,6 +182,7 @@ struct APIClient {
             queryItems.append(URLQueryItem(name: "name", value: name))
         }
         components.queryItems = queryItems
+        components.fragment = "/preview"
         guard let url = components.url else { throw APIClientError.invalidResponse }
         return url
     }

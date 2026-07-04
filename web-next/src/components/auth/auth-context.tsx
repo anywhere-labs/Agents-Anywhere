@@ -18,6 +18,8 @@ export type AuthScreen =
   | "signed-out"
   | "oauth-new-user"
   | "oauth-link-existing"
+  | "mobile-oauth"
+  | "preview"
   | "app"
 
 export type OAuthPending = {
@@ -64,11 +66,13 @@ function hashToScreen(hash: string): AuthScreen {
     "#/signed-out": "signed-out",
     "#/oauth/new": "oauth-new-user",
     "#/oauth/link": "oauth-link-existing",
+    "#/mobile-oauth": "mobile-oauth",
+    "#/preview": "preview",
   }
   if (exactMap[hash]) return exactMap[hash]
 
   // Any app sub-route → app. Default bare hash "/" is also app.
-  const path = hash.replace(/^#\/?/, "")
+  const path = hash.replace(/^#\/?/, "").split("?")[0] ?? ""
   const isAppRoute =
     path === "" ||
     path === "app" ||
@@ -91,6 +95,8 @@ function screenToHash(s: AuthScreen): string {
     "signed-out": "#/signed-out",
     "oauth-new-user": "#/oauth/new",
     "oauth-link-existing": "#/oauth/link",
+    "mobile-oauth": "#/mobile-oauth",
+    preview: "#/preview",
     app: "#/",
   }
   return map[s] ?? "#/login"
@@ -224,6 +230,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setMe(currentUser)
     setError(null)
     setOauthPending(null)
+    const postAuthScreen = hashToScreen(window.location.hash)
+    if (postAuthScreen === "mobile-oauth") {
+      setScreenState("mobile-oauth")
+      return
+    }
     window.location.hash = "#/"
     setScreenState("app")
   }, [])

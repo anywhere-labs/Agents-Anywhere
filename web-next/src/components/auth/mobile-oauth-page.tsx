@@ -26,12 +26,12 @@ type MobileOAuthParams = {
 export function MobileOAuthPage() {
   return (
     <AuthProvider>
-      <MobileOAuthInner />
+      <MobileOAuthFlow />
     </AuthProvider>
   )
 }
 
-function MobileOAuthInner() {
+export function MobileOAuthFlow() {
   const params = useSearchParams()
   const { screen, loading, isAuthenticated, session } = useAuth()
   const [error, setError] = React.useState<string | null>(null)
