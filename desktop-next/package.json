@@ -113,6 +113,10 @@
       "icon": "build/icon.ico",
       "target": "nsis"
     },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
     "mac": {
       "icon": "build/icon.icns",
       "identity": "-",
