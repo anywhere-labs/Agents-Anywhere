@@ -15,6 +15,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { createClientId } from "@/lib/id"
 import { cn } from "@/lib/utils"
 import { dashboardApi } from "@/features/dashboard/api"
 import type {
@@ -503,7 +504,7 @@ export function SessionDetail({
 
   const handleSend = async (content: string, attachments: AttachedFile[]): Promise<boolean> => {
     if (!session || (!content.trim() && attachments.length === 0)) return false
-    const clientMessageId = crypto.randomUUID()
+    const clientMessageId = createClientId("msg")
     const messageText = content.trim() || tNew("attachmentOnlyPrompt")
     forceScrollOnNextUpdateRef.current = true
     setState((current) => {

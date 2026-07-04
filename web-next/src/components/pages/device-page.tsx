@@ -300,28 +300,28 @@ function AddAgentDialog({
   const tCommon = useTranslations("common")
   const [runtime, setRuntime] = React.useState<(typeof ADD_AGENT_RUNTIME_OPTIONS)[number]["id"]>("codex")
   const [path, setPath] = React.useState("")
-  const [scanReport, setScanReport] = React.useState<RuntimeReport | null>(null)
+  const [scanIssue, setScanIssue] = React.useState<string | null>(null)
 
   React.useEffect(() => {
     if (!open) return
     setRuntime("codex")
     setPath("")
-    setScanReport(null)
+    setScanIssue(null)
   }, [open])
 
-  const scanIssue = scanReport ? runtimeIssueReason(scanReport) ?? t("addAgentNotFound") : null
-
   const submit = async () => {
-    setScanReport(null)
+    setScanIssue(null)
     const response = await onAdd(runtime, path)
     if (!response) return
-    const report = response.scanned.report ?? null
-    const attached = Boolean(response.runtimeCapabilities.attached[response.scanned.runtime ?? runtime])
-    if (attached) {
+    const scannedRuntime = response.scanned.runtime ?? runtime
+    const attachedAgent = response.runtimeCapabilities.attached[scannedRuntime]
+    if (attachedAgent && reportIsHealthy(attachedAgent)) {
       onOpenChange(false)
       return
     }
-    setScanReport(report)
+
+    const report = response.scanned.report ?? null
+    setScanIssue(report ? runtimeIssueReason(report) ?? t("addAgentNotFound") : t("addAgentNotFound"))
   }
 
   return (
@@ -785,8 +785,10 @@ export function DevicePage() {
       setConnector(nextConnector)
       setAgents(agentsFromConnector(nextConnector))
       refreshData()
-      if (response.runtimeCapabilities.attached[response.scanned.runtime ?? runtime]) {
-        toast.success(t("addAgentSuccess", { name: response.scanned.runtime ?? runtime }))
+      const scannedRuntime = response.scanned.runtime ?? runtime
+      const attachedAgent = response.runtimeCapabilities.attached[scannedRuntime]
+      if (attachedAgent && reportIsHealthy(attachedAgent)) {
+        toast.success(t("addAgentSuccess", { name: scannedRuntime }))
       }
       return response
     } catch (err) {

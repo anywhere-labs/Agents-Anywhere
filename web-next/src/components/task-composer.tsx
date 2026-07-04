@@ -28,6 +28,7 @@ import { WorkspacePicker, type WorkspaceSelection } from "@/components/workspace
 import { useWorkspace } from "@/components/workspace-context"
 import { useAuth } from "@/components/auth/auth-context"
 import { dashboardApi } from "@/features/dashboard/api"
+import { createClientId } from "@/lib/id"
 import { cn } from "@/lib/utils"
 import {
   composerMenuOptions,
@@ -369,7 +370,7 @@ export function TaskComposer() {
         prompt.trim() || t("attachmentOnlyPrompt"),
         {
           attachments: attachmentRefs,
-          clientMessageId: crypto.randomUUID(),
+          clientMessageId: createClientId("msg"),
           model: selectedModel || undefined,
           effort: validSelectedReasoning || undefined,
         },

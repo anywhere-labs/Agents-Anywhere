@@ -12,6 +12,7 @@ import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { dashboardApi } from "@/features/dashboard/api"
 import type { TerminalView } from "@/features/dashboard/types"
+import { createClientId } from "@/lib/id"
 import { cn } from "@/lib/utils"
 
 type TerminalPanelBodyProps = {
@@ -23,11 +24,7 @@ type TerminalPanelBodyProps = {
 }
 
 function makeTerminalGroupId() {
-  const random =
-    typeof crypto !== "undefined" && "randomUUID" in crypto
-      ? crypto.randomUUID()
-      : Math.random().toString(36).slice(2)
-  return `termgrp_${random}`
+  return createClientId("termgrp")
 }
 
 export function TerminalPanelBody({ token, connectorId, root, onClose, onPopOut }: TerminalPanelBodyProps) {
