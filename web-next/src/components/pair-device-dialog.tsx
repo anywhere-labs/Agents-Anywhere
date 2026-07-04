@@ -135,7 +135,7 @@ function writeCommandWarningAccepted() {
 }
 
 // ── Types ──────────────────────────────────────────────────
-type Step = "name" | "method" | "desktop-method" | "desktop-local" | "desktop-paircode" | "desktop-credentials" | "command" | "success"
+type Step = "name" | "method" | "desktop-method" | "desktop-local" | "desktop-paircode" | "desktop-credentials" | "command-warning" | "command" | "success"
 
 interface Props {
   open: boolean
@@ -201,7 +201,6 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
   const [claiming, setClaiming] = React.useState(false)
   const [polling, setPolling] = React.useState(false)
   const [exitGuardOpen, setExitGuardOpen] = React.useState(false)
-  const [commandWarningOpen, setCommandWarningOpen] = React.useState(false)
   const [commandWarningAccepted, setCommandWarningAccepted] = React.useState(readCommandWarningAccepted)
   const [commandCountdown, setCommandCountdown] = React.useState(COMMAND_WARNING_WAIT_SECONDS)
   const pollingRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -255,7 +254,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
   }, [])
 
   React.useEffect(() => {
-    if (!commandWarningOpen) {
+    if (step !== "command-warning") {
       if (commandCountdownRef.current) window.clearInterval(commandCountdownRef.current)
       commandCountdownRef.current = null
       return
@@ -279,7 +278,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
       if (commandCountdownRef.current) window.clearInterval(commandCountdownRef.current)
       commandCountdownRef.current = null
     }
-  }, [commandWarningOpen])
+  }, [commandWarningAccepted, step])
 
   const reset = () => {
     stopPolling()
@@ -291,7 +290,6 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
     setCreating(false)
     setClaiming(false)
     setPolling(false)
-    setCommandWarningOpen(false)
     setCommandCountdown(COMMAND_WARNING_WAIT_SECONDS)
   }
 
@@ -361,18 +359,17 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
   const handleSelectCommand = () => {
     if (!connectorId) return
     stopPolling()
-    setCommandWarningOpen(true)
+    setCommandCountdown(commandWarningAccepted ? 0 : COMMAND_WARNING_WAIT_SECONDS)
+    setStep("command-warning")
   }
 
   const handleAcceptCommandWarning = () => {
     writeCommandWarningAccepted()
     setCommandWarningAccepted(true)
-    setCommandWarningOpen(false)
     enterCommandStep()
   }
 
   const handleUseDesktopFromCommandWarning = () => {
-    setCommandWarningOpen(false)
     handleSelectDesktop()
   }
 
@@ -501,6 +498,28 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
                   <span className="min-w-0 break-words text-sm text-muted-foreground">{t("commandDescription")}</span>
                 </Button>
               </div>
+            </>
+          )}
+
+          {/* ── Step: Command warning ── */}
+          {step === "command-warning" && (
+            <>
+              <DialogHeader>
+                <DialogTitle>{t("commandWarningTitle")}</DialogTitle>
+                <DialogDescription>{t("commandWarningDescription")}</DialogDescription>
+              </DialogHeader>
+              <div className="rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">
+                {t("commandWarningFallback")}
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={handleAcceptCommandWarning} disabled={commandCountdown > 0}>
+                  {commandCountdown > 0 ? t("commandWarningCommandCountdown", { seconds: commandCountdown }) : t("commandWarningConfirm")}
+                </Button>
+                <Button onClick={handleUseDesktopFromCommandWarning}>
+                  <MonitorUp className="size-4" />
+                  {t("commandWarningDesktop")}
+                </Button>
+              </DialogFooter>
             </>
           )}
 
@@ -760,31 +779,6 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
         </AlertDialogContent>
       </AlertDialog>
 
-      <AlertDialog
-        open={commandWarningOpen}
-        onOpenChange={(next) => {
-          setCommandWarningOpen(next)
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t("commandWarningTitle")}</AlertDialogTitle>
-            <AlertDialogDescription>{t("commandWarningDescription")}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <div className="rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">
-            {t("commandWarningFallback")}
-          </div>
-          <AlertDialogFooter>
-            <Button variant="outline" onClick={handleAcceptCommandWarning} disabled={commandCountdown > 0}>
-              {commandCountdown > 0 ? t("commandWarningCommandCountdown", { seconds: commandCountdown }) : t("commandWarningConfirm")}
-            </Button>
-            <Button onClick={handleUseDesktopFromCommandWarning}>
-              <MonitorUp className="size-4" />
-              {t("commandWarningDesktop")}
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </>
   )
 }
