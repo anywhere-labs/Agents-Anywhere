@@ -94,6 +94,16 @@ export type ConnectorRuntimeCapabilitiesResponse = {
   serverTime: string;
 };
 
+export type ConnectorRuntimeScanResponse = {
+  connectorId: string;
+  runtimeCapabilities: DeviceAgentsState;
+  scanned: {
+    runtime?: string;
+    report?: RuntimeReport;
+  };
+  serverTime: string;
+};
+
 export type ConnectorCreateResponse = {
   connector: ConnectorView;
   connectorToken: string;

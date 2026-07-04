@@ -11,6 +11,7 @@ import type {
   ConnectorResponse,
   ConnectorRevokeResponse,
   ConnectorRuntimeCapabilitiesResponse,
+  ConnectorRuntimeScanResponse,
   FsListResult,
   FsPreviewSessionResponse,
   FsPreviewTokenCreateResponse,
@@ -529,6 +530,19 @@ export class DashboardApi {
   ): Promise<ConnectorRuntimeCapabilitiesResponse> {
     return this.client.delete<ConnectorRuntimeCapabilitiesResponse>(
       `/connectors/${encodeURIComponent(connectorId)}/runtime-capabilities/${encodeURIComponent(runtime)}`,
+      { token },
+    );
+  }
+
+  scanConnectorRuntime(
+    token: string,
+    connectorId: string,
+    runtime: string,
+    path?: string | null,
+  ): Promise<ConnectorRuntimeScanResponse> {
+    return this.client.post<ConnectorRuntimeScanResponse>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtime-capabilities/scan`,
+      { runtime, ...(path && path.trim() ? { path: path.trim() } : {}) },
       { token },
     );
   }

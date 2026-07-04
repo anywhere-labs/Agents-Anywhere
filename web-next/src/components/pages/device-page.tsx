@@ -13,7 +13,6 @@ import {
   Circle,
   AlertCircle,
   Archive,
-  RefreshCw,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -24,6 +23,12 @@ import { Badge } from "@/components/ui/badge"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { LoadingState } from "@/components/loading-state"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import {
   Dialog,
   DialogContent,
@@ -54,6 +59,7 @@ import type {
   AttachedAgent,
   RuntimeReport,
   RuntimeConfigSchema,
+  ConnectorRuntimeScanResponse,
   RuntimeSettingsResponse,
   SessionView as RealSessionView,
 } from "@/features/dashboard/types"
@@ -85,6 +91,11 @@ type AgentRow = {
   healthy: boolean
   reason: string | null
 }
+
+const ADD_AGENT_RUNTIME_OPTIONS = [
+  { id: "codex", label: "Codex" },
+  { id: "claude", label: "Claude Code" },
+] as const
 
 type ConnectorWorkspace = {
   path: string
@@ -265,6 +276,108 @@ function AgentConfigDialog({
           </Button>
           <Button onClick={() => void submit()} disabled={saving || visibleFields.length === 0}>
             {saving ? t("saving") : tCommon("save")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ── AddAgentDialog ────────────────────────────────────────────
+
+function AddAgentDialog({
+  open,
+  onOpenChange,
+  adding,
+  onAdd,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  adding: boolean
+  onAdd: (runtime: string, path: string) => Promise<ConnectorRuntimeScanResponse | null>
+}) {
+  const t = useTranslations("dashboard.device")
+  const tCommon = useTranslations("common")
+  const [runtime, setRuntime] = React.useState<(typeof ADD_AGENT_RUNTIME_OPTIONS)[number]["id"]>("codex")
+  const [path, setPath] = React.useState("")
+  const [scanReport, setScanReport] = React.useState<RuntimeReport | null>(null)
+
+  React.useEffect(() => {
+    if (!open) return
+    setRuntime("codex")
+    setPath("")
+    setScanReport(null)
+  }, [open])
+
+  const scanIssue = scanReport ? runtimeIssueReason(scanReport) ?? t("addAgentNotFound") : null
+
+  const submit = async () => {
+    setScanReport(null)
+    const response = await onAdd(runtime, path)
+    if (!response) return
+    const report = response.scanned.report ?? null
+    const attached = Boolean(response.runtimeCapabilities.attached[response.scanned.runtime ?? runtime])
+    if (attached) {
+      onOpenChange(false)
+      return
+    }
+    setScanReport(report)
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{t("addAgent")}</DialogTitle>
+          <DialogDescription>{t("addAgentDescription")}</DialogDescription>
+        </DialogHeader>
+
+        <div className="flex flex-col gap-4 py-2">
+          <div className="flex flex-col gap-2">
+            <Label>{t("agent")}</Label>
+            <ToggleGroup
+              type="single"
+              value={runtime}
+              onValueChange={(value) => {
+                if (value) setRuntime(value as (typeof ADD_AGENT_RUNTIME_OPTIONS)[number]["id"])
+              }}
+              className="grid grid-cols-2"
+            >
+              {ADD_AGENT_RUNTIME_OPTIONS.map((option) => (
+                <ToggleGroupItem key={option.id} value={option.id}>
+                  {option.label}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="add-agent-path">{t("agentPath")}</Label>
+            <Input
+              id="add-agent-path"
+              value={path}
+              onChange={(event) => setPath(event.currentTarget.value)}
+              placeholder={t("agentPathPlaceholder")}
+              spellCheck={false}
+            />
+            <p className="text-xs text-muted-foreground">{t("agentPathDescription")}</p>
+          </div>
+
+          {scanIssue ? (
+            <Alert variant="destructive">
+              <AlertCircle />
+              <AlertTitle>{t("addAgentFailed")}</AlertTitle>
+              <AlertDescription>{scanIssue}</AlertDescription>
+            </Alert>
+          ) : null}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={adding}>
+            {tCommon("cancel")}
+          </Button>
+          <Button onClick={() => void submit()} disabled={adding}>
+            {adding ? t("addingAgent") : t("addAgentAction")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -499,6 +612,8 @@ export function DevicePage() {
   const [showAllWorkspaces, setShowAllWorkspaces] = React.useState(false)
   const [sessionTab, setSessionTab] = React.useState<SessionTabId>("active")
   const [configAgent, setConfigAgent] = React.useState<AgentRow | null>(null)
+  const [addAgentOpen, setAddAgentOpen] = React.useState(false)
+  const [addingAgent, setAddingAgent] = React.useState(false)
   const [agentSettings, setAgentSettings] = React.useState<Record<string, RuntimeSettingsResponse | null>>({})
   const [agentSchemas, setAgentSchemas] = React.useState<Record<string, RuntimeConfigSchema | null>>({})
   const [agentSettingsError, setAgentSettingsError] = React.useState<Record<string, string | null>>({})
@@ -534,6 +649,8 @@ export function DevicePage() {
     setAgentSchemas({})
     setAgentSettingsError({})
     setConfigAgent(null)
+    setAddAgentOpen(false)
+    setAddingAgent(false)
     setRemoveAgentRuntime(null)
     setSelectMode(false)
     setSelectedSessionIds(new Set())
@@ -651,6 +768,32 @@ export function DevicePage() {
       throw err
     } finally {
       setSavingAgentRuntime(null)
+    }
+  }
+
+  const addAgent = async (runtime: string, path: string) => {
+    if (!authSession?.accessToken) return null
+    setAddingAgent(true)
+    try {
+      const response = await dashboardApi.scanConnectorRuntime(
+        authSession.accessToken,
+        connector.id,
+        runtime,
+        path,
+      )
+      const nextConnector = { ...connector, runtimeCapabilities: response.runtimeCapabilities }
+      setConnector(nextConnector)
+      setAgents(agentsFromConnector(nextConnector))
+      refreshData()
+      if (response.runtimeCapabilities.attached[response.scanned.runtime ?? runtime]) {
+        toast.success(t("addAgentSuccess", { name: response.scanned.runtime ?? runtime }))
+      }
+      return response
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t("addAgentFailed"))
+      return null
+    } finally {
+      setAddingAgent(false)
     }
   }
 
@@ -815,64 +958,75 @@ export function DevicePage() {
             </h2>
             <Button
               type="button"
-              variant="ghost"
-              size="icon"
-              onClick={() => refreshData()}
-              aria-label={t("refreshAgents")}
+              variant="outline"
+              size="sm"
+              onClick={() => setAddAgentOpen(true)}
+              disabled={connector.status !== "online"}
             >
-              <RefreshCw />
+              <Plus />
+              {t("addAgent")}
             </Button>
           </div>
 
           {agents.length === 0 ? (
             <p className="text-sm text-muted-foreground">{t("noAgents")}</p>
           ) : (
-            <div className="flex flex-col gap-0.5">
-              {agents.map((agent) => (
-                <div
-                  key={agent.runtime}
-                  className="flex items-center gap-3 rounded-md px-2 py-2 transition-colors hover:bg-accent/30"
-                >
-                  <span
-                    className={cn(
-                      "size-2 shrink-0 rounded-full",
-                      agent.healthy ? "bg-emerald-500" : "bg-destructive",
-                    )}
-                  />
-                  <span className="flex min-w-0 flex-1 items-center gap-2">
-                    <span className="truncate text-sm font-medium">{agent.runtime}</span>
-                    {agent.reason ? (
-                      <Badge variant="destructive" className="max-w-48 truncate">
-                        {agent.reason}
-                      </Badge>
-                    ) : null}
-                  </span>
-                  <div className="flex items-center gap-0.5">
-                    <Button
-                      type="button"
-                      onClick={() => setConfigAgent(agent)}
-                      variant="ghost"
-                      size="icon"
-                      aria-label={t("configureAgent", { name: agent.runtime })}
-                    >
-                      <Settings />
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="text-muted-foreground hover:text-destructive"
-                      onClick={() => {
-                        setRemoveAgentRuntime(agent.runtime)
-                      }}
-                      aria-label={t("removeAgent", { name: agent.runtime })}
-                    >
-                      <Trash2 />
-                    </Button>
+            <TooltipProvider>
+              <div className="flex flex-col gap-0.5">
+                {agents.map((agent) => (
+                  <div
+                    key={agent.runtime}
+                    className="flex items-center gap-3 rounded-md px-2 py-2 transition-colors hover:bg-accent/30"
+                  >
+                    <span
+                      className={cn(
+                        "size-2 shrink-0 rounded-full",
+                        agent.healthy ? "bg-emerald-500" : "bg-destructive",
+                      )}
+                    />
+                    <span className="flex min-w-0 flex-1 items-center gap-2">
+                      <span className="truncate text-sm font-medium">{agent.runtime}</span>
+                      {agent.reason ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Badge variant="destructive" className="shrink-0 gap-1">
+                              <AlertCircle className="size-3" />
+                              {t("agentIssue")}
+                            </Badge>
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="max-w-sm">
+                            {agent.reason}
+                          </TooltipContent>
+                        </Tooltip>
+                      ) : null}
+                    </span>
+                    <div className="flex items-center gap-0.5">
+                      <Button
+                        type="button"
+                        onClick={() => setConfigAgent(agent)}
+                        variant="ghost"
+                        size="icon"
+                        aria-label={t("configureAgent", { name: agent.runtime })}
+                      >
+                        <Settings />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="text-muted-foreground hover:text-destructive"
+                        onClick={() => {
+                          setRemoveAgentRuntime(agent.runtime)
+                        }}
+                        aria-label={t("removeAgent", { name: agent.runtime })}
+                      >
+                        <Trash2 />
+                      </Button>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            </TooltipProvider>
           )}
         </section>
 
@@ -1034,6 +1188,13 @@ export function DevicePage() {
           onSave={(settings) => saveAgentSettings(configAgent.runtime, settings)}
         />
       )}
+
+      <AddAgentDialog
+        open={addAgentOpen}
+        onOpenChange={setAddAgentOpen}
+        adding={addingAgent}
+        onAdd={addAgent}
+      />
 
       <PairDeviceDialog
         open={setupOpen}
