@@ -15,6 +15,7 @@ const APP_PROTOCOL = "app";
 const APP_HOST = "desktop";
 const DEEP_LINK_PROTOCOL = "agents-anywhere";
 const ENV_SNAPSHOT_TIMEOUT_MS = 3500;
+const LOGIN_ITEM_HIDDEN_ARG = "--hidden";
 
 app.setName(APP_NAME);
 protocol.registerSchemesAsPrivileged([
@@ -78,7 +79,40 @@ const state = {
 };
 
 function launchedAsLoginItem() {
-  return process.argv.includes("--hidden") || process.argv.includes("--background") || process.argv.includes("--squirrel-firstrun");
+  const loginItemSettings = getLoginItemSettingsForState();
+  return Boolean(
+    loginItemSettings.wasOpenedAtLogin ||
+      loginItemSettings.wasOpenedAsHidden ||
+      process.argv.includes(LOGIN_ITEM_HIDDEN_ARG) ||
+      process.argv.includes("--background") ||
+      process.argv.includes("--squirrel-firstrun"),
+  );
+}
+
+function loginItemArgs(silentLaunch = state.silentLaunch) {
+  return silentLaunch ? [LOGIN_ITEM_HIDDEN_ARG] : [];
+}
+
+function loginItemSettingsOptions(silentLaunch = state.silentLaunch) {
+  if (process.platform !== "win32") return {};
+  return { path: process.execPath, args: loginItemArgs(silentLaunch) };
+}
+
+function nextLoginItemSettings(openAtLogin = state.openAtLogin, silentLaunch = state.silentLaunch) {
+  return {
+    openAtLogin,
+    openAsHidden: silentLaunch,
+    ...loginItemSettingsOptions(silentLaunch),
+  };
+}
+
+function getLoginItemSettingsForState() {
+  return app.getLoginItemSettings(loginItemSettingsOptions());
+}
+
+function isOpenAtLoginEnabled() {
+  const loginItemSettings = getLoginItemSettingsForState();
+  return Boolean(loginItemSettings.openAtLogin || loginItemSettings.executableWillLaunchAtLogin);
 }
 
 function userDataPath(name) {
@@ -445,7 +479,8 @@ function loadDesktopSettings() {
   state.logRetentionDays = clampNumber(settings.logRetentionDays, DEFAULT_LOG_RETENTION_DAYS, 1, 365);
   if (typeof settings.startConnectorOnLaunch === "boolean") state.startConnectorOnLaunch = settings.startConnectorOnLaunch;
   if (typeof settings.silentLaunch === "boolean") state.silentLaunch = settings.silentLaunch;
-  state.openAtLogin = app.getLoginItemSettings().openAtLogin;
+  state.openAtLogin = isOpenAtLoginEnabled();
+  if (process.platform === "win32" && state.openAtLogin) app.setLoginItemSettings(nextLoginItemSettings());
   pruneLogChunks();
 }
 
@@ -462,11 +497,11 @@ function saveDesktopSettings(next = {}) {
   if (typeof next.startConnectorOnLaunch === "boolean") state.startConnectorOnLaunch = next.startConnectorOnLaunch;
   if (typeof next.silentLaunch === "boolean") state.silentLaunch = next.silentLaunch;
   if (typeof next.openAtLogin === "boolean") {
-    app.setLoginItemSettings({ openAtLogin: next.openAtLogin, openAsHidden: state.silentLaunch });
+    app.setLoginItemSettings(nextLoginItemSettings(next.openAtLogin, state.silentLaunch));
     state.openAtLogin = next.openAtLogin;
   }
   if (typeof next.silentLaunch === "boolean" && state.openAtLogin) {
-    app.setLoginItemSettings({ openAtLogin: true, openAsHidden: state.silentLaunch });
+    app.setLoginItemSettings(nextLoginItemSettings(true, state.silentLaunch));
   }
   writeJson(state.settingsPath, {
     uvPath: state.uvPath,
