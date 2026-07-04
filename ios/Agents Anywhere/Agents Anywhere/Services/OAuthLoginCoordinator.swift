@@ -44,13 +44,17 @@ final class OAuthLoginCoordinator: NSObject, ObservableObject, ASWebAuthenticati
     }
 
     private func callbackURL(for authURL: URL) async throws -> URL {
+        let callback = OAuthCallbackContinuation()
         try await withCheckedThrowingContinuation { continuation in
+            callback.setContinuation(continuation)
             let authSession = ASWebAuthenticationSession(url: authURL, callbackURLScheme: callbackScheme) { [weak self] callbackURL, error in
-                self?.session = nil
+                Task { @MainActor in
+                    self?.session = nil
+                }
                 if let callbackURL {
-                    continuation.resume(returning: callbackURL)
+                    callback.resume(returning: callbackURL)
                 } else {
-                    continuation.resume(throwing: error ?? OAuthLoginError.cancelled)
+                    callback.resume(throwing: error ?? OAuthLoginError.cancelled)
                 }
             }
             authSession.presentationContextProvider = self
@@ -58,7 +62,7 @@ final class OAuthLoginCoordinator: NSObject, ObservableObject, ASWebAuthenticati
             session = authSession
             if !authSession.start() {
                 session = nil
-                continuation.resume(throwing: OAuthLoginError.cancelled)
+                callback.resume(throwing: OAuthLoginError.cancelled)
             }
         }
     }
@@ -82,6 +86,39 @@ final class OAuthLoginCoordinator: NSObject, ObservableObject, ASWebAuthenticati
         components.percentEncodedFragment = hashRouteFragment("mobile-oauth", queryItems: queryItems)
         guard let url = components.url else { throw OAuthLoginError.invalidAuthorizeURL }
         return url
+    }
+}
+
+private final class OAuthCallbackContinuation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<URL, Error>?
+
+    func setContinuation(_ continuation: CheckedContinuation<URL, Error>) {
+        lock.lock()
+        self.continuation = continuation
+        lock.unlock()
+    }
+
+    func resume(returning url: URL) {
+        resume(with: .success(url))
+    }
+
+    func resume(throwing error: Error) {
+        resume(with: .failure(error))
+    }
+
+    private func resume(with result: Result<URL, Error>) {
+        lock.lock()
+        let continuation = continuation
+        self.continuation = nil
+        lock.unlock()
+        guard let continuation else { return }
+        switch result {
+        case let .success(url):
+            continuation.resume(returning: url)
+        case let .failure(error):
+            continuation.resume(throwing: error)
+        }
     }
 }
 
