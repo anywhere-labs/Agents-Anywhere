@@ -181,8 +181,7 @@ struct APIClient {
         if let name, !name.isEmpty {
             queryItems.append(URLQueryItem(name: "name", value: name))
         }
-        components.queryItems = queryItems
-        components.fragment = "/preview"
+        components.percentEncodedFragment = hashRouteFragment("preview", queryItems: queryItems)
         guard let url = components.url else { throw APIClientError.invalidResponse }
         return url
     }
@@ -514,6 +513,15 @@ struct APIClient {
             throw APIClientError.decoding(error.agentsAnywhereDescription)
         }
     }
+}
+
+private func hashRouteFragment(_ route: String, queryItems: [URLQueryItem]) -> String {
+    var fragmentComponents = URLComponents()
+    fragmentComponents.queryItems = queryItems
+    guard let query = fragmentComponents.percentEncodedQuery, !query.isEmpty else {
+        return "/\(route)"
+    }
+    return "/\(route)?\(query)"
 }
 
 private extension DecodingError {

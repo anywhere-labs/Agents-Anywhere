@@ -1,8 +1,8 @@
 "use client"
 
 import * as React from "react"
-import { useSearchParams } from "next/navigation"
 
+import { useRouteSearchParams } from "@/components/hash-route-params"
 import { LoadingState } from "@/components/loading-state"
 import { authApi } from "@/features/auth/api"
 import { AuthProvider, useAuth } from "./auth-context"
@@ -32,7 +32,7 @@ export function MobileOAuthPage() {
 }
 
 export function MobileOAuthFlow() {
-  const params = useSearchParams()
+  const params = useRouteSearchParams()
   const { screen, loading, isAuthenticated, session } = useAuth()
   const [error, setError] = React.useState<string | null>(null)
   const redirectingRef = React.useRef(false)

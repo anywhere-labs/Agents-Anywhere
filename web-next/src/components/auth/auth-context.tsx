@@ -59,20 +59,19 @@ export function useAuth() {
 }
 
 function hashToScreen(hash: string): AuthScreen {
-  // Exact matches for auth screens
-  const exactMap: Record<string, AuthScreen> = {
-    "#/login": "login",
-    "#/register": "register",
-    "#/signed-out": "signed-out",
-    "#/oauth/new": "oauth-new-user",
-    "#/oauth/link": "oauth-link-existing",
-    "#/mobile-oauth": "mobile-oauth",
-    "#/preview": "preview",
-  }
-  if (exactMap[hash]) return exactMap[hash]
-
-  // Any app sub-route → app. Default bare hash "/" is also app.
   const path = hash.replace(/^#\/?/, "").split("?")[0] ?? ""
+  const exactMap: Record<string, AuthScreen> = {
+    login: "login",
+    register: "register",
+    "signed-out": "signed-out",
+    "oauth/new": "oauth-new-user",
+    "oauth/link": "oauth-link-existing",
+    "mobile-oauth": "mobile-oauth",
+    preview: "preview",
+  }
+  if (exactMap[path]) return exactMap[path]
+
+  // Any app sub-route -> app. Default bare hash "/" is also app.
   const isAppRoute =
     path === "" ||
     path === "app" ||

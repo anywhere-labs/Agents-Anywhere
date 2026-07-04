@@ -262,7 +262,7 @@ export function openNativeFilePreviewWindow({
     path: file.path,
     name: file.name,
   })
-  const child = window.open(`/${locale}?${search.toString()}#/preview`, "_blank", "width=980,height=720,resizable=yes,scrollbars=yes")
+  const child = window.open(`/${locale}#/preview?${search.toString()}`, "_blank", "width=980,height=720,resizable=yes,scrollbars=yes")
   if (!child) {
     onBlocked?.()
     return

@@ -70,7 +70,7 @@ final class OAuthLoginCoordinator: NSObject, ObservableObject, ASWebAuthenticati
         ) else {
             throw OAuthLoginError.invalidAuthorizeURL
         }
-        components.queryItems = [
+        let queryItems = [
             URLQueryItem(name: "response_type", value: "code"),
             URLQueryItem(name: "client_id", value: clientID),
             URLQueryItem(name: "redirect_uri", value: redirectURI),
@@ -79,10 +79,19 @@ final class OAuthLoginCoordinator: NSObject, ObservableObject, ASWebAuthenticati
             URLQueryItem(name: "scope", value: "profile"),
             URLQueryItem(name: "state", value: state),
         ]
-        components.fragment = "/mobile-oauth"
+        components.percentEncodedFragment = hashRouteFragment("mobile-oauth", queryItems: queryItems)
         guard let url = components.url else { throw OAuthLoginError.invalidAuthorizeURL }
         return url
     }
+}
+
+private func hashRouteFragment(_ route: String, queryItems: [URLQueryItem]) -> String {
+    var fragmentComponents = URLComponents()
+    fragmentComponents.queryItems = queryItems
+    guard let query = fragmentComponents.percentEncodedQuery, !query.isEmpty else {
+        return "/\(route)"
+    }
+    return "/\(route)?\(query)"
 }
 
 private enum OAuthLoginError: LocalizedError {

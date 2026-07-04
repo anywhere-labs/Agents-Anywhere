@@ -13,9 +13,9 @@ import {
   Search,
   X,
 } from "lucide-react"
-import { useSearchParams } from "next/navigation"
 import { useTranslations } from "next-intl"
 
+import { useRouteSearchParams } from "@/components/hash-route-params"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -45,7 +45,7 @@ const TEXT_MAX_BYTES = 1_000_000
 
 export function FilePreviewPage() {
   const t = useTranslations("preview")
-  const params = useSearchParams()
+  const params = useRouteSearchParams()
   const connectorId = params.get("connectorId") ?? ""
   const root = params.get("root") ?? ""
   const path = params.get("path") ?? ""
