@@ -291,25 +291,41 @@ private struct QRCompleteStepView: View {
     let onCancel: () -> Void
 
     @State private var isFinishing = false
+    @State private var didSignIn = false
     @State private var alertMessage: String?
 
     var body: some View {
-        AuthScreen(
-            title: "Login Success",
-            subtitle: "The web console approved this iPhone. Go to your dashboard to continue.",
-            onCancel: onCancel,
-        ) {
-            VStack(alignment: .leading, spacing: 22) {
-                LoginSummaryView(
-                    server: payload.webUrl,
-                    userId: payload.userId,
-                )
-
-                AuthPrimaryButton(
-                    title: "Go to Dashboard",
-                    isLoading: isFinishing,
+        Group {
+            if didSignIn {
+                AuthResultView(
+                    title: "Login Success",
+                    message: "Your iPhone is signed in. Go to your dashboard to continue.",
+                    buttonTitle: "Go to Dashboard",
+                    buttonSystemImage: "arrow.right",
+                    symbolName: "checkmark.circle.fill",
+                    symbolColor: .green,
                 ) {
-                    Task { await finishLogin() }
+                    Task { await openDashboard() }
+                }
+            } else {
+                AuthScreen(
+                    title: "Login Success",
+                    subtitle: "The web console approved this iPhone. Go to your dashboard to continue.",
+                    onCancel: onCancel,
+                ) {
+                    VStack(alignment: .leading, spacing: 22) {
+                        LoginSummaryView(
+                            server: payload.webUrl,
+                            userId: payload.userId,
+                        )
+
+                        AuthPrimaryButton(
+                            title: "Go to Dashboard",
+                            isLoading: isFinishing,
+                        ) {
+                            Task { await finishLogin() }
+                        }
+                    }
                 }
             }
         }
@@ -327,12 +343,17 @@ private struct QRCompleteStepView: View {
     private func finishLogin() async {
         isFinishing = true
         defer { isFinishing = false }
-        await appState.exchangeMobileLogin(payload: payload)
-        if case .signedIn = appState.route {
-            onCancel()
+        await appState.exchangeMobileLogin(payload: payload, showSignedInRoute: false)
+        if appState.me != nil {
+            didSignIn = true
         } else {
             alertMessage = appState.authError ?? "The login could not be completed."
         }
+    }
+
+    private func openDashboard() async {
+        await appState.showSignedInRoute()
+        onCancel()
     }
 }
 

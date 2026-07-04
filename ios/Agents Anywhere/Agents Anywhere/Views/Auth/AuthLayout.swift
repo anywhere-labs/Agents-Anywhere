@@ -211,3 +211,43 @@ struct LoginSummaryView: View {
         }
     }
 }
+
+struct AuthResultView: View {
+    let title: String
+    let message: String
+    let buttonTitle: String
+    let buttonSystemImage: String
+    let symbolName: String
+    let symbolColor: Color
+    let action: () -> Void
+
+    var body: some View {
+        AuthWelcomeLayout {
+            VStack(spacing: 26) {
+                VStack(spacing: 16) {
+                    Image(systemName: symbolName)
+                        .font(.system(size: 56, weight: .semibold))
+                        .foregroundStyle(symbolColor)
+
+                    VStack(spacing: 8) {
+                        Text(title)
+                            .font(.system(size: 34, weight: .bold))
+                            .multilineTextAlignment(.center)
+
+                        Text(message)
+                            .font(.body)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
+                AuthPrimaryButton(
+                    title: buttonTitle,
+                    systemImage: buttonSystemImage,
+                    action: action,
+                )
+            }
+        }
+    }
+}

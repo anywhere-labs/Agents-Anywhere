@@ -115,7 +115,7 @@ final class AppState: ObservableObject {
         }
     }
 
-    func completePasswordLogin(serverURL: URL, auth: AuthResponse) async {
+    func completePasswordLogin(serverURL: URL, auth: AuthResponse, showSignedInRoute: Bool = true) async {
         authError = nil
         isWorking = true
         defer { isWorking = false }
@@ -124,14 +124,16 @@ final class AppState: ObservableObject {
             try saveSession(serverURL: serverURL, token: auth.accessToken)
             self.serverURL = serverURL
             me = try await client.me(token: auth.accessToken)
-            route = .signedIn
-            await refreshDashboard()
+            if showSignedInRoute {
+                route = .signedIn
+                await refreshDashboard()
+            }
         } catch {
             authError = error.localizedDescription
         }
     }
 
-    func completeOAuthLogin(serverURL: URL, token: OAuthTokenResponse) async {
+    func completeOAuthLogin(serverURL: URL, token: OAuthTokenResponse, showSignedInRoute: Bool = true) async {
         authError = nil
         isWorking = true
         defer { isWorking = false }
@@ -140,8 +142,10 @@ final class AppState: ObservableObject {
             try saveSession(serverURL: serverURL, token: token.accessToken)
             self.serverURL = serverURL
             me = try await client.me(token: token.accessToken)
-            route = .signedIn
-            await refreshDashboard()
+            if showSignedInRoute {
+                route = .signedIn
+                await refreshDashboard()
+            }
         } catch {
             authError = error.localizedDescription
         }
@@ -178,7 +182,7 @@ final class AppState: ObservableObject {
         }
     }
 
-    func exchangeMobileLogin(payload: MobileLoginPayload) async {
+    func exchangeMobileLogin(payload: MobileLoginPayload, showSignedInRoute: Bool = true) async {
         authError = nil
         isWorking = true
         defer { isWorking = false }
@@ -189,8 +193,10 @@ final class AppState: ObservableObject {
             try saveSession(serverURL: serverURL, token: exchange.auth.accessToken)
             self.serverURL = serverURL
             me = try await client.me(token: exchange.auth.accessToken)
-            route = .signedIn
-            await refreshDashboard()
+            if showSignedInRoute {
+                route = .signedIn
+                await refreshDashboard()
+            }
         } catch {
             authError = error.localizedDescription
         }
@@ -265,6 +271,11 @@ final class AppState: ObservableObject {
 
     func showSignedOutRoute() {
         route = .signedOut
+    }
+
+    func showSignedInRoute() async {
+        route = .signedIn
+        await refreshDashboard()
     }
 
     private func saveSession(serverURL: URL, token: String) throws {

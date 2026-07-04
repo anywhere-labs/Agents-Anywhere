@@ -786,33 +786,15 @@ private struct SignedOutConfirmationView: View {
     let onContinue: () -> Void
 
     var body: some View {
-        AuthWelcomeLayout {
-            VStack(spacing: 26) {
-                VStack(spacing: 16) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 56, weight: .semibold))
-                        .foregroundStyle(.green)
-
-                    VStack(spacing: 8) {
-                        Text("Signed Out")
-                            .font(.system(size: 34, weight: .bold))
-                            .multilineTextAlignment(.center)
-
-                        Text("Your local credentials have been cleared. You can safely close this page or return to sign in again.")
-                            .font(.body)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-
-                AuthPrimaryButton(
-                    title: "Back to Sign In",
-                    systemImage: "arrow.right",
-                    action: onContinue,
-                )
-            }
-        }
+        AuthResultView(
+            title: "Signed Out",
+            message: "Your local credentials have been cleared. You can safely close this page or return to sign in again.",
+            buttonTitle: "Back to Sign In",
+            buttonSystemImage: "arrow.right",
+            symbolName: "checkmark.circle.fill",
+            symbolColor: .green,
+            action: onContinue,
+        )
     }
 }
 
