@@ -3,5 +3,6 @@ out/
 node_modules/
 .yarn/
 tsconfig.tsbuildinfo
+next-env.d.ts
 release/
 dist/
