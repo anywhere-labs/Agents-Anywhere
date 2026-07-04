@@ -630,12 +630,29 @@ export function DevicePage() {
   const [selectedSessionIds, setSelectedSessionIds] = React.useState<Set<string>>(() => new Set())
   const [bulkBusy, setBulkBusy] = React.useState(false)
   const [archiveAllOpen, setArchiveAllOpen] = React.useState(false)
+  const previousConnectorIdRef = React.useRef<string | null>(null)
 
   React.useEffect(() => {
-    if (!activeConnectorId) return
-    setLoading(true)
-    setShowAllWorkspaces(false)
-    setSessionTab("active")
+    if (!activeConnectorId) {
+      previousConnectorIdRef.current = null
+      return
+    }
+    const connectorChanged = previousConnectorIdRef.current !== activeConnectorId
+    previousConnectorIdRef.current = activeConnectorId
+    if (connectorChanged) {
+      setLoading(true)
+      setShowAllWorkspaces(false)
+      setSessionTab("active")
+      setAgentSettings({})
+      setAgentSchemas({})
+      setAgentSettingsError({})
+      setConfigAgent(null)
+      setAddAgentOpen(false)
+      setAddingAgent(false)
+      setRemoveAgentRuntime(null)
+      setSelectMode(false)
+      setSelectedSessionIds(new Set())
+    }
 
     const currentConnector = connectors.find((item) => item.id === activeConnectorId) ?? null
     const connectorSessions = allSessions.filter((item) => item.connectorId === activeConnectorId)
@@ -645,15 +662,6 @@ export function DevicePage() {
     setSessions(connectorSessions)
     setWorkspaces(workspacesFromSessions(connectorSessions))
     setAgents(agentsFromConnector(currentConnector))
-    setAgentSettings({})
-    setAgentSchemas({})
-    setAgentSettingsError({})
-    setConfigAgent(null)
-    setAddAgentOpen(false)
-    setAddingAgent(false)
-    setRemoveAgentRuntime(null)
-    setSelectMode(false)
-    setSelectedSessionIds(new Set())
     setLoading(false)
   }, [activeConnectorId, connectors, allSessions])
 
