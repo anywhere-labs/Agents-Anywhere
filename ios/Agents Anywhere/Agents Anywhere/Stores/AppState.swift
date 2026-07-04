@@ -278,6 +278,11 @@ final class AppState: ObservableObject {
         await refreshDashboard()
     }
 
+    func activateSignedInRoute() {
+        route = .signedIn
+        Task { await refreshDashboard() }
+    }
+
     private func saveSession(serverURL: URL, token: String) throws {
         UserDefaults.standard.set(serverURL.absoluteString, forKey: serverDefaultsKey)
         try keychain.saveString(token, account: tokenAccount)

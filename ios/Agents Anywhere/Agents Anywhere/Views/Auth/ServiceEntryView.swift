@@ -2,9 +2,8 @@ import SwiftUI
 
 struct ServiceEntryView: View {
     @EnvironmentObject private var appState: AppState
-    @State private var showingEnterServer = false
-    @State private var showingQRCodeLogin = false
-    @State private var pendingSignedInRoute = false
+    var onEnterServer: () -> Void = {}
+    var onQRCodeLogin: () -> Void = {}
 
     var body: some View {
         NavigationStack {
@@ -13,11 +12,11 @@ struct ServiceEntryView: View {
 
                 VStack(spacing: 12) {
                     AuthPrimaryButton(title: "Enter Server", systemImage: "link") {
-                        showingEnterServer = true
+                        onEnterServer()
                     }
 
                     AuthGlassButton("QR Code Login", systemImage: "qrcode.viewfinder") {
-                        showingQRCodeLogin = true
+                        onQRCodeLogin()
                     }
                 }
                 .frame(maxWidth: 340)
@@ -31,25 +30,7 @@ struct ServiceEntryView: View {
                 }
             }
             .navigationTitle("")
-            .sheet(isPresented: $showingEnterServer, onDismiss: activateSignedInRouteIfNeeded) {
-                EnterServerView {
-                    pendingSignedInRoute = true
-                    showingEnterServer = false
-                }
-            }
-            .sheet(isPresented: $showingQRCodeLogin, onDismiss: activateSignedInRouteIfNeeded) {
-                QRCodeLoginView {
-                    pendingSignedInRoute = true
-                    showingQRCodeLogin = false
-                }
-            }
         }
-    }
-
-    private func activateSignedInRouteIfNeeded() {
-        guard pendingSignedInRoute else { return }
-        pendingSignedInRoute = false
-        Task { await appState.showSignedInRoute() }
     }
 }
 

@@ -3,6 +3,9 @@ import SwiftUI
 struct RootView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.colorScheme) private var colorScheme
+    @State private var showingEnterServer = false
+    @State private var showingQRCodeLogin = false
+    @State private var showingSignOut = false
 
     var body: some View {
         Group {
@@ -11,9 +14,32 @@ struct RootView: View {
                 ProgressView()
                     .controlSize(.large)
             case .signedOut:
-                ServiceEntryView()
+                ServiceEntryView(
+                    onEnterServer: { showingEnterServer = true },
+                    onQRCodeLogin: { showingQRCodeLogin = true },
+                )
             case .signedIn:
-                DashboardView()
+                DashboardView {
+                    showingSignOut = true
+                }
+            }
+        }
+        .sheet(isPresented: $showingEnterServer) {
+            EnterServerView {
+                appState.activateSignedInRoute()
+                showingEnterServer = false
+            }
+        }
+        .sheet(isPresented: $showingQRCodeLogin) {
+            QRCodeLoginView {
+                appState.activateSignedInRoute()
+                showingQRCodeLogin = false
+            }
+        }
+        .fullScreenCover(isPresented: $showingSignOut) {
+            SignOutSheet {
+                appState.showSignedOutRoute()
+                showingSignOut = false
             }
         }
         .tint(AppTheme.primaryText(colorScheme))

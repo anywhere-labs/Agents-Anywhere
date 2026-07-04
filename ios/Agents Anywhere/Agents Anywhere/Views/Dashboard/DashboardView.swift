@@ -15,10 +15,17 @@ struct DashboardView: View {
     @State private var isShowingNewSession = false
     @State private var sessionToOpen: SessionSummary?
 
+    var onSignOutRequested: () -> Void = {}
+
     var body: some View {
-        RootTabsView(sessionToOpen: $sessionToOpen, isNewSessionPresented: $isShowingNewSession) {
-            isShowingNewSession = true
-        }
+        RootTabsView(
+            sessionToOpen: $sessionToOpen,
+            isNewSessionPresented: $isShowingNewSession,
+            onNewSession: {
+                isShowingNewSession = true
+            },
+            onSignOutRequested: onSignOutRequested,
+        )
         .task {
             await appState.refreshDashboard()
         }
@@ -38,6 +45,7 @@ private struct RootTabsView: View {
     @Binding var isNewSessionPresented: Bool
 
     let onNewSession: () -> Void
+    let onSignOutRequested: () -> Void
 
     @SceneStorage("selectedRootTab")
     private var selectedTab: String = RootTab.sessions
@@ -145,7 +153,7 @@ private struct RootTabsView: View {
 
     private var sessionsRoot: some View {
         NavigationStack(path: $sessionPath) {
-            SessionsView(scrollOffset: $sessionsScrollOffset)
+            SessionsView(scrollOffset: $sessionsScrollOffset, onSignOutRequested: onSignOutRequested)
                 .navigationDestination(for: SessionSummary.self) { session in
                     SessionDetailView(initialSession: session)
                 }
@@ -154,7 +162,7 @@ private struct RootTabsView: View {
 
     private var devicesRoot: some View {
         NavigationStack {
-            DevicesView(scrollOffset: $devicesScrollOffset)
+            DevicesView(scrollOffset: $devicesScrollOffset, onSignOutRequested: onSignOutRequested)
         }
     }
 
@@ -229,7 +237,6 @@ private struct SessionsView: View {
 
     @State private var activeFilter: SessionFilter?
     @State private var isShowingAccount = false
-    @State private var isShowingSignOut = false
     @State private var pendingSignOut = false
     @State private var sessionBeingRenamed: SessionSummary?
     @State private var renameText = ""
@@ -240,14 +247,18 @@ private struct SessionsView: View {
     @State private var selectedSort = "Recent"
     @State private var mirrorScrollPosition = ScrollPosition()
 
+    private let onSignOutRequested: () -> Void
+
     init(
         scrollOffset: Binding<CGFloat> = .constant(0),
         isMirror: Bool = false,
         mirroredScrollOffset: CGFloat = 0,
+        onSignOutRequested: @escaping () -> Void = {},
     ) {
         _scrollOffset = scrollOffset
         self.isMirror = isMirror
         self.mirroredScrollOffset = mirroredScrollOffset
+        self.onSignOutRequested = onSignOutRequested
     }
 
     private var filteredSessions: [SessionSummary] {
@@ -320,15 +331,10 @@ private struct SessionsView: View {
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
         }
-        .fullScreenCover(isPresented: $isShowingSignOut) {
-            SignOutSheet {
-                isShowingSignOut = false
-            }
-        }
         .onChange(of: isShowingAccount) { _, showing in
             guard !showing, pendingSignOut else { return }
             pendingSignOut = false
-            isShowingSignOut = true
+            onSignOutRequested()
         }
         .onAppear {
             guard !isMirror else { return }
@@ -537,21 +543,22 @@ private struct DevicesView: View {
     @Binding private var scrollOffset: CGFloat
     private let isMirror: Bool
     private let mirroredScrollOffset: CGFloat
+    private let onSignOutRequested: () -> Void
 
     @State private var isShowingAccount = false
-    @State private var isShowingSignOut = false
     @State private var pendingSignOut = false
-    @State private var pendingSignedOutRoute = false
     @State private var mirrorScrollPosition = ScrollPosition()
 
     init(
         scrollOffset: Binding<CGFloat> = .constant(0),
         isMirror: Bool = false,
         mirroredScrollOffset: CGFloat = 0,
+        onSignOutRequested: @escaping () -> Void = {},
     ) {
         _scrollOffset = scrollOffset
         self.isMirror = isMirror
         self.mirroredScrollOffset = mirroredScrollOffset
+        self.onSignOutRequested = onSignOutRequested
     }
 
     var body: some View {
@@ -600,27 +607,15 @@ private struct DevicesView: View {
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
         }
-        .fullScreenCover(isPresented: $isShowingSignOut, onDismiss: activateSignedOutRouteIfNeeded) {
-            SignOutSheet {
-                pendingSignedOutRoute = true
-                isShowingSignOut = false
-            }
-        }
         .onChange(of: isShowingAccount) { _, showing in
             guard !showing, pendingSignOut else { return }
             pendingSignOut = false
-            isShowingSignOut = true
+            onSignOutRequested()
         }
         .refreshable {
             guard !isMirror else { return }
             await appState.refreshDashboard()
         }
-    }
-
-    private func activateSignedOutRouteIfNeeded() {
-        guard pendingSignedOutRoute else { return }
-        pendingSignedOutRoute = false
-        appState.showSignedOutRoute()
     }
 
     private var mirrorScrollTarget: CGFloat {
@@ -745,7 +740,7 @@ private struct MeView: View {
     }
 }
 
-private struct SignOutSheet: View {
+struct SignOutSheet: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
     @State private var path: [SignOutRoute] = []
