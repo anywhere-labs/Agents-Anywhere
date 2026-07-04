@@ -2,10 +2,12 @@
 
 import * as React from "react"
 import { Download, FolderTree, Loader2, PanelLeft, SquareTerminal } from "lucide-react"
+import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
+import { Input } from "@/components/ui/input"
 import { useSidebar } from "@/components/ui/sidebar"
 import { useDashboardSidebarControls } from "@/components/demo"
 import { useWorkspace, type PanelId } from "@/components/workspace-context"
@@ -51,8 +53,18 @@ export function SessionViewHeader({
   exporting,
 }: SessionViewHeaderProps) {
   const { isMobile, toggleSidebar } = useSidebar()
+  const { renameSession } = useWorkspace()
   const sidebarControls = useDashboardSidebarControls()
+  const tSession = useTranslations("dashboard.session")
   const tActions = useTranslations("dashboard.actions")
+  const [editingTitle, setEditingTitle] = React.useState(false)
+  const [titleDraft, setTitleDraft] = React.useState(session.title ?? "")
+  const [renaming, setRenaming] = React.useState(false)
+
+  React.useEffect(() => {
+    if (!editingTitle) setTitleDraft(session.title ?? "")
+  }, [editingTitle, session.title])
+
   const toggleDashboardSidebar = React.useCallback(() => {
     if (isMobile) {
       toggleSidebar()
@@ -60,6 +72,32 @@ export function SessionViewHeader({
     }
     sidebarControls?.toggleSidebar()
   }, [isMobile, sidebarControls, toggleSidebar])
+
+  const cancelRename = React.useCallback(() => {
+    setTitleDraft(session.title ?? "")
+    setEditingTitle(false)
+  }, [session.title])
+
+  const submitRename = React.useCallback(async () => {
+    const nextTitle = titleDraft.trim()
+    if (!nextTitle) {
+      cancelRename()
+      return
+    }
+    if (renaming) return
+    if (nextTitle === session.title) {
+      setEditingTitle(false)
+      return
+    }
+    setRenaming(true)
+    try {
+      const ok = await renameSession(session.id, nextTitle)
+      if (ok) setEditingTitle(false)
+      else toast.error(tSession("renameFailed"))
+    } finally {
+      setRenaming(false)
+    }
+  }, [cancelRename, renameSession, renaming, session.id, session.title, tSession, titleDraft])
 
   return (
     <header className="pointer-events-none absolute inset-x-0 top-0 z-10 h-14 overflow-hidden">
@@ -78,7 +116,40 @@ export function SessionViewHeader({
         >
           <PanelLeft className="size-4" />
         </Button>
-        <h1 className="truncate text-sm font-medium">{session.title}</h1>
+        {editingTitle ? (
+          <Input
+            autoFocus
+            value={titleDraft}
+            onChange={(event) => setTitleDraft(event.currentTarget.value)}
+            onBlur={cancelRename}
+            onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing) return
+              if (event.key === "Enter") {
+                event.preventDefault()
+                void submitRename()
+              }
+              if (event.key === "Escape") {
+                event.preventDefault()
+                cancelRename()
+              }
+            }}
+            disabled={renaming}
+            aria-label={tSession("renameTitle")}
+            className="h-8 min-w-0 max-w-[min(28rem,40vw)] flex-1 rounded-xl text-sm"
+          />
+        ) : (
+          <button
+            type="button"
+            className="min-w-0 truncate rounded-md px-1 text-left text-sm font-medium hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            title={tSession("renameTitle")}
+            onClick={() => {
+              setTitleDraft(session.title ?? "")
+              setEditingTitle(true)
+            }}
+          >
+            {session.title}
+          </button>
+        )}
         <SessionMetaBadge
           session={session}
           connectorName={connectorName}

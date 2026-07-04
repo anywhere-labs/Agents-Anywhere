@@ -196,6 +196,7 @@ type WorkspaceState = {
   closeFirstDevicePrompt: () => void
   togglePinSession: (id: string) => void
   toggleArchiveSession: (id: string) => void
+  renameSession: (id: string, title: string) => Promise<boolean>
   markSessionRead: (id: string) => void
   upsertSession: (session: RealSessionView) => void
   appendPathToComposer: (path: string) => boolean
@@ -520,6 +521,35 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     }
   }, [authSession?.accessToken, sessions])
 
+  const renameSession = React.useCallback(async (id: string, title: string) => {
+    const nextTitle = title.trim()
+    if (!nextTitle) return false
+
+    const targetSession = sessions.find((s) => s.id === id)
+    if (!targetSession) return false
+    if (targetSession.title === nextTitle) return true
+
+    setSessions((prev) =>
+      prev.map((s) => (s.id === id ? { ...s, title: nextTitle } : s)),
+    )
+
+    try {
+      if (authSession?.accessToken) {
+        const response = await dashboardApi.patchSession(authSession.accessToken, id, { title: nextTitle })
+        const mapped = mapSession(response.session)
+        setSessions((prev) => prev.map((s) => (s.id === id ? mapped : s)))
+      } else {
+        await patchMockSession("mock-token", id, { title: nextTitle })
+      }
+      return true
+    } catch {
+      setSessions((prev) =>
+        prev.map((s) => (s.id === id ? { ...s, title: targetSession.title } : s)),
+      )
+      return false
+    }
+  }, [authSession?.accessToken, sessions])
+
   const upsertSession = React.useCallback((session: RealSessionView) => {
     const mapped = mapSession(session)
     setSessions((prev) => {
@@ -587,6 +617,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     closeFirstDevicePrompt,
     togglePinSession,
     toggleArchiveSession,
+    renameSession,
     markSessionRead,
     upsertSession,
     appendPathToComposer,

@@ -41,6 +41,7 @@ import {
 } from "@/components/ui/dialog"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { copyText } from "@/lib/clipboard"
 import { cn } from "@/lib/utils"
@@ -67,6 +68,7 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
     navigateToDevice,
     togglePinSession,
     toggleArchiveSession,
+    renameSession,
     refreshData,
   } = useWorkspace()
   const { signOut, me, session: authSession } = useAuth()
@@ -179,6 +181,7 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
                     onOpen={() => openSession(item.id)}
                     onTogglePin={() => togglePinSession(item.id)}
                     onToggleArchive={() => toggleArchiveSession(item.id)}
+                    onRename={(title) => renameSession(item.id, title)}
                   />
                 ))}
               </SidebarMenu>
@@ -215,6 +218,7 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
                     onOpen={() => openSession(item.id)}
                     onTogglePin={() => togglePinSession(item.id)}
                     onToggleArchive={() => toggleArchiveSession(item.id)}
+                    onRename={(title) => renameSession(item.id, title)}
                   />
                 ))
               )}
@@ -319,14 +323,51 @@ function SessionSidebarItem({
   onOpen,
   onTogglePin,
   onToggleArchive,
+  onRename,
 }: {
   item: { id: string; title?: string | null; status: string; unread: boolean; pinned: boolean; archived: boolean }
   isActive: boolean
   onOpen: () => void
   onTogglePin: () => void
   onToggleArchive: () => void
+  onRename: (title: string) => Promise<boolean>
 }) {
   const t = useTranslations("dashboard")
+  const tSession = useTranslations("dashboard.session")
+  const [editingTitle, setEditingTitle] = React.useState(false)
+  const [titleDraft, setTitleDraft] = React.useState(item.title ?? "")
+  const [renaming, setRenaming] = React.useState(false)
+
+  React.useEffect(() => {
+    if (!editingTitle) setTitleDraft(item.title ?? "")
+  }, [editingTitle, item.title])
+
+  const cancelRename = React.useCallback(() => {
+    setTitleDraft(item.title ?? "")
+    setEditingTitle(false)
+  }, [item.title])
+
+  const submitRename = React.useCallback(async () => {
+    const nextTitle = titleDraft.trim()
+    if (!nextTitle) {
+      cancelRename()
+      return
+    }
+    if (renaming) return
+    if (nextTitle === item.title) {
+      setEditingTitle(false)
+      return
+    }
+    setRenaming(true)
+    try {
+      const ok = await onRename(nextTitle)
+      if (ok) setEditingTitle(false)
+      else toast.error(tSession("renameFailed"))
+    } finally {
+      setRenaming(false)
+    }
+  }, [cancelRename, item.title, onRename, renaming, tSession, titleDraft])
+
   const copySessionId = async () => {
     try {
       await copyText(item.id)
@@ -339,43 +380,83 @@ function SessionSidebarItem({
   return (
     <ContextMenu>
       <SidebarMenuItem className="group/session">
-        <ContextMenuTrigger asChild>
-          <div>
-            <SidebarMenuButton
-              isActive={isActive}
-              onClick={onOpen}
+        {editingTitle ? (
+          <div className="flex h-8 items-center gap-2 rounded-xl px-2">
+            <span
               className={cn(
-                "text-muted-foreground data-[active=true]:text-foreground",
-                "group-hover/session:pr-[4.25rem] group-focus-within/session:pr-[4.25rem]",
-                isActive && "pr-[4.25rem]",
+                "size-1.5 shrink-0 rounded-full border",
+                item.unread
+                  ? "border-primary bg-primary"
+                  : item.status === "running"
+                  ? "border-emerald-500 bg-emerald-500"
+                  : item.status === "error"
+                    ? "border-red-500/70"
+                    : item.status === "waiting_approval"
+                      ? "border-amber-400/70"
+                      : "border-muted-foreground/50",
               )}
-            >
-              <span
-                className={cn(
-                  "size-1.5 shrink-0 rounded-full border",
-                  item.unread
-                    ? "border-primary bg-primary"
-                    : item.status === "running"
-                    ? "border-emerald-500 bg-emerald-500"
-                    : item.status === "error"
-                      ? "border-red-500/70"
-                      : item.status === "waiting_approval"
-                        ? "border-amber-400/70"
-                        : "border-muted-foreground/50",
-                )}
-              />
-              <span className="truncate">{item.title}</span>
-            </SidebarMenuButton>
+            />
+            <Input
+              autoFocus
+              value={titleDraft}
+              onChange={(event) => setTitleDraft(event.currentTarget.value)}
+              onBlur={cancelRename}
+              onKeyDown={(event) => {
+                if (event.nativeEvent.isComposing) return
+                if (event.key === "Enter") {
+                  event.preventDefault()
+                  void submitRename()
+                }
+                if (event.key === "Escape") {
+                  event.preventDefault()
+                  cancelRename()
+                }
+              }}
+              disabled={renaming}
+              aria-label={tSession("renameTitle")}
+              className="h-7 min-w-0 flex-1 rounded-lg text-xs"
+            />
           </div>
-        </ContextMenuTrigger>
+        ) : (
+          <ContextMenuTrigger asChild>
+            <div>
+              <SidebarMenuButton
+                isActive={isActive}
+                onClick={onOpen}
+                className={cn(
+                  "text-muted-foreground data-[active=true]:text-foreground",
+                  "group-hover/session:pr-[4.25rem] group-focus-within/session:pr-[4.25rem]",
+                  isActive && "pr-[4.25rem]",
+                )}
+              >
+                <span
+                  className={cn(
+                    "size-1.5 shrink-0 rounded-full border",
+                    item.unread
+                      ? "border-primary bg-primary"
+                      : item.status === "running"
+                      ? "border-emerald-500 bg-emerald-500"
+                      : item.status === "error"
+                        ? "border-red-500/70"
+                        : item.status === "waiting_approval"
+                          ? "border-amber-400/70"
+                          : "border-muted-foreground/50",
+                  )}
+                />
+                <span className="truncate">{item.title}</span>
+              </SidebarMenuButton>
+            </div>
+          </ContextMenuTrigger>
+        )}
 
-        <div
-          className={cn(
-            "absolute right-1 top-1/2 hidden -translate-y-1/2 items-center gap-0.5",
-            "group-hover/session:flex group-focus-within/session:flex",
-            isActive && "flex",
-          )}
-        >
+        {!editingTitle ? (
+          <div
+            className={cn(
+              "absolute right-1 top-1/2 hidden -translate-y-1/2 items-center gap-0.5",
+              "group-hover/session:flex group-focus-within/session:flex",
+              isActive && "flex",
+            )}
+          >
           <button
             type="button"
             aria-label={item.pinned ? t("actions.unpin") : t("actions.pin")}
@@ -401,12 +482,16 @@ function SessionSidebarItem({
           >
             <Archive className="size-3" />
           </button>
-        </div>
+          </div>
+        ) : null}
       </SidebarMenuItem>
       <ContextMenuContent className="w-52">
         <ContextMenuItem onSelect={onOpen}>
           <FolderOpen className="size-4" />
           {t("actions.open")}
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={() => setEditingTitle(true)}>
+          {t("actions.rename")}
         </ContextMenuItem>
         <ContextMenuItem onSelect={onTogglePin}>
           <Pin className="size-4" />
