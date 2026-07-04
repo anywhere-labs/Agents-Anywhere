@@ -712,6 +712,18 @@
       "login": "打开登录页面",
       "title": "已退出登录"
     },
+    "mobileOAuth": {
+      "cancel": "取消",
+      "continue": "继续",
+      "currentAccount": "当前账号",
+      "description": "Agents Anywhere iOS 将使用这个服务器账号登录。",
+      "eyebrow": "手机登录",
+      "invalid": "手机登录请求无效。",
+      "opening": "正在打开 Agents Anywhere...",
+      "switchAccount": "使用其他账号",
+      "title": "继续打开 App？",
+      "unknownAccount": "已登录账号"
+    },
     "passwordStrength": {
       "0": "太短",
       "1": "较弱",

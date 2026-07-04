@@ -1,9 +1,11 @@
 "use client"
 
 import * as React from "react"
+import { useTranslations } from "next-intl"
 
 import { useRouteSearchParams } from "@/components/hash-route-params"
 import { LoadingState } from "@/components/loading-state"
+import { Button } from "@/components/ui/button"
 import { authApi } from "@/features/auth/api"
 import { AuthProvider, useAuth } from "./auth-context"
 import { BootstrapScreen } from "./bootstrap-screen"
@@ -11,7 +13,6 @@ import { LoginScreen } from "./login-screen"
 import { OAuthLinkExistingScreen } from "./oauth-link-existing-screen"
 import { OAuthNewUserScreen } from "./oauth-new-user-screen"
 import { RegisterScreen } from "./register-screen"
-import { SignedOutScreen } from "./signed-out-screen"
 
 type MobileOAuthParams = {
   response_type: string
@@ -32,44 +33,62 @@ export function MobileOAuthPage() {
 }
 
 export function MobileOAuthFlow() {
+  const t = useTranslations("auth.mobileOAuth")
   const params = useRouteSearchParams()
-  const { screen, loading, isAuthenticated, session } = useAuth()
+  const { me, screen, loading, isAuthenticated, session, signOut } = useAuth()
   const [error, setError] = React.useState<string | null>(null)
-  const redirectingRef = React.useRef(false)
+  const [authorizing, setAuthorizing] = React.useState(false)
 
   const oauthParams = React.useMemo(() => readMobileOAuthParams(params), [params])
   const accessToken = session?.accessToken ?? null
 
-  React.useEffect(() => {
-    if (loading || !isAuthenticated || !accessToken || !oauthParams || redirectingRef.current) return
+  const authorize = React.useCallback(async () => {
+    if (!accessToken || !oauthParams) return
+    setAuthorizing(true)
     const token = accessToken
     const payload = oauthParams
-    redirectingRef.current = true
     setError(null)
-    async function authorize() {
-      try {
-        const result = await authApi.authorizeOAuth(token, payload)
-        window.location.assign(result.redirectUrl)
-      } catch (err) {
-        redirectingRef.current = false
-        setError(err instanceof Error ? err.message : String(err))
-      }
+    try {
+      const result = await authApi.authorizeOAuth(token, payload)
+      window.location.assign(result.redirectUrl)
+    } catch (err) {
+      setAuthorizing(false)
+      setError(err instanceof Error ? err.message : String(err))
     }
-    void authorize()
-  }, [accessToken, isAuthenticated, loading, oauthParams])
+  }, [accessToken, oauthParams])
+
+  const switchAccount = React.useCallback(() => {
+    const mobileOAuthHash = window.location.hash
+    signOut()
+    window.location.hash = mobileOAuthHash
+  }, [signOut])
+
+  const cancel = React.useCallback(() => {
+    if (!oauthParams) return
+    window.location.assign(mobileOAuthErrorRedirect(oauthParams, "access_denied", "The request was cancelled."))
+  }, [oauthParams])
 
   if (!oauthParams) {
-    return <MobileOAuthStatus message="Invalid mobile login request." error />
+    return <MobileOAuthStatus message={t("invalid")} error />
   }
   if (error) {
     return <MobileOAuthStatus message={error} error />
   }
-  if (loading || isAuthenticated) {
-    return <LoadingState className="min-h-screen bg-background" label="Opening Agents Anywhere..." />
+  if (loading || authorizing) {
+    return <LoadingState className="min-h-screen bg-background" label={t("opening")} />
+  }
+  if (isAuthenticated && accessToken) {
+    return (
+      <MobileOAuthConsent
+        userId={me?.userId ?? ""}
+        onCancel={cancel}
+        onContinue={() => void authorize()}
+        onSwitchAccount={switchAccount}
+      />
+    )
   }
   if (screen === "bootstrap") return <BootstrapScreen />
   if (screen === "register") return <RegisterScreen />
-  if (screen === "signed-out") return <SignedOutScreen />
   if (screen === "oauth-new-user") return <OAuthNewUserScreen />
   if (screen === "oauth-link-existing") return <OAuthLinkExistingScreen />
   return <LoginScreen />
@@ -90,6 +109,54 @@ function readMobileOAuthParams(params: { get(name: string): string | null }): Mo
     scope: params.get("scope") || "",
     state: params.get("state") || undefined,
   }
+}
+
+function mobileOAuthErrorRedirect(params: MobileOAuthParams, error: string, description: string): string {
+  const url = new URL(params.redirect_uri)
+  url.searchParams.set("error", error)
+  url.searchParams.set("error_description", description)
+  if (params.state) url.searchParams.set("state", params.state)
+  return url.toString()
+}
+
+function MobileOAuthConsent({
+  userId,
+  onCancel,
+  onContinue,
+  onSwitchAccount,
+}: {
+  userId: string
+  onCancel: () => void
+  onContinue: () => void
+  onSwitchAccount: () => void
+}) {
+  const t = useTranslations("auth.mobileOAuth")
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-background px-6">
+      <section className="w-full max-w-sm space-y-6 text-center">
+        <div className="space-y-2">
+          <p className="text-sm font-medium text-muted-foreground">{t("eyebrow")}</p>
+          <h1 className="text-2xl font-semibold tracking-normal text-foreground">{t("title")}</h1>
+          <p className="text-sm leading-6 text-muted-foreground">{t("description")}</p>
+        </div>
+        <div className="rounded-lg border border-border bg-muted/30 px-4 py-3 text-left">
+          <p className="text-xs font-medium uppercase text-muted-foreground">{t("currentAccount")}</p>
+          <p className="mt-1 truncate text-base font-medium text-foreground">{userId || t("unknownAccount")}</p>
+        </div>
+        <div className="space-y-3">
+          <Button className="h-11 w-full" onClick={onContinue}>
+            {t("continue")}
+          </Button>
+          <Button variant="outline" className="h-11 w-full" onClick={onSwitchAccount}>
+            {t("switchAccount")}
+          </Button>
+          <Button variant="ghost" className="h-11 w-full text-muted-foreground" onClick={onCancel}>
+            {t("cancel")}
+          </Button>
+        </div>
+      </section>
+    </main>
+  )
 }
 
 function MobileOAuthStatus({ message, error = false }: { message: string; error?: boolean }) {

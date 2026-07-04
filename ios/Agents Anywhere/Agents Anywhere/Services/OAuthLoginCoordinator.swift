@@ -26,6 +26,12 @@ final class OAuthLoginCoordinator: NSObject, ObservableObject, ASWebAuthenticati
         if queryItems.first(where: { $0.name == "state" })?.value != state {
             throw OAuthLoginError.invalidCallback
         }
+        if let error = queryItems.first(where: { $0.name == "error" })?.value, !error.isEmpty {
+            if error == "access_denied" {
+                throw OAuthLoginError.cancelled
+            }
+            throw OAuthLoginError.callbackError(queryItems.first(where: { $0.name == "error_description" })?.value ?? error)
+        }
         guard let code = queryItems.first(where: { $0.name == "code" })?.value, !code.isEmpty else {
             throw OAuthLoginError.invalidCallback
         }
@@ -141,6 +147,7 @@ private enum OAuthLoginError: LocalizedError {
     case cancelled
     case invalidAuthorizeURL
     case invalidCallback
+    case callbackError(String)
 
     var errorDescription: String? {
         switch self {
@@ -150,6 +157,8 @@ private enum OAuthLoginError: LocalizedError {
             return "The server returned an invalid sign-in URL."
         case .invalidCallback:
             return "The sign-in callback was invalid."
+        case let .callbackError(message):
+            return message
         }
     }
 }

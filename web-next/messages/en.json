@@ -712,6 +712,18 @@
       "login": "Open sign-in page",
       "title": "Signed out"
     },
+    "mobileOAuth": {
+      "cancel": "Cancel",
+      "continue": "Continue",
+      "currentAccount": "Current account",
+      "description": "Agents Anywhere for iOS wants to sign in with this server account.",
+      "eyebrow": "Mobile sign-in",
+      "invalid": "Invalid mobile login request.",
+      "opening": "Opening Agents Anywhere...",
+      "switchAccount": "Use another account",
+      "title": "Continue to the app?",
+      "unknownAccount": "Signed-in account"
+    },
     "passwordStrength": {
       "0": "Too short",
       "1": "Weak",
