@@ -35,6 +35,7 @@ type FilesPanelBodyProps = {
   token?: string | null
   connectorId?: string | null
   root?: string | null
+  connectorDeviceOs?: string | null
   onClose?: () => void
   onPopOut?: () => void
   onPopupBlocked?: () => void
@@ -44,6 +45,7 @@ export function FilesPanelBody({
   token,
   connectorId,
   root,
+  connectorDeviceOs,
   onClose,
   onPopOut,
   onPopupBlocked,
@@ -59,11 +61,13 @@ export function FilesPanelBody({
   const [contextEntry, setContextEntry] = React.useState<FsEntry | null>(null)
 
   const canLoad = Boolean(token && connectorId)
+  const isWindowsConnector = connectorDeviceOs === "windows"
 
   const loadDir = React.useCallback(
     async (nextPath: string) => {
       if (!token || !connectorId) return
-      const target = nextPath.trim() || "."
+      const trimmedPath = nextPath.trim()
+      const target = isWindowsConnector ? trimmedPath : trimmedPath || "/"
       setLoading(true)
       setError(null)
       try {
@@ -81,18 +85,20 @@ export function FilesPanelBody({
         setLoading(false)
       }
     },
-    [connectorId, effectiveRoot, token],
+    [connectorId, effectiveRoot, isWindowsConnector, token],
   )
 
   React.useEffect(() => {
-    setPath(".")
-    setCurrentPath(".")
+    const initialPath = isWindowsConnector ? "" : effectiveRoot
+    setPath(initialPath)
+    setCurrentPath(initialPath)
     setEntries([])
     setError(null)
-    if (canLoad) void loadDir(".")
-  }, [canLoad, connectorId, effectiveRoot, loadDir])
+    if (canLoad) void loadDir(initialPath)
+  }, [canLoad, connectorId, effectiveRoot, isWindowsConnector, loadDir])
 
   const parentPath = React.useMemo(() => parentOf(currentPath || path), [currentPath, path])
+  const canGoParent = parentPath !== "" || isWindowsDriveRoot(currentPath || path)
   const sortedEntries = React.useMemo(
     () =>
       entries.slice().sort((a, b) => {
@@ -182,8 +188,8 @@ export function FilesPanelBody({
             type="button"
             title={t("goParent")}
             aria-label={t("goParent")}
-            onClick={() => parentPath && void loadDir(parentPath)}
-            disabled={loading || !parentPath || !canLoad}
+            onClick={() => void loadDir(parentPath)}
+            disabled={loading || !canGoParent || !canLoad}
           >
             <ChevronUp className="size-3.5" />
           </Button>
@@ -249,7 +255,7 @@ export function FilesPanelBody({
             title={t("openPath")}
             aria-label={t("openPath")}
             onClick={() => void loadDir(path)}
-            disabled={loading || !path.trim() || !canLoad}
+            disabled={loading || (!isWindowsConnector && !path.trim()) || !canLoad}
           >
             <ChevronRight className="size-3.5" />
           </Button>
@@ -264,7 +270,7 @@ export function FilesPanelBody({
                   {error ? <div className="aa-rt-error">{error}</div> : null}
                   {loading && entries.length === 0 ? <div className="aa-rt-empty">{t("loading")}</div> : null}
                   {!loading && !error && canLoad && entries.length === 0 ? <div className="aa-rt-empty">{t("empty")}</div> : null}
-                  {canLoad && parentPath ? (
+                  {canLoad && canGoParent ? (
                     <button className="aa-fs-row" type="button" onClick={() => void loadDir(parentPath)}>
                       <FolderOpen className="size-3.5" />
                       <span>..</span>
@@ -360,6 +366,10 @@ function parentOf(rawPath: string): string {
 
 function normalizeWindowsDrivePath(path: string): string {
   return path.replace(/^\/([A-Za-z]:[\\/])/, "$1")
+}
+
+function isWindowsDriveRoot(path: string): boolean {
+  return /^[A-Za-z]:[\\/]?$/.test(normalizeWindowsDrivePath(path).trim())
 }
 
 function isDownloadableEntry(entry: FsEntry) {

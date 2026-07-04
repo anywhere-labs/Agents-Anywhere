@@ -52,6 +52,7 @@ function FileBrowserDialog({
   open,
   onOpenChange,
   connectorId,
+  connectorDeviceOs,
   token,
   initialPath = "~",
   onConfirm,
@@ -59,6 +60,7 @@ function FileBrowserDialog({
   open: boolean
   onOpenChange: (v: boolean) => void
   connectorId: string
+  connectorDeviceOs?: string | null
   token: string | null | undefined
   initialPath?: string
   onConfirm: (path: string) => void
@@ -71,6 +73,7 @@ function FileBrowserDialog({
   const [entries, setEntries] = React.useState<FsEntry[]>([])
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
+  const isWindowsConnector = connectorDeviceOs === "windows"
 
   const loadPath = React.useCallback(
     async (path: string) => {
@@ -81,10 +84,12 @@ function FileBrowserDialog({
       setLoading(true)
       setError(null)
       try {
-        const target = path.trim() || "~"
+        const trimmedPath = path.trim()
+        const target = isWindowsConnector ? trimmedPath : trimmedPath || "/"
+        const root = target || "~"
         const res = await dashboardApi.connectorFsList(token, connectorId, {
-          root: target,
-          path: ".",
+          root,
+          path: target ? "." : "",
         })
         setEntries(res.result.entries)
         const resolved = res.result.path || target
@@ -97,12 +102,12 @@ function FileBrowserDialog({
         setLoading(false)
       }
     },
-    [connectorId, token],
+    [connectorId, isWindowsConnector, token],
   )
 
   React.useEffect(() => {
-    if (open) loadPath(initialPath || "~")
-  }, [initialPath, open, loadPath])
+    if (open) loadPath(isWindowsConnector ? initialPath : initialPath || "~")
+  }, [initialPath, isWindowsConnector, open, loadPath])
 
   const dirs = React.useMemo(
     () => entries.filter((entry) => entry.type === "directory").sort((a, b) => a.name.localeCompare(b.name)),
@@ -114,9 +119,10 @@ function FileBrowserDialog({
 
   const parentPath = React.useMemo(() => {
     if (!currentPath || currentPath === "." || currentPath === "") return null
+    if (isWindows && /^[A-Za-z]:[\\/]?$/.test(currentPath)) return ""
     const parts = currentPath.split(sep)
     return parts.length > 1 ? parts.slice(0, -1).join(sep) || sep : null
-  }, [currentPath, sep])
+  }, [currentPath, isWindows, sep])
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -136,7 +142,7 @@ function FileBrowserDialog({
             placeholder={t("enterPath")}
             className="min-w-0 code-mono text-xs"
           />
-          {parentPath && (
+          {parentPath !== null && (
             <Button variant="outline" size="icon" onClick={() => loadPath(parentPath)} title={t("parent")}>
               <ChevronRight className="size-4 -rotate-90" />
             </Button>
@@ -395,8 +401,9 @@ export function WorkspacePicker({
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         connectorId={activeConnector?.id ?? ""}
+        connectorDeviceOs={activeConnector?.deviceOs}
         token={authSession?.accessToken}
-        initialPath={workspace.path || homeWorkspace.path || "~"}
+        initialPath={activeConnector?.deviceOs === "windows" ? "" : workspace.path || homeWorkspace.path || "~"}
         onConfirm={(path) => {
           const isWin = path.includes("\\")
           const sep = isWin ? "\\" : "/"

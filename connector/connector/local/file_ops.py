@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import mimetypes
 import hashlib
+import sys
 from typing import Any
 
 from connector.local.common import (
@@ -18,6 +19,25 @@ from connector.local.common import (
 
 
 class FileOps:
+    def _windows_drive_entries(self) -> list[dict[str, Any]]:
+        if sys.platform != "win32":
+            return []
+
+        entries: list[dict[str, Any]] = []
+        from pathlib import Path
+
+        for code in range(ord("A"), ord("Z") + 1):
+            letter = chr(code)
+            path = Path(f"{letter}:\\")
+            try:
+                exists = path.exists()
+            except OSError:
+                exists = False
+            if not exists:
+                continue
+            entries.append({"name": f"{letter}:", "path": str(path), "type": "directory", "size": None})
+        return entries
+
     async def prepare_download(self, params: dict[str, Any]) -> dict[str, Any]:
         root = workspace_root(params)
         path = resolve_path(root, required_string(params, "path"))
@@ -95,6 +115,8 @@ class FileOps:
     async def read_dir(self, params: dict[str, Any]) -> dict[str, Any]:
         root = workspace_root(params)
         raw_path = params.get("path")
+        if sys.platform == "win32" and raw_path == "":
+            return {"path": "", "entries": self._windows_drive_entries(), "truncated": False}
         path = root if raw_path is None else resolve_path(root, required_string(params, "path"))
         path = nearest_existing_dir(path, fallback=root)
 

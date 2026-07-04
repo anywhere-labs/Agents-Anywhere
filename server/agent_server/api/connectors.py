@@ -305,14 +305,14 @@ async def connector_fs_list(
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
 ) -> RpcResponsePayload:
-    await _require_owned_online_connector(connector_id, user_id, db, manager)
+    connector = await _require_owned_online_connector(connector_id, user_id, db, manager)
     root_value = root or payload.get("root")
     if not isinstance(root_value, str) or not root_value.strip():
         raise HTTPException(status_code=422, detail="root is required")
-    raw_path = payload.get("path") or "."
+    raw_path = payload.get("path", ".")
     if not isinstance(raw_path, str):
         raise HTTPException(status_code=422, detail="path must be a string")
-    path = resolve_workspace_path(root_value, raw_path)
+    path = "" if connector.deviceOs == "windows" and raw_path == "" else resolve_workspace_path(root_value, raw_path)
     result = await request_connector(
         manager,
         connector_id,
@@ -898,10 +898,16 @@ async def _require_owned_online_connector(
     user_id: str,
     db: Store,
     manager: ConnectorRpcManager,
-) -> None:
-    await _require_owned_connector(connector_id, user_id, db)
+) -> ConnectorView:
+    try:
+        connector = await db.get_connector(connector_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="connector not found") from None
+    if connector.userId != user_id:
+        raise HTTPException(status_code=404, detail="connector not found")
     if not manager.is_online(connector_id):
         raise HTTPException(status_code=409, detail="connector is offline")
+    return connector
 
 
 def _quoted_filename(value: str) -> str:

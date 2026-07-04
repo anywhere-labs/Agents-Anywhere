@@ -32,6 +32,7 @@ const CANONICAL_VERTICAL_PANEL_IDS = ["runtime-files", "runtime-terminal"]
 type SessionRuntimePanelsProps = {
   token: string | null
   connectorId: string | null
+  connectorDeviceOs?: string | null
   root: string
   dockedPanels: PanelId[]
 }
@@ -39,6 +40,7 @@ type SessionRuntimePanelsProps = {
 export function SessionRuntimePanels({
   token,
   connectorId,
+  connectorDeviceOs,
   root,
   dockedPanels,
 }: SessionRuntimePanelsProps) {
@@ -53,7 +55,7 @@ export function SessionRuntimePanels({
     () => readSavedLayout(verticalLayoutKey, verticalPanelIds, verticalDefaultLayout, CANONICAL_VERTICAL_PANEL_IDS),
     [verticalLayoutKey, verticalPanelIds, verticalDefaultLayout],
   )
-  const renderRuntimePanel = useRuntimePanelRenderer({ token, connectorId, root })
+  const renderRuntimePanel = useRuntimePanelRenderer({ token, connectorId, connectorDeviceOs, root })
 
   if (dockedPanels.length === 0) return null
 
@@ -87,17 +89,19 @@ export function SessionRuntimePanels({
 export function FloatingRuntimePanels({
   token,
   connectorId,
+  connectorDeviceOs,
   root,
   floatingPanels,
 }: {
   token: string | null
   connectorId: string | null
+  connectorDeviceOs?: string | null
   root: string
   floatingPanels: PanelId[]
 }) {
   const { setPanelMode } = useWorkspace()
   const t = useTranslations("dashboard.session")
-  const renderRuntimePanel = useRuntimePanelRenderer({ token, connectorId, root })
+  const renderRuntimePanel = useRuntimePanelRenderer({ token, connectorId, connectorDeviceOs, root })
 
   return (
     <>
@@ -145,10 +149,12 @@ export function PopupBlockedDialog() {
 function useRuntimePanelRenderer({
   token,
   connectorId,
+  connectorDeviceOs,
   root,
 }: {
   token: string | null
   connectorId: string | null
+  connectorDeviceOs?: string | null
   root: string
 }) {
   const { setPanelMode } = useWorkspace()
@@ -159,6 +165,7 @@ function useRuntimePanelRenderer({
         <FilesPanelBody
           token={token}
           connectorId={connectorId}
+          connectorDeviceOs={connectorDeviceOs}
           root={root}
           onPopOut={options?.nativeWindow ? undefined : () => setPanelMode("files", "floating")}
           onClose={() => setPanelMode("files", "closed")}

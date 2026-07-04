@@ -189,6 +189,7 @@ export function SessionView() {
           <SessionRuntimePanels
             token={token}
             connectorId={connectorId}
+            connectorDeviceOs={connector?.deviceOs}
             root={root}
             dockedPanels={dockedPanels}
           />
@@ -198,6 +199,7 @@ export function SessionView() {
       <FloatingRuntimePanels
         token={token}
         connectorId={connectorId}
+        connectorDeviceOs={connector?.deviceOs}
         root={root}
         floatingPanels={floatingPanels}
       />

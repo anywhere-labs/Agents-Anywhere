@@ -5122,6 +5122,32 @@ def test_connector_fs_list_supports_body_and_query_roots(tmp_path):
     ]
 
 
+def test_connector_fs_list_preserves_windows_empty_top_level(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, _, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online", device_os="windows"))
+
+    response = client.post(
+        f"/connectors/{connector_id}/fs/list?root=C%3A%5CUsers%5Cadmin",
+        headers=headers,
+        json={"path": ""},
+    )
+
+    assert response.status_code == 200
+    assert fake_rpc.requests[-1] == (
+        connector_id,
+        "fs.readDir",
+        {
+            "sessionId": f"browse_{connector_id}",
+            "root": r"C:\Users\admin",
+            "path": "",
+        },
+        30,
+    )
+
+
 def test_shell_task_start_waits_for_connector_completion(tmp_path):
     client = make_client(tmp_path)
     connector_id, connector_access_token, session_id, headers = create_connector_and_session(client)

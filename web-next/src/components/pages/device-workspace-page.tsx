@@ -236,6 +236,7 @@ export function DeviceWorkspacePage() {
           <FilesPanelBody
             token={authSession?.accessToken}
             connectorId={activeConnectorId}
+            connectorDeviceOs={connector?.deviceOs}
             root={activeWorkspacePath}
           />
         </div>

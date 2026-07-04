@@ -100,6 +100,7 @@ function mapConnector(connector: RealConnectorView): ConnectorView {
     id: connector.id,
     userId: connector.userId,
     name: connector.name,
+    deviceOs: connector.deviceOs,
     status: connector.status,
     lastSeenAt: connector.lastSeenAt,
     runtimeCapabilities: connector.runtimeCapabilities,
