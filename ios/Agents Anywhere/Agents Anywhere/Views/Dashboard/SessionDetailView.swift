@@ -11,6 +11,11 @@ private let timelinePageLimit = 100
 private let autoScrollBottomDistance: CGFloat = 180
 private let scrollBottomButtonDistance: CGFloat = 96
 private let loadOlderScrollThreshold: CGFloat = 96
+private let timelineBottomAnchorID = "bottom"
+private let initialBottomSettleInterval: DispatchTimeInterval = .milliseconds(40)
+private let initialBottomStablePasses = 2
+private let initialBottomMaxSettlePasses = 20
+private let timelineHeightStabilityThreshold: CGFloat = 1
 
 struct SessionDetailView: View {
     @EnvironmentObject private var appState: AppState
@@ -51,8 +56,10 @@ struct SessionDetailView: View {
     @State private var shouldForceScrollOnTimelineUpdate = false
     @State private var isLoadingOlder = false
     @State private var pendingPrependAnchorID: String?
-    @State private var timelineScrollPosition = ScrollPosition()
     @State private var isTimelineReadyForDisplay = false
+    @State private var isSettlingInitialBottomScroll = false
+    @State private var initialBottomScrollGeneration = 0
+    @State private var timelineContentHeight: CGFloat = 0
     @State private var lastEntryRefreshAt: Date?
     @State private var sseTask: Task<Void, Never>?
     @State private var pollTask: Task<Void, Never>?
@@ -174,10 +181,18 @@ struct SessionDetailView: View {
 
                         Color.clear
                             .frame(height: 1)
-                            .id("bottom")
+                            .id(timelineBottomAnchorID)
                     }
                     .padding(.horizontal, 16)
                     .padding(.top, 14)
+                    .background {
+                        GeometryReader { geometry in
+                            Color.clear.preference(
+                                key: TimelineContentHeightPreferenceKey.self,
+                                value: geometry.size.height,
+                            )
+                        }
+                    }
                     .opacity(isTimelineReadyForDisplay || displayEntries.isEmpty ? 1 : 0)
                     .allowsHitTesting(isTimelineReadyForDisplay || displayEntries.isEmpty)
                 }
@@ -187,7 +202,6 @@ struct SessionDetailView: View {
                         dismissComposerKeyboard()
                     },
                 )
-                .scrollPosition($timelineScrollPosition)
                 .onScrollGeometryChange(for: Bool.self) { geometry in
                     distanceToBottom(geometry) <= scrollBottomButtonDistance
                 } action: { _, isNearBottom in
@@ -201,7 +215,7 @@ struct SessionDetailView: View {
                 .onScrollGeometryChange(for: Bool.self) { geometry in
                     geometry.visibleRect.minY <= loadOlderScrollThreshold
                 } action: { _, isNearTop in
-                    guard isNearTop, hasPositionedInitialScroll, !displayEntries.isEmpty else { return }
+                    guard isNearTop, isTimelineReadyForDisplay, !displayEntries.isEmpty else { return }
                     Task { await loadOlderTimeline(proxy) }
                 }
 
@@ -209,7 +223,7 @@ struct SessionDetailView: View {
                     Button {
                         shouldForceScrollOnTimelineUpdate = false
                         shouldAutoScrollOnTimelineUpdate = false
-                        scrollToBottom(animated: true)
+                        scrollToBottom(proxy, animated: true)
                     } label: {
                         Image(systemName: "arrow.down")
                             .font(.system(size: 17, weight: .semibold))
@@ -230,6 +244,9 @@ struct SessionDetailView: View {
             .animation(.smooth(duration: 0.18), value: shouldShowScrollToBottomButton)
             .onChange(of: timelineRevision) { _, _ in
                 reconcileTimelineScroll(proxy)
+            }
+            .onPreferenceChange(TimelineContentHeightPreferenceKey.self) { height in
+                timelineContentHeight = height
             }
             .onChange(of: session.status) { _, _ in
                 if isInterrupting && !serverBusy {
@@ -253,6 +270,8 @@ struct SessionDetailView: View {
                 }
             }
             .onDisappear {
+                initialBottomScrollGeneration += 1
+                isSettlingInitialBottomScroll = false
                 sseTask?.cancel()
                 pollTask?.cancel()
             }
@@ -494,12 +513,16 @@ struct SessionDetailView: View {
         )
     }
 
-    private func scrollToBottom(animated: Bool) {
-        let action = { timelineScrollPosition.scrollTo(edge: .bottom) }
+    private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool) {
+        let action = {
+            proxy.scrollTo(timelineBottomAnchorID, anchor: .bottom)
+        }
         if animated {
             withAnimation(.easeOut(duration: 0.22), action)
         } else {
-            action()
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction, action)
         }
     }
 
@@ -509,26 +532,60 @@ struct SessionDetailView: View {
         }
     }
 
-    private func scrollToBottomAfterLayout(animated: Bool) {
+    private func scrollToBottomAfterLayout(_ proxy: ScrollViewProxy, animated: Bool) {
         DispatchQueue.main.async {
             if animated {
-                scrollToBottom(animated: true)
+                scrollToBottom(proxy, animated: true)
             } else {
-                scrollToBottom(animated: false)
+                scrollToBottom(proxy, animated: false)
                 DispatchQueue.main.async {
-                    scrollToBottom(animated: false)
+                    scrollToBottom(proxy, animated: false)
                 }
             }
         }
     }
 
-    private func revealTimelineAtBottomAfterLayout() {
-        DispatchQueue.main.async {
-            scrollToBottom(animated: false)
-            DispatchQueue.main.async {
-                scrollToBottom(animated: false)
-                isTimelineReadyForDisplay = true
+    private func revealTimelineAtBottomAfterLayout(_ proxy: ScrollViewProxy) {
+        initialBottomScrollGeneration += 1
+        let generation = initialBottomScrollGeneration
+        isSettlingInitialBottomScroll = true
+        scrollToBottom(proxy, animated: false)
+        settleInitialBottomScroll(
+            proxy,
+            generation: generation,
+            previousHeight: timelineContentHeight,
+            stablePasses: 0,
+            remainingPasses: initialBottomMaxSettlePasses,
+        )
+    }
+
+    private func settleInitialBottomScroll(
+        _ proxy: ScrollViewProxy,
+        generation: Int,
+        previousHeight: CGFloat,
+        stablePasses: Int,
+        remainingPasses: Int
+    ) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + initialBottomSettleInterval) {
+            guard initialBottomScrollGeneration == generation, isSettlingInitialBottomScroll else { return }
+            scrollToBottom(proxy, animated: false)
+            let currentHeight = timelineContentHeight
+            let nextStablePasses = abs(currentHeight - previousHeight) <= timelineHeightStabilityThreshold
+                ? stablePasses + 1
+                : 0
+            if nextStablePasses < initialBottomStablePasses, remainingPasses > 0 {
+                settleInitialBottomScroll(
+                    proxy,
+                    generation: generation,
+                    previousHeight: currentHeight,
+                    stablePasses: nextStablePasses,
+                    remainingPasses: remainingPasses - 1,
+                )
+                return
             }
+            scrollToBottom(proxy, animated: false)
+            isSettlingInitialBottomScroll = false
+            isTimelineReadyForDisplay = true
         }
     }
 
@@ -549,13 +606,13 @@ struct SessionDetailView: View {
             hasPositionedInitialScroll = true
             shouldForceScrollOnTimelineUpdate = false
             shouldAutoScrollOnTimelineUpdate = false
-            revealTimelineAtBottomAfterLayout()
+            revealTimelineAtBottomAfterLayout(proxy)
             return
         }
         if shouldForceScrollOnTimelineUpdate || shouldAutoScrollOnTimelineUpdate {
             shouldForceScrollOnTimelineUpdate = false
             shouldAutoScrollOnTimelineUpdate = false
-            scrollToBottomAfterLayout(animated: true)
+            scrollToBottomAfterLayout(proxy, animated: true)
         }
     }
 
@@ -715,7 +772,7 @@ struct SessionDetailView: View {
     }
 
     private func loadOlderTimeline(_ proxy: ScrollViewProxy) async {
-        guard hasPositionedInitialScroll, !isLoadingOlder, timeline.hasMore,
+        guard isTimelineReadyForDisplay, !isLoadingOlder, timeline.hasMore,
               let oldestOrderSeq = timeline.oldestOrderSeq,
               let anchorID = displayEntries.first?.id,
               let api = appState.api,
@@ -2922,6 +2979,14 @@ private struct ComposerGrowingTextEditor: View {
 }
 
 private struct ComposerTextHeightPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+private struct TimelineContentHeightPreferenceKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
 
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
