@@ -5,7 +5,7 @@
   <img src="docs/brand/agents-anywhere-wordmark-light.png" alt="Agents Anywhere" width="420">
 </picture>
 
-<h3>Control coding agents on any device from your phone.</h3>
+<h3>Control any coding agent on any device from your phone.</h3>
 
 Run Codex, Claude Code, and more agents on your Mac, Windows PC, Linux devbox, or cloud sandbox. Use the mobile app to chat with sessions, preview files and code, approve actions, and open a terminal on that device.
 
