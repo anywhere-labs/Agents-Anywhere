@@ -60,8 +60,24 @@ private struct RootTabsView: View {
         tabSortOrder(previousTab)
     }
 
+    private var rootTabSelection: Binding<String> {
+        Binding(
+            get: { selectedTab },
+            set: { newValue in
+                if newValue == RootTab.newSession {
+                    onNewSession()
+                    return
+                }
+                guard isSelectableRootTab(newValue), selectedTab != newValue else { return }
+                previousTab = selectedTab
+                selectedTab = newValue
+                currentSelectableTab = newValue
+            },
+        )
+    }
+
     var body: some View {
-        TabView(selection: $selectedTab) {
+        TabView(selection: rootTabSelection) {
             Tab("Sessions", systemImage: "rectangle.stack.fill", value: RootTab.sessions) {
                 sessionsRoot
                 .id(RootTab.sessions)
@@ -94,20 +110,6 @@ private struct RootTabsView: View {
                 selectedTab = RootTab.sessions
             }
             currentSelectableTab = selectedTab
-        }
-        .onChange(of: selectedTab) { oldValue, newValue in
-            if newValue == RootTab.newSession {
-                let returnTab = isSelectableRootTab(oldValue) ? oldValue : currentSelectableTab
-                withTransaction(Transaction(animation: nil)) {
-                    selectedTab = returnTab
-                }
-                currentSelectableTab = returnTab
-                onNewSession()
-                return
-            }
-
-            previousTab = oldValue == RootTab.newSession ? currentSelectableTab : oldValue
-            currentSelectableTab = newValue
         }
         .onChange(of: sessionToOpen) { _, session in
             guard let session else { return }
