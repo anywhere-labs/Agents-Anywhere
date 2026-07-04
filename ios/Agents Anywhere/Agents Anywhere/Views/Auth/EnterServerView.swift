@@ -38,6 +38,7 @@ private struct ServerAddressView: View {
                 ) {
                     Task { await finishLogin() }
                 }
+                .transition(.move(edge: .trailing).combined(with: .opacity))
             } else {
                 AuthScreen(
                     title: "Enter Server",
@@ -73,6 +74,7 @@ private struct ServerAddressView: View {
                 }
             }
         }
+        .animation(.snappy(duration: 0.26), value: didSignIn)
         .alert("Server Unavailable", isPresented: Binding(
             get: { alertMessage != nil },
             set: { if !$0 { alertMessage = nil } },
@@ -101,7 +103,9 @@ private struct ServerAddressView: View {
             let token = try await oauthLogin.authenticate(serverURL: url)
             await appState.completeOAuthLogin(serverURL: url, token: token, showSignedInRoute: false)
             if appState.me != nil {
-                didSignIn = true
+                withAnimation(.snappy(duration: 0.26)) {
+                    didSignIn = true
+                }
             } else {
                 alertMessage = appState.authError ?? "The login could not be completed."
             }
