@@ -236,6 +236,7 @@ private struct SessionsView: View {
     @State private var selectedRuntime = "Any Runtime"
     @State private var selectedDevice = "Any Device"
     @State private var selectedSort = "Recent"
+    @State private var mirrorScrollPosition = ScrollPosition()
 
     init(
         scrollOffset: Binding<CGFloat> = .constant(0),
@@ -284,9 +285,14 @@ private struct SessionsView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.bottom, 32)
-            .offset(y: isMirror ? -max(0, mirroredScrollOffset) : 0)
         }
-        .scrollDisabled(isMirror)
+        .scrollPosition($mirrorScrollPosition)
+        .task(id: mirrorScrollTarget) {
+            guard isMirror else { return }
+            withTransaction(Transaction(animation: nil)) {
+                mirrorScrollPosition.scrollTo(y: mirrorScrollTarget)
+            }
+        }
         .onScrollGeometryChange(for: CGFloat.self) { geometry in
             max(0, geometry.contentOffset.y + geometry.contentInsets.top)
         } action: { _, offset in
@@ -359,6 +365,10 @@ private struct SessionsView: View {
         } message: {
             Text(sessionActionError ?? "")
         }
+    }
+
+    private var mirrorScrollTarget: CGFloat {
+        max(0, mirroredScrollOffset)
     }
 
     private var header: some View {
@@ -514,6 +524,7 @@ private struct DevicesView: View {
     private let mirroredScrollOffset: CGFloat
 
     @State private var isShowingAccount = false
+    @State private var mirrorScrollPosition = ScrollPosition()
 
     init(
         scrollOffset: Binding<CGFloat> = .constant(0),
@@ -538,9 +549,14 @@ private struct DevicesView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.bottom, 32)
-            .offset(y: isMirror ? -max(0, mirroredScrollOffset) : 0)
         }
-        .scrollDisabled(isMirror)
+        .scrollPosition($mirrorScrollPosition)
+        .task(id: mirrorScrollTarget) {
+            guard isMirror else { return }
+            withTransaction(Transaction(animation: nil)) {
+                mirrorScrollPosition.scrollTo(y: mirrorScrollTarget)
+            }
+        }
         .onScrollGeometryChange(for: CGFloat.self) { geometry in
             max(0, geometry.contentOffset.y + geometry.contentInsets.top)
         } action: { _, offset in
@@ -567,6 +583,10 @@ private struct DevicesView: View {
             guard !isMirror else { return }
             await appState.refreshDashboard()
         }
+    }
+
+    private var mirrorScrollTarget: CGFloat {
+        max(0, mirroredScrollOffset)
     }
 
     @ViewBuilder
