@@ -277,21 +277,24 @@ private struct SessionsView: View {
     }
 
     var body: some View {
-        ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: 20) {
-                header
-                sessionList
+        Group {
+            if isMirror {
+                GeometryReader { geometry in
+                    scrollContent
+                        .offset(y: -max(0, mirroredScrollOffset))
+                        .frame(width: geometry.size.width, alignment: .topLeading)
+                }
+                .clipped()
+            } else {
+                ScrollView(.vertical) {
+                    scrollContent
+                }
+                .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                    max(0, geometry.contentOffset.y)
+                } action: { _, offset in
+                    scrollOffset = offset
+                }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.bottom, 32)
-            .offset(y: isMirror ? -max(0, mirroredScrollOffset) : 0)
-        }
-        .scrollDisabled(isMirror)
-        .onScrollGeometryChange(for: CGFloat.self) { geometry in
-            max(0, geometry.contentOffset.y)
-        } action: { _, offset in
-            guard !isMirror else { return }
-            scrollOffset = offset
         }
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $isShowingAccount) {
@@ -359,6 +362,15 @@ private struct SessionsView: View {
         } message: {
             Text(sessionActionError ?? "")
         }
+    }
+
+    private var scrollContent: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            header
+            sessionList
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.bottom, 32)
     }
 
     private var header: some View {
@@ -526,26 +538,24 @@ private struct DevicesView: View {
     }
 
     var body: some View {
-        ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: 20) {
-                DashboardPageHeader(title: "Devices", me: appState.me) {
-                    isShowingAccount = true
+        Group {
+            if isMirror {
+                GeometryReader { geometry in
+                    scrollContent
+                        .offset(y: -max(0, mirroredScrollOffset))
+                        .frame(width: geometry.size.width, alignment: .topLeading)
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 24)
-
-                deviceList
+                .clipped()
+            } else {
+                ScrollView(.vertical) {
+                    scrollContent
+                }
+                .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                    max(0, geometry.contentOffset.y)
+                } action: { _, offset in
+                    scrollOffset = offset
+                }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.bottom, 32)
-            .offset(y: isMirror ? -max(0, mirroredScrollOffset) : 0)
-        }
-        .scrollDisabled(isMirror)
-        .onScrollGeometryChange(for: CGFloat.self) { geometry in
-            max(0, geometry.contentOffset.y)
-        } action: { _, offset in
-            guard !isMirror else { return }
-            scrollOffset = offset
         }
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $isShowingAccount) {
@@ -567,6 +577,20 @@ private struct DevicesView: View {
             guard !isMirror else { return }
             await appState.refreshDashboard()
         }
+    }
+
+    private var scrollContent: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            DashboardPageHeader(title: "Devices", me: appState.me) {
+                isShowingAccount = true
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 24)
+
+            deviceList
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.bottom, 32)
     }
 
     @ViewBuilder
