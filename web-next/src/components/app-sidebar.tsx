@@ -1,7 +1,8 @@
 "use client"
 
 import * as React from "react"
-import { Search, Plus, Settings, Users, Server, LogOut, Pin, Archive, CheckCheck } from "lucide-react"
+import { Search, Plus, Settings, Users, Server, LogOut, Pin, Archive, CheckCheck, Copy, FolderOpen } from "lucide-react"
+import { toast } from "sonner"
 import { PairDeviceDialog } from "@/components/pair-device-dialog"
 
 import {
@@ -24,6 +25,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu"
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -34,6 +42,7 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
+import { copyText } from "@/lib/clipboard"
 import { cn } from "@/lib/utils"
 import { filterSessions } from "@/lib/demo-api"
 import { useWorkspace } from "@/components/workspace-context"
@@ -141,26 +150,15 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
                 <p className="px-3 py-2 text-xs text-muted-foreground">{t("empty.noDevicesShort")}</p>
               ) : (
                 connectors.map((connector) => (
-                  <SidebarMenuItem key={connector.id}>
-                    <SidebarMenuButton
-                      className="code-mono text-[13px]"
-                      isActive={
-                        (page === "device" || page === "device-workspace") &&
-                        activeConnectorId === connector.id
-                      }
-                      onClick={() => navigateToDevice(connector.id)}
-                    >
-                      <span
-                        className={cn(
-                          "size-1.5 rounded-full",
-                          connector.status === "online" ? "bg-emerald-500" : "bg-muted-foreground/40",
-                        )}
-                      />
-                      <span className={cn(connector.status === "offline" && "text-muted-foreground")}>
-                        {connector.name}
-                      </span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
+                  <DeviceSidebarItem
+                    key={connector.id}
+                    connector={connector}
+                    isActive={
+                      (page === "device" || page === "device-workspace") &&
+                      activeConnectorId === connector.id
+                    }
+                    onOpen={() => navigateToDevice(connector.id)}
+                  />
                 ))
               )}
             </SidebarMenu>
@@ -322,75 +320,167 @@ function SessionSidebarItem({
   onTogglePin,
   onToggleArchive,
 }: {
-  item: { id: string; title?: string | null; status: string; unread: boolean; pinned: boolean }
+  item: { id: string; title?: string | null; status: string; unread: boolean; pinned: boolean; archived: boolean }
   isActive: boolean
   onOpen: () => void
   onTogglePin: () => void
   onToggleArchive: () => void
 }) {
   const t = useTranslations("dashboard")
-  return (
-    <SidebarMenuItem className="group/session">
-      <SidebarMenuButton
-        isActive={isActive}
-        onClick={onOpen}
-        className={cn(
-          "text-muted-foreground data-[active=true]:text-foreground",
-          "group-hover/session:pr-[4.25rem] group-focus-within/session:pr-[4.25rem]",
-          isActive && "pr-[4.25rem]",
-        )}
-      >
-        <span
-          className={cn(
-            "size-1.5 shrink-0 rounded-full border",
-            item.unread
-              ? "border-primary bg-primary"
-              : item.status === "running"
-              ? "border-emerald-500 bg-emerald-500"
-              : item.status === "error"
-                ? "border-red-500/70"
-                : item.status === "waiting_approval"
-                  ? "border-amber-400/70"
-                  : "border-muted-foreground/50",
-          )}
-        />
-        <span className="truncate">{item.title}</span>
-      </SidebarMenuButton>
+  const copySessionId = async () => {
+    try {
+      await copyText(item.id)
+      toast.success(t("actions.copiedSessionId"))
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t("actions.copyFailed"))
+    }
+  }
 
-      <div
-        className={cn(
-          "absolute right-1 top-1/2 hidden -translate-y-1/2 items-center gap-0.5",
-          "group-hover/session:flex group-focus-within/session:flex",
-          isActive && "flex",
-        )}
-      >
-        <button
-          type="button"
-          aria-label={item.pinned ? t("actions.unpin") : t("actions.pin")}
-          onClick={(e) => {
-            e.stopPropagation()
-            onTogglePin()
-          }}
+  return (
+    <ContextMenu>
+      <SidebarMenuItem className="group/session">
+        <ContextMenuTrigger asChild>
+          <div>
+            <SidebarMenuButton
+              isActive={isActive}
+              onClick={onOpen}
+              className={cn(
+                "text-muted-foreground data-[active=true]:text-foreground",
+                "group-hover/session:pr-[4.25rem] group-focus-within/session:pr-[4.25rem]",
+                isActive && "pr-[4.25rem]",
+              )}
+            >
+              <span
+                className={cn(
+                  "size-1.5 shrink-0 rounded-full border",
+                  item.unread
+                    ? "border-primary bg-primary"
+                    : item.status === "running"
+                    ? "border-emerald-500 bg-emerald-500"
+                    : item.status === "error"
+                      ? "border-red-500/70"
+                      : item.status === "waiting_approval"
+                        ? "border-amber-400/70"
+                        : "border-muted-foreground/50",
+                )}
+              />
+              <span className="truncate">{item.title}</span>
+            </SidebarMenuButton>
+          </div>
+        </ContextMenuTrigger>
+
+        <div
           className={cn(
-            "rounded p-1 transition-colors hover:bg-sidebar-accent/65 hover:text-foreground",
-            item.pinned ? "text-primary" : "text-muted-foreground",
+            "absolute right-1 top-1/2 hidden -translate-y-1/2 items-center gap-0.5",
+            "group-hover/session:flex group-focus-within/session:flex",
+            isActive && "flex",
           )}
         >
-          <Pin className="size-3" />
-        </button>
-        <button
-          type="button"
-          aria-label={t("actions.archive")}
-          onClick={(e) => {
-            e.stopPropagation()
-            onToggleArchive()
-          }}
-          className="rounded p-1 text-muted-foreground transition-colors hover:bg-sidebar-accent/65 hover:text-foreground"
-        >
-          <Archive className="size-3" />
-        </button>
-      </div>
-    </SidebarMenuItem>
+          <button
+            type="button"
+            aria-label={item.pinned ? t("actions.unpin") : t("actions.pin")}
+            onClick={(e) => {
+              e.stopPropagation()
+              onTogglePin()
+            }}
+            className={cn(
+              "rounded p-1 transition-colors hover:bg-sidebar-accent/65 hover:text-foreground",
+              item.pinned ? "text-primary" : "text-muted-foreground",
+            )}
+          >
+            <Pin className="size-3" />
+          </button>
+          <button
+            type="button"
+            aria-label={t("actions.archive")}
+            onClick={(e) => {
+              e.stopPropagation()
+              onToggleArchive()
+            }}
+            className="rounded p-1 text-muted-foreground transition-colors hover:bg-sidebar-accent/65 hover:text-foreground"
+          >
+            <Archive className="size-3" />
+          </button>
+        </div>
+      </SidebarMenuItem>
+      <ContextMenuContent className="w-52">
+        <ContextMenuItem onSelect={onOpen}>
+          <FolderOpen className="size-4" />
+          {t("actions.open")}
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={onTogglePin}>
+          <Pin className="size-4" />
+          {item.pinned ? t("actions.unpin") : t("actions.pin")}
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={onToggleArchive}>
+          <Archive className="size-4" />
+          {item.archived ? t("actions.unarchive") : t("actions.archive")}
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem onSelect={() => void copySessionId()}>
+          <Copy className="size-4" />
+          {t("actions.copySessionId")}
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  )
+}
+
+function DeviceSidebarItem({
+  connector,
+  isActive,
+  onOpen,
+}: {
+  connector: { id: string; name: string; status: string }
+  isActive: boolean
+  onOpen: () => void
+}) {
+  const t = useTranslations("dashboard")
+
+  const copyDeviceId = async () => {
+    try {
+      await copyText(connector.id)
+      toast.success(t("actions.copiedDeviceId"))
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t("actions.copyFailed"))
+    }
+  }
+
+  return (
+    <ContextMenu>
+      <SidebarMenuItem>
+        <ContextMenuTrigger asChild>
+          <div>
+            <SidebarMenuButton
+              className="code-mono text-[13px]"
+              isActive={isActive}
+              onClick={onOpen}
+            >
+              <span
+                className={cn(
+                  "size-1.5 rounded-full",
+                  connector.status === "online" ? "bg-emerald-500" : "bg-muted-foreground/40",
+                )}
+              />
+              <span className={cn(connector.status === "offline" && "text-muted-foreground")}>
+                {connector.name}
+              </span>
+            </SidebarMenuButton>
+          </div>
+        </ContextMenuTrigger>
+      </SidebarMenuItem>
+      <ContextMenuContent className="w-52">
+        <ContextMenuItem onSelect={onOpen}>
+          <FolderOpen className="size-4" />
+          {t("actions.open")}
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem onSelect={() => void copyDeviceId()}>
+          <Copy className="size-4" />
+          {t("actions.copyDeviceId")}
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   )
 }
 

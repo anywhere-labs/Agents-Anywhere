@@ -33,6 +33,7 @@ import { TimelineEntry } from "@/components/session/session-timeline-entry"
 import { isCreatedFileChange } from "@/components/session/session-tool-cards"
 import { SessionComposer, type AttachedFile } from "@/components/session/session-composer"
 import { recordsOf, runtimeLabel, sortTimelineItems, textOf } from "@/components/session/session-utils"
+import { useWorkspace } from "@/components/workspace-context"
 
 type SessionDetailProps = {
   token: string
@@ -224,6 +225,7 @@ export function SessionDetail({
   const tSession = useTranslations("dashboard.session")
   const tNew = useTranslations("dashboard.new")
   const tCommon = useTranslations("common")
+  const { composerInsertion } = useWorkspace()
   const [state, setState] = React.useState<SessionStateResponse | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
@@ -267,6 +269,18 @@ export function SessionDetail({
   const setComposerDraft = React.useCallback((value: string) => {
     setComposerDraftState({ sessionId, value })
   }, [sessionId])
+
+  React.useEffect(() => {
+    if (!composerInsertion || composerInsertion.sessionId !== sessionId) return
+    setComposerDraftState((current) => {
+      const currentValue = current.sessionId === sessionId ? current.value : readComposerDraft(sessionId)
+      const separator = currentValue.trim().length > 0 && !/\s$/.test(currentValue) ? " " : ""
+      return {
+        sessionId,
+        value: `${currentValue}${separator}${composerInsertion.text}`,
+      }
+    })
+  }, [composerInsertion, sessionId])
 
   React.useEffect(() => {
     if (!state) {

@@ -34,6 +34,12 @@ export type PanelMode = "docked" | "floating" | "closed"
  */
 export type AppPage = "home" | "session" | "settings" | "team" | "service" | "device" | "device-workspace"
 
+export type ComposerInsertion = {
+  id: number
+  sessionId: string
+  text: string
+}
+
 // ─── Hash routing helpers ─────────────────────────────────────
 
 type ParsedRoute =
@@ -172,6 +178,7 @@ type WorkspaceState = {
   popupBlocked: boolean
   firstDevicePromptOpen: boolean
   pairDeviceDialogOpen: boolean
+  composerInsertion: ComposerInsertion | null
 
   // Actions
   openSession: (id: string) => void
@@ -191,6 +198,7 @@ type WorkspaceState = {
   toggleArchiveSession: (id: string) => void
   markSessionRead: (id: string) => void
   upsertSession: (session: RealSessionView) => void
+  appendPathToComposer: (path: string) => boolean
   refreshData: () => void
 }
 
@@ -268,7 +276,9 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [popupBlocked, setPopupBlocked] = React.useState(false)
   const [firstDevicePromptOpen, setFirstDevicePromptOpen] = React.useState(false)
   const [pairDeviceDialogOpen, setPairDeviceDialogOpen] = React.useState(false)
+  const [composerInsertion, setComposerInsertion] = React.useState<ComposerInsertion | null>(null)
   const firstDeviceWizardCheckedRef = React.useRef(false)
+  const composerInsertionSeqRef = React.useRef(0)
 
   // ── Fetch data from mock API ──────────────────────────────
   const initialLoadDoneRef = React.useRef(false)
@@ -521,6 +531,19 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     })
   }, [])
 
+  const appendPathToComposer = React.useCallback((path: string) => {
+    if (route.page !== "session" || !route.sessionId) return false
+    const targetSession = sessions.find((session) => session.id === route.sessionId)
+    if (!targetSession?.takeover) return false
+    composerInsertionSeqRef.current += 1
+    setComposerInsertion({
+      id: composerInsertionSeqRef.current,
+      sessionId: route.sessionId,
+      text: `@${path}`,
+    })
+    return true
+  }, [route, sessions])
+
   // ── Derived route fields ──────────────────────────────────
 
   const validPages: AppPage[] = ["home", "session", "settings", "team", "service", "device", "device-workspace"]
@@ -548,6 +571,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     popupBlocked,
     firstDevicePromptOpen,
     pairDeviceDialogOpen,
+    composerInsertion,
     openSession,
     goHome,
     navigate,
@@ -565,6 +589,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     toggleArchiveSession,
     markSessionRead,
     upsertSession,
+    appendPathToComposer,
     refreshData: fetchData,
   }
 

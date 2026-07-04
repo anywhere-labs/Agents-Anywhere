@@ -1,17 +1,28 @@
 "use client"
 
 import * as React from "react"
-import { ChevronRight, ChevronUp, File, Folder, FolderOpen, RefreshCw, X } from "lucide-react"
+import { ChevronRight, ChevronUp, Copy, Download, File, Folder, FolderOpen, MessageSquarePlus, RefreshCw, X } from "lucide-react"
+import { toast } from "sonner"
 
 import "./runtime-panel.css"
 import { ChevronExternal } from "./runtime-icons"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
+import { useWorkspace } from "@/components/workspace-context"
 import { dashboardApi } from "@/features/dashboard/api"
 import type { FsEntry } from "@/features/dashboard/types"
 import { localeFromPathname, readStoredLocale } from "@/i18n/client-locale"
+import { copyText } from "@/lib/clipboard"
+import { downloadBlob } from "@/lib/download"
 import { cn } from "@/lib/utils"
 import { useTranslations } from "next-intl"
 
@@ -38,12 +49,14 @@ export function FilesPanelBody({
   onPopupBlocked,
 }: FilesPanelBodyProps) {
   const t = useTranslations("dashboard.panels.files")
+  const { appendPathToComposer } = useWorkspace()
   const effectiveRoot = root?.trim() || "."
   const [path, setPath] = React.useState(".")
   const [currentPath, setCurrentPath] = React.useState(".")
   const [entries, setEntries] = React.useState<FsEntry[]>([])
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
+  const [contextEntry, setContextEntry] = React.useState<FsEntry | null>(null)
 
   const canLoad = Boolean(token && connectorId)
 
@@ -89,6 +102,9 @@ export function FilesPanelBody({
       }),
     [entries],
   )
+  const entriesByPath = React.useMemo(() => new Map(sortedEntries.map((entry) => [entry.path, entry])), [sortedEntries])
+  const contextPath = contextEntry?.path ?? currentPath
+  const contextIsFile = contextEntry ? isDownloadableEntry(contextEntry) : false
 
   const openEntry = (entry: FsEntry) => {
     if (entry.type === "directory") {
@@ -112,6 +128,42 @@ export function FilesPanelBody({
         },
       })
     }
+  }
+
+  const copyPath = async () => {
+    try {
+      await copyText(contextPath)
+      toast.success(t("pathCopied"))
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t("copyPathFailed"))
+    }
+  }
+
+  const addToComposer = () => {
+    if (!appendPathToComposer(contextPath)) {
+      toast.error(t("addToComposerNoSession"))
+      return
+    }
+    toast.success(t("pathAddedToComposer"))
+  }
+
+  const downloadEntry = async () => {
+    if (!token || !connectorId || !contextEntry || !contextIsFile) return
+    try {
+      const response = await dashboardApi.connectorFsRead(token, connectorId, effectiveRoot, contextEntry.path)
+      const blob = await dashboardApi.downloadBlob(token, response.result.downloadUrl)
+      downloadBlob(blob, response.result.name || contextEntry.name)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t("downloadFailed"))
+    }
+  }
+
+  const updateContextTarget = (event: React.MouseEvent) => {
+    const target = event.target instanceof HTMLElement
+      ? event.target.closest<HTMLElement>("[data-fs-entry-path]")
+      : null
+    const entryPath = target?.dataset.fsEntryPath
+    setContextEntry(entryPath ? entriesByPath.get(entryPath) ?? null : null)
   }
 
   return (
@@ -203,34 +255,56 @@ export function FilesPanelBody({
           </Button>
         </div>
 
-        <ScrollArea className="aa-fs-browser">
-          <div className="aa-fs-browser-inner">
-            {!canLoad ? <div className="aa-rt-empty">{t("noConnector")}</div> : null}
-            {error ? <div className="aa-rt-error">{error}</div> : null}
-            {loading && entries.length === 0 ? <div className="aa-rt-empty">{t("loading")}</div> : null}
-            {!loading && !error && canLoad && entries.length === 0 ? <div className="aa-rt-empty">{t("empty")}</div> : null}
-            {canLoad && parentPath ? (
-              <button className="aa-fs-row" type="button" onClick={() => void loadDir(parentPath)}>
-                <FolderOpen className="size-3.5" />
-                <span>..</span>
-                <em>{t("parent")}</em>
-              </button>
-            ) : null}
-            {sortedEntries.map((entry) => (
-              <button
-                key={entry.path}
-                className="aa-fs-row"
-                type="button"
-                onClick={() => openEntry(entry)}
-                disabled={entry.type !== "directory" && entry.type !== "file" && entry.type !== "symlink"}
-              >
-                {entry.type === "directory" ? <Folder className="size-3.5" /> : <File className="size-3.5" />}
-                <span>{entry.name}</span>
-                <em>{entry.type === "file" && typeof entry.size === "number" ? formatBytes(entry.size) : entry.type}</em>
-              </button>
-            ))}
-          </div>
-        </ScrollArea>
+        <ContextMenu>
+          <ContextMenuTrigger asChild>
+            <div className="flex min-h-0 flex-1 flex-col" onContextMenu={updateContextTarget}>
+              <ScrollArea className="aa-fs-browser">
+                <div className="aa-fs-browser-inner">
+                  {!canLoad ? <div className="aa-rt-empty">{t("noConnector")}</div> : null}
+                  {error ? <div className="aa-rt-error">{error}</div> : null}
+                  {loading && entries.length === 0 ? <div className="aa-rt-empty">{t("loading")}</div> : null}
+                  {!loading && !error && canLoad && entries.length === 0 ? <div className="aa-rt-empty">{t("empty")}</div> : null}
+                  {canLoad && parentPath ? (
+                    <button className="aa-fs-row" type="button" onClick={() => void loadDir(parentPath)}>
+                      <FolderOpen className="size-3.5" />
+                      <span>..</span>
+                      <em>{t("parent")}</em>
+                    </button>
+                  ) : null}
+                  {sortedEntries.map((entry) => (
+                    <button
+                      key={entry.path}
+                      className="aa-fs-row"
+                      type="button"
+                      data-fs-entry-path={entry.path}
+                      onClick={() => openEntry(entry)}
+                      disabled={entry.type !== "directory" && entry.type !== "file" && entry.type !== "symlink"}
+                    >
+                      {entry.type === "directory" ? <Folder className="size-3.5" /> : <File className="size-3.5" />}
+                      <span>{entry.name}</span>
+                      <em>{entry.type === "file" && typeof entry.size === "number" ? formatBytes(entry.size) : entry.type}</em>
+                    </button>
+                  ))}
+                </div>
+              </ScrollArea>
+            </div>
+          </ContextMenuTrigger>
+          <ContextMenuContent className="w-52">
+            <ContextMenuItem onSelect={() => void copyPath()}>
+              <Copy className="size-4" />
+              {t("copyPath")}
+            </ContextMenuItem>
+            <ContextMenuItem onSelect={addToComposer}>
+              <MessageSquarePlus className="size-4" />
+              {t("addToComposer")}
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem onSelect={() => void downloadEntry()} disabled={!contextIsFile || !canLoad}>
+              <Download className="size-4" />
+              {t("download")}
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
       </CardContent>
     </Card>
   )
@@ -286,6 +360,10 @@ function parentOf(rawPath: string): string {
 
 function normalizeWindowsDrivePath(path: string): string {
   return path.replace(/^\/([A-Za-z]:[\\/])/, "$1")
+}
+
+function isDownloadableEntry(entry: FsEntry) {
+  return entry.type === "file" || entry.type === "symlink"
 }
 
 function formatBytes(size: number): string {
