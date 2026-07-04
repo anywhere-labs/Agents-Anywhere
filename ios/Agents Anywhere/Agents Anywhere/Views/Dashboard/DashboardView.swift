@@ -16,7 +16,7 @@ struct DashboardView: View {
     @State private var sessionToOpen: SessionSummary?
 
     var body: some View {
-        RootTabsView(sessionToOpen: $sessionToOpen, isNewSessionPresented: $isShowingNewSession) {
+        RootTabsView(sessionToOpen: $sessionToOpen) {
             isShowingNewSession = true
         }
         .task {
@@ -35,7 +35,6 @@ struct DashboardView: View {
 
 private struct RootTabsView: View {
     @Binding var sessionToOpen: SessionSummary?
-    @Binding var isNewSessionPresented: Bool
 
     let onNewSession: () -> Void
 
@@ -44,7 +43,6 @@ private struct RootTabsView: View {
     @State private var sessionPath: [SessionSummary] = []
     @State private var previousTab: String = RootTab.sessions
     @State private var currentSelectableTab: String = RootTab.sessions
-    @State private var actionReturnTab: String?
 
     private var tabTransition: AnyTransition {
         let edge: Edge = selectedTabSortOrder >= previousTabSortOrder ? .trailing : .leading
@@ -78,13 +76,13 @@ private struct RootTabsView: View {
 
             if #available(iOS 27.0, *) {
                 Tab("New", systemImage: "plus", value: RootTab.newSession, role: .prominent) {
-                    mirroredActionTabRoot
+                    Color.clear
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
                 }
             } else {
                 Tab("New", systemImage: "plus", value: RootTab.newSession) {
-                    mirroredActionTabRoot
+                    Color.clear
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
                 }
@@ -99,25 +97,23 @@ private struct RootTabsView: View {
         }
         .onChange(of: selectedTab) { oldValue, newValue in
             if newValue == RootTab.newSession {
-                actionReturnTab = isSelectableRootTab(oldValue) ? oldValue : currentSelectableTab
+                let returnTab = isSelectableRootTab(oldValue) ? oldValue : currentSelectableTab
+                withTransaction(Transaction(animation: nil)) {
+                    selectedTab = returnTab
+                }
+                currentSelectableTab = returnTab
                 onNewSession()
                 return
             }
 
-            previousTab = oldValue == RootTab.newSession ? actionReturnTab ?? currentSelectableTab : oldValue
+            previousTab = oldValue == RootTab.newSession ? currentSelectableTab : oldValue
             currentSelectableTab = newValue
-        }
-        .onChange(of: isNewSessionPresented) { _, isPresented in
-            guard !isPresented, selectedTab == RootTab.newSession else { return }
-            selectedTab = actionReturnTab ?? currentSelectableTab
-            actionReturnTab = nil
         }
         .onChange(of: sessionToOpen) { _, session in
             guard let session else { return }
             previousTab = selectedTab
             selectedTab = RootTab.sessions
             currentSelectableTab = RootTab.sessions
-            actionReturnTab = nil
             sessionPath = [session]
             sessionToOpen = nil
         }
@@ -135,16 +131,6 @@ private struct RootTabsView: View {
     private var devicesRoot: some View {
         NavigationStack {
             DevicesView()
-        }
-    }
-
-    @ViewBuilder
-    private var mirroredActionTabRoot: some View {
-        switch actionReturnTab ?? currentSelectableTab {
-        case RootTab.devices:
-            devicesRoot
-        default:
-            sessionsRoot
         }
     }
 
