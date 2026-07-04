@@ -52,7 +52,7 @@ struct AuthScreen<Content: View>: View {
         .toolbar {
             if showsCancel {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel", action: onCancel)
+                    SheetCloseButton(action: onCancel)
                 }
             }
         }

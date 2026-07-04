@@ -306,7 +306,7 @@ private struct SessionsView: View {
                     .navigationTitle("Me")
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
-                            Button("Done") {
+                            SheetCloseButton {
                                 isShowingAccount = false
                             }
                         }
@@ -570,7 +570,7 @@ private struct DevicesView: View {
                     .navigationTitle("Me")
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
-                            Button("Done") {
+                            SheetCloseButton {
                                 isShowingAccount = false
                             }
                         }
@@ -1042,7 +1042,9 @@ private struct NewSessionSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    SheetCloseButton {
+                        dismiss()
+                    }
                 }
                 ToolbarItem(placement: .primaryAction) {
                     runtimeMenu
@@ -1553,7 +1555,9 @@ private struct WorkspacePickerSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    SheetCloseButton {
+                        dismiss()
+                    }
                 }
             }
         }
