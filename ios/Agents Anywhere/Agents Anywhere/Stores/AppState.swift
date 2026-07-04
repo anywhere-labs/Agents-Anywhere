@@ -244,9 +244,10 @@ final class AppState: ObservableObject {
         }
     }
 
-    func signOut() {
+    func signOut(showSignedOutRoute: Bool = true) {
         try? keychain.delete(account: tokenAccount)
         me = nil
+        serverURL = nil
         connectors = []
         sessions = []
         isDashboardLoading = false
@@ -256,6 +257,13 @@ final class AppState: ObservableObject {
         dashboardError = nil
         sessionsError = nil
         connectorsError = nil
+        authError = nil
+        if showSignedOutRoute {
+            route = .signedOut
+        }
+    }
+
+    func showSignedOutRoute() {
         route = .signedOut
     }
 

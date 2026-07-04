@@ -229,6 +229,8 @@ private struct SessionsView: View {
 
     @State private var activeFilter: SessionFilter?
     @State private var isShowingAccount = false
+    @State private var isShowingSignOut = false
+    @State private var pendingSignOut = false
     @State private var sessionBeingRenamed: SessionSummary?
     @State private var renameText = ""
     @State private var sessionActionError: String?
@@ -302,7 +304,10 @@ private struct SessionsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $isShowingAccount) {
             NavigationStack {
-                MeView()
+                MeView {
+                    pendingSignOut = true
+                    isShowingAccount = false
+                }
                     .navigationTitle("Me")
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
@@ -314,6 +319,16 @@ private struct SessionsView: View {
             }
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
+        }
+        .fullScreenCover(isPresented: $isShowingSignOut) {
+            SignOutSheet {
+                isShowingSignOut = false
+            }
+        }
+        .onChange(of: isShowingAccount) { _, showing in
+            guard !showing, pendingSignOut else { return }
+            pendingSignOut = false
+            isShowingSignOut = true
         }
         .onAppear {
             guard !isMirror else { return }
@@ -524,6 +539,8 @@ private struct DevicesView: View {
     private let mirroredScrollOffset: CGFloat
 
     @State private var isShowingAccount = false
+    @State private var isShowingSignOut = false
+    @State private var pendingSignOut = false
     @State private var mirrorScrollPosition = ScrollPosition()
 
     init(
@@ -566,7 +583,10 @@ private struct DevicesView: View {
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $isShowingAccount) {
             NavigationStack {
-                MeView()
+                MeView {
+                    pendingSignOut = true
+                    isShowingAccount = false
+                }
                     .navigationTitle("Me")
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
@@ -578,6 +598,16 @@ private struct DevicesView: View {
             }
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
+        }
+        .fullScreenCover(isPresented: $isShowingSignOut) {
+            SignOutSheet {
+                isShowingSignOut = false
+            }
+        }
+        .onChange(of: isShowingAccount) { _, showing in
+            guard !showing, pendingSignOut else { return }
+            pendingSignOut = false
+            isShowingSignOut = true
         }
         .refreshable {
             guard !isMirror else { return }
@@ -664,6 +694,7 @@ private struct SessionSectionHeader: View {
 
 private struct MeView: View {
     @EnvironmentObject private var appState: AppState
+    let onSignOut: () -> Void
 
     var body: some View {
         List {
@@ -699,8 +730,87 @@ private struct MeView: View {
 
             Section {
                 Button("Sign Out", role: .destructive) {
-                    appState.signOut()
+                    onSignOut()
                 }
+            }
+        }
+    }
+}
+
+private struct SignOutSheet: View {
+    @EnvironmentObject private var appState: AppState
+    @Environment(\.dismiss) private var dismiss
+    @State private var didSignOut = false
+
+    let onDone: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            if didSignOut {
+                SignedOutConfirmationView {
+                    dismiss()
+                    onDone()
+                    appState.showSignedOutRoute()
+                }
+            } else {
+                AuthScreen(
+                    title: "Sign Out?",
+                    subtitle: "This will remove your local credentials from this iPhone. Your server account and devices are not deleted.",
+                    onCancel: { dismiss() },
+                ) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        LoginSummaryView(
+                            server: appState.serverURL?.absoluteString ?? "Unknown server",
+                            userId: appState.me?.userId ?? "Signed-in account",
+                        )
+
+                        AuthPrimaryButton(
+                            title: "Sign Out",
+                            systemImage: "rectangle.portrait.and.arrow.right",
+                        ) {
+                            appState.signOut(showSignedOutRoute: false)
+                            didSignOut = true
+                        }
+
+                        AuthGlassButton("Cancel") {
+                            dismiss()
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct SignedOutConfirmationView: View {
+    let onContinue: () -> Void
+
+    var body: some View {
+        AuthWelcomeLayout {
+            VStack(spacing: 26) {
+                VStack(spacing: 16) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 56, weight: .semibold))
+                        .foregroundStyle(.green)
+
+                    VStack(spacing: 8) {
+                        Text("Signed Out")
+                            .font(.system(size: 34, weight: .bold))
+                            .multilineTextAlignment(.center)
+
+                        Text("Your local credentials have been cleared. You can safely close this page or return to sign in again.")
+                            .font(.body)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
+                AuthPrimaryButton(
+                    title: "Back to Sign In",
+                    systemImage: "arrow.right",
+                    action: onContinue,
+                )
             }
         }
     }
