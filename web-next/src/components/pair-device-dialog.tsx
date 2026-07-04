@@ -55,7 +55,7 @@ const NOUNS = [
 ]
 const GITHUB_RELEASES_URL = "https://github.com/anywhere-labs/Agents-Anywhere/releases"
 const COMMAND_WARNING_ACCEPTED_KEY = "agents-anywhere.pairDevice.commandWarningAccepted.v1"
-const COMMAND_WARNING_CANCEL_SECONDS = 3
+const COMMAND_WARNING_WAIT_SECONDS = 5
 
 function randomName(): string {
   const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)]
@@ -203,14 +203,17 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
   const [exitGuardOpen, setExitGuardOpen] = React.useState(false)
   const [commandWarningOpen, setCommandWarningOpen] = React.useState(false)
   const [commandWarningAccepted, setCommandWarningAccepted] = React.useState(readCommandWarningAccepted)
-  const [commandCancelCountdown, setCommandCancelCountdown] = React.useState(COMMAND_WARNING_CANCEL_SECONDS)
+  const [commandCountdown, setCommandCountdown] = React.useState(COMMAND_WARNING_WAIT_SECONDS)
   const pollingRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const commandCountdownRef = React.useRef<number | null>(null)
   const suppressCloseGuardRef = React.useRef(false)
   const serverUrl = React.useMemo(resolvePairingServerUrl, [])
 
-  // Stable device-created guard: once connector exists, closing needs confirmation
-  const deviceCreated = connectorId !== null && step !== "success"
+  const shouldConfirmExit =
+    connectorId !== null &&
+    step !== "success" &&
+    (step === "command" || step === "desktop-local" || step === "desktop-paircode" || step === "desktop-credentials") &&
+    (polling || claiming || pairCode.length > 0)
 
   React.useEffect(() => {
     if (!open) return
@@ -257,9 +260,9 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
       commandCountdownRef.current = null
       return
     }
-    setCommandCancelCountdown(COMMAND_WARNING_CANCEL_SECONDS)
+    setCommandCountdown(COMMAND_WARNING_WAIT_SECONDS)
     commandCountdownRef.current = window.setInterval(() => {
-      setCommandCancelCountdown((current) => {
+      setCommandCountdown((current) => {
         if (current <= 1) {
           if (commandCountdownRef.current) window.clearInterval(commandCountdownRef.current)
           commandCountdownRef.current = null
@@ -285,12 +288,12 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
     setClaiming(false)
     setPolling(false)
     setCommandWarningOpen(false)
-    setCommandCancelCountdown(COMMAND_WARNING_CANCEL_SECONDS)
+    setCommandCountdown(COMMAND_WARNING_WAIT_SECONDS)
   }
 
   const handleOpenChange = (next: boolean) => {
     if (!next && suppressCloseGuardRef.current) return
-    if (!next && deviceCreated) {
+    if (!next && shouldConfirmExit) {
       setExitGuardOpen(true)
       return
     }
@@ -366,6 +369,11 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
     setCommandWarningAccepted(true)
     setCommandWarningOpen(false)
     enterCommandStep()
+  }
+
+  const handleUseDesktopFromCommandWarning = () => {
+    setCommandWarningOpen(false)
+    handleSelectDesktop()
   }
 
   const handleClaim = async () => {
@@ -755,7 +763,6 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
       <AlertDialog
         open={commandWarningOpen}
         onOpenChange={(next) => {
-          if (!next && commandCancelCountdown > 0) return
           setCommandWarningOpen(next)
         }}
       >
@@ -768,12 +775,13 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
             {t("commandWarningFallback")}
           </div>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={commandCancelCountdown > 0}>
-              {commandCancelCountdown > 0 ? t("commandWarningCancelCountdown", { seconds: commandCancelCountdown }) : tCommon("cancel")}
-            </AlertDialogCancel>
-            <AlertDialogAction onClick={handleAcceptCommandWarning}>
-              {t("commandWarningConfirm")}
-            </AlertDialogAction>
+            <Button variant="outline" onClick={handleAcceptCommandWarning} disabled={commandCountdown > 0}>
+              {commandCountdown > 0 ? t("commandWarningCommandCountdown", { seconds: commandCountdown }) : t("commandWarningConfirm")}
+            </Button>
+            <Button onClick={handleUseDesktopFromCommandWarning}>
+              <MonitorUp className="size-4" />
+              {t("commandWarningDesktop")}
+            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
