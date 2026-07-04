@@ -47,7 +47,7 @@ final class OAuthLoginCoordinator: NSObject, ObservableObject, ASWebAuthenticati
         if let scene = scenes.first {
             return ASPresentationAnchor(windowScene: scene)
         }
-        return ASPresentationAnchor(frame: .zero)
+        preconditionFailure("ASWebAuthenticationSession requires an active window scene.")
         #elseif canImport(AppKit)
         return NSApplication.shared.windows.first ?? ASPresentationAnchor()
         #else
