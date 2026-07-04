@@ -100,6 +100,7 @@ export type ConnectorDesktopApi = {
   cancelPairing: () => Promise<PairingState>
   saveSettings: (settings: DesktopSettings) => Promise<ConnectorState>
   clearCredentials: () => Promise<ConnectorState>
+  factoryReset: () => Promise<void>
   openConfigFolder: () => Promise<string>
   openServer: (serverUrl: string) => Promise<void>
   openUvInstall: () => Promise<void>

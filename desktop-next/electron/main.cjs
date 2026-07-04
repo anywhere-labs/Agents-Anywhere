@@ -95,6 +95,11 @@ function sharedConnectorRuntimePath() {
   return path.join(path.dirname(configPath), "connector-runtime.json");
 }
 
+function defaultConnectorStateDbPath() {
+  const configPath = state.configPath || sharedConnectorConfigPath();
+  return path.join(path.dirname(configPath), "connector-state.sqlite3");
+}
+
 function readJson(filePath, fallback) {
   try {
     return JSON.parse(fs.readFileSync(filePath, "utf8"));
@@ -110,6 +115,19 @@ function readJsonStrict(filePath) {
 function writeJson(filePath, value) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+function removePath(targetPath) {
+  if (!targetPath) return;
+  try {
+    fs.rmSync(targetPath, { recursive: true, force: true });
+  } catch (error) {
+    appendLog({
+      level: "WARNING",
+      message: `Failed to remove ${targetPath}: ${error instanceof Error ? error.message : String(error)}`,
+      time: new Date().toISOString(),
+    });
+  }
 }
 
 function exportedAppDir() {
@@ -207,7 +225,20 @@ function resolveExecutablePath(command) {
 }
 
 function defaultUvPath() {
+  const bundled = bundledUvPath();
+  if (bundled) return bundled;
   return resolveExecutablePath(process.platform === "win32" ? "uv.exe" : "uv");
+}
+
+function runtimeUvKey() {
+  return `${process.platform}-${process.arch}`;
+}
+
+function bundledUvPath() {
+  if (!app.isPackaged) return "";
+  const executable = process.platform === "win32" ? "uv.exe" : "uv";
+  const candidate = path.join(process.resourcesPath, "uv", runtimeUvKey(), executable);
+  return fs.existsSync(candidate) ? candidate : "";
 }
 
 function refreshUvState() {
@@ -258,10 +289,13 @@ function refreshLocalSetupState() {
 }
 
 function connectorEnv() {
+  const uvPath = state.resolvedUvPath || defaultUvPath();
+  const pathEntries = defaultPathEntries();
+  if (uvPath) pathEntries.unshift(path.dirname(uvPath));
   const env = {
     ...process.env,
     ...shellEnvironment,
-    PATH: defaultPathEntries().join(path.delimiter),
+    PATH: [...new Set(pathEntries.filter(Boolean))].join(path.delimiter),
     PYTHONUNBUFFERED: "1",
     FORCE_COLOR: "0",
   };
@@ -635,6 +669,46 @@ async function clearConnectorCredentials() {
   return publicState();
 }
 
+function connectorStateDbPaths() {
+  const paths = new Set([defaultConnectorStateDbPath()]);
+  try {
+    const config = readJson(state.configPath, {});
+    if (typeof config.stateDbPath === "string" && config.stateDbPath.trim()) paths.add(config.stateDbPath.trim());
+  } catch {
+    // Ignore unreadable config while resetting.
+  }
+  return Array.from(paths);
+}
+
+async function factoryReset() {
+  try {
+    await rpcRequest("connector.stop");
+  } catch {
+    // Reset must proceed even if the connector is already stopped or broken.
+  }
+  stopRpcProcess();
+  const userDataDir = app.getPath("userData");
+  const paths = [
+    state.configPath,
+    state.runtimePath || sharedConnectorRuntimePath(),
+    ...connectorStateDbPaths(),
+    state.settingsPath,
+    state.logPath,
+    path.join(userDataDir, "Local Storage"),
+    path.join(userDataDir, "Session Storage"),
+    path.join(userDataDir, "IndexedDB"),
+    path.join(userDataDir, "Cache"),
+    path.join(userDataDir, "Code Cache"),
+    path.join(userDataDir, "GPUCache"),
+    path.join(userDataDir, "DawnCache"),
+    path.join(userDataDir, "DawnGraphiteCache"),
+    path.join(userDataDir, "DawnWebGPUCache"),
+  ];
+  for (const targetPath of paths) removePath(targetPath);
+  app.relaunch();
+  app.exit(0);
+}
+
 function appendStderrLog(chunk) {
   const text = chunk.toString().trimEnd();
   if (!text) return;
@@ -1001,6 +1075,7 @@ ipcMain.handle("connector:startPairing", (_event, input) => rpcRequest("connecto
 ipcMain.handle("connector:cancelPairing", () => rpcRequest("connector.cancelPairing"));
 ipcMain.handle("connector:saveSettings", (_event, settings) => saveDesktopSettings(settings));
 ipcMain.handle("connector:clearCredentials", () => clearConnectorCredentials());
+ipcMain.handle("connector:factoryReset", () => factoryReset());
 ipcMain.handle("connector:openConfigFolder", () => shell.openPath(path.dirname(state.configPath)));
 ipcMain.handle("connector:openServer", async (_event, serverUrl) => {
   const url = String(serverUrl || "").trim();

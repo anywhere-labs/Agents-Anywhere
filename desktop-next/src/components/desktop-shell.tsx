@@ -259,6 +259,11 @@ const desktopMessages = {
     clearCredentialsConfirmTitle: "Clear local credentials?",
     clearCredentialsConfirmDescription: "This stops the connector and removes the saved connector config from this computer. It does not delete the connector in Agents Anywhere.",
     clearCredentialsDone: "Local connector credentials cleared",
+    factoryResetTitle: "Factory reset",
+    factoryResetDescription: "Remove all local desktop settings, logs, cached data, and connector credentials, then restart this app.",
+    factoryResetAction: "Reset app",
+    factoryResetConfirmTitle: "Reset this desktop app?",
+    factoryResetConfirmDescription: "This will stop the connector, delete all local desktop app data and saved connector credentials, then restart the app. It does not delete anything from Agents Anywhere.",
     serverUrl: "Server URL",
     connectorId: "Connector ID",
     connectorToken: "Connector token",
@@ -407,6 +412,11 @@ const desktopMessages = {
     clearCredentialsConfirmTitle: "清除本地凭据？",
     clearCredentialsConfirmDescription: "这会停止连接器，并删除这台电脑上保存的连接器配置。不会删除 Agents Anywhere 中的连接器。",
     clearCredentialsDone: "已清除本地连接器凭据",
+    factoryResetTitle: "恢复出厂设置",
+    factoryResetDescription: "删除本地桌面应用设置、日志、缓存数据和连接器凭据，然后重启应用。",
+    factoryResetAction: "恢复出厂设置",
+    factoryResetConfirmTitle: "恢复这个桌面应用的出厂设置？",
+    factoryResetConfirmDescription: "这会停止连接器，删除本地桌面应用数据和保存的连接器凭据，然后重启应用。不会删除 Agents Anywhere 服务器中的任何内容。",
     serverUrl: "服务器 URL",
     connectorId: "连接器 ID",
     connectorToken: "连接器 token",
@@ -846,6 +856,10 @@ export function DesktopShell() {
     setConfig(defaultConfig)
   }
 
+  async function factoryReset() {
+    await connectorDesktop().factoryReset()
+  }
+
   async function loadLogs(options: { reset?: boolean; pageSize?: number } = {}) {
     const pageSize = options.pageSize ?? logPageSize
     const page = await run("logs", () => connectorDesktop().getLogs({ pageSize }))
@@ -1213,6 +1227,7 @@ export function DesktopShell() {
                 isRunning={isRunning}
                 busy={busy}
                 clearCredentials={clearCredentials}
+                factoryReset={factoryReset}
                 saveSettings={saveSettings}
                 saveLocale={saveLocale}
                 saveAppearance={saveAppearance}
@@ -1387,6 +1402,7 @@ function SettingsView({
   isRunning,
   busy,
   clearCredentials,
+  factoryReset,
   saveSettings,
   saveLocale,
   saveAppearance,
@@ -1400,6 +1416,7 @@ function SettingsView({
   isRunning: boolean
   busy: string | null
   clearCredentials: () => Promise<void>
+  factoryReset: () => Promise<void>
   saveSettings: (settings: DesktopSettings) => Promise<void>
   saveLocale: (locale: "system" | "en" | "zh") => void
   saveAppearance: (appearance: AppearanceMode) => void
@@ -1615,6 +1632,39 @@ function SettingsView({
               </Button>
             </div>
           </FieldGroup>
+        </CardContent>
+      </Card>
+      <Card className="border-destructive/25">
+        <CardHeader>
+          <CardTitle>{t.factoryResetTitle}</CardTitle>
+          <CardDescription>{t.factoryResetDescription}</CardDescription>
+          <CardAction>
+            <Trash2 className="size-5 text-destructive" />
+          </CardAction>
+        </CardHeader>
+        <CardContent>
+          <div className="flex justify-end">
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="destructive" disabled={Boolean(busy)}>
+                  <Trash2 className="size-4" />
+                  {t.factoryResetAction}
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>{t.factoryResetConfirmTitle}</AlertDialogTitle>
+                  <AlertDialogDescription>{t.factoryResetConfirmDescription}</AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>{t.cancel}</AlertDialogCancel>
+                  <AlertDialogAction variant="destructive" onClick={() => void factoryReset()}>
+                    {t.factoryResetAction}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </div>
         </CardContent>
       </Card>
     </div>

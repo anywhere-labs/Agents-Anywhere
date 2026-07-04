@@ -14,8 +14,9 @@
     "start": "electron .",
     "build": "next build",
     "typecheck": "tsc --noEmit",
-    "pack": "yarn build && electron-builder --dir",
-    "dist": "yarn build && electron-builder"
+    "bundle:uv": "node scripts/prepare-uv.mjs",
+    "pack": "yarn bundle:uv && yarn build && electron-builder --dir",
+    "dist": "yarn bundle:uv && yarn build && electron-builder"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
@@ -95,6 +96,13 @@
         "to": "logo",
         "filter": [
           "*.png"
+        ]
+      },
+      {
+        "from": "build/uv",
+        "to": "uv",
+        "filter": [
+          "**/*"
         ]
       }
     ],

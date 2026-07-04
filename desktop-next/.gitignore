@@ -2,7 +2,9 @@
 out/
 node_modules/
 .yarn/
+.cache/
 tsconfig.tsbuildinfo
 next-env.d.ts
+build/uv/
 release/
 dist/
