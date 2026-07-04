@@ -64,6 +64,10 @@ private struct RootTabsView: View {
         tabSortOrder(previousTab)
     }
 
+    private var rootTabAnimation: Animation? {
+        actionReturnTab == nil ? .smooth(duration: 0.22) : nil
+    }
+
     private var rootTabSelection: Binding<String> {
         Binding(
             get: { selectedTab },
@@ -112,7 +116,7 @@ private struct RootTabsView: View {
                 }
             }
         }
-        .animation(.smooth(duration: 0.22), value: selectedTab)
+        .animation(rootTabAnimation, value: selectedTab)
         .onAppear {
             if selectedTab == RootTab.newSession || !isSelectableRootTab(selectedTab) {
                 selectedTab = RootTab.sessions
