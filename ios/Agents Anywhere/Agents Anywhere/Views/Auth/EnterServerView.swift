@@ -2,15 +2,43 @@ import SwiftUI
 import UIKit
 
 struct EnterServerView: View {
+    @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
+    @State private var path: [ServerLoginRoute] = []
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             ServerAddressView(
-                onCancel: { dismiss() }
+                onCancel: { dismiss() },
+                onSignedIn: {
+                    path.append(.success)
+                },
             )
+            .navigationDestination(for: ServerLoginRoute.self) { route in
+                switch route {
+                case .success:
+                    AuthResultView(
+                        title: "Login Success",
+                        message: "Your iPhone is signed in. Go to your dashboard to continue.",
+                        buttonTitle: "Go to Dashboard",
+                        buttonSystemImage: "arrow.right",
+                        symbolName: "checkmark.circle.fill",
+                        symbolColor: .green,
+                    ) {
+                        Task {
+                            await appState.showSignedInRoute()
+                            dismiss()
+                        }
+                    }
+                    .navigationBarBackButtonHidden(true)
+                }
+            }
         }
     }
+}
+
+private enum ServerLoginRoute: Hashable {
+    case success
 }
 
 private struct ServerAddressView: View {
@@ -18,63 +46,46 @@ private struct ServerAddressView: View {
     @StateObject private var oauthLogin = OAuthLoginCoordinator()
 
     let onCancel: () -> Void
+    let onSignedIn: () -> Void
 
     @State private var serverText = ""
     @State private var isChecking = false
     @State private var isSigningIn = false
-    @State private var didSignIn = false
     @State private var alertMessage: String?
 
     var body: some View {
-        Group {
-            if didSignIn {
-                AuthResultView(
-                    title: "Login Success",
-                    message: "Your iPhone is signed in. Go to your dashboard to continue.",
-                    buttonTitle: "Go to Dashboard",
-                    buttonSystemImage: "arrow.right",
-                    symbolName: "checkmark.circle.fill",
-                    symbolColor: .green,
-                ) {
-                    Task { await finishLogin() }
-                }
-                .transition(.move(edge: .trailing).combined(with: .opacity))
-            } else {
-                AuthScreen(
-                    title: "Enter Server",
-                    subtitle: "Enter your server address, then sign in with the server's web login.",
-                    onCancel: onCancel,
-                ) {
-                    VStack(alignment: .leading, spacing: 16) {
-                        UnderlinedTextField(
-                            placeholder: "https://your-server.example.com",
-                            text: $serverText,
-                            keyboardType: .URL,
-                            textContentType: .URL,
-                            submitLabel: .continue,
-                            onSubmit: {
-                                guard canContinue else { return }
-                                Task { await startWebSignIn() }
-                            },
-                        )
+        AuthScreen(
+            title: "Enter Server",
+            subtitle: "Enter your server address, then sign in with the server's web login.",
+            onCancel: onCancel,
+        ) {
+            VStack(alignment: .leading, spacing: 16) {
+                UnderlinedTextField(
+                    placeholder: "https://your-server.example.com",
+                    text: $serverText,
+                    keyboardType: .URL,
+                    textContentType: .URL,
+                    submitLabel: .continue,
+                    onSubmit: {
+                        guard canContinue else { return }
+                        Task { await startWebSignIn() }
+                    },
+                )
 
-                        AuthPrimaryButton(
-                            title: "Continue in Browser",
-                            isLoading: isChecking || isSigningIn,
-                            disabled: !canContinue,
-                        ) {
-                            Task { await startWebSignIn() }
-                        }
-
-                        Text("The server login opens in a secure web session. You can use password login or any OAuth provider configured on that server.")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+                AuthPrimaryButton(
+                    title: "Continue in Browser",
+                    isLoading: isChecking || isSigningIn,
+                    disabled: !canContinue,
+                ) {
+                    Task { await startWebSignIn() }
                 }
+
+                Text("The server login opens in a secure web session. You can use password login or any OAuth provider configured on that server.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .animation(.snappy(duration: 0.26), value: didSignIn)
         .alert("Server Unavailable", isPresented: Binding(
             get: { alertMessage != nil },
             set: { if !$0 { alertMessage = nil } },
@@ -103,20 +114,13 @@ private struct ServerAddressView: View {
             let token = try await oauthLogin.authenticate(serverURL: url)
             await appState.completeOAuthLogin(serverURL: url, token: token, showSignedInRoute: false)
             if appState.me != nil {
-                withAnimation(.snappy(duration: 0.26)) {
-                    didSignIn = true
-                }
+                onSignedIn()
             } else {
                 alertMessage = appState.authError ?? "The login could not be completed."
             }
         } catch {
             alertMessage = error.localizedDescription
         }
-    }
-
-    private func finishLogin() async {
-        await appState.showSignedInRoute()
-        onCancel()
     }
 }
 

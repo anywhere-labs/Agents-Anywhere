@@ -740,46 +740,53 @@ private struct MeView: View {
 private struct SignOutSheet: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
-    @State private var didSignOut = false
+    @State private var path: [SignOutRoute] = []
 
     let onDone: () -> Void
 
     var body: some View {
-        NavigationStack {
-            if didSignOut {
-                SignedOutConfirmationView {
-                    dismiss()
-                    onDone()
-                    appState.showSignedOutRoute()
-                }
-            } else {
-                AuthScreen(
-                    title: "Sign Out?",
-                    subtitle: "This will remove your local credentials from this iPhone. Your server account and devices are not deleted.",
-                    onCancel: { dismiss() },
-                ) {
-                    VStack(alignment: .leading, spacing: 16) {
-                        LoginSummaryView(
-                            server: appState.serverURL?.absoluteString ?? "Unknown server",
-                            userId: appState.me?.userId ?? "Signed-in account",
-                        )
+        NavigationStack(path: $path) {
+            AuthScreen(
+                title: "Sign Out?",
+                subtitle: "This will remove your local credentials from this iPhone. Your server account and devices are not deleted.",
+                onCancel: { dismiss() },
+            ) {
+                VStack(alignment: .leading, spacing: 16) {
+                    LoginSummaryView(
+                        server: appState.serverURL?.absoluteString ?? "Unknown server",
+                        userId: appState.me?.userId ?? "Signed-in account",
+                    )
 
-                        AuthPrimaryButton(
-                            title: "Sign Out",
-                            systemImage: "rectangle.portrait.and.arrow.right",
-                        ) {
-                            appState.signOut(showSignedOutRoute: false)
-                            didSignOut = true
-                        }
-
-                        AuthGlassButton("Cancel") {
-                            dismiss()
-                        }
+                    AuthPrimaryButton(
+                        title: "Sign Out",
+                        systemImage: "rectangle.portrait.and.arrow.right",
+                    ) {
+                        appState.signOut(showSignedOutRoute: false)
+                        path.append(.signedOut)
                     }
+
+                    AuthGlassButton("Cancel") {
+                        dismiss()
+                    }
+                }
+            }
+            .navigationDestination(for: SignOutRoute.self) { route in
+                switch route {
+                case .signedOut:
+                    SignedOutConfirmationView {
+                        dismiss()
+                        onDone()
+                        appState.showSignedOutRoute()
+                    }
+                    .navigationBarBackButtonHidden(true)
                 }
             }
         }
     }
+}
+
+private enum SignOutRoute: Hashable {
+    case signedOut
 }
 
 private struct SignedOutConfirmationView: View {
