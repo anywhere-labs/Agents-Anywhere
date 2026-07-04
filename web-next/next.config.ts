@@ -21,6 +21,7 @@ const nextConfig: NextConfig = {
         async rewrites() {
           return [
             "/auth/:path*",
+            "/oauth/:path*",
             "/admin/:path*",
             "/health",
             "/agents/:path*",
