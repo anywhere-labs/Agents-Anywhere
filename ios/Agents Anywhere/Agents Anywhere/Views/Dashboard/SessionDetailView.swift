@@ -52,6 +52,7 @@ struct SessionDetailView: View {
     @State private var isLoadingOlder = false
     @State private var pendingPrependAnchorID: String?
     @State private var timelineScrollPosition = ScrollPosition()
+    @State private var isPinningInitialBottom = false
     @State private var lastEntryRefreshAt: Date?
     @State private var sseTask: Task<Void, Never>?
     @State private var pollTask: Task<Void, Never>?
@@ -201,6 +202,13 @@ struct SessionDetailView: View {
                     guard isNearTop, hasPositionedInitialScroll, !displayEntries.isEmpty else { return }
                     Task { await loadOlderTimeline(proxy) }
                 }
+                .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                    geometry.contentSize.height
+                } action: { _, _ in
+                    guard hasPositionedInitialScroll, pendingPrependAnchorID == nil else { return }
+                    guard isPinningInitialBottom || isTimelineWithinAutoScrollDistance else { return }
+                    scrollToBottomAfterLayout(animated: false)
+                }
 
                 if shouldShowScrollToBottomButton {
                     Button {
@@ -214,10 +222,13 @@ struct SessionDetailView: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.primary)
+                    .frame(width: 56, height: 56)
+                    .contentShape(Circle())
                     .composerGlassEffect(shape: Circle())
                     .accessibilityLabel("Scroll to Bottom")
                     .padding(.trailing, 18)
                     .padding(.bottom, 12)
+                    .zIndex(10)
                     .transition(.scale(scale: 0.92).combined(with: .opacity))
                 }
             }
@@ -515,6 +526,17 @@ struct SessionDetailView: View {
         }
     }
 
+    private func pinInitialBottomDuringLayout() {
+        isPinningInitialBottom = true
+        scrollToBottomAfterLayout(animated: false)
+        Task {
+            try? await Task.sleep(for: .milliseconds(600))
+            await MainActor.run {
+                isPinningInitialBottom = false
+            }
+        }
+    }
+
     private func scrollToAnchorAfterLayout(_ proxy: ScrollViewProxy, id: String) {
         DispatchQueue.main.async {
             proxy.scrollTo(id, anchor: .top)
@@ -532,7 +554,7 @@ struct SessionDetailView: View {
             hasPositionedInitialScroll = true
             shouldForceScrollOnTimelineUpdate = false
             shouldAutoScrollOnTimelineUpdate = false
-            scrollToBottomAfterLayout(animated: false)
+            pinInitialBottomDuringLayout()
             return
         }
         if shouldForceScrollOnTimelineUpdate || shouldAutoScrollOnTimelineUpdate {
