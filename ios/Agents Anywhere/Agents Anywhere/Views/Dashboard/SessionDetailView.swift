@@ -6,6 +6,11 @@ import SwiftUI
 import UIKit
 
 private let attachmentOnlyPrompt = "Please review the attached file."
+private let initialTimelineLimit = 100
+private let timelinePageLimit = 100
+private let autoScrollBottomDistance: CGFloat = 180
+private let scrollBottomButtonDistance: CGFloat = 96
+private let loadOlderScrollThreshold: CGFloat = 96
 
 struct SessionDetailView: View {
     @EnvironmentObject private var appState: AppState
@@ -40,6 +45,12 @@ struct SessionDetailView: View {
     @State private var attachmentPreviewURL: URL?
     @State private var hasPositionedInitialScroll = false
     @State private var isTimelineNearBottom = true
+    @State private var isTimelineWithinAutoScrollDistance = true
+    @State private var timelineRevision = 0
+    @State private var shouldAutoScrollOnTimelineUpdate = false
+    @State private var shouldForceScrollOnTimelineUpdate = false
+    @State private var isLoadingOlder = false
+    @State private var pendingPrependAnchorID: String?
     @State private var lastEntryRefreshAt: Date?
     @State private var sseTask: Task<Void, Never>?
     @State private var pollTask: Task<Void, Never>?
@@ -128,6 +139,13 @@ struct SessionDetailView: View {
                             )
                             .padding(.top, 80)
                         } else {
+                            if timeline.hasMore || isLoadingOlder {
+                                LoadOlderTimelineButton(isLoading: isLoadingOlder) {
+                                    Task { await loadOlderTimeline(proxy) }
+                                }
+                                .id("load-older")
+                            }
+
                             ForEach(displayEntries) { entry in
                                 ChatEntryView(
                                     entry: entry,
@@ -168,13 +186,29 @@ struct SessionDetailView: View {
                     let distanceToBottom = geometry.contentSize.height
                         - geometry.containerSize.height
                         - geometry.contentOffset.y
-                    return distanceToBottom < 90
+                    return distanceToBottom <= scrollBottomButtonDistance
                 } action: { _, isNearBottom in
                     isTimelineNearBottom = isNearBottom
+                }
+                .onScrollGeometryChange(for: Bool.self) { geometry in
+                    let distanceToBottom = geometry.contentSize.height
+                        - geometry.containerSize.height
+                        - geometry.contentOffset.y
+                    return distanceToBottom <= autoScrollBottomDistance
+                } action: { _, isNearEnoughForAutoScroll in
+                    isTimelineWithinAutoScrollDistance = isNearEnoughForAutoScroll
+                }
+                .onScrollGeometryChange(for: Bool.self) { geometry in
+                    geometry.contentOffset.y <= loadOlderScrollThreshold
+                } action: { _, isNearTop in
+                    guard isNearTop, hasPositionedInitialScroll, !displayEntries.isEmpty else { return }
+                    Task { await loadOlderTimeline(proxy) }
                 }
 
                 if shouldShowScrollToBottomButton {
                     Button {
+                        shouldForceScrollOnTimelineUpdate = false
+                        shouldAutoScrollOnTimelineUpdate = false
                         scrollToBottom(proxy, animated: true)
                     } label: {
                         Image(systemName: "arrow.down")
@@ -191,31 +225,23 @@ struct SessionDetailView: View {
                 }
             }
             .animation(.smooth(duration: 0.18), value: shouldShowScrollToBottomButton)
-            .onChange(of: displayEntries.last?.id) { _, _ in
-                guard !displayEntries.isEmpty else { return }
-                if hasPositionedInitialScroll {
-                    if isTimelineNearBottom {
-                        scrollToBottom(proxy, animated: true)
-                    }
-                } else {
-                    positionInitialTimeline(proxy)
-                }
+            .onChange(of: timelineRevision) { _, _ in
+                reconcileTimelineScroll(proxy)
             }
             .onChange(of: session.status) { _, _ in
                 if isInterrupting && !serverBusy {
                     isInterrupting = false
                 }
-                if hasPositionedInitialScroll && isTimelineNearBottom {
-                    scrollToBottom(proxy, animated: true)
-                }
             }
             .task {
+                hasPositionedInitialScroll = false
+                shouldForceScrollOnTimelineUpdate = true
+                pendingPrependAnchorID = nil
                 await markRead()
                 await loadState(replace: true)
                 lastEntryRefreshAt = Date()
                 Task { await loadRuntimeSettingsIfNeeded() }
                 startEventStream()
-                positionInitialTimeline(proxy)
             }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active {
@@ -467,16 +493,49 @@ struct SessionDetailView: View {
         isTimelineNearBottom = true
     }
 
-    private func positionInitialTimeline(_ proxy: ScrollViewProxy) {
-        guard !displayEntries.isEmpty, !hasPositionedInitialScroll else { return }
-        hasPositionedInitialScroll = true
-        isTimelineNearBottom = true
+    private func markAutoScrollIfNearBottom() {
+        if isTimelineWithinAutoScrollDistance {
+            shouldAutoScrollOnTimelineUpdate = true
+        }
+    }
 
+    private func scrollToBottomAfterLayout(_ proxy: ScrollViewProxy, animated: Bool) {
         DispatchQueue.main.async {
-            scrollToBottom(proxy, animated: false)
-            DispatchQueue.main.async {
+            if animated {
+                scrollToBottom(proxy, animated: true)
+            } else {
                 scrollToBottom(proxy, animated: false)
+                DispatchQueue.main.async {
+                    scrollToBottom(proxy, animated: false)
+                }
             }
+        }
+    }
+
+    private func scrollToAnchorAfterLayout(_ proxy: ScrollViewProxy, id: String) {
+        DispatchQueue.main.async {
+            proxy.scrollTo(id, anchor: .top)
+        }
+    }
+
+    private func reconcileTimelineScroll(_ proxy: ScrollViewProxy) {
+        guard !displayEntries.isEmpty else { return }
+        if let pendingPrependAnchorID {
+            self.pendingPrependAnchorID = nil
+            scrollToAnchorAfterLayout(proxy, id: pendingPrependAnchorID)
+            return
+        }
+        if !hasPositionedInitialScroll {
+            hasPositionedInitialScroll = true
+            shouldForceScrollOnTimelineUpdate = false
+            shouldAutoScrollOnTimelineUpdate = false
+            scrollToBottomAfterLayout(proxy, animated: false)
+            return
+        }
+        if shouldForceScrollOnTimelineUpdate || shouldAutoScrollOnTimelineUpdate {
+            shouldForceScrollOnTimelineUpdate = false
+            shouldAutoScrollOnTimelineUpdate = false
+            scrollToBottomAfterLayout(proxy, animated: true)
         }
     }
 
@@ -592,7 +651,7 @@ struct SessionDetailView: View {
                 let response = try await api.getLatestSessionState(
                     token: token,
                     sessionId: initialSession.id,
-                    limit: 100,
+                    limit: initialTimelineLimit,
                 )
                 applyDelta(
                     items: response.items,
@@ -630,8 +689,39 @@ struct SessionDetailView: View {
             return
         }
         lastEntryRefreshAt = now
+        markAutoScrollIfNearBottom()
         await loadState(replace: false)
         await markRead()
+    }
+
+    private func loadOlderTimeline(_ proxy: ScrollViewProxy) async {
+        guard hasPositionedInitialScroll, !isLoadingOlder, timeline.hasMore,
+              let oldestOrderSeq = timeline.oldestOrderSeq,
+              let anchorID = displayEntries.first?.id,
+              let api = appState.api,
+              let token = appState.accessToken()
+        else { return }
+        isLoadingOlder = true
+        defer { isLoadingOlder = false }
+        do {
+            let response = try await api.getSessionStateBefore(
+                token: token,
+                sessionId: initialSession.id,
+                beforeOrderSeq: oldestOrderSeq,
+                limit: timelinePageLimit,
+            )
+            pendingPrependAnchorID = anchorID
+            applyDelta(
+                items: response.items,
+                approvals: nil,
+                session: response.session,
+                nextSeq: response.nextSeq,
+                hasMore: response.hasMore,
+                replaceItems: false,
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func startEventStream() {
@@ -650,8 +740,10 @@ struct SessionDetailView: View {
                     if let event = try? JSONDecoder().decode(SessionEventEnvelope.self, from: data) {
                         await MainActor.run {
                             if event.refetch == true {
+                                markAutoScrollIfNearBottom()
                                 Task { await loadState(replace: true) }
                             } else {
+                                markAutoScrollIfNearBottom()
                                 applyDelta(
                                     items: event.items ?? [],
                                     approvals: event.approvals,
@@ -682,6 +774,7 @@ struct SessionDetailView: View {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(10))
                 guard !Task.isCancelled else { return }
+                markAutoScrollIfNearBottom()
                 await loadState(replace: false)
             }
         }
@@ -695,15 +788,19 @@ struct SessionDetailView: View {
         hasMore newHasMore: Bool?,
         replaceItems: Bool,
     ) {
-        timeline.applyDelta(
+        let sessionChanged = newSession.map { session != $0 } ?? false
+        let timelineChanged = timeline.applyDelta(
             items: newItems,
             approvals: newApprovals,
             nextSeq: newNextSeq,
             hasMore: newHasMore,
             replaceItems: replaceItems,
         )
-        if let newSession, session != newSession {
+        if let newSession, sessionChanged {
             session = newSession
+        }
+        if timelineChanged || sessionChanged {
+            timelineRevision += 1
         }
     }
 
@@ -756,7 +853,9 @@ struct SessionDetailView: View {
                 attachments: uploaded,
                 createdAt: now,
             )
+            shouldForceScrollOnTimelineUpdate = true
             timeline.appendOptimistic(optimistic)
+            timelineRevision += 1
             didClearComposer = clearComposerDraft(matching: draft)
 
             _ = try await api.sendSessionMessage(
@@ -768,9 +867,11 @@ struct SessionDetailView: View {
             )
 
             timeline.updateOptimisticStatus(id: tempId, status: "running")
+            timelineRevision += 1
             errorMessage = nil
         } catch {
             timeline.updateOptimisticStatus(id: tempId, status: "failed")
+            timelineRevision += 1
             if didClearComposer {
                 restoreComposerDraftIfEmpty(draft)
             }
@@ -815,7 +916,9 @@ struct SessionDetailView: View {
         do {
             _ = try await api.resolveApproval(token: token, approvalId: approval.id, status: status)
             timeline.removeApproval(id: approval.id)
+            timelineRevision += 1
             errorMessage = nil
+            markAutoScrollIfNearBottom()
             await loadState(replace: false)
         } catch {
             errorMessage = error.localizedDescription
@@ -890,6 +993,33 @@ private enum ChatEntry: Identifiable {
 
 }
 
+private struct LoadOlderTimelineButton: View {
+    let isLoading: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                if isLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: "chevron.up")
+                        .font(.caption.weight(.semibold))
+                }
+                Text(isLoading ? "Loading earlier" : "Load earlier")
+                    .font(.footnote.weight(.medium))
+            }
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+        }
+        .buttonStyle(.plain)
+        .disabled(isLoading)
+        .accessibilityLabel(isLoading ? "Loading Earlier Messages" : "Load Earlier Messages")
+    }
+}
+
 private struct SessionTimelineState {
     private var itemsById: [String: TimelineItem] = [:]
     private var approvals: [Approval] = []
@@ -902,6 +1032,10 @@ private struct SessionTimelineState {
             lhs.orderSeq == rhs.orderSeq ? lhs.updatedSeq < rhs.updatedSeq : lhs.orderSeq < rhs.orderSeq
         }
         return mergeOptimisticItems(real: real, optimistic: optimisticItems)
+    }
+
+    var oldestOrderSeq: Int? {
+        itemsById.values.map(\.orderSeq).min()
     }
 
     var displayEntries: [ChatEntry] {
@@ -941,26 +1075,40 @@ private struct SessionTimelineState {
         nextSeq newNextSeq: Int?,
         hasMore newHasMore: Bool?,
         replaceItems: Bool,
-    ) {
+    ) -> Bool {
+        var didChange = false
         if replaceItems {
+            didChange = true
             itemsById = [:]
         }
         for item in newItems {
             let existing = itemsById[item.id]
             if existing != item, existing == nil || existing!.updatedSeq <= item.updatedSeq {
                 itemsById[item.id] = item
+                didChange = true
             }
         }
         if let newApprovals, approvals != newApprovals {
             approvals = newApprovals
+            didChange = true
         }
         if let newNextSeq {
-            nextSeq = max(nextSeq, newNextSeq)
+            let nextValue = max(nextSeq, newNextSeq)
+            if nextSeq != nextValue {
+                nextSeq = nextValue
+                didChange = true
+            }
         }
         if let newHasMore {
-            hasMore = newHasMore
+            if hasMore != newHasMore {
+                hasMore = newHasMore
+                didChange = true
+            }
         }
-        pruneOptimisticItems()
+        if pruneOptimisticItems() {
+            didChange = true
+        }
+        return didChange
     }
 
     mutating func appendOptimistic(_ item: TimelineItem) {
@@ -977,11 +1125,13 @@ private struct SessionTimelineState {
         approvals.removeAll { $0.id == id }
     }
 
-    private mutating func pruneOptimisticItems() {
+    private mutating func pruneOptimisticItems() -> Bool {
+        let before = optimisticItems
         optimisticItems.removeAll { optimistic in
             guard optimistic.status != "failed" else { return false }
             return itemsById.values.contains { $0.matchesOptimisticMessage(optimistic.id) }
         }
+        return optimisticItems != before
     }
 }
 
