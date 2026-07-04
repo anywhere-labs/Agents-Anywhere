@@ -205,8 +205,8 @@ private struct QRWaitingStepView: View {
 
     var body: some View {
         AuthScreen(
-            title: isFinishing ? "Completing Login" : "Confirm on Web",
-            subtitle: isFinishing ? "The web console approved this iPhone. Finishing the secure login now." : "Click confirm in the web console, then return here.",
+            title: "Confirm on Web",
+            subtitle: "Click confirm in the web console, then return here.",
             showsCancel: !isFinishing,
             onCancel: onCancel,
         ) {
@@ -296,7 +296,6 @@ private struct QRWaitingStepView: View {
     private func finishLogin() async {
         guard !isFinishing else { return }
         isFinishing = true
-        statusText = "Signing in..."
         await appState.exchangeMobileLogin(payload: payload, showSignedInRoute: false)
         if appState.me != nil {
             onSignedIn()
