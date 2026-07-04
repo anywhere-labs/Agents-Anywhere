@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld("connectorDesktop", {
   start: (config) => ipcRenderer.invoke("connector:start", config),
   stop: () => ipcRenderer.invoke("connector:stop"),
   restart: () => ipcRenderer.invoke("connector:restart"),
+  takeDeepLinks: () => ipcRenderer.invoke("connector:takeDeepLinks"),
   startPairing: (input) => ipcRenderer.invoke("connector:startPairing", input),
   cancelPairing: () => ipcRenderer.invoke("connector:cancelPairing"),
   saveSettings: (settings) => ipcRenderer.invoke("connector:saveSettings", settings),
@@ -30,6 +31,11 @@ contextBridge.exposeInMainWorld("connectorDesktop", {
     const listener = (_event, state) => callback(state);
     ipcRenderer.on("connector:pairing", listener);
     return () => ipcRenderer.removeListener("connector:pairing", listener);
+  },
+  onDeepLink: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on("connector:deepLink", listener);
+    return () => ipcRenderer.removeListener("connector:deepLink", listener);
   },
   onLogsCleared: (callback) => {
     const listener = () => callback();

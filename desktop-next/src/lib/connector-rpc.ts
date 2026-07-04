@@ -82,6 +82,10 @@ export type LogPage = {
   total: number
 }
 
+export type DesktopDeepLinkPayload = {
+  rawUrl: string
+}
+
 export type ConnectorDesktopApi = {
   getState: () => Promise<ConnectorState>
   getConfig: () => Promise<ConnectorConfig>
@@ -89,6 +93,7 @@ export type ConnectorDesktopApi = {
   start: (config?: ConnectorConfig) => Promise<ConnectorState>
   stop: () => Promise<ConnectorState>
   restart: () => Promise<ConnectorState>
+  takeDeepLinks: () => Promise<DesktopDeepLinkPayload[]>
   startPairing: (input: { server: string; timeout?: number; pollInterval?: number }) => Promise<PairingState>
   cancelPairing: () => Promise<PairingState>
   saveSettings: (settings: DesktopSettings) => Promise<ConnectorState>
@@ -101,6 +106,7 @@ export type ConnectorDesktopApi = {
   onState: (callback: (state: ConnectorState) => void) => () => void
   onLog: (callback: (log: ConnectorLog) => void) => () => void
   onPairing: (callback: (state: PairingState) => void) => () => void
+  onDeepLink: (callback: () => void) => () => void
   onLogsCleared: (callback: () => void) => () => void
 }
 

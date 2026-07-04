@@ -83,6 +83,7 @@ type CommandDialogStep = "input" | "confirm"
 type ParsedConnectorCommand =
   | { kind: "start"; config: ConnectorConfig }
   | { kind: "pair"; server: string }
+type ExternalLaunchCommand = ParsedConnectorCommand & { rawUrl: string }
 const LOG_PAGE_SIZE_OPTIONS = [100, 300, 1000, 3000] as const
 const SYNC_INTERVAL_OPTIONS = [15, 30, 60, 300] as const
 type AppearanceMode = "system" | "light" | "dark"
@@ -201,6 +202,15 @@ const desktopMessages = {
     server: "Server",
     commandTitle: "Start from command",
     commandDescription: "Paste the command from the web console.",
+    externalLaunchPairTitle: "Use pairing request?",
+    externalLaunchStartTitle: "Use connector credentials?",
+    externalLaunchPairDescription: "A web page is asking this desktop app to start pairing with this server.",
+    externalLaunchStartDescription: "A web page is asking this desktop app to save connector credentials and start the connector.",
+    externalLaunchOverwriteTitle: "Saved credentials will be replaced",
+    externalLaunchOverwriteDescription: "This computer already has saved connector credentials. Continuing will replace them after the request succeeds.",
+    externalLaunchConfirmPair: "Use pairing request",
+    externalLaunchConfirmStart: "Save and start",
+    externalLaunchInvalid: "Unsupported desktop launch link.",
     commandLabel: "Connector command",
     pairCommandReady: "This command starts pairing.",
     startCommandReady: "This command contains connector credentials.",
@@ -333,6 +343,15 @@ const desktopMessages = {
     server: "服务器",
     commandTitle: "从命令启动",
     commandDescription: "粘贴 Web 控制台生成的命令。",
+    externalLaunchPairTitle: "使用配对请求？",
+    externalLaunchStartTitle: "使用连接器凭据？",
+    externalLaunchPairDescription: "网页正在请求此桌面应用与下面的服务器开始配对。",
+    externalLaunchStartDescription: "网页正在请求此桌面应用保存连接器凭据并启动连接器。",
+    externalLaunchOverwriteTitle: "已保存的凭据会被替换",
+    externalLaunchOverwriteDescription: "这台电脑已经保存了连接器凭据。继续后，请求成功时会替换本地凭据。",
+    externalLaunchConfirmPair: "使用配对请求",
+    externalLaunchConfirmStart: "保存并启动",
+    externalLaunchInvalid: "不支持的桌面启动链接。",
     commandLabel: "连接器命令",
     pairCommandReady: "这条命令会开始配对。",
     startCommandReady: "这条命令包含连接器凭据。",
@@ -490,6 +509,7 @@ export function DesktopShell() {
   const [commandStep, setCommandStep] = React.useState<CommandDialogStep>("input")
   const [commandInput, setCommandInput] = React.useState("")
   const [parsedCommand, setParsedCommand] = React.useState<ParsedConnectorCommand | null>(null)
+  const [externalLaunchCommand, setExternalLaunchCommand] = React.useState<ExternalLaunchCommand | null>(null)
   const [uvInstallPromptOpen, setUvInstallPromptOpen] = React.useState(false)
   const authFailedToastShown = React.useRef(false)
   const uvMissingPromptShown = React.useRef(false)
@@ -510,6 +530,19 @@ export function DesktopShell() {
     async function boot() {
       try {
         const api = connectorDesktop()
+        const drainDeepLinks = async () => {
+          const payloads = await api.takeDeepLinks()
+          for (const payload of payloads) {
+            try {
+              const parsed = parseDesktopLaunchUrl(payload.rawUrl, t)
+              setExternalLaunchCommand({ ...parsed, rawUrl: payload.rawUrl })
+              setPairOpen(false)
+              setCommandOpen(false)
+            } catch (error) {
+              toast.error(error instanceof Error ? error.message : String(error))
+            }
+          }
+        }
         await refreshLocalSnapshot()
         cleanup = [
           api.onState((next) => setState(next)),
@@ -520,6 +553,11 @@ export function DesktopShell() {
             if (next.status === "error") setPairStep("error")
             if (next.config) setConfig({ ...defaultConfig, ...next.config })
           }),
+          api.onDeepLink(() => {
+            void drainDeepLinks().catch((error) => {
+              toast.error(error instanceof Error ? error.message : String(error))
+            })
+          }),
           api.onLog(() => undefined),
           api.onLogsCleared(() => {
             setLogs([])
@@ -528,6 +566,7 @@ export function DesktopShell() {
             updateLogSeqRefs([])
           }),
         ]
+        await drainDeepLinks()
       } catch (error) {
         setBridgeError(error instanceof Error ? error.message : String(error))
       }
@@ -536,7 +575,7 @@ export function DesktopShell() {
     return () => {
       for (const dispose of cleanup) dispose()
     }
-  }, [refreshLocalSnapshot])
+  }, [refreshLocalSnapshot, t])
 
   React.useEffect(() => {
     function refreshWhenVisible() {
@@ -748,6 +787,14 @@ export function DesktopShell() {
     return [...withoutSeq, ...Array.from(map.values()).sort((a, b) => Number(a.seq || 0) - Number(b.seq || 0))]
   }
 
+  async function beginPairing(server: string) {
+    const next = await run("pairing", () => connectorDesktop().startPairing({ server }), t.pairingStarted)
+    if (!next) return false
+    setPairing(next)
+    setPairStep(next.status === "waiting" ? "waiting" : "input")
+    return true
+  }
+
   async function startPairing() {
     if (!canRunLocalSetup(state)) {
       showSetupBlock()
@@ -769,11 +816,7 @@ export function DesktopShell() {
       toast.error(error instanceof Error ? error.message : String(error))
       return
     }
-    const next = await run("pairing", () => connectorDesktop().startPairing({ server }), t.pairingStarted)
-    if (next) {
-      setPairing(next)
-      setPairStep(next.status === "waiting" ? "waiting" : "input")
-    }
+    await beginPairing(server)
   }
 
   async function cancelPairing() {
@@ -836,11 +879,7 @@ export function DesktopShell() {
       setPairOpen(true)
       setPairStep("input")
       setPairServer(parsedCommand.server)
-      const next = await run("pairing", () => connectorDesktop().startPairing({ server: parsedCommand.server }), t.pairingStarted)
-      if (next) {
-        setPairing(next)
-        setPairStep(next.status === "waiting" ? "waiting" : "input")
-      }
+      await beginPairing(parsedCommand.server)
       return
     }
     if (save) {
@@ -852,10 +891,33 @@ export function DesktopShell() {
     setCommandOpen(false)
   }
 
+  async function confirmExternalLaunch() {
+    if (!externalLaunchCommand) return
+    if (!canRunLocalSetup(state)) {
+      showSetupBlock()
+      return
+    }
+    if (externalLaunchCommand.kind === "pair") {
+      setPairServer(externalLaunchCommand.server)
+      const started = await beginPairing(externalLaunchCommand.server)
+      if (started) {
+        setExternalLaunchCommand(null)
+        setPairOpen(true)
+      }
+      return
+    }
+    const saved = await saveConfig(externalLaunchCommand.config)
+    if (!saved) return
+    await startConnector()
+    setExternalLaunchCommand(null)
+  }
+
   const isRunning = Boolean(state?.running)
   const connectorView = connectorStatusView(state, isRunning, t)
   const credentialView = credentialStatusView(state, config, isRunning, t)
   const setupDetail = setupIssueDetail(state, t)
+  const savedCredentialServer = state?.serverUrl || config.serverUrl
+  const hasSavedCredentials = Boolean(state?.hasConfig || config.connectorId || config.connectorToken)
   const showSetupNotice = Boolean(setupDetail && state?.setupIssue !== "configMissing")
   const startSavedEnabled = canStartSavedConnector(state)
   const setupActionsEnabled = canRunLocalSetup(state)
@@ -1051,6 +1113,17 @@ export function DesktopShell() {
         onOpenChange={setCommandOpen}
         onParse={parseCommand}
         onRun={runParsedCommand}
+      />
+      <ExternalLaunchDialog
+        t={t}
+        command={externalLaunchCommand}
+        busy={busy}
+        hasSavedCredentials={hasSavedCredentials}
+        savedCredentialServer={savedCredentialServer}
+        onOpenChange={(open) => {
+          if (!open && !busy) setExternalLaunchCommand(null)
+        }}
+        onConfirm={confirmExternalLaunch}
       />
       <AlertDialog open={uvInstallPromptOpen} onOpenChange={setUvInstallPromptOpen}>
         <AlertDialogContent>
@@ -1450,6 +1523,74 @@ function PairingDialog({
         )}
       </DialogContent>
     </Dialog>
+  )
+}
+
+function ExternalLaunchDialog({
+  t,
+  command,
+  busy,
+  hasSavedCredentials,
+  savedCredentialServer,
+  onOpenChange,
+  onConfirm,
+}: {
+  t: DesktopMessages
+  command: ExternalLaunchCommand | null
+  busy: string | null
+  hasSavedCredentials: boolean
+  savedCredentialServer: string
+  onOpenChange: (open: boolean) => void
+  onConfirm: () => Promise<void>
+}) {
+  const isStart = command?.kind === "start"
+  const server = command?.kind === "start" ? command.config.serverUrl : command?.server
+  const loading = Boolean(busy)
+
+  return (
+    <AlertDialog open={Boolean(command)} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{isStart ? t.externalLaunchStartTitle : t.externalLaunchPairTitle}</AlertDialogTitle>
+          <AlertDialogDescription>
+            {isStart ? t.externalLaunchStartDescription : t.externalLaunchPairDescription}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <div className="grid gap-3 text-sm">
+          {server ? (
+            <div className="rounded-lg border bg-muted/30 p-3">
+              <div className="text-xs font-medium uppercase text-muted-foreground">{t.server}</div>
+              <div className="mt-1 break-all font-mono text-xs">{server}</div>
+            </div>
+          ) : null}
+          {hasSavedCredentials ? (
+            <div className="rounded-lg border border-destructive/25 bg-destructive/5 p-3">
+              <div className="flex items-center gap-2 font-medium text-destructive">
+                <CircleAlert className="size-4" />
+                {t.externalLaunchOverwriteTitle}
+              </div>
+              <p className="mt-1 text-muted-foreground">{t.externalLaunchOverwriteDescription}</p>
+              {savedCredentialServer ? (
+                <div className="mt-2 break-all font-mono text-xs text-muted-foreground">{savedCredentialServer}</div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={loading}>{t.cancel}</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={(event) => {
+              event.preventDefault()
+              void onConfirm()
+            }}
+            disabled={loading}
+          >
+            {loading ? <Loader2 className="size-4 animate-spin" /> : isStart ? <Play className="size-4" /> : <Plus className="size-4" />}
+            {isStart ? t.externalLaunchConfirmStart : t.externalLaunchConfirmPair}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }
 
@@ -2112,6 +2253,40 @@ function SetupNotice({
       </CardHeader>
     </Card>
   )
+}
+
+function parseDesktopLaunchUrl(rawUrl: string, t: DesktopMessages): ParsedConnectorCommand {
+  let url: URL
+  try {
+    url = new URL(rawUrl)
+  } catch {
+    throw new Error(t.externalLaunchInvalid)
+  }
+  if (url.protocol !== "agents-anywhere:") throw new Error(t.externalLaunchInvalid)
+  const action = (url.hostname || url.pathname.replace(/^\/+/, "")).toLowerCase()
+  if (action === "start") {
+    const serverUrl = (url.searchParams.get("serverUrl") || url.searchParams.get("server") || "").trim().replace(/\/+$/, "")
+    const connectorId = (url.searchParams.get("connectorId") || url.searchParams.get("id") || "").trim()
+    const connectorToken = (url.searchParams.get("connectorToken") || url.searchParams.get("token") || "").trim()
+    if (!/^https?:\/\//i.test(serverUrl) || !connectorId || !connectorToken) {
+      throw new Error(t.parseMissingValues)
+    }
+    return {
+      kind: "start",
+      config: {
+        ...defaultConfig,
+        serverUrl,
+        connectorId,
+        connectorToken,
+      },
+    }
+  }
+  if (action === "pair" || action === "login") {
+    const server = (url.searchParams.get("serverUrl") || url.searchParams.get("server") || "").trim().replace(/\/+$/, "")
+    if (!/^https?:\/\//i.test(server)) throw new Error(t.parseMissingValues)
+    return { kind: "pair", server }
+  }
+  throw new Error(t.externalLaunchInvalid)
 }
 
 function parseConnectorCommand(input: string, t: DesktopMessages): ParsedConnectorCommand {

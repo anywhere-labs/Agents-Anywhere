@@ -38,6 +38,7 @@ let nextLogSeq = 1;
 let pending = new Map();
 let shellEnvironment = {};
 let pendingDeepLinks = [];
+let pendingRendererDeepLinks = [];
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
@@ -681,47 +682,32 @@ async function handleDeepLink(rawUrl) {
     return;
   }
   const action = url.hostname || url.pathname.replace(/^\/+/, "");
-  if (action !== "start") {
+  if (action !== "start" && action !== "pair" && action !== "login") {
     appendLog({ level: "WARNING", message: `Unsupported desktop launch action: ${action || "(none)"}`, time: new Date().toISOString() });
     return;
   }
-  const config = configFromDeepLink(url);
-  if (!config) {
-    appendLog({ level: "ERROR", message: "Desktop launch URL is missing connector credentials.", time: new Date().toISOString() });
-    return;
-  }
-  try {
-    await rpcRequest("connector.saveConfig", config, { requiresConfig: false });
-    const next = await rpcRequest("connector.start");
-    mergeConnectorState({
-      ...next,
-      hasConfig: true,
-      authFailed: false,
-      usingTemporaryCredential: false,
-      serverUrl: config.serverUrl,
-    });
-    appendLog(`Started connector from ${DEEP_LINK_PROTOCOL}://start`);
-  } catch (error) {
-    appendLog({ level: "ERROR", message: error instanceof Error ? error.message : String(error), time: new Date().toISOString() });
-  }
-}
-
-function configFromDeepLink(url) {
-  const serverUrl = (url.searchParams.get("serverUrl") || url.searchParams.get("server") || "").trim().replace(/\/+$/, "");
-  const connectorId = (url.searchParams.get("connectorId") || url.searchParams.get("id") || "").trim();
-  const connectorToken = (url.searchParams.get("connectorToken") || url.searchParams.get("token") || "").trim();
-  if (!/^https?:\/\//i.test(serverUrl) || !connectorId || !connectorToken) return null;
-  return {
-    serverUrl,
-    connectorId,
-    connectorToken,
-  };
+  await showWindow();
+  await waitForMainWindowReady();
+  pendingRendererDeepLinks.push({ rawUrl });
+  sendToWindow("connector:deepLink");
+  appendLog(`Received desktop launch request from ${DEEP_LINK_PROTOCOL}://${action}`);
 }
 
 function sendToWindow(channel, payload) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(channel, payload);
   }
+}
+
+function waitForMainWindowReady() {
+  if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.webContents.isLoadingMainFrame()) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    const done = () => resolve();
+    mainWindow.webContents.once("did-finish-load", done);
+    mainWindow.webContents.once("did-fail-load", done);
+  });
 }
 
 function startRpcProcess(options = {}) {
@@ -1006,6 +992,7 @@ ipcMain.handle("connector:restart", async () => {
   mergeConnectorState(next);
   return publicState();
 });
+ipcMain.handle("connector:takeDeepLinks", () => pendingRendererDeepLinks.splice(0));
 ipcMain.handle("connector:startPairing", (_event, input) => rpcRequest("connector.startPairing", input, { requiresConfig: false }));
 ipcMain.handle("connector:cancelPairing", () => rpcRequest("connector.cancelPairing"));
 ipcMain.handle("connector:saveSettings", (_event, settings) => saveDesktopSettings(settings));
