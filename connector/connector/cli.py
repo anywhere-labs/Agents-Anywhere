@@ -22,6 +22,13 @@ from connector.logging import install_rpc_log_sink
 from connector.runtime import BackendRpcClient, ConnectorConfig
 
 
+SHELL_LIFETIME_WARNING = (
+    "Note: this connector runs in the current shell session. "
+    "If you do not run it with a tool such as systemd, tmux, screen, "
+    "or a background service, the connection will stop when this shell session ends."
+)
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -185,6 +192,7 @@ async def _run_cli_connector(config: ConnectorConfig, *, config_path: str | Path
     runtime_file = runtime_path(config_path)
     assert_can_start(runtime_file, config)
     write_runtime(runtime_file, config, kind="cli")
+    print(SHELL_LIFETIME_WARNING)
     try:
         await BackendRpcClient(config).run_forever()
     finally:

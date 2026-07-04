@@ -80,7 +80,7 @@ class FakeBackendRpcClient:
         self.started_configs.append(self.config)
 
 
-def test_pair_starts_connector_after_saving_credentials(monkeypatch, tmp_path) -> None:
+def test_pair_starts_connector_after_saving_credentials(monkeypatch, tmp_path, capsys) -> None:
     config_path = tmp_path / "connector.json"
     FakeBackendRpcClient.started_configs = []
     monkeypatch.setattr(cli_module.httpx, "AsyncClient", FakeHttpClient)
@@ -101,6 +101,7 @@ def test_pair_starts_connector_after_saving_credentials(monkeypatch, tmp_path) -
     loaded = ConnectorConfig.load(config_path)
     assert loaded.connector_id == "conn_1"
     assert [config.connector_id for config in FakeBackendRpcClient.started_configs] == ["conn_1"]
+    assert "connection will stop when this shell session ends" in capsys.readouterr().out
 
 
 def test_pair_no_start_only_saves_credentials(monkeypatch, tmp_path) -> None:
