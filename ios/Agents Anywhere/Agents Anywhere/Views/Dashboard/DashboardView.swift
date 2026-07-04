@@ -10,13 +10,28 @@ private enum RootTab {
     static let newSession = "newSession"
 }
 
+private extension UIApplication {
+    func activeWindowSnapshot() -> UIImage? {
+        guard let window = connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .flatMap(\.windows)
+            .first(where: { $0.isKeyWindow })
+        else { return nil }
+
+        let renderer = UIGraphicsImageRenderer(bounds: window.bounds)
+        return renderer.image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: false)
+        }
+    }
+}
+
 struct DashboardView: View {
     @EnvironmentObject private var appState: AppState
     @State private var isShowingNewSession = false
     @State private var sessionToOpen: SessionSummary?
 
     var body: some View {
-        RootTabsView(sessionToOpen: $sessionToOpen) {
+        RootTabsView(sessionToOpen: $sessionToOpen, isNewSessionPresented: $isShowingNewSession) {
             isShowingNewSession = true
         }
         .task {
@@ -35,6 +50,7 @@ struct DashboardView: View {
 
 private struct RootTabsView: View {
     @Binding var sessionToOpen: SessionSummary?
+    @Binding var isNewSessionPresented: Bool
 
     let onNewSession: () -> Void
 
@@ -43,6 +59,8 @@ private struct RootTabsView: View {
     @State private var sessionPath: [SessionSummary] = []
     @State private var previousTab: String = RootTab.sessions
     @State private var currentSelectableTab: String = RootTab.sessions
+    @State private var actionReturnTab: String?
+    @State private var actionTabSnapshot: UIImage?
 
     private var tabTransition: AnyTransition {
         let edge: Edge = selectedTabSortOrder >= previousTabSortOrder ? .trailing : .leading
@@ -65,11 +83,16 @@ private struct RootTabsView: View {
             get: { selectedTab },
             set: { newValue in
                 if newValue == RootTab.newSession {
+                    actionReturnTab = selectedTab
+                    actionTabSnapshot = UIApplication.shared.activeWindowSnapshot()
+                    withTransaction(Transaction(animation: nil)) {
+                        selectedTab = RootTab.newSession
+                    }
                     onNewSession()
                     return
                 }
                 guard isSelectableRootTab(newValue), selectedTab != newValue else { return }
-                previousTab = selectedTab
+                previousTab = selectedTab == RootTab.newSession ? actionReturnTab ?? currentSelectableTab : selectedTab
                 selectedTab = newValue
                 currentSelectableTab = newValue
             },
@@ -92,13 +115,13 @@ private struct RootTabsView: View {
 
             if #available(iOS 27.0, *) {
                 Tab("New", systemImage: "plus", value: RootTab.newSession, role: .prominent) {
-                    Color.clear
+                    actionTabSnapshotView
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
                 }
             } else {
                 Tab("New", systemImage: "plus", value: RootTab.newSession) {
-                    Color.clear
+                    actionTabSnapshotView
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
                 }
@@ -111,11 +134,23 @@ private struct RootTabsView: View {
             }
             currentSelectableTab = selectedTab
         }
+        .onChange(of: isNewSessionPresented) { _, isPresented in
+            guard !isPresented, selectedTab == RootTab.newSession else { return }
+            let returnTab = actionReturnTab ?? currentSelectableTab
+            withTransaction(Transaction(animation: nil)) {
+                selectedTab = returnTab
+            }
+            currentSelectableTab = returnTab
+            actionReturnTab = nil
+            actionTabSnapshot = nil
+        }
         .onChange(of: sessionToOpen) { _, session in
             guard let session else { return }
             previousTab = selectedTab
             selectedTab = RootTab.sessions
             currentSelectableTab = RootTab.sessions
+            actionReturnTab = nil
+            actionTabSnapshot = nil
             sessionPath = [session]
             sessionToOpen = nil
         }
@@ -133,6 +168,18 @@ private struct RootTabsView: View {
     private var devicesRoot: some View {
         NavigationStack {
             DevicesView()
+        }
+    }
+
+    @ViewBuilder
+    private var actionTabSnapshotView: some View {
+        if let actionTabSnapshot {
+            Image(uiImage: actionTabSnapshot)
+                .resizable()
+                .scaledToFill()
+                .ignoresSafeArea()
+        } else {
+            Color.clear
         }
     }
 
