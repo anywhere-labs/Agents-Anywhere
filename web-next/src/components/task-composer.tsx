@@ -39,7 +39,6 @@ import {
   runtimeConfigFields,
   validEffortValue,
 } from "@/features/dashboard/runtime-config"
-import { readNewSessionPermissionMode } from "@/features/dashboard/new-session-preferences"
 import type { RuntimeConfigSchema } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
 
@@ -250,15 +249,10 @@ export function TaskComposer() {
       .then(([schemaResponse, settingsResponse, defaultsResponse]) => {
         if (cancelled) return
         const userDefaultSettings = defaultsResponse.runtimes[selectedAgent]?.settings ?? {}
-        const localPermissionMode = readNewSessionPermissionMode()
         setRuntimeSchema(schemaResponse.schema)
         setRuntimeSettings({
+          ...userDefaultSettings,
           ...(settingsResponse.runtimeSettings ?? settingsResponse.settings ?? {}),
-          ...(localPermissionMode
-            ? { permissionMode: localPermissionMode }
-            : typeof userDefaultSettings.permissionMode === "string"
-              ? { permissionMode: userDefaultSettings.permissionMode }
-            : {}),
         })
       })
       .catch(() => {

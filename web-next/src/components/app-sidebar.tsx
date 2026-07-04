@@ -33,7 +33,6 @@ import {
 } from "@/components/ui/dialog"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
-import { Kbd } from "@/components/ui/kbd"
 import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { filterSessions } from "@/lib/demo-api"
@@ -115,7 +114,6 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
             <SidebarMenuButton className="h-10 font-medium" onClick={goHome}>
               <Plus className="size-4" />
               <span>{t("actions.newSession")}</span>
-              <Kbd className="ml-auto">⌘N</Kbd>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
