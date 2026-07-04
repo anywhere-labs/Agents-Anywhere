@@ -48,6 +48,35 @@ struct APIClient {
         try await request("/auth/me", token: token)
     }
 
+    func oauthToken(code: String, codeVerifier: String) async throws -> OAuthTokenResponse {
+        guard let url = URL(string: "/oauth/token", relativeTo: serverURL)?.absoluteURL else {
+            throw APIClientError.invalidResponse
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        var body = URLComponents()
+        body.queryItems = [
+            URLQueryItem(name: "grant_type", value: "authorization_code"),
+            URLQueryItem(name: "code", value: code),
+            URLQueryItem(name: "client_id", value: "agents-anywhere-mobile"),
+            URLQueryItem(name: "redirect_uri", value: "agents-anywhere://oauth/callback"),
+            URLQueryItem(name: "code_verifier", value: codeVerifier),
+        ]
+        request.httpBody = body.percentEncodedQuery?.data(using: .utf8)
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw APIClientError.invalidResponse
+        }
+        guard 200..<300 ~= http.statusCode else {
+            let detail = (try? JSONDecoder().decode(APIErrorResponse.self, from: data).message)
+                ?? HTTPURLResponse.localizedString(forStatusCode: http.statusCode)
+            throw APIClientError.server(status: http.statusCode, detail: detail)
+        }
+        return try JSONDecoder().decode(OAuthTokenResponse.self, from: data)
+    }
+
     func requestMobileLogin(payload: MobileLoginPayload, deviceName: String) async throws -> MobileLoginStatusResponse {
         try await request(
             "/auth/mobile-login/request",
@@ -124,6 +153,37 @@ struct APIClient {
             body: FsListRequest(root: root, path: path),
             token: token,
         )
+    }
+
+    func createConnectorFsPreviewToken(
+        token: String,
+        connectorId: String,
+        root: String,
+        path: String,
+    ) async throws -> FsPreviewTokenCreateResponse {
+        let id = connectorId.urlPathComponentEncoded
+        return try await request(
+            "/connectors/\(id)/fs/preview-token?root=\(root.urlQueryEncoded)",
+            method: "POST",
+            body: FsReadRequest(path: path),
+            token: token,
+        )
+    }
+
+    func filePreviewURL(previewToken: String, name: String? = nil) throws -> URL {
+        guard var components = URLComponents(
+            url: URL(string: "/en/preview", relativeTo: serverURL)?.absoluteURL ?? serverURL,
+            resolvingAgainstBaseURL: false,
+        ) else {
+            throw APIClientError.invalidResponse
+        }
+        var queryItems = [URLQueryItem(name: "previewToken", value: previewToken)]
+        if let name, !name.isEmpty {
+            queryItems.append(URLQueryItem(name: "name", value: name))
+        }
+        components.queryItems = queryItems
+        guard let url = components.url else { throw APIClientError.invalidResponse }
+        return url
     }
 
     func markSessionRead(token: String, sessionId: String) async throws -> SessionResponse {
@@ -533,6 +593,12 @@ extension URL {
 private extension String {
     var urlPathComponentEncoded: String {
         addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? self
+    }
+
+    var urlQueryEncoded: String {
+        var allowed = CharacterSet.urlQueryAllowed
+        allowed.remove(charactersIn: ":#[]@!$&'()*+,;=")
+        return addingPercentEncoding(withAllowedCharacters: allowed) ?? self
     }
 }
 

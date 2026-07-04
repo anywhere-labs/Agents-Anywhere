@@ -131,6 +131,22 @@ final class AppState: ObservableObject {
         }
     }
 
+    func completeOAuthLogin(serverURL: URL, token: OAuthTokenResponse) async {
+        authError = nil
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            let client = APIClient(serverURL: serverURL)
+            try saveSession(serverURL: serverURL, token: token.accessToken)
+            self.serverURL = serverURL
+            me = try await client.me(token: token.accessToken)
+            route = .signedIn
+            await refreshDashboard()
+        } catch {
+            authError = error.localizedDescription
+        }
+    }
+
     func requestMobileLogin(payload: MobileLoginPayload) async -> Bool {
         authError = nil
         isWorking = true

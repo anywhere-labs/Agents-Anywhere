@@ -50,6 +50,21 @@ export type OAuthStartResponse = {
   serverTime: string;
 };
 
+export type OAuthAuthorizePayload = {
+  response_type: string;
+  client_id: string;
+  redirect_uri: string;
+  code_challenge: string;
+  code_challenge_method?: string;
+  scope?: string;
+  state?: string;
+};
+
+export type OAuthAuthorizeResponse = {
+  redirectUrl: string;
+  serverTime: string;
+};
+
 export type OAuthFinalizePayload = {
   pendingToken: string;
   userId?: string;

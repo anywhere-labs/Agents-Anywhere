@@ -24,7 +24,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { MonacoCodeView, type MonacoCodeViewApi } from "@/components/monaco-code-view"
 import { dashboardApi } from "@/features/dashboard/api"
 import { loadStoredSession } from "@/features/auth/session"
-import type { FsReadTextResult } from "@/features/dashboard/types"
+import type { FsPreviewSessionResponse, FsReadTextResult } from "@/features/dashboard/types"
 
 type PreviewState =
   | { kind: "loading" }
@@ -49,7 +49,10 @@ export function FilePreviewPage() {
   const connectorId = params.get("connectorId") ?? ""
   const root = params.get("root") ?? ""
   const path = params.get("path") ?? ""
-  const name = params.get("name") || fileNameFromPath(path)
+  const previewToken = params.get("previewToken") ?? ""
+  const [previewSession, setPreviewSession] = React.useState<FsPreviewSessionResponse | null>(null)
+  const effectivePath = previewSession?.path ?? path
+  const name = params.get("name") || fileNameFromPath(effectivePath)
   const token = React.useMemo(() => loadStoredSession()?.accessToken ?? null, [])
   const [state, setState] = React.useState<PreviewState>({ kind: "loading" })
   const [editMode, setEditMode] = React.useState(false)
@@ -63,7 +66,8 @@ export function FilePreviewPage() {
   const editorInitialContentRef = React.useRef("")
   const objectUrlRef = React.useRef<string | null>(null)
 
-  const canLoad = Boolean(token && connectorId && root && path)
+  const isScopedPreview = Boolean(previewToken)
+  const canLoad = isScopedPreview || Boolean(token && connectorId && root && path)
 
   const revokeObjectUrl = React.useCallback(() => {
     if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
@@ -80,17 +84,38 @@ export function FilePreviewPage() {
     setSaveError(null)
     setDownloadError(null)
     setSavedFlash(false)
-    if (!canLoad || !token) {
+    if (!canLoad) {
       setState({ kind: "error", message: t("missingContext") })
       return
     }
     try {
-      const text = await dashboardApi.connectorFsReadText(token, connectorId, root, path, TEXT_MAX_BYTES)
+      let scopedSession = previewSession
+      if (previewToken && !scopedSession) {
+        scopedSession = await dashboardApi.createConnectorFsPreviewSession(previewToken)
+        setPreviewSession(scopedSession)
+      }
+      const text = scopedSession
+        ? await dashboardApi.connectorFsPreviewReadText(scopedSession.previewAccessToken, TEXT_MAX_BYTES)
+        : token
+          ? await dashboardApi.connectorFsReadText(token, connectorId, root, path, TEXT_MAX_BYTES)
+          : null
+      if (!text) {
+        setState({ kind: "error", message: t("missingContext") })
+        return
+      }
       if (!text.binary) {
         setState({ kind: "text", file: text })
         return
       }
-      const response = await dashboardApi.connectorFsRead(token, connectorId, root, path)
+      const response = scopedSession
+        ? await dashboardApi.connectorFsPreviewRead(scopedSession.previewAccessToken)
+        : token
+          ? await dashboardApi.connectorFsRead(token, connectorId, root, path)
+          : null
+      if (!response) {
+        setState({ kind: "error", message: t("missingContext") })
+        return
+      }
       const mediaType = response.result.mediaType || mediaTypeForFile(response.result.name || name)
       const binary: BinaryFileInfo = {
         ...response.result,
@@ -98,7 +123,7 @@ export function FilePreviewPage() {
       }
       let objectUrl: string | null = null
       if (canBrowserPreview(mediaType, binary.name)) {
-        const blob = await dashboardApi.downloadBlob(token, binary.downloadUrl)
+        const blob = await dashboardApi.downloadBlob(scopedSession ? null : token, binary.downloadUrl)
         objectUrl = URL.createObjectURL(new Blob([blob], { type: mediaType || blob.type || "application/octet-stream" }))
         objectUrlRef.current = objectUrl
       }
@@ -106,7 +131,7 @@ export function FilePreviewPage() {
     } catch (err) {
       setState({ kind: "error", message: err instanceof Error ? err.message : String(err) })
     }
-  }, [canLoad, connectorId, name, path, revokeObjectUrl, root, t, token])
+  }, [canLoad, connectorId, name, path, previewSession, previewToken, revokeObjectUrl, root, t, token])
 
   React.useEffect(() => {
     void loadFile()
@@ -134,7 +159,7 @@ export function FilePreviewPage() {
 
   const handleDownload = React.useCallback(async () => {
     setDownloadError(null)
-    if (!token) return
+    if (!token && !isScopedPreview) return
     try {
       if (state.kind === "text") {
         const content = editorRef.current?.getValue() ?? state.file.content
@@ -144,16 +169,16 @@ export function FilePreviewPage() {
       if (state.kind === "binary") {
         const blob = state.objectUrl
           ? await fetch(state.objectUrl).then((response) => response.blob())
-          : await dashboardApi.downloadBlob(token, state.file.downloadUrl)
+          : await dashboardApi.downloadBlob(isScopedPreview ? null : token, state.file.downloadUrl)
         downloadBlob(blob, state.file.name || name)
       }
     } catch (err) {
       setDownloadError(err instanceof Error ? err.message : String(err))
     }
-  }, [name, state, token])
+  }, [isScopedPreview, name, state, token])
 
   const handleSave = React.useCallback(async () => {
-    if (!token || state.kind !== "text" || !editorRef.current || !editMode) return
+    if (isScopedPreview || !token || state.kind !== "text" || !editorRef.current || !editMode) return
     const content = editorRef.current.getValue()
     setSaving(true)
     setSaveError(null)
@@ -186,7 +211,7 @@ export function FilePreviewPage() {
     } finally {
       setSaving(false)
     }
-  }, [connectorId, editMode, path, root, state, t, token])
+  }, [connectorId, editMode, isScopedPreview, path, root, state, t, token])
 
   React.useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -228,7 +253,7 @@ export function FilePreviewPage() {
       <header className="flex min-h-12 items-center gap-2 border-b bg-sidebar px-3">
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-medium">{name || t("untitled")}</div>
-          <div className="truncate code-mono text-xs text-muted-foreground">{path}</div>
+          <div className="truncate code-mono text-xs text-muted-foreground">{effectivePath}</div>
         </div>
         <PreviewBadges state={state} dirty={dirty} saving={saving} savedFlash={savedFlash} saveError={saveError} />
         <Button variant="ghost" size="icon-sm" type="button" aria-label={t("refresh")} onClick={() => void loadFile()}>
@@ -238,7 +263,7 @@ export function FilePreviewPage() {
           variant={editMode ? "secondary" : "ghost"}
           size="sm"
           type="button"
-          disabled={state.kind !== "text"}
+          disabled={state.kind !== "text" || isScopedPreview}
           onClick={() => {
             if (editMode) {
               if (dirty) {
@@ -288,7 +313,7 @@ export function FilePreviewPage() {
         <Button
           size="sm"
           type="button"
-          disabled={state.kind !== "text" || !dirty || saving || !editMode}
+          disabled={isScopedPreview || state.kind !== "text" || !dirty || saving || !editMode}
           onClick={() => void handleSave()}
         >
           {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
@@ -329,7 +354,7 @@ export function FilePreviewPage() {
             key={`${state.file.path}:${state.file.sha256}:${editMode}`}
             fileName={state.file.name || name}
             content={state.file.content}
-            editable={editMode}
+            editable={editMode && !isScopedPreview}
             onReady={handleEditorReady}
             onChange={handleEditorChange}
             className="h-full min-h-0 overflow-hidden"

@@ -6,7 +6,13 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
 from agent_server.core.auth import DEFAULT_USER_EXPIRES_IN, create_user_access_token
-from agent_server.core.models import OAuthMetadataResponse, OAuthTokenResponse, UserView
+from agent_server.core.models import (
+    OAuthAuthorizeRequest,
+    OAuthAuthorizeResponse,
+    OAuthMetadataResponse,
+    OAuthTokenResponse,
+    UserView,
+)
 from agent_server.core.utc import utc_now
 from agent_server.deps import current_user, get_store
 from agent_server.infra.repositories.facade import Store
@@ -42,6 +48,52 @@ async def oauth_authorize(
     user: UserView = Depends(current_user),
     db: Store = Depends(get_store),
 ) -> RedirectResponse:
+    redirect_url = await _create_authorization_redirect(
+        response_type=response_type,
+        client_id=client_id,
+        redirect_uri=redirect_uri,
+        code_challenge=code_challenge,
+        code_challenge_method=code_challenge_method,
+        scope=scope,
+        state=state,
+        user=user,
+        db=db,
+    )
+    return RedirectResponse(redirect_url)
+
+
+@router.post("/oauth/authorize", response_model=OAuthAuthorizeResponse)
+async def oauth_authorize_json(
+    payload: OAuthAuthorizeRequest,
+    user: UserView = Depends(current_user),
+    db: Store = Depends(get_store),
+) -> OAuthAuthorizeResponse:
+    redirect_url = await _create_authorization_redirect(
+        response_type=payload.response_type,
+        client_id=payload.client_id,
+        redirect_uri=payload.redirect_uri,
+        code_challenge=payload.code_challenge,
+        code_challenge_method=payload.code_challenge_method,
+        scope=payload.scope,
+        state=payload.state,
+        user=user,
+        db=db,
+    )
+    return OAuthAuthorizeResponse(redirectUrl=redirect_url, serverTime=utc_now())
+
+
+async def _create_authorization_redirect(
+    *,
+    response_type: str,
+    client_id: str,
+    redirect_uri: str,
+    code_challenge: str,
+    code_challenge_method: str,
+    scope: str,
+    state: str | None,
+    user: UserView,
+    db: Store,
+) -> str:
     if response_type != "code":
         raise HTTPException(status_code=422, detail="response_type must be code")
     if client_id != FIRST_PARTY_CLIENT_ID:
@@ -64,7 +116,7 @@ async def oauth_authorize(
     params = {"code": code}
     if state is not None:
         params["state"] = state
-    return RedirectResponse(f"{redirect_uri}?{urlencode(params)}")
+    return f"{redirect_uri}?{urlencode(params)}"
 
 
 @router.post("/oauth/token", response_model=OAuthTokenResponse)

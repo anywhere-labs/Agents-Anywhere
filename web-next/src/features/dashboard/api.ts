@@ -12,6 +12,8 @@ import type {
   ConnectorRevokeResponse,
   ConnectorRuntimeCapabilitiesResponse,
   FsListResult,
+  FsPreviewSessionResponse,
+  FsPreviewTokenCreateResponse,
   FsReadFileResult,
   FsReadTextResult,
   FsWriteResult,
@@ -251,6 +253,43 @@ export class DashboardApi {
     );
   }
 
+  createConnectorFsPreviewToken(
+    token: string,
+    connectorId: string,
+    root: string,
+    path: string,
+  ): Promise<FsPreviewTokenCreateResponse> {
+    return this.client.post<FsPreviewTokenCreateResponse>(
+      `/connectors/${encodeURIComponent(connectorId)}/fs/preview-token`,
+      { path },
+      { token, query: { root } },
+    );
+  }
+
+  createConnectorFsPreviewSession(previewToken: string): Promise<FsPreviewSessionResponse> {
+    return this.client.post<FsPreviewSessionResponse>(
+      "/connectors/fs/preview-session",
+      { previewToken },
+      { auth: false },
+    );
+  }
+
+  connectorFsPreviewReadText(previewAccessToken: string, maxBytes: number): Promise<FsReadTextResult> {
+    return this.client.post<FsReadTextResult>(
+      "/connectors/fs/preview/readText",
+      { previewAccessToken, maxBytes },
+      { auth: false },
+    );
+  }
+
+  connectorFsPreviewRead(previewAccessToken: string): Promise<RpcResponse<FsReadFileResult>> {
+    return this.client.post<RpcResponse<FsReadFileResult>>(
+      "/connectors/fs/preview/read",
+      { previewAccessToken },
+      { auth: false },
+    );
+  }
+
   connectorFsWrite(
     token: string,
     connectorId: string,
@@ -264,9 +303,11 @@ export class DashboardApi {
     );
   }
 
-  async downloadBlob(token: string, url: string): Promise<Blob> {
+  async downloadBlob(token: string | null, url: string): Promise<Blob> {
+    const headers: HeadersInit = {};
+    if (token) headers.authorization = `Bearer ${token}`;
     const response = await fetch(url, {
-      headers: { authorization: `Bearer ${token}` },
+      headers,
     });
     if (!response.ok) throw new Error(await response.text());
     return response.blob();

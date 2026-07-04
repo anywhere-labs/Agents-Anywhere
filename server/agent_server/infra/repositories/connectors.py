@@ -4,6 +4,68 @@ from agent_server.infra.repositories.store_support import *
 
 
 class ConnectorRepositoryMixin:
+    async def record_fs_preview_token(
+        self,
+        *,
+        token: str,
+        user_id: str,
+        connector_id: str,
+        root: str,
+        path: str,
+        expires_at: str,
+    ) -> None:
+        connector = await self.get_connector(connector_id)
+        if connector.userId != user_id:
+            raise KeyError(connector_id)
+        now = utc_now()
+        async with self._engine.begin() as conn:
+            await conn.execute(
+                insert(fs_preview_tokens_t).values(
+                    token_hash=_hash_token(token),
+                    user_id=user_id,
+                    connector_id=connector_id,
+                    root=root,
+                    path=path,
+                    expires_at=expires_at,
+                    created_at=now,
+                    consumed_at=None,
+                )
+            )
+
+
+    async def consume_fs_preview_token(
+        self,
+        *,
+        token: str,
+        user_id: str,
+        connector_id: str,
+        root: str,
+        path: str,
+    ) -> bool:
+        token_hash = _hash_token(token)
+        now = utc_now()
+        async with self._engine.begin() as conn:
+            row = (
+                await conn.execute(
+                    select(fs_preview_tokens_t).where(
+                        fs_preview_tokens_t.c.token_hash == token_hash,
+                        fs_preview_tokens_t.c.user_id == user_id,
+                        fs_preview_tokens_t.c.connector_id == connector_id,
+                        fs_preview_tokens_t.c.root == root,
+                        fs_preview_tokens_t.c.path == path,
+                    )
+                )
+            ).mappings().first()
+            if row is None or row["consumed_at"] is not None or row["expires_at"] < now:
+                return False
+            await conn.execute(
+                update(fs_preview_tokens_t)
+                .where(fs_preview_tokens_t.c.token_hash == token_hash)
+                .values(consumed_at=now)
+            )
+            return True
+
+
     async def create_connector(self, *, name: str, user_id: str) -> tuple[ConnectorView, str, str]:
         connector_id = f"conn_{secrets.token_urlsafe(10)}"
         token = _new_connector_token()

@@ -3,57 +3,31 @@ import UIKit
 
 struct EnterServerView: View {
     @Environment(\.dismiss) private var dismiss
-    @State private var path: [EnterServerRoute] = []
 
     var body: some View {
-        NavigationStack(path: $path) {
+        NavigationStack {
             ServerAddressView(
-                onCancel: { dismiss() },
-                onServerReady: { url in
-                    path.append(.credentials(url))
-                },
+                onCancel: { dismiss() }
             )
-            .navigationDestination(for: EnterServerRoute.self) { route in
-                switch route {
-                case let .credentials(url):
-                    PasswordLoginView(
-                        serverURL: url,
-                        onCancel: { dismiss() },
-                        onVerified: { auth in
-                            path.append(.confirmPasswordLogin(url, auth))
-                        },
-                    )
-                case let .confirmPasswordLogin(url, auth):
-                    PasswordLoginConfirmView(
-                        serverURL: url,
-                        auth: auth,
-                        onCancel: { dismiss() },
-                    )
-                }
-            }
         }
     }
 }
 
-private enum EnterServerRoute: Hashable {
-    case credentials(URL)
-    case confirmPasswordLogin(URL, AuthResponse)
-}
-
 private struct ServerAddressView: View {
     @EnvironmentObject private var appState: AppState
+    @StateObject private var oauthLogin = OAuthLoginCoordinator()
 
     let onCancel: () -> Void
-    let onServerReady: (URL) -> Void
 
     @State private var serverText = ""
     @State private var isChecking = false
+    @State private var isSigningIn = false
     @State private var alertMessage: String?
 
     var body: some View {
         AuthScreen(
             title: "Enter Server",
-            subtitle: "Enter the server address you want to connect to.",
+            subtitle: "Enter your server address, then sign in with the server's web login.",
             onCancel: onCancel,
         ) {
             VStack(alignment: .leading, spacing: 16) {
@@ -65,19 +39,19 @@ private struct ServerAddressView: View {
                     submitLabel: .continue,
                     onSubmit: {
                         guard canContinue else { return }
-                        Task { await checkServer() }
+                        Task { await startWebSignIn() }
                     },
                 )
 
                 AuthPrimaryButton(
-                    title: "Continue",
-                    isLoading: isChecking,
+                    title: "Continue in Browser",
+                    isLoading: isChecking || isSigningIn,
                     disabled: !canContinue,
                 ) {
-                    Task { await checkServer() }
+                    Task { await startWebSignIn() }
                 }
 
-                Text("We will check that the server is available before asking for your account credentials.")
+                Text("The server login opens in a secure web session. You can use password login or any OAuth provider configured on that server.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -94,146 +68,29 @@ private struct ServerAddressView: View {
     }
 
     private var canContinue: Bool {
-        !isChecking && !serverText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !isChecking && !isSigningIn && !serverText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    private func checkServer() async {
+    private func startWebSignIn() async {
         isChecking = true
-        defer { isChecking = false }
-        if let url = await appState.checkServer(serverText) {
-            onServerReady(url)
-        } else {
+        guard let url = await appState.checkServer(serverText) else {
+            isChecking = false
             alertMessage = appState.authError ?? "The server could not be reached."
+            return
         }
-    }
-}
-
-private struct PasswordLoginView: View {
-    @EnvironmentObject private var appState: AppState
-
-    let serverURL: URL
-    let onCancel: () -> Void
-    let onVerified: (AuthResponse) -> Void
-
-    @State private var userId = ""
-    @State private var password = ""
-    @State private var isSigningIn = false
-    @State private var alertMessage: String?
-
-    var body: some View {
-        AuthScreen(
-            title: "Sign In",
-            subtitle: "Use your Agents Anywhere account for this server.",
-            onCancel: onCancel,
-        ) {
-            VStack(alignment: .leading, spacing: 18) {
-                VStack(spacing: 14) {
-                    UnderlinedTextField(
-                        placeholder: "User ID",
-                        text: $userId,
-                        textContentType: .username,
-                    )
-
-                    UnderlinedSecureField(
-                        placeholder: "Password",
-                        text: $password,
-                    )
-                }
-
-                Text(serverURL.absoluteString)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-
-                AuthPrimaryButton(
-                    title: "Sign In",
-                    isLoading: isSigningIn,
-                    disabled: !canSignIn,
-                ) {
-                    Task { await signIn() }
-                }
-            }
-        }
-        .alert("Sign In Failed", isPresented: Binding(
-            get: { alertMessage != nil },
-            set: { if !$0 { alertMessage = nil } },
-        )) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(alertMessage ?? "Check your credentials and try again.")
-        }
-    }
-
-    private var canSignIn: Bool {
-        !isSigningIn
-            && !userId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !password.isEmpty
-    }
-
-    private func signIn() async {
+        isChecking = false
         isSigningIn = true
         defer { isSigningIn = false }
-        if let auth = await appState.verifyPasswordLogin(
-            serverURL: serverURL,
-            userId: userId.trimmingCharacters(in: .whitespacesAndNewlines),
-            password: password,
-        ) {
-            onVerified(auth)
-        } else {
-            alertMessage = appState.authError ?? "Check your credentials and try again."
-        }
-    }
-}
-
-private struct PasswordLoginConfirmView: View {
-    @EnvironmentObject private var appState: AppState
-
-    let serverURL: URL
-    let auth: AuthResponse
-    let onCancel: () -> Void
-
-    @State private var isFinishing = false
-    @State private var alertMessage: String?
-
-    var body: some View {
-        AuthScreen(
-            title: "Login Success",
-            subtitle: "Password verified for \(auth.userId). Go to your dashboard to continue.",
-            onCancel: onCancel,
-        ) {
-            VStack(alignment: .leading, spacing: 22) {
-                LoginSummaryView(
-                    server: serverURL.absoluteString,
-                    userId: auth.userId,
-                )
-
-                AuthPrimaryButton(
-                    title: "Go to Dashboard",
-                    isLoading: isFinishing,
-                ) {
-                    Task { await finishLogin() }
-                }
+        do {
+            let token = try await oauthLogin.authenticate(serverURL: url)
+            await appState.completeOAuthLogin(serverURL: url, token: token)
+            if case .signedIn = appState.route {
+                onCancel()
+            } else {
+                alertMessage = appState.authError ?? "The login could not be completed."
             }
-        }
-        .alert("Login Failed", isPresented: Binding(
-            get: { alertMessage != nil },
-            set: { if !$0 { alertMessage = nil } },
-        )) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(alertMessage ?? "The login could not be completed.")
-        }
-        .navigationBarBackButtonHidden(true)
-    }
-
-    private func finishLogin() async {
-        isFinishing = true
-        defer { isFinishing = false }
-        await appState.completePasswordLogin(serverURL: serverURL, auth: auth)
-        if case .signedIn = appState.route {
-            onCancel()
-        } else {
-            alertMessage = appState.authError ?? "The login could not be completed."
+        } catch {
+            alertMessage = error.localizedDescription
         }
     }
 }

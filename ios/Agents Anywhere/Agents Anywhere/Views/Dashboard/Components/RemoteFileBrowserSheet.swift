@@ -13,6 +13,7 @@ struct RemoteFileSelection: Hashable {
 
 struct RemoteFileBrowserSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
 
     let api: APIClient
     let token: String
@@ -26,6 +27,7 @@ struct RemoteFileBrowserSheet: View {
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var selectedEntry: FsEntry?
+    @State private var previewingPath: String?
 
     init(
         api: APIClient,
@@ -184,7 +186,30 @@ struct RemoteFileBrowserSheet: View {
             Task { await load(path: entry.path) }
             return
         }
+        if mode == .browse {
+            Task { await openPreview(entry) }
+            return
+        }
         selectedEntry = entry
+    }
+
+    private func openPreview(_ entry: FsEntry) async {
+        guard previewingPath == nil else { return }
+        previewingPath = entry.path
+        errorMessage = nil
+        defer { previewingPath = nil }
+        do {
+            let response = try await api.createConnectorFsPreviewToken(
+                token: token,
+                connectorId: connector.id,
+                root: currentPath,
+                path: entry.path,
+            )
+            let url = try api.filePreviewURL(previewToken: response.previewToken, name: entry.name)
+            openURL(url)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func selectCurrentTarget() {

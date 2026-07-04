@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 from typing import Any
 import urllib.parse
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from loguru import logger
 
-from agent_server.core.auth import verify_user_access_token
+from agent_server.core.auth import create_signed_token, verify_signed_token, verify_user_access_token
 from agent_server.infra.connector_rpc import (
     ConnectorOfflineError,
     ConnectorRpcError,
@@ -39,6 +40,11 @@ from agent_server.core.models import (
     ConnectorUpdateRequest,
     ConnectorView,
     DeviceAgentsState,
+    FsPreviewReadRequest,
+    FsPreviewReadTextRequest,
+    FsPreviewSessionRequest,
+    FsPreviewSessionResponse,
+    FsPreviewTokenCreateResponse,
     FsReadRequest,
     FsReadTextRequest,
     FsReadTextResponse,
@@ -74,6 +80,10 @@ from agent_server.core.utc import utc_now
 
 
 router = APIRouter(prefix="/connectors", tags=["connectors"])
+FS_PREVIEW_OPEN_TOKEN_KIND = "fs_preview_open"
+FS_PREVIEW_ACCESS_TOKEN_KIND = "fs_preview_access"
+FS_PREVIEW_OPEN_EXPIRES_IN = 5 * 60
+FS_PREVIEW_ACCESS_EXPIRES_IN = 15 * 60
 
 
 def _connector_for_response(manager: ConnectorRpcManager, connector: ConnectorView) -> ConnectorView:
@@ -358,18 +368,182 @@ async def connector_fs_read(
     )
 
 
+@router.post("/{connector_id}/fs/preview-token", response_model=FsPreviewTokenCreateResponse)
+async def create_connector_fs_preview_token(
+    connector_id: str,
+    payload: FsReadRequest,
+    root: str = Query(..., min_length=1),
+    user_id: str = Depends(current_user_id),
+    db: Store = Depends(get_store),
+) -> FsPreviewTokenCreateResponse:
+    await _require_owned_connector(connector_id, user_id, db)
+    path = resolve_workspace_path(root, payload.path)
+    expires_at = _utc_now_plus_seconds(FS_PREVIEW_OPEN_EXPIRES_IN)
+    preview_token = create_signed_token(
+        FS_PREVIEW_OPEN_TOKEN_KIND,
+        {
+            "user_id": user_id,
+            "connector_id": connector_id,
+            "root": root,
+            "path": path,
+        },
+        FS_PREVIEW_OPEN_EXPIRES_IN,
+    )
+    await db.record_fs_preview_token(
+        token=preview_token,
+        user_id=user_id,
+        connector_id=connector_id,
+        root=root,
+        path=path,
+        expires_at=expires_at,
+    )
+    return FsPreviewTokenCreateResponse(
+        previewToken=preview_token,
+        expiresAt=expires_at,
+        serverTime=utc_now(),
+    )
+
+
+@router.post("/fs/preview-session", response_model=FsPreviewSessionResponse)
+async def create_connector_fs_preview_session(
+    payload: FsPreviewSessionRequest,
+    db: Store = Depends(get_store),
+) -> FsPreviewSessionResponse:
+    token_payload = verify_signed_token(FS_PREVIEW_OPEN_TOKEN_KIND, payload.previewToken)
+    if token_payload is None:
+        raise HTTPException(status_code=400, detail="invalid preview token")
+    user_id = str(token_payload.get("user_id") or "")
+    connector_id = str(token_payload.get("connector_id") or "")
+    root = str(token_payload.get("root") or "")
+    path = str(token_payload.get("path") or "")
+    if not user_id or not connector_id or not root or not path:
+        raise HTTPException(status_code=400, detail="invalid preview token")
+    consumed = await db.consume_fs_preview_token(
+        token=payload.previewToken,
+        user_id=user_id,
+        connector_id=connector_id,
+        root=root,
+        path=path,
+    )
+    if not consumed:
+        raise HTTPException(status_code=400, detail="preview token was already used or expired")
+    expires_at = _utc_now_plus_seconds(FS_PREVIEW_ACCESS_EXPIRES_IN)
+    access_token = create_signed_token(
+        FS_PREVIEW_ACCESS_TOKEN_KIND,
+        {
+            "user_id": user_id,
+            "connector_id": connector_id,
+            "root": root,
+            "path": path,
+        },
+        FS_PREVIEW_ACCESS_EXPIRES_IN,
+    )
+    return FsPreviewSessionResponse(
+        previewAccessToken=access_token,
+        expiresAt=expires_at,
+        connectorId=connector_id,
+        root=root,
+        path=path,
+        serverTime=utc_now(),
+    )
+
+
+@router.post("/fs/preview/readText", response_model=FsReadTextResponse)
+async def connector_fs_preview_read_text(
+    payload: FsPreviewReadTextRequest,
+    db: Store = Depends(get_store),
+    manager: ConnectorRpcManager = Depends(get_rpc),
+) -> FsReadTextResponse:
+    preview = _fs_preview_access_payload(payload.previewAccessToken)
+    connector_id = preview["connector_id"]
+    root = preview["root"]
+    path = preview["path"]
+    await _require_owned_online_connector(connector_id, preview["user_id"], db, manager)
+    result = await request_connector(
+        manager,
+        connector_id,
+        "fs.readText",
+        {
+            "sessionId": _connector_scope_id(connector_id),
+            "root": root,
+            "path": path,
+            "maxBytes": payload.maxBytes,
+        },
+        timeout=30,
+    )
+    return FsReadTextResponse(**result, serverTime=utc_now())
+
+
+@router.post("/fs/preview/read", response_model=RpcResponsePayload)
+async def connector_fs_preview_read(
+    payload: FsPreviewReadRequest,
+    db: Store = Depends(get_store),
+    manager: ConnectorRpcManager = Depends(get_rpc),
+    downloads: FsDownloadRelayManager = Depends(get_fs_downloads),
+) -> RpcResponsePayload:
+    preview = _fs_preview_access_payload(payload.previewAccessToken)
+    connector_id = preview["connector_id"]
+    root = preview["root"]
+    path = preview["path"]
+    await _require_owned_online_connector(connector_id, preview["user_id"], db, manager)
+    result = await request_connector(
+        manager,
+        connector_id,
+        "fs.prepareDownload",
+        {"sessionId": _connector_scope_id(connector_id), "root": root, "path": path},
+        timeout=30,
+    )
+    if not isinstance(result, dict):
+        raise HTTPException(status_code=502, detail="invalid fs.prepareDownload response")
+    transfer = downloads.create(
+        connector_id=connector_id,
+        root=root,
+        path=str(result.get("path") or path),
+        name=str(result.get("name") or path.rsplit("/", 1)[-1] or "download"),
+        size=int(result.get("size") or 0),
+        sha256=str(result.get("sha256") or ""),
+        media_type=str(result.get("mediaType") or "application/octet-stream"),
+    )
+    return RpcResponsePayload(
+        ok=True,
+        result={
+            **result,
+            "transferId": transfer.transfer_id,
+            "token": transfer.token,
+            "downloadUrl": (
+                f"/connectors/{connector_id}/fs/transfers/{transfer.transfer_id}"
+                f"?token={transfer.token}&previewAccessToken={urllib.parse.quote(payload.previewAccessToken)}"
+            ),
+        },
+    )
+
+
 @router.get("/{connector_id}/fs/transfers/{transfer_id}")
 async def connector_fs_transfer_download(
     connector_id: str,
     transfer_id: str,
     token: str,
-    user_id: str = Depends(current_user_id),
+    previewAccessToken: str | None = Query(default=None),
+    authorization: str | None = Header(None, alias="Authorization"),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
     downloads: FsDownloadRelayManager = Depends(get_fs_downloads),
 ) -> StreamingResponse:
-    await _require_owned_online_connector(connector_id, user_id, db, manager)
     transfer = downloads.get(transfer_id, token)
+    if previewAccessToken:
+        preview = _fs_preview_access_payload(previewAccessToken)
+        if (
+            transfer is None
+            or transfer.connector_id != connector_id
+            or preview["connector_id"] != connector_id
+            or preview["root"] != transfer.root
+            or preview["path"] != transfer.path
+        ):
+            raise HTTPException(status_code=404, detail="transfer not found")
+        user_id = preview["user_id"]
+    else:
+        user_id = _user_id_from_authorization(authorization)
+    await _require_owned_online_connector(connector_id, user_id, db, manager)
     if transfer is None or transfer.connector_id != connector_id:
         raise HTTPException(status_code=404, detail="transfer not found")
     await request_connector(
@@ -741,6 +915,38 @@ def _safe_header_value(value: str) -> str:
 
 def _connector_scope_id(connector_id: str) -> str:
     return f"browse_{connector_id}"
+
+
+def _user_id_from_authorization(authorization: str | None) -> str:
+    prefix = "Bearer "
+    if authorization is None or not authorization.startswith(prefix):
+        raise HTTPException(status_code=401, detail="missing user access token")
+    user_id = verify_user_access_token(authorization[len(prefix) :])
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="invalid user access token")
+    return user_id
+
+
+def _fs_preview_access_payload(token: str) -> dict[str, str]:
+    payload = verify_signed_token(FS_PREVIEW_ACCESS_TOKEN_KIND, token)
+    if payload is None:
+        raise HTTPException(status_code=401, detail="invalid preview access token")
+    user_id = str(payload.get("user_id") or "")
+    connector_id = str(payload.get("connector_id") or "")
+    root = str(payload.get("root") or "")
+    path = str(payload.get("path") or "")
+    if not user_id or not connector_id or not root or not path:
+        raise HTTPException(status_code=401, detail="invalid preview access token")
+    return {
+        "user_id": user_id,
+        "connector_id": connector_id,
+        "root": root,
+        "path": path,
+    }
+
+
+def _utc_now_plus_seconds(seconds: int) -> str:
+    return (datetime.now(UTC) + timedelta(seconds=seconds)).isoformat().replace("+00:00", "Z")
 
 
 async def _abandon_connector_shell_task(

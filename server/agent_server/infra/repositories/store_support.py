@@ -31,6 +31,7 @@ from agent_server.infra.db import (
     build_engine,
     connectors as connectors_t,
     device_agent_settings as device_agent_settings_t,
+    fs_preview_tokens as fs_preview_tokens_t,
     init_db,
     mobile_login_tokens as mobile_login_tokens_t,
     oauth_accounts as oauth_accounts_t,

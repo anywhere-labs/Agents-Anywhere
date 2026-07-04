@@ -304,6 +304,21 @@ class OAuthTokenResponse(BaseModel):
     refresh_token: str | None = None
 
 
+class OAuthAuthorizeRequest(BaseModel):
+    response_type: str
+    client_id: str
+    redirect_uri: str
+    code_challenge: str
+    code_challenge_method: str = "S256"
+    scope: str = ""
+    state: str | None = None
+
+
+class OAuthAuthorizeResponse(BaseModel):
+    redirectUrl: str
+    serverTime: str
+
+
 class OAuthMetadataResponse(BaseModel):
     issuer: str
     authorization_endpoint: str
@@ -684,6 +699,34 @@ class UserUploadResponse(BaseModel):
 
 class FsReadRequest(BaseModel):
     path: str = Field(min_length=1)
+
+
+class FsPreviewTokenCreateResponse(BaseModel):
+    previewToken: str
+    expiresAt: str
+    serverTime: str
+
+
+class FsPreviewSessionRequest(BaseModel):
+    previewToken: str = Field(min_length=1)
+
+
+class FsPreviewSessionResponse(BaseModel):
+    previewAccessToken: str
+    expiresAt: str
+    connectorId: str
+    root: str
+    path: str
+    serverTime: str
+
+
+class FsPreviewReadTextRequest(BaseModel):
+    previewAccessToken: str = Field(min_length=1)
+    maxBytes: int = Field(default=1_048_576, ge=1, le=4_194_304)
+
+
+class FsPreviewReadRequest(BaseModel):
+    previewAccessToken: str = Field(min_length=1)
 
 
 class FsDownloadResponse(BaseModel):

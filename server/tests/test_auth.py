@@ -844,6 +844,31 @@ def test_first_party_oauth_authorization_code_pkce_round_trip(tmp_path):
     assert reused.status_code == 400
 
 
+def test_first_party_oauth_authorize_json_returns_app_callback(tmp_path):
+    client = make_client(tmp_path)
+    token = admin_token(client)
+    verifier = "test-verifier-value"
+    response = client.post(
+        "/oauth/authorize",
+        headers=bearer(token),
+        json={
+            "response_type": "code",
+            "client_id": "agents-anywhere-mobile",
+            "redirect_uri": "agents-anywhere://oauth/callback",
+            "code_challenge": pkce_challenge(verifier),
+            "code_challenge_method": "S256",
+            "scope": "profile",
+            "state": "mobile-state",
+        },
+    )
+    assert response.status_code == 200, response.text
+    redirected = urlparse(response.json()["redirectUrl"])
+    params = parse_qs(redirected.query)
+    assert redirected.scheme == "agents-anywhere"
+    assert params["state"] == ["mobile-state"]
+    assert params["code"]
+
+
 def test_oauth_authorize_rejects_unregistered_redirects(tmp_path):
     client = make_client(tmp_path)
     token = admin_token(client)
@@ -859,6 +884,29 @@ def test_oauth_authorize_rejects_unregistered_redirects(tmp_path):
         follow_redirects=False,
     )
     assert response.status_code == 422
+
+
+def test_fs_preview_token_is_consumed_once(tmp_path):
+    client = make_client(tmp_path)
+    token = admin_token(client)
+    connector = client.post("/connectors", headers=bearer(token), json={"name": "Desktop"}).json()["connector"]
+    created = client.post(
+        f"/connectors/{connector['id']}/fs/preview-token",
+        headers=bearer(token),
+        params={"root": "/tmp/project"},
+        json={"path": "README.md"},
+    )
+    assert created.status_code == 200, created.text
+    preview_token = created.json()["previewToken"]
+
+    first = client.post("/connectors/fs/preview-session", json={"previewToken": preview_token})
+    assert first.status_code == 200, first.text
+    assert first.json()["connectorId"] == connector["id"]
+    assert first.json()["root"] == "/tmp/project"
+    assert first.json()["path"] == "/tmp/project/README.md"
+
+    reused = client.post("/connectors/fs/preview-session", json={"previewToken": preview_token})
+    assert reused.status_code == 400
 
 
 # ---------- mobile QR login --------------------------------------------------

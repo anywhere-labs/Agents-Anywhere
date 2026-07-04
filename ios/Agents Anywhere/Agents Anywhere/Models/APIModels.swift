@@ -23,6 +23,22 @@ struct AuthResponse: Codable, Hashable {
     let serverTime: String
 }
 
+struct OAuthTokenResponse: Decodable, Hashable {
+    let accessToken: String
+    let tokenType: String
+    let expiresIn: Int
+    let scope: String
+    let refreshToken: String?
+
+    enum CodingKeys: String, CodingKey {
+        case accessToken = "access_token"
+        case tokenType = "token_type"
+        case expiresIn = "expires_in"
+        case scope
+        case refreshToken = "refresh_token"
+    }
+}
+
 struct AuthMe: Codable {
     let userId: String
     let role: UserRole
@@ -74,6 +90,12 @@ struct MobileLoginStatusResponse: Decodable {
     let expiresAt: String?
     let requestedAt: String?
     let approvedAt: String?
+    let serverTime: String
+}
+
+struct FsPreviewTokenCreateResponse: Decodable {
+    let previewToken: String
+    let expiresAt: String
     let serverTime: String
 }
 
@@ -586,6 +608,10 @@ struct RpcResponsePayload: Decodable {
 
 struct FsListRequest: Encodable {
     let root: String
+    let path: String
+}
+
+struct FsReadRequest: Encodable {
     let path: String
 }
 

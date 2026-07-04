@@ -14,6 +14,8 @@ import type {
   AuthResponse,
   InstanceSettings,
   OAuthProviderConfigUpdate,
+  OAuthAuthorizePayload,
+  OAuthAuthorizeResponse,
   OAuthFinalizePayload,
   OAuthFinalizeResponse,
   OAuthStartResponse,
@@ -84,6 +86,14 @@ export class AuthApi {
       auth: false,
       query: { returnTo }
     });
+  }
+
+  authorizeOAuth(token: string, payload: OAuthAuthorizePayload): Promise<OAuthAuthorizeResponse> {
+    return this.client.post<OAuthAuthorizeResponse>(
+      "/oauth/authorize",
+      payload,
+      { token },
+    );
   }
 
   async finalizeOAuth(payload: OAuthFinalizePayload): Promise<OAuthFinalizeResponse> {

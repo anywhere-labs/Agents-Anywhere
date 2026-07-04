@@ -282,6 +282,21 @@ export type FsReadTextResult = {
   serverTime: string;
 };
 
+export type FsPreviewTokenCreateResponse = {
+  previewToken: string;
+  expiresAt: string;
+  serverTime: string;
+};
+
+export type FsPreviewSessionResponse = {
+  previewAccessToken: string;
+  expiresAt: string;
+  connectorId: string;
+  root: string;
+  path: string;
+  serverTime: string;
+};
+
 export type FsReadFileResult = {
   path: string;
   name: string;

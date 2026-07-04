@@ -157,6 +157,20 @@ mobile_login_tokens = Table(
 )
 
 
+fs_preview_tokens = Table(
+    "fs_preview_tokens",
+    metadata,
+    Column("token_hash", Text, primary_key=True),
+    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("connector_id", Text, ForeignKey("connectors.id", ondelete="CASCADE"), nullable=False),
+    Column("root", Text, nullable=False),
+    Column("path", Text, nullable=False),
+    Column("expires_at", Text, nullable=False),
+    Column("created_at", Text, nullable=False),
+    Column("consumed_at", Text),
+)
+
+
 instance_settings = Table(
     "instance_settings",
     metadata,
