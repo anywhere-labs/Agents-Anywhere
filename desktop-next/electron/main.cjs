@@ -64,6 +64,7 @@ const state = {
   resolvedUvPath: "",
   uvMissing: false,
   uvPypiIndexUrl: "",
+  pypiMirrorPromptDismissed: false,
   locale: "system",
   appearance: "system",
   usingTemporaryCredential: false,
@@ -402,6 +403,7 @@ function loadDesktopSettings() {
   state.uvPath = typeof settings.uvPath === "string" ? settings.uvPath.trim() : typeof settings.uvCommand === "string" ? settings.uvCommand.trim() : "";
   refreshUvState();
   state.uvPypiIndexUrl = typeof settings.uvPypiIndexUrl === "string" ? settings.uvPypiIndexUrl.trim() : "";
+  state.pypiMirrorPromptDismissed = Boolean(settings.pypiMirrorPromptDismissed);
   if (typeof settings.locale === "string" && ["system", "en", "zh"].includes(settings.locale)) state.locale = settings.locale;
   if (typeof settings.appearance === "string" && ["system", "light", "dark"].includes(settings.appearance)) state.appearance = settings.appearance;
   state.logChunkSizeKb = clampNumber(settings.logChunkSizeKb, DEFAULT_LOG_CHUNK_SIZE_KB, 64, 10240);
@@ -416,6 +418,7 @@ function loadDesktopSettings() {
 function saveDesktopSettings(next = {}) {
   if (typeof next.uvPath === "string") state.uvPath = next.uvPath.trim();
   if (typeof next.uvPypiIndexUrl === "string") state.uvPypiIndexUrl = next.uvPypiIndexUrl.trim();
+  if (typeof next.pypiMirrorPromptDismissed === "boolean") state.pypiMirrorPromptDismissed = next.pypiMirrorPromptDismissed;
   refreshLocalSetupState();
   if (typeof next.locale === "string" && ["system", "en", "zh"].includes(next.locale)) state.locale = next.locale;
   if (typeof next.appearance === "string" && ["system", "light", "dark"].includes(next.appearance)) state.appearance = next.appearance;
@@ -434,6 +437,7 @@ function saveDesktopSettings(next = {}) {
   writeJson(state.settingsPath, {
     uvPath: state.uvPath,
     uvPypiIndexUrl: state.uvPypiIndexUrl,
+    pypiMirrorPromptDismissed: state.pypiMirrorPromptDismissed,
     locale: state.locale,
     appearance: state.appearance,
     logChunkSizeKb: state.logChunkSizeKb,

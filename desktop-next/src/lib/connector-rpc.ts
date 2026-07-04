@@ -22,6 +22,7 @@ export type ConnectorState = {
   resolvedUvPath?: string
   uvMissing?: boolean
   uvPypiIndexUrl?: string
+  pypiMirrorPromptDismissed?: boolean
   locale?: "system" | "en" | "zh" | string
   appearance?: "system" | "light" | "dark" | string
   usingTemporaryCredential?: boolean
@@ -67,6 +68,7 @@ export type DesktopSettings = {
   silentLaunch?: boolean
   uvPath?: string
   uvPypiIndexUrl?: string
+  pypiMirrorPromptDismissed?: boolean
   locale?: "system" | "en" | "zh"
   appearance?: "system" | "light" | "dark"
   logChunkSizeKb?: number

@@ -114,6 +114,7 @@ const PYPI_MIRROR_OPTIONS: readonly PypiMirrorOption[] = [
   { id: "tencent", url: "https://mirrors.cloud.tencent.com/pypi/simple" },
   { id: "huawei", url: "https://repo.huaweicloud.com/repository/pypi/simple" },
 ]
+const DEFAULT_CHINA_PYPI_MIRROR = PYPI_MIRROR_OPTIONS.find((option) => option.id === "tsinghua") ?? PYPI_MIRROR_OPTIONS[1]!
 
 const defaultConfig: ConnectorConfig = {
   serverUrl: "",
@@ -193,6 +194,11 @@ const desktopMessages = {
     pypiAliyun: "Aliyun",
     pypiTencent: "Tencent Cloud",
     pypiHuawei: "Huawei Cloud",
+    pypiMirrorPromptTitle: "Use a PyPI mirror?",
+    pypiMirrorPromptDescription: "Your system language appears to be Chinese. If you are in mainland China, the official PyPI source may be slow.",
+    pypiMirrorPromptMirrorLabel: "Mirror",
+    pypiMirrorPromptUseMirror: "Use mirror",
+    pypiMirrorPromptKeepOfficial: "Keep official source",
     configPath: "Config path",
     settingsPath: "Settings path",
     logPath: "Log path",
@@ -336,6 +342,11 @@ const desktopMessages = {
     pypiAliyun: "阿里云",
     pypiTencent: "腾讯云",
     pypiHuawei: "华为云",
+    pypiMirrorPromptTitle: "是否使用 PyPI 镜像？",
+    pypiMirrorPromptDescription: "检测到你的系统语言可能是中文。如果你可能在中国大陆，使用官方 PyPI 源安装依赖可能较慢。",
+    pypiMirrorPromptMirrorLabel: "镜像源",
+    pypiMirrorPromptUseMirror: "使用镜像",
+    pypiMirrorPromptKeepOfficial: "继续使用官方源",
     configPath: "配置路径",
     settingsPath: "设置路径",
     logPath: "日志路径",
@@ -433,6 +444,12 @@ function useDesktopMessages(preferredLocale: string | undefined): DesktopMessage
   return desktopMessages[locale] as DesktopMessages
 }
 
+function systemLanguageIsChinese(): boolean {
+  if (typeof navigator === "undefined") return false
+  const languages = Array.isArray(navigator.languages) && navigator.languages.length > 0 ? navigator.languages : [navigator.language]
+  return languages.some((language) => language.toLowerCase().startsWith("zh"))
+}
+
 type MetricTone = "default" | "success" | "error"
 
 function isConfigBrokenIssue(issue: string | undefined): boolean {
@@ -520,8 +537,11 @@ export function DesktopShell() {
   const [externalLaunchCommand, setExternalLaunchCommand] = React.useState<ExternalLaunchCommand | null>(null)
   const [pendingCredentialAction, setPendingCredentialAction] = React.useState<PendingCredentialAction | null>(null)
   const [uvInstallPromptOpen, setUvInstallPromptOpen] = React.useState(false)
+  const [pypiMirrorPromptOpen, setPypiMirrorPromptOpen] = React.useState(false)
+  const [selectedPypiMirrorUrl, setSelectedPypiMirrorUrl] = React.useState(DEFAULT_CHINA_PYPI_MIRROR.url)
   const authFailedToastShown = React.useRef(false)
   const uvMissingPromptShown = React.useRef(false)
+  const pypiMirrorPromptShown = React.useRef(false)
   const savedConfigRef = React.useRef<ConnectorConfig>(defaultConfig)
   const minLogSeqRef = React.useRef<number | null>(null)
   const maxLogSeqRef = React.useRef<number | null>(null)
@@ -642,6 +662,8 @@ export function DesktopShell() {
 
   React.useEffect(() => {
     if (state?.uvMissing) {
+      const shouldPromptForPypiMirror = Boolean(state && !state.pypiMirrorPromptDismissed && !state.uvPypiIndexUrl && systemLanguageIsChinese())
+      if (shouldPromptForPypiMirror && !pypiMirrorPromptShown.current) return
       if (!uvMissingPromptShown.current) {
         uvMissingPromptShown.current = true
         setUvInstallPromptOpen(true)
@@ -649,7 +671,15 @@ export function DesktopShell() {
       return
     }
     uvMissingPromptShown.current = false
-  }, [state?.uvMissing])
+  }, [state])
+
+  React.useEffect(() => {
+    if (!state || state.pypiMirrorPromptDismissed || state.uvPypiIndexUrl || pypiMirrorPromptShown.current) return
+    if (!systemLanguageIsChinese()) return
+    pypiMirrorPromptShown.current = true
+    setSelectedPypiMirrorUrl(DEFAULT_CHINA_PYPI_MIRROR.url)
+    setPypiMirrorPromptOpen(true)
+  }, [state])
 
   async function run<T>(label: string, action: () => Promise<T>, success?: string): Promise<T | null> {
     setBusy(label)
@@ -937,6 +967,13 @@ export function DesktopShell() {
   async function saveSettings(patch: DesktopSettings) {
     const next = await run("settings", () => connectorDesktop().saveSettings(patch))
     if (next) setState(next)
+  }
+
+  async function dismissPypiMirrorPrompt(useMirror: boolean) {
+    const uvPypiIndexUrl = useMirror ? selectedPypiMirrorUrl : ""
+    const next = await run("settings", () => connectorDesktop().saveSettings({ uvPypiIndexUrl, pypiMirrorPromptDismissed: true }))
+    if (next) setState(next)
+    setPypiMirrorPromptOpen(false)
   }
 
   function saveLocale(locale: "system" | "en" | "zh") {
@@ -1245,6 +1282,36 @@ export function DesktopShell() {
             <AlertDialogCancel>{t.cancel}</AlertDialogCancel>
             <AlertDialogAction onClick={() => void connectorDesktop().openUvInstall()}>
               {t.installUv}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog
+        open={pypiMirrorPromptOpen}
+        onOpenChange={(open) => {
+          if (!open) setPypiMirrorPromptOpen(false)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t.pypiMirrorPromptTitle}</AlertDialogTitle>
+            <AlertDialogDescription>{t.pypiMirrorPromptDescription}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="grid gap-2">
+            <Label>{t.pypiMirrorPromptMirrorLabel}</Label>
+            <PypiMirrorSelect
+              t={t}
+              value={selectedPypiMirrorUrl}
+              includeDefault={false}
+              onValueChange={setSelectedPypiMirrorUrl}
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => void dismissPypiMirrorPrompt(false)}>
+              {t.pypiMirrorPromptKeepOfficial}
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={() => void dismissPypiMirrorPrompt(true)}>
+              {t.pypiMirrorPromptUseMirror}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -2193,7 +2260,6 @@ function PypiMirrorField({
 }) {
   const defaultOption = PYPI_MIRROR_OPTIONS[0]!
   const current = PYPI_MIRROR_OPTIONS.find((option) => option.url === value) ?? defaultOption
-  const label = pypiMirrorLabel(t, current.id)
 
   return (
     <Field orientation="horizontal">
@@ -2201,24 +2267,45 @@ function PypiMirrorField({
         <FieldTitle>{t.uvPypiMirror}</FieldTitle>
         <FieldDescription>{t.uvPypiMirrorDescription}</FieldDescription>
       </FieldContent>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button type="button" variant="outline" className="min-w-44 justify-between">
-            {label}
-            <ChevronDown data-icon="inline-end" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-64">
-          <DropdownMenuRadioGroup value={current.url} onValueChange={onValueChange}>
-            {PYPI_MIRROR_OPTIONS.map((option) => (
-              <DropdownMenuRadioItem key={option.id} value={option.url}>
-                <span>{pypiMirrorLabel(t, option.id)}</span>
-              </DropdownMenuRadioItem>
-            ))}
-          </DropdownMenuRadioGroup>
-        </DropdownMenuContent>
-      </DropdownMenu>
+      <PypiMirrorSelect t={t} value={current.url} onValueChange={onValueChange} />
     </Field>
+  )
+}
+
+function PypiMirrorSelect({
+  t,
+  value,
+  includeDefault = true,
+  onValueChange,
+}: {
+  t: DesktopMessages
+  value: string
+  includeDefault?: boolean
+  onValueChange: (value: string) => void
+}) {
+  const options = includeDefault ? PYPI_MIRROR_OPTIONS : PYPI_MIRROR_OPTIONS.filter((option) => option.id !== "default")
+  const fallback = options[0] ?? PYPI_MIRROR_OPTIONS[0]!
+  const current = options.find((option) => option.url === value) ?? fallback
+  const label = pypiMirrorLabel(t, current.id)
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button type="button" variant="outline" className="min-w-44 justify-between">
+          {label}
+          <ChevronDown data-icon="inline-end" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-64">
+        <DropdownMenuRadioGroup value={current.url} onValueChange={onValueChange}>
+          {options.map((option) => (
+            <DropdownMenuRadioItem key={option.id} value={option.url}>
+              <span>{pypiMirrorLabel(t, option.id)}</span>
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
