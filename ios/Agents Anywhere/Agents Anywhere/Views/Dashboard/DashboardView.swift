@@ -10,21 +10,6 @@ private enum RootTab {
     static let newSession = "newSession"
 }
 
-private extension UIApplication {
-    func activeWindowSnapshot() -> UIImage? {
-        guard let window = connectedScenes
-            .compactMap({ $0 as? UIWindowScene })
-            .flatMap(\.windows)
-            .first(where: { $0.isKeyWindow })
-        else { return nil }
-
-        let renderer = UIGraphicsImageRenderer(bounds: window.bounds)
-        return renderer.image { _ in
-            window.drawHierarchy(in: window.bounds, afterScreenUpdates: false)
-        }
-    }
-}
-
 struct DashboardView: View {
     @EnvironmentObject private var appState: AppState
     @State private var isShowingNewSession = false
@@ -60,7 +45,8 @@ private struct RootTabsView: View {
     @State private var previousTab: String = RootTab.sessions
     @State private var currentSelectableTab: String = RootTab.sessions
     @State private var actionReturnTab: String?
-    @State private var actionTabSnapshot: UIImage?
+    @State private var sessionsScrollOffset: CGFloat = 0
+    @State private var devicesScrollOffset: CGFloat = 0
 
     private var tabTransition: AnyTransition {
         let edge: Edge = selectedTabSortOrder >= previousTabSortOrder ? .trailing : .leading
@@ -84,7 +70,6 @@ private struct RootTabsView: View {
             set: { newValue in
                 if newValue == RootTab.newSession {
                     actionReturnTab = selectedTab
-                    actionTabSnapshot = UIApplication.shared.activeWindowSnapshot()
                     withTransaction(Transaction(animation: nil)) {
                         selectedTab = RootTab.newSession
                     }
@@ -115,13 +100,13 @@ private struct RootTabsView: View {
 
             if #available(iOS 27.0, *) {
                 Tab("New", systemImage: "plus", value: RootTab.newSession, role: .prominent) {
-                    actionTabSnapshotView
+                    mirroredActionTabRoot
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
                 }
             } else {
                 Tab("New", systemImage: "plus", value: RootTab.newSession) {
-                    actionTabSnapshotView
+                    mirroredActionTabRoot
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
                 }
@@ -142,7 +127,6 @@ private struct RootTabsView: View {
             }
             currentSelectableTab = returnTab
             actionReturnTab = nil
-            actionTabSnapshot = nil
         }
         .onChange(of: sessionToOpen) { _, session in
             guard let session else { return }
@@ -150,7 +134,6 @@ private struct RootTabsView: View {
             selectedTab = RootTab.sessions
             currentSelectableTab = RootTab.sessions
             actionReturnTab = nil
-            actionTabSnapshot = nil
             sessionPath = [session]
             sessionToOpen = nil
         }
@@ -158,7 +141,7 @@ private struct RootTabsView: View {
 
     private var sessionsRoot: some View {
         NavigationStack(path: $sessionPath) {
-            SessionsView()
+            SessionsView(scrollOffset: $sessionsScrollOffset)
                 .navigationDestination(for: SessionSummary.self) { session in
                     SessionDetailView(initialSession: session)
                 }
@@ -167,17 +150,23 @@ private struct RootTabsView: View {
 
     private var devicesRoot: some View {
         NavigationStack {
-            DevicesView()
+            DevicesView(scrollOffset: $devicesScrollOffset)
         }
     }
 
     @ViewBuilder
-    private var actionTabSnapshotView: some View {
-        if let actionTabSnapshot {
-            Image(uiImage: actionTabSnapshot)
-                .resizable()
-                .scaledToFill()
-                .ignoresSafeArea()
+    private var mirroredActionTabRoot: some View {
+        if selectedTab == RootTab.newSession {
+            switch actionReturnTab ?? currentSelectableTab {
+            case RootTab.devices:
+                NavigationStack {
+                    DevicesView(isMirror: true, mirroredScrollOffset: devicesScrollOffset)
+                }
+            default:
+                NavigationStack {
+                    SessionsView(isMirror: true, mirroredScrollOffset: sessionsScrollOffset)
+                }
+            }
         } else {
             Color.clear
         }
@@ -230,6 +219,10 @@ private struct SessionsView: View {
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var appState: AppState
 
+    @Binding private var scrollOffset: CGFloat
+    private let isMirror: Bool
+    private let mirroredScrollOffset: CGFloat
+
     @State private var activeFilter: SessionFilter?
     @State private var isShowingAccount = false
     @State private var sessionBeingRenamed: SessionSummary?
@@ -239,6 +232,16 @@ private struct SessionsView: View {
     @State private var selectedRuntime = "Any Runtime"
     @State private var selectedDevice = "Any Device"
     @State private var selectedSort = "Recent"
+
+    init(
+        scrollOffset: Binding<CGFloat> = .constant(0),
+        isMirror: Bool = false,
+        mirroredScrollOffset: CGFloat = 0,
+    ) {
+        _scrollOffset = scrollOffset
+        self.isMirror = isMirror
+        self.mirroredScrollOffset = mirroredScrollOffset
+    }
 
     private var filteredSessions: [SessionSummary] {
         sortedSessions.filter { session in
@@ -277,6 +280,14 @@ private struct SessionsView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.bottom, 32)
+            .offset(y: isMirror ? -max(0, mirroredScrollOffset) : 0)
+        }
+        .scrollDisabled(isMirror)
+        .onScrollGeometryChange(for: CGFloat.self) { geometry in
+            max(0, geometry.contentOffset.y)
+        } action: { _, offset in
+            guard !isMirror else { return }
+            scrollOffset = offset
         }
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $isShowingAccount) {
@@ -295,14 +306,17 @@ private struct SessionsView: View {
             .presentationDragIndicator(.visible)
         }
         .onAppear {
+            guard !isMirror else { return }
             Task { await appState.refreshDashboardIfStale() }
         }
         .onChange(of: scenePhase) { _, phase in
+            guard !isMirror else { return }
             if phase == .active {
                 Task { await appState.refreshDashboardIfStale() }
             }
         }
         .refreshable {
+            guard !isMirror else { return }
             await appState.refreshDashboard()
         }
         .sheet(item: $activeFilter) { filter in
@@ -491,7 +505,21 @@ private struct SessionsView: View {
 
 private struct DevicesView: View {
     @EnvironmentObject private var appState: AppState
+    @Binding private var scrollOffset: CGFloat
+    private let isMirror: Bool
+    private let mirroredScrollOffset: CGFloat
+
     @State private var isShowingAccount = false
+
+    init(
+        scrollOffset: Binding<CGFloat> = .constant(0),
+        isMirror: Bool = false,
+        mirroredScrollOffset: CGFloat = 0,
+    ) {
+        _scrollOffset = scrollOffset
+        self.isMirror = isMirror
+        self.mirroredScrollOffset = mirroredScrollOffset
+    }
 
     var body: some View {
         ScrollView(.vertical) {
@@ -506,6 +534,14 @@ private struct DevicesView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.bottom, 32)
+            .offset(y: isMirror ? -max(0, mirroredScrollOffset) : 0)
+        }
+        .scrollDisabled(isMirror)
+        .onScrollGeometryChange(for: CGFloat.self) { geometry in
+            max(0, geometry.contentOffset.y)
+        } action: { _, offset in
+            guard !isMirror else { return }
+            scrollOffset = offset
         }
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $isShowingAccount) {
@@ -524,6 +560,7 @@ private struct DevicesView: View {
             .presentationDragIndicator(.visible)
         }
         .refreshable {
+            guard !isMirror else { return }
             await appState.refreshDashboard()
         }
     }
