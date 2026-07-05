@@ -86,12 +86,14 @@ private val SessionWelcomeFontFamily = FontFamily(
 
 private sealed interface TimelineRenderItem {
     val key: String
+    val messages: List<TimelineMessage>
 
     data class Single(val message: TimelineMessage) : TimelineRenderItem {
         override val key: String = message.id
+        override val messages: List<TimelineMessage> = listOf(message)
     }
 
-    data class ToolRun(val messages: List<TimelineMessage>) : TimelineRenderItem {
+    data class ToolRun(override val messages: List<TimelineMessage>) : TimelineRenderItem {
         override val key: String = "tool-run:${messages.joinToString(":") { it.id }}"
     }
 }
@@ -207,10 +209,14 @@ internal fun MessageList(
     loadingOlder: Boolean,
     onLoadOlder: () -> Unit,
     onPreviewAttachment: (TimelineAttachment) -> Unit,
+    onCopyMessage: (String) -> Unit,
 ) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val timelineItems = remember(messages) { groupTimelineMessages(messages) }
+    val agentTurnCopyTextByItem = remember(timelineItems, workingLabel) {
+        buildAgentTurnCopyTextByItem(timelineItems, workingLabel != null)
+    }
     var showScrollToBottom by remember { mutableStateOf(false) }
 
     LaunchedEffect(listState) {
@@ -274,20 +280,39 @@ internal fun MessageList(
                     }
                 }
                 items(timelineItems.asReversed(), key = { it.key }) { item ->
-                    when (item) {
-                        is TimelineRenderItem.Single -> TimelineMessageRow(
-                            message = item.message,
-                            darkMode = darkMode,
-                            listState = listState,
-                            sessionId = sessionId,
-                            controller = controller,
-                            onPreviewAttachment = onPreviewAttachment,
-                        )
-                        is TimelineRenderItem.ToolRun -> ToolRunGroup(
-                            messages = item.messages,
-                            darkMode = darkMode,
-                            listState = listState,
-                        )
+                    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                        when (item) {
+                            is TimelineRenderItem.Single -> TimelineMessageRow(
+                                message = item.message,
+                                darkMode = darkMode,
+                                listState = listState,
+                                sessionId = sessionId,
+                                controller = controller,
+                                onPreviewAttachment = onPreviewAttachment,
+                                onCopyMessage = onCopyMessage,
+                            )
+                            is TimelineRenderItem.ToolRun -> ToolRunGroup(
+                                messages = item.messages,
+                                darkMode = darkMode,
+                                listState = listState,
+                            )
+                        }
+                        agentTurnCopyTextByItem[item.key]?.let { copyText ->
+                            DisableSelection {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 4.dp),
+                                    horizontalArrangement = Arrangement.Start,
+                                ) {
+                                    MessageCopyButton(
+                                        darkMode = darkMode,
+                                        label = stringResource(R.string.session_copy_reply),
+                                        onClick = { onCopyMessage(copyText) },
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
                 if (loadingOlder) {
@@ -339,6 +364,63 @@ private fun groupTimelineMessages(messages: List<TimelineMessage>): List<Timelin
     }
     flushTools()
     return result
+}
+
+private fun buildAgentTurnCopyTextByItem(
+    items: List<TimelineRenderItem>,
+    hideLatestTurn: Boolean,
+): Map<String, String> {
+    val latestTurnId = if (hideLatestTurn) {
+        items.asReversed()
+            .asSequence()
+            .flatMap { it.messages.asReversed().asSequence() }
+            .firstOrNull { it.turnId != null }
+            ?.turnId
+    } else {
+        null
+    }
+    val turnOrder = mutableListOf<String>()
+    val textByTurn = linkedMapOf<String, MutableList<String>>()
+    val lastItemKeyByTurn = linkedMapOf<String, String>()
+
+    items.forEach { item ->
+        item.messages.forEach { message ->
+            val turnKey = message.turnId ?: "message:${message.id}"
+            if (message.turnId != null || message.isCopyableAgentText()) {
+                lastItemKeyByTurn[turnKey] = item.key
+            }
+            val text = message.agentCopyText()
+            if (text.isNotBlank()) {
+                if (turnKey !in textByTurn) {
+                    turnOrder += turnKey
+                    textByTurn[turnKey] = mutableListOf()
+                }
+                textByTurn.getValue(turnKey) += text
+            }
+        }
+    }
+
+    return buildMap {
+        turnOrder.forEach { turnKey ->
+            if (turnKey == latestTurnId) return@forEach
+            val copyText = textByTurn[turnKey]
+                .orEmpty()
+                .joinToString("\n\n")
+                .trim()
+            val lastItemKey = lastItemKeyByTurn[turnKey]
+            if (copyText.isNotBlank() && lastItemKey != null) {
+                put(lastItemKey, copyText)
+            }
+        }
+    }
+}
+
+private fun TimelineMessage.isCopyableAgentText(): Boolean {
+    return kind == TimelineMessageKind.Text && author == MessageAuthor.Agent
+}
+
+private fun TimelineMessage.agentCopyText(): String {
+    return if (isCopyableAgentText()) text.trimEnd('\r', '\n') else ""
 }
 
 private fun TimelineMessage.isToolRunItem(): Boolean {
@@ -560,6 +642,7 @@ private fun TimelineMessageRow(
     sessionId: String,
     controller: SessionDetailController,
     onPreviewAttachment: (TimelineAttachment) -> Unit,
+    onCopyMessage: (String) -> Unit,
 ) {
     when (message.kind) {
         TimelineMessageKind.Reasoning -> ReasoningSection(message, darkMode)
@@ -568,7 +651,7 @@ private fun TimelineMessageRow(
         TimelineMessageKind.ToolCall -> ToolActivityCard(message, darkMode, listState)
         TimelineMessageKind.System -> ToolPlaceholder(message, darkMode)
         TimelineMessageKind.Text -> when (message.author) {
-            MessageAuthor.User -> UserBubble(message, darkMode, sessionId, controller, onPreviewAttachment)
+            MessageAuthor.User -> UserBubble(message, darkMode, sessionId, controller, onPreviewAttachment, onCopyMessage)
             MessageAuthor.Agent -> AgentMarkdownText(message.text, darkMode)
             MessageAuthor.Tool -> ToolPlaceholder(message, darkMode)
         }
@@ -582,6 +665,7 @@ private fun UserBubble(
     sessionId: String,
     controller: SessionDetailController,
     onPreviewAttachment: (TimelineAttachment) -> Unit,
+    onCopyMessage: (String) -> Unit,
 ) {
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val maxBubbleWidth = maxWidth * 0.78f
@@ -613,39 +697,52 @@ private fun UserBubble(
                     onPreviewAttachment = onPreviewAttachment,
                 )
                 if (text.isNotBlank()) {
-                    Box(
-                        modifier = Modifier
-                            .widthIn(max = maxBubbleWidth)
-                            .clip(RoundedCornerShape(22.dp))
-                            .background(if (darkMode) Color(0xFF2A2A2D) else Color(0xFFF1F0ED))
-                            .padding(horizontal = 17.dp, vertical = 13.dp),
+                    Row(
+                        modifier = Modifier.widthIn(max = maxBubbleWidth + 38.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.Bottom,
                     ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                            Text(
-                                text = text,
-                                color = if (darkMode) Color(0xFFF4F4F5) else Color(0xFF242522),
-                                fontSize = 16.5.sp,
-                                lineHeight = 24.sp,
-                                fontWeight = FontWeight.Normal,
-                                maxLines = if (expanded) Int.MAX_VALUE else 8,
-                                overflow = TextOverflow.Ellipsis,
-                                onTextLayout = { result ->
-                                    if (!expanded) canExpand = result.hasVisualOverflow
-                                },
+                        DisableSelection {
+                            MessageCopyButton(
+                                darkMode = darkMode,
+                                onClick = { onCopyMessage(text) },
+                                modifier = Modifier.padding(bottom = 3.dp),
                             )
-                            if (canExpand || expanded) {
-                                DisableSelection {
-                                    Text(
-                                        text = if (expanded) {
-                                            stringResource(R.string.session_show_less)
-                                        } else {
-                                            stringResource(R.string.session_read_more)
-                                        },
-                                        color = Color(0xFFEAB308),
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.noRippleClickable { expanded = !expanded },
-                                    )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .widthIn(max = maxBubbleWidth)
+                                .clip(RoundedCornerShape(22.dp))
+                                .background(if (darkMode) Color(0xFF2A2A2D) else Color(0xFFF1F0ED))
+                                .padding(horizontal = 17.dp, vertical = 13.dp),
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                                Text(
+                                    text = text,
+                                    color = if (darkMode) Color(0xFFF4F4F5) else Color(0xFF242522),
+                                    fontSize = 16.5.sp,
+                                    lineHeight = 24.sp,
+                                    fontWeight = FontWeight.Normal,
+                                    maxLines = if (expanded) Int.MAX_VALUE else 8,
+                                    overflow = TextOverflow.Ellipsis,
+                                    onTextLayout = { result ->
+                                        if (!expanded) canExpand = result.hasVisualOverflow
+                                    },
+                                )
+                                if (canExpand || expanded) {
+                                    DisableSelection {
+                                        Text(
+                                            text = if (expanded) {
+                                                stringResource(R.string.session_show_less)
+                                            } else {
+                                                stringResource(R.string.session_read_more)
+                                            },
+                                            color = Color(0xFFEAB308),
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.noRippleClickable { expanded = !expanded },
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -662,6 +759,41 @@ private fun UserBubble(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun MessageCopyButton(
+    darkMode: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    label: String? = null,
+) {
+    val iconRes = if (darkMode) R.drawable.ic_copy_bash_command_light else R.drawable.ic_copy_bash_command_dark
+    val contentColor = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF7C7B76)
+    Row(
+        modifier = modifier
+            .height(30.dp)
+            .then(if (label == null) Modifier.width(30.dp) else Modifier.padding(horizontal = 2.dp))
+            .clip(if (label == null) CircleShape else RoundedCornerShape(15.dp))
+            .noRippleClickable(onClick = onClick),
+        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Image(
+            painter = painterResource(iconRes),
+            contentDescription = label ?: stringResource(R.string.common_copy),
+            modifier = Modifier.size(17.dp),
+        )
+        if (label != null) {
+            Text(
+                text = label,
+                color = contentColor,
+                fontSize = 12.sp,
+                lineHeight = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
         }
     }
 }

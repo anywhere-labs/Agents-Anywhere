@@ -48,10 +48,12 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -105,6 +107,7 @@ fun SessionDetailScreen(
     val colors = LocalAAColors.current
     val darkMode = colors.canvas == Color(0xFF09090B)
     val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
@@ -158,6 +161,19 @@ fun SessionDetailScreen(
                 ),
             )
         }
+    }
+
+    fun showToast(message: String) {
+        scope.launch {
+            snackbarHostState.showSnackbar(AAToastVisuals(message = message))
+        }
+    }
+
+    fun copyMessageText(text: String) {
+        val copyText = text.trimEnd('\r', '\n')
+        if (copyText.isBlank()) return
+        clipboard.setText(AnnotatedString(copyText))
+        showToast(context.getString(R.string.common_copied))
     }
 
     fun saveComposerDraft(nextDraft: String, nextAttachments: List<PendingAttachment>) {
@@ -765,6 +781,7 @@ fun SessionDetailScreen(
                                 loadingOlder = state.loadingOlder,
                                 onLoadOlder = { loadOlderMessages() },
                                 onPreviewAttachment = { previewImage = AttachmentPreview.Remote(it) },
+                                onCopyMessage = ::copyMessageText,
                             )
                         }
                         ComposerVeil(

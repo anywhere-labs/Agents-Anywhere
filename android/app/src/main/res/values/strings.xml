@@ -320,6 +320,7 @@
     <string name="session_status_failed">Failed</string>
     <string name="session_show_less">Show less</string>
     <string name="session_read_more">Read more</string>
+    <string name="session_copy_reply">Copy reply</string>
     <string name="session_reasoning">Reasoning</string>
     <string name="session_command">Command</string>
     <string name="session_command_fallback">command</string>

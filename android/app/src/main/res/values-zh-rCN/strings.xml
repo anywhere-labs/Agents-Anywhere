@@ -320,6 +320,7 @@
     <string name="session_status_failed">失败</string>
     <string name="session_show_less">收起</string>
     <string name="session_read_more">展开</string>
+    <string name="session_copy_reply">复制回复</string>
     <string name="session_reasoning">推理</string>
     <string name="session_command">命令</string>
     <string name="session_command_fallback">命令</string>
