@@ -186,8 +186,11 @@ fun NewSessionScreen(
         }
     }
 
-    val workspaces = remember(sessionsState.sessions, selectedDevice?.id, homePath) {
-        workspaceOptionsFor(sessionsState.sessions, selectedDevice?.id, homePath)
+    val workspaceSessions = remember(sessionsState.sessions, sessionsState.archivedSessions) {
+        sessionsState.sessions + sessionsState.archivedSessions
+    }
+    val workspaces = remember(workspaceSessions, selectedDevice?.id, homePath) {
+        workspaceOptionsFor(workspaceSessions, selectedDevice?.id, homePath)
     }
     val selectedWorkspace = workspaces.firstOrNull { it.path == selectedWorkspacePath }
     val selectedWorkspaceTitle = selectedWorkspace?.title?.localizedWorkspaceTitle()
