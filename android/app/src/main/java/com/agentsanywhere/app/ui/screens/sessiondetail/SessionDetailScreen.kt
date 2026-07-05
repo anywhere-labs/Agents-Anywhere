@@ -99,6 +99,7 @@ fun SessionDetailScreen(
     controller: SessionDetailController,
     filesController: FilesController,
     terminalController: TerminalController,
+    composerDraftStore: SessionComposerDraftStore,
     onSessionChanged: (AgentSession) -> Unit = {},
 ) {
     val colors = LocalAAColors.current
@@ -111,9 +112,15 @@ fun SessionDetailScreen(
     val haptic = LocalHapticFeedback.current
     val snackbarHostState = remember { SnackbarHostState() }
     val pagerState = rememberPagerState(pageCount = { 2 })
-    var draft by remember(sessionId) { mutableStateOf("") }
+    val restoredComposerDraft = remember(sessionId) {
+        composerDraftStore.restore(
+            sessionId = sessionId,
+            uploadCancelledMessage = context.getString(R.string.session_attachment_upload_failed),
+        )
+    }
+    var draft by remember(sessionId) { mutableStateOf(restoredComposerDraft.text) }
     var pinLatestRequest by remember(sessionId) { mutableStateOf(0) }
-    var attachments by remember(sessionId) { mutableStateOf(emptyList<PendingAttachment>()) }
+    var attachments by remember(sessionId) { mutableStateOf(restoredComposerDraft.attachments) }
     var takeoverConfirm by remember(sessionId) { mutableStateOf<Boolean?>(null) }
     var pendingErrorSend by remember(sessionId) { mutableStateOf<String?>(null) }
     var previewImage by remember(sessionId) { mutableStateOf<AttachmentPreview?>(null) }
@@ -153,10 +160,31 @@ fun SessionDetailScreen(
         }
     }
 
+    fun saveComposerDraft(nextDraft: String, nextAttachments: List<PendingAttachment>) {
+        composerDraftStore.save(sessionId, nextDraft, nextAttachments)
+    }
+
+    fun setComposerDraft(nextDraft: String) {
+        draft = nextDraft
+        saveComposerDraft(nextDraft, attachments)
+    }
+
+    fun setComposerAttachments(nextAttachments: List<PendingAttachment>) {
+        attachments = nextAttachments
+        saveComposerDraft(draft, nextAttachments)
+    }
+
+    fun clearComposerDraft() {
+        draft = ""
+        attachments = emptyList()
+        composerDraftStore.clear(sessionId)
+    }
+
     fun updateAttachment(id: String, transform: (PendingAttachment) -> PendingAttachment) {
-        attachments = attachments.map { attachment ->
+        val nextAttachments = attachments.map { attachment ->
             if (attachment.id == id) transform(attachment) else attachment
         }
+        setComposerAttachments(nextAttachments)
     }
 
     fun uploadPendingAttachment(attachment: PendingAttachment) {
@@ -247,7 +275,7 @@ fun SessionDetailScreen(
                 )
             }
         if (accepted.isEmpty()) return
-        attachments = attachments + accepted
+        setComposerAttachments(attachments + accepted)
         accepted.forEach(::uploadPendingAttachment)
     }
 
@@ -394,8 +422,7 @@ fun SessionDetailScreen(
                 clientMessageId,
                 attachments = uploadedAttachments,
             )
-            draft = ""
-            attachments = emptyList()
+            clearComposerDraft()
             unfocusComposer()
             pinLatestRequest += 1
             controller.sendMessage(
@@ -747,7 +774,7 @@ fun SessionDetailScreen(
                         MessageComposer(
                             darkMode = darkMode,
                             draft = draft,
-                            onDraftChange = { draft = it },
+                            onDraftChange = ::setComposerDraft,
                             takeoverEnabled = takeoverEnabled,
                             takeoverBusy = state.takeoverInFlight || !connectorOnline,
                             inputEnabled = inputEnabled,
@@ -760,7 +787,7 @@ fun SessionDetailScreen(
                             onPickFile = ::openFilePicker,
                             onOpenCamera = ::openCamera,
                             onRemoveAttachment = { remove ->
-                                attachments = attachments.filterNot { it.id == remove.id }
+                                setComposerAttachments(attachments.filterNot { it.id == remove.id })
                             },
                             onPreviewAttachment = { previewImage = AttachmentPreview.Local(it) },
                             onReadOnlyClick = ::handleReadOnlyComposerClick,
