@@ -9,9 +9,13 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.Clipboard
 import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.LocalTextToolbar
+import androidx.compose.ui.platform.TextToolbar
+import androidx.compose.ui.platform.TextToolbarStatus
 
 private const val SESSION_SELECTION_CLIP_LABEL = "plain text"
 
@@ -29,10 +33,15 @@ internal fun SessionSelectionContainer(
     val rewritingClipboard = remember(platformClipboard, copyTokens) {
         SessionSelectionClipboard(platformClipboard, copyTokens)
     }
+    val platformTextToolbar = LocalTextToolbar.current
+    val copyOnlyTextToolbar = remember(platformTextToolbar) {
+        CopyOnlyTextToolbar(platformTextToolbar)
+    }
 
     CompositionLocalProvider(
         LocalSessionSelectionCopyTokens provides copyTokens,
         LocalClipboard provides rewritingClipboard,
+        LocalTextToolbar provides copyOnlyTextToolbar,
     ) {
         SelectionContainer(modifier = modifier, content = content)
     }
@@ -86,4 +95,49 @@ private class SessionSelectionClipboard(
             .replace(Regex("\\n{3,}"), "\n\n")
             .trim('\n')
     }
+}
+
+private class CopyOnlyTextToolbar(
+    private val delegate: TextToolbar,
+) : TextToolbar {
+    override fun showMenu(
+        rect: Rect,
+        onCopyRequested: (() -> Unit)?,
+        onPasteRequested: (() -> Unit)?,
+        onCutRequested: (() -> Unit)?,
+        onSelectAllRequested: (() -> Unit)?,
+    ) {
+        delegate.showMenu(
+            rect = rect,
+            onCopyRequested = onCopyRequested,
+            onPasteRequested = null,
+            onCutRequested = null,
+            onSelectAllRequested = null,
+        )
+    }
+
+    override fun showMenu(
+        rect: Rect,
+        onCopyRequested: (() -> Unit)?,
+        onPasteRequested: (() -> Unit)?,
+        onCutRequested: (() -> Unit)?,
+        onSelectAllRequested: (() -> Unit)?,
+        onAutofillRequested: (() -> Unit)?,
+    ) {
+        delegate.showMenu(
+            rect = rect,
+            onCopyRequested = onCopyRequested,
+            onPasteRequested = null,
+            onCutRequested = null,
+            onSelectAllRequested = null,
+            onAutofillRequested = null,
+        )
+    }
+
+    override fun hide() {
+        delegate.hide()
+    }
+
+    override val status: TextToolbarStatus
+        get() = delegate.status
 }
