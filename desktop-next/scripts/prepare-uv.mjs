@@ -5,6 +5,7 @@ import { get } from "node:https"
 import { basename, dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { spawn } from "node:child_process"
+import { ProxyAgent } from "proxy-agent"
 
 const UV_VERSION = process.env.UV_BUNDLE_VERSION || "0.11.26"
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..")
@@ -13,6 +14,7 @@ const OUTPUT_ROOT = join(REPO_ROOT, "build", "uv")
 const RELEASE_BASE = `https://github.com/astral-sh/uv/releases/download/${UV_VERSION}`
 const RAW_BASE = `https://raw.githubusercontent.com/astral-sh/uv/${UV_VERSION}`
 const DOWNLOAD_TIMEOUT_MS = Number(process.env.UV_BUNDLE_DOWNLOAD_TIMEOUT_MS || 30000)
+const PROXY_ENV_KEYS = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"]
 
 const TARGETS = {
   "darwin-arm64": { triple: "aarch64-apple-darwin", archive: "tar.gz", executable: "uv" },
@@ -42,6 +44,12 @@ async function exists(path) {
   }
 }
 
+function hasProxyEnv() {
+  return PROXY_ENV_KEYS.some((key) => Boolean(process.env[key]?.trim()))
+}
+
+const proxyAgent = hasProxyEnv() ? new ProxyAgent() : undefined
+
 async function download(url, destination) {
   await mkdir(dirname(destination), { recursive: true })
   if (await exists(destination)) return
@@ -53,7 +61,7 @@ async function download(url, destination) {
       await rm(destination, { force: true }).catch(() => undefined)
       reject(error)
     }
-    const request = get(url, { headers: { "user-agent": "agents-anywhere-desktop-build" } }, (response) => {
+    const request = get(url, { agent: proxyAgent, headers: { "user-agent": "agents-anywhere-desktop-build" } }, (response) => {
       if (response.statusCode && response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
         response.resume()
         download(response.headers.location, destination).then(resolvePromise, reject)

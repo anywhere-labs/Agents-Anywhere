@@ -63,6 +63,7 @@
     "@types/react-is": "^19",
     "electron": "^39.2.7",
     "electron-builder": "^26.0.12",
+    "proxy-agent": "^8.0.2",
     "typescript": "^6.0.3"
   },
   "build": {
