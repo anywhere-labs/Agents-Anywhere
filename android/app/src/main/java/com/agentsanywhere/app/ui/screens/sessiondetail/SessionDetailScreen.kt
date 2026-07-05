@@ -124,6 +124,7 @@ fun SessionDetailScreen(
     var composerHeightPx by remember { mutableStateOf(0) }
     var readOnlyComposerTapCount by remember(sessionId) { mutableStateOf(0) }
     val refetchInFlight = remember(sessionId) { AtomicBoolean(false) }
+    val olderInFlight = remember(sessionId) { AtomicBoolean(false) }
     val streamOpen = remember(sessionId) { AtomicBoolean(false) }
     val remoteTerminal = remember(sessionId, terminalController) { RemoteTerminalController(terminalController) }
 
@@ -313,7 +314,7 @@ fun SessionDetailScreen(
         val id = sessionId ?: return
         if (!appVisible) return
         if (!refetchInFlight.compareAndSet(false, true)) return
-        if (showLoading) state = state.copy(isLoading = true, errorMessage = null)
+        if (showLoading) state = state.copy(isLoading = true, loadingOlder = false, errorMessage = null)
         try {
             controller.load(id, devices, state)
                 .onSuccess { loaded ->
@@ -323,7 +324,9 @@ fun SessionDetailScreen(
                         messages = loaded.messages,
                         approvals = loaded.approvals,
                         nextSeq = max(state.nextSeq, loaded.nextSeq),
+                        hasMore = loaded.hasMore,
                         isLoading = false,
+                        loadingOlder = false,
                         errorMessage = null,
                     )
                     state.session?.let(onSessionChanged)
@@ -332,12 +335,45 @@ fun SessionDetailScreen(
                     if (appVisible) {
                         state = state.copy(
                             isLoading = false,
+                            loadingOlder = false,
                             errorMessage = error.message ?: context.getString(R.string.session_load_messages_failed),
                         )
                     }
                 }
         } finally {
             refetchInFlight.set(false)
+        }
+    }
+
+    fun loadOlderMessages() {
+        val id = sessionId ?: return
+        if (!appVisible || !state.hasMore || state.loadingOlder) return
+        if (!olderInFlight.compareAndSet(false, true)) return
+        val beforeOrderSeq = state.messages
+            .filterNot { it.optimistic }
+            .minOfOrNull { it.orderSeq }
+        if (beforeOrderSeq == null || beforeOrderSeq <= 1) {
+            olderInFlight.set(false)
+            state = state.copy(hasMore = false, loadingOlder = false)
+            return
+        }
+        state = state.copy(loadingOlder = true, actionError = null)
+        scope.launch {
+            try {
+                controller.loadOlder(id, beforeOrderSeq, devices)
+                    .onSuccess { older ->
+                        if (!appVisible) return@onSuccess
+                        state = controller.applyOlder(state, older)
+                        state.session?.let(onSessionChanged)
+                    }
+                    .onFailure { error ->
+                        val message = error.message ?: context.getString(R.string.session_load_messages_failed)
+                        state = state.copy(loadingOlder = false, actionError = message)
+                        showError(message)
+                    }
+            } finally {
+                olderInFlight.set(false)
+            }
         }
     }
 
@@ -536,6 +572,7 @@ fun SessionDetailScreen(
         onDispose {
             streamOpen.set(false)
             refetchInFlight.set(false)
+            olderInFlight.set(false)
             lifecycleOwner.lifecycle.removeObserver(observer)
         }
     }
@@ -697,6 +734,9 @@ fun SessionDetailScreen(
                                 controller = controller,
                                 pinLatestRequest = pinLatestRequest,
                                 workingLabel = workingLabel,
+                                hasMore = state.hasMore,
+                                loadingOlder = state.loadingOlder,
+                                onLoadOlder = { loadOlderMessages() },
                                 onPreviewAttachment = { previewImage = AttachmentPreview.Remote(it) },
                             )
                         }

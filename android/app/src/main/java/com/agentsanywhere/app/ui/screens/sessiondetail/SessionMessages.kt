@@ -29,6 +29,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -70,12 +71,14 @@ import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import com.valentinilk.shimmer.shimmer
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
 private const val SESSION_WELCOME_WRITE_MS = 58L
 private const val SESSION_WELCOME_ERASE_MS = 22L
 private const val SESSION_WELCOME_HOLD_MS = 15_000L
+private const val LOAD_OLDER_VISIBLE_THRESHOLD = 3
 private val SessionWelcomeFontFamily = FontFamily(
     Font(R.font.newsreader_opsz_wght, FontWeight(650)),
 )
@@ -187,6 +190,9 @@ internal fun MessageList(
     controller: SessionDetailController,
     pinLatestRequest: Int,
     workingLabel: String?,
+    hasMore: Boolean,
+    loadingOlder: Boolean,
+    onLoadOlder: () -> Unit,
     onPreviewAttachment: (TimelineAttachment) -> Unit,
 ) {
     val listState = rememberLazyListState()
@@ -219,6 +225,21 @@ internal fun MessageList(
         }
     }
 
+    LaunchedEffect(listState, hasMore, loadingOlder, messages.size) {
+        snapshotFlow {
+            val layout = listState.layoutInfo
+            val total = layout.totalItemsCount
+            val lastVisible = layout.visibleItemsInfo.maxOfOrNull { it.index } ?: -1
+            total > 0 && lastVisible >= total - LOAD_OLDER_VISIBLE_THRESHOLD
+        }
+            .distinctUntilChanged()
+            .collectLatest { nearOldest ->
+                if (nearOldest && hasMore && !loadingOlder) {
+                    onLoadOlder()
+                }
+            }
+    }
+
     Box(Modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
@@ -245,6 +266,11 @@ internal fun MessageList(
                     onPreviewAttachment = onPreviewAttachment,
                 )
             }
+            if (loadingOlder) {
+                item(key = "loading-older") {
+                    OlderMessagesLoadingIndicator(darkMode = darkMode)
+                }
+            }
             item(key = "top-space") { Spacer(Modifier.height(74.dp)) }
         }
 
@@ -260,6 +286,23 @@ internal fun MessageList(
                     .padding(bottom = 140.dp),
             )
         }
+    }
+}
+
+@Composable
+private fun OlderMessagesLoadingIndicator(darkMode: Boolean) {
+    val color = if (darkMode) Color(0xFFEDEDEF) else Color(0xFF2F2F33)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        CircularProgressIndicator(
+            color = color,
+            strokeWidth = 2.dp,
+            modifier = Modifier.size(22.dp),
+        )
     }
 }
 
