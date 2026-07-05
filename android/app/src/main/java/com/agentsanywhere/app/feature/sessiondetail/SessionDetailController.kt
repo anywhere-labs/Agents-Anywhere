@@ -36,6 +36,9 @@ class SessionDetailController(
     private val sessionsApi: SessionsApi,
     private val sessionStore: AuthSessionStore,
 ) {
+    private val optimisticLock = Any()
+    private val optimisticMessagesBySession = mutableMapOf<String, List<TimelineMessage>>()
+
     suspend fun load(
         sessionId: String,
         devices: List<AgentDevice>,
@@ -53,9 +56,14 @@ class SessionDetailController(
                 )
                 val items = page.items
                 val realMessages = items.flatMap { it.toTimelineMessages() }
+                val messages = mergeOptimistic(
+                    sessionId = sessionId,
+                    realMessages = realMessages,
+                    currentMessages = currentState?.messages.orEmpty(),
+                )
                 SessionDetailState(
                     session = page.session.toAgentSession(devices.associateBy { it.id }),
-                    messages = mergeOptimistic(realMessages, currentState?.messages.orEmpty()),
+                    messages = messages,
                     approvals = page.approvals.map { it.toTimelineApproval() },
                     nextSeq = page.nextSeq,
                     hasMore = page.hasMore,
@@ -65,7 +73,7 @@ class SessionDetailController(
                     actionError = currentState?.actionError,
                     sseConnected = currentState?.sseConnected ?: false,
                     takeoverInFlight = currentState?.takeoverInFlight ?: false,
-                    sending = currentState?.sending ?: false,
+                    sending = currentState?.sending ?: messages.hasPendingOptimisticSend(),
                     interrupting = currentState?.interrupting ?: false,
                 )
             }.recoverCatching { error ->
@@ -297,13 +305,21 @@ class SessionDetailController(
         }
     }
 
-    fun applyDelta(current: SessionDetailState, delta: SessionDetailDelta): SessionDetailState {
+    fun applyDelta(
+        sessionId: String,
+        current: SessionDetailState,
+        delta: SessionDetailDelta,
+    ): SessionDetailState {
         if (delta.refetch) return current
         val keptReal = current.messages.filter { message ->
             !message.optimistic && message.sourceItemId !in delta.replaceSourceItemIds
         }
         val keptOptimistic = current.messages.filter { it.optimistic }
-        val messages = mergeOptimistic(keptReal + delta.messages, keptOptimistic)
+        val messages = mergeOptimistic(
+            sessionId = sessionId,
+            realMessages = keptReal + delta.messages,
+            currentMessages = keptOptimistic,
+        )
         return current.copy(
             session = delta.session ?: current.session,
             messages = messages,
@@ -315,12 +331,21 @@ class SessionDetailController(
         )
     }
 
-    fun applyOlder(current: SessionDetailState, older: SessionDetailState): SessionDetailState {
+    fun applyOlder(
+        sessionId: String,
+        current: SessionDetailState,
+        older: SessionDetailState,
+    ): SessionDetailState {
         val realMessages = (older.messages + current.messages.filterNot { it.optimistic })
             .distinctBy { it.id }
+        val messages = mergeOptimistic(
+            sessionId = sessionId,
+            realMessages = realMessages,
+            currentMessages = current.messages,
+        )
         return current.copy(
             session = older.session ?: current.session,
-            messages = mergeOptimistic(realMessages, current.messages),
+            messages = messages,
             approvals = older.approvals,
             nextSeq = max(current.nextSeq, older.nextSeq),
             hasMore = older.hasMore,
@@ -330,6 +355,7 @@ class SessionDetailController(
     }
 
     fun addOptimisticMessage(
+        sessionId: String,
         state: SessionDetailState,
         text: String,
         clientMessageId: String,
@@ -349,33 +375,48 @@ class SessionDetailController(
             turnId = null,
             optimistic = true,
         )
+        upsertOptimisticMessage(sessionId, message)
         return state.copy(
-            messages = sortMessages(state.messages + message),
+            messages = mergeOptimistic(
+                sessionId = sessionId,
+                realMessages = state.messages,
+                currentMessages = state.messages + message,
+            ),
             sending = true,
             actionError = null,
         )
     }
 
     fun markOptimisticMessage(
+        sessionId: String,
         state: SessionDetailState,
         clientMessageId: String,
         status: String,
         turnId: String? = null,
         attachments: List<TimelineAttachment> = emptyList(),
     ): SessionDetailState {
+        val updatedMessages = state.messages.map { message ->
+            if (message.id == clientMessageId && message.optimistic) {
+                message.copy(
+                    status = status,
+                    badge = status.statusLabel(),
+                    turnId = turnId ?: message.turnId,
+                    attachments = attachments.ifEmpty { message.attachments },
+                )
+            } else {
+                message
+            }
+        }
+        replaceOptimisticMessages(
+            sessionId = sessionId,
+            messages = updatedMessages.filter { it.optimistic },
+        )
         return state.copy(
-            messages = state.messages.map { message ->
-                if (message.id == clientMessageId && message.optimistic) {
-                    message.copy(
-                        status = status,
-                        badge = status.statusLabel(),
-                        turnId = turnId ?: message.turnId,
-                        attachments = attachments.ifEmpty { message.attachments },
-                    )
-                } else {
-                    message
-                }
-            },
+            messages = mergeOptimistic(
+                sessionId = sessionId,
+                realMessages = state.messages,
+                currentMessages = updatedMessages,
+            ),
             sending = false,
             actionError = if (status == "failed") state.actionError else null,
         )
@@ -458,16 +499,43 @@ class SessionDetailController(
     }
 
     private fun mergeOptimistic(
+        sessionId: String,
         realMessages: List<TimelineMessage>,
         currentMessages: List<TimelineMessage>,
     ): List<TimelineMessage> {
         val real = realMessages.filterNot { it.optimistic }
-        val optimistic = currentMessages.filter { it.optimistic }
+        val optimistic = (currentMessages.filter { it.optimistic } + optimisticMessages(sessionId))
+            .distinctBy { it.id }
         val pending = optimistic.filter { optimisticMessage ->
             optimisticMessage.status == "failed" ||
                 real.none { realMessage -> realMessage.matchesClientMessage(optimisticMessage.id) }
         }
+        replaceOptimisticMessages(sessionId, pending)
         return sortMessages(real + pending)
+    }
+
+    private fun optimisticMessages(sessionId: String): List<TimelineMessage> {
+        return synchronized(optimisticLock) {
+            optimisticMessagesBySession[sessionId].orEmpty()
+        }
+    }
+
+    private fun upsertOptimisticMessage(sessionId: String, message: TimelineMessage) {
+        synchronized(optimisticLock) {
+            val messages = optimisticMessagesBySession[sessionId].orEmpty()
+                .filterNot { it.id == message.id } + message
+            optimisticMessagesBySession[sessionId] = sortMessages(messages)
+        }
+    }
+
+    private fun replaceOptimisticMessages(sessionId: String, messages: List<TimelineMessage>) {
+        synchronized(optimisticLock) {
+            if (messages.isEmpty()) {
+                optimisticMessagesBySession.remove(sessionId)
+            } else {
+                optimisticMessagesBySession[sessionId] = sortMessages(messages.filter { it.optimistic })
+            }
+        }
     }
 
     private fun sortMessages(messages: List<TimelineMessage>): List<TimelineMessage> {
@@ -480,6 +548,10 @@ class SessionDetailController(
 
     private fun TimelineMessage.matchesClientMessage(clientMessageId: String): Boolean {
         return author == MessageAuthor.User && this.clientMessageId == clientMessageId
+    }
+
+    private fun List<TimelineMessage>.hasPendingOptimisticSend(): Boolean {
+        return any { it.optimistic && it.status == "pending" }
     }
 
     private fun RemoteUploadedAttachment.toTimelineAttachment(): TimelineAttachment {

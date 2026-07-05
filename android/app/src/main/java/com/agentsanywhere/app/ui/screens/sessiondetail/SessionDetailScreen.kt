@@ -416,7 +416,7 @@ fun SessionDetailScreen(
                 controller.loadOlder(id, beforeOrderSeq, devices)
                     .onSuccess { older ->
                         if (!appVisible) return@onSuccess
-                        state = controller.applyOlder(state, older)
+                        state = controller.applyOlder(id, state, older)
                         state.session?.let(onSessionChanged)
                     }
                     .onFailure { error ->
@@ -442,9 +442,10 @@ fun SessionDetailScreen(
             }
             val uploadedAttachments = pendingAttachments.mapNotNull { it.remote }
             state = controller.addOptimisticMessage(
-                state,
-                text,
-                clientMessageId,
+                sessionId = id,
+                state = state,
+                text = text,
+                clientMessageId = clientMessageId,
                 attachments = uploadedAttachments,
             )
             clearComposerDraft()
@@ -458,6 +459,7 @@ fun SessionDetailScreen(
             )
                 .onSuccess { result ->
                     state = controller.markOptimisticMessage(
+                        sessionId = id,
                         state = state,
                         clientMessageId = clientMessageId,
                         status = "running",
@@ -467,8 +469,12 @@ fun SessionDetailScreen(
                 }
                 .onFailure { error ->
                     val message = error.message ?: context.getString(R.string.session_send_failed)
-                    state = controller.markOptimisticMessage(state, clientMessageId, "failed")
-                        .copy(actionError = message)
+                    state = controller.markOptimisticMessage(
+                        sessionId = id,
+                        state = state,
+                        clientMessageId = clientMessageId,
+                        status = "failed",
+                    ).copy(actionError = message)
                     showError(message)
                 }
         }
@@ -685,7 +691,7 @@ fun SessionDetailScreen(
                     if (event.value.refetch) {
                         refetch(showLoading = false)
                     } else {
-                        state = controller.applyDelta(state, event.value)
+                        state = controller.applyDelta(id, state, event.value)
                         state.session?.let(onSessionChanged)
                         if (event.value.messages.isNotEmpty()) streamLatestRequest += 1
                     }
