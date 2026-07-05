@@ -338,12 +338,11 @@ function XtermHost({
 
     let term: import("@xterm/xterm").Terminal | null = null
     let fit: import("@xterm/addon-fit").FitAddon | null = null
+    let socket: WebSocket | null = null
     let resizeObserver: ResizeObserver | null = null
     let lastSeenSeq = 0
-    let lastSnapshotData = ""
     let lastSentSize: { cols: number; rows: number } | null = null
     let resizeFrame: number | null = null
-    let pollTimer: number | null = null
     let exitPrinted = false
 
     const sendResize = () => {
@@ -352,50 +351,21 @@ function XtermHost({
       const rows = term.rows
       if (lastSentSize?.cols === cols && lastSentSize.rows === rows) return
       lastSentSize = { cols, rows }
-      void dashboardApi.connectorTerminalResizeV2(token, connectorId, terminal.terminalId, cols, rows).catch(() => undefined)
+      if (socket?.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: "resize", cols, rows }))
+      }
     }
 
-    const pollSnapshot = async () => {
-      if (!term || cancelled) return
-      try {
-        const snapshot = await dashboardApi.connectorTerminalSnapshotV2(token, connectorId, terminal.terminalId, lastSeenSeq)
-        if (cancelled || !term) return
-        const { baseSeq, dataBase64, outputs, seq, terminal: terminalSnapshot } = snapshot.result
-        if (lastSeenSeq === 0 || baseSeq > lastSeenSeq) {
-          lastSnapshotData = dataBase64
-          lastSeenSeq = seq
-          term.reset()
-          term.write(base64ToBytes(dataBase64))
-        } else if (outputs?.length) {
-          for (const frame of outputs) {
-            if (frame.seq <= lastSeenSeq) continue
-            term.write(base64ToBytes(frame.dataBase64))
-            lastSeenSeq = frame.seq
-          }
-        } else if (dataBase64 !== lastSnapshotData && seq === lastSeenSeq) {
-          lastSnapshotData = dataBase64
-        } else {
-          lastSeenSeq = Math.max(lastSeenSeq, seq)
-        }
-        if (terminalSnapshot.status === "exited") {
-          setStatus("exited")
-          if (!exitPrinted) {
-            exitPrinted = true
-            term.writeln("")
-            term.writeln(
-              `\x1b[2m[${
-                terminalSnapshot.exitCode != null
-                  ? t("processExitedWithCode", { code: terminalSnapshot.exitCode })
-                  : t("processExited")
-              }]\x1b[0m`,
-            )
-          }
-          return
-        }
-        setStatus("open")
-      } catch (err) {
-        if (!cancelled) onError(err instanceof Error ? err.message : String(err))
-      }
+    const printExit = (exitCode: number | null | undefined) => {
+      if (!term || exitPrinted) return
+      exitPrinted = true
+      setStatus("exited")
+      term.writeln("")
+      term.writeln(
+        `\x1b[2m[${
+          exitCode != null ? t("processExitedWithCode", { code: exitCode }) : t("processExited")
+        }]\x1b[0m`,
+      )
     }
 
     ;(async () => {
@@ -429,9 +399,8 @@ function XtermHost({
       term.focus()
 
       term.onData((data) => {
-        void dashboardApi.connectorTerminalWriteV2(token, connectorId, terminal.terminalId, utf8ToBase64(data)).catch((err) => {
-          if (!cancelled) onError(err instanceof Error ? err.message : String(err))
-        })
+        if (socket?.readyState !== WebSocket.OPEN) return
+        socket.send(JSON.stringify({ type: "input", data: utf8ToBase64(data) }))
       })
 
       resizeObserver = new ResizeObserver(() => {
@@ -449,9 +418,42 @@ function XtermHost({
         })
       })
       resizeObserver.observe(host)
-      sendResize()
-      await pollSnapshot()
-      if (!cancelled) pollTimer = window.setInterval(() => void pollSnapshot(), 500)
+
+      socket = new WebSocket(connectorTerminalStreamUrl(connectorId, terminal.terminalId, token))
+      socket.onopen = () => {
+        if (cancelled) return
+        setStatus("open")
+        sendResize()
+      }
+      socket.onmessage = (event) => {
+        if (cancelled || !term) return
+        let message: unknown
+        try {
+          message = JSON.parse(String(event.data))
+        } catch {
+          return
+        }
+        if (!isTerminalStreamMessage(message)) return
+        if (message.type === "replay") {
+          lastSeenSeq = message.seq
+          term.reset()
+          term.write(base64ToBytes(message.data))
+        } else if (message.type === "output") {
+          if (message.seq <= lastSeenSeq) return
+          lastSeenSeq = message.seq
+          term.write(base64ToBytes(message.data))
+        } else if (message.type === "exit") {
+          printExit(message.exitCode)
+        } else if (message.type === "error") {
+          onError(message.message)
+        }
+      }
+      socket.onerror = () => {
+        if (!cancelled) onError(t("websocketError"))
+      }
+      socket.onclose = () => {
+        if (!cancelled && !exitPrinted) setStatus("connecting")
+      }
     })().catch((err) => {
       if (!cancelled) onError(err instanceof Error ? err.message : String(err))
     })
@@ -459,8 +461,8 @@ function XtermHost({
     return () => {
       cancelled = true
       if (resizeFrame != null) cancelAnimationFrame(resizeFrame)
-      if (pollTimer != null) window.clearInterval(pollTimer)
       resizeObserver?.disconnect()
+      socket?.close()
       term?.dispose()
     }
   }, [connectorId, onError, t, terminal.terminalId, token])
@@ -504,4 +506,33 @@ function base64ToBytes(base64: string): Uint8Array {
   const bytes = new Uint8Array(binary.length)
   for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index)
   return bytes
+}
+
+type TerminalStreamMessage =
+  | { type: "replay"; data: string; seq: number }
+  | { type: "output"; data: string; seq: number }
+  | { type: "exit"; exitCode?: number | null }
+  | { type: "error"; message: string }
+  | { type: "pong" }
+
+function isTerminalStreamMessage(value: unknown): value is TerminalStreamMessage {
+  if (!value || typeof value !== "object") return false
+  const message = value as Record<string, unknown>
+  if (message.type === "replay" || message.type === "output") {
+    return typeof message.data === "string" && typeof message.seq === "number"
+  }
+  if (message.type === "exit") return true
+  if (message.type === "error") return typeof message.message === "string"
+  if (message.type === "pong") return true
+  return false
+}
+
+function connectorTerminalStreamUrl(connectorId: string, terminalId: string, token: string): string {
+  const apiBase = process.env.NEXT_PUBLIC_AGENTS_ANYWHERE_API?.replace(/\/$/, "") || ""
+  const path = `/connectors/${encodeURIComponent(connectorId)}/terminals-v2/${encodeURIComponent(terminalId)}/stream`
+  const url = new URL(path, apiBase || window.location.origin)
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:"
+  url.searchParams.set("token", token)
+  url.searchParams.set("fromSeq", "0")
+  return url.toString()
 }

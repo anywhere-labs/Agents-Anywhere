@@ -977,6 +977,135 @@ async def connector_terminal_snapshot_v2(
     return RpcResponsePayload(ok=True, result=result)
 
 
+@router.websocket("/{connector_id}/terminals-v2/{terminal_id}/stream")
+async def connector_terminal_stream_v2(
+    websocket: WebSocket,
+    connector_id: str,
+    terminal_id: str,
+    fromSeq: int = Query(default=0, ge=0),
+) -> None:
+    token = websocket.query_params.get("token")
+    auth_header = websocket.headers.get("authorization")
+    if not token and auth_header and auth_header.startswith("Bearer "):
+        token = auth_header[len("Bearer "):]
+    if not token:
+        await websocket.close(code=4401)
+        return
+    user_id = verify_user_access_token(urllib.parse.unquote(token))
+    if user_id is None:
+        await websocket.close(code=4401)
+        return
+
+    db: Store = websocket.app.state.store
+    try:
+        await _require_owned_connector(connector_id, user_id, db)
+    except HTTPException:
+        await websocket.close(code=4404)
+        return
+
+    manager: ConnectorRpcManager = websocket.app.state.rpc
+    hub = websocket.app.state.terminal_stream_hub
+
+    await websocket.accept()
+    await hub.attach(connector_id, terminal_id, websocket)
+    try:
+        try:
+            snapshot = await request_connector(
+                manager,
+                connector_id,
+                "terminal.snapshot",
+                {
+                    "terminalId": terminal_id,
+                    "sessionId": terminal_connector_scope_id(connector_id),
+                    "fromSeq": fromSeq,
+                },
+                timeout=10,
+            )
+        except Exception as exc:
+            code = getattr(exc, "status_code", 500)
+            detail = getattr(exc, "detail", str(exc))
+            await websocket.send_json({"type": "error", "code": code, "message": str(detail)})
+            return
+
+        terminal_snapshot = snapshot.get("terminal") if isinstance(snapshot, dict) else None
+        data_b64 = snapshot.get("dataBase64") if isinstance(snapshot, dict) else None
+        seq = snapshot.get("seq") if isinstance(snapshot, dict) else None
+        if isinstance(data_b64, str):
+            await websocket.send_json(
+                {
+                    "type": "replay",
+                    "data": data_b64,
+                    "seq": seq if isinstance(seq, int) else fromSeq,
+                }
+            )
+        await hub.mark_ready(connector_id, terminal_id, websocket)
+
+        if isinstance(terminal_snapshot, dict) and terminal_snapshot.get("status") == "exited":
+            exit_code = terminal_snapshot.get("exitCode")
+            await websocket.send_json(
+                {
+                    "type": "exit",
+                    "exitCode": exit_code if isinstance(exit_code, int) else None,
+                    "reason": "exit",
+                }
+            )
+
+        while True:
+            message = await websocket.receive_json()
+            mtype = message.get("type")
+            if mtype == "input":
+                data_b64 = message.get("data")
+                if not isinstance(data_b64, str):
+                    continue
+                try:
+                    await request_connector(
+                        manager,
+                        connector_id,
+                        "terminal.write",
+                        {
+                            "terminalId": terminal_id,
+                            "sessionId": terminal_connector_scope_id(connector_id),
+                            "dataBase64": data_b64,
+                        },
+                        timeout=5,
+                    )
+                except Exception as exc:
+                    code = getattr(exc, "status_code", 500)
+                    detail = getattr(exc, "detail", str(exc))
+                    await websocket.send_json({"type": "error", "code": code, "message": str(detail)})
+            elif mtype == "resize":
+                try:
+                    cols = int(message.get("cols") or 80)
+                    rows = int(message.get("rows") or 24)
+                except (TypeError, ValueError):
+                    continue
+                cols = max(1, min(500, cols))
+                rows = max(1, min(200, rows))
+                try:
+                    await request_connector(
+                        manager,
+                        connector_id,
+                        "terminal.resize",
+                        {
+                            "terminalId": terminal_id,
+                            "sessionId": terminal_connector_scope_id(connector_id),
+                            "cols": cols,
+                            "rows": rows,
+                        },
+                        timeout=5,
+                    )
+                except Exception as exc:
+                    code = getattr(exc, "status_code", 500)
+                    detail = getattr(exc, "detail", str(exc))
+                    await websocket.send_json({"type": "error", "code": code, "message": str(detail)})
+            elif mtype == "ping":
+                await websocket.send_json({"type": "pong"})
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await hub.detach(connector_id, terminal_id, websocket)
+
+
 @router.websocket("/{connector_id}/terminals/{terminal_id}/stream")
 async def connector_terminal_stream(
     websocket: WebSocket,

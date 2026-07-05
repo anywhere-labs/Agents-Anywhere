@@ -7,6 +7,7 @@ from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.shell_tasks import ShellTaskManager
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.terminal_broker import TerminalBroker
+from agent_server.infra.terminal_stream_hub import TerminalStreamHub
 from agent_server.core.utc import utc_now
 from agent_server.infra.timeline_broker import TimelineBroker
 
@@ -18,12 +19,14 @@ class ConnectorIngestService:
         manager: ConnectorRpcManager,
         tasks: ShellTaskManager,
         terminal_broker: TerminalBroker,
+        terminal_stream_hub: TerminalStreamHub,
         timeline_broker: TimelineBroker,
     ) -> None:
         self._store = store
         self._manager = manager
         self._tasks = tasks
         self._terminal_broker = terminal_broker
+        self._terminal_stream_hub = terminal_stream_hub
         self._timeline_broker = timeline_broker
 
     async def ingest(
@@ -48,6 +51,7 @@ class ConnectorIngestService:
                     self._store,
                     self._tasks,
                     self._terminal_broker,
+                    self._terminal_stream_hub,
                 )
             )
         await _publish_effects(self._store, self._timeline_broker, effects)
@@ -78,6 +82,7 @@ class ConnectorIngestService:
             self._store,
             self._tasks,
             self._terminal_broker,
+            self._terminal_stream_hub,
         )
         await _publish_effects(self._store, self._timeline_broker, [effect])
         if method == "connector.capabilitiesUpdated":

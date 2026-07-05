@@ -35,6 +35,7 @@ from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.terminal_broker import TerminalBroker
+from agent_server.infra.terminal_stream_hub import TerminalStreamHub
 from agent_server.core.utc import utc_now
 from agent_server.infra.timeline_broker import TimelineBroker
 
@@ -95,6 +96,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     app.state.fs_downloads = FsDownloadRelayManager()
     app.state.shell_tasks = ShellTaskManager()
     app.state.terminal_broker = TerminalBroker()
+    app.state.terminal_stream_hub = TerminalStreamHub()
     app.state.timeline_broker = TimelineBroker()
     app.state.setup_token = SetupToken()
     app.state.started_at_iso = utc_now()

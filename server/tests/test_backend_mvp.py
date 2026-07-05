@@ -4,6 +4,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import time
 from typing import Any
 
 from fastapi.testclient import TestClient
@@ -556,6 +557,16 @@ class FakeLocalRpc:
         if method == "turn.interrupt":
             return self.interrupt_result
         return {"method": method, "params": params}
+
+
+def wait_for_rpc_method(fake_rpc: FakeLocalRpc, method: str) -> tuple[str, str, dict[str, Any], float]:
+    deadline = time.monotonic() + 1
+    while time.monotonic() < deadline:
+        for request in reversed(fake_rpc.requests):
+            if request[1] == method:
+                return request
+        time.sleep(0.01)
+    raise AssertionError(f"timed out waiting for rpc method {method}")
 
 
 def ingest_pending_command_approval(client: TestClient, access_token: str, session_id: str) -> None:
@@ -3306,6 +3317,59 @@ def test_connector_terminal_v2_forwards_lifecycle_to_connector(tmp_path):
     closed = client.delete(f"/connectors/{connector_id}/terminals-v2/{terminal_id}", headers=headers)
     assert closed.status_code == 200, closed.text
     assert fake_rpc.requests[-1][1] == "terminal.close"
+
+
+def test_connector_terminal_v2_stream_uses_websocket_protocol(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, _, headers = create_connector_and_session(client)
+    token = headers["Authorization"].removeprefix("Bearer ")
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+
+    created = client.post(
+        f"/connectors/{connector_id}/terminals-v2?root=/repo",
+        headers=headers,
+        json={"cols": 80, "rows": 24, "label": "Shell"},
+    )
+    assert created.status_code == 200, created.text
+    terminal_id = created.json()["result"]["terminalId"]
+
+    with client.websocket_connect(
+        f"/connectors/{connector_id}/terminals-v2/{terminal_id}/stream?token={token}"
+    ) as websocket:
+        assert websocket.receive_json() == {"type": "replay", "data": "b2s=", "seq": 1}
+
+        websocket.send_json({"type": "input", "data": "Cg=="})
+        assert wait_for_rpc_method(fake_rpc, "terminal.write")[1:] == (
+            "terminal.write",
+            {
+                "terminalId": terminal_id,
+                "sessionId": f"browse_{connector_id}",
+                "dataBase64": "Cg==",
+            },
+            5,
+        )
+
+        websocket.send_json({"type": "resize", "cols": 120, "rows": 40})
+        assert wait_for_rpc_method(fake_rpc, "terminal.resize")[1:] == (
+            "terminal.resize",
+            {
+                "terminalId": terminal_id,
+                "sessionId": f"browse_{connector_id}",
+                "cols": 120,
+                "rows": 40,
+            },
+            5,
+        )
+
+        asyncio.run(
+            client.app.state.terminal_stream_hub.publish_output(
+                connector_id,
+                {"terminalId": terminal_id, "dataBase64": "bGl2ZQ==", "seq": 2},
+            )
+        )
+        assert websocket.receive_json() == {"type": "output", "data": "bGl2ZQ==", "seq": 2}
 
 
 def test_terminal_broker_removes_connector_user_terminals_only(tmp_path):

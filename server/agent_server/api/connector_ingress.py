@@ -47,6 +47,7 @@ from agent_server.services.timeline_effects import close_waiting_approval_items_
 from agent_server.services.shell_tasks import ShellTaskManager
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.terminal_broker import TerminalBroker
+from agent_server.infra.terminal_stream_hub import TerminalStreamHub
 from agent_server.infra.timeline_broker import TimelineBroker
 
 
@@ -263,7 +264,14 @@ async def connector_ws(
         connector_id=connector_id,
         reason="connector.online",
     )
-    ingest_service = ConnectorIngestService(db, manager, tasks, broker, timeline_broker)
+    ingest_service = ConnectorIngestService(
+        db,
+        manager,
+        tasks,
+        broker,
+        websocket.app.state.terminal_stream_hub,
+        timeline_broker,
+    )
     logger.info("connector connected: {}", connector_id)
     try:
         while True:
@@ -444,6 +452,7 @@ async def apply_connector_notification(
     db: Store,
     tasks: ShellTaskManager | None = None,
     broker: TerminalBroker | None = None,
+    terminal_stream_hub: TerminalStreamHub | None = None,
 ) -> IngestEffect:
     """Apply one connector notification, returning what to push to SSE.
 
@@ -619,11 +628,13 @@ async def apply_connector_notification(
                 result=params.get("result") if isinstance(params.get("result"), dict) else None,
                 error=params.get("error") if isinstance(params.get("error"), dict) else None,
             )
-    elif method == "terminal.output" and broker is not None:
+    elif method == "terminal.output":
         terminal_id = params.get("terminalId")
         data_b64 = params.get("dataBase64")
         seq = params.get("seq")
-        if isinstance(terminal_id, str) and isinstance(data_b64, str) and isinstance(seq, int):
+        if terminal_stream_hub is not None:
+            await terminal_stream_hub.publish_output(connector_id, params)
+        if broker is not None and isinstance(terminal_id, str) and isinstance(data_b64, str) and isinstance(seq, int):
             import base64
             try:
                 data = base64.b64decode(data_b64)
@@ -631,11 +642,13 @@ async def apply_connector_notification(
                 data = b""
             if data:
                 await broker.on_output(terminal_id, data=data, seq=seq)
-    elif method == "terminal.exited" and broker is not None:
+    elif method == "terminal.exited":
         terminal_id = params.get("terminalId")
         exit_code = params.get("exitCode")
         reason = params.get("reason") if isinstance(params.get("reason"), str) else None
-        if isinstance(terminal_id, str):
+        if terminal_stream_hub is not None:
+            await terminal_stream_hub.publish_exit(connector_id, params)
+        if broker is not None and isinstance(terminal_id, str):
             await broker.on_exited(
                 terminal_id,
                 exit_code=exit_code if isinstance(exit_code, int) else None,

@@ -41,6 +41,7 @@ def get_connector_ingest_service(conn: HTTPConnection) -> ConnectorIngestService
         conn.app.state.rpc,
         conn.app.state.shell_tasks,
         conn.app.state.terminal_broker,
+        conn.app.state.terminal_stream_hub,
         conn.app.state.timeline_broker,
     )
 
