@@ -29,6 +29,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -254,44 +255,50 @@ internal fun MessageList(
     }
 
     Box(Modifier.fillMaxSize()) {
-        LazyColumn(
-            state = listState,
-            reverseLayout = true,
-            modifier = Modifier
-                .fillMaxSize()
-                .imePadding()
-                .padding(horizontal = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            item(key = "bottom-space") { Spacer(Modifier.height(168.dp)) }
-            if (workingLabel != null) {
-                item(key = "working-indicator") {
-                    WorkingIndicator(label = workingLabel, darkMode = darkMode)
+        SessionSelectionContainer(modifier = Modifier.fillMaxSize()) {
+            LazyColumn(
+                state = listState,
+                reverseLayout = true,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .imePadding()
+                    .padding(horizontal = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                item(key = "bottom-space") { Spacer(Modifier.height(168.dp)) }
+                if (workingLabel != null) {
+                    item(key = "working-indicator") {
+                        DisableSelection {
+                            WorkingIndicator(label = workingLabel, darkMode = darkMode)
+                        }
+                    }
                 }
-            }
-            items(timelineItems.asReversed(), key = { it.key }) { item ->
-                when (item) {
-                    is TimelineRenderItem.Single -> TimelineMessageRow(
-                        message = item.message,
-                        darkMode = darkMode,
-                        listState = listState,
-                        sessionId = sessionId,
-                        controller = controller,
-                        onPreviewAttachment = onPreviewAttachment,
-                    )
-                    is TimelineRenderItem.ToolRun -> ToolRunGroup(
-                        messages = item.messages,
-                        darkMode = darkMode,
-                        listState = listState,
-                    )
+                items(timelineItems.asReversed(), key = { it.key }) { item ->
+                    when (item) {
+                        is TimelineRenderItem.Single -> TimelineMessageRow(
+                            message = item.message,
+                            darkMode = darkMode,
+                            listState = listState,
+                            sessionId = sessionId,
+                            controller = controller,
+                            onPreviewAttachment = onPreviewAttachment,
+                        )
+                        is TimelineRenderItem.ToolRun -> ToolRunGroup(
+                            messages = item.messages,
+                            darkMode = darkMode,
+                            listState = listState,
+                        )
+                    }
                 }
-            }
-            if (loadingOlder) {
-                item(key = "loading-older") {
-                    OlderMessagesLoadingIndicator(darkMode = darkMode)
+                if (loadingOlder) {
+                    item(key = "loading-older") {
+                        DisableSelection {
+                            OlderMessagesLoadingIndicator(darkMode = darkMode)
+                        }
+                    }
                 }
+                item(key = "top-space") { Spacer(Modifier.height(74.dp)) }
             }
-            item(key = "top-space") { Spacer(Modifier.height(74.dp)) }
         }
 
         if (showScrollToBottom) {
@@ -627,28 +634,32 @@ private fun UserBubble(
                                 },
                             )
                             if (canExpand || expanded) {
-                                Text(
-                                    text = if (expanded) {
-                                        stringResource(R.string.session_show_less)
-                                    } else {
-                                        stringResource(R.string.session_read_more)
-                                    },
-                                    color = Color(0xFFEAB308),
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.noRippleClickable { expanded = !expanded },
-                                )
+                                DisableSelection {
+                                    Text(
+                                        text = if (expanded) {
+                                            stringResource(R.string.session_show_less)
+                                        } else {
+                                            stringResource(R.string.session_read_more)
+                                        },
+                                        color = Color(0xFFEAB308),
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.noRippleClickable { expanded = !expanded },
+                                    )
+                                }
                             }
                         }
                     }
                 }
                 if (meta.isNotBlank()) {
-                    Text(
-                        text = meta,
-                        color = if (message.status == "failed") Color(0xFFF87171) else if (darkMode) Color(0xFFA1A1AA) else Color(0xFF7C7B76),
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    )
+                    DisableSelection {
+                        Text(
+                            text = meta,
+                            color = if (message.status == "failed") Color(0xFFF87171) else if (darkMode) Color(0xFFA1A1AA) else Color(0xFF7C7B76),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
                 }
             }
         }
@@ -864,15 +875,17 @@ private fun ToolActivityCard(
             CompactStatusPill(label = message.badge.ifBlank { message.status }, darkMode = darkMode)
         }
         if (expanded && expandable) {
-            ToolActivityDetailCard(
-                message = message,
-                darkMode = darkMode,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(surface)
-                    .border(1.dp, border, RoundedCornerShape(14.dp)),
-            )
+            DisableSelection {
+                ToolActivityDetailCard(
+                    message = message,
+                    darkMode = darkMode,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(surface)
+                        .border(1.dp, border, RoundedCornerShape(14.dp)),
+                )
+            }
         }
     }
 }

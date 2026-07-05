@@ -8,6 +8,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
@@ -60,6 +61,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
@@ -101,6 +103,7 @@ import org.commonmark.parser.Parser
 
 private const val AnnotationFile = "aa-file"
 private const val AnnotationUrl = "aa-url"
+private const val SelectionCodeTokenPrefix = "[[AA_SELECT_CODE:"
 
 private val markdownParser = Parser.builder()
     .extensions(
@@ -498,6 +501,7 @@ private fun isBashLabel(label: String): Boolean {
 
 @Composable
 private fun MarkdownCodePanel(label: String, code: String, darkMode: Boolean, styles: MarkdownStyles) {
+    val normalizedLabel = label.ifBlank { "code" }
     if (isBashLabel(label)) {
         val commands = code.lineSequence()
             .map { it.trimEnd() }
@@ -505,12 +509,82 @@ private fun MarkdownCodePanel(label: String, code: String, darkMode: Boolean, st
             .toList()
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             commands.ifEmpty { listOf(code) }.forEach { command ->
-                BashCommandCard(label = "Bash", code = command, darkMode = darkMode, styles = styles)
+                SelectableMarkdownCodeBlock(
+                    label = "Bash",
+                    code = command,
+                    height = 112.dp,
+                ) {
+                    BashCommandCard(label = "Bash", code = command, darkMode = darkMode, styles = styles)
+                }
             }
         }
         return
     }
 
+    SelectableMarkdownCodeBlock(
+        label = normalizedLabel,
+        code = code,
+        height = markdownCodePanelHeight(code),
+    ) {
+        MarkdownCodePanelContent(label = normalizedLabel, code = code, darkMode = darkMode, styles = styles)
+    }
+}
+
+@Composable
+private fun SelectableMarkdownCodeBlock(
+    label: String,
+    code: String,
+    height: Dp,
+    content: @Composable () -> Unit,
+) {
+    val density = LocalDensity.current
+    val token = remember(label, code) { selectionCodeToken(label, code) }
+    RegisterSessionSelectionCopyToken(token = token, replacement = code)
+
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val placeholderWidth = with(density) { maxWidth.toSp() }
+        val placeholderHeight = with(density) { height.toSp() }
+        val text = remember(token) {
+            buildAnnotatedString {
+                appendInlineContent(token, token)
+            }
+        }
+        val inlineContent = mapOf(
+            token to InlineTextContent(
+                placeholder = Placeholder(
+                    width = placeholderWidth,
+                    height = placeholderHeight,
+                    placeholderVerticalAlign = PlaceholderVerticalAlign.TextTop,
+                ),
+            ) {
+                content()
+            },
+        )
+
+        BasicText(
+            text = text,
+            modifier = Modifier.fillMaxWidth(),
+            style = TextStyle(
+                color = Color.Transparent,
+                fontSize = 1.sp,
+                lineHeight = placeholderHeight,
+            ),
+            inlineContent = inlineContent,
+        )
+    }
+}
+
+private fun selectionCodeToken(label: String, code: String): String {
+    return "$SelectionCodeTokenPrefix${label.hashCode()}:${code.hashCode()}]]"
+}
+
+private fun markdownCodePanelHeight(code: String): Dp {
+    val lineCount = code.lineSequence().count().coerceAtLeast(1)
+    return (lineCount * 15 + 73).dp.coerceAtLeast(112.dp)
+}
+
+@Composable
+private fun MarkdownCodePanelContent(label: String, code: String, darkMode: Boolean, styles: MarkdownStyles) {
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
     var copied by remember(code) { mutableStateOf(false) }
@@ -537,7 +611,7 @@ private fun MarkdownCodePanel(label: String, code: String, darkMode: Boolean, st
             verticalAlignment = Alignment.Top,
         ) {
             Text(
-                text = label.ifBlank { "code" },
+                text = label,
                 color = labelColor,
                 fontSize = 14.sp,
                 lineHeight = 18.sp,
