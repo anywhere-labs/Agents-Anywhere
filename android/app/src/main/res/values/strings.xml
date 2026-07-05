@@ -281,6 +281,7 @@
     <string name="session_interrupt_failed">Could not interrupt this session.</string>
     <string name="session_approval_resolve_failed">Could not resolve approval.</string>
     <string name="session_agent_working">%1$s is working</string>
+    <string name="session_agent_interrupting">Interrupting %1$s</string>
     <string name="session_agent_fallback">Agent</string>
     <string name="session_device_offline_placeholder">Device is offline. You can\'t chat right now.</string>
     <string name="session_reply_to">Reply to %1$s</string>

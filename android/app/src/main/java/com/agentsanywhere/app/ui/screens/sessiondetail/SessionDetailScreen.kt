@@ -702,7 +702,6 @@ fun SessionDetailScreen(
 
     val serverBusy = state.session?.status == SessionStatus.Running ||
         state.session?.status == SessionStatus.WaitingApproval
-    val isBusy = serverBusy && !state.interrupting
     LaunchedEffect(state.interrupting, serverBusy) {
         if (state.interrupting && !serverBusy) state = state.copy(interrupting = false)
     }
@@ -721,19 +720,18 @@ fun SessionDetailScreen(
         attachmentsReady &&
         (draft.isNotBlank() || attachments.isNotEmpty()) &&
         (state.session?.status == SessionStatus.Idle || state.session?.status == SessionStatus.Error)
-    val workingLabel = if (!state.interrupting && (
+    val agentLabel = state.session?.runtimeLabel?.takeIf { it.isNotBlank() }
+        ?: context.getString(R.string.session_agent_fallback)
+    val workingLabel = when {
+        state.interrupting -> context.getString(R.string.session_agent_interrupting, agentLabel)
         state.sending ||
-        state.session?.status == SessionStatus.Running ||
-        state.messages.any { it.optimistic && it.status == "running" }
-    )) {
-        context.getString(
-            R.string.session_agent_working,
-            state.session?.runtimeLabel?.takeIf { it.isNotBlank() } ?: context.getString(R.string.session_agent_fallback),
-        )
-    } else {
-        null
+            state.session?.status == SessionStatus.Running ||
+            state.messages.any { it.optimistic && it.status == "running" } -> {
+            context.getString(R.string.session_agent_working, agentLabel)
+        }
+        else -> null
     }
-    val showInterrupt = inputEnabled && isBusy && draft.isBlank() && attachments.isEmpty()
+    val showInterrupt = inputEnabled && (serverBusy || state.interrupting) && draft.isBlank() && attachments.isEmpty()
     val replyTarget = state.session?.runtimeLabel?.takeIf { it.isNotBlank() }
         ?: stringResource(R.string.session_agent_fallback)
     val placeholder = when {
@@ -811,6 +809,7 @@ fun SessionDetailScreen(
                             inputEnabled = inputEnabled,
                             canSend = canSend,
                             showInterrupt = showInterrupt,
+                            interrupting = state.interrupting,
                             placeholder = placeholder,
                             attachments = attachments,
                             onToggleTakeover = { takeoverConfirm = !takeoverEnabled },

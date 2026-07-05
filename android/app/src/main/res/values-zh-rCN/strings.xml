@@ -281,6 +281,7 @@
     <string name="session_interrupt_failed">无法中断这个会话。</string>
     <string name="session_approval_resolve_failed">无法处理审批。</string>
     <string name="session_agent_working">%1$s 正在处理</string>
+    <string name="session_agent_interrupting">正在中断 %1$s</string>
     <string name="session_agent_fallback">Agent</string>
     <string name="session_device_offline_placeholder">设备已离线，暂时不能聊天。</string>
     <string name="session_reply_to">回复 %1$s</string>
