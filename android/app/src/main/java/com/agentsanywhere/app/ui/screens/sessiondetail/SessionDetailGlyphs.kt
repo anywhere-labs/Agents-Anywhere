@@ -39,6 +39,12 @@ internal fun ChevronRightGlyph(color: Color) = DetailGlyph(sizeDp = 18, color = 
 }
 
 @Composable
+internal fun ChevronDownGlyph(color: Color) = DetailGlyph(sizeDp = 18, color = color) {
+    drawLine(color, Offset(size.width * 0.28f, size.height * 0.40f), Offset(size.width * 0.50f, size.height * 0.62f), strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round)
+    drawLine(color, Offset(size.width * 0.50f, size.height * 0.62f), Offset(size.width * 0.72f, size.height * 0.40f), strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round)
+}
+
+@Composable
 internal fun ChevronUpGlyph(color: Color) = DetailGlyph(sizeDp = 18, color = color) {
     drawLine(color, Offset(size.width * 0.28f, size.height * 0.60f), Offset(size.width * 0.50f, size.height * 0.38f), strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round)
     drawLine(color, Offset(size.width * 0.50f, size.height * 0.38f), Offset(size.width * 0.72f, size.height * 0.60f), strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round)

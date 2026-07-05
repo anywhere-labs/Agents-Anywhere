@@ -141,11 +141,22 @@ class SessionsApi(
         authorizationToken: String,
         sessionId: String,
         afterSeq: Int = 0,
+        beforeOrderSeq: Int? = null,
+        mode: String = "since",
         limit: Int = 500,
     ): RemoteSessionState {
+        val query = buildList {
+            add("mode=${mode.urlEncode()}")
+            add("limit=$limit")
+            when (mode) {
+                "before" -> beforeOrderSeq?.let { add("beforeOrderSeq=$it") }
+                "latest" -> Unit
+                else -> add("afterSeq=$afterSeq")
+            }
+        }.joinToString("&")
         return client.getJson(
             serverUrl = serverUrl,
-            path = "/sessions/${sessionId.urlEncode()}/state?afterSeq=$afterSeq&limit=$limit",
+            path = "/sessions/${sessionId.urlEncode()}/state?$query",
             authorizationToken = authorizationToken,
         ).toRemoteSessionState()
     }

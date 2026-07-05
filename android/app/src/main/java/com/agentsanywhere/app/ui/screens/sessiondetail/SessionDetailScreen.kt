@@ -48,10 +48,12 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -99,11 +101,13 @@ fun SessionDetailScreen(
     controller: SessionDetailController,
     filesController: FilesController,
     terminalController: TerminalController,
+    composerDraftStore: SessionComposerDraftStore,
     onSessionChanged: (AgentSession) -> Unit = {},
 ) {
     val colors = LocalAAColors.current
     val darkMode = colors.canvas == Color(0xFF09090B)
     val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
@@ -111,9 +115,16 @@ fun SessionDetailScreen(
     val haptic = LocalHapticFeedback.current
     val snackbarHostState = remember { SnackbarHostState() }
     val pagerState = rememberPagerState(pageCount = { 2 })
-    var draft by remember(sessionId) { mutableStateOf("") }
-    var pinLatestRequest by remember(sessionId) { mutableStateOf(0) }
-    var attachments by remember(sessionId) { mutableStateOf(emptyList<PendingAttachment>()) }
+    val restoredComposerDraft = remember(sessionId) {
+        composerDraftStore.restore(
+            sessionId = sessionId,
+            uploadCancelledMessage = context.getString(R.string.session_attachment_upload_failed),
+        )
+    }
+    var draft by remember(sessionId) { mutableStateOf(restoredComposerDraft.text) }
+    var forceLatestRequest by remember(sessionId) { mutableStateOf(0) }
+    var streamLatestRequest by remember(sessionId) { mutableStateOf(0) }
+    var attachments by remember(sessionId) { mutableStateOf(restoredComposerDraft.attachments) }
     var takeoverConfirm by remember(sessionId) { mutableStateOf<Boolean?>(null) }
     var pendingErrorSend by remember(sessionId) { mutableStateOf<String?>(null) }
     var previewImage by remember(sessionId) { mutableStateOf<AttachmentPreview?>(null) }
@@ -124,6 +135,7 @@ fun SessionDetailScreen(
     var composerHeightPx by remember { mutableStateOf(0) }
     var readOnlyComposerTapCount by remember(sessionId) { mutableStateOf(0) }
     val refetchInFlight = remember(sessionId) { AtomicBoolean(false) }
+    val olderInFlight = remember(sessionId) { AtomicBoolean(false) }
     val streamOpen = remember(sessionId) { AtomicBoolean(false) }
     val remoteTerminal = remember(sessionId, terminalController) { RemoteTerminalController(terminalController) }
 
@@ -152,10 +164,44 @@ fun SessionDetailScreen(
         }
     }
 
+    fun showToast(message: String) {
+        scope.launch {
+            snackbarHostState.showSnackbar(AAToastVisuals(message = message))
+        }
+    }
+
+    fun copyMessageText(text: String) {
+        val copyText = text.trimEnd('\r', '\n')
+        if (copyText.isBlank()) return
+        clipboard.setText(AnnotatedString(copyText))
+        showToast(context.getString(R.string.common_copied))
+    }
+
+    fun saveComposerDraft(nextDraft: String, nextAttachments: List<PendingAttachment>) {
+        composerDraftStore.save(sessionId, nextDraft, nextAttachments)
+    }
+
+    fun setComposerDraft(nextDraft: String) {
+        draft = nextDraft
+        saveComposerDraft(nextDraft, attachments)
+    }
+
+    fun setComposerAttachments(nextAttachments: List<PendingAttachment>) {
+        attachments = nextAttachments
+        saveComposerDraft(draft, nextAttachments)
+    }
+
+    fun clearComposerDraft() {
+        draft = ""
+        attachments = emptyList()
+        composerDraftStore.clear(sessionId)
+    }
+
     fun updateAttachment(id: String, transform: (PendingAttachment) -> PendingAttachment) {
-        attachments = attachments.map { attachment ->
+        val nextAttachments = attachments.map { attachment ->
             if (attachment.id == id) transform(attachment) else attachment
         }
+        setComposerAttachments(nextAttachments)
     }
 
     fun uploadPendingAttachment(attachment: PendingAttachment) {
@@ -246,7 +292,7 @@ fun SessionDetailScreen(
                 )
             }
         if (accepted.isEmpty()) return
-        attachments = attachments + accepted
+        setComposerAttachments(attachments + accepted)
         accepted.forEach(::uploadPendingAttachment)
     }
 
@@ -313,7 +359,7 @@ fun SessionDetailScreen(
         val id = sessionId ?: return
         if (!appVisible) return
         if (!refetchInFlight.compareAndSet(false, true)) return
-        if (showLoading) state = state.copy(isLoading = true, errorMessage = null)
+        if (showLoading) state = state.copy(isLoading = true, loadingOlder = false, errorMessage = null)
         try {
             controller.load(id, devices, state)
                 .onSuccess { loaded ->
@@ -323,7 +369,9 @@ fun SessionDetailScreen(
                         messages = loaded.messages,
                         approvals = loaded.approvals,
                         nextSeq = max(state.nextSeq, loaded.nextSeq),
+                        hasMore = loaded.hasMore,
                         isLoading = false,
+                        loadingOlder = false,
                         errorMessage = null,
                     )
                     state.session?.let(onSessionChanged)
@@ -332,12 +380,45 @@ fun SessionDetailScreen(
                     if (appVisible) {
                         state = state.copy(
                             isLoading = false,
+                            loadingOlder = false,
                             errorMessage = error.message ?: context.getString(R.string.session_load_messages_failed),
                         )
                     }
                 }
         } finally {
             refetchInFlight.set(false)
+        }
+    }
+
+    fun loadOlderMessages() {
+        val id = sessionId ?: return
+        if (!appVisible || !state.hasMore || state.loadingOlder) return
+        if (!olderInFlight.compareAndSet(false, true)) return
+        val beforeOrderSeq = state.messages
+            .filterNot { it.optimistic }
+            .minOfOrNull { it.orderSeq }
+        if (beforeOrderSeq == null || beforeOrderSeq <= 1) {
+            olderInFlight.set(false)
+            state = state.copy(hasMore = false, loadingOlder = false)
+            return
+        }
+        state = state.copy(loadingOlder = true, actionError = null)
+        scope.launch {
+            try {
+                controller.loadOlder(id, beforeOrderSeq, devices)
+                    .onSuccess { older ->
+                        if (!appVisible) return@onSuccess
+                        state = controller.applyOlder(state, older)
+                        state.session?.let(onSessionChanged)
+                    }
+                    .onFailure { error ->
+                        val message = error.message ?: context.getString(R.string.session_load_messages_failed)
+                        state = state.copy(loadingOlder = false, actionError = message)
+                        showError(message)
+                    }
+            } finally {
+                olderInFlight.set(false)
+            }
         }
     }
 
@@ -358,10 +439,9 @@ fun SessionDetailScreen(
                 clientMessageId,
                 attachments = uploadedAttachments,
             )
-            draft = ""
-            attachments = emptyList()
+            clearComposerDraft()
             unfocusComposer()
-            pinLatestRequest += 1
+            forceLatestRequest += 1
             controller.sendMessage(
                 sessionId = id,
                 content = text,
@@ -536,6 +616,7 @@ fun SessionDetailScreen(
         onDispose {
             streamOpen.set(false)
             refetchInFlight.set(false)
+            olderInFlight.set(false)
             lifecycleOwner.lifecycle.removeObserver(observer)
         }
     }
@@ -601,7 +682,7 @@ fun SessionDetailScreen(
                     } else {
                         state = controller.applyDelta(state, event.value)
                         state.session?.let(onSessionChanged)
-                        if (event.value.messages.isNotEmpty()) pinLatestRequest += 1
+                        if (event.value.messages.isNotEmpty()) streamLatestRequest += 1
                     }
                 }
             }
@@ -695,9 +776,14 @@ fun SessionDetailScreen(
                                 darkMode = darkMode,
                                 sessionId = sessionId.orEmpty(),
                                 controller = controller,
-                                pinLatestRequest = pinLatestRequest,
+                                forceLatestRequest = forceLatestRequest,
+                                streamLatestRequest = streamLatestRequest,
                                 workingLabel = workingLabel,
+                                hasMore = state.hasMore,
+                                loadingOlder = state.loadingOlder,
+                                onLoadOlder = { loadOlderMessages() },
                                 onPreviewAttachment = { previewImage = AttachmentPreview.Remote(it) },
+                                onCopyMessage = ::copyMessageText,
                             )
                         }
                         ComposerVeil(
@@ -707,7 +793,7 @@ fun SessionDetailScreen(
                         MessageComposer(
                             darkMode = darkMode,
                             draft = draft,
-                            onDraftChange = { draft = it },
+                            onDraftChange = ::setComposerDraft,
                             takeoverEnabled = takeoverEnabled,
                             takeoverBusy = state.takeoverInFlight || !connectorOnline,
                             inputEnabled = inputEnabled,
@@ -720,7 +806,7 @@ fun SessionDetailScreen(
                             onPickFile = ::openFilePicker,
                             onOpenCamera = ::openCamera,
                             onRemoveAttachment = { remove ->
-                                attachments = attachments.filterNot { it.id == remove.id }
+                                setComposerAttachments(attachments.filterNot { it.id == remove.id })
                             },
                             onPreviewAttachment = { previewImage = AttachmentPreview.Local(it) },
                             onReadOnlyClick = ::handleReadOnlyComposerClick,

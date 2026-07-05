@@ -320,12 +320,17 @@
     <string name="session_status_failed">失败</string>
     <string name="session_show_less">收起</string>
     <string name="session_read_more">展开</string>
+    <string name="session_copy_reply">复制回复</string>
     <string name="session_reasoning">推理</string>
     <string name="session_command">命令</string>
     <string name="session_command_fallback">命令</string>
     <string name="session_output">输出</string>
     <string name="session_no_output">没有输出</string>
     <string name="session_no_preview">暂无预览</string>
+    <string name="session_tool_summary_commands">执行了 %1$d 条指令</string>
+    <string name="session_tool_summary_changed_files">修改了 %1$d 个文件</string>
+    <string name="session_tool_summary_created_files">创建了 %1$d 个文件</string>
+    <string name="session_tool_summary_items">%1$d 条活动</string>
     <string name="session_takeover">接管</string>
     <string name="session_attachment_camera">相机</string>
     <string name="session_attachment_photos">照片</string>

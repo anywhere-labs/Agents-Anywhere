@@ -8,6 +8,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
@@ -58,8 +59,10 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
@@ -101,6 +104,8 @@ import org.commonmark.parser.Parser
 
 private const val AnnotationFile = "aa-file"
 private const val AnnotationUrl = "aa-url"
+private const val SelectionCodeTokenPrefix = "[[AA_SELECT_CODE:"
+private val TableDelimiterCellRegex = Regex(""":?-{1,}:?""")
 
 private val markdownParser = Parser.builder()
     .extensions(
@@ -116,7 +121,9 @@ private val markdownParser = Parser.builder()
 @Composable
 internal fun AgentMarkdownText(text: String, darkMode: Boolean) {
     val uriHandler = LocalUriHandler.current
-    val document = remember(text) { markdownParser.parse(text.ifBlank { "_(no content)_" }) as Document }
+    val document = remember(text) {
+        markdownParser.parse(normalizeMarkdownTables(text.ifBlank { "_(no content)_" })) as Document
+    }
     val styles = markdownStyles(darkMode)
     val openUrl: (String) -> Unit = { url ->
         runCatching { uriHandler.openUri(url) }
@@ -282,17 +289,21 @@ private fun MarkdownTable(
         table.tableRows().forEachIndexed { rowIndex, row ->
             Row {
                 row.children().filterIsInstance<TableCell>().forEach { cell ->
+                    val cellStyle = styles.tableCell(
+                        header = cell.isHeader,
+                        alignment = cell.alignment,
+                    )
                     Box(
                         modifier = Modifier
                             .widthIn(min = 112.dp, max = 240.dp)
-                            .background(if (rowIndex == 0) styles.codeBackground else Color.Transparent)
+                            .background(if (cell.isHeader || rowIndex == 0) styles.codeBackground else Color.Transparent)
                             .border(0.5.dp, styles.border)
                             .padding(horizontal = 10.dp, vertical = 8.dp),
                     ) {
-                        MarkdownBlocks(
+                        MarkdownInlineText(
                             nodes = cell.children(),
-                            darkMode = darkMode,
-                            styles = styles,
+                            textStyle = cellStyle,
+                            styles = styles.copy(bodyColor = cellStyle.color),
                             onOpenFile = onOpenFile,
                             onOpenUrl = onOpenUrl,
                         )
@@ -498,6 +509,7 @@ private fun isBashLabel(label: String): Boolean {
 
 @Composable
 private fun MarkdownCodePanel(label: String, code: String, darkMode: Boolean, styles: MarkdownStyles) {
+    val normalizedLabel = label.ifBlank { "code" }
     if (isBashLabel(label)) {
         val commands = code.lineSequence()
             .map { it.trimEnd() }
@@ -505,12 +517,82 @@ private fun MarkdownCodePanel(label: String, code: String, darkMode: Boolean, st
             .toList()
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             commands.ifEmpty { listOf(code) }.forEach { command ->
-                BashCommandCard(label = "Bash", code = command, darkMode = darkMode, styles = styles)
+                SelectableMarkdownCodeBlock(
+                    label = "Bash",
+                    code = command,
+                    height = 112.dp,
+                ) {
+                    BashCommandCard(label = "Bash", code = command, darkMode = darkMode, styles = styles)
+                }
             }
         }
         return
     }
 
+    SelectableMarkdownCodeBlock(
+        label = normalizedLabel,
+        code = code,
+        height = markdownCodePanelHeight(code),
+    ) {
+        MarkdownCodePanelContent(label = normalizedLabel, code = code, darkMode = darkMode, styles = styles)
+    }
+}
+
+@Composable
+private fun SelectableMarkdownCodeBlock(
+    label: String,
+    code: String,
+    height: Dp,
+    content: @Composable () -> Unit,
+) {
+    val density = LocalDensity.current
+    val token = remember(label, code) { selectionCodeToken(label, code) }
+    RegisterSessionSelectionCopyToken(token = token, replacement = code)
+
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val placeholderWidth = with(density) { maxWidth.toSp() }
+        val placeholderHeight = with(density) { height.toSp() }
+        val text = remember(token) {
+            buildAnnotatedString {
+                appendInlineContent(token, token)
+            }
+        }
+        val inlineContent = mapOf(
+            token to InlineTextContent(
+                placeholder = Placeholder(
+                    width = placeholderWidth,
+                    height = placeholderHeight,
+                    placeholderVerticalAlign = PlaceholderVerticalAlign.TextTop,
+                ),
+            ) {
+                content()
+            },
+        )
+
+        BasicText(
+            text = text,
+            modifier = Modifier.fillMaxWidth(),
+            style = TextStyle(
+                color = Color.Transparent,
+                fontSize = 1.sp,
+                lineHeight = placeholderHeight,
+            ),
+            inlineContent = inlineContent,
+        )
+    }
+}
+
+private fun selectionCodeToken(label: String, code: String): String {
+    return "$SelectionCodeTokenPrefix${label.hashCode()}:${code.hashCode()}]]"
+}
+
+private fun markdownCodePanelHeight(code: String): Dp {
+    val lineCount = code.lineSequence().count().coerceAtLeast(1)
+    return (lineCount * 15 + 73).dp.coerceAtLeast(112.dp)
+}
+
+@Composable
+private fun MarkdownCodePanelContent(label: String, code: String, darkMode: Boolean, styles: MarkdownStyles) {
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
     var copied by remember(code) { mutableStateOf(false) }
@@ -537,7 +619,7 @@ private fun MarkdownCodePanel(label: String, code: String, darkMode: Boolean, st
             verticalAlignment = Alignment.Top,
         ) {
             Text(
-                text = label.ifBlank { "code" },
+                text = label,
                 color = labelColor,
                 fontSize = 14.sp,
                 lineHeight = 18.sp,
@@ -755,6 +837,17 @@ private data class MarkdownStyles(
         },
         fontWeight = FontWeight.Bold,
     )
+
+    fun tableCell(header: Boolean, alignment: TableCell.Alignment?): TextStyle = body.copy(
+        fontSize = 14.5.sp,
+        lineHeight = 22.sp,
+        fontWeight = if (header) FontWeight.Bold else FontWeight.Normal,
+        textAlign = when (alignment) {
+            TableCell.Alignment.CENTER -> TextAlign.Center
+            TableCell.Alignment.RIGHT -> TextAlign.End
+            else -> TextAlign.Start
+        },
+    )
 }
 
 private fun Node.children(): List<Node> {
@@ -775,6 +868,58 @@ private fun Node.tableRows(): List<TableRow> {
     }
     children().forEach(::visit)
     return out
+}
+
+private fun normalizeMarkdownTables(markdown: String): String {
+    if (!markdown.contains('|')) return markdown
+
+    val lines = markdown.lines()
+    if (lines.size < 2) return markdown
+
+    val normalized = mutableListOf<String>()
+    var inFence = false
+
+    lines.forEachIndexed { index, line ->
+        if (
+            !inFence &&
+            index + 1 < lines.size &&
+            isPotentialTableHeaderRow(line) &&
+            isTableDelimiterRow(lines[index + 1]) &&
+            normalized.lastOrNull()?.isNotBlank() == true
+        ) {
+            normalized += ""
+        }
+
+        normalized += line
+
+        if (line.isMarkdownFenceBoundary()) {
+            inFence = !inFence
+        }
+    }
+
+    return normalized.joinToString("\n")
+}
+
+private fun isPotentialTableHeaderRow(line: String): Boolean {
+    if (isTableDelimiterRow(line)) return false
+    val cells = splitTableRowCells(line)
+    return cells.size >= 2 && cells.any { it.trim().isNotEmpty() }
+}
+
+private fun isTableDelimiterRow(line: String): Boolean {
+    val cells = splitTableRowCells(line)
+    return cells.size >= 2 && cells.all { it.trim().matches(TableDelimiterCellRegex) }
+}
+
+private fun splitTableRowCells(line: String): List<String> {
+    val trimmed = line.trim().trim('|')
+    if (trimmed.isBlank()) return emptyList()
+    return trimmed.split('|')
+}
+
+private fun String.isMarkdownFenceBoundary(): Boolean {
+    val trimmed = trimStart()
+    return trimmed.startsWith("```") || trimmed.startsWith("~~~")
 }
 
 private fun stripLine(path: String): String = path.replace(Regex(""":\d+(:\d+)?$"""), "")

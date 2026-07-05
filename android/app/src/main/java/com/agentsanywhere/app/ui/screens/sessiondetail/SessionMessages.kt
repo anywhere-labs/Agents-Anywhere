@@ -29,6 +29,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.DisableSelection
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -36,6 +38,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -45,10 +48,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
@@ -70,15 +76,37 @@ import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import com.valentinilk.shimmer.shimmer
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
 private const val SESSION_WELCOME_WRITE_MS = 58L
 private const val SESSION_WELCOME_ERASE_MS = 22L
 private const val SESSION_WELCOME_HOLD_MS = 15_000L
+private const val LOAD_OLDER_VISIBLE_THRESHOLD = 3
+private const val RETURN_TO_LATEST_ANIMATION_WINDOW = 12
+private val AUTO_FOLLOW_RESUME_THRESHOLD = 8.dp
+private val AUTO_FOLLOW_DRAG_PAUSE_THRESHOLD = 32.dp
+private val TimelineMessageOrder = compareBy<TimelineMessage> { it.orderSeq }
+    .thenBy { it.updatedSeq }
+    .thenBy { it.id }
 private val SessionWelcomeFontFamily = FontFamily(
     Font(R.font.newsreader_opsz_wght, FontWeight(650)),
 )
+
+private sealed interface TimelineRenderItem {
+    val key: String
+    val messages: List<TimelineMessage>
+
+    data class Single(val message: TimelineMessage) : TimelineRenderItem {
+        override val key: String = message.id
+        override val messages: List<TimelineMessage> = listOf(message)
+    }
+
+    data class ToolRun(override val messages: List<TimelineMessage>) : TimelineRenderItem {
+        override val key: String = "tool-run:${messages.joinToString(":") { it.id }}"
+    }
+}
 
 @Composable
 internal fun SessionDetailLoadingState(darkMode: Boolean) {
@@ -185,13 +213,60 @@ internal fun MessageList(
     darkMode: Boolean,
     sessionId: String,
     controller: SessionDetailController,
-    pinLatestRequest: Int,
+    forceLatestRequest: Int,
+    streamLatestRequest: Int,
     workingLabel: String?,
+    hasMore: Boolean,
+    loadingOlder: Boolean,
+    onLoadOlder: () -> Unit,
     onPreviewAttachment: (TimelineAttachment) -> Unit,
+    onCopyMessage: (String) -> Unit,
 ) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
+    val resumeThresholdPx = with(density) { AUTO_FOLLOW_RESUME_THRESHOLD.roundToPx() }
+    val dragPauseThresholdPx = with(density) { AUTO_FOLLOW_DRAG_PAUSE_THRESHOLD.toPx() }
+    val latestMessages by rememberUpdatedState(messages)
+    val latestWorkingLabel by rememberUpdatedState(workingLabel)
+    var lockedMessages by remember(sessionId) { mutableStateOf<List<TimelineMessage>?>(null) }
+    var lockedWorkingLabel by remember(sessionId) { mutableStateOf<String?>(null) }
+    val displayMessages = lockedMessages ?: messages
+    val displayWorkingLabel = if (lockedMessages != null) lockedWorkingLabel else workingLabel
+    val timelineItems = remember(displayMessages) { groupTimelineMessages(displayMessages) }
+    val agentTurnCopyTextByItem = remember(timelineItems, displayWorkingLabel) {
+        buildAgentTurnCopyTextByItem(timelineItems, displayWorkingLabel != null)
+    }
     var showScrollToBottom by remember { mutableStateOf(false) }
+    var autoFollowLatest by remember(sessionId) { mutableStateOf(true) }
+    var userPausedAutoFollow by remember(sessionId) { mutableStateOf(false) }
+
+    fun releaseReadLock() {
+        lockedMessages = null
+        lockedWorkingLabel = null
+        userPausedAutoFollow = false
+        autoFollowLatest = true
+    }
+
+    fun pauseAutoFollowWithSnapshot() {
+        if (lockedMessages == null) {
+            lockedMessages = latestMessages
+            lockedWorkingLabel = latestWorkingLabel
+        }
+        userPausedAutoFollow = true
+        autoFollowLatest = false
+    }
+
+    LaunchedEffect(messages, lockedMessages) {
+        val locked = lockedMessages ?: return@LaunchedEffect
+        val merged = mergeOlderMessagesIntoLock(
+            lockedMessages = locked,
+            latestMessages = messages,
+        )
+        if (merged.size != locked.size) {
+            lockedMessages = merged
+        }
+    }
 
     LaunchedEffect(listState) {
         var lastPosition = listState.firstVisibleItemIndex * 1_000 + listState.firstVisibleItemScrollOffset
@@ -213,46 +288,143 @@ internal fun MessageList(
         }
     }
 
-    LaunchedEffect(pinLatestRequest) {
-        if (pinLatestRequest > 0) {
+    LaunchedEffect(listState, resumeThresholdPx) {
+        snapshotFlow {
+            Triple(
+                listState.isAtLatest(),
+                listState.isNearLatest(resumeThresholdPx),
+                listState.isScrollInProgress,
+            )
+        }
+            .distinctUntilChanged()
+            .collectLatest { (atLatest, nearLatest, scrolling) ->
+                if (atLatest && !scrolling) {
+                    releaseReadLock()
+                } else if (nearLatest && !scrolling && !userPausedAutoFollow) {
+                    autoFollowLatest = true
+                }
+            }
+    }
+
+    LaunchedEffect(forceLatestRequest) {
+        if (forceLatestRequest > 0) {
+            releaseReadLock()
             listState.scrollToItem(0)
         }
     }
 
-    Box(Modifier.fillMaxSize()) {
-        LazyColumn(
-            state = listState,
-            reverseLayout = true,
-            modifier = Modifier
-                .fillMaxSize()
-                .imePadding()
-                .padding(horizontal = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            item(key = "bottom-space") { Spacer(Modifier.height(168.dp)) }
-            if (workingLabel != null) {
-                item(key = "working-indicator") {
-                    WorkingIndicator(label = workingLabel, darkMode = darkMode)
+    LaunchedEffect(streamLatestRequest) {
+        if (streamLatestRequest > 0 && autoFollowLatest && !userPausedAutoFollow && !listState.isScrollInProgress) {
+            listState.scrollToItem(0)
+        }
+    }
+
+    LaunchedEffect(listState, hasMore, loadingOlder, displayMessages.size) {
+        snapshotFlow {
+            val layout = listState.layoutInfo
+            val total = layout.totalItemsCount
+            val lastVisible = layout.visibleItemsInfo.maxOfOrNull { it.index } ?: -1
+            total > 0 && lastVisible >= total - LOAD_OLDER_VISIBLE_THRESHOLD
+        }
+            .distinctUntilChanged()
+            .collectLatest { nearOldest ->
+                if (nearOldest && hasMore && !loadingOlder) {
+                    onLoadOlder()
                 }
             }
-            items(messages.asReversed(), key = { it.id }) { message ->
-                TimelineMessageRow(
-                    message = message,
-                    darkMode = darkMode,
-                    listState = listState,
-                    sessionId = sessionId,
-                    controller = controller,
-                    onPreviewAttachment = onPreviewAttachment,
-                )
+    }
+
+    Box(Modifier.fillMaxSize()) {
+        SessionSelectionContainer(modifier = Modifier.fillMaxSize()) {
+            LazyColumn(
+                state = listState,
+                reverseLayout = true,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .imePadding()
+                    .pointerInput(sessionId, dragPauseThresholdPx) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val down = awaitPointerEvent(PointerEventPass.Initial)
+                                    .changes
+                                    .firstOrNull { it.pressed && !it.previousPressed }
+                                    ?: continue
+                                val pointerId = down.id
+                                val startY = down.position.y
+
+                                while (true) {
+                                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                                    val change = event.changes.firstOrNull { it.id == pointerId }
+                                        ?: event.changes.firstOrNull { it.pressed }
+                                        ?: break
+                                    if (!change.pressed) break
+                                    if (abs(change.position.y - startY) >= dragPauseThresholdPx) {
+                                        pauseAutoFollowWithSnapshot()
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .padding(horizontal = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                item(key = "bottom-space") { Spacer(Modifier.height(168.dp)) }
+                if (displayWorkingLabel != null) {
+                    item(key = "working-indicator") {
+                        DisableSelection {
+                            WorkingIndicator(label = displayWorkingLabel, darkMode = darkMode)
+                        }
+                    }
+                }
+                items(timelineItems.asReversed(), key = { it.key }) { item ->
+                    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                        when (item) {
+                            is TimelineRenderItem.Single -> TimelineMessageRow(
+                                message = item.message,
+                                darkMode = darkMode,
+                                listState = listState,
+                                sessionId = sessionId,
+                                controller = controller,
+                                onPreviewAttachment = onPreviewAttachment,
+                                onCopyMessage = onCopyMessage,
+                            )
+                            is TimelineRenderItem.ToolRun -> ToolRunGroup(
+                                messages = item.messages,
+                                darkMode = darkMode,
+                                listState = listState,
+                            )
+                        }
+                        agentTurnCopyTextByItem[item.key]?.let { copyText ->
+                            DisableSelection {
+                                AgentReplyCopyAction(
+                                    darkMode = darkMode,
+                                    copyText = copyText,
+                                    onCopyMessage = onCopyMessage,
+                                )
+                            }
+                        }
+                    }
+                }
+                if (loadingOlder) {
+                    item(key = "loading-older") {
+                        DisableSelection {
+                            OlderMessagesLoadingIndicator(darkMode = darkMode)
+                        }
+                    }
+                }
+                item(key = "top-space") { Spacer(Modifier.height(74.dp)) }
             }
-            item(key = "top-space") { Spacer(Modifier.height(74.dp)) }
         }
 
         if (showScrollToBottom) {
             ScrollToBottomButton(
                 darkMode = darkMode,
                 onClick = {
-                    scope.launch { listState.animateScrollToItem(0) }
+                    scope.launch {
+                        listState.animateToLatestFromAnywhere()
+                        releaseReadLock()
+                        listState.scrollToItem(0)
+                    }
                 },
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -260,6 +432,303 @@ internal fun MessageList(
                     .padding(bottom = 140.dp),
             )
         }
+    }
+}
+
+private suspend fun LazyListState.animateToLatestFromAnywhere() {
+    if (firstVisibleItemIndex > RETURN_TO_LATEST_ANIMATION_WINDOW) {
+        scrollToItem(RETURN_TO_LATEST_ANIMATION_WINDOW)
+    }
+    animateScrollToItem(0)
+}
+
+private fun mergeOlderMessagesIntoLock(
+    lockedMessages: List<TimelineMessage>,
+    latestMessages: List<TimelineMessage>,
+): List<TimelineMessage> {
+    val firstLocked = lockedMessages.minWithOrNull(TimelineMessageOrder) ?: return lockedMessages
+    val lockedIds = lockedMessages.mapTo(mutableSetOf()) { it.id }
+    val olderMessages = latestMessages.filter { message ->
+        message.id !in lockedIds && TimelineMessageOrder.compare(message, firstLocked) < 0
+    }
+    if (olderMessages.isEmpty()) return lockedMessages
+    return (olderMessages + lockedMessages)
+        .distinctBy { it.id }
+        .sortedWith(TimelineMessageOrder)
+}
+
+private fun LazyListState.isNearLatest(thresholdPx: Int): Boolean {
+    return firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset <= thresholdPx
+}
+
+private fun LazyListState.isAtLatest(): Boolean {
+    return firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset == 0
+}
+
+@Composable
+private fun AgentReplyCopyAction(
+    darkMode: Boolean,
+    copyText: String,
+    onCopyMessage: (String) -> Unit,
+) {
+    val divider = if (darkMode) Color(0x4A3F3F46) else Color(0x332F2F33)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 4.dp, end = 4.dp, top = 3.dp),
+        verticalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(divider),
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Start,
+        ) {
+            MessageCopyButton(
+                darkMode = darkMode,
+                label = stringResource(R.string.session_copy_reply),
+                onClick = { onCopyMessage(copyText) },
+            )
+        }
+    }
+}
+
+private fun groupTimelineMessages(messages: List<TimelineMessage>): List<TimelineRenderItem> {
+    val result = mutableListOf<TimelineRenderItem>()
+    val pendingTools = mutableListOf<TimelineMessage>()
+
+    fun flushTools() {
+        when (pendingTools.size) {
+            0 -> Unit
+            1 -> result += TimelineRenderItem.Single(pendingTools.first())
+            else -> result += TimelineRenderItem.ToolRun(pendingTools.toList())
+        }
+        pendingTools.clear()
+    }
+
+    for (message in messages) {
+        if (message.isToolRunItem()) {
+            pendingTools += message
+        } else {
+            flushTools()
+            result += TimelineRenderItem.Single(message)
+        }
+    }
+    flushTools()
+    return result
+}
+
+private fun buildAgentTurnCopyTextByItem(
+    items: List<TimelineRenderItem>,
+    hideLatestTurn: Boolean,
+): Map<String, String> {
+    val latestTurnId = if (hideLatestTurn) {
+        items.asReversed()
+            .asSequence()
+            .flatMap { it.messages.asReversed().asSequence() }
+            .firstOrNull { it.turnId != null }
+            ?.turnId
+    } else {
+        null
+    }
+    val turnOrder = mutableListOf<String>()
+    val textByTurn = linkedMapOf<String, MutableList<String>>()
+    val lastItemKeyByTurn = linkedMapOf<String, String>()
+
+    items.forEach { item ->
+        item.messages.forEach { message ->
+            val turnKey = message.turnId ?: "message:${message.id}"
+            if (message.turnId != null || message.isCopyableAgentText()) {
+                lastItemKeyByTurn[turnKey] = item.key
+            }
+            val text = message.agentCopyText()
+            if (text.isNotBlank()) {
+                if (turnKey !in textByTurn) {
+                    turnOrder += turnKey
+                    textByTurn[turnKey] = mutableListOf()
+                }
+                textByTurn.getValue(turnKey) += text
+            }
+        }
+    }
+
+    return buildMap {
+        turnOrder.forEach { turnKey ->
+            if (turnKey == latestTurnId) return@forEach
+            val copyText = textByTurn[turnKey]
+                .orEmpty()
+                .joinToString("\n\n")
+                .trim()
+            val lastItemKey = lastItemKeyByTurn[turnKey]
+            if (copyText.isNotBlank() && lastItemKey != null) {
+                put(lastItemKey, copyText)
+            }
+        }
+    }
+}
+
+private fun TimelineMessage.isCopyableAgentText(): Boolean {
+    return kind == TimelineMessageKind.Text && author == MessageAuthor.Agent
+}
+
+private fun TimelineMessage.agentCopyText(): String {
+    return if (isCopyableAgentText()) text.trimEnd('\r', '\n') else ""
+}
+
+private fun TimelineMessage.isToolRunItem(): Boolean {
+    return kind == TimelineMessageKind.Command ||
+        kind == TimelineMessageKind.FileChange ||
+        kind == TimelineMessageKind.ToolCall
+}
+
+@Composable
+private fun OlderMessagesLoadingIndicator(darkMode: Boolean) {
+    val color = if (darkMode) Color(0xFFEDEDEF) else Color(0xFF2F2F33)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        CircularProgressIndicator(
+            color = color,
+            strokeWidth = 2.dp,
+            modifier = Modifier.size(22.dp),
+        )
+    }
+}
+
+@Composable
+private fun ToolRunGroup(
+    messages: List<TimelineMessage>,
+    darkMode: Boolean,
+    listState: LazyListState,
+) {
+    val primary = if (darkMode) Color(0xFFFAFAFA) else Color(0xFF2B2C29)
+    val muted = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF7C7B76)
+    val surface = if (darkMode) Color(0x1018181B) else Color(0x14F1F0ED)
+    val haptic = LocalHapticFeedback.current
+    var expanded by remember(messages.joinToString(":") { it.id }) { mutableStateOf(false) }
+    var cardTop by remember(messages.joinToString(":") { it.id }) { mutableStateOf<Float?>(null) }
+    var lockedTop by remember(messages.joinToString(":") { it.id }) { mutableStateOf<Float?>(null) }
+
+    fun toggleExpanded() {
+        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        lockedTop = cardTop
+        expanded = !expanded
+    }
+
+    val modifier = Modifier
+        .fillMaxWidth()
+        .padding(horizontal = 4.dp)
+        .onGloballyPositioned {
+            val nextTop = it.positionInWindow().y
+            val delta = (lockedTop ?: nextTop) - nextTop
+            if (abs(delta) > 1f) listState.dispatchRawDelta(delta)
+            lockedTop = null
+            cardTop = nextTop
+        }
+
+    if (!expanded) {
+        Row(
+            modifier = modifier
+                .heightIn(min = 34.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(surface)
+                .noRippleClickable(onClick = ::toggleExpanded)
+                .padding(horizontal = 6.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ChevronRightGlyph(muted)
+            PngToolIcon(
+                lightRes = R.drawable.ic_tool_call_light,
+                darkRes = R.drawable.ic_tool_call_dark,
+                darkMode = darkMode,
+                sizeDp = 16,
+            )
+            Text(
+                text = toolRunSummary(messages),
+                modifier = Modifier.weight(1f),
+                color = muted,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            CompactStatusPill(label = toolRunStatus(messages), darkMode = darkMode)
+        }
+        return
+    }
+
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 34.dp)
+                .noRippleClickable(onClick = ::toggleExpanded)
+                .padding(horizontal = 6.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ChevronDownGlyph(muted)
+            Text(
+                text = toolRunSummary(messages),
+                modifier = Modifier.weight(1f),
+                color = primary,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            CompactStatusPill(label = toolRunStatus(messages), darkMode = darkMode)
+        }
+        messages.forEach { message ->
+            ToolActivityCard(
+                message = message,
+                darkMode = darkMode,
+                listState = listState,
+                embedded = true,
+            )
+        }
+    }
+}
+
+@Composable
+private fun toolRunSummary(messages: List<TimelineMessage>): String {
+    val commands = messages.count { it.kind == TimelineMessageKind.Command }
+    val fileChanges = messages.count { it.kind == TimelineMessageKind.FileChange && it.title != "Added" }
+    val createdFiles = messages.count { it.kind == TimelineMessageKind.FileChange && it.title == "Added" }
+    val tools = messages.count { it.kind == TimelineMessageKind.ToolCall }
+    val parts = buildList {
+        if (commands > 0) add(stringResource(R.string.session_tool_summary_commands, commands))
+        if (fileChanges > 0) add(stringResource(R.string.session_tool_summary_changed_files, fileChanges))
+        if (createdFiles > 0) add(stringResource(R.string.session_tool_summary_created_files, createdFiles))
+        if (tools > 0) add(stringResource(R.string.session_tool_summary_items, tools))
+    }
+    return parts.joinToString(", ").ifBlank {
+        stringResource(R.string.session_tool_summary_items, messages.size)
+    }
+}
+
+private fun toolRunStatus(messages: List<TimelineMessage>): String {
+    return when {
+        messages.any { it.status == "failed" } -> "Failed"
+        messages.any { it.status == "running" } -> "Running"
+        messages.any { it.status == "pending" } -> "Pending"
+        messages.any { it.status == "waiting_approval" } -> "Approval"
+        messages.any { it.status == "cancelled" } -> "Cancelled"
+        messages.any { it.status == "interrupted" } -> "Stopped"
+        else -> "Done"
     }
 }
 
@@ -329,6 +798,7 @@ private fun TimelineMessageRow(
     sessionId: String,
     controller: SessionDetailController,
     onPreviewAttachment: (TimelineAttachment) -> Unit,
+    onCopyMessage: (String) -> Unit,
 ) {
     when (message.kind) {
         TimelineMessageKind.Reasoning -> ReasoningSection(message, darkMode)
@@ -337,7 +807,7 @@ private fun TimelineMessageRow(
         TimelineMessageKind.ToolCall -> ToolActivityCard(message, darkMode, listState)
         TimelineMessageKind.System -> ToolPlaceholder(message, darkMode)
         TimelineMessageKind.Text -> when (message.author) {
-            MessageAuthor.User -> UserBubble(message, darkMode, sessionId, controller, onPreviewAttachment)
+            MessageAuthor.User -> UserBubble(message, darkMode, sessionId, controller, onPreviewAttachment, onCopyMessage)
             MessageAuthor.Agent -> AgentMarkdownText(message.text, darkMode)
             MessageAuthor.Tool -> ToolPlaceholder(message, darkMode)
         }
@@ -351,6 +821,7 @@ private fun UserBubble(
     sessionId: String,
     controller: SessionDetailController,
     onPreviewAttachment: (TimelineAttachment) -> Unit,
+    onCopyMessage: (String) -> Unit,
 ) {
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val maxBubbleWidth = maxWidth * 0.78f
@@ -382,51 +853,110 @@ private fun UserBubble(
                     onPreviewAttachment = onPreviewAttachment,
                 )
                 if (text.isNotBlank()) {
-                    Box(
-                        modifier = Modifier
-                            .widthIn(max = maxBubbleWidth)
-                            .clip(RoundedCornerShape(22.dp))
-                            .background(if (darkMode) Color(0xFF2A2A2D) else Color(0xFFF1F0ED))
-                            .padding(horizontal = 17.dp, vertical = 13.dp),
+                    Row(
+                        modifier = Modifier.widthIn(max = maxBubbleWidth + 38.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.Bottom,
                     ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                            Text(
-                                text = text,
-                                color = if (darkMode) Color(0xFFF4F4F5) else Color(0xFF242522),
-                                fontSize = 16.5.sp,
-                                lineHeight = 24.sp,
-                                fontWeight = FontWeight.Normal,
-                                maxLines = if (expanded) Int.MAX_VALUE else 8,
-                                overflow = TextOverflow.Ellipsis,
-                                onTextLayout = { result ->
-                                    if (!expanded) canExpand = result.hasVisualOverflow
-                                },
+                        DisableSelection {
+                            MessageCopyButton(
+                                darkMode = darkMode,
+                                onClick = { onCopyMessage(text) },
+                                modifier = Modifier.padding(bottom = 3.dp),
                             )
-                            if (canExpand || expanded) {
+                        }
+                        Box(
+                            modifier = Modifier
+                                .widthIn(max = maxBubbleWidth)
+                                .clip(RoundedCornerShape(22.dp))
+                                .background(if (darkMode) Color(0xFF2A2A2D) else Color(0xFFF1F0ED))
+                                .padding(horizontal = 17.dp, vertical = 13.dp),
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
                                 Text(
-                                    text = if (expanded) {
-                                        stringResource(R.string.session_show_less)
-                                    } else {
-                                        stringResource(R.string.session_read_more)
+                                    text = text,
+                                    color = if (darkMode) Color(0xFFF4F4F5) else Color(0xFF242522),
+                                    fontSize = 16.5.sp,
+                                    lineHeight = 24.sp,
+                                    fontWeight = FontWeight.Normal,
+                                    maxLines = if (expanded) Int.MAX_VALUE else 8,
+                                    overflow = TextOverflow.Ellipsis,
+                                    onTextLayout = { result ->
+                                        if (!expanded) canExpand = result.hasVisualOverflow
                                     },
-                                    color = Color(0xFFEAB308),
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.noRippleClickable { expanded = !expanded },
                                 )
+                                if (canExpand || expanded) {
+                                    DisableSelection {
+                                        Text(
+                                            text = if (expanded) {
+                                                stringResource(R.string.session_show_less)
+                                            } else {
+                                                stringResource(R.string.session_read_more)
+                                            },
+                                            color = Color(0xFFEAB308),
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.noRippleClickable { expanded = !expanded },
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
                 }
                 if (meta.isNotBlank()) {
-                    Text(
-                        text = meta,
-                        color = if (message.status == "failed") Color(0xFFF87171) else if (darkMode) Color(0xFFA1A1AA) else Color(0xFF7C7B76),
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    )
+                    DisableSelection {
+                        Text(
+                            text = meta,
+                            color = if (message.status == "failed") Color(0xFFF87171) else if (darkMode) Color(0xFFA1A1AA) else Color(0xFF7C7B76),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun MessageCopyButton(
+    darkMode: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    label: String? = null,
+) {
+    val iconRes = if (darkMode) R.drawable.ic_copy_bash_command_light else R.drawable.ic_copy_bash_command_dark
+    val contentColor = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF7C7B76)
+    Row(
+        modifier = modifier
+            .height(30.dp)
+            .then(
+                if (label == null) {
+                    Modifier
+                        .width(30.dp)
+                        .clip(CircleShape)
+                } else {
+                    Modifier.padding(start = 8.dp, end = 10.dp)
+                },
+            )
+            .noRippleClickable(onClick = onClick),
+        horizontalArrangement = Arrangement.spacedBy(if (label == null) 0.dp else 9.dp, Alignment.CenterHorizontally),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Image(
+            painter = painterResource(iconRes),
+            contentDescription = label ?: stringResource(R.string.common_copy),
+            modifier = Modifier.size(17.dp),
+        )
+        if (label != null) {
+            Text(
+                text = label,
+                color = contentColor,
+                fontSize = 12.sp,
+                lineHeight = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
         }
     }
 }
@@ -558,12 +1088,20 @@ private fun ReasoningSection(message: TimelineMessage, darkMode: Boolean) {
 }
 
 @Composable
-private fun ToolActivityCard(message: TimelineMessage, darkMode: Boolean, listState: LazyListState) {
+private fun ToolActivityCard(
+    message: TimelineMessage,
+    darkMode: Boolean,
+    listState: LazyListState,
+    embedded: Boolean = false,
+) {
     val surface = if (darkMode) Color(0xFF18181B) else Color(0xFFF1F0ED)
     val border = if (darkMode) Color(0xFF27272A) else Color(0xFFE4E1DB)
     val primary = if (darkMode) Color(0xFFFAFAFA) else Color(0xFF2B2C29)
     val muted = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF7C7B76)
-    val expandable = message.kind == TimelineMessageKind.Command || message.kind == TimelineMessageKind.FileChange
+    val collapsedSurface = if (darkMode) Color(0x1018181B) else Color(0x12F1F0ED)
+    val expandable = message.kind == TimelineMessageKind.Command ||
+        message.kind == TimelineMessageKind.FileChange ||
+        (message.kind == TimelineMessageKind.ToolCall && message.hasToolCallDetail)
     val haptic = LocalHapticFeedback.current
     var expanded by remember(message.id) { mutableStateOf(false) }
     var cardTop by remember(message.id) { mutableStateOf<Float?>(null) }
@@ -573,11 +1111,7 @@ private fun ToolActivityCard(message: TimelineMessage, darkMode: Boolean, listSt
         lockedTop = cardTop
         expanded = !expanded
     }
-    val target = if (message.kind == TimelineMessageKind.ToolCall) {
-        message.title.ifBlank { message.text }
-    } else {
-        message.subtitle.ifBlank { message.text }.ifBlank { message.title }
-    }
+    val target = message.toolSummaryTarget()
     val cardModifier = Modifier
         .fillMaxWidth()
         .onGloballyPositioned {
@@ -587,105 +1121,82 @@ private fun ToolActivityCard(message: TimelineMessage, darkMode: Boolean, listSt
             lockedTop = null
             cardTop = nextTop
         }
-        .clip(RoundedCornerShape(if (expanded) 20.dp else 18.dp))
-        .background(surface)
-        .border(1.dp, border, RoundedCornerShape(if (expanded) 20.dp else 18.dp))
+        .then(if (embedded) Modifier else Modifier.padding(horizontal = 4.dp))
 
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 4.dp),
+    Column(
+        modifier = cardModifier,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        if (expanded && expandable) {
-            ExpandedToolActivityCard(
-                message = message,
-                darkMode = darkMode,
-                onToggle = ::toggleExpanded,
-                modifier = cardModifier,
-            )
-        } else {
-            Row(
-                modifier = cardModifier
-                    .heightIn(min = 58.dp)
-                    .then(if (expandable) Modifier.noRippleClickable { toggleExpanded() } else Modifier)
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                ToolActivityIcon(kind = message.kind, darkMode = darkMode, expanded = false)
-                if (message.kind != TimelineMessageKind.ToolCall) {
-                    Text(
-                        text = message.title,
-                        color = muted,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                    )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 34.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(collapsedSurface)
+                .then(if (expandable) Modifier.noRippleClickable { toggleExpanded() } else Modifier)
+                .padding(horizontal = 6.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (expandable) {
+                if (expanded) {
+                    ChevronDownGlyph(muted)
+                } else {
+                    ChevronRightGlyph(muted)
                 }
+            } else {
+                Spacer(Modifier.width(18.dp))
+            }
+            ToolActivityIcon(kind = message.kind, darkMode = darkMode, expanded = false, sizeDp = 16)
+            if (message.kind != TimelineMessageKind.ToolCall) {
                 Text(
-                    text = target,
-                    modifier = Modifier.weight(1f),
-                    color = primary,
-                    fontSize = if (message.kind == TimelineMessageKind.FileChange) 15.sp else 14.sp,
+                    text = message.title,
+                    color = muted,
+                    fontSize = 13.sp,
                     fontWeight = FontWeight.Bold,
-                    fontFamily = if (message.kind == TimelineMessageKind.FileChange) FontFamily.SansSerif else FontFamily.Monospace,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
                 )
-                StatusPill(label = message.badge.ifBlank { message.status }, darkMode = darkMode)
-                if (expandable) ChevronRightGlyph(if (darkMode) muted else primary)
+            }
+            Text(
+                text = target,
+                modifier = Modifier.weight(1f),
+                color = primary,
+                fontSize = if (message.kind == TimelineMessageKind.FileChange) 13.sp else 12.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = if (message.kind == TimelineMessageKind.FileChange) FontFamily.SansSerif else FontFamily.Monospace,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            CompactStatusPill(label = message.badge.ifBlank { message.status }, darkMode = darkMode)
+        }
+        if (expanded && expandable) {
+            DisableSelection {
+                ToolActivityDetailCard(
+                    message = message,
+                    darkMode = darkMode,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(surface)
+                        .border(1.dp, border, RoundedCornerShape(14.dp)),
+                )
             }
         }
     }
 }
 
 @Composable
-private fun ExpandedToolActivityCard(
+private fun ToolActivityDetailCard(
     message: TimelineMessage,
     darkMode: Boolean,
-    onToggle: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val primary = if (darkMode) Color(0xFFFAFAFA) else Color(0xFF2B2C29)
     val muted = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF7C7B76)
 
     Column(
         modifier = modifier.padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .noRippleClickable(onClick = onToggle),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Row(
-                modifier = Modifier.weight(1f),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                ToolActivityIcon(kind = message.kind, darkMode = darkMode, expanded = true)
-                Text(
-                    text = message.title,
-                    color = muted,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                )
-                Text(
-                    text = if (message.kind == TimelineMessageKind.Command) message.badge.ifBlank { message.status } else expandedTitleTarget(message),
-                    modifier = Modifier.weight(1f),
-                    color = if (message.kind == TimelineMessageKind.Command) muted else primary,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    fontFamily = if (message.kind == TimelineMessageKind.Command) FontFamily.SansSerif else FontFamily.Monospace,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            ChevronUpGlyph(if (darkMode) muted else primary)
-        }
         if (message.kind == TimelineMessageKind.FileChange && message.detail.isNotBlank()) {
             Text(
                 text = message.detail,
@@ -696,17 +1207,47 @@ private fun ExpandedToolActivityCard(
                 fontFamily = FontFamily.Monospace,
             )
         }
-        if (message.kind == TimelineMessageKind.Command) {
-            CommandPreview(command = message.detail.ifBlank { message.subtitle }, output = message.body, darkMode = darkMode)
-        } else {
-            DiffPreview(diff = message.body, path = message.detail.ifBlank { message.subtitle }, darkMode = darkMode)
+        when (message.kind) {
+            TimelineMessageKind.Command -> {
+                CommandPreview(command = message.detail.ifBlank { message.subtitle }, output = message.body, darkMode = darkMode)
+            }
+            TimelineMessageKind.FileChange -> {
+                DiffPreview(diff = message.body, path = message.detail.ifBlank { message.subtitle }, darkMode = darkMode)
+            }
+            TimelineMessageKind.ToolCall -> {
+                ToolCallPreview(message = message, darkMode = darkMode)
+            }
+            else -> Unit
         }
     }
 }
 
-private fun expandedTitleTarget(message: TimelineMessage): String {
-    return message.subtitle.ifBlank { message.text }
+private fun TimelineMessage.toolSummaryTarget(): String {
+    return if (kind == TimelineMessageKind.ToolCall) {
+        title.ifBlank { text }
+    } else {
+        subtitle.ifBlank { text }.ifBlank { title }
+    }
 }
+
+@Composable
+private fun ToolCallPreview(message: TimelineMessage, darkMode: Boolean) {
+    val details = listOf(
+        message.subtitle,
+        message.detail,
+        message.body,
+    ).filter { it.isNotBlank() }
+    if (details.isEmpty()) return
+    CommandPreviewSection(
+        label = message.title.ifBlank { message.text.ifBlank { "tool" } },
+        text = details.joinToString("\n"),
+        languageHint = null,
+        darkMode = darkMode,
+    )
+}
+
+private val TimelineMessage.hasToolCallDetail: Boolean
+    get() = subtitle.isNotBlank() || detail.isNotBlank() || body.isNotBlank()
 
 @Composable
 private fun CommandPreview(command: String, output: String, darkMode: Boolean) {
@@ -801,22 +1342,30 @@ private fun DiffPreview(diff: String, path: String, darkMode: Boolean) {
 }
 
 @Composable
-private fun ToolActivityIcon(kind: TimelineMessageKind, darkMode: Boolean, expanded: Boolean) {
+private fun ToolActivityIcon(
+    kind: TimelineMessageKind,
+    darkMode: Boolean,
+    expanded: Boolean,
+    sizeDp: Int = 20,
+) {
     when (kind) {
         TimelineMessageKind.Command -> PngToolIcon(
             lightRes = if (expanded) R.drawable.ic_ran_expanded_light else R.drawable.ic_terminal_command_light,
             darkRes = if (expanded) R.drawable.ic_ran_expanded_dark else R.drawable.ic_terminal_command_dark,
             darkMode = darkMode,
+            sizeDp = sizeDp,
         )
         TimelineMessageKind.FileChange -> PngToolIcon(
             lightRes = if (expanded) R.drawable.ic_edited_expanded_light else R.drawable.ic_edited_file_light,
             darkRes = if (expanded) R.drawable.ic_edited_expanded_dark else R.drawable.ic_edited_file_dark,
             darkMode = darkMode,
+            sizeDp = sizeDp,
         )
         else -> PngToolIcon(
             lightRes = R.drawable.ic_tool_call_light,
             darkRes = R.drawable.ic_tool_call_dark,
             darkMode = darkMode,
+            sizeDp = sizeDp,
         )
     }
 }
@@ -836,20 +1385,22 @@ private fun PngToolIcon(
 }
 
 @Composable
-private fun StatusPill(label: String, darkMode: Boolean) {
-    Box(
+private fun CompactStatusPill(label: String, darkMode: Boolean) {
+    Row(
         modifier = Modifier
-            .height(24.dp)
-            .widthIn(min = 48.dp)
+            .height(20.dp)
+            .widthIn(min = 40.dp)
             .clip(CircleShape)
             .background(if (darkMode) Color(0xFF27272A) else Color(0xFFE4E2DD))
-            .padding(horizontal = 10.dp),
-        contentAlignment = Alignment.Center,
+            .padding(horizontal = 8.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = label,
             color = if (darkMode) Color(0xFFD4D4D8) else Color(0xFF6F6E69),
-            fontSize = 12.sp,
+            fontSize = 11.sp,
+            lineHeight = 11.sp,
             fontWeight = FontWeight.Bold,
             maxLines = 1,
         )

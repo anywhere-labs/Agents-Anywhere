@@ -70,6 +70,7 @@ import com.agentsanywhere.app.ui.screens.devices.DeviceDetailScreen
 import com.agentsanywhere.app.ui.screens.devices.DevicesScreen
 import com.agentsanywhere.app.ui.screens.devices.PairNewDeviceSheetHost
 import com.agentsanywhere.app.ui.screens.files.FilesScreen
+import com.agentsanywhere.app.ui.screens.sessiondetail.SessionComposerDraftStore
 import com.agentsanywhere.app.ui.screens.sessiondetail.SessionDetailScreen
 import com.agentsanywhere.app.ui.screens.home.HomeTab
 import com.agentsanywhere.app.ui.screens.home.HomeScreen
@@ -556,6 +557,7 @@ private fun AgentsAnywhereNavHost(
 ) {
     val colors = LocalAAColors.current
     var pairDeviceSheetOpen by remember { mutableStateOf(false) }
+    val sessionComposerDraftStore = remember(userId) { SessionComposerDraftStore() }
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -658,6 +660,7 @@ private fun AgentsAnywhereNavHost(
                     controller = sessionDetailController,
                     filesController = filesController,
                     terminalController = terminalController,
+                    composerDraftStore = sessionComposerDraftStore,
                     onSessionChanged = onSessionChanged,
                 )
                 AppDestination.DeviceDetail -> DeviceDetailScreen(

@@ -191,8 +191,13 @@ fun NewSessionScreen(
     val selectedWorkspaceTitle = selectedWorkspace?.title?.localizedWorkspaceTitle()
         ?: pathTitle(selectedWorkspacePath, stringResource(R.string.new_session_home_directory))
     val selectedWorkspaceDetail = selectedWorkspace?.detail ?: selectedWorkspacePath
+    val effectiveWorkspacePath = if (choosePath) currentPath else selectedWorkspacePath
     val selectedAgent = agents.firstOrNull { it.runtime == selectedRuntime }
-    val canStart = selectedDevice != null && selectedAgent != null && selectedWorkspacePath.isNotBlank() && !creating
+    val canStart = selectedDevice != null &&
+        selectedAgent != null &&
+        effectiveWorkspacePath.isNotBlank() &&
+        !creating &&
+        (!choosePath || !pathLoading)
 
     fun submitTitle() {
         title = title.trim().ifBlank { defaultTitle }
@@ -207,7 +212,7 @@ fun NewSessionScreen(
         scope.launch {
             creating = true
             createError = null
-            onCreateSession(title, device.id, agent.runtime, selectedWorkspacePath)
+            onCreateSession(title, device.id, agent.runtime, effectiveWorkspacePath)
                 .onSuccess { session ->
                     creating = false
                     onOpenSession(session)
@@ -298,7 +303,10 @@ fun NewSessionScreen(
                         expanded = workspaceListExpanded,
                         darkMode = darkMode,
                         modifier = Modifier.weight(1f),
-                        onChoosePath = { choosePath = true },
+                        onChoosePath = {
+                            choosePath = true
+                            scope.launch { loadDirectory(root = selectedWorkspacePath) }
+                        },
                         onToggleExpanded = { workspaceListExpanded = !workspaceListExpanded },
                         onSelectWorkspace = {
                             selectedWorkspacePath = it.path

@@ -29,6 +29,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.max
 
+private const val INITIAL_TIMELINE_LIMIT = 100
+private const val TIMELINE_PAGE_LIMIT = 100
+
 class SessionDetailController(
     private val sessionsApi: SessionsApi,
     private val sessionStore: AuthSessionStore,
@@ -41,35 +44,23 @@ class SessionDetailController(
         return withContext(Dispatchers.IO) {
             runCatching {
                 val auth = authSession()
-                val items = mutableListOf<RemoteTimelineItem>()
-                var approvals = emptyList<RemoteApproval>()
-                var session: RemoteSession? = null
-                var nextSeq = 0
-                var afterSeq = 0
-                var hasMore = true
-                while (hasMore) {
-                    val page = sessionsApi.getSessionState(
-                        serverUrl = auth.serverUrl,
-                        authorizationToken = auth.accessToken,
-                        sessionId = sessionId,
-                        afterSeq = afterSeq,
-                    )
-                    session = page.session
-                    approvals = page.approvals
-                    nextSeq = max(nextSeq, page.nextSeq)
-                    items += page.items
-                    hasMore = page.hasMore
-                    val lastSeq = page.items.maxOfOrNull { it.updatedSeq } ?: break
-                    if (lastSeq <= afterSeq) break
-                    afterSeq = lastSeq
-                }
+                val page = sessionsApi.getSessionState(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                    sessionId = sessionId,
+                    mode = "latest",
+                    limit = INITIAL_TIMELINE_LIMIT,
+                )
+                val items = page.items
                 val realMessages = items.flatMap { it.toTimelineMessages() }
                 SessionDetailState(
-                    session = session?.toAgentSession(devices.associateBy { it.id }),
+                    session = page.session.toAgentSession(devices.associateBy { it.id }),
                     messages = mergeOptimistic(realMessages, currentState?.messages.orEmpty()),
-                    approvals = approvals.map { it.toTimelineApproval() },
-                    nextSeq = nextSeq,
+                    approvals = page.approvals.map { it.toTimelineApproval() },
+                    nextSeq = page.nextSeq,
+                    hasMore = page.hasMore,
                     isLoading = false,
+                    loadingOlder = false,
                     errorMessage = null,
                     actionError = currentState?.actionError,
                     sseConnected = currentState?.sseConnected ?: false,
@@ -80,6 +71,39 @@ class SessionDetailController(
             }.recoverCatching { error ->
                 if (error is ApiException) throw error
                 throw IllegalStateException(error.message ?: "Could not load messages.", error)
+            }
+        }
+    }
+
+    suspend fun loadOlder(
+        sessionId: String,
+        beforeOrderSeq: Int,
+        devices: List<AgentDevice>,
+    ): Result<SessionDetailState> {
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val auth = authSession()
+                val page = sessionsApi.getSessionState(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                    sessionId = sessionId,
+                    beforeOrderSeq = beforeOrderSeq,
+                    mode = "before",
+                    limit = TIMELINE_PAGE_LIMIT,
+                )
+                SessionDetailState(
+                    session = page.session.toAgentSession(devices.associateBy { it.id }),
+                    messages = page.items.flatMap { it.toTimelineMessages() },
+                    approvals = page.approvals.map { it.toTimelineApproval() },
+                    nextSeq = page.nextSeq,
+                    hasMore = page.hasMore,
+                    isLoading = false,
+                    loadingOlder = false,
+                    errorMessage = null,
+                )
+            }.recoverCatching { error ->
+                if (error is ApiException) throw error
+                throw IllegalStateException(error.message ?: "Could not load older messages.", error)
             }
         }
     }
@@ -286,6 +310,21 @@ class SessionDetailController(
             approvals = delta.approvals ?: current.approvals,
             nextSeq = max(current.nextSeq, delta.nextSeq),
             isLoading = false,
+            loadingOlder = false,
+            errorMessage = null,
+        )
+    }
+
+    fun applyOlder(current: SessionDetailState, older: SessionDetailState): SessionDetailState {
+        val realMessages = (older.messages + current.messages.filterNot { it.optimistic })
+            .distinctBy { it.id }
+        return current.copy(
+            session = older.session ?: current.session,
+            messages = mergeOptimistic(realMessages, current.messages),
+            approvals = older.approvals,
+            nextSeq = max(current.nextSeq, older.nextSeq),
+            hasMore = older.hasMore,
+            loadingOlder = false,
             errorMessage = null,
         )
     }
