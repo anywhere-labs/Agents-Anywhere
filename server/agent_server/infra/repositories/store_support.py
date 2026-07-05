@@ -72,7 +72,7 @@ from agent_server.services.runtime_config import RuntimeConfigService, seed_runt
 from agent_server.core.utc import utc_now
 from agent_server.infra.timeline_store import SqlTimelineStore
 
-DERIVED_SESSION_TITLE_MAX_CHARS = 48
+DERIVED_SESSION_TITLE_MAX_CHARS = 8
 
 # Username format: 3-32 chars, lowercase letters / digits / hyphen / underscore.
 # Stored lowercase regardless of input.
@@ -392,7 +392,7 @@ def _message_text(content: Any) -> str:
 def _truncate_title(text: str) -> str:
     if len(text) <= DERIVED_SESSION_TITLE_MAX_CHARS:
         return text
-    return f"{text[:DERIVED_SESSION_TITLE_MAX_CHARS].rstrip()}..."
+    return text[:DERIVED_SESSION_TITLE_MAX_CHARS].rstrip()
 
 
 def _timeline_item_from_input(
