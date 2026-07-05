@@ -17,6 +17,7 @@ import android.text.InputType;
 import android.text.TextUtils;
 import android.util.AttributeSet;
 import android.util.Log;
+import android.view.ActionMode;
 import android.view.HapticFeedbackConstants;
 import android.view.InputDevice;
 import android.view.KeyCharacterMap;
@@ -25,6 +26,7 @@ import android.view.Menu;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
+import android.view.ViewTreeObserver;
 import android.view.accessibility.AccessibilityManager;
 import android.view.autofill.AutofillManager;
 import android.view.autofill.AutofillValue;
@@ -40,6 +42,7 @@ import androidx.annotation.RequiresApi;
 import com.termux.terminal.KeyHandler;
 import com.termux.terminal.TerminalEmulator;
 import com.agentsanywhere.app.feature.terminal.RemoteTerminalController;
+import com.termux.view.remoteselection.TextSelectionCursorController;
 
 /** View displaying and interacting with a {@link RemoteTerminalController}. */
 public final class RemoteTerminalView extends View {
@@ -56,7 +59,8 @@ public final class RemoteTerminalView extends View {
 
     public RemoteTerminalViewClient mClient;
 
-    
+    private TextSelectionCursorController mTextSelectionCursorController;
+
     private Handler mTerminalCursorBlinkerHandler;
     private TerminalCursorBlinkerRunnable mTerminalCursorBlinkerRunnable;
     private int mTerminalCursorBlinkerRate;
@@ -1048,7 +1052,13 @@ public final class RemoteTerminalView extends View {
         if (mEmulator == null) {
             canvas.drawColor(0XFF000000);
         } else {
-            mRenderer.render(mEmulator, canvas, mTopRow, -1, -1, -1, -1);
+            int[] sel = mDefaultSelectors;
+            if (mTextSelectionCursorController != null) {
+                mTextSelectionCursorController.getSelectors(sel);
+            }
+
+            mRenderer.render(mEmulator, canvas, mTopRow, sel[0], sel[1], sel[2], sel[3]);
+            renderTextSelection();
         }
     }
 
@@ -1388,42 +1398,110 @@ public final class RemoteTerminalView extends View {
     /**
      * Define functions required for text selection and its handles.
      */
-    private void renderTextSelection() {}
+    TextSelectionCursorController getTextSelectionCursorController() {
+        if (mTextSelectionCursorController == null) {
+            mTextSelectionCursorController = new TextSelectionCursorController(this);
+
+            final ViewTreeObserver observer = getViewTreeObserver();
+            if (observer != null) {
+                observer.addOnTouchModeChangeListener(mTextSelectionCursorController);
+            }
+        }
+
+        return mTextSelectionCursorController;
+    }
+
+    private void showTextSelectionCursors(MotionEvent event) {
+        getTextSelectionCursorController().show(event);
+    }
+
+    private boolean hideTextSelectionCursors() {
+        return getTextSelectionCursorController().hide();
+    }
+
+    private void renderTextSelection() {
+        if (mTextSelectionCursorController != null)
+            mTextSelectionCursorController.render();
+    }
 
     public boolean isSelectingText() {
-        return false;
+        if (mTextSelectionCursorController != null) {
+            return mTextSelectionCursorController.isActive();
+        } else {
+            return false;
+        }
     }
 
     /** Get the currently selected text if selecting. */
     public String getSelectedText() {
-        return null;
+        if (isSelectingText() && mTextSelectionCursorController != null)
+            return mTextSelectionCursorController.getSelectedText();
+        else
+            return null;
     }
 
     /** Get the selected text stored before "MORE" button was pressed on the context menu. */
     @Nullable
     public String getStoredSelectedText() {
-        return null;
+        return mTextSelectionCursorController != null ? mTextSelectionCursorController.getStoredSelectedText() : null;
     }
 
     /** Unset the selected text stored before "MORE" button was pressed on the context menu. */
-    public void unsetStoredSelectedText() {}
-
-    public void startTextSelectionMode(MotionEvent event) {
-        requestFocus();
+    public void unsetStoredSelectedText() {
+        if (mTextSelectionCursorController != null) mTextSelectionCursorController.unsetStoredSelectedText();
     }
 
-    public void stopTextSelectionMode() {}
+    private ActionMode getTextSelectionActionMode() {
+        if (mTextSelectionCursorController != null) {
+            return mTextSelectionCursorController.getActionMode();
+        } else {
+            return null;
+        }
+    }
 
-    private void decrementYTextSelectionCursors(int decrement) {}
+    public void startTextSelectionMode(MotionEvent event) {
+        if (!requestFocus()) {
+            return;
+        }
+
+        showTextSelectionCursors(event);
+        mClient.copyModeChanged(isSelectingText());
+
+        invalidate();
+    }
+
+    public void stopTextSelectionMode() {
+        if (hideTextSelectionCursors()) {
+            mClient.copyModeChanged(isSelectingText());
+            invalidate();
+        }
+    }
+
+    private void decrementYTextSelectionCursors(int decrement) {
+        if (mTextSelectionCursorController != null) {
+            mTextSelectionCursorController.decrementYTextSelectionCursors(decrement);
+        }
+    }
 
     @Override
     protected void onAttachedToWindow() {
         super.onAttachedToWindow();
+
+        if (mTextSelectionCursorController != null) {
+            getViewTreeObserver().addOnTouchModeChangeListener(mTextSelectionCursorController);
+        }
     }
 
     @Override
     protected void onDetachedFromWindow() {
         super.onDetachedFromWindow();
+
+        if (mTextSelectionCursorController != null) {
+            stopTextSelectionMode();
+
+            getViewTreeObserver().removeOnTouchModeChangeListener(mTextSelectionCursorController);
+            mTextSelectionCursorController.onDetached();
+        }
     }
 
 
@@ -1432,17 +1510,40 @@ public final class RemoteTerminalView extends View {
      * Define functions required for long hold toolbar.
      */
     private final Runnable mShowFloatingToolbar = new Runnable() {
-        @RequiresApi(api = Build.VERSION_CODES.M)
         @Override
-        public void run() {}
+        public void run() {
+            if (getTextSelectionActionMode() != null) {
+                getTextSelectionActionMode().hide(0);
+            }
+        }
     };
 
-    @RequiresApi(api = Build.VERSION_CODES.M)
-    private void showFloatingToolbar() {}
+    private void showFloatingToolbar() {
+        if (getTextSelectionActionMode() != null) {
+            int delay = ViewConfiguration.getDoubleTapTimeout();
+            postDelayed(mShowFloatingToolbar, delay);
+        }
+    }
 
-    @RequiresApi(api = Build.VERSION_CODES.M)
-    void hideFloatingToolbar() {}
+    void hideFloatingToolbar() {
+        if (getTextSelectionActionMode() != null) {
+            removeCallbacks(mShowFloatingToolbar);
+            getTextSelectionActionMode().hide(-1);
+        }
+    }
 
-    public void updateFloatingToolbarVisibility(MotionEvent event) {}
+    public void updateFloatingToolbarVisibility(MotionEvent event) {
+        if (getTextSelectionActionMode() != null) {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_MOVE:
+                    hideFloatingToolbar();
+                    break;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    showFloatingToolbar();
+                    break;
+            }
+        }
+    }
 
 }

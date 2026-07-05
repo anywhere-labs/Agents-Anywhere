@@ -595,7 +595,7 @@ private fun remoteTerminalViewClient(
     override fun verticalScrollChanged(active: Boolean) = onVerticalDragChange(active)
     override fun onKeyDown(keyCode: Int, e: KeyEvent?, session: RemoteTerminalController?): Boolean = false
     override fun onKeyUp(keyCode: Int, e: KeyEvent?): Boolean = false
-    override fun onLongPress(event: MotionEvent?): Boolean = true
+    override fun onLongPress(event: MotionEvent?): Boolean = false
     override fun readControlKey(): Boolean = controller.isCtrlLatched
     override fun readAltKey(): Boolean = controller.isAltLatched
     override fun readShiftKey(): Boolean = false
