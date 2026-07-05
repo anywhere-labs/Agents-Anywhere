@@ -299,18 +299,11 @@ internal fun MessageList(
                         }
                         agentTurnCopyTextByItem[item.key]?.let { copyText ->
                             DisableSelection {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 4.dp),
-                                    horizontalArrangement = Arrangement.Start,
-                                ) {
-                                    MessageCopyButton(
-                                        darkMode = darkMode,
-                                        label = stringResource(R.string.session_copy_reply),
-                                        onClick = { onCopyMessage(copyText) },
-                                    )
-                                }
+                                AgentReplyCopyAction(
+                                    darkMode = darkMode,
+                                    copyText = copyText,
+                                    onCopyMessage = onCopyMessage,
+                                )
                             }
                         }
                     }
@@ -336,6 +329,38 @@ internal fun MessageList(
                     .align(Alignment.BottomCenter)
                     .imePadding()
                     .padding(bottom = 140.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun AgentReplyCopyAction(
+    darkMode: Boolean,
+    copyText: String,
+    onCopyMessage: (String) -> Unit,
+) {
+    val divider = if (darkMode) Color(0x4A3F3F46) else Color(0x332F2F33)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 4.dp, end = 4.dp, top = 3.dp),
+        verticalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(divider),
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Start,
+        ) {
+            MessageCopyButton(
+                darkMode = darkMode,
+                label = stringResource(R.string.session_copy_reply),
+                onClick = { onCopyMessage(copyText) },
             )
         }
     }
@@ -775,10 +800,17 @@ private fun MessageCopyButton(
     Row(
         modifier = modifier
             .height(30.dp)
-            .then(if (label == null) Modifier.width(30.dp) else Modifier.padding(horizontal = 2.dp))
-            .clip(if (label == null) CircleShape else RoundedCornerShape(15.dp))
+            .then(
+                if (label == null) {
+                    Modifier
+                        .width(30.dp)
+                        .clip(CircleShape)
+                } else {
+                    Modifier.padding(start = 8.dp, end = 10.dp)
+                },
+            )
             .noRippleClickable(onClick = onClick),
-        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+        horizontalArrangement = Arrangement.spacedBy(if (label == null) 0.dp else 9.dp, Alignment.CenterHorizontally),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Image(
