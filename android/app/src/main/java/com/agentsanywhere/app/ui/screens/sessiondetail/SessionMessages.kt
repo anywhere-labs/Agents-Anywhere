@@ -84,8 +84,12 @@ private const val SESSION_WELCOME_WRITE_MS = 58L
 private const val SESSION_WELCOME_ERASE_MS = 22L
 private const val SESSION_WELCOME_HOLD_MS = 15_000L
 private const val LOAD_OLDER_VISIBLE_THRESHOLD = 3
+private const val RETURN_TO_LATEST_ANIMATION_WINDOW = 12
 private val AUTO_FOLLOW_RESUME_THRESHOLD = 8.dp
 private val AUTO_FOLLOW_DRAG_PAUSE_THRESHOLD = 32.dp
+private val TimelineMessageOrder = compareBy<TimelineMessage> { it.orderSeq }
+    .thenBy { it.updatedSeq }
+    .thenBy { it.id }
 private val SessionWelcomeFontFamily = FontFamily(
     Font(R.font.newsreader_opsz_wght, FontWeight(650)),
 )
@@ -253,6 +257,17 @@ internal fun MessageList(
         autoFollowLatest = false
     }
 
+    LaunchedEffect(messages, lockedMessages) {
+        val locked = lockedMessages ?: return@LaunchedEffect
+        val merged = mergeOlderMessagesIntoLock(
+            lockedMessages = locked,
+            latestMessages = messages,
+        )
+        if (merged.size != locked.size) {
+            lockedMessages = merged
+        }
+    }
+
     LaunchedEffect(listState) {
         var lastPosition = listState.firstVisibleItemIndex * 1_000 + listState.firstVisibleItemScrollOffset
         var lastTime = System.nanoTime()
@@ -406,7 +421,7 @@ internal fun MessageList(
                 darkMode = darkMode,
                 onClick = {
                     scope.launch {
-                        listState.animateScrollToItem(0)
+                        listState.animateToLatestFromAnywhere()
                         releaseReadLock()
                         listState.scrollToItem(0)
                     }
@@ -418,6 +433,28 @@ internal fun MessageList(
             )
         }
     }
+}
+
+private suspend fun LazyListState.animateToLatestFromAnywhere() {
+    if (firstVisibleItemIndex > RETURN_TO_LATEST_ANIMATION_WINDOW) {
+        scrollToItem(RETURN_TO_LATEST_ANIMATION_WINDOW)
+    }
+    animateScrollToItem(0)
+}
+
+private fun mergeOlderMessagesIntoLock(
+    lockedMessages: List<TimelineMessage>,
+    latestMessages: List<TimelineMessage>,
+): List<TimelineMessage> {
+    val firstLocked = lockedMessages.minWithOrNull(TimelineMessageOrder) ?: return lockedMessages
+    val lockedIds = lockedMessages.mapTo(mutableSetOf()) { it.id }
+    val olderMessages = latestMessages.filter { message ->
+        message.id !in lockedIds && TimelineMessageOrder.compare(message, firstLocked) < 0
+    }
+    if (olderMessages.isEmpty()) return lockedMessages
+    return (olderMessages + lockedMessages)
+        .distinctBy { it.id }
+        .sortedWith(TimelineMessageOrder)
 }
 
 private fun LazyListState.isNearLatest(thresholdPx: Int): Boolean {
