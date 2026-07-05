@@ -59,6 +59,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
@@ -104,6 +105,7 @@ import org.commonmark.parser.Parser
 private const val AnnotationFile = "aa-file"
 private const val AnnotationUrl = "aa-url"
 private const val SelectionCodeTokenPrefix = "[[AA_SELECT_CODE:"
+private val TableDelimiterCellRegex = Regex(""":?-{1,}:?""")
 
 private val markdownParser = Parser.builder()
     .extensions(
@@ -119,7 +121,9 @@ private val markdownParser = Parser.builder()
 @Composable
 internal fun AgentMarkdownText(text: String, darkMode: Boolean) {
     val uriHandler = LocalUriHandler.current
-    val document = remember(text) { markdownParser.parse(text.ifBlank { "_(no content)_" }) as Document }
+    val document = remember(text) {
+        markdownParser.parse(normalizeMarkdownTables(text.ifBlank { "_(no content)_" })) as Document
+    }
     val styles = markdownStyles(darkMode)
     val openUrl: (String) -> Unit = { url ->
         runCatching { uriHandler.openUri(url) }
@@ -285,17 +289,21 @@ private fun MarkdownTable(
         table.tableRows().forEachIndexed { rowIndex, row ->
             Row {
                 row.children().filterIsInstance<TableCell>().forEach { cell ->
+                    val cellStyle = styles.tableCell(
+                        header = cell.isHeader,
+                        alignment = cell.alignment,
+                    )
                     Box(
                         modifier = Modifier
                             .widthIn(min = 112.dp, max = 240.dp)
-                            .background(if (rowIndex == 0) styles.codeBackground else Color.Transparent)
+                            .background(if (cell.isHeader || rowIndex == 0) styles.codeBackground else Color.Transparent)
                             .border(0.5.dp, styles.border)
                             .padding(horizontal = 10.dp, vertical = 8.dp),
                     ) {
-                        MarkdownBlocks(
+                        MarkdownInlineText(
                             nodes = cell.children(),
-                            darkMode = darkMode,
-                            styles = styles,
+                            textStyle = cellStyle,
+                            styles = styles.copy(bodyColor = cellStyle.color),
                             onOpenFile = onOpenFile,
                             onOpenUrl = onOpenUrl,
                         )
@@ -829,6 +837,17 @@ private data class MarkdownStyles(
         },
         fontWeight = FontWeight.Bold,
     )
+
+    fun tableCell(header: Boolean, alignment: TableCell.Alignment?): TextStyle = body.copy(
+        fontSize = 14.5.sp,
+        lineHeight = 22.sp,
+        fontWeight = if (header) FontWeight.Bold else FontWeight.Normal,
+        textAlign = when (alignment) {
+            TableCell.Alignment.CENTER -> TextAlign.Center
+            TableCell.Alignment.RIGHT -> TextAlign.End
+            else -> TextAlign.Start
+        },
+    )
 }
 
 private fun Node.children(): List<Node> {
@@ -849,6 +868,58 @@ private fun Node.tableRows(): List<TableRow> {
     }
     children().forEach(::visit)
     return out
+}
+
+private fun normalizeMarkdownTables(markdown: String): String {
+    if (!markdown.contains('|')) return markdown
+
+    val lines = markdown.lines()
+    if (lines.size < 2) return markdown
+
+    val normalized = mutableListOf<String>()
+    var inFence = false
+
+    lines.forEachIndexed { index, line ->
+        if (
+            !inFence &&
+            index + 1 < lines.size &&
+            isPotentialTableHeaderRow(line) &&
+            isTableDelimiterRow(lines[index + 1]) &&
+            normalized.lastOrNull()?.isNotBlank() == true
+        ) {
+            normalized += ""
+        }
+
+        normalized += line
+
+        if (line.isMarkdownFenceBoundary()) {
+            inFence = !inFence
+        }
+    }
+
+    return normalized.joinToString("\n")
+}
+
+private fun isPotentialTableHeaderRow(line: String): Boolean {
+    if (isTableDelimiterRow(line)) return false
+    val cells = splitTableRowCells(line)
+    return cells.size >= 2 && cells.any { it.trim().isNotEmpty() }
+}
+
+private fun isTableDelimiterRow(line: String): Boolean {
+    val cells = splitTableRowCells(line)
+    return cells.size >= 2 && cells.all { it.trim().matches(TableDelimiterCellRegex) }
+}
+
+private fun splitTableRowCells(line: String): List<String> {
+    val trimmed = line.trim().trim('|')
+    if (trimmed.isBlank()) return emptyList()
+    return trimmed.split('|')
+}
+
+private fun String.isMarkdownFenceBoundary(): Boolean {
+    val trimmed = trimStart()
+    return trimmed.startsWith("```") || trimmed.startsWith("~~~")
 }
 
 private fun stripLine(path: String): String = path.replace(Regex(""":\d+(:\d+)?$"""), "")
