@@ -1,5 +1,14 @@
 package com.agentsanywhere.app.ui.screens.home
 
+import android.graphics.Typeface
+import android.text.Editable
+import android.text.InputType
+import android.text.TextWatcher
+import android.util.TypedValue
+import android.view.Gravity
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
+import android.widget.EditText
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -31,9 +40,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
@@ -55,8 +61,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -68,12 +74,11 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.agentsanywhere.app.R
@@ -112,6 +117,8 @@ private data class HomeSessionActionMenu(
     val session: AgentSession,
     val rowBounds: Rect,
 )
+
+private const val SESSION_TITLE_DISPLAY_MAX_CHARS = 15
 
 @Composable
 fun HomeScreen(
@@ -346,7 +353,7 @@ private fun HomeSessionHighlightRow(session: AgentSession, darkMode: Boolean) {
                 verticalArrangement = Arrangement.Center,
             ) {
                 Text(
-                    text = session.title,
+                    text = session.title.sessionDisplayTitle(),
                     color = title,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
@@ -365,7 +372,7 @@ private fun HomeSessionHighlightRow(session: AgentSession, darkMode: Boolean) {
             }
         } else {
             Text(
-                text = session.title,
+                text = session.title.sessionDisplayTitle(),
                 modifier = Modifier.weight(1f),
                 color = title,
                 fontSize = 16.sp,
@@ -519,19 +526,35 @@ private fun HomeRenameSessionDialog(
                     .padding(horizontal = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                BasicTextField(
-                    value = name,
-                    onValueChange = { name = it },
+                AndroidView(
+                    factory = { viewContext ->
+                        EditText(viewContext).apply {
+                            configureRenameInput(colors.ink, onDone = { submit() })
+                            setText(name)
+                            setSelection(text.length)
+                            addTextChangedListener(
+                                object : TextWatcher {
+                                    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                                    override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+                                    override fun afterTextChanged(s: Editable?) {
+                                        val next = s?.toString().orEmpty()
+                                        if (next != name) name = next
+                                    }
+                                },
+                            )
+                            post { focusAtTextEnd(viewContext) }
+                            postDelayed({ focusAtTextEnd(viewContext, forceKeyboard = true) }, 180L)
+                        }
+                    },
+                    update = { input ->
+                        input.configureRenameInput(colors.ink, onDone = { submit() })
+                        if (input.text.toString() != name) {
+                            input.setText(name)
+                            input.setSelection(input.text.length)
+                            input.bringPointIntoView(input.selectionEnd)
+                        }
+                    },
                     modifier = Modifier.weight(1f),
-                    singleLine = true,
-                    textStyle = TextStyle(
-                        color = colors.ink,
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    ),
-                    cursorBrush = SolidColor(colors.ink),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(onDone = { submit() }),
                 )
             }
             Row(
@@ -556,6 +579,57 @@ private fun HomeRenameSessionDialog(
                 )
             }
         }
+    }
+}
+
+private fun String.sessionDisplayTitle(): String {
+    if (length <= SESSION_TITLE_DISPLAY_MAX_CHARS) return this
+    return "${take(SESSION_TITLE_DISPLAY_MAX_CHARS).trimEnd()}..."
+}
+
+private fun EditText.configureRenameInput(
+    textColor: Color,
+    onDone: () -> Unit,
+) {
+    isFocusable = true
+    isFocusableInTouchMode = true
+    setSingleLine(true)
+    setHorizontallyScrolling(true)
+    setBackgroundColor(android.graphics.Color.TRANSPARENT)
+    setTextColor(textColor.toArgb())
+    setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
+    typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+    gravity = Gravity.CENTER_VERTICAL
+    includeFontPadding = false
+    minHeight = 0
+    minimumHeight = 0
+    setPadding(0, 0, 0, 0)
+    inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+    imeOptions = EditorInfo.IME_ACTION_DONE
+    setOnEditorActionListener { _, actionId, _ ->
+        if (actionId == EditorInfo.IME_ACTION_DONE) {
+            onDone()
+            true
+        } else {
+            false
+        }
+    }
+}
+
+@Suppress("DEPRECATION")
+private fun EditText.focusAtTextEnd(
+    context: android.content.Context,
+    forceKeyboard: Boolean = false,
+) {
+    requestFocus()
+    setSelection(text.length)
+    post {
+        setSelection(text.length)
+        bringPointIntoView(selectionEnd)
+        context.getSystemService(InputMethodManager::class.java)?.showSoftInput(
+            this,
+            if (forceKeyboard) InputMethodManager.SHOW_FORCED else InputMethodManager.SHOW_IMPLICIT,
+        )
     }
 }
 
@@ -1191,7 +1265,7 @@ private fun HomePinnedSessionRow(
             verticalArrangement = Arrangement.Center,
         ) {
             Text(
-                text = session.title,
+                text = session.title.sessionDisplayTitle(),
                 color = LocalAAColors.current.inkSoft,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold,
@@ -1228,7 +1302,7 @@ private fun HomeRecentSessionRow(
     HomeSessionRowShell(height = 52.dp, onClick = onClick, onLongPress = onLongPress) {
         Icon(Lucide.ListIcon, contentDescription = null, tint = LocalAAColors.current.faint, modifier = Modifier.size(14.dp))
         Text(
-            text = session.title,
+            text = session.title.sessionDisplayTitle(),
             modifier = Modifier.weight(1f),
             color = LocalAAColors.current.inkSoft,
             fontSize = 16.sp,
