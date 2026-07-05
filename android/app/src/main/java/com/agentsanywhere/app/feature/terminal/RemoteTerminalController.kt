@@ -87,6 +87,9 @@ class RemoteTerminalController(
         if (terminalId != null && connectorId == session.connectorId) {
             return
         }
+        if (terminalId != null) {
+            clearLocalScreen()
+        }
         close()
         if (session.cwd.isNullOrBlank()) {
             state.value = RemoteTerminalState(status = RemoteTerminalStatus.Error, message = "This session has no workspace.")
@@ -120,6 +123,9 @@ class RemoteTerminalController(
     suspend fun ensureStarted(device: AgentDevice) {
         if (terminalId != null && connectorId == device.id) {
             return
+        }
+        if (terminalId != null) {
+            clearLocalScreen()
         }
         close()
         if (!device.online) {
@@ -227,6 +233,30 @@ class RemoteTerminalController(
     }
 
     suspend fun close() {
+        val target = detachTerminalForClose()
+        if (target != null) {
+            withContext(Dispatchers.IO) {
+                terminalController.closeTerminal(target.connectorId, target.terminalId)
+            }
+        }
+    }
+
+    fun closeAndDispose() {
+        val target = detachTerminalForClose()
+        if (target == null) {
+            terminalScope.cancel()
+            return
+        }
+        terminalScope.launch {
+            try {
+                terminalController.closeTerminal(target.connectorId, target.terminalId)
+            } finally {
+                terminalScope.cancel()
+            }
+        }
+    }
+
+    private fun detachTerminalForClose(): TerminalCloseTarget? {
         diag("close requested terminal=$terminalId")
         manuallyClosed = true
         socket?.close(1000, "closed")
@@ -243,10 +273,10 @@ class RemoteTerminalController(
             pendingInput.clear()
         }
         state.value = RemoteTerminalState()
-        if (currentConnectorId != null && currentTerminalId != null) {
-            withContext(Dispatchers.IO) {
-                terminalController.closeTerminal(currentConnectorId, currentTerminalId)
-            }
+        return if (currentConnectorId != null && currentTerminalId != null) {
+            TerminalCloseTarget(currentConnectorId, currentTerminalId)
+        } else {
+            null
         }
     }
 
@@ -257,7 +287,10 @@ class RemoteTerminalController(
             Request.Builder().url(url).build(),
             object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
-                    socket = webSocket
+                    if (socket !== webSocket || manuallyClosed) {
+                        webSocket.close(1000, "stale")
+                        return
+                    }
                     reconnectAttempts = 0
                     state.value = RemoteTerminalState(status = RemoteTerminalStatus.Open)
                     diag("ws open terminal=$terminalId")
@@ -266,12 +299,14 @@ class RemoteTerminalController(
                 }
 
                 override fun onMessage(webSocket: WebSocket, text: String) {
+                    if (socket !== webSocket || manuallyClosed) return
                     handleFrame(text)
                 }
 
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                     diag("ws closed code=$code reason=$reason manual=$manuallyClosed terminal=$terminalId")
-                    if (socket === webSocket) socket = null
+                    if (socket !== webSocket) return
+                    socket = null
                     if (!manuallyClosed) {
                         scheduleReconnect()
                     }
@@ -279,7 +314,8 @@ class RemoteTerminalController(
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                     diag("ws failure ${t::class.java.simpleName}: ${t.message} manual=$manuallyClosed terminal=$terminalId")
-                    if (socket === webSocket) socket = null
+                    if (socket !== webSocket) return
+                    socket = null
                     if (!manuallyClosed) {
                         scheduleReconnect()
                     }
@@ -489,6 +525,11 @@ class RemoteTerminalController(
     private fun diag(message: String) {
         Log.d(DIAG_TAG, message)
     }
+
+    private data class TerminalCloseTarget(
+        val connectorId: String,
+        val terminalId: String,
+    )
 
     private companion object {
         private const val DIAG_TAG = "AATerminal"
