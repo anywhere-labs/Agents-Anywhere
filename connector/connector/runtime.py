@@ -378,8 +378,14 @@ class BackendRpcClient:
             return await self.local_ops.terminal_resize(params)
         if method == "terminal.close":
             return await self.local_ops.terminal_close(params)
+        if method == "terminal.rename":
+            return await self.local_ops.terminal_rename(params)
         if method == "terminal.list":
             return await self.local_ops.terminal_list(params)
+        if method == "terminal.release":
+            return await self.local_ops.terminal_release(params)
+        if method == "terminal.snapshot":
+            return await self.local_ops.terminal_snapshot(params)
         if method == "terminal.relay.connect":
             return await self.start_terminal_relay(params)
         if method == "capabilities.scanRuntime":
@@ -911,7 +917,7 @@ class BackendRpcClient:
                         await self.local_ops.terminal.close({"terminalId": terminal_id})
                         break
             finally:
-                await self.local_ops.terminal.close({"terminalId": terminal_id})
+                await self.local_ops.terminal.release({"terminalId": terminal_id})
 
     def _on_background_upload_done(self, task: asyncio.Task[Any]) -> None:
         self._background_tasks.discard(task)

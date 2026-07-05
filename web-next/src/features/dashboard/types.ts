@@ -365,8 +365,20 @@ export type TerminalListResponse = {
   serverTime: string;
 };
 
+export type TerminalListResult = {
+  terminals: TerminalView[];
+};
+
 export type TerminalResponse = {
   terminal: TerminalView;
+};
+
+export type TerminalSnapshotResult = {
+  terminal: TerminalView;
+  baseSeq: number;
+  seq: number;
+  dataBase64: string;
+  outputs?: Array<{ seq: number; dataBase64: string }>;
 };
 
 export type AttachmentRef = {

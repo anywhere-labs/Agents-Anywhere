@@ -33,8 +33,10 @@ import type {
   SessionStateResponse,
   TakeoverResponse,
   TerminalCreateRequest,
+  TerminalListResult,
   TerminalListResponse,
   TerminalResponse,
+  TerminalSnapshotResult,
   UserAgentDefaultsResponse
 } from "@/features/dashboard/types";
 
@@ -334,6 +336,26 @@ export class DashboardApi {
     );
   }
 
+  connectorTerminalListV2(token: string, connectorId: string): Promise<RpcResponse<TerminalListResult>> {
+    return this.client.get<RpcResponse<TerminalListResult>>(
+      `/connectors/${encodeURIComponent(connectorId)}/terminals-v2`,
+      { token },
+    );
+  }
+
+  connectorTerminalCreateV2(
+    token: string,
+    connectorId: string,
+    root: string,
+    body: TerminalCreateRequest,
+  ): Promise<RpcResponse<TerminalResponse["terminal"]>> {
+    return this.client.post<RpcResponse<TerminalResponse["terminal"]>>(
+      `/connectors/${encodeURIComponent(connectorId)}/terminals-v2`,
+      body,
+      { token, query: { root } },
+    );
+  }
+
   connectorTerminalRename(
     token: string,
     connectorId: string,
@@ -358,6 +380,30 @@ export class DashboardApi {
     );
   }
 
+  connectorTerminalCloseV2(
+    token: string,
+    connectorId: string,
+    terminalId: string,
+  ): Promise<RpcResponse<unknown>> {
+    return this.client.delete<RpcResponse<unknown>>(
+      `/connectors/${encodeURIComponent(connectorId)}/terminals-v2/${encodeURIComponent(terminalId)}`,
+      { token },
+    );
+  }
+
+  connectorTerminalRenameV2(
+    token: string,
+    connectorId: string,
+    terminalId: string,
+    label: string,
+  ): Promise<RpcResponse<TerminalResponse["terminal"]>> {
+    return this.client.patch<RpcResponse<TerminalResponse["terminal"]>>(
+      `/connectors/${encodeURIComponent(connectorId)}/terminals-v2/${encodeURIComponent(terminalId)}`,
+      { label },
+      { token },
+    );
+  }
+
   connectorTerminalResize(
     token: string,
     connectorId: string,
@@ -369,6 +415,45 @@ export class DashboardApi {
       `/connectors/${encodeURIComponent(connectorId)}/terminals/${encodeURIComponent(terminalId)}/resize`,
       { cols, rows },
       { token },
+    );
+  }
+
+  connectorTerminalResizeV2(
+    token: string,
+    connectorId: string,
+    terminalId: string,
+    cols: number,
+    rows: number,
+  ): Promise<RpcResponse<unknown>> {
+    return this.client.post<RpcResponse<unknown>>(
+      `/connectors/${encodeURIComponent(connectorId)}/terminals-v2/${encodeURIComponent(terminalId)}/resize`,
+      { cols, rows },
+      { token },
+    );
+  }
+
+  connectorTerminalWriteV2(
+    token: string,
+    connectorId: string,
+    terminalId: string,
+    dataBase64: string,
+  ): Promise<RpcResponse<unknown>> {
+    return this.client.post<RpcResponse<unknown>>(
+      `/connectors/${encodeURIComponent(connectorId)}/terminals-v2/${encodeURIComponent(terminalId)}/write`,
+      { dataBase64 },
+      { token },
+    );
+  }
+
+  connectorTerminalSnapshotV2(
+    token: string,
+    connectorId: string,
+    terminalId: string,
+    fromSeq = 0,
+  ): Promise<RpcResponse<TerminalSnapshotResult>> {
+    return this.client.get<RpcResponse<TerminalSnapshotResult>>(
+      `/connectors/${encodeURIComponent(connectorId)}/terminals-v2/${encodeURIComponent(terminalId)}/snapshot`,
+      { token, query: { fromSeq } },
     );
   }
 

@@ -12,7 +12,6 @@ import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { dashboardApi } from "@/features/dashboard/api"
 import type { TerminalView } from "@/features/dashboard/types"
-import { createClientId } from "@/lib/id"
 import { cn } from "@/lib/utils"
 
 type TerminalPanelBodyProps = {
@@ -21,10 +20,6 @@ type TerminalPanelBodyProps = {
   root?: string | null
   onClose?: () => void
   onPopOut?: () => void
-}
-
-function makeTerminalGroupId() {
-  return createClientId("termgrp")
 }
 
 export function TerminalPanelBody({ token, connectorId, root, onClose, onPopOut }: TerminalPanelBodyProps) {
@@ -37,7 +32,6 @@ export function TerminalPanelBody({ token, connectorId, root, onClose, onPopOut 
   const [error, setError] = React.useState<string | null>(null)
   const [busy, setBusy] = React.useState(false)
   const termsRef = React.useRef<TerminalView[]>([])
-  const terminalGroupIdRef = React.useRef(makeTerminalGroupId())
   const renameTimerRef = React.useRef<number | null>(null)
   const generationRef = React.useRef(0)
 
@@ -61,7 +55,6 @@ export function TerminalPanelBody({ token, connectorId, root, onClose, onPopOut 
     setRenameText("")
     setError(null)
     setBusy(false)
-    terminalGroupIdRef.current = makeTerminalGroupId()
   }, [connectorId, effectiveRoot])
 
   React.useEffect(() => {
@@ -70,15 +63,21 @@ export function TerminalPanelBody({ token, connectorId, root, onClose, onPopOut 
     let cancelled = false
     ;(async () => {
       try {
-        const created = await dashboardApi.connectorTerminalCreate(token, connectorId, effectiveRoot, {
+        const listed = await dashboardApi.connectorTerminalListV2(token, connectorId)
+        if (cancelled || generation !== generationRef.current) return
+        if (listed.result.terminals.length > 0) {
+          setTerms(listed.result.terminals)
+          setActiveId(listed.result.terminals[0]?.terminalId ?? null)
+          return
+        }
+        const created = await dashboardApi.connectorTerminalCreateV2(token, connectorId, effectiveRoot, {
           cols: 80,
           rows: 24,
           label: t("title"),
-          ephemeralGroupId: terminalGroupIdRef.current,
         })
         if (cancelled || generation !== generationRef.current) return
-        setTerms([created.terminal])
-        setActiveId(created.terminal.terminalId)
+        setTerms([created.result])
+        setActiveId(created.result.terminalId)
       } catch (err) {
         if (!cancelled && generation === generationRef.current) setError(err instanceof Error ? err.message : String(err))
       }
@@ -93,14 +92,13 @@ export function TerminalPanelBody({ token, connectorId, root, onClose, onPopOut 
     setBusy(true)
     setError(null)
     try {
-      const response = await dashboardApi.connectorTerminalCreate(token, connectorId, effectiveRoot, {
+      const response = await dashboardApi.connectorTerminalCreateV2(token, connectorId, effectiveRoot, {
         cols: 80,
         rows: 24,
         label: `${t("title")} ${termsRef.current.length + 1}`,
-        ephemeralGroupId: terminalGroupIdRef.current,
       })
-      setTerms((prev) => [...prev, response.terminal])
-      setActiveId(response.terminal.terminalId)
+      setTerms((prev) => [...prev, response.result])
+      setActiveId(response.result.terminalId)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -128,7 +126,7 @@ export function TerminalPanelBody({ token, connectorId, root, onClose, onPopOut 
       if (!token || !connectorId) return
       cancelScheduledRename()
       try {
-        await dashboardApi.connectorTerminalClose(token, connectorId, terminalId)
+        await dashboardApi.connectorTerminalCloseV2(token, connectorId, terminalId)
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err))
       }
@@ -149,9 +147,9 @@ export function TerminalPanelBody({ token, connectorId, root, onClose, onPopOut 
       if (!nextLabel) return
       setTerms((prev) => prev.map((term) => (term.terminalId === terminalId ? { ...term, label: nextLabel } : term)))
       try {
-        const response = await dashboardApi.connectorTerminalRename(token, connectorId, terminalId, nextLabel)
+        const response = await dashboardApi.connectorTerminalRenameV2(token, connectorId, terminalId, nextLabel)
         setTerms((prev) =>
-          prev.map((term) => (term.terminalId === terminalId ? { ...term, ...response.terminal } : term)),
+          prev.map((term) => (term.terminalId === terminalId ? { ...term, ...response.result } : term)),
         )
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err))
@@ -159,14 +157,6 @@ export function TerminalPanelBody({ token, connectorId, root, onClose, onPopOut 
     },
     [connectorId, token],
   )
-
-  const removeTerminal = React.useCallback((terminalId: string) => {
-    setTerms((prev) => {
-      const next = prev.filter((item) => item.terminalId !== terminalId)
-      setActiveId((current) => (current === terminalId ? next[0]?.terminalId ?? null : current))
-      return next
-    })
-  }, [])
 
   const handleTerminalError = React.useCallback((message: string) => {
     setError(message)
@@ -313,7 +303,6 @@ export function TerminalPanelBody({ token, connectorId, root, onClose, onPopOut 
                   terminal={term}
                   active={activeId === term.terminalId}
                   onError={handleTerminalError}
-                  onClosed={removeTerminal}
                 />
               ) : null}
             </div>
@@ -331,18 +320,16 @@ function XtermHost({
   terminal,
   active,
   onError,
-  onClosed,
 }: {
   token: string
   connectorId: string
   terminal: TerminalView
   active: boolean
   onError: (message: string) => void
-  onClosed: (terminalId: string) => void
 }) {
   const t = useTranslations("dashboard.panels.terminal")
   const hostRef = React.useRef<HTMLDivElement | null>(null)
-  const [status, setStatus] = React.useState<"connecting" | "open" | "closed" | "exited">("connecting")
+  const [status, setStatus] = React.useState<"connecting" | "open" | "exited">("connecting")
 
   React.useEffect(() => {
     let cancelled = false
@@ -351,22 +338,64 @@ function XtermHost({
 
     let term: import("@xterm/xterm").Terminal | null = null
     let fit: import("@xterm/addon-fit").FitAddon | null = null
-    let socket: WebSocket | null = null
     let resizeObserver: ResizeObserver | null = null
     let lastSeenSeq = 0
+    let lastSnapshotData = ""
     let lastSentSize: { cols: number; rows: number } | null = null
-    let pendingInput = ""
     let resizeFrame: number | null = null
-    let finished = false
+    let pollTimer: number | null = null
+    let exitPrinted = false
 
     const sendResize = () => {
-      if (!term || !socket || socket.readyState !== WebSocket.OPEN) return
+      if (!term) return
       const cols = term.cols
       const rows = term.rows
       if (lastSentSize?.cols === cols && lastSentSize.rows === rows) return
       lastSentSize = { cols, rows }
-      socket.send(JSON.stringify({ type: "resize", cols, rows }))
-      void dashboardApi.connectorTerminalResize(token, connectorId, terminal.terminalId, cols, rows).catch(() => undefined)
+      void dashboardApi.connectorTerminalResizeV2(token, connectorId, terminal.terminalId, cols, rows).catch(() => undefined)
+    }
+
+    const pollSnapshot = async () => {
+      if (!term || cancelled) return
+      try {
+        const snapshot = await dashboardApi.connectorTerminalSnapshotV2(token, connectorId, terminal.terminalId, lastSeenSeq)
+        if (cancelled || !term) return
+        const { baseSeq, dataBase64, outputs, seq, terminal: terminalSnapshot } = snapshot.result
+        if (lastSeenSeq === 0 || baseSeq > lastSeenSeq) {
+          lastSnapshotData = dataBase64
+          lastSeenSeq = seq
+          term.reset()
+          term.write(base64ToBytes(dataBase64))
+        } else if (outputs?.length) {
+          for (const frame of outputs) {
+            if (frame.seq <= lastSeenSeq) continue
+            term.write(base64ToBytes(frame.dataBase64))
+            lastSeenSeq = frame.seq
+          }
+        } else if (dataBase64 !== lastSnapshotData && seq === lastSeenSeq) {
+          lastSnapshotData = dataBase64
+        } else {
+          lastSeenSeq = Math.max(lastSeenSeq, seq)
+        }
+        if (terminalSnapshot.status === "exited") {
+          setStatus("exited")
+          if (!exitPrinted) {
+            exitPrinted = true
+            term.writeln("")
+            term.writeln(
+              `\x1b[2m[${
+                terminalSnapshot.exitCode != null
+                  ? t("processExitedWithCode", { code: terminalSnapshot.exitCode })
+                  : t("processExited")
+              }]\x1b[0m`,
+            )
+          }
+          return
+        }
+        setStatus("open")
+      } catch (err) {
+        if (!cancelled) onError(err instanceof Error ? err.message : String(err))
+      }
     }
 
     ;(async () => {
@@ -400,11 +429,9 @@ function XtermHost({
       term.focus()
 
       term.onData((data) => {
-        if (socket?.readyState === WebSocket.OPEN) {
-          socket.send(JSON.stringify({ type: "input", data: utf8ToBase64(data) }))
-          return
-        }
-        pendingInput += data
+        void dashboardApi.connectorTerminalWriteV2(token, connectorId, terminal.terminalId, utf8ToBase64(data)).catch((err) => {
+          if (!cancelled) onError(err instanceof Error ? err.message : String(err))
+        })
       })
 
       resizeObserver = new ResizeObserver(() => {
@@ -422,58 +449,9 @@ function XtermHost({
         })
       })
       resizeObserver.observe(host)
-
-      const protocol = window.location.protocol === "https:" ? "wss" : "ws"
-      const url = `${protocol}://${window.location.host}/connectors/${encodeURIComponent(
-        connectorId,
-      )}/terminals/${encodeURIComponent(terminal.terminalId)}/stream?fromSeq=0&token=${encodeURIComponent(token)}`
-      socket = new WebSocket(url)
-      socket.addEventListener("open", () => {
-        if (cancelled) return
-        setStatus("open")
-        sendResize()
-        if (pendingInput && socket) {
-          socket.send(JSON.stringify({ type: "input", data: utf8ToBase64(pendingInput) }))
-          pendingInput = ""
-        }
-      })
-      socket.addEventListener("message", (event) => {
-        if (!term) return
-        try {
-          const frame = JSON.parse(typeof event.data === "string" ? event.data : new TextDecoder().decode(event.data))
-          if (frame.type === "replay" || frame.type === "output") {
-            if (typeof frame.seq === "number" && frame.seq <= lastSeenSeq) return
-            if (typeof frame.seq === "number") lastSeenSeq = frame.seq
-            term.write(base64ToBytes(frame.data))
-          } else if (frame.type === "exit") {
-            setStatus("exited")
-            term.writeln("")
-            term.writeln(
-              `\x1b[2m[${
-                frame.exitCode != null ? t("processExitedWithCode", { code: frame.exitCode }) : t("processExited")
-              }]\x1b[0m`,
-            )
-          } else if (frame.type === "error") {
-            onError(`${frame.code}: ${frame.message}`)
-          }
-        } catch {
-          // Ignore malformed frames from a closing socket.
-        }
-      })
-      socket.addEventListener("close", () => {
-        if (cancelled) return
-        setStatus((current) => (current === "exited" ? "exited" : "closed"))
-        if (finished) return
-        finished = true
-        onClosed(terminal.terminalId)
-      })
-      socket.addEventListener("error", () => {
-        if (cancelled) return
-        onError(t("websocketError"))
-        if (finished) return
-        finished = true
-        onClosed(terminal.terminalId)
-      })
+      sendResize()
+      await pollSnapshot()
+      if (!cancelled) pollTimer = window.setInterval(() => void pollSnapshot(), 500)
     })().catch((err) => {
       if (!cancelled) onError(err instanceof Error ? err.message : String(err))
     })
@@ -481,11 +459,11 @@ function XtermHost({
     return () => {
       cancelled = true
       if (resizeFrame != null) cancelAnimationFrame(resizeFrame)
+      if (pollTimer != null) window.clearInterval(pollTimer)
       resizeObserver?.disconnect()
-      if (socket && socket.readyState !== WebSocket.CLOSED) socket.close()
       term?.dispose()
     }
-  }, [connectorId, onClosed, onError, t, terminal.terminalId, token])
+  }, [connectorId, onError, t, terminal.terminalId, token])
 
   React.useEffect(() => {
     if (!active) return
@@ -507,7 +485,6 @@ function XtermHost({
       {status !== "open" ? (
         <div className="aa-term-status">
           {status === "connecting" ? t("connecting") : null}
-          {status === "closed" ? t("disconnected") : null}
           {status === "exited" ? t("exited") : null}
         </div>
       ) : null}

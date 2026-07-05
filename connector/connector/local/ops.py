@@ -66,8 +66,17 @@ class LocalOps:
     async def terminal_close(self, params: dict[str, Any]) -> dict[str, Any]:
         return await self.terminal.close(params)
 
+    async def terminal_rename(self, params: dict[str, Any]) -> dict[str, Any]:
+        return await self.terminal.rename(params)
+
     async def terminal_list(self, params: dict[str, Any]) -> dict[str, Any]:
         return await self.terminal.list(params)
+
+    async def terminal_release(self, params: dict[str, Any]) -> dict[str, Any]:
+        return await self.terminal.release(params)
+
+    async def terminal_snapshot(self, params: dict[str, Any]) -> dict[str, Any]:
+        return await self.terminal.snapshot(params)
 
 
 def create_local_ops(

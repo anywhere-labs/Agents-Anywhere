@@ -514,6 +514,12 @@ class FakeLocalRpc:
             if terminal is not None:
                 terminal["closed"] = True
             return {"terminalId": terminal_id, "closed": True}
+        if method == "terminal.rename":
+            terminal_id = params["terminalId"]
+            terminal = self.terminals.get(terminal_id)
+            if terminal is not None:
+                terminal["label"] = params.get("label")
+            return terminal or {"terminalId": terminal_id, "closed": True}
         if method == "terminal.list":
             if self.timeout_terminal_list:
                 raise TimeoutError("terminal.list timed out")
@@ -537,6 +543,16 @@ class FakeLocalRpc:
             terminal["cols"] = params.get("cols")
             terminal["rows"] = params.get("rows")
             return {"terminalId": terminal_id, "cols": params.get("cols"), "rows": params.get("rows")}
+        if method == "terminal.snapshot":
+            terminal_id = params["terminalId"]
+            terminal = self.terminals.get(terminal_id)
+            return {
+                "terminal": terminal or {"terminalId": terminal_id, "closed": True},
+                "baseSeq": 0,
+                "seq": 1,
+                "dataBase64": "b2s=",
+                "outputs": [{"seq": 1, "dataBase64": "b2s="}],
+            }
         if method == "turn.interrupt":
             return self.interrupt_result
         return {"method": method, "params": params}
@@ -3211,6 +3227,85 @@ def test_connector_terminal_lifecycle_uses_workspace_scope(tmp_path):
     listing = client.get(f"/connectors/{connector_id}/terminals", headers=headers)
     assert listing.status_code == 200, listing.text
     assert listing.json()["terminals"] == []
+
+
+def test_connector_terminal_v2_forwards_lifecycle_to_connector(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, _, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+
+    created = client.post(
+        f"/connectors/{connector_id}/terminals-v2?root=/repo",
+        headers=headers,
+        json={"cols": 80, "rows": 24, "cwd": "src", "label": "Shell"},
+    )
+
+    assert created.status_code == 200, created.text
+    terminal_id = created.json()["result"]["terminalId"]
+    assert fake_rpc.requests[-1][1:] == (
+        "terminal.create",
+        {
+            "terminalId": terminal_id,
+            "sessionId": f"browse_{connector_id}",
+            "root": "/repo",
+            "cwd": "/repo/src",
+            "shell": None,
+            "command": None,
+            "args": [],
+            "profile": None,
+            "cols": 80,
+            "rows": 24,
+            "env": {},
+            "label": "Shell",
+        },
+        15,
+    )
+
+    listing = client.get(f"/connectors/{connector_id}/terminals-v2", headers=headers)
+    assert listing.status_code == 200, listing.text
+    assert fake_rpc.requests[-1] == (
+        connector_id,
+        "terminal.list",
+        {"sessionId": f"browse_{connector_id}"},
+        10,
+    )
+
+    snapshot = client.get(
+        f"/connectors/{connector_id}/terminals-v2/{terminal_id}/snapshot",
+        headers=headers,
+    )
+    assert snapshot.status_code == 200, snapshot.text
+    assert snapshot.json()["result"]["dataBase64"] == "b2s="
+
+    renamed = client.patch(
+        f"/connectors/{connector_id}/terminals-v2/{terminal_id}",
+        headers=headers,
+        json={"label": "Build"},
+    )
+    assert renamed.status_code == 200, renamed.text
+    assert fake_rpc.requests[-1][1] == "terminal.rename"
+
+    resized = client.post(
+        f"/connectors/{connector_id}/terminals-v2/{terminal_id}/resize",
+        headers=headers,
+        json={"cols": 100, "rows": 30},
+    )
+    assert resized.status_code == 200, resized.text
+    assert fake_rpc.requests[-1][1] == "terminal.resize"
+
+    written = client.post(
+        f"/connectors/{connector_id}/terminals-v2/{terminal_id}/write",
+        headers=headers,
+        json={"dataBase64": "Cg=="},
+    )
+    assert written.status_code == 200, written.text
+    assert fake_rpc.requests[-1][1] == "terminal.write"
+
+    closed = client.delete(f"/connectors/{connector_id}/terminals-v2/{terminal_id}", headers=headers)
+    assert closed.status_code == 200, closed.text
+    assert fake_rpc.requests[-1][1] == "terminal.close"
 
 
 def test_terminal_broker_removes_connector_user_terminals_only(tmp_path):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import sys
@@ -116,6 +117,14 @@ class FakeTerminalBackend(TerminalBackend):
         return None
 
 
+class FakeSnapshotTerminalBackend(FakeTerminalBackend):
+    def _spawn(self, argv, *, cwd, env, rows, cols):
+        return {"cwd": cwd, "reads": [b"hello\n", b""]}
+
+    def _read(self, pty) -> bytes:
+        return pty["reads"].pop(0)
+
+
 def test_connector_runtime_dispatches_request_and_forwards_notifications() -> None:
     asyncio.run(_exercise_runtime())
 
@@ -188,6 +197,10 @@ def test_connector_terminal_create_falls_back_to_existing_parent(tmp_path) -> No
 
 def test_connector_terminal_resize_missing_terminal_is_idempotent() -> None:
     asyncio.run(_exercise_terminal_missing_resize())
+
+
+def test_connector_terminal_release_keeps_snapshot_until_close(tmp_path) -> None:
+    asyncio.run(_exercise_terminal_release_snapshot(tmp_path))
 
 
 def test_connector_runtime_dispatches_async_shell_tasks(tmp_path) -> None:
@@ -700,6 +713,36 @@ async def _exercise_terminal_missing_resize() -> None:
     )
 
     assert result == {"terminalId": "trm_missing", "closed": True}
+
+
+async def _exercise_terminal_release_snapshot(tmp_path) -> None:
+    backend = FakeSnapshotTerminalBackend()
+    created = await backend.create(
+        {
+            "terminalId": "trm_snapshot",
+            "sessionId": "sess_snapshot",
+            "root": str(tmp_path),
+        }
+    )
+    assert created["terminalId"] == "trm_snapshot"
+
+    snapshot = {}
+    for _ in range(20):
+        await asyncio.sleep(0.05)
+        snapshot = await backend.snapshot({"terminalId": "trm_snapshot"})
+        if snapshot["dataBase64"]:
+            break
+
+    assert base64.b64decode(snapshot["dataBase64"]).strip() == b"hello"
+    assert snapshot["outputs"] == [{"seq": 1, "dataBase64": base64.b64encode(b"hello\n").decode("ascii")}]
+    released = await backend.release({"terminalId": "trm_snapshot"})
+    assert released == {"terminalId": "trm_snapshot", "released": True}
+    listing = await backend.list({"sessionId": "sess_snapshot"})
+    assert [item["terminalId"] for item in listing["terminals"]] == ["trm_snapshot"]
+
+    await backend.close({"terminalId": "trm_snapshot"})
+    listing = await backend.list({"sessionId": "sess_snapshot"})
+    assert listing["terminals"] == []
 
 
 async def _exercise_multi_adapter_routing() -> None:

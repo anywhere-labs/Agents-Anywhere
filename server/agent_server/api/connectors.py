@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
 import urllib.parse
@@ -737,6 +738,45 @@ async def connector_terminal_create(
         _raise_terminal_service_error(exc)
 
 
+@router.post("/{connector_id}/terminals-v2", response_model=RpcResponsePayload)
+async def connector_terminal_create_v2(
+    connector_id: str,
+    payload: TerminalCreateRequest,
+    root: str = Query(..., min_length=1),
+    user_id: str = Depends(current_user_id),
+    db: Store = Depends(get_store),
+    manager: ConnectorRpcManager = Depends(get_rpc),
+) -> RpcResponsePayload:
+    await _require_owned_online_connector(connector_id, user_id, db, manager)
+    terminal_id = f"trm_{secrets.token_urlsafe(18)}"
+    scope_id = terminal_connector_scope_id(connector_id)
+    cwd = resolve_workspace_path(root, payload.cwd or ".")
+    result = await request_connector(
+        manager,
+        connector_id,
+        "terminal.create",
+        {
+            "terminalId": terminal_id,
+            "sessionId": scope_id,
+            "root": root,
+            "cwd": cwd,
+            "shell": payload.shell,
+            "command": payload.command,
+            "args": payload.args or [],
+            "profile": payload.profile,
+            "cols": payload.cols,
+            "rows": payload.rows,
+            "env": payload.env or {},
+            "label": payload.label,
+        },
+        timeout=15,
+    )
+    if isinstance(result, dict):
+        result.setdefault("label", payload.label or "Shell")
+        result.setdefault("createdAt", utc_now())
+    return RpcResponsePayload(ok=True, result=result)
+
+
 @router.get("/{connector_id}/terminals", response_model=TerminalListResponse)
 async def connector_terminal_list(
     connector_id: str,
@@ -749,6 +789,24 @@ async def connector_terminal_list(
         return await terminal_service.list_for_connector(connector_id)
     except TerminalServiceError as exc:
         _raise_terminal_service_error(exc)
+
+
+@router.get("/{connector_id}/terminals-v2", response_model=RpcResponsePayload)
+async def connector_terminal_list_v2(
+    connector_id: str,
+    user_id: str = Depends(current_user_id),
+    db: Store = Depends(get_store),
+    manager: ConnectorRpcManager = Depends(get_rpc),
+) -> RpcResponsePayload:
+    await _require_owned_online_connector(connector_id, user_id, db, manager)
+    result = await request_connector(
+        manager,
+        connector_id,
+        "terminal.list",
+        {"sessionId": terminal_connector_scope_id(connector_id)},
+        timeout=10,
+    )
+    return RpcResponsePayload(ok=True, result=result)
 
 
 @router.patch("/{connector_id}/terminals/{terminal_id}", response_model=TerminalResponse)
@@ -767,6 +825,30 @@ async def connector_terminal_rename(
         _raise_terminal_service_error(exc)
 
 
+@router.patch("/{connector_id}/terminals-v2/{terminal_id}", response_model=RpcResponsePayload)
+async def connector_terminal_rename_v2(
+    connector_id: str,
+    terminal_id: str,
+    payload: TerminalPatchRequest,
+    user_id: str = Depends(current_user_id),
+    db: Store = Depends(get_store),
+    manager: ConnectorRpcManager = Depends(get_rpc),
+) -> RpcResponsePayload:
+    await _require_owned_online_connector(connector_id, user_id, db, manager)
+    result = await request_connector(
+        manager,
+        connector_id,
+        "terminal.rename",
+        {
+            "terminalId": terminal_id,
+            "sessionId": terminal_connector_scope_id(connector_id),
+            "label": payload.label,
+        },
+        timeout=10,
+    )
+    return RpcResponsePayload(ok=True, result=result)
+
+
 @router.delete("/{connector_id}/terminals/{terminal_id}", response_model=TerminalResponse)
 async def connector_terminal_close(
     connector_id: str,
@@ -781,6 +863,25 @@ async def connector_terminal_close(
         return await terminal_service.close_for_connector(connector_id, terminal_id)
     except TerminalServiceError as exc:
         _raise_terminal_service_error(exc)
+
+
+@router.delete("/{connector_id}/terminals-v2/{terminal_id}", response_model=RpcResponsePayload)
+async def connector_terminal_close_v2(
+    connector_id: str,
+    terminal_id: str,
+    user_id: str = Depends(current_user_id),
+    db: Store = Depends(get_store),
+    manager: ConnectorRpcManager = Depends(get_rpc),
+) -> RpcResponsePayload:
+    await _require_owned_online_connector(connector_id, user_id, db, manager)
+    result = await request_connector(
+        manager,
+        connector_id,
+        "terminal.close",
+        {"terminalId": terminal_id, "sessionId": terminal_connector_scope_id(connector_id)},
+        timeout=10,
+    )
+    return RpcResponsePayload(ok=True, result=result)
 
 
 @router.post("/{connector_id}/terminals/{terminal_id}/resize", response_model=TerminalResponse)
@@ -798,6 +899,82 @@ async def connector_terminal_resize(
         return await terminal_service.resize_for_connector(connector_id, terminal_id, payload)
     except TerminalServiceError as exc:
         _raise_terminal_service_error(exc)
+
+
+@router.post("/{connector_id}/terminals-v2/{terminal_id}/resize", response_model=RpcResponsePayload)
+async def connector_terminal_resize_v2(
+    connector_id: str,
+    terminal_id: str,
+    payload: TerminalResizeRequest,
+    user_id: str = Depends(current_user_id),
+    db: Store = Depends(get_store),
+    manager: ConnectorRpcManager = Depends(get_rpc),
+) -> RpcResponsePayload:
+    await _require_owned_online_connector(connector_id, user_id, db, manager)
+    result = await request_connector(
+        manager,
+        connector_id,
+        "terminal.resize",
+        {
+            "terminalId": terminal_id,
+            "sessionId": terminal_connector_scope_id(connector_id),
+            "cols": payload.cols,
+            "rows": payload.rows,
+        },
+        timeout=10,
+    )
+    return RpcResponsePayload(ok=True, result=result)
+
+
+@router.post("/{connector_id}/terminals-v2/{terminal_id}/write", response_model=RpcResponsePayload)
+async def connector_terminal_write_v2(
+    connector_id: str,
+    terminal_id: str,
+    payload: dict[str, Any] = Body(default_factory=dict),
+    user_id: str = Depends(current_user_id),
+    db: Store = Depends(get_store),
+    manager: ConnectorRpcManager = Depends(get_rpc),
+) -> RpcResponsePayload:
+    await _require_owned_online_connector(connector_id, user_id, db, manager)
+    data_base64 = payload.get("dataBase64")
+    if not isinstance(data_base64, str):
+        raise HTTPException(status_code=422, detail="dataBase64 is required")
+    result = await request_connector(
+        manager,
+        connector_id,
+        "terminal.write",
+        {
+            "terminalId": terminal_id,
+            "sessionId": terminal_connector_scope_id(connector_id),
+            "dataBase64": data_base64,
+        },
+        timeout=10,
+    )
+    return RpcResponsePayload(ok=True, result=result)
+
+
+@router.get("/{connector_id}/terminals-v2/{terminal_id}/snapshot", response_model=RpcResponsePayload)
+async def connector_terminal_snapshot_v2(
+    connector_id: str,
+    terminal_id: str,
+    fromSeq: int = Query(default=0, ge=0),
+    user_id: str = Depends(current_user_id),
+    db: Store = Depends(get_store),
+    manager: ConnectorRpcManager = Depends(get_rpc),
+) -> RpcResponsePayload:
+    await _require_owned_online_connector(connector_id, user_id, db, manager)
+    result = await request_connector(
+        manager,
+        connector_id,
+        "terminal.snapshot",
+        {
+            "terminalId": terminal_id,
+            "sessionId": terminal_connector_scope_id(connector_id),
+            "fromSeq": fromSeq,
+        },
+        timeout=10,
+    )
+    return RpcResponsePayload(ok=True, result=result)
 
 
 @router.websocket("/{connector_id}/terminals/{terminal_id}/stream")
