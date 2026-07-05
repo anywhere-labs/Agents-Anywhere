@@ -368,10 +368,10 @@ def test_session_title_defaults_to_first_user_message(tmp_path):
             headers,
             lambda body: (
                 len(body["items"]) == 2
-                and body["session"]["title"] == "first me"
+                and body["session"]["title"] == "first message"
             ),
         )
-        assert state["session"]["title"] == "first me"
+        assert state["session"]["title"] == "first message"
 
         ws.send_json(
             {
