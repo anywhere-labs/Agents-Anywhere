@@ -113,6 +113,8 @@ internal fun SessionAgentFilesScreen(
     filesController: FilesController,
     terminalController: RemoteTerminalController,
     darkMode: Boolean,
+    openFilePath: String? = null,
+    onOpenFileRequestConsumed: (String) -> Unit = {},
     onTerminalVerticalDragChange: (Boolean) -> Unit = {},
     onBack: () -> Unit,
 ) {
@@ -173,6 +175,24 @@ internal fun SessionAgentFilesScreen(
         } else {
             load(".")
         }
+    }
+
+    LaunchedEffect(session?.id, session?.cwd, openFilePath) {
+        val path = normalizeWindowsDrivePath(openFilePath.orEmpty()).trim()
+        if (path.isBlank()) return@LaunchedEffect
+        selectedFile = FileEntry(
+            name = fileNameFromPath(path),
+            path = path,
+            isDirectory = false,
+            size = null,
+        )
+        preview = null
+        previewError = null
+        searchOpen = false
+        searchQuery = ""
+        searchResult = SoraFileSearchResult()
+        pushView = PushView.Files
+        onOpenFileRequestConsumed(openFilePath.orEmpty())
     }
 
     LaunchedEffect(session?.id, session?.cwd, selectedFile?.path) {
@@ -1619,6 +1639,11 @@ private fun parentPath(rawPath: String): String {
     } else {
         parent
     }
+}
+
+private fun fileNameFromPath(rawPath: String): String {
+    val normalized = normalizeWindowsDrivePath(rawPath).trim().trimEnd('/', '\\').replace('\\', '/')
+    return normalized.substringAfterLast('/').ifBlank { normalized.ifBlank { "Untitled" } }
 }
 
 private fun FilesDirectory.normalizedRemotePaths(): FilesDirectory {

@@ -221,6 +221,7 @@ internal fun MessageList(
     onLoadOlder: () -> Unit,
     onPreviewAttachment: (TimelineAttachment) -> Unit,
     onCopyMessage: (String) -> Unit,
+    onOpenFile: (String) -> Unit,
 ) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -387,6 +388,7 @@ internal fun MessageList(
                                 controller = controller,
                                 onPreviewAttachment = onPreviewAttachment,
                                 onCopyMessage = onCopyMessage,
+                                onOpenFile = onOpenFile,
                             )
                             is TimelineRenderItem.ToolRun -> ToolRunGroup(
                                 messages = item.messages,
@@ -799,6 +801,7 @@ private fun TimelineMessageRow(
     controller: SessionDetailController,
     onPreviewAttachment: (TimelineAttachment) -> Unit,
     onCopyMessage: (String) -> Unit,
+    onOpenFile: (String) -> Unit,
 ) {
     when (message.kind) {
         TimelineMessageKind.Reasoning -> ReasoningSection(message, darkMode)
@@ -808,7 +811,7 @@ private fun TimelineMessageRow(
         TimelineMessageKind.System -> ToolPlaceholder(message, darkMode)
         TimelineMessageKind.Text -> when (message.author) {
             MessageAuthor.User -> UserBubble(message, darkMode, sessionId, controller, onPreviewAttachment, onCopyMessage)
-            MessageAuthor.Agent -> AgentMarkdownText(message.text, darkMode)
+            MessageAuthor.Agent -> AgentMarkdownText(message.text, darkMode, onOpenFile = onOpenFile)
             MessageAuthor.Tool -> ToolPlaceholder(message, darkMode)
         }
     }

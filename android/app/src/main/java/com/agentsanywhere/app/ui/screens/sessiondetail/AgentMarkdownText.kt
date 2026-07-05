@@ -119,7 +119,11 @@ private val markdownParser = Parser.builder()
     .build()
 
 @Composable
-internal fun AgentMarkdownText(text: String, darkMode: Boolean) {
+internal fun AgentMarkdownText(
+    text: String,
+    darkMode: Boolean,
+    onOpenFile: (String) -> Unit = {},
+) {
     val uriHandler = LocalUriHandler.current
     val document = remember(text) {
         markdownParser.parse(normalizeMarkdownTables(text.ifBlank { "_(no content)_" })) as Document
@@ -128,8 +132,6 @@ internal fun AgentMarkdownText(text: String, darkMode: Boolean) {
     val openUrl: (String) -> Unit = { url ->
         runCatching { uriHandler.openUri(url) }
     }
-    // ponytail: Android has no file panel yet; wire this to the runtime file panel when it lands.
-    val openFile: (String) -> Unit = { _ -> }
 
     Column(
         modifier = Modifier
@@ -141,7 +143,7 @@ internal fun AgentMarkdownText(text: String, darkMode: Boolean) {
             nodes = document.children(),
             darkMode = darkMode,
             styles = styles,
-            onOpenFile = openFile,
+            onOpenFile = onOpenFile,
             onOpenUrl = openUrl,
         )
     }

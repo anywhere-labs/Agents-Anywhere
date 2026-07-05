@@ -92,6 +92,7 @@ internal fun MessageComposer(
     inputEnabled: Boolean,
     canSend: Boolean,
     showInterrupt: Boolean,
+    interrupting: Boolean,
     placeholder: String,
     attachments: List<PendingAttachment>,
     onToggleTakeover: () -> Unit,
@@ -193,6 +194,7 @@ internal fun MessageComposer(
                 inputEnabled = inputEnabled,
                 canSend = canSend,
                 showInterrupt = showInterrupt,
+                interrupting = interrupting,
                 onToggleTakeover = onToggleTakeover,
                 onOpenAttachMenu = { if (inputEnabled) showAttachMenu = true },
                 onSend = onSend,
@@ -422,6 +424,7 @@ private fun ComposerActions(
     inputEnabled: Boolean,
     canSend: Boolean,
     showInterrupt: Boolean,
+    interrupting: Boolean,
     onToggleTakeover: () -> Unit,
     onOpenAttachMenu: () -> Unit,
     onSend: () -> Unit,
@@ -436,7 +439,7 @@ private fun ComposerActions(
         darkMode -> Color(0xFFA1A1AA)
         else -> Color(0xFF3A3935)
     }
-    val canPressSend = canSend || showInterrupt
+    val canPressSend = canSend || (showInterrupt && !interrupting)
     val sendSurface = when {
         showInterrupt && darkMode -> Color.White
         showInterrupt -> Color(0xFF09090B)
@@ -522,7 +525,13 @@ private fun ComposerActions(
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            if (showInterrupt) {
+            if (showInterrupt && interrupting) {
+                CircularProgressIndicator(
+                    color = sendIcon,
+                    strokeWidth = 2.dp,
+                    modifier = Modifier.size(17.dp),
+                )
+            } else if (showInterrupt) {
                 Box(
                     modifier = Modifier
                         .size(10.dp)

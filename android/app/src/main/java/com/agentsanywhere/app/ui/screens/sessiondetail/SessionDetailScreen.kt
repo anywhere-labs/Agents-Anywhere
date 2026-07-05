@@ -131,6 +131,7 @@ fun SessionDetailScreen(
     var showCamera by remember(sessionId) { mutableStateOf(false) }
     var showDeviceOffline by remember(sessionId) { mutableStateOf(false) }
     var showRuntimeSettings by remember(sessionId) { mutableStateOf(false) }
+    var pendingOpenFilePath by remember(sessionId) { mutableStateOf<String?>(null) }
     var terminalVerticalDragActive by remember(sessionId) { mutableStateOf(false) }
     var composerHeightPx by remember { mutableStateOf(0) }
     var readOnlyComposerTapCount by remember(sessionId) { mutableStateOf(0) }
@@ -175,6 +176,13 @@ fun SessionDetailScreen(
         if (copyText.isBlank()) return
         clipboard.setText(AnnotatedString(copyText))
         showToast(context.getString(R.string.common_copied))
+    }
+
+    fun openReferencedFile(path: String) {
+        val trimmed = path.trim()
+        if (trimmed.isBlank()) return
+        pendingOpenFilePath = trimmed
+        scope.launch { pagerState.animateScrollToPage(1) }
     }
 
     fun saveComposerDraft(nextDraft: String, nextAttachments: List<PendingAttachment>) {
@@ -408,7 +416,7 @@ fun SessionDetailScreen(
                 controller.loadOlder(id, beforeOrderSeq, devices)
                     .onSuccess { older ->
                         if (!appVisible) return@onSuccess
-                        state = controller.applyOlder(state, older)
+                        state = controller.applyOlder(id, state, older)
                         state.session?.let(onSessionChanged)
                     }
                     .onFailure { error ->
@@ -434,9 +442,10 @@ fun SessionDetailScreen(
             }
             val uploadedAttachments = pendingAttachments.mapNotNull { it.remote }
             state = controller.addOptimisticMessage(
-                state,
-                text,
-                clientMessageId,
+                sessionId = id,
+                state = state,
+                text = text,
+                clientMessageId = clientMessageId,
                 attachments = uploadedAttachments,
             )
             clearComposerDraft()
@@ -450,6 +459,7 @@ fun SessionDetailScreen(
             )
                 .onSuccess { result ->
                     state = controller.markOptimisticMessage(
+                        sessionId = id,
                         state = state,
                         clientMessageId = clientMessageId,
                         status = "running",
@@ -459,8 +469,12 @@ fun SessionDetailScreen(
                 }
                 .onFailure { error ->
                     val message = error.message ?: context.getString(R.string.session_send_failed)
-                    state = controller.markOptimisticMessage(state, clientMessageId, "failed")
-                        .copy(actionError = message)
+                    state = controller.markOptimisticMessage(
+                        sessionId = id,
+                        state = state,
+                        clientMessageId = clientMessageId,
+                        status = "failed",
+                    ).copy(actionError = message)
                     showError(message)
                 }
         }
@@ -677,7 +691,7 @@ fun SessionDetailScreen(
                     if (event.value.refetch) {
                         refetch(showLoading = false)
                     } else {
-                        state = controller.applyDelta(state, event.value)
+                        state = controller.applyDelta(id, state, event.value)
                         state.session?.let(onSessionChanged)
                         if (event.value.messages.isNotEmpty()) streamLatestRequest += 1
                     }
@@ -688,7 +702,6 @@ fun SessionDetailScreen(
 
     val serverBusy = state.session?.status == SessionStatus.Running ||
         state.session?.status == SessionStatus.WaitingApproval
-    val isBusy = serverBusy && !state.interrupting
     LaunchedEffect(state.interrupting, serverBusy) {
         if (state.interrupting && !serverBusy) state = state.copy(interrupting = false)
     }
@@ -707,19 +720,18 @@ fun SessionDetailScreen(
         attachmentsReady &&
         (draft.isNotBlank() || attachments.isNotEmpty()) &&
         (state.session?.status == SessionStatus.Idle || state.session?.status == SessionStatus.Error)
-    val workingLabel = if (!state.interrupting && (
+    val agentLabel = state.session?.runtimeLabel?.takeIf { it.isNotBlank() }
+        ?: context.getString(R.string.session_agent_fallback)
+    val workingLabel = when {
+        state.interrupting -> context.getString(R.string.session_agent_interrupting, agentLabel)
         state.sending ||
-        state.session?.status == SessionStatus.Running ||
-        state.messages.any { it.optimistic && it.status == "running" }
-    )) {
-        context.getString(
-            R.string.session_agent_working,
-            state.session?.runtimeLabel?.takeIf { it.isNotBlank() } ?: context.getString(R.string.session_agent_fallback),
-        )
-    } else {
-        null
+            state.session?.status == SessionStatus.Running ||
+            state.messages.any { it.optimistic && it.status == "running" } -> {
+            context.getString(R.string.session_agent_working, agentLabel)
+        }
+        else -> null
     }
-    val showInterrupt = inputEnabled && isBusy && draft.isBlank() && attachments.isEmpty()
+    val showInterrupt = inputEnabled && (serverBusy || state.interrupting) && draft.isBlank() && attachments.isEmpty()
     val replyTarget = state.session?.runtimeLabel?.takeIf { it.isNotBlank() }
         ?: stringResource(R.string.session_agent_fallback)
     val placeholder = when {
@@ -781,6 +793,7 @@ fun SessionDetailScreen(
                                 onLoadOlder = { loadOlderMessages() },
                                 onPreviewAttachment = { previewImage = AttachmentPreview.Remote(it) },
                                 onCopyMessage = ::copyMessageText,
+                                onOpenFile = ::openReferencedFile,
                             )
                         }
                         ComposerVeil(
@@ -796,6 +809,7 @@ fun SessionDetailScreen(
                             inputEnabled = inputEnabled,
                             canSend = canSend,
                             showInterrupt = showInterrupt,
+                            interrupting = state.interrupting,
                             placeholder = placeholder,
                             attachments = attachments,
                             onToggleTakeover = { takeoverConfirm = !takeoverEnabled },
@@ -848,6 +862,10 @@ fun SessionDetailScreen(
                     filesController = filesController,
                     terminalController = remoteTerminal,
                     darkMode = darkMode,
+                    openFilePath = pendingOpenFilePath,
+                    onOpenFileRequestConsumed = { consumed ->
+                        if (pendingOpenFilePath == consumed) pendingOpenFilePath = null
+                    },
                     onTerminalVerticalDragChange = { terminalVerticalDragActive = it },
                     onBack = { scope.launch { pagerState.animateScrollToPage(0) } },
                 )
