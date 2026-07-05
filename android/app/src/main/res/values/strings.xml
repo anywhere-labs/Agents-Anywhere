@@ -326,6 +326,10 @@
     <string name="session_output">Output</string>
     <string name="session_no_output">No output</string>
     <string name="session_no_preview">No preview</string>
+    <string name="session_tool_summary_commands">Ran %1$d commands</string>
+    <string name="session_tool_summary_changed_files">Changed %1$d files</string>
+    <string name="session_tool_summary_created_files">Created %1$d files</string>
+    <string name="session_tool_summary_items">%1$d activities</string>
     <string name="session_takeover">Takeover</string>
     <string name="session_attachment_camera">Camera</string>
     <string name="session_attachment_photos">Photos</string>
