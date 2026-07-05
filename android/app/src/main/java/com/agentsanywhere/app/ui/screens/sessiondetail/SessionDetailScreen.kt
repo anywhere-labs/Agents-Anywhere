@@ -131,6 +131,7 @@ fun SessionDetailScreen(
     var showCamera by remember(sessionId) { mutableStateOf(false) }
     var showDeviceOffline by remember(sessionId) { mutableStateOf(false) }
     var showRuntimeSettings by remember(sessionId) { mutableStateOf(false) }
+    var pendingOpenFilePath by remember(sessionId) { mutableStateOf<String?>(null) }
     var terminalVerticalDragActive by remember(sessionId) { mutableStateOf(false) }
     var composerHeightPx by remember { mutableStateOf(0) }
     var readOnlyComposerTapCount by remember(sessionId) { mutableStateOf(0) }
@@ -175,6 +176,13 @@ fun SessionDetailScreen(
         if (copyText.isBlank()) return
         clipboard.setText(AnnotatedString(copyText))
         showToast(context.getString(R.string.common_copied))
+    }
+
+    fun openReferencedFile(path: String) {
+        val trimmed = path.trim()
+        if (trimmed.isBlank()) return
+        pendingOpenFilePath = trimmed
+        scope.launch { pagerState.animateScrollToPage(1) }
     }
 
     fun saveComposerDraft(nextDraft: String, nextAttachments: List<PendingAttachment>) {
@@ -781,6 +789,7 @@ fun SessionDetailScreen(
                                 onLoadOlder = { loadOlderMessages() },
                                 onPreviewAttachment = { previewImage = AttachmentPreview.Remote(it) },
                                 onCopyMessage = ::copyMessageText,
+                                onOpenFile = ::openReferencedFile,
                             )
                         }
                         ComposerVeil(
@@ -848,6 +857,10 @@ fun SessionDetailScreen(
                     filesController = filesController,
                     terminalController = remoteTerminal,
                     darkMode = darkMode,
+                    openFilePath = pendingOpenFilePath,
+                    onOpenFileRequestConsumed = { consumed ->
+                        if (pendingOpenFilePath == consumed) pendingOpenFilePath = null
+                    },
                     onTerminalVerticalDragChange = { terminalVerticalDragActive = it },
                     onBack = { scope.launch { pagerState.animateScrollToPage(0) } },
                 )
