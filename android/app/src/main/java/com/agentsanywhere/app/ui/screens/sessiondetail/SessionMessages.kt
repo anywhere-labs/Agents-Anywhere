@@ -38,6 +38,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -47,10 +48,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
@@ -80,6 +84,8 @@ private const val SESSION_WELCOME_WRITE_MS = 58L
 private const val SESSION_WELCOME_ERASE_MS = 22L
 private const val SESSION_WELCOME_HOLD_MS = 15_000L
 private const val LOAD_OLDER_VISIBLE_THRESHOLD = 3
+private val AUTO_FOLLOW_RESUME_THRESHOLD = 8.dp
+private val AUTO_FOLLOW_DRAG_PAUSE_THRESHOLD = 32.dp
 private val SessionWelcomeFontFamily = FontFamily(
     Font(R.font.newsreader_opsz_wght, FontWeight(650)),
 )
@@ -203,7 +209,8 @@ internal fun MessageList(
     darkMode: Boolean,
     sessionId: String,
     controller: SessionDetailController,
-    pinLatestRequest: Int,
+    forceLatestRequest: Int,
+    streamLatestRequest: Int,
     workingLabel: String?,
     hasMore: Boolean,
     loadingOlder: Boolean,
@@ -213,11 +220,38 @@ internal fun MessageList(
 ) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
-    val timelineItems = remember(messages) { groupTimelineMessages(messages) }
-    val agentTurnCopyTextByItem = remember(timelineItems, workingLabel) {
-        buildAgentTurnCopyTextByItem(timelineItems, workingLabel != null)
+    val density = LocalDensity.current
+    val resumeThresholdPx = with(density) { AUTO_FOLLOW_RESUME_THRESHOLD.roundToPx() }
+    val dragPauseThresholdPx = with(density) { AUTO_FOLLOW_DRAG_PAUSE_THRESHOLD.toPx() }
+    val latestMessages by rememberUpdatedState(messages)
+    val latestWorkingLabel by rememberUpdatedState(workingLabel)
+    var lockedMessages by remember(sessionId) { mutableStateOf<List<TimelineMessage>?>(null) }
+    var lockedWorkingLabel by remember(sessionId) { mutableStateOf<String?>(null) }
+    val displayMessages = lockedMessages ?: messages
+    val displayWorkingLabel = if (lockedMessages != null) lockedWorkingLabel else workingLabel
+    val timelineItems = remember(displayMessages) { groupTimelineMessages(displayMessages) }
+    val agentTurnCopyTextByItem = remember(timelineItems, displayWorkingLabel) {
+        buildAgentTurnCopyTextByItem(timelineItems, displayWorkingLabel != null)
     }
     var showScrollToBottom by remember { mutableStateOf(false) }
+    var autoFollowLatest by remember(sessionId) { mutableStateOf(true) }
+    var userPausedAutoFollow by remember(sessionId) { mutableStateOf(false) }
+
+    fun releaseReadLock() {
+        lockedMessages = null
+        lockedWorkingLabel = null
+        userPausedAutoFollow = false
+        autoFollowLatest = true
+    }
+
+    fun pauseAutoFollowWithSnapshot() {
+        if (lockedMessages == null) {
+            lockedMessages = latestMessages
+            lockedWorkingLabel = latestWorkingLabel
+        }
+        userPausedAutoFollow = true
+        autoFollowLatest = false
+    }
 
     LaunchedEffect(listState) {
         var lastPosition = listState.firstVisibleItemIndex * 1_000 + listState.firstVisibleItemScrollOffset
@@ -239,13 +273,38 @@ internal fun MessageList(
         }
     }
 
-    LaunchedEffect(pinLatestRequest) {
-        if (pinLatestRequest > 0) {
+    LaunchedEffect(listState, resumeThresholdPx) {
+        snapshotFlow {
+            Triple(
+                listState.isAtLatest(),
+                listState.isNearLatest(resumeThresholdPx),
+                listState.isScrollInProgress,
+            )
+        }
+            .distinctUntilChanged()
+            .collectLatest { (atLatest, nearLatest, scrolling) ->
+                if (atLatest && !scrolling) {
+                    releaseReadLock()
+                } else if (nearLatest && !scrolling && !userPausedAutoFollow) {
+                    autoFollowLatest = true
+                }
+            }
+    }
+
+    LaunchedEffect(forceLatestRequest) {
+        if (forceLatestRequest > 0) {
+            releaseReadLock()
             listState.scrollToItem(0)
         }
     }
 
-    LaunchedEffect(listState, hasMore, loadingOlder, messages.size) {
+    LaunchedEffect(streamLatestRequest) {
+        if (streamLatestRequest > 0 && autoFollowLatest && !userPausedAutoFollow && !listState.isScrollInProgress) {
+            listState.scrollToItem(0)
+        }
+    }
+
+    LaunchedEffect(listState, hasMore, loadingOlder, displayMessages.size) {
         snapshotFlow {
             val layout = listState.layoutInfo
             val total = layout.totalItemsCount
@@ -268,14 +327,37 @@ internal fun MessageList(
                 modifier = Modifier
                     .fillMaxSize()
                     .imePadding()
+                    .pointerInput(sessionId, dragPauseThresholdPx) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val down = awaitPointerEvent(PointerEventPass.Initial)
+                                    .changes
+                                    .firstOrNull { it.pressed && !it.previousPressed }
+                                    ?: continue
+                                val pointerId = down.id
+                                val startY = down.position.y
+
+                                while (true) {
+                                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                                    val change = event.changes.firstOrNull { it.id == pointerId }
+                                        ?: event.changes.firstOrNull { it.pressed }
+                                        ?: break
+                                    if (!change.pressed) break
+                                    if (abs(change.position.y - startY) >= dragPauseThresholdPx) {
+                                        pauseAutoFollowWithSnapshot()
+                                    }
+                                }
+                            }
+                        }
+                    }
                     .padding(horizontal = 20.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 item(key = "bottom-space") { Spacer(Modifier.height(168.dp)) }
-                if (workingLabel != null) {
+                if (displayWorkingLabel != null) {
                     item(key = "working-indicator") {
                         DisableSelection {
-                            WorkingIndicator(label = workingLabel, darkMode = darkMode)
+                            WorkingIndicator(label = displayWorkingLabel, darkMode = darkMode)
                         }
                     }
                 }
@@ -323,7 +405,11 @@ internal fun MessageList(
             ScrollToBottomButton(
                 darkMode = darkMode,
                 onClick = {
-                    scope.launch { listState.animateScrollToItem(0) }
+                    scope.launch {
+                        listState.animateScrollToItem(0)
+                        releaseReadLock()
+                        listState.scrollToItem(0)
+                    }
                 },
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -332,6 +418,14 @@ internal fun MessageList(
             )
         }
     }
+}
+
+private fun LazyListState.isNearLatest(thresholdPx: Int): Boolean {
+    return firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset <= thresholdPx
+}
+
+private fun LazyListState.isAtLatest(): Boolean {
+    return firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset == 0
 }
 
 @Composable

@@ -122,7 +122,8 @@ fun SessionDetailScreen(
         )
     }
     var draft by remember(sessionId) { mutableStateOf(restoredComposerDraft.text) }
-    var pinLatestRequest by remember(sessionId) { mutableStateOf(0) }
+    var forceLatestRequest by remember(sessionId) { mutableStateOf(0) }
+    var streamLatestRequest by remember(sessionId) { mutableStateOf(0) }
     var attachments by remember(sessionId) { mutableStateOf(restoredComposerDraft.attachments) }
     var takeoverConfirm by remember(sessionId) { mutableStateOf<Boolean?>(null) }
     var pendingErrorSend by remember(sessionId) { mutableStateOf<String?>(null) }
@@ -440,7 +441,7 @@ fun SessionDetailScreen(
             )
             clearComposerDraft()
             unfocusComposer()
-            pinLatestRequest += 1
+            forceLatestRequest += 1
             controller.sendMessage(
                 sessionId = id,
                 content = text,
@@ -681,7 +682,7 @@ fun SessionDetailScreen(
                     } else {
                         state = controller.applyDelta(state, event.value)
                         state.session?.let(onSessionChanged)
-                        if (event.value.messages.isNotEmpty()) pinLatestRequest += 1
+                        if (event.value.messages.isNotEmpty()) streamLatestRequest += 1
                     }
                 }
             }
@@ -775,7 +776,8 @@ fun SessionDetailScreen(
                                 darkMode = darkMode,
                                 sessionId = sessionId.orEmpty(),
                                 controller = controller,
-                                pinLatestRequest = pinLatestRequest,
+                                forceLatestRequest = forceLatestRequest,
+                                streamLatestRequest = streamLatestRequest,
                                 workingLabel = workingLabel,
                                 hasMore = state.hasMore,
                                 loadingOlder = state.loadingOlder,
