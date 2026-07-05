@@ -623,10 +623,7 @@ fun SessionDetailScreen(
 
     DisposableEffect(remoteTerminal) {
         onDispose {
-            scope.launch {
-                remoteTerminal.close()
-                remoteTerminal.dispose()
-            }
+            remoteTerminal.closeAndDispose()
         }
     }
 

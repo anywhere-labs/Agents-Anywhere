@@ -57,10 +57,12 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -184,8 +186,11 @@ fun NewSessionScreen(
         }
     }
 
-    val workspaces = remember(sessionsState.sessions, selectedDevice?.id, homePath) {
-        workspaceOptionsFor(sessionsState.sessions, selectedDevice?.id, homePath)
+    val workspaceSessions = remember(sessionsState.sessions, sessionsState.archivedSessions) {
+        sessionsState.sessions + sessionsState.archivedSessions
+    }
+    val workspaces = remember(workspaceSessions, selectedDevice?.id, homePath) {
+        workspaceOptionsFor(workspaceSessions, selectedDevice?.id, homePath)
     }
     val selectedWorkspace = workspaces.firstOrNull { it.path == selectedWorkspacePath }
     val selectedWorkspaceTitle = selectedWorkspace?.title?.localizedWorkspaceTitle()
@@ -385,6 +390,19 @@ private fun NewSessionHeader(
 ) {
     val colors = LocalAAColors.current
     val iconColor = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF777777)
+    var titleField by remember { mutableStateOf(title.textFieldValueAtEnd()) }
+
+    LaunchedEffect(editing) {
+        if (editing) {
+            titleField = title.textFieldValueAtEnd()
+        }
+    }
+
+    LaunchedEffect(title, editing) {
+        if (!editing && titleField.text != title) {
+            titleField = title.textFieldValueAtEnd()
+        }
+    }
 
     Row(
         modifier = Modifier
@@ -404,8 +422,11 @@ private fun NewSessionHeader(
                 verticalArrangement = Arrangement.spacedBy(3.dp),
             ) {
                 BasicTextField(
-                    value = title,
-                    onValueChange = onTitleChange,
+                    value = titleField,
+                    onValueChange = {
+                        titleField = it
+                        onTitleChange(it.text)
+                    },
                     singleLine = true,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1201,6 +1222,10 @@ private fun pathTitle(path: String, homeDirectory: String): String {
     val clean = path.trim().trimEnd('/').ifBlank { path }
     if (clean == "~") return homeDirectory
     return clean.substringAfterLast('/').ifBlank { clean }
+}
+
+private fun String.textFieldValueAtEnd(): TextFieldValue {
+    return TextFieldValue(text = this, selection = TextRange(length))
 }
 
 @Composable

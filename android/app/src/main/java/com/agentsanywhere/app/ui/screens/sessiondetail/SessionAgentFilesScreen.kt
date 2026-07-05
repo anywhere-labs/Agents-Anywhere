@@ -83,6 +83,7 @@ import com.agentsanywhere.app.feature.terminal.RemoteTerminalStatus
 import com.agentsanywhere.app.feature.terminal.TerminalShortcut
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentSession
+import com.agentsanywhere.app.ui.designsystem.AuthErrorNotice
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import com.composables.icons.lucide.Braces
@@ -153,7 +154,7 @@ internal fun SessionAgentFilesScreen(
                 root = root,
                 path = path,
             )
-                .onSuccess { directory = it.copy(path = path) }
+                .onSuccess { directory = it.normalizedRemotePaths() }
                 .onFailure { failure -> error = failure.message ?: loadFilesFailedMessage }
             loading = false
         }
@@ -285,6 +286,7 @@ internal fun DeviceFilesContent(
 ) {
     val scope = rememberCoroutineScope()
     var directory by remember(device?.id) { mutableStateOf(FilesDirectory(path = ".")) }
+    var resolvedRoot by remember(device?.id) { mutableStateOf<String?>(null) }
     var loading by remember(device?.id) { mutableStateOf(false) }
     var error by remember(device?.id) { mutableStateOf<String?>(null) }
     var openActionPath by remember(device?.id) { mutableStateOf<String?>(null) }
@@ -296,7 +298,6 @@ internal fun DeviceFilesContent(
     var searchQuery by remember(device?.id) { mutableStateOf("") }
     var searchResult by remember(device?.id) { mutableStateOf(SoraFileSearchResult()) }
     val searchController = remember(selectedFile?.path) { SoraFileSearchController() }
-    val root = "~"
     val deviceOfflineMessage = stringResource(R.string.files_device_offline)
     val selectDeviceMessage = stringResource(R.string.files_select_device)
     val loadFilesFailedMessage = stringResource(R.string.files_load_failed)
@@ -304,6 +305,7 @@ internal fun DeviceFilesContent(
 
     fun load(path: String) {
         val current = device ?: return
+        val root = resolvedRoot?.takeIf { it.isNotBlank() } ?: "~"
         if (!current.online) {
             error = deviceOfflineMessage
             return
@@ -314,9 +316,15 @@ internal fun DeviceFilesContent(
             controller.listFiles(
                 connectorId = current.id,
                 root = root,
-                path = path,
+                path = normalizeWindowsDrivePath(path),
             )
-                .onSuccess { directory = it.copy(path = path) }
+                .onSuccess {
+                    val nextDirectory = it.normalizedRemotePaths()
+                    directory = nextDirectory
+                    if (root == "~") {
+                        resolvedRoot = nextDirectory.path.takeIf { path -> path.isNotBlank() }
+                    }
+                }
                 .onFailure { failure -> error = failure.message ?: loadFilesFailedMessage }
             loading = false
         }
@@ -329,6 +337,7 @@ internal fun DeviceFilesContent(
         searchOpen = false
         searchQuery = ""
         searchResult = SoraFileSearchResult()
+        resolvedRoot = null
         directory = FilesDirectory(path = ".")
         error = when {
             device == null -> selectDeviceMessage
@@ -354,8 +363,8 @@ internal fun DeviceFilesContent(
         searchResult = SoraFileSearchResult()
         controller.readTextFile(
             connectorId = current.id,
-            root = root,
-            path = file.path,
+            root = resolvedRoot?.takeIf { it.isNotBlank() } ?: "~",
+            path = normalizeWindowsDrivePath(file.path),
         )
             .onSuccess { preview = it }
             .onFailure { failure -> previewError = failure.message ?: openFileFailedMessage }
@@ -364,9 +373,10 @@ internal fun DeviceFilesContent(
 
     Box(modifier = modifier.fillMaxSize()) {
         val file = selectedFile
+        val rootPath = resolvedRoot ?: "~"
         if (file == null) {
             FileListContent(
-                rootPath = root,
+                rootPath = rootPath,
                 directory = directory,
                 loading = loading,
                 error = error,
@@ -383,7 +393,7 @@ internal fun DeviceFilesContent(
             )
         } else {
             FilePreviewContent(
-                rootPath = root,
+                rootPath = rootPath,
                 file = file,
                 preview = preview,
                 loading = previewLoading,
@@ -448,6 +458,9 @@ internal fun TerminalContent(
         terminalState.status == RemoteTerminalStatus.Exited ||
         terminalState.status == RemoteTerminalStatus.Error
         )
+    val emphasizedStatus = terminalState.status == RemoteTerminalStatus.Closed ||
+        terminalState.status == RemoteTerminalStatus.Exited ||
+        terminalState.status == RemoteTerminalStatus.Error
 
     LaunchedEffect(terminalKey) {
         if (terminalKey != null) onStart()
@@ -505,24 +518,32 @@ internal fun TerminalContent(
                 .padding(start = 16.dp, end = 16.dp, bottom = terminalBottomInset),
         ) {
             if (statusText != null) {
-                Text(
-                    text = statusText,
-                    color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF6F706A),
-                    fontSize = 12.sp,
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier
-                        .padding(horizontal = 14.dp, vertical = 10.dp)
-                        .then(
-                            if (reconnectable) {
-                                Modifier.noRippleClickable {
-                                    scope.launch { onRestart() }
-                                }
-                            } else {
-                                Modifier
-                            },
-                        ),
-                )
+                val statusModifier = Modifier
+                    .padding(vertical = 10.dp)
+                    .then(
+                        if (reconnectable) {
+                            Modifier.noRippleClickable {
+                                scope.launch { onRestart() }
+                            }
+                        } else {
+                            Modifier
+                        },
+                    )
+                if (emphasizedStatus) {
+                    AuthErrorNotice(
+                        message = statusText,
+                        modifier = statusModifier,
+                    )
+                } else {
+                    Text(
+                        text = statusText,
+                        color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF6F706A),
+                        fontSize = 12.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = statusModifier.padding(horizontal = 14.dp),
+                    )
+                }
             }
             AndroidView(
                 factory = { terminalView },
@@ -567,14 +588,14 @@ private fun remoteTerminalViewClient(
     override fun onSingleTapUp(e: MotionEvent?) = Unit
 
     override fun shouldBackButtonBeMappedToEscape(): Boolean = false
-    override fun shouldEnforceCharBasedInput(): Boolean = false
+    override fun shouldEnforceCharBasedInput(): Boolean = true
     override fun shouldUseCtrlSpaceWorkaround(): Boolean = false
     override fun isTerminalViewSelected(): Boolean = true
     override fun copyModeChanged(copyMode: Boolean) = Unit
     override fun verticalScrollChanged(active: Boolean) = onVerticalDragChange(active)
     override fun onKeyDown(keyCode: Int, e: KeyEvent?, session: RemoteTerminalController?): Boolean = false
     override fun onKeyUp(keyCode: Int, e: KeyEvent?): Boolean = false
-    override fun onLongPress(event: MotionEvent?): Boolean = true
+    override fun onLongPress(event: MotionEvent?): Boolean = false
     override fun readControlKey(): Boolean = controller.isCtrlLatched
     override fun readAltKey(): Boolean = controller.isAltLatched
     override fun readShiftKey(): Boolean = false
@@ -1577,20 +1598,36 @@ private fun fileIconFor(name: String, knownCode: Boolean): ImageVector {
 
 private fun displayPath(root: String?, rawPath: String): String {
     val base = root.orEmpty().trim().trimEnd('/', '\\')
-    val path = rawPath.trim().replace('\\', '/')
+    val path = normalizeWindowsDrivePath(rawPath).trim().replace('\\', '/')
     if (path.isBlank() || path == "." || path == "/") return base.ifBlank { "." }
     if (path.startsWith("/") || Regex("^[A-Za-z]:/.*").matches(path)) return path
     return if (base.isBlank()) path else "$base/${path.trimStart('/')}"
 }
 
 private fun parentPath(rawPath: String): String {
-    val clean = rawPath.trim().trimEnd('/', '\\').ifBlank { "." }
+    val clean = normalizeWindowsDrivePath(rawPath).trim().trimEnd('/', '\\').ifBlank { "." }
     if (clean == "." || clean == "/" || Regex("^[A-Za-z]:[\\\\/]?$").matches(clean)) return ""
     val normalized = clean.replace('\\', '/')
     val slash = normalized.lastIndexOf("/")
-    return when {
+    val parent = when {
         slash < 0 -> "."
         slash == 0 -> "/"
         else -> normalized.take(slash)
     }
+    return if (clean.contains('\\') && Regex("^[A-Za-z]:/").containsMatchIn(parent)) {
+        parent.replace('/', '\\')
+    } else {
+        parent
+    }
+}
+
+private fun FilesDirectory.normalizedRemotePaths(): FilesDirectory {
+    return copy(
+        path = normalizeWindowsDrivePath(path),
+        entries = entries.map { entry -> entry.copy(path = normalizeWindowsDrivePath(entry.path)) },
+    )
+}
+
+private fun normalizeWindowsDrivePath(rawPath: String): String {
+    return rawPath.replace(Regex("^/([A-Za-z]:)(?=$|[\\\\/])"), "$1")
 }
