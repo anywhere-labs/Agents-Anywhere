@@ -343,11 +343,16 @@ class RemoteTerminalController(
                 manuallyClosed = true
                 socket?.close(1000, "terminal exited")
                 socket = null
-                state.value = RemoteTerminalState(status = RemoteTerminalStatus.Exited, message = "Exited. Tap to reconnect.")
+                state.value = RemoteTerminalState(status = RemoteTerminalStatus.Exited)
             }
             "error" -> {
                 diag("rx error ${json.optString("message")} terminal=$terminalId")
-                state.value = RemoteTerminalState(status = RemoteTerminalStatus.Error, message = json.optString("message", "Terminal error."))
+                val message = json.optString("message").takeIf { it.isNotBlank() }
+                state.value = if (message == null) {
+                    RemoteTerminalState(status = RemoteTerminalStatus.Closed)
+                } else {
+                    RemoteTerminalState(status = RemoteTerminalStatus.Error, message = message)
+                }
             }
         }
     }
@@ -385,10 +390,7 @@ class RemoteTerminalController(
             diag("frame#$localFrameSeq $kind accepted=$accepted terminal=$terminalId")
             if (accepted == false && !manuallyClosed) {
                 main.post {
-                    state.value = RemoteTerminalState(
-                        status = RemoteTerminalStatus.Error,
-                        message = "Terminal input could not be sent.",
-                    )
+                    state.value = RemoteTerminalState(status = RemoteTerminalStatus.Closed)
                 }
             }
         }
@@ -400,13 +402,13 @@ class RemoteTerminalController(
         if (reconnectScheduled) return
         if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
             diag("reconnect exhausted terminal=$terminalId lastSeen=$lastSeenSeq")
-            state.value = RemoteTerminalState(status = RemoteTerminalStatus.Error, message = "Terminal disconnected. Tap to reconnect.")
+            state.value = RemoteTerminalState(status = RemoteTerminalStatus.Closed)
             return
         }
         reconnectAttempts += 1
         reconnectScheduled = true
         diag("reconnect scheduled attempt=$reconnectAttempts terminal=$terminalId lastSeen=$lastSeenSeq")
-        state.value = RemoteTerminalState(status = RemoteTerminalStatus.Connecting, message = "Reconnecting terminal...")
+        state.value = RemoteTerminalState(status = RemoteTerminalStatus.Connecting)
         main.postDelayed({
             reconnectScheduled = false
             if (manuallyClosed || socket != null || terminalId == null || streamUrl != originalUrl) return@postDelayed

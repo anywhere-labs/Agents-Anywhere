@@ -365,7 +365,7 @@
     <string name="files_terminal_connecting">正在连接...</string>
     <string name="files_terminal_disconnected">连接已断开，点按重新连接。</string>
     <string name="files_terminal_exited">终端已退出，点按重新连接。</string>
-    <string name="files_terminal_error">终端出错，点按重新连接。</string>
+    <string name="files_terminal_error">连接已断开，点按重新连接。</string>
     <string name="files_loading">正在加载文件...</string>
     <string name="files_empty_directory">这个目录是空的。</string>
     <string name="files_loading_file">正在加载文件...</string>

@@ -83,6 +83,7 @@ import com.agentsanywhere.app.feature.terminal.RemoteTerminalStatus
 import com.agentsanywhere.app.feature.terminal.TerminalShortcut
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentSession
+import com.agentsanywhere.app.ui.designsystem.AuthErrorNotice
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import com.composables.icons.lucide.Braces
@@ -457,6 +458,9 @@ internal fun TerminalContent(
         terminalState.status == RemoteTerminalStatus.Exited ||
         terminalState.status == RemoteTerminalStatus.Error
         )
+    val emphasizedStatus = terminalState.status == RemoteTerminalStatus.Closed ||
+        terminalState.status == RemoteTerminalStatus.Exited ||
+        terminalState.status == RemoteTerminalStatus.Error
 
     LaunchedEffect(terminalKey) {
         if (terminalKey != null) onStart()
@@ -514,24 +518,32 @@ internal fun TerminalContent(
                 .padding(start = 16.dp, end = 16.dp, bottom = terminalBottomInset),
         ) {
             if (statusText != null) {
-                Text(
-                    text = statusText,
-                    color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF6F706A),
-                    fontSize = 12.sp,
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier
-                        .padding(horizontal = 14.dp, vertical = 10.dp)
-                        .then(
-                            if (reconnectable) {
-                                Modifier.noRippleClickable {
-                                    scope.launch { onRestart() }
-                                }
-                            } else {
-                                Modifier
-                            },
-                        ),
-                )
+                val statusModifier = Modifier
+                    .padding(vertical = 10.dp)
+                    .then(
+                        if (reconnectable) {
+                            Modifier.noRippleClickable {
+                                scope.launch { onRestart() }
+                            }
+                        } else {
+                            Modifier
+                        },
+                    )
+                if (emphasizedStatus) {
+                    AuthErrorNotice(
+                        message = statusText,
+                        modifier = statusModifier,
+                    )
+                } else {
+                    Text(
+                        text = statusText,
+                        color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF6F706A),
+                        fontSize = 12.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = statusModifier.padding(horizontal = 14.dp),
+                    )
+                }
             }
             AndroidView(
                 factory = { terminalView },
