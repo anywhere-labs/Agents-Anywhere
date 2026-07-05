@@ -45,7 +45,6 @@ import com.agentsanywhere.app.feature.sessions.withPatchedSession
 import com.agentsanywhere.app.feature.sessions.withPatchedSessions
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeSettingsState
-import com.agentsanywhere.app.feature.terminal.RemoteTerminalController
 import com.agentsanywhere.app.feature.terminal.TerminalController
 import com.agentsanywhere.app.model.MobileLoginQrPayload
 import com.agentsanywhere.app.feature.auth.OAuthPendingStatus
@@ -144,9 +143,6 @@ fun AgentsAnywhereApp(
             terminalApi = TerminalApi(),
             sessionStore = sessionStore,
         )
-    }
-    val standaloneRemoteTerminalController = remember(terminalController) {
-        RemoteTerminalController(terminalController)
     }
     val currentDestination = AppDestination.valueOf(destinationName)
     val hasAuthSession = sessionStore.hasAuthSession()
@@ -284,7 +280,6 @@ fun AgentsAnywhereApp(
         sessionDetailController = sessionDetailController,
         filesController = filesController,
         terminalController = terminalController,
-        standaloneRemoteTerminalController = standaloneRemoteTerminalController,
         pendingMobileLoginQr = pendingMobileLoginQr,
         oauthFlow = oauthFlow,
         oauthErrorMessage = oauthErrorMessage,
@@ -518,7 +513,6 @@ private fun AgentsAnywhereNavHost(
     sessionDetailController: SessionDetailController,
     filesController: FilesController,
     terminalController: TerminalController,
-    standaloneRemoteTerminalController: RemoteTerminalController,
     pendingMobileLoginQr: MobileLoginQrPayload?,
     oauthFlow: OAuthFlowState?,
     oauthErrorMessage: String?,
@@ -695,7 +689,7 @@ private fun AgentsAnywhereNavHost(
                 AppDestination.Terminal -> TerminalScreen(
                     navigate = navigate,
                     state = sessionsState,
-                    terminalController = standaloneRemoteTerminalController,
+                    terminalController = terminalController,
                     onPairDevice = { pairDeviceSheetOpen = true },
                 )
                 AppDestination.Files -> FilesScreen(

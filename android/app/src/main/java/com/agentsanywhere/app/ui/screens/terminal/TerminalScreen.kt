@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.feature.sessions.SessionsState
 import com.agentsanywhere.app.feature.terminal.RemoteTerminalController
+import com.agentsanywhere.app.feature.terminal.TerminalController
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.navigation.AppDestination
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
@@ -59,7 +60,7 @@ import kotlinx.coroutines.launch
 fun TerminalScreen(
     navigate: (AppDestination) -> Unit,
     state: SessionsState,
-    terminalController: RemoteTerminalController,
+    terminalController: TerminalController,
     onPairDevice: () -> Unit,
 ) {
     val colors = LocalAAColors.current
@@ -68,6 +69,9 @@ fun TerminalScreen(
     var selectedDeviceId by remember { mutableStateOf(devices.firstOrNull { it.online }?.id) }
     val selectedDevice = devices.firstOrNull { it.id == selectedDeviceId && it.online }
     val scope = rememberCoroutineScope()
+    val remoteTerminalController = remember(selectedDevice?.id, terminalController) {
+        selectedDevice?.let { RemoteTerminalController(terminalController) }
+    }
 
     BackHandler { navigate(AppDestination.Sessions) }
 
@@ -77,9 +81,13 @@ fun TerminalScreen(
         }
     }
 
-    DisposableEffect(Unit) {
+    DisposableEffect(remoteTerminalController) {
         onDispose {
-            scope.launch { terminalController.close() }
+            val controller = remoteTerminalController ?: return@onDispose
+            scope.launch {
+                controller.close()
+                controller.dispose()
+            }
         }
     }
 
@@ -104,16 +112,16 @@ fun TerminalScreen(
                 onButtonClick = onPairDevice,
                 modifier = Modifier.weight(1f),
             )
-        } else if (selectedDevice == null) {
+        } else if (selectedDevice == null || remoteTerminalController == null) {
             EmptyTerminalMessage(stringResource(R.string.terminal_all_devices_offline), darkMode, Modifier.weight(1f))
         } else {
             TerminalContent(
-                terminalController = terminalController,
+                terminalController = remoteTerminalController,
                 darkMode = darkMode,
                 terminalKey = selectedDevice.id,
                 canReconnect = selectedDevice.online,
-                onStart = { terminalController.ensureStarted(selectedDevice) },
-                onRestart = { terminalController.restart(selectedDevice) },
+                onStart = { remoteTerminalController.ensureStarted(selectedDevice) },
+                onRestart = { remoteTerminalController.restart(selectedDevice) },
                 onVerticalDragChange = {},
                 modifier = Modifier.weight(1f),
             )
