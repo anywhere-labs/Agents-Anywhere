@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Download, Loader2, PanelLeft } from "lucide-react"
+import { Download, FolderOpen, Loader2, PanelLeft, SquareTerminal } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
@@ -15,13 +15,12 @@ import type { SessionMemorySnapshot } from "@/components/session-detail"
 import { cn } from "@/lib/utils"
 import { useTranslations } from "next-intl"
 import type { SessionView as SessionViewModel } from "@/lib/demo-api"
-import { PanelFilesIcon, PanelTerminalIcon } from "@/components/panels/runtime-icons"
 
 type PanelIcon = React.ComponentType<React.SVGProps<SVGSVGElement>>
 
 const PANEL_META: Record<PanelId, { titleKey: "panelFiles" | "panelShell"; icon: PanelIcon }> = {
-  files: { titleKey: "panelFiles", icon: PanelFilesIcon },
-  terminal: { titleKey: "panelShell", icon: PanelTerminalIcon },
+  files: { titleKey: "panelFiles", icon: FolderOpen },
+  terminal: { titleKey: "panelShell", icon: SquareTerminal },
 }
 
 const HEADER_BLUR_LAYERS = buildBlurGradientLayers({
