@@ -656,7 +656,7 @@
       "createDevice": "创建设备",
       "methodTitle": "选择配对方式",
       "methodDescription": "你想如何把 {name} 连接到这个实例？",
-      "desktopTitle": "使用桌面连接器",
+      "desktopTitle": "使用桌面连接器（推荐）",
       "desktopDescription": "使用桌面应用完成本机或其他设备的配对。",
       "desktopMethodTitle": "选择桌面连接器方式",
       "desktopMethodDescription": "你想如何使用桌面连接器连接 {name}？",
