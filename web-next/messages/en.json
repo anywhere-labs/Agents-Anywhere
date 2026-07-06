@@ -422,6 +422,8 @@
       "addAgentFailed": "Failed to add agent",
       "addAgentNotFound": "Agent not found on this device.",
       "addAgentSuccess": "{name} was added.",
+      "allAgentsAddedTitle": "All agents added",
+      "allAgentsAddedDescription": "All supported agents on this device have already been added.",
       "agentIssue": "Issue",
       "configureAgent": "Configure {name}",
       "removeAgent": "Remove {name}",

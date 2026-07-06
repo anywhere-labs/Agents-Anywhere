@@ -422,6 +422,8 @@
       "addAgentFailed": "无法添加 Agent",
       "addAgentNotFound": "这台设备上没有找到 Agent。",
       "addAgentSuccess": "已添加 {name}。",
+      "allAgentsAddedTitle": "所有 Agents 已添加",
+      "allAgentsAddedDescription": "本机所有支持的 Agents 都已添加。",
       "agentIssue": "异常",
       "configureAgent": "配置 {name}",
       "removeAgent": "移除 {name}",

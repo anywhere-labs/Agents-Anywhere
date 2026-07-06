@@ -572,6 +572,13 @@ function agentsFromConnector(connector: DeviceConnector | null): AgentRow[] {
     .sort((a, b) => a.runtime.localeCompare(b.runtime))
 }
 
+function allSupportedAgentsHealthy(connector: DeviceConnector) {
+  return ADD_AGENT_RUNTIME_OPTIONS.every(({ id }) => {
+    const agent = connector.runtimeCapabilities.attached[id]
+    return agent ? reportIsHealthy(agent) : false
+  })
+}
+
 function reportIsHealthy(agent: AttachedAgent) {
   if (agent.report.error) return false
   if (!agent.report.selected) return false
@@ -613,6 +620,7 @@ export function DevicePage() {
   const [sessionTab, setSessionTab] = React.useState<SessionTabId>("active")
   const [configAgent, setConfigAgent] = React.useState<AgentRow | null>(null)
   const [addAgentOpen, setAddAgentOpen] = React.useState(false)
+  const [allAgentsAddedOpen, setAllAgentsAddedOpen] = React.useState(false)
   const [addingAgent, setAddingAgent] = React.useState(false)
   const [agentSettings, setAgentSettings] = React.useState<Record<string, RuntimeSettingsResponse | null>>({})
   const [agentSchemas, setAgentSchemas] = React.useState<Record<string, RuntimeConfigSchema | null>>({})
@@ -648,6 +656,7 @@ export function DevicePage() {
       setAgentSettingsError({})
       setConfigAgent(null)
       setAddAgentOpen(false)
+      setAllAgentsAddedOpen(false)
       setAddingAgent(false)
       setRemoveAgentRuntime(null)
       setSelectMode(false)
@@ -805,6 +814,14 @@ export function DevicePage() {
     } finally {
       setAddingAgent(false)
     }
+  }
+
+  const handleAddAgentClick = () => {
+    if (allSupportedAgentsHealthy(connector)) {
+      setAllAgentsAddedOpen(true)
+      return
+    }
+    setAddAgentOpen(true)
   }
 
   const removeAgent = async () => {
@@ -970,7 +987,7 @@ export function DevicePage() {
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => setAddAgentOpen(true)}
+              onClick={handleAddAgentClick}
               disabled={connector.status !== "online"}
             >
               <Plus />
@@ -1205,6 +1222,20 @@ export function DevicePage() {
         adding={addingAgent}
         onAdd={addAgent}
       />
+
+      <Dialog open={allAgentsAddedOpen} onOpenChange={setAllAgentsAddedOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t("allAgentsAddedTitle")}</DialogTitle>
+            <DialogDescription>{t("allAgentsAddedDescription")}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button onClick={() => setAllAgentsAddedOpen(false)}>
+              {tCommon("close")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <PairDeviceDialog
         open={setupOpen}
