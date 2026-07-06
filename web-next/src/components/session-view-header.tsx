@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Download, FolderTree, Loader2, PanelLeft, SquareTerminal } from "lucide-react"
+import { Download, FolderOpen, Loader2, PanelLeft, SquareTerminal } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
@@ -16,8 +16,10 @@ import { cn } from "@/lib/utils"
 import { useTranslations } from "next-intl"
 import type { SessionView as SessionViewModel } from "@/lib/demo-api"
 
-const PANEL_META: Record<PanelId, { titleKey: "panelFiles" | "panelShell"; icon: typeof FolderTree }> = {
-  files: { titleKey: "panelFiles", icon: FolderTree },
+type PanelIcon = React.ComponentType<React.SVGProps<SVGSVGElement>>
+
+const PANEL_META: Record<PanelId, { titleKey: "panelFiles" | "panelShell"; icon: PanelIcon }> = {
+  files: { titleKey: "panelFiles", icon: FolderOpen },
   terminal: { titleKey: "panelShell", icon: SquareTerminal },
 }
 
@@ -159,8 +161,8 @@ export function SessionViewHeader({
           exporting={exporting}
         />
         <div className="ml-auto flex items-center gap-1">
-          <TogglePanelButton id="files" icon={FolderTree} />
-          <TogglePanelButton id="terminal" icon={SquareTerminal} />
+          <TogglePanelButton id="files" icon={PANEL_META.files.icon} />
+          <TogglePanelButton id="terminal" icon={PANEL_META.terminal.icon} />
         </div>
       </div>
     </header>
@@ -296,7 +298,7 @@ function SessionMetaBadge({
   )
 }
 
-function TogglePanelButton({ id, icon: Icon }: { id: PanelId; icon: typeof FolderTree }) {
+function TogglePanelButton({ id, icon: Icon }: { id: PanelId; icon: PanelIcon }) {
   const { panels, setPanelMode } = useWorkspace()
   const t = useTranslations("dashboard.session")
   const active = panels[id] !== "closed"

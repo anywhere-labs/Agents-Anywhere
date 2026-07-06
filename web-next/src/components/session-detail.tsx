@@ -184,18 +184,27 @@ function buildOptimisticUserMessage({
   sessionId,
   clientMessageId,
   text,
+  attachments,
   items,
   nextSeq,
 }: {
   sessionId: string
   clientMessageId: string
   text: string
+  attachments: AttachedFile[]
   items: TimelineItem[]
   nextSeq: number
 }): TimelineItem {
   const now = new Date().toISOString()
   const lastOrderSeq = items.reduce((max, item) => Math.max(max, item.orderSeq), 0)
   const orderSeq = Math.max(lastOrderSeq + 1, nextSeq + 1)
+  const optimisticAttachments = attachments.map((attachment) => ({
+    fileId: `optimistic:${attachment.id}`,
+    name: attachment.name,
+    size: attachment.size,
+    mediaType: attachment.file.type,
+    optimistic: true,
+  }))
   return {
     id: `${OPTIMISTIC_ITEM_PREFIX}${clientMessageId}`,
     sessionId,
@@ -203,7 +212,7 @@ function buildOptimisticUserMessage({
     type: "message",
     status: "pending",
     role: "user",
-    content: { text },
+    content: optimisticAttachments.length > 0 ? { text, attachments: optimisticAttachments } : { text },
     source: { clientMessageId, optimistic: true },
     orderSeq,
     revision: 0,
@@ -530,6 +539,7 @@ export function SessionDetail({
             sessionId: session.id,
             clientMessageId,
             text: messageText,
+            attachments,
             items: current.items,
             nextSeq: current.nextSeq,
           }),

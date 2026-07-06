@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { ChevronLeft, FolderOpen, Plus } from "lucide-react"
+import { ChevronLeft, FolderOpen } from "lucide-react"
 import type { Layout } from "react-resizable-panels"
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -192,13 +192,6 @@ export function DeviceWorkspacePage() {
                 {t("sessionCount", { count: sessions.length })}
               </p>
             </div>
-            <button
-              type="button"
-              className="rounded p-1 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground"
-              aria-label={t("addWorkspace")}
-            >
-              <Plus className="size-3.5" />
-            </button>
           </div>
 
           {/* List */}

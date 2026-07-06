@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Download, ExternalLink, FileText } from "lucide-react"
+import { Download, ExternalLink, FileText, Loader2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
@@ -53,6 +53,9 @@ function MessageAttachmentItem({
   const openUrl = attachmentOpenUrl(sessionId, attachment.fileId, token)
   const isImage = isImageAttachment(attachment)
   const [previewOpen, setPreviewOpen] = useState(false)
+  if (attachment.optimistic) {
+    return <AttachmentFileCard attachment={attachment} name={name} mediaType={mediaType} align={align} pending />
+  }
   if (isImage) {
     return (
       <>
@@ -88,11 +91,40 @@ function MessageAttachmentItem({
   }
 
   return (
+    <AttachmentFileCard
+      attachment={attachment}
+      name={name}
+      mediaType={mediaType}
+      align={align}
+      openUrl={openUrl}
+    />
+  )
+}
+
+function AttachmentFileCard({
+  attachment,
+  name,
+  mediaType,
+  align,
+  openUrl,
+  pending = false,
+}: {
+  attachment: ReconcileAttachment
+  name: string
+  mediaType: string
+  align: "left" | "right"
+  openUrl?: string
+  pending?: boolean
+}) {
+  const details = [mediaType || "file", formatBytes(attachment.size)].filter(Boolean).join(" - ")
+
+  return (
     <div
       className={cn(
         "max-w-full overflow-hidden rounded-lg border border-border/80 bg-background/80 text-foreground shadow-sm",
         "w-[min(420px,100%)]",
         align === "right" && "bg-background/70",
+        pending && "opacity-80",
       )}
     >
       <div className="flex min-w-0 items-center gap-2 px-2.5 py-2">
@@ -100,19 +132,39 @@ function MessageAttachmentItem({
         <div className="min-w-0 flex-1">
           <div className="truncate text-xs font-medium">{name}</div>
           <div className="truncate text-[11px] text-muted-foreground">
-            {[mediaType || "file", formatBytes(attachment.size)].filter(Boolean).join(" - ")}
+            {pending ? (
+              <span className="inline-flex items-center gap-1">
+                <Loader2 className="size-3 animate-spin" />
+                <span>{[details, "Pending"].filter(Boolean).join(" - ")}</span>
+              </span>
+            ) : (
+              details
+            )}
           </div>
         </div>
-        <Button asChild variant="ghost" size="icon-sm" className="shrink-0">
-          <a href={openUrl} target="_blank" rel="noreferrer" aria-label={`Open ${name}`}>
-            <ExternalLink className="size-3.5" />
-          </a>
-        </Button>
-        <Button asChild variant="ghost" size="icon-sm" className="shrink-0">
-          <a href={openUrl} download={name} aria-label={`Download ${name}`}>
-            <Download className="size-3.5" />
-          </a>
-        </Button>
+        {pending ? (
+          <>
+            <Button variant="ghost" size="icon-sm" className="shrink-0" disabled aria-label={`Open ${name}`}>
+              <ExternalLink className="size-3.5" />
+            </Button>
+            <Button variant="ghost" size="icon-sm" className="shrink-0" disabled aria-label={`Download ${name}`}>
+              <Download className="size-3.5" />
+            </Button>
+          </>
+        ) : openUrl ? (
+          <>
+            <Button asChild variant="ghost" size="icon-sm" className="shrink-0">
+              <a href={openUrl} target="_blank" rel="noreferrer" aria-label={`Open ${name}`}>
+                <ExternalLink className="size-3.5" />
+              </a>
+            </Button>
+            <Button asChild variant="ghost" size="icon-sm" className="shrink-0">
+              <a href={openUrl} download={name} aria-label={`Download ${name}`}>
+                <Download className="size-3.5" />
+              </a>
+            </Button>
+          </>
+        ) : null}
       </div>
     </div>
   )

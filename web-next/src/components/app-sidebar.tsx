@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Search, Plus, Settings, Users, Server, LogOut, Pin, Archive, CheckCheck, Copy, FolderOpen } from "lucide-react"
+import { Search, Plus, Settings, Users, Server, LogOut, Pin, Archive, CheckCheck, Copy, FolderOpen, Pencil } from "lucide-react"
 import { toast } from "sonner"
 import { PairDeviceDialog } from "@/components/pair-device-dialog"
 
@@ -334,17 +334,18 @@ function SessionSidebarItem({
 }) {
   const t = useTranslations("dashboard")
   const tSession = useTranslations("dashboard.session")
-  const [editingTitle, setEditingTitle] = React.useState(false)
+  const tCommon = useTranslations("common")
+  const [renameOpen, setRenameOpen] = React.useState(false)
   const [titleDraft, setTitleDraft] = React.useState(item.title ?? "")
   const [renaming, setRenaming] = React.useState(false)
 
   React.useEffect(() => {
-    if (!editingTitle) setTitleDraft(item.title ?? "")
-  }, [editingTitle, item.title])
+    if (!renameOpen) setTitleDraft(item.title ?? "")
+  }, [item.title, renameOpen])
 
   const cancelRename = React.useCallback(() => {
     setTitleDraft(item.title ?? "")
-    setEditingTitle(false)
+    setRenameOpen(false)
   }, [item.title])
 
   const submitRename = React.useCallback(async () => {
@@ -355,13 +356,13 @@ function SessionSidebarItem({
     }
     if (renaming) return
     if (nextTitle === item.title) {
-      setEditingTitle(false)
+      setRenameOpen(false)
       return
     }
     setRenaming(true)
     try {
       const ok = await onRename(nextTitle)
-      if (ok) setEditingTitle(false)
+      if (ok) setRenameOpen(false)
       else toast.error(tSession("renameFailed"))
     } finally {
       setRenaming(false)
@@ -378,46 +379,9 @@ function SessionSidebarItem({
   }
 
   return (
-    <ContextMenu>
-      <SidebarMenuItem className="group/session">
-        {editingTitle ? (
-          <div className="flex h-8 items-center gap-2 rounded-xl px-2">
-            <span
-              className={cn(
-                "size-1.5 shrink-0 rounded-full border",
-                item.unread
-                  ? "border-primary bg-primary"
-                  : item.status === "running"
-                  ? "border-emerald-500 bg-emerald-500"
-                  : item.status === "error"
-                    ? "border-red-500/70"
-                    : item.status === "waiting_approval"
-                      ? "border-amber-400/70"
-                      : "border-muted-foreground/50",
-              )}
-            />
-            <Input
-              autoFocus
-              value={titleDraft}
-              onChange={(event) => setTitleDraft(event.currentTarget.value)}
-              onBlur={cancelRename}
-              onKeyDown={(event) => {
-                if (event.nativeEvent.isComposing) return
-                if (event.key === "Enter") {
-                  event.preventDefault()
-                  void submitRename()
-                }
-                if (event.key === "Escape") {
-                  event.preventDefault()
-                  cancelRename()
-                }
-              }}
-              disabled={renaming}
-              aria-label={tSession("renameTitle")}
-              className="h-7 min-w-0 flex-1 rounded-lg text-xs"
-            />
-          </div>
-        ) : (
+    <>
+      <ContextMenu>
+        <SidebarMenuItem className="group/session">
           <ContextMenuTrigger asChild>
             <div>
               <SidebarMenuButton
@@ -447,9 +411,7 @@ function SessionSidebarItem({
               </SidebarMenuButton>
             </div>
           </ContextMenuTrigger>
-        )}
 
-        {!editingTitle ? (
           <div
             className={cn(
               "absolute right-1 top-1/2 hidden -translate-y-1/2 items-center gap-0.5",
@@ -483,31 +445,77 @@ function SessionSidebarItem({
             <Archive className="size-3" />
           </button>
           </div>
-        ) : null}
-      </SidebarMenuItem>
-      <ContextMenuContent className="w-52">
-        <ContextMenuItem onSelect={onOpen}>
-          <FolderOpen className="size-4" />
-          {t("actions.open")}
-        </ContextMenuItem>
-        <ContextMenuItem onSelect={() => setEditingTitle(true)}>
-          {t("actions.rename")}
-        </ContextMenuItem>
-        <ContextMenuItem onSelect={onTogglePin}>
-          <Pin className="size-4" />
-          {item.pinned ? t("actions.unpin") : t("actions.pin")}
-        </ContextMenuItem>
-        <ContextMenuItem onSelect={onToggleArchive}>
-          <Archive className="size-4" />
-          {item.archived ? t("actions.unarchive") : t("actions.archive")}
-        </ContextMenuItem>
-        <ContextMenuSeparator />
-        <ContextMenuItem onSelect={() => void copySessionId()}>
-          <Copy className="size-4" />
-          {t("actions.copySessionId")}
-        </ContextMenuItem>
-      </ContextMenuContent>
-    </ContextMenu>
+        </SidebarMenuItem>
+        <ContextMenuContent className="w-52">
+          <ContextMenuItem onSelect={onOpen}>
+            <FolderOpen className="size-4" />
+            {t("actions.open")}
+          </ContextMenuItem>
+          <ContextMenuItem onSelect={() => setRenameOpen(true)}>
+            <Pencil className="size-4" />
+            {t("actions.rename")}
+          </ContextMenuItem>
+          <ContextMenuItem onSelect={onTogglePin}>
+            <Pin className="size-4" />
+            {item.pinned ? t("actions.unpin") : t("actions.pin")}
+          </ContextMenuItem>
+          <ContextMenuItem onSelect={onToggleArchive}>
+            <Archive className="size-4" />
+            {item.archived ? t("actions.unarchive") : t("actions.archive")}
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem onSelect={() => void copySessionId()}>
+            <Copy className="size-4" />
+            {t("actions.copySessionId")}
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
+
+      <Dialog open={renameOpen} onOpenChange={(open) => {
+        if (open) {
+          setTitleDraft(item.title ?? "")
+          setRenameOpen(true)
+        } else {
+          cancelRename()
+        }
+      }}>
+        <DialogContent className="sm:max-w-sm">
+          <form
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault()
+              void submitRename()
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle>{tSession("renameTitle")}</DialogTitle>
+            </DialogHeader>
+            <Input
+              autoFocus
+              value={titleDraft}
+              onChange={(event) => setTitleDraft(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.nativeEvent.isComposing) return
+                if (event.key === "Escape") {
+                  event.preventDefault()
+                  cancelRename()
+                }
+              }}
+              disabled={renaming}
+              aria-label={tSession("renameTitle")}
+            />
+            <DialogFooter className="gap-2 sm:gap-2">
+              <Button type="button" variant="outline" onClick={cancelRename} disabled={renaming}>
+                {tCommon("cancel")}
+              </Button>
+              <Button type="submit" disabled={renaming || titleDraft.trim().length === 0}>
+                {tCommon("save")}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }
 

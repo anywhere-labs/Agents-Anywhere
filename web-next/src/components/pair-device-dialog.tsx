@@ -478,18 +478,6 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={handleSelectCommand}
-                  className="h-auto w-full min-w-0 flex-col items-start gap-0.5 whitespace-normal px-4 py-3 text-left"
-                >
-                  <span className="flex min-w-0 items-center gap-2 font-medium">
-                    <Terminal className="size-4" />
-                    {t("commandTitle")}
-                  </span>
-                  <span className="min-w-0 break-words text-sm text-muted-foreground">{t("commandDescription")}</span>
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
                   onClick={handleSelectDesktop}
                   className="h-auto w-full min-w-0 flex-col items-start gap-0.5 whitespace-normal px-4 py-3 text-left"
                 >
@@ -498,6 +486,18 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
                     {t("desktopTitle")}
                   </span>
                   <span className="min-w-0 break-words text-sm text-muted-foreground">{t("desktopDescription")}</span>
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleSelectCommand}
+                  className="h-auto w-full min-w-0 flex-col items-start gap-0.5 whitespace-normal px-4 py-3 text-left"
+                >
+                  <span className="flex min-w-0 items-center gap-2 font-medium">
+                    <Terminal className="size-4" />
+                    {t("commandTitle")}
+                  </span>
+                  <span className="min-w-0 break-words text-sm text-muted-foreground">{t("commandDescription")}</span>
                 </Button>
               </div>
             </>
