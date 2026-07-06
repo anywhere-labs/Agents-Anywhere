@@ -74,6 +74,7 @@ import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailState
 import com.agentsanywhere.app.feature.sessiondetail.SessionStreamEvent
 import com.agentsanywhere.app.feature.sessiondetail.TimelineApproval
+import com.agentsanywhere.app.feature.sessiondetail.MessageAuthor
 import com.agentsanywhere.app.feature.terminal.RemoteTerminalController
 import com.agentsanywhere.app.feature.terminal.RemoteTerminalForegroundService
 import com.agentsanywhere.app.feature.terminal.TerminalController
@@ -143,6 +144,8 @@ fun SessionDetailScreen(
     var terminalVerticalDragActive by remember(sessionId) { mutableStateOf(false) }
     var resolvingApprovalId by remember(sessionId) { mutableStateOf<String?>(null) }
     var resolvingApprovalStatus by remember(sessionId) { mutableStateOf<String?>(null) }
+    var optimisticWorkingTurnKey by remember(sessionId) { mutableStateOf<String?>(null) }
+    var optimisticWorkingConfirmed by remember(sessionId) { mutableStateOf(false) }
     var composerHeightPx by remember { mutableStateOf(0) }
     var readOnlyComposerTapCount by remember(sessionId) { mutableStateOf(0) }
     val refetchInFlight = remember(sessionId) { AtomicBoolean(false) }
@@ -451,6 +454,8 @@ fun SessionDetailScreen(
                 return@launch
             }
             val uploadedAttachments = pendingAttachments.mapNotNull { it.remote }
+            optimisticWorkingTurnKey = clientMessageId
+            optimisticWorkingConfirmed = false
             state = controller.addOptimisticMessage(
                 sessionId = id,
                 state = state,
@@ -468,6 +473,7 @@ fun SessionDetailScreen(
                 uploadedAttachments = uploadedAttachments,
             )
                 .onSuccess { result ->
+                    result.turnId?.takeIf { it.isNotBlank() }?.let { optimisticWorkingTurnKey = it }
                     state = controller.markOptimisticMessage(
                         sessionId = id,
                         state = state,
@@ -478,6 +484,8 @@ fun SessionDetailScreen(
                     )
                 }
                 .onFailure { error ->
+                    optimisticWorkingTurnKey = null
+                    optimisticWorkingConfirmed = false
                     val message = error.message ?: context.getString(R.string.session_send_failed)
                     state = controller.markOptimisticMessage(
                         sessionId = id,
@@ -719,8 +727,39 @@ fun SessionDetailScreen(
 
     val serverBusy = state.session?.status == SessionStatus.Running ||
         state.session?.status == SessionStatus.WaitingApproval
+    val activeServerMessage = state.messages.any { message ->
+        !message.optimistic &&
+            message.author != MessageAuthor.User &&
+            message.status.isActiveTimelineStatus()
+    }
+    val optimisticTurnHasServerOutput = optimisticWorkingTurnKey?.let { turnKey ->
+        state.messages.any { message ->
+            !message.optimistic &&
+                message.turnId == turnKey &&
+                message.author != MessageAuthor.User
+        }
+    } == true
+
     LaunchedEffect(state.interrupting, serverBusy) {
         if (state.interrupting && !serverBusy) state = state.copy(interrupting = false)
+    }
+    LaunchedEffect(
+        optimisticWorkingTurnKey,
+        serverBusy,
+        activeServerMessage,
+        optimisticTurnHasServerOutput,
+        optimisticWorkingConfirmed,
+    ) {
+        if (optimisticWorkingTurnKey == null) return@LaunchedEffect
+        if (serverBusy || activeServerMessage) {
+            optimisticWorkingConfirmed = true
+        }
+        if ((!serverBusy && !activeServerMessage && optimisticWorkingConfirmed) ||
+            (!serverBusy && !activeServerMessage && optimisticTurnHasServerOutput)
+        ) {
+            optimisticWorkingTurnKey = null
+            optimisticWorkingConfirmed = false
+        }
     }
 
     val pendingApproval = remember(state.approvals) {
@@ -742,8 +781,10 @@ fun SessionDetailScreen(
     val workingLabel = when {
         state.interrupting -> context.getString(R.string.session_agent_interrupting, agentLabel)
         state.sending ||
+            optimisticWorkingTurnKey != null ||
             state.session?.status == SessionStatus.Running ||
-            state.messages.any { it.optimistic && it.status == "running" } -> {
+            activeServerMessage ||
+            state.messages.any { it.optimistic && it.status.isActiveTimelineStatus() } -> {
             context.getString(R.string.session_agent_working, agentLabel)
         }
         else -> null
@@ -1386,3 +1427,7 @@ private fun Context.uploadPart(attachment: PendingAttachment): UploadFilePart {
 
 private const val MAX_ATTACHMENT_FILES = 6
 private const val MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
+
+private fun String.isActiveTimelineStatus(): Boolean {
+    return this == "pending" || this == "running" || this == "waiting_approval"
+}
