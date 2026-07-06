@@ -209,7 +209,7 @@ function CodePanelFrame({
 
 function HighlightedCodeContent({ code, language, maxHeight }: { code: string; language: string; maxHeight: number }) {
   return (
-    <ScrollArea contentWide className="min-w-0" style={{ maxHeight }}>
+    <ScrollArea contentWide className="min-w-0" style={{ height: maxHeight, maxHeight }}>
       <pre className="code-mono min-w-full w-max px-3 py-2 text-xs leading-relaxed">
         <code className="code-mono whitespace-pre">{highlightCode(code, language)}</code>
       </pre>
@@ -225,7 +225,7 @@ export function JsonBlock({ value }: { value: unknown }) {
 function DiffPanel({ code, maxHeight }: { code: string; maxHeight: number }) {
   const rows = React.useMemo(() => buildDiffRows(code), [code])
   return (
-    <ScrollArea contentWide className="min-w-0" style={{ maxHeight }}>
+    <ScrollArea contentWide className="min-w-0" style={{ height: maxHeight, maxHeight }}>
       <div className="code-mono w-max min-w-full py-2 text-xs">
         {rows.map((row, index) => (
           <div
