@@ -120,8 +120,9 @@
     },
     "mac": {
       "icon": "build/icon.icns",
-      "identity": "-",
-      "hardenedRuntime": false,
+      "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
       "gatekeeperAssess": false,
       "target": "dmg"
     },
