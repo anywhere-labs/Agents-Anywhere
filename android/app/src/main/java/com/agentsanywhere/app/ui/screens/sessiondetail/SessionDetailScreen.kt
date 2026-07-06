@@ -21,11 +21,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -55,6 +58,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -82,6 +86,10 @@ import com.agentsanywhere.app.ui.designsystem.AAToastVisuals
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.ScreenScaffold
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
+import com.composables.icons.lucide.Check
+import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.ShieldCheck
+import com.composables.icons.lucide.X
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
@@ -133,6 +141,8 @@ fun SessionDetailScreen(
     var showRuntimeSettings by remember(sessionId) { mutableStateOf(false) }
     var pendingOpenFilePath by remember(sessionId) { mutableStateOf<String?>(null) }
     var terminalVerticalDragActive by remember(sessionId) { mutableStateOf(false) }
+    var resolvingApprovalId by remember(sessionId) { mutableStateOf<String?>(null) }
+    var resolvingApprovalStatus by remember(sessionId) { mutableStateOf<String?>(null) }
     var composerHeightPx by remember { mutableStateOf(0) }
     var readOnlyComposerTapCount by remember(sessionId) { mutableStateOf(0) }
     val refetchInFlight = remember(sessionId) { AtomicBoolean(false) }
@@ -588,14 +598,21 @@ fun SessionDetailScreen(
     }
 
     fun resolveApproval(approval: TimelineApproval, status: String) {
-        state = state.copy(approvals = state.approvals.filterNot { it.id == approval.id })
+        if (resolvingApprovalId != null) return
+        resolvingApprovalId = approval.id
+        resolvingApprovalStatus = status
         scope.launch {
             controller.resolveApproval(approval.id, status)
+                .onSuccess {
+                    state = state.copy(approvals = state.approvals.filterNot { it.id == approval.id })
+                }
                 .onFailure { error ->
                     val message = error.message ?: context.getString(R.string.session_approval_resolve_failed)
                     state = state.copy(actionError = message)
                     showError(message)
                 }
+            resolvingApprovalId = null
+            resolvingApprovalStatus = null
         }
     }
 
@@ -919,6 +936,7 @@ fun SessionDetailScreen(
     pendingApproval?.let { approval ->
         ApprovalDialog(
             approval = approval,
+            resolvingStatus = resolvingApprovalStatus.takeIf { resolvingApprovalId == approval.id },
             onDismiss = {},
             onResolve = { status -> resolveApproval(approval, status) },
         )
@@ -1117,38 +1135,217 @@ private fun ErrorSendConfirmDialog(
 @Composable
 private fun ApprovalDialog(
     approval: TimelineApproval,
+    resolvingStatus: String?,
     onDismiss: () -> Unit,
     onResolve: (String) -> Unit,
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(approval.title) },
-        text = {
-            Text(
-                approval.description
-                    ?: stringResource(R.string.session_approval_fallback, approval.kind.replace('_', ' ')),
-            )
-        },
-        confirmButton = {
-            Row(horizontalArrangement = Arrangement.End) {
-                if ("reject" in approval.choices) {
-                    TextButton(onClick = { onResolve("rejected") }) {
-                        Text(stringResource(R.string.session_approval_deny))
-                    }
+    val colors = LocalAAColors.current
+    val darkMode = colors.canvas == Color(0xFF09090B)
+    val shape = RoundedCornerShape(26.dp)
+    val surface = if (darkMode) Color(0xFF18181B) else Color.White
+    val iconSurface = if (darkMode) Color(0xFF2A2316) else Color(0xFFFFF4D6)
+    val secondaryButton = if (darkMode) Color(0xFF27272A) else Color(0xFFF3F3F3)
+    val busy = resolvingStatus != null
+    val description = approval.description
+        ?: stringResource(R.string.session_approval_fallback, approval.kind.replace('_', ' '))
+    val title = approval.title.ifBlank { stringResource(R.string.session_approval_requested) }
+    val hasApprove = "approve" in approval.choices
+    val hasApproveForSession = "approve_for_session" in approval.choices
+    val hasReject = "reject" in approval.choices
+
+    Dialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 22.dp)
+                .widthIn(max = 392.dp)
+                .shadow(34.dp, shape, ambientColor = Color(0x33000000), spotColor = Color(0x33000000))
+                .clip(shape)
+                .background(surface)
+                .border(1.dp, colors.border, shape)
+                .padding(22.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .height(44.dp)
+                        .widthIn(min = 44.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(iconSurface),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Lucide.ShieldCheck,
+                        contentDescription = null,
+                        tint = Color(0xFFEAB308),
+                        modifier = Modifier.size(22.dp),
+                    )
                 }
-                if ("approve_for_session" in approval.choices) {
-                    TextButton(onClick = { onResolve("approved_for_session") }) {
-                        Text(stringResource(R.string.session_approval_always_allow))
-                    }
-                }
-                if ("approve" in approval.choices) {
-                    TextButton(onClick = { onResolve("approved") }) {
-                        Text(stringResource(R.string.session_approval_allow))
-                    }
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                    Text(
+                        text = stringResource(R.string.session_approval_requested),
+                        color = colors.muted,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        lineHeight = 14.sp,
+                    )
+                    Text(
+                        text = title,
+                        color = colors.ink,
+                        fontSize = 21.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        lineHeight = 25.sp,
+                    )
                 }
             }
-        },
-    )
+            Text(
+                text = description,
+                color = colors.muted,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium,
+                lineHeight = 21.sp,
+            )
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                if (hasApprove) {
+                    ApprovalDialogButton(
+                        label = if (resolvingStatus == "approved") {
+                            stringResource(R.string.common_working)
+                        } else {
+                            stringResource(R.string.session_approval_allow)
+                        },
+                        icon = "check",
+                        loading = resolvingStatus == "approved",
+                        background = colors.primaryAction.copy(alpha = if (busy) 0.42f else 1f),
+                        content = colors.onPrimaryAction,
+                        enabled = !busy,
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = { onResolve("approved") },
+                    )
+                }
+                if (hasReject || hasApproveForSession) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        if (hasReject) {
+                            ApprovalDialogButton(
+                                label = if (resolvingStatus == "rejected") {
+                                    stringResource(R.string.common_working)
+                                } else {
+                                    stringResource(R.string.session_approval_deny)
+                                },
+                                icon = "reject",
+                                loading = resolvingStatus == "rejected",
+                                background = secondaryButton,
+                                content = colors.ink,
+                                enabled = !busy,
+                                modifier = Modifier.weight(1f),
+                                onClick = { onResolve("rejected") },
+                            )
+                        }
+                        if (hasApproveForSession) {
+                            ApprovalDialogButton(
+                                label = if (resolvingStatus == "approved_for_session") {
+                                    stringResource(R.string.common_working)
+                                } else {
+                                    stringResource(R.string.session_approval_always_allow)
+                                },
+                                icon = "session",
+                                loading = resolvingStatus == "approved_for_session",
+                                background = if (hasApprove) {
+                                    secondaryButton
+                                } else {
+                                    colors.primaryAction.copy(alpha = if (busy) 0.42f else 1f)
+                                },
+                                content = if (hasApprove) colors.ink else colors.onPrimaryAction,
+                                enabled = !busy,
+                                modifier = Modifier.weight(1f),
+                                onClick = { onResolve("approved_for_session") },
+                            )
+                        }
+                    }
+                }
+                if (!hasApprove && !hasApproveForSession && !hasReject) {
+                    Text(
+                        text = stringResource(R.string.session_approval_no_actions),
+                        color = colors.errorText,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        lineHeight = 17.sp,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ApprovalDialogButton(
+    label: String,
+    icon: String,
+    loading: Boolean,
+    background: Color,
+    content: Color,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = modifier
+            .height(50.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(background)
+            .noRippleClickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 12.dp),
+        ) {
+            if (loading) {
+                CircularProgressIndicator(
+                    color = content,
+                    strokeWidth = 2.dp,
+                    modifier = Modifier.size(16.dp),
+                )
+            } else {
+                Icon(
+                    imageVector = when (icon) {
+                        "reject" -> Lucide.X
+                        "session" -> Lucide.ShieldCheck
+                        else -> Lucide.Check
+                    },
+                    contentDescription = null,
+                    tint = content.copy(alpha = if (enabled) 1f else 0.55f),
+                    modifier = Modifier.size(17.dp),
+                )
+            }
+            Text(
+                text = label,
+                color = content.copy(alpha = if (enabled) 1f else 0.55f),
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                lineHeight = 18.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
 }
 
 private fun Context.pendingAttachment(uri: Uri): PendingAttachment? {

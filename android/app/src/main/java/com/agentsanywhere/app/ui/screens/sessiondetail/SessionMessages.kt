@@ -4,7 +4,9 @@ import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.border
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Image
@@ -51,8 +53,6 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
@@ -104,7 +104,12 @@ private sealed interface TimelineRenderItem {
     }
 
     data class ToolRun(override val messages: List<TimelineMessage>) : TimelineRenderItem {
-        override val key: String = "tool-run:${messages.joinToString(":") { it.id }}"
+        override val key: String = buildString {
+            append("tool-run:")
+            append(messages.firstOrNull()?.turnId ?: messages.firstOrNull()?.sourceItemId ?: "unknown")
+            append(":")
+            append(messages.firstOrNull()?.id ?: "unknown")
+        }
     }
 }
 
@@ -235,8 +240,11 @@ internal fun MessageList(
     val displayMessages = lockedMessages ?: messages
     val displayWorkingLabel = if (lockedMessages != null) lockedWorkingLabel else workingLabel
     val timelineItems = remember(displayMessages) { groupTimelineMessages(displayMessages) }
-    val agentTurnCopyTextByItem = remember(timelineItems, displayWorkingLabel) {
-        buildAgentTurnCopyTextByItem(timelineItems, displayWorkingLabel != null)
+    val activeAgentTurnId = remember(timelineItems, displayWorkingLabel) {
+        if (displayWorkingLabel == null) null else latestActiveAgentTurnId(timelineItems)
+    }
+    val agentTurnCopyTextByItem = remember(timelineItems, activeAgentTurnId) {
+        buildAgentTurnCopyTextByItem(timelineItems, activeAgentTurnId)
     }
     var showScrollToBottom by remember { mutableStateOf(false) }
     var autoFollowLatest by remember(sessionId) { mutableStateOf(true) }
@@ -383,7 +391,6 @@ internal fun MessageList(
                             is TimelineRenderItem.Single -> TimelineMessageRow(
                                 message = item.message,
                                 darkMode = darkMode,
-                                listState = listState,
                                 sessionId = sessionId,
                                 controller = controller,
                                 onPreviewAttachment = onPreviewAttachment,
@@ -393,7 +400,7 @@ internal fun MessageList(
                             is TimelineRenderItem.ToolRun -> ToolRunGroup(
                                 messages = item.messages,
                                 darkMode = darkMode,
-                                listState = listState,
+                                itemKey = item.key,
                             )
                         }
                         agentTurnCopyTextByItem[item.key]?.let { copyText ->
@@ -526,17 +533,8 @@ private fun groupTimelineMessages(messages: List<TimelineMessage>): List<Timelin
 
 private fun buildAgentTurnCopyTextByItem(
     items: List<TimelineRenderItem>,
-    hideLatestTurn: Boolean,
+    hiddenTurnId: String?,
 ): Map<String, String> {
-    val latestTurnId = if (hideLatestTurn) {
-        items.asReversed()
-            .asSequence()
-            .flatMap { it.messages.asReversed().asSequence() }
-            .firstOrNull { it.turnId != null }
-            ?.turnId
-    } else {
-        null
-    }
     val turnOrder = mutableListOf<String>()
     val textByTurn = linkedMapOf<String, MutableList<String>>()
     val lastItemKeyByTurn = linkedMapOf<String, String>()
@@ -560,7 +558,7 @@ private fun buildAgentTurnCopyTextByItem(
 
     return buildMap {
         turnOrder.forEach { turnKey ->
-            if (turnKey == latestTurnId) return@forEach
+            if (turnKey == hiddenTurnId) return@forEach
             val copyText = textByTurn[turnKey]
                 .orEmpty()
                 .joinToString("\n\n")
@@ -571,6 +569,18 @@ private fun buildAgentTurnCopyTextByItem(
             }
         }
     }
+}
+
+private fun latestActiveAgentTurnId(items: List<TimelineRenderItem>): String? {
+    return items.asReversed()
+        .asSequence()
+        .flatMap { it.messages.asReversed().asSequence() }
+        .firstOrNull { message ->
+            message.turnId != null &&
+                message.isCopyableAgentText() &&
+                message.status.isActiveTimelineStatus()
+        }
+        ?.turnId
 }
 
 private fun TimelineMessage.isCopyableAgentText(): Boolean {
@@ -585,6 +595,10 @@ private fun TimelineMessage.isToolRunItem(): Boolean {
     return kind == TimelineMessageKind.Command ||
         kind == TimelineMessageKind.FileChange ||
         kind == TimelineMessageKind.ToolCall
+}
+
+private fun String.isActiveTimelineStatus(): Boolean {
+    return this == "pending" || this == "running" || this == "waiting_approval"
 }
 
 @Composable
@@ -608,32 +622,23 @@ private fun OlderMessagesLoadingIndicator(darkMode: Boolean) {
 private fun ToolRunGroup(
     messages: List<TimelineMessage>,
     darkMode: Boolean,
-    listState: LazyListState,
+    itemKey: String,
 ) {
     val primary = if (darkMode) Color(0xFFFAFAFA) else Color(0xFF2B2C29)
     val muted = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF7C7B76)
     val surface = if (darkMode) Color(0x1018181B) else Color(0x14F1F0ED)
     val haptic = LocalHapticFeedback.current
-    var expanded by remember(messages.joinToString(":") { it.id }) { mutableStateOf(false) }
-    var cardTop by remember(messages.joinToString(":") { it.id }) { mutableStateOf<Float?>(null) }
-    var lockedTop by remember(messages.joinToString(":") { it.id }) { mutableStateOf<Float?>(null) }
+    var expanded by remember(itemKey) { mutableStateOf(false) }
 
     fun toggleExpanded() {
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-        lockedTop = cardTop
         expanded = !expanded
     }
 
     val modifier = Modifier
         .fillMaxWidth()
         .padding(horizontal = 4.dp)
-        .onGloballyPositioned {
-            val nextTop = it.positionInWindow().y
-            val delta = (lockedTop ?: nextTop) - nextTop
-            if (abs(delta) > 1f) listState.dispatchRawDelta(delta)
-            lockedTop = null
-            cardTop = nextTop
-        }
+        .animateContentSize(animationSpec = spring())
 
     if (!expanded) {
         Row(
@@ -698,7 +703,6 @@ private fun ToolRunGroup(
             ToolActivityCard(
                 message = message,
                 darkMode = darkMode,
-                listState = listState,
                 embedded = true,
             )
         }
@@ -796,7 +800,6 @@ private fun ScrollToBottomButton(
 private fun TimelineMessageRow(
     message: TimelineMessage,
     darkMode: Boolean,
-    listState: LazyListState,
     sessionId: String,
     controller: SessionDetailController,
     onPreviewAttachment: (TimelineAttachment) -> Unit,
@@ -807,7 +810,7 @@ private fun TimelineMessageRow(
         TimelineMessageKind.Reasoning -> ReasoningSection(message, darkMode)
         TimelineMessageKind.Command,
         TimelineMessageKind.FileChange,
-        TimelineMessageKind.ToolCall -> ToolActivityCard(message, darkMode, listState)
+        TimelineMessageKind.ToolCall -> ToolActivityCard(message, darkMode)
         TimelineMessageKind.System -> ToolPlaceholder(message, darkMode)
         TimelineMessageKind.Text -> when (message.author) {
             MessageAuthor.User -> UserBubble(message, darkMode, sessionId, controller, onPreviewAttachment, onCopyMessage)
@@ -1094,7 +1097,6 @@ private fun ReasoningSection(message: TimelineMessage, darkMode: Boolean) {
 private fun ToolActivityCard(
     message: TimelineMessage,
     darkMode: Boolean,
-    listState: LazyListState,
     embedded: Boolean = false,
 ) {
     val surface = if (darkMode) Color(0xFF18181B) else Color(0xFFF1F0ED)
@@ -1107,23 +1109,14 @@ private fun ToolActivityCard(
         (message.kind == TimelineMessageKind.ToolCall && message.hasToolCallDetail)
     val haptic = LocalHapticFeedback.current
     var expanded by remember(message.id) { mutableStateOf(false) }
-    var cardTop by remember(message.id) { mutableStateOf<Float?>(null) }
-    var lockedTop by remember(message.id) { mutableStateOf<Float?>(null) }
     fun toggleExpanded() {
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-        lockedTop = cardTop
         expanded = !expanded
     }
     val target = message.toolSummaryTarget()
     val cardModifier = Modifier
         .fillMaxWidth()
-        .onGloballyPositioned {
-            val nextTop = it.positionInWindow().y
-            val delta = (lockedTop ?: nextTop) - nextTop
-            if (abs(delta) > 1f) listState.dispatchRawDelta(delta)
-            lockedTop = null
-            cardTop = nextTop
-        }
+        .animateContentSize(animationSpec = spring())
         .then(if (embedded) Modifier else Modifier.padding(horizontal = 4.dp))
 
     Column(

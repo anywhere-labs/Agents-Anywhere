@@ -297,6 +297,8 @@
     <string name="session_send_anyway_title">仍要发送？</string>
     <string name="session_send_anyway_body">这个会话处于错误状态。发送后会尝试开始新一轮对话。</string>
     <string name="session_approval_fallback">允许这次 %1$s 请求？</string>
+    <string name="session_approval_requested">请求确认</string>
+    <string name="session_approval_no_actions">这个确认请求没有可用操作。</string>
     <string name="session_approval_deny">拒绝</string>
     <string name="session_approval_always_allow">始终允许</string>
     <string name="session_approval_allow">允许</string>

@@ -297,6 +297,8 @@
     <string name="session_send_anyway_title">Send anyway?</string>
     <string name="session_send_anyway_body">This session is in an error state. Sending will try to start a new turn.</string>
     <string name="session_approval_fallback">Allow this %1$s request?</string>
+    <string name="session_approval_requested">Approval requested</string>
+    <string name="session_approval_no_actions">This approval request has no available actions.</string>
     <string name="session_approval_deny">Deny</string>
     <string name="session_approval_always_allow">Always allow</string>
     <string name="session_approval_allow">Allow</string>
