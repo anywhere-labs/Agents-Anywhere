@@ -163,7 +163,7 @@ function ensureConnectorRuntimeDirs() {
   fs.mkdirSync(connectorRuntimeDir(), { recursive: true });
   fs.mkdirSync(connectorUvCacheDir(), { recursive: true });
   if (!fs.existsSync(path.join(bundledConnectorDir(), "pyproject.toml"))) return;
-  if (fs.existsSync(path.join(connectorRuntimeProjectDir(), "pyproject.toml"))) return;
+  fs.rmSync(connectorRuntimeProjectDir(), { recursive: true, force: true });
   fs.cpSync(bundledConnectorDir(), connectorRuntimeProjectDir(), {
     recursive: true,
     filter(source) {

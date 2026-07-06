@@ -31,6 +31,7 @@ assert.match(mainSource, /function bundledConnectorDir\(\)[\s\S]*process\.resour
 assert.match(mainSource, /function connectorRuntimeProjectDir\(\)[\s\S]*path\.join\(connectorRuntimeDir\(\),\s*"connector"\)/, "packaged connector project must live under userData");
 assert.match(mainSource, /function connectorWorkingDir\(\)[\s\S]*app\.isPackaged \? connectorRuntimeDir\(\) : state\.connectorDir/, "packaged connector cwd must use userData while dev keeps source cwd");
 assert.match(mainSource, /function resolveConnectorDir\(\)[\s\S]*if \(app\.isPackaged\) return connectorRuntimeProjectDir\(\)/, "packaged connector project must not point into the signed app bundle");
+assert.match(mainSource, /fs\.rmSync\(connectorRuntimeProjectDir\(\), \{ recursive: true, force: true \}\)/, "packaged connector runtime project must refresh stale bundled dependencies");
 assert.match(mainSource, /fs\.cpSync\(bundledConnectorDir\(\), connectorRuntimeProjectDir\(\)/, "packaged connector source must be copied to a writable runtime project");
 assert.match(mainSource, /UV_PROJECT_ENVIRONMENT:\s*connectorUvEnvironmentPath\(\)/, "uv virtualenv must be outside the signed app bundle");
 assert.match(mainSource, /UV_CACHE_DIR:\s*connectorUvCacheDir\(\)/, "uv cache must be outside the signed app bundle");
