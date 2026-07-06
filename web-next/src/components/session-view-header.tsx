@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Download, FolderTree, Loader2, PanelLeft, SquareTerminal } from "lucide-react"
+import { Download, Loader2, PanelLeft } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
@@ -15,10 +15,13 @@ import type { SessionMemorySnapshot } from "@/components/session-detail"
 import { cn } from "@/lib/utils"
 import { useTranslations } from "next-intl"
 import type { SessionView as SessionViewModel } from "@/lib/demo-api"
+import { PanelFilesIcon, PanelTerminalIcon } from "@/components/panels/runtime-icons"
 
-const PANEL_META: Record<PanelId, { titleKey: "panelFiles" | "panelShell"; icon: typeof FolderTree }> = {
-  files: { titleKey: "panelFiles", icon: FolderTree },
-  terminal: { titleKey: "panelShell", icon: SquareTerminal },
+type PanelIcon = React.ComponentType<React.SVGProps<SVGSVGElement>>
+
+const PANEL_META: Record<PanelId, { titleKey: "panelFiles" | "panelShell"; icon: PanelIcon }> = {
+  files: { titleKey: "panelFiles", icon: PanelFilesIcon },
+  terminal: { titleKey: "panelShell", icon: PanelTerminalIcon },
 }
 
 const HEADER_BLUR_LAYERS = buildBlurGradientLayers({
@@ -159,8 +162,8 @@ export function SessionViewHeader({
           exporting={exporting}
         />
         <div className="ml-auto flex items-center gap-1">
-          <TogglePanelButton id="files" icon={FolderTree} />
-          <TogglePanelButton id="terminal" icon={SquareTerminal} />
+          <TogglePanelButton id="files" icon={PANEL_META.files.icon} />
+          <TogglePanelButton id="terminal" icon={PANEL_META.terminal.icon} />
         </div>
       </div>
     </header>
@@ -296,7 +299,7 @@ function SessionMetaBadge({
   )
 }
 
-function TogglePanelButton({ id, icon: Icon }: { id: PanelId; icon: typeof FolderTree }) {
+function TogglePanelButton({ id, icon: Icon }: { id: PanelId; icon: PanelIcon }) {
   const { panels, setPanelMode } = useWorkspace()
   const t = useTranslations("dashboard.session")
   const active = panels[id] !== "closed"
