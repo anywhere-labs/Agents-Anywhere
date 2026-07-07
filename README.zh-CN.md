@@ -253,11 +253,11 @@ Android 用户可以从 [GitHub Releases](https://github.com/anywhere-labs/Agent
 
 Agents Anywhere 已经提供线上 Beta 服务。当前服务免费、仍处于 Beta 阶段，并且只面向中国用户开放，需要申请后使用。
 
-如果你想试用，请扫码加入微信群、飞书群或 QQ 群，并联系管理员开通。
+如果你想试用，请扫码加入企业微信群、飞书群或 QQ 群，并联系管理员开通。
 
-| 微信群 | 飞书群 | QQ 群 | Discord |
+| 企业微信群 | 飞书群 | QQ 群 | Discord |
 | --- | --- | --- | --- |
-| <img src="docs/contact/wechat-beta.jpeg" alt="微信群二维码" width="180"> | <img src="docs/contact/feishu-beta.jpeg" alt="飞书群二维码" width="180"> | <img src="docs/contact/qq-beta.jpeg" alt="QQ 群二维码" width="180"> | <img src="docs/contact/discord-beta.jpeg" alt="Discord 社区二维码" width="180"> |
+| <img src="docs/contact/wechat-beta.jpeg" alt="企业微信群二维码" width="180"> | <img src="docs/contact/feishu-beta.jpeg" alt="飞书群二维码" width="180"> | <img src="docs/contact/qq-beta.jpeg" alt="QQ 群二维码" width="180"> | <img src="docs/contact/discord-beta.jpeg" alt="Discord 社区二维码" width="180"> |
 | 中国区 Beta 试用群 | 中国区 Beta 试用群 | 中国区 Beta 试用群 | 海外社区 |
 
 海外用户入口暂未开放。可以先加入 Discord 获取后续社区和开放计划更新。
