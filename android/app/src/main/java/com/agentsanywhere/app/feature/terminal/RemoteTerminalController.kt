@@ -2,7 +2,6 @@ package com.agentsanywhere.app.feature.terminal
 
 import android.os.Handler
 import android.os.Looper
-import android.util.Log
 import android.view.KeyEvent
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentSession
@@ -705,8 +704,8 @@ class RemoteTerminalController(
     override fun logStackTraceWithMessage(tag: String?, message: String?, e: Exception?) = Unit
     override fun logStackTrace(tag: String?, e: Exception?) = Unit
 
-    private fun diag(message: String) {
-        Log.d(DIAG_TAG, message)
+    private fun diag(@Suppress("UNUSED_PARAMETER") message: String) {
+        Unit
     }
 
     private data class TerminalCloseTarget(
@@ -715,7 +714,6 @@ class RemoteTerminalController(
     )
 
     private companion object {
-        private const val DIAG_TAG = "AATerminal"
         private const val RECONNECT_DELAY_MS = 800L
         private const val STREAM_OPEN_GRACE_MS = 1_200L
         private const val MAX_RECONNECT_ATTEMPTS = 3

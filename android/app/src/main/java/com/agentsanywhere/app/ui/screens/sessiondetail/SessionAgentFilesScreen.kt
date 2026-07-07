@@ -41,6 +41,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -507,7 +508,6 @@ internal fun TerminalContent(
     val terminalState by terminalController.state.collectAsState()
     val modifierState by terminalController.modifierState.collectAsState()
     val density = LocalDensity.current
-    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val imeBottomPx = WindowInsets.ime.getBottom(density)
     val imeBottom = with(density) { imeBottomPx.toDp() }
@@ -538,46 +538,6 @@ internal fun TerminalContent(
 
     DisposableEffect(terminalController) {
         onDispose { terminalController.detach() }
-    }
-
-    val terminalClient = remember(terminalController, onVerticalDragChange) {
-        remoteTerminalViewClient(terminalController, onVerticalDragChange)
-    }
-    val terminalView = remember(terminalController, context) {
-        RemoteTerminalView(context, null).apply {
-            setTextSize(
-                TypedValue.applyDimension(
-                    TypedValue.COMPLEX_UNIT_SP,
-                    12f,
-                    context.resources.displayMetrics,
-                ).roundToInt(),
-            )
-            setTypeface(Typeface.MONOSPACE)
-            setRemoteTerminalViewClient(terminalClient)
-            attachSession(terminalController)
-            applyTerminalColors(terminalController, darkMode)
-        }
-    }
-
-    DisposableEffect(terminalView, terminalController) {
-        val redraw: () -> Unit = {
-            terminalView.post {
-                if (terminalView.currentSession === terminalController) {
-                    terminalView.onScreenUpdated()
-                }
-            }
-        }
-        terminalController.onRedraw = redraw
-        terminalView.post {
-            if (terminalView.currentSession === terminalController) {
-                terminalView.onScreenUpdated()
-            }
-        }
-        onDispose {
-            if (terminalController.onRedraw === redraw) {
-                terminalController.onRedraw = null
-            }
-        }
     }
 
     Box(
@@ -619,14 +579,10 @@ internal fun TerminalContent(
                     )
                 }
             }
-            AndroidView(
-                factory = { terminalView },
-                update = {
-                    it.setRemoteTerminalViewClient(terminalClient)
-                    it.attachSession(terminalController)
-                    applyTerminalColors(terminalController, darkMode)
-                    it.invalidate()
-                },
+            TerminalAndroidView(
+                terminalController = terminalController,
+                darkMode = darkMode,
+                onVerticalDragChange = onVerticalDragChange,
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
@@ -651,6 +607,69 @@ internal fun TerminalContent(
                 .align(Alignment.TopEnd)
                 .padding(top = 10.dp, end = 18.dp)
                 .zIndex(1f),
+        )
+    }
+}
+
+@Composable
+private fun TerminalAndroidView(
+    terminalController: RemoteTerminalController,
+    darkMode: Boolean,
+    onVerticalDragChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    key(terminalController) {
+        val context = LocalContext.current
+        val terminalClient = remember(terminalController, onVerticalDragChange) {
+            remoteTerminalViewClient(terminalController, onVerticalDragChange)
+        }
+        val terminalView = remember(context, terminalController) {
+            RemoteTerminalView(context, null).apply {
+                setTextSize(
+                    TypedValue.applyDimension(
+                        TypedValue.COMPLEX_UNIT_SP,
+                        12f,
+                        context.resources.displayMetrics,
+                    ).roundToInt(),
+                )
+                setTypeface(Typeface.MONOSPACE)
+                setRemoteTerminalViewClient(terminalClient)
+                attachSession(terminalController)
+                applyTerminalColors(terminalController, darkMode)
+            }
+        }
+
+        DisposableEffect(terminalView, terminalController) {
+            val redraw: () -> Unit = {
+                terminalView.post {
+                    if (terminalView.currentSession === terminalController) {
+                        terminalView.onScreenUpdated()
+                    }
+                }
+            }
+            terminalController.onRedraw = redraw
+            terminalView.post {
+                if (terminalView.currentSession === terminalController) {
+                    terminalView.onScreenUpdated()
+                }
+            }
+            onDispose {
+                if (terminalController.onRedraw === redraw) {
+                    terminalController.onRedraw = null
+                }
+                terminalView.releaseSession()
+            }
+        }
+
+        AndroidView(
+            factory = { terminalView },
+            update = {
+                it.setRemoteTerminalViewClient(terminalClient)
+                it.attachSession(terminalController)
+                applyTerminalColors(terminalController, darkMode)
+                it.invalidate()
+            },
+            modifier = modifier,
         )
     }
 }
