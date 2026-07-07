@@ -32,6 +32,14 @@ import { SessionSkeleton, SessionSkeletonInline } from "@/components/session/ses
 import { TimelineEntry } from "@/components/session/session-timeline-entry"
 import { isCreatedFileChange } from "@/components/session/session-tool-cards"
 import { SessionComposer, type AttachedFile } from "@/components/session/session-composer"
+import {
+  buildOptimisticUserMessage,
+  isOptimisticTimelineItem,
+  markOptimisticItemFailed,
+  mergeTimelineItems,
+  preserveOptimisticItems,
+  timelineClientMessageId,
+} from "@/components/session/optimistic-timeline"
 import { recordsOf, runtimeLabel, sortTimelineItems, textOf } from "@/components/session/session-utils"
 import { useWorkspace } from "@/components/workspace-context"
 
@@ -65,7 +73,6 @@ const INITIAL_TIMELINE_LIMIT = 100
 const TIMELINE_PAGE_LIMIT = 100
 const LOAD_OLDER_SCROLL_THRESHOLD = 96
 const COMPOSER_DRAFT_STORAGE_PREFIX = "agents-anywhere.sessionComposerDraft.v1."
-const OPTIMISTIC_ITEM_PREFIX = "optimistic-message:"
 const COMPOSER_BLUR_LAYERS = buildComposerBlurLayers({
   height: 144,
   layerCount: 10,
@@ -158,72 +165,6 @@ function writeComposerDraft(sessionId: string, value: string) {
   }
 }
 
-function timelineClientMessageId(item: TimelineItem): string | null {
-  const value = item.source.clientMessageId
-  return typeof value === "string" ? value : null
-}
-
-function isOptimisticTimelineItem(item: TimelineItem): boolean {
-  return item.id.startsWith(OPTIMISTIC_ITEM_PREFIX) || item.source.optimistic === true
-}
-
-function hasTimelineItemForClientMessage(items: TimelineItem[], clientMessageId: string): boolean {
-  return items.some((item) => !isOptimisticTimelineItem(item) && timelineClientMessageId(item) === clientMessageId)
-}
-
-function preserveOptimisticItems(baseItems: TimelineItem[], previousItems: TimelineItem[]): TimelineItem[] {
-  const preserved = previousItems.filter((item) => {
-    if (!isOptimisticTimelineItem(item)) return false
-    const clientMessageId = timelineClientMessageId(item)
-    return !clientMessageId || !hasTimelineItemForClientMessage(baseItems, clientMessageId)
-  })
-  return preserved.length > 0 ? mergeTimelineItems(baseItems, preserved) : baseItems
-}
-
-function buildOptimisticUserMessage({
-  sessionId,
-  clientMessageId,
-  text,
-  attachments,
-  items,
-  nextSeq,
-}: {
-  sessionId: string
-  clientMessageId: string
-  text: string
-  attachments: AttachedFile[]
-  items: TimelineItem[]
-  nextSeq: number
-}): TimelineItem {
-  const now = new Date().toISOString()
-  const lastOrderSeq = items.reduce((max, item) => Math.max(max, item.orderSeq), 0)
-  const orderSeq = Math.max(lastOrderSeq + 1, nextSeq + 1)
-  const optimisticAttachments = attachments.map((attachment) => ({
-    fileId: `optimistic:${attachment.id}`,
-    name: attachment.name,
-    size: attachment.size,
-    mediaType: attachment.file.type,
-    optimistic: true,
-  }))
-  return {
-    id: `${OPTIMISTIC_ITEM_PREFIX}${clientMessageId}`,
-    sessionId,
-    turnId: null,
-    type: "message",
-    status: "pending",
-    role: "user",
-    content: optimisticAttachments.length > 0 ? { text, attachments: optimisticAttachments } : { text },
-    source: { clientMessageId, optimistic: true },
-    orderSeq,
-    revision: 0,
-    contentHash: clientMessageId,
-    updatedSeq: orderSeq,
-    createdAt: now,
-    updatedAt: now,
-    completedAt: null,
-  }
-}
-
 export function SessionDetail({
   token,
   sessionId,
@@ -234,7 +175,15 @@ export function SessionDetail({
   const tSession = useTranslations("dashboard.session")
   const tNew = useTranslations("dashboard.new")
   const tCommon = useTranslations("common")
-  const { composerInsertion } = useWorkspace()
+  const {
+    addOptimisticMessage,
+    clearResolvedOptimisticMessages,
+    composerInsertion,
+    getOptimisticItems,
+    getOptimisticSessionState,
+    isOptimisticSession,
+    markOptimisticMessageFailed,
+  } = useWorkspace()
   const [state, setState] = React.useState<SessionStateResponse | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
@@ -266,6 +215,34 @@ export function SessionDetail({
 
   const session = state?.session ?? fallbackSession
   const composerDraft = composerDraftState.sessionId === sessionId ? composerDraftState.value : ""
+  const isLocalOptimisticSession = isOptimisticSession(sessionId)
+
+  const applyOptimisticItems = React.useCallback((next: SessionStateResponse): SessionStateResponse => ({
+    ...next,
+    items: mergeTimelineItems(next.items, getOptimisticItems(sessionId)),
+  }), [getOptimisticItems, sessionId])
+  const applyOptimisticItemsRef = React.useRef(applyOptimisticItems)
+  const clearResolvedOptimisticMessagesRef = React.useRef(clearResolvedOptimisticMessages)
+  const getOptimisticSessionStateRef = React.useRef(getOptimisticSessionState)
+  const tSessionRef = React.useRef(tSession)
+
+  React.useEffect(() => {
+    applyOptimisticItemsRef.current = applyOptimisticItems
+    clearResolvedOptimisticMessagesRef.current = clearResolvedOptimisticMessages
+    getOptimisticSessionStateRef.current = getOptimisticSessionState
+    tSessionRef.current = tSession
+  }, [applyOptimisticItems, clearResolvedOptimisticMessages, getOptimisticSessionState, tSession])
+
+  React.useEffect(() => {
+    const optimisticState = getOptimisticSessionState(sessionId)
+    if (isLocalOptimisticSession) {
+      if (optimisticState) setState(optimisticState)
+      return
+    }
+    const optimisticItems = getOptimisticItems(sessionId)
+    if (optimisticItems.length === 0) return
+    setState((current) => current ? { ...current, items: mergeTimelineItems(current.items, optimisticItems) } : current)
+  }, [getOptimisticItems, getOptimisticSessionState, isLocalOptimisticSession, sessionId])
 
   React.useEffect(() => {
     setComposerDraftState({ sessionId, value: readComposerDraft(sessionId) })
@@ -368,7 +345,8 @@ export function SessionDetail({
     if (options.preserveBottom ?? true) markAutoScrollIfNearBottom()
     if (options.scrollToBottom) forceScrollOnNextUpdateRef.current = true
     setError(null)
-    const next = await loadInitialSessionState(token, sessionId)
+    const next = applyOptimisticItemsRef.current(await loadInitialSessionState(token, sessionId))
+    clearResolvedOptimisticMessagesRef.current(sessionId, next.items)
     setState((current) => current ? { ...next, items: preserveOptimisticItems(next.items, current.items) } : next)
     nextSeqRef.current = Math.max(nextSeqRef.current, next.nextSeq)
     onSessionUpdated?.(next.session)
@@ -431,15 +409,28 @@ export function SessionDetail({
     setLoading(true)
     setState(null)
     setError(null)
+    if (isLocalOptimisticSession) {
+      const optimisticState = getOptimisticSessionStateRef.current(sessionId)
+      if (optimisticState) {
+        setState(optimisticState)
+        nextSeqRef.current = optimisticState.nextSeq
+      }
+      setLoading(false)
+      return () => {
+        cancelled = true
+      }
+    }
     loadInitialSessionState(token, sessionId)
       .then((next) => {
         if (cancelled) return
-        setState(next)
+        const merged = applyOptimisticItemsRef.current(next)
+        clearResolvedOptimisticMessagesRef.current(sessionId, merged.items)
+        setState(merged)
         nextSeqRef.current = next.nextSeq
         onSessionUpdated?.(next.session)
       })
       .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : tSession("loadFailed"))
+        if (!cancelled) setError(err instanceof Error ? err.message : tSessionRef.current("loadFailed"))
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -447,10 +438,15 @@ export function SessionDetail({
     return () => {
       cancelled = true
     }
-  }, [onSessionUpdated, sessionId, token])
+  }, [
+    isLocalOptimisticSession,
+    onSessionUpdated,
+    sessionId,
+    token,
+  ])
 
   React.useEffect(() => {
-    if (!session?.runtime) return
+    if (isLocalOptimisticSession || !session?.runtime) return
     let cancelled = false
     setRuntimeSchema(null)
     setRuntimeSettings(null)
@@ -472,9 +468,10 @@ export function SessionDetail({
     return () => {
       cancelled = true
     }
-  }, [session?.id, session?.runtime, token])
+  }, [isLocalOptimisticSession, session?.id, session?.runtime, token])
 
   React.useEffect(() => {
+    if (isLocalOptimisticSession) return
     let cancelled = false
     let eventSource: EventSource | null = null
     const refetch = () => {
@@ -482,8 +479,10 @@ export function SessionDetail({
       loadInitialSessionState(token, sessionId)
         .then((next) => {
           if (cancelled) return
+          const merged = applyOptimisticItemsRef.current(next)
+          clearResolvedOptimisticMessagesRef.current(sessionId, merged.items)
           nextSeqRef.current = Math.max(nextSeqRef.current, next.nextSeq)
-          setState((current) => current ? { ...next, items: preserveOptimisticItems(next.items, current.items) } : next)
+          setState((current) => current ? { ...merged, items: preserveOptimisticItems(merged.items, current.items) } : merged)
           onSessionUpdated?.(next.session)
         })
         .catch(() => undefined)
@@ -506,6 +505,7 @@ export function SessionDetail({
         }
         markAutoScrollIfNearBottom()
         setState((current) => mergeSessionState(current, envelope))
+        if (envelope.items) clearResolvedOptimisticMessagesRef.current(sessionId, envelope.items)
         if (envelope.nextSeq) nextSeqRef.current = Math.max(nextSeqRef.current, envelope.nextSeq)
         if (envelope.session) onSessionUpdated?.(envelope.session)
       }
@@ -523,27 +523,37 @@ export function SessionDetail({
       window.clearInterval(intervalId)
       eventSource?.close()
     }
-  }, [markAutoScrollIfNearBottom, onSessionUpdated, sessionId, token])
+  }, [
+    isLocalOptimisticSession,
+    markAutoScrollIfNearBottom,
+    onSessionUpdated,
+    sessionId,
+    token,
+  ])
 
   const handleSend = async (content: string, attachments: AttachedFile[]): Promise<boolean> => {
     if (!session || (!content.trim() && attachments.length === 0)) return false
     const clientMessageId = createClientId("msg")
     const messageText = content.trim() || tNew("attachmentOnlyPrompt")
     forceScrollOnNextUpdateRef.current = true
+    const optimisticMessage = buildOptimisticUserMessage({
+      sessionId: session.id,
+      clientMessageId,
+      text: messageText,
+      attachments,
+      items: state?.items ?? [],
+      nextSeq: state?.nextSeq ?? nextSeqRef.current,
+    })
+    addOptimisticMessage({
+      clientMessageId,
+      sessionId: session.id,
+      item: optimisticMessage,
+    })
     setState((current) => {
       if (!current) return current
       return {
         ...current,
-        items: mergeTimelineItems(current.items, [
-          buildOptimisticUserMessage({
-            sessionId: session.id,
-            clientMessageId,
-            text: messageText,
-            attachments,
-            items: current.items,
-            nextSeq: current.nextSeq,
-          }),
-        ]),
+        items: mergeTimelineItems(current.items, [optimisticMessage]),
       }
     })
     setSending(true)
@@ -561,18 +571,14 @@ export function SessionDetail({
       return true
     } catch (err) {
       const message = err instanceof Error ? err.message : tSession("sendFailed")
+      markOptimisticMessageFailed(clientMessageId, message)
       setState((current) => {
         if (!current) return current
         return {
           ...current,
           items: current.items.map((item) =>
             timelineClientMessageId(item) === clientMessageId && isOptimisticTimelineItem(item)
-              ? {
-                  ...item,
-                  status: "failed",
-                  content: { ...item.content, error: message },
-                  updatedAt: new Date().toISOString(),
-                }
+              ? markOptimisticItemFailed(item, message)
               : item,
           ),
         }
@@ -781,6 +787,10 @@ export function SessionDetail({
   if (!session) return null
 
   const takeoverTarget = pendingTakeover ?? false
+  const takeoverAgent = runtimeLabel(session.runtime)
+  const takeoverDescription = (tSession.raw(
+    takeoverTarget ? "takeoverEnableDescription" : "takeoverDisableDescription",
+  ) as string[]).map((line) => line.replaceAll("{agent}", takeoverAgent))
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden overscroll-none">
@@ -908,8 +918,12 @@ export function SessionDetail({
             <DialogTitle>
               {takeoverTarget ? tSession("takeoverEnableTitle") : tSession("takeoverDisableTitle")}
             </DialogTitle>
-            <DialogDescription>
-              {takeoverTarget ? tSession("takeoverEnableDescription") : tSession("takeoverDisableDescription")}
+            <DialogDescription asChild>
+              <ul className="list-disc space-y-1 pl-5">
+                {takeoverDescription.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -1090,25 +1104,4 @@ function mergeSessionState(
     hasMore: envelope.hasMore ?? current.hasMore,
     serverTime: envelope.serverTime ?? current.serverTime,
   }
-}
-
-function mergeTimelineItems(
-  currentItems: TimelineItem[],
-  incomingItems: TimelineItem[],
-): TimelineItem[] {
-  if (incomingItems.length === 0) return currentItems
-  const byId = new Map(currentItems.map((item) => [item.id, item]))
-  for (const item of incomingItems) {
-    const clientMessageId = timelineClientMessageId(item)
-    if (clientMessageId && !isOptimisticTimelineItem(item)) {
-      for (const [id, existing] of byId) {
-        if (isOptimisticTimelineItem(existing) && timelineClientMessageId(existing) === clientMessageId) {
-          byId.delete(id)
-        }
-      }
-    }
-    const existing = byId.get(item.id)
-    if (!existing || existing.updatedSeq <= item.updatedSeq) byId.set(item.id, item)
-  }
-  return sortTimelineItems(Array.from(byId.values()))
 }

@@ -24,6 +24,7 @@ import {
   DragOverlay,
   useAttachments,
 } from "@/components/attachment-input"
+import { buildOptimisticUserMessage } from "@/components/session/optimistic-timeline"
 import { WorkspacePicker, type WorkspaceSelection } from "@/components/workspace-picker"
 import { useWorkspace } from "@/components/workspace-context"
 import { useAuth } from "@/components/auth/auth-context"
@@ -39,7 +40,7 @@ import {
   runtimeConfigFields,
   validEffortValue,
 } from "@/features/dashboard/runtime-config"
-import type { RuntimeConfigSchema } from "@/features/dashboard/types"
+import type { RuntimeConfigSchema, SessionView as RealSessionView } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
 
 type ComposerPermissionMode = {
@@ -104,7 +105,15 @@ type NewSessionTitleKey = (typeof NEW_SESSION_TITLE_KEYS)[number]
 
 export function TaskComposer() {
   const { session: authSession } = useAuth()
-  const { connectors, openSession, upsertSession, refreshData } = useWorkspace()
+  const {
+    addOptimisticMessage,
+    bindOptimisticSession,
+    connectors,
+    markOptimisticMessageFailed,
+    openSession,
+    upsertSession,
+    refreshData,
+  } = useWorkspace()
   const t = useTranslations("dashboard.new")
   const typewriterTitles = React.useMemo(
     () => NEW_SESSION_TITLE_KEYS.map((key) => t(key as NewSessionTitleKey)),
@@ -333,6 +342,54 @@ export function TaskComposer() {
   const handleCreate = async () => {
     if (!authSession?.accessToken || !selectedConnector || !selectedAgent || creating) return
     if (!prompt.trim() && attachments.length === 0) return
+    const localSessionId = createClientId("session")
+    const clientMessageId = createClientId("msg")
+    const messageText = prompt.trim() || t("attachmentOnlyPrompt")
+    const selectedAttachments = attachments
+    const now = new Date().toISOString()
+    const optimisticSession: RealSessionView = {
+      id: localSessionId,
+      connectorId: selectedConnector.id,
+      connectorStatus: selectedConnector.status,
+      runtime: selectedAgent,
+      externalSessionId: null,
+      title: prompt.trim() || null,
+      cwd: workspace?.path || null,
+      status: "idle",
+      takeover: false,
+      pinned: false,
+      pinnedAt: null,
+      archived: false,
+      archivedAt: null,
+      unread: false,
+      lastReadSeq: 0,
+      lastSyncedAt: null,
+      sourceObservedAt: null,
+      lastActivityAt: now,
+      lastItemAt: now,
+      lastItemOrderSeq: 1,
+      sortAt: now,
+      updatedSeq: 1,
+      effectiveRunMode: "chat",
+      runtimeSettings: null,
+      runtimeSettingsOverride: null,
+    }
+    addOptimisticMessage({
+      clientMessageId,
+      sessionId: localSessionId,
+      session: optimisticSession,
+      item: buildOptimisticUserMessage({
+        sessionId: localSessionId,
+        clientMessageId,
+        text: messageText,
+        attachments: selectedAttachments,
+        items: [],
+        nextSeq: 0,
+      }),
+    })
+    clear()
+    setPrompt("")
+    openSession(localSessionId)
     setCreating(true)
     try {
       const created = await dashboardApi.createSession(authSession.accessToken, {
@@ -346,8 +403,10 @@ export function TaskComposer() {
       const nextPreference = { connectorId: selectedConnector.id, agent: selectedAgent }
       writeNewSessionPreference(nextPreference)
       setPreference(nextPreference)
+      bindOptimisticSession(localSessionId, created.session)
       const takeover = await dashboardApi.enableTakeover(authSession.accessToken, created.session.id)
       const sessionId = takeover.session.id
+      bindOptimisticSession(localSessionId, takeover.session)
       const settings: Record<string, unknown> = {}
       const validSelectedReasoning = validEffortValue(effortField, selectedReasoning)
       if (selectedPermissionMode) settings.permissionMode = selectedPermissionMode
@@ -356,7 +415,7 @@ export function TaskComposer() {
       if (Object.keys(settings).length > 0) {
         await dashboardApi.patchSessionRuntimeSettings(authSession.accessToken, sessionId, settings)
       }
-      const files = attachments.map((attachment) => attachment.file)
+      const files = selectedAttachments.map((attachment) => attachment.file)
       const upload = files.length > 0
         ? await dashboardApi.uploadSessionAttachments(authSession.accessToken, sessionId, files)
         : null
@@ -364,21 +423,20 @@ export function TaskComposer() {
       await dashboardApi.sendSessionMessage(
         authSession.accessToken,
         sessionId,
-        prompt.trim() || t("attachmentOnlyPrompt"),
+        messageText,
         {
           attachments: attachmentRefs,
-          clientMessageId: createClientId("msg"),
+          clientMessageId,
           model: selectedModel || undefined,
           effort: validSelectedReasoning || undefined,
         },
       )
-      clear()
-      setPrompt("")
       upsertSession(takeover.session)
       refreshData()
-      openSession(sessionId)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : t("createFailed"))
+      const message = err instanceof Error ? err.message : t("createFailed")
+      markOptimisticMessageFailed(clientMessageId, message)
+      toast.error(message)
     } finally {
       setCreating(false)
     }
