@@ -68,12 +68,18 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
+import com.agentsanywhere.app.feature.files.canonicalRemoteDirectoryPath
+import com.agentsanywhere.app.feature.files.displayRemotePath
+import com.agentsanywhere.app.feature.files.isSelectableRemoteDirectory
+import com.agentsanywhere.app.feature.files.isWindowsDeviceOs
+import com.agentsanywhere.app.feature.files.normalizeRemotePath
+import com.agentsanywhere.app.feature.files.remoteFileRequest
+import com.agentsanywhere.app.feature.files.remoteParentPath
 import com.agentsanywhere.app.feature.sessions.NewSessionAgent
 import com.agentsanywhere.app.feature.sessions.NewSessionDirectory
 import com.agentsanywhere.app.feature.sessions.NewSessionPathEntry
 import com.agentsanywhere.app.feature.sessions.SessionsState
 import com.agentsanywhere.app.feature.sessions.newSessionAgents
-import com.agentsanywhere.app.feature.sessions.parentPath
 import com.agentsanywhere.app.feature.sessions.workspaceOptionsFor
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentSession
@@ -141,6 +147,8 @@ fun NewSessionScreen(
     }
 
     val selectedDevice = devices.firstOrNull { it.id == selectedDeviceId }
+    val selectedDeviceOs = selectedDevice?.deviceOs
+    val isWindowsDevice = isWindowsDeviceOs(selectedDeviceOs)
     val agents = remember(selectedDevice) { selectedDevice?.newSessionAgents().orEmpty() }
 
     LaunchedEffect(agents) {
@@ -149,16 +157,36 @@ fun NewSessionScreen(
         }
     }
 
-    suspend fun loadDirectory(root: String, path: String = ".", select: Boolean = false) {
+    suspend fun loadDirectory(
+        targetPath: String,
+        fallbackRoot: String? = selectedWorkspacePath,
+        select: Boolean = false,
+    ) {
         val device = selectedDevice ?: return
+        val request = remoteFileRequest(
+            targetPath = targetPath,
+            deviceOs = device.deviceOs,
+            fallbackRoot = fallbackRoot,
+        )
         pathLoading = true
         pathError = null
-        onListDirectory(device.id, root, path)
+        onListDirectory(device.id, request.root, request.path)
             .onSuccess { directory ->
-                currentPath = directory.path
-                pathEntries = directory.entries
-                if (root == "~" && homePath == null) homePath = directory.path
-                if (select) selectedWorkspacePath = directory.path
+                val nextPath = canonicalRemoteDirectoryPath(
+                    request = request,
+                    returnedPath = directory.path,
+                    deviceOs = device.deviceOs,
+                )
+                currentPath = nextPath
+                pathEntries = directory.entries.map { entry ->
+                    entry.copy(path = normalizeRemotePath(entry.path))
+                }
+                if (request.root == "~" && homePath == null && nextPath.isNotBlank()) {
+                    homePath = nextPath
+                }
+                if (select && isSelectableRemoteDirectory(nextPath, device.deviceOs)) {
+                    selectedWorkspacePath = nextPath
+                }
             }
             .onFailure { error ->
                 pathEntries = emptyList()
@@ -176,7 +204,7 @@ fun NewSessionScreen(
         homePath = null
         currentPath = "~"
         selectedWorkspacePath = "~"
-        loadDirectory(root = "~", select = true)
+        loadDirectory(targetPath = ".", fallbackRoot = "~", select = true)
     }
 
     LaunchedEffect(editingTitle) {
@@ -196,13 +224,14 @@ fun NewSessionScreen(
     val selectedWorkspaceTitle = selectedWorkspace?.title?.localizedWorkspaceTitle()
         ?: pathTitle(selectedWorkspacePath, stringResource(R.string.new_session_home_directory))
     val selectedWorkspaceDetail = selectedWorkspace?.detail ?: selectedWorkspacePath
+    val canUseCurrentPath = isSelectableRemoteDirectory(currentPath, selectedDeviceOs)
     val effectiveWorkspacePath = if (choosePath) currentPath else selectedWorkspacePath
     val selectedAgent = agents.firstOrNull { it.runtime == selectedRuntime }
     val canStart = selectedDevice != null &&
         selectedAgent != null &&
         effectiveWorkspacePath.isNotBlank() &&
         !creating &&
-        (!choosePath || !pathLoading)
+        (!choosePath || (!pathLoading && canUseCurrentPath))
 
     fun submitTitle() {
         title = title.trim().ifBlank { defaultTitle }
@@ -277,27 +306,52 @@ fun NewSessionScreen(
                 }
 
                 if (choosePath) {
+                    val parent = remoteParentPath(
+                        rawPath = currentPath,
+                        deviceOs = selectedDeviceOs,
+                        allowWindowsDriveOverview = isWindowsDevice,
+                    )
+                    val currentPathLabel = displayRemotePath(
+                        root = selectedWorkspacePath,
+                        rawPath = currentPath,
+                        deviceOs = selectedDeviceOs,
+                        windowsDriveOverviewLabel = stringResource(R.string.files_windows_drives),
+                    )
                     ChoosePathSection(
                         currentPath = currentPath,
+                        currentPathLabel = currentPathLabel,
+                        parentPath = parent,
                         entries = pathEntries,
                         loading = pathLoading,
                         error = pathError,
                         darkMode = darkMode,
+                        canUseCurrent = canUseCurrentPath,
                         modifier = Modifier.weight(1f),
                         onBack = { choosePath = false },
                         onParent = {
-                            val parent = parentPath(currentPath)
-                            if (parent.isNotBlank()) {
-                                scope.launch { loadDirectory(root = parent) }
+                            if (parent != null) {
+                                scope.launch {
+                                    loadDirectory(
+                                        targetPath = parent,
+                                        fallbackRoot = currentPath.ifBlank { selectedWorkspacePath },
+                                    )
+                                }
                             }
                         },
                         onUseCurrent = {
-                            selectedWorkspacePath = currentPath
-                            choosePath = false
-                            workspaceListExpanded = false
+                            if (canUseCurrentPath) {
+                                selectedWorkspacePath = currentPath
+                                choosePath = false
+                                workspaceListExpanded = false
+                            }
                         },
                         onOpenEntry = { entry ->
-                            scope.launch { loadDirectory(root = entry.path) }
+                            scope.launch {
+                                loadDirectory(
+                                    targetPath = entry.path,
+                                    fallbackRoot = currentPath.ifBlank { selectedWorkspacePath },
+                                )
+                            }
                         },
                     )
                 } else {
@@ -310,7 +364,13 @@ fun NewSessionScreen(
                         modifier = Modifier.weight(1f),
                         onChoosePath = {
                             choosePath = true
-                            scope.launch { loadDirectory(root = selectedWorkspacePath) }
+                            val startPath = if (isWindowsDevice) "" else selectedWorkspacePath
+                            scope.launch {
+                                loadDirectory(
+                                    targetPath = startPath,
+                                    fallbackRoot = selectedWorkspacePath,
+                                )
+                            }
                         },
                         onToggleExpanded = { workspaceListExpanded = !workspaceListExpanded },
                         onSelectWorkspace = {
@@ -788,17 +848,19 @@ private fun WorkspaceRow(
 @Composable
 private fun ChoosePathSection(
     currentPath: String,
+    currentPathLabel: String,
+    parentPath: String?,
     entries: List<NewSessionPathEntry>,
     loading: Boolean,
     error: String?,
     darkMode: Boolean,
+    canUseCurrent: Boolean,
     modifier: Modifier,
     onBack: () -> Unit,
     onParent: () -> Unit,
     onUseCurrent: () -> Unit,
     onOpenEntry: (NewSessionPathEntry) -> Unit,
 ) {
-    val parent = parentPath(currentPath)
     Column(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -829,8 +891,10 @@ private fun ChoosePathSection(
             }
         }
         CurrentDirectoryBar(
-            currentPath = currentPath,
+            currentPath = currentPathLabel,
             darkMode = darkMode,
+            canGoParent = parentPath != null,
+            canUseCurrent = canUseCurrent,
             onParent = onParent,
             onUseCurrent = onUseCurrent,
         )
@@ -848,7 +912,7 @@ private fun ChoosePathSection(
                         PathMessage(error, darkMode)
                     }
                     else -> {
-                        if (parent.isNotBlank()) {
+                        if (parentPath != null) {
                             item(key = "$currentPath/..") {
                                 PathRow(name = "..", icon = Lucide.Folder, darkMode = darkMode, onClick = onParent)
                             }
@@ -870,6 +934,8 @@ private fun ChoosePathSection(
 private fun CurrentDirectoryBar(
     currentPath: String,
     darkMode: Boolean,
+    canGoParent: Boolean,
+    canUseCurrent: Boolean,
     onParent: () -> Unit,
     onUseCurrent: () -> Unit,
 ) {
@@ -901,15 +967,23 @@ private fun CurrentDirectoryBar(
             softWrap = false,
             overflow = TextOverflow.MiddleEllipsis,
         )
-        CircleMiniButton(darkMode = darkMode, onClick = onParent) {
-            BackGlyph(color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF777777))
+        if (canGoParent) {
+            CircleMiniButton(darkMode = darkMode, onClick = onParent) {
+                BackGlyph(color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF777777))
+            }
         }
         CircleMiniButton(
             darkMode = darkMode,
-            selected = !darkMode,
+            selected = !darkMode && canUseCurrent,
+            enabled = canUseCurrent,
             onClick = onUseCurrent,
         ) {
-            CheckGlyph(color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF16A34A))
+            val checkColor = when {
+                !canUseCurrent -> if (darkMode) Color(0xFF52525B) else Color(0xFFBDBDBD)
+                darkMode -> Color(0xFFA1A1AA)
+                else -> Color(0xFF16A34A)
+            }
+            CheckGlyph(color = checkColor)
         }
     }
 }
@@ -991,6 +1065,7 @@ private fun SmallPill(
 private fun CircleMiniButton(
     darkMode: Boolean,
     selected: Boolean = false,
+    enabled: Boolean = true,
     onClick: () -> Unit,
     content: @Composable () -> Unit,
 ) {
@@ -1010,7 +1085,9 @@ private fun CircleMiniButton(
             .clip(CircleShape)
             .background(background)
             .border(1.dp, border, CircleShape)
-            .noRippleClickable(onClick = onClick),
+            .noRippleClickable {
+                if (enabled) onClick()
+            },
         contentAlignment = Alignment.Center,
     ) {
         content()

@@ -80,5 +80,6 @@ dependencies {
     implementation(libs.telephoto.zoomable.image.coil3)
     implementation(libs.termux.terminal.view)
     coreLibraryDesugaring(libs.desugar.jdk.libs)
+    testImplementation(libs.junit)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

@@ -74,10 +74,21 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.zIndex
 import com.agentsanywhere.app.R
+import com.agentsanywhere.app.feature.files.canonicalRemotePaths
+import com.agentsanywhere.app.feature.files.displayRemotePath
 import com.agentsanywhere.app.feature.files.FileEntry
+import com.agentsanywhere.app.feature.files.fileNameFromRemotePath
 import com.agentsanywhere.app.feature.files.FilesController
 import com.agentsanywhere.app.feature.files.FilesDirectory
+import com.agentsanywhere.app.feature.files.initialRemoteFilePath
+import com.agentsanywhere.app.feature.files.isWindowsDeviceOs
+import com.agentsanywhere.app.feature.files.isWindowsDriveOverview
+import com.agentsanywhere.app.feature.files.normalizeRemotePath
+import com.agentsanywhere.app.feature.files.remoteFileRequest
+import com.agentsanywhere.app.feature.files.remoteParentPath
+import com.agentsanywhere.app.feature.files.remoteRootForPath
 import com.agentsanywhere.app.feature.files.TextFile
+import com.agentsanywhere.app.feature.files.windowsDriveRoot
 import com.agentsanywhere.app.feature.terminal.RemoteTerminalController
 import com.agentsanywhere.app.feature.terminal.RemoteTerminalStatus
 import com.agentsanywhere.app.feature.terminal.TerminalShortcut
@@ -110,6 +121,7 @@ import kotlin.math.roundToInt
 @Composable
 internal fun SessionAgentFilesScreen(
     session: AgentSession?,
+    device: AgentDevice?,
     filesController: FilesController,
     terminalController: RemoteTerminalController,
     darkMode: Boolean,
@@ -136,6 +148,7 @@ internal fun SessionAgentFilesScreen(
     val noWorkspaceMessage = stringResource(R.string.files_session_no_workspace)
     val loadFilesFailedMessage = stringResource(R.string.files_load_failed)
     val openFileFailedMessage = stringResource(R.string.files_open_failed)
+    val deviceOs = device?.deviceOs ?: session?.cwd?.takeIf { windowsDriveRoot(it) != null }?.let { "windows" }
 
     DisposableEffect(Unit) {
         onDispose { onTerminalVerticalDragChange(false) }
@@ -148,21 +161,26 @@ internal fun SessionAgentFilesScreen(
             error = noWorkspaceMessage
             return
         }
+        val request = remoteFileRequest(
+            targetPath = path,
+            deviceOs = deviceOs,
+            fallbackRoot = root,
+        )
         loading = true
         error = null
         scope.launch {
             filesController.listFiles(
                 connectorId = current.connectorId,
-                root = root,
-                path = path,
+                root = request.root,
+                path = request.path,
             )
-                .onSuccess { directory = it.normalizedRemotePaths() }
+                .onSuccess { directory = it.canonicalRemotePaths(request, deviceOs) }
                 .onFailure { failure -> error = failure.message ?: loadFilesFailedMessage }
             loading = false
         }
     }
 
-    LaunchedEffect(session?.id, session?.cwd) {
+    LaunchedEffect(session?.id, session?.cwd, deviceOs) {
         selectedFile = null
         preview = null
         previewError = null
@@ -177,11 +195,11 @@ internal fun SessionAgentFilesScreen(
         }
     }
 
-    LaunchedEffect(session?.id, session?.cwd, openFilePath) {
-        val path = normalizeWindowsDrivePath(openFilePath.orEmpty()).trim()
+    LaunchedEffect(session?.id, session?.cwd, deviceOs, openFilePath) {
+        val path = normalizeRemotePath(openFilePath.orEmpty()).trim()
         if (path.isBlank()) return@LaunchedEffect
         selectedFile = FileEntry(
-            name = fileNameFromPath(path),
+            name = fileNameFromRemotePath(path),
             path = path,
             isDirectory = false,
             size = null,
@@ -195,7 +213,7 @@ internal fun SessionAgentFilesScreen(
         onOpenFileRequestConsumed(openFilePath.orEmpty())
     }
 
-    LaunchedEffect(session?.id, session?.cwd, selectedFile?.path) {
+    LaunchedEffect(session?.id, session?.cwd, deviceOs, selectedFile?.path) {
         val file = selectedFile
         if (file == null) return@LaunchedEffect
         val current = session
@@ -211,10 +229,15 @@ internal fun SessionAgentFilesScreen(
         previewError = null
         searchQuery = ""
         searchResult = SoraFileSearchResult()
+        val filePath = normalizeRemotePath(file.path)
         filesController.readTextFile(
             connectorId = current.connectorId,
-            root = root,
-            path = file.path,
+            root = remoteRootForPath(
+                targetPath = filePath,
+                deviceOs = deviceOs,
+                fallbackRoot = root,
+            ),
+            path = filePath,
         )
             .onSuccess { preview = it }
             .onFailure { failure -> previewError = failure.message ?: openFileFailedMessage }
@@ -254,6 +277,7 @@ internal fun SessionAgentFilesScreen(
             if (file == null) {
                 FileListContent(
                     rootPath = session?.cwd,
+                    deviceOs = deviceOs,
                     directory = directory,
                     loading = loading,
                     error = error,
@@ -271,6 +295,7 @@ internal fun SessionAgentFilesScreen(
             } else {
                 FilePreviewContent(
                     rootPath = session?.cwd,
+                    deviceOs = deviceOs,
                     file = file,
                     preview = preview,
                     loading = previewLoading,
@@ -322,18 +347,16 @@ internal fun DeviceFilesContent(
     val selectDeviceMessage = stringResource(R.string.files_select_device)
     val loadFilesFailedMessage = stringResource(R.string.files_load_failed)
     val openFileFailedMessage = stringResource(R.string.files_open_failed)
-    val isWindowsDevice = device?.deviceOs == "windows"
+    val deviceOs = device?.deviceOs
+    val isWindowsDevice = isWindowsDeviceOs(deviceOs)
 
     fun load(path: String) {
         val current = device ?: return
-        val normalizedPath = normalizeWindowsDrivePath(path)
-        val root = if (isWindowsDevice) {
-            windowsDriveRoot(normalizedPath)
-                ?: resolvedRoot?.takeIf { it.isNotBlank() }
-                ?: "~"
-        } else {
-            resolvedRoot?.takeIf { it.isNotBlank() } ?: "~"
-        }
+        val request = remoteFileRequest(
+            targetPath = path,
+            deviceOs = deviceOs,
+            fallbackRoot = resolvedRoot?.takeIf { it.isNotBlank() } ?: "~",
+        )
         if (!current.online) {
             error = deviceOfflineMessage
             return
@@ -343,15 +366,15 @@ internal fun DeviceFilesContent(
         scope.launch {
             controller.listFiles(
                 connectorId = current.id,
-                root = root,
-                path = normalizedPath,
+                root = request.root,
+                path = request.path,
             )
                 .onSuccess {
-                    val nextDirectory = it.normalizedRemotePaths()
+                    val nextDirectory = it.canonicalRemotePaths(request, deviceOs)
                     directory = nextDirectory
                     resolvedRoot = if (isWindowsDevice) {
                         windowsDriveRoot(nextDirectory.path)
-                    } else if (root == "~") {
+                    } else if (request.root == "~") {
                         nextDirectory.path.takeIf { value -> value.isNotBlank() }
                     } else {
                         resolvedRoot
@@ -370,7 +393,7 @@ internal fun DeviceFilesContent(
         searchQuery = ""
         searchResult = SoraFileSearchResult()
         resolvedRoot = null
-        directory = FilesDirectory(path = if (isWindowsDevice) "" else ".")
+        directory = FilesDirectory(path = initialRemoteFilePath(deviceOs))
         error = when {
             device == null -> selectDeviceMessage
             !device.online -> deviceOfflineMessage
@@ -393,14 +416,12 @@ internal fun DeviceFilesContent(
         previewError = null
         searchQuery = ""
         searchResult = SoraFileSearchResult()
-        val filePath = normalizeWindowsDrivePath(file.path)
-        val root = if (isWindowsDevice) {
-            windowsDriveRoot(filePath)
-                ?: resolvedRoot?.takeIf { it.isNotBlank() }
-                ?: "~"
-        } else {
-            resolvedRoot?.takeIf { it.isNotBlank() } ?: "~"
-        }
+        val filePath = normalizeRemotePath(file.path)
+        val root = remoteRootForPath(
+            targetPath = filePath,
+            deviceOs = deviceOs,
+            fallbackRoot = resolvedRoot?.takeIf { it.isNotBlank() } ?: "~",
+        )
         controller.readTextFile(
             connectorId = current.id,
             root = root,
@@ -413,10 +434,11 @@ internal fun DeviceFilesContent(
 
     Box(modifier = modifier.fillMaxSize()) {
         val file = selectedFile
-        val rootPath = if (isWindowsDevice && directory.path.isBlank()) "" else resolvedRoot ?: "~"
+        val rootPath = if (isWindowsDriveOverview(directory.path, deviceOs)) "" else resolvedRoot ?: "~"
         if (file == null) {
             FileListContent(
                 rootPath = rootPath,
+                deviceOs = deviceOs,
                 directory = directory,
                 loading = loading,
                 error = error,
@@ -434,6 +456,7 @@ internal fun DeviceFilesContent(
         } else {
             FilePreviewContent(
                 rootPath = rootPath,
+                deviceOs = deviceOs,
                 file = file,
                 preview = preview,
                 loading = previewLoading,
@@ -751,6 +774,7 @@ private fun TerminalShortcutRow(
 @Composable
 private fun FileListContent(
     rootPath: String?,
+    deviceOs: String?,
     directory: FilesDirectory,
     loading: Boolean,
     error: String?,
@@ -761,6 +785,7 @@ private fun FileListContent(
     onOpenDirectory: (String) -> Unit,
     onOpenFile: (FileEntry) -> Unit,
 ) {
+    val windowsDriveOverviewLabel = stringResource(R.string.files_windows_drives)
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -768,7 +793,12 @@ private fun FileListContent(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         PathBar(
-            path = displayPath(rootPath, directory.path),
+            path = displayRemotePath(
+                root = rootPath,
+                rawPath = directory.path,
+                deviceOs = deviceOs,
+                windowsDriveOverviewLabel = windowsDriveOverviewLabel,
+            ),
             darkMode = darkMode,
         )
         LazyColumn(
@@ -780,12 +810,21 @@ private fun FileListContent(
                 error != null && directory.entries.isEmpty() -> item { FilesMessage(error.orEmpty(), darkMode) }
                 !loading && directory.entries.isEmpty() -> item { FilesMessage(stringResource(R.string.files_empty_directory), darkMode) }
             }
-            val parent = parentPath(directory.path)
-            if (parent.isNotBlank()) {
+            val parent = remoteParentPath(
+                rawPath = directory.path,
+                deviceOs = deviceOs,
+                allowWindowsDriveOverview = isWindowsDeviceOs(deviceOs),
+            )
+            if (parent != null) {
                 item("..") {
                     FolderRow(
                         name = "..",
-                        copyPath = displayPath(rootPath, parent),
+                        copyPath = displayRemotePath(
+                            root = rootPath,
+                            rawPath = parent,
+                            deviceOs = deviceOs,
+                            windowsDriveOverviewLabel = windowsDriveOverviewLabel,
+                        ),
                         darkMode = darkMode,
                         menuOpen = openActionPath == parent,
                         onOpenMenu = { onOpenActionPath(parent) },
@@ -798,7 +837,12 @@ private fun FileListContent(
                 if (entry.isDirectory) {
                     FolderRow(
                         name = entry.name,
-                        copyPath = displayPath(rootPath, entry.path),
+                        copyPath = displayRemotePath(
+                            root = rootPath,
+                            rawPath = entry.path,
+                            deviceOs = deviceOs,
+                            windowsDriveOverviewLabel = windowsDriveOverviewLabel,
+                        ),
                         darkMode = darkMode,
                         menuOpen = openActionPath == entry.path,
                         onOpenMenu = { onOpenActionPath(entry.path) },
@@ -808,7 +852,12 @@ private fun FileListContent(
                 } else {
                     FileRow(
                         entry = entry,
-                        copyPath = displayPath(rootPath, entry.path),
+                        copyPath = displayRemotePath(
+                            root = rootPath,
+                            rawPath = entry.path,
+                            deviceOs = deviceOs,
+                            windowsDriveOverviewLabel = windowsDriveOverviewLabel,
+                        ),
                         darkMode = darkMode,
                         menuOpen = openActionPath == entry.path,
                         onOpenMenu = { onOpenActionPath(entry.path) },
@@ -825,6 +874,7 @@ private fun FileListContent(
 @Composable
 private fun FilePreviewContent(
     rootPath: String?,
+    deviceOs: String?,
     file: FileEntry,
     preview: TextFile?,
     loading: Boolean,
@@ -839,6 +889,7 @@ private fun FilePreviewContent(
     onSearchQueryChange: (String) -> Unit,
     onSearchResult: (SoraFileSearchResult) -> Unit,
 ) {
+    val windowsDriveOverviewLabel = stringResource(R.string.files_windows_drives)
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -846,7 +897,12 @@ private fun FilePreviewContent(
         verticalArrangement = Arrangement.spacedBy(9.dp),
     ) {
         PreviewBreadcrumb(
-            path = displayPath(rootPath, file.path),
+            path = displayRemotePath(
+                root = rootPath,
+                rawPath = file.path,
+                deviceOs = deviceOs,
+                windowsDriveOverviewLabel = windowsDriveOverviewLabel,
+            ),
             darkMode = darkMode,
             onBackToFiles = onBackToFiles,
         )
@@ -1634,52 +1690,4 @@ private fun fileIconFor(name: String, knownCode: Boolean): ImageVector {
         knownCode -> Lucide.FileCode
         else -> Lucide.FileText
     }
-}
-
-private fun displayPath(root: String?, rawPath: String): String {
-    val base = root.orEmpty().trim().trimEnd('/', '\\')
-    val path = normalizeWindowsDrivePath(rawPath).trim().replace('\\', '/')
-    if (path.isBlank() || path == "." || path == "/") return base.ifBlank { "." }
-    if (path.startsWith("/") || Regex("^[A-Za-z]:/.*").matches(path)) return path
-    return if (base.isBlank()) path else "$base/${path.trimStart('/')}"
-}
-
-private fun parentPath(rawPath: String): String {
-    val clean = normalizeWindowsDrivePath(rawPath).trim().trimEnd('/', '\\').ifBlank { "." }
-    if (clean == "." || clean == "/" || Regex("^[A-Za-z]:[\\\\/]?$").matches(clean)) return ""
-    val normalized = clean.replace('\\', '/')
-    val slash = normalized.lastIndexOf("/")
-    val parent = when {
-        Regex("^[A-Za-z]:/").containsMatchIn(normalized) && slash == 2 -> normalized.take(3)
-        slash < 0 -> "."
-        slash == 0 -> "/"
-        else -> normalized.take(slash)
-    }
-    return if (clean.contains('\\') && Regex("^[A-Za-z]:/").containsMatchIn(parent)) {
-        parent.replace('/', '\\')
-    } else {
-        parent
-    }
-}
-
-private fun fileNameFromPath(rawPath: String): String {
-    val normalized = normalizeWindowsDrivePath(rawPath).trim().trimEnd('/', '\\').replace('\\', '/')
-    return normalized.substringAfterLast('/').ifBlank { normalized.ifBlank { "Untitled" } }
-}
-
-private fun FilesDirectory.normalizedRemotePaths(): FilesDirectory {
-    return copy(
-        path = normalizeWindowsDrivePath(path),
-        entries = entries.map { entry -> entry.copy(path = normalizeWindowsDrivePath(entry.path)) },
-    )
-}
-
-private fun windowsDriveRoot(rawPath: String): String? {
-    val normalized = normalizeWindowsDrivePath(rawPath).trim()
-    val match = Regex("^([A-Za-z]:)(?:[\\\\/].*)?$").find(normalized) ?: return null
-    return "${match.groupValues[1]}\\"
-}
-
-private fun normalizeWindowsDrivePath(rawPath: String): String {
-    return rawPath.replace(Regex("^/([A-Za-z]:)(?=$|[\\\\/])"), "$1")
 }

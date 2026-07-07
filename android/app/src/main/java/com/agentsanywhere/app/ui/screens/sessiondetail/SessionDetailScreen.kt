@@ -859,6 +859,7 @@ fun SessionDetailScreen(
             } else {
                 SessionAgentFilesScreen(
                     session = state.session,
+                    device = devices.firstOrNull { device -> device.id == state.session?.connectorId },
                     filesController = filesController,
                     terminalController = remoteTerminal,
                     darkMode = darkMode,

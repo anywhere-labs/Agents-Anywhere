@@ -363,6 +363,7 @@
     <string name="files_open_failed">Could not open file.</string>
     <string name="files_device_offline">This device is offline.</string>
     <string name="files_select_device">Select a device.</string>
+    <string name="files_windows_drives">This PC</string>
     <string name="files_terminal_connecting">Connecting...</string>
     <string name="files_terminal_disconnected">Disconnected. Tap to reconnect.</string>
     <string name="files_terminal_exited">Exited. Tap to reconnect.</string>

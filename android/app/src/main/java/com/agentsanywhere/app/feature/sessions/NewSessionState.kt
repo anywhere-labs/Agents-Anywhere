@@ -79,18 +79,6 @@ fun workspaceOptionsFor(
     ) + existing
 }
 
-fun parentPath(path: String): String {
-    val clean = path.trim().trimEnd('/', '\\').ifBlank { "." }
-    if (clean == "." || clean == "/" || Regex("^[A-Za-z]:[\\\\/]?$").matches(clean)) return ""
-    val normalized = clean.replace('\\', '/')
-    val slash = normalized.lastIndexOf("/")
-    return when {
-        slash < 0 -> "."
-        slash == 0 -> "/"
-        else -> normalized.take(slash)
-    }
-}
-
 private fun workspaceTitle(path: String, homePath: String?): String {
     val home = homePath?.trimEnd('/')
     if (!home.isNullOrBlank() && path.trimEnd('/') == home) return "Home directory"
