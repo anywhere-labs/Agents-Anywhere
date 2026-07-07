@@ -569,10 +569,9 @@ export function TaskComposer() {
 
         <div className="mt-3">
           <WorkspacePicker
-            connectorId={selectedConnector?.id}
+            connectorId={selectedConnectorId}
             value={workspace}
             onChange={setWorkspace}
-            loading={selectorsLoading}
           />
         </div>
       </div>
