@@ -95,6 +95,42 @@ def _raise_terminal_service_error(exc: TerminalServiceError) -> None:
     raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
+def _normalize_terminal_v2_view(
+    terminal: Any,
+    *,
+    session_id: str,
+    terminal_id: str | None = None,
+    root: str | None = None,
+    cwd: str | None = None,
+    label: str | None = None,
+    cols: int | None = None,
+    rows: int | None = None,
+) -> dict[str, Any]:
+    item = dict(terminal) if isinstance(terminal, dict) else {}
+    if terminal_id is not None:
+        item.setdefault("terminalId", terminal_id)
+    item.setdefault("sessionId", session_id)
+    if root is not None:
+        item["root"] = root
+    elif not isinstance(item.get("root"), str) or not item["root"].strip():
+        item["root"] = item.get("cwd") if isinstance(item.get("cwd"), str) and item["cwd"].strip() else "."
+    if cwd is not None:
+        item.setdefault("cwd", cwd)
+    else:
+        item.setdefault("cwd", item["root"])
+    item.setdefault("label", label or "Shell")
+    item.setdefault("purpose", "user")
+    item.setdefault("pid", None)
+    item.setdefault("cols", cols or 80)
+    item.setdefault("rows", rows or 24)
+    item.setdefault("status", "exited" if item.get("closed") else "running")
+    item.setdefault("exitCode", None)
+    item.setdefault("scrollbackBytes", 0)
+    item.setdefault("scrollbackSeq", 0)
+    item.setdefault("createdAt", utc_now())
+    return item
+
+
 async def _send_invalidate_runtime(
     manager: ConnectorRpcManager, connector_id: str, runtime: str
 ) -> None:
@@ -771,9 +807,24 @@ async def connector_terminal_create_v2(
         },
         timeout=15,
     )
+    await db.record_connector_terminal_root(
+        connector_id=connector_id,
+        terminal_id=terminal_id,
+        session_id=scope_id,
+        root=root,
+        cwd=cwd,
+    )
     if isinstance(result, dict):
-        result.setdefault("label", payload.label or "Shell")
-        result.setdefault("createdAt", utc_now())
+        result = _normalize_terminal_v2_view(
+            result,
+            session_id=scope_id,
+            terminal_id=terminal_id,
+            root=root,
+            cwd=cwd,
+            label=payload.label or "Shell",
+            cols=payload.cols,
+            rows=payload.rows,
+        )
     return RpcResponsePayload(ok=True, result=result)
 
 
@@ -799,13 +850,43 @@ async def connector_terminal_list_v2(
     manager: ConnectorRpcManager = Depends(get_rpc),
 ) -> RpcResponsePayload:
     await _require_owned_online_connector(connector_id, user_id, db, manager)
+    scope_id = terminal_connector_scope_id(connector_id)
     result = await request_connector(
         manager,
         connector_id,
         "terminal.list",
-        {"sessionId": terminal_connector_scope_id(connector_id)},
+        {"sessionId": scope_id},
         timeout=10,
     )
+    if isinstance(result, dict) and isinstance(result.get("terminals"), list):
+        root_by_id = await db.list_connector_terminal_roots(
+            connector_id=connector_id,
+            session_id=scope_id,
+        )
+        live_ids: set[str] = set()
+        terminals: list[dict[str, Any]] = []
+        for item in result["terminals"]:
+            terminal_id = item.get("terminalId") if isinstance(item, dict) else None
+            meta = root_by_id.get(terminal_id) if isinstance(terminal_id, str) else None
+            if isinstance(terminal_id, str):
+                live_ids.add(terminal_id)
+            terminals.append(
+                _normalize_terminal_v2_view(
+                    item,
+                    session_id=scope_id,
+                    root=meta["root"] if meta is not None else None,
+                    cwd=meta["cwd"] if meta is not None else None,
+                )
+            )
+        await db.prune_connector_terminal_roots(
+            connector_id=connector_id,
+            session_id=scope_id,
+            terminal_ids=live_ids,
+        )
+        result = {
+            **result,
+            "terminals": terminals,
+        }
     return RpcResponsePayload(ok=True, result=result)
 
 
@@ -835,17 +916,30 @@ async def connector_terminal_rename_v2(
     manager: ConnectorRpcManager = Depends(get_rpc),
 ) -> RpcResponsePayload:
     await _require_owned_online_connector(connector_id, user_id, db, manager)
+    scope_id = terminal_connector_scope_id(connector_id)
     result = await request_connector(
         manager,
         connector_id,
         "terminal.rename",
         {
             "terminalId": terminal_id,
-            "sessionId": terminal_connector_scope_id(connector_id),
+            "sessionId": scope_id,
             "label": payload.label,
         },
         timeout=10,
     )
+    if isinstance(result, dict):
+        meta = await db.get_connector_terminal_root(
+            connector_id=connector_id,
+            terminal_id=terminal_id,
+        )
+        result = _normalize_terminal_v2_view(
+            result,
+            session_id=scope_id,
+            terminal_id=terminal_id,
+            root=meta["root"] if meta is not None else None,
+            cwd=meta["cwd"] if meta is not None else None,
+        )
     return RpcResponsePayload(ok=True, result=result)
 
 
@@ -881,6 +975,7 @@ async def connector_terminal_close_v2(
         {"terminalId": terminal_id, "sessionId": terminal_connector_scope_id(connector_id)},
         timeout=10,
     )
+    await db.forget_connector_terminal_root(connector_id=connector_id, terminal_id=terminal_id)
     return RpcResponsePayload(ok=True, result=result)
 
 
@@ -974,6 +1069,21 @@ async def connector_terminal_snapshot_v2(
         },
         timeout=10,
     )
+    if isinstance(result, dict) and isinstance(result.get("terminal"), dict):
+        meta = await db.get_connector_terminal_root(
+            connector_id=connector_id,
+            terminal_id=terminal_id,
+        )
+        result = {
+            **result,
+            "terminal": _normalize_terminal_v2_view(
+                result["terminal"],
+                session_id=terminal_connector_scope_id(connector_id),
+                terminal_id=terminal_id,
+                root=meta["root"] if meta is not None else None,
+                cwd=meta["cwd"] if meta is not None else None,
+            ),
+        }
     return RpcResponsePayload(ok=True, result=result)
 
 

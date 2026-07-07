@@ -65,9 +65,10 @@ export function TerminalPanelBody({ token, connectorId, root, onClose, onPopOut 
       try {
         const listed = await dashboardApi.connectorTerminalListV2(token, connectorId)
         if (cancelled || generation !== generationRef.current) return
-        if (listed.result.terminals.length > 0) {
-          setTerms(listed.result.terminals)
-          setActiveId(listed.result.terminals[0]?.terminalId ?? null)
+        const workspaceTerms = listed.result.terminals.filter((term) => term.root === effectiveRoot)
+        if (workspaceTerms.length > 0) {
+          setTerms(workspaceTerms)
+          setActiveId(workspaceTerms[0]?.terminalId ?? null)
           return
         }
         const created = await dashboardApi.connectorTerminalCreateV2(token, connectorId, effectiveRoot, {

@@ -66,6 +66,130 @@ class ConnectorRepositoryMixin:
             return True
 
 
+    async def record_connector_terminal_root(
+        self,
+        *,
+        connector_id: str,
+        terminal_id: str,
+        session_id: str,
+        root: str,
+        cwd: str,
+    ) -> None:
+        now = utc_now()
+        async with self._engine.begin() as conn:
+            existing = (
+                await conn.execute(
+                    select(connector_terminal_roots_t.c.terminal_id).where(
+                        connector_terminal_roots_t.c.connector_id == connector_id,
+                        connector_terminal_roots_t.c.terminal_id == terminal_id,
+                    )
+                )
+            ).first()
+            values = {
+                "session_id": session_id,
+                "root": root,
+                "cwd": cwd,
+                "updated_at": now,
+            }
+            if existing is None:
+                await conn.execute(
+                    insert(connector_terminal_roots_t).values(
+                        connector_id=connector_id,
+                        terminal_id=terminal_id,
+                        created_at=now,
+                        **values,
+                    )
+                )
+                return
+            await conn.execute(
+                update(connector_terminal_roots_t)
+                .where(
+                    connector_terminal_roots_t.c.connector_id == connector_id,
+                    connector_terminal_roots_t.c.terminal_id == terminal_id,
+                )
+                .values(**values)
+            )
+
+
+    async def list_connector_terminal_roots(
+        self,
+        *,
+        connector_id: str,
+        session_id: str,
+    ) -> dict[str, dict[str, str]]:
+        async with self._engine.connect() as conn:
+            rows = (
+                await conn.execute(
+                    select(connector_terminal_roots_t).where(
+                        connector_terminal_roots_t.c.connector_id == connector_id,
+                        connector_terminal_roots_t.c.session_id == session_id,
+                    )
+                )
+            ).mappings().all()
+        return {
+            row["terminal_id"]: {
+                "root": row["root"],
+                "cwd": row["cwd"],
+            }
+            for row in rows
+        }
+
+
+    async def get_connector_terminal_root(
+        self,
+        *,
+        connector_id: str,
+        terminal_id: str,
+    ) -> dict[str, str] | None:
+        async with self._engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    select(connector_terminal_roots_t).where(
+                        connector_terminal_roots_t.c.connector_id == connector_id,
+                        connector_terminal_roots_t.c.terminal_id == terminal_id,
+                    )
+                )
+            ).mappings().first()
+        if row is None:
+            return None
+        return {
+            "root": row["root"],
+            "cwd": row["cwd"],
+        }
+
+
+    async def prune_connector_terminal_roots(
+        self,
+        *,
+        connector_id: str,
+        session_id: str,
+        terminal_ids: set[str],
+    ) -> None:
+        async with self._engine.begin() as conn:
+            stmt = delete(connector_terminal_roots_t).where(
+                connector_terminal_roots_t.c.connector_id == connector_id,
+                connector_terminal_roots_t.c.session_id == session_id,
+            )
+            if terminal_ids:
+                stmt = stmt.where(~connector_terminal_roots_t.c.terminal_id.in_(terminal_ids))
+            await conn.execute(stmt)
+
+
+    async def forget_connector_terminal_root(
+        self,
+        *,
+        connector_id: str,
+        terminal_id: str,
+    ) -> None:
+        async with self._engine.begin() as conn:
+            await conn.execute(
+                delete(connector_terminal_roots_t).where(
+                    connector_terminal_roots_t.c.connector_id == connector_id,
+                    connector_terminal_roots_t.c.terminal_id == terminal_id,
+                )
+            )
+
+
     async def create_connector(self, *, name: str, user_id: str) -> tuple[ConnectorView, str, str]:
         connector_id = f"conn_{secrets.token_urlsafe(10)}"
         token = _new_connector_token()

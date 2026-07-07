@@ -29,6 +29,7 @@ from agent_server.infra.db import (
     agent_models as agent_models_t,
     approvals as approvals_t,
     build_engine,
+    connector_terminal_roots as connector_terminal_roots_t,
     connectors as connectors_t,
     device_agent_settings as device_agent_settings_t,
     fs_preview_tokens as fs_preview_tokens_t,

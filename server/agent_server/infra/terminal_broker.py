@@ -84,6 +84,7 @@ class Terminal:
             "terminalId": self.id,
             "sessionId": self.session_id,
             "label": self.label,
+            "root": self.root,
             "cwd": self.cwd,
             "cols": self.cols,
             "rows": self.rows,

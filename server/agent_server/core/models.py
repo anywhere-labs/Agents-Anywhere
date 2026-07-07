@@ -808,6 +808,7 @@ class TerminalView(BaseModel):
     terminalId: str
     sessionId: str
     label: str
+    root: str
     cwd: str
     cols: int
     rows: int

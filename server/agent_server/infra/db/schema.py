@@ -171,6 +171,21 @@ fs_preview_tokens = Table(
 )
 
 
+connector_terminal_roots = Table(
+    "connector_terminal_roots",
+    metadata,
+    Column("connector_id", Text, ForeignKey("connectors.id", ondelete="CASCADE"), nullable=False),
+    Column("terminal_id", Text, nullable=False),
+    Column("session_id", Text, nullable=False),
+    Column("root", Text, nullable=False),
+    Column("cwd", Text, nullable=False),
+    Column("created_at", Text, nullable=False),
+    Column("updated_at", Text, nullable=False),
+    PrimaryKeyConstraint("connector_id", "terminal_id"),
+    Index("idx_connector_terminal_roots_session", "connector_id", "session_id"),
+)
+
+
 instance_settings = Table(
     "instance_settings",
     metadata,

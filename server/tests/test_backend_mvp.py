@@ -495,10 +495,15 @@ class FakeLocalRpc:
             self.terminals[terminal_id] = {
                 "terminalId": terminal_id,
                 "sessionId": params.get("sessionId"),
+                "cwd": params.get("cwd"),
+                "label": params.get("label") or "Shell",
+                "cols": params.get("cols") or 80,
+                "rows": params.get("rows") or 24,
+                "status": "running",
                 "pid": 123,
                 "closed": False,
             }
-            return {"terminalId": terminal_id, "pid": 123}
+            return dict(self.terminals[terminal_id])
         if method == "terminal.relay.connect":
             terminal_id = params["terminalId"]
             token = params["token"]
@@ -3202,6 +3207,7 @@ def test_connector_terminal_lifecycle_uses_workspace_scope(tmp_path):
     terminal = created.json()["terminal"]
     terminal_id = terminal["terminalId"]
     assert terminal["sessionId"] == scope_id
+    assert terminal["root"] == "/repo"
     assert terminal["cwd"] == "/repo/src"
     assert fake_rpc.requests[-1] == (
         connector_id,
@@ -3217,6 +3223,7 @@ def test_connector_terminal_lifecycle_uses_workspace_scope(tmp_path):
     listing = client.get(f"/connectors/{connector_id}/terminals", headers=headers)
     assert listing.status_code == 200, listing.text
     assert [item["terminalId"] for item in listing.json()["terminals"]] == [terminal_id]
+    assert listing.json()["terminals"][0]["root"] == "/repo"
 
     relay_ws = fake_rpc.terminal_relay_sockets[terminal_id]
 
@@ -3254,7 +3261,10 @@ def test_connector_terminal_v2_forwards_lifecycle_to_connector(tmp_path):
     )
 
     assert created.status_code == 200, created.text
-    terminal_id = created.json()["result"]["terminalId"]
+    created_terminal = created.json()["result"]
+    terminal_id = created_terminal["terminalId"]
+    assert created_terminal["root"] == "/repo"
+    assert created_terminal["cwd"] == "/repo/src"
     assert fake_rpc.requests[-1][1:] == (
         "terminal.create",
         {
@@ -3276,6 +3286,9 @@ def test_connector_terminal_v2_forwards_lifecycle_to_connector(tmp_path):
 
     listing = client.get(f"/connectors/{connector_id}/terminals-v2", headers=headers)
     assert listing.status_code == 200, listing.text
+    listed_terminals = listing.json()["result"]["terminals"]
+    assert listed_terminals[0]["root"] == "/repo"
+    assert listed_terminals[0]["cwd"] == "/repo/src"
     assert fake_rpc.requests[-1] == (
         connector_id,
         "terminal.list",
@@ -3289,6 +3302,8 @@ def test_connector_terminal_v2_forwards_lifecycle_to_connector(tmp_path):
     )
     assert snapshot.status_code == 200, snapshot.text
     assert snapshot.json()["result"]["dataBase64"] == "b2s="
+    assert snapshot.json()["result"]["terminal"]["root"] == "/repo"
+    assert snapshot.json()["result"]["terminal"]["cwd"] == "/repo/src"
 
     renamed = client.patch(
         f"/connectors/{connector_id}/terminals-v2/{terminal_id}",
@@ -3297,6 +3312,8 @@ def test_connector_terminal_v2_forwards_lifecycle_to_connector(tmp_path):
     )
     assert renamed.status_code == 200, renamed.text
     assert fake_rpc.requests[-1][1] == "terminal.rename"
+    assert renamed.json()["result"]["root"] == "/repo"
+    assert renamed.json()["result"]["cwd"] == "/repo/src"
 
     resized = client.post(
         f"/connectors/{connector_id}/terminals-v2/{terminal_id}/resize",

@@ -335,6 +335,7 @@ export type TerminalView = {
   terminalId: string;
   sessionId: string;
   label: string;
+  root: string;
   cwd: string;
   cols: number;
   rows: number;
