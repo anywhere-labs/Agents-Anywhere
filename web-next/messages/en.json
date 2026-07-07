@@ -564,9 +564,16 @@
       "noWorkspaceRuntime": "This session has no connector workspace, so Files and Terminal are unavailable.",
       "takeover": "Takeover",
       "takeoverEnableTitle": "Enable Takeover?",
-      "takeoverEnableDescription": "After enabling Takeover, you can continue this session in the browser. Avoid sending messages from other clients at the same time to prevent sync issues.",
+      "takeoverEnableDescription": [
+        "After enabling Takeover, you can take over this session on the web.",
+        "Messages may not sync to the {agent} client immediately. Restarting it usually refreshes the sync.",
+        "If you operate this session in both Agents Anywhere and the {agent} client at the same time, unexpected results may occur."
+      ],
       "takeoverDisableTitle": "Disable Takeover?",
-      "takeoverDisableDescription": "After disabling Takeover, the session returns to read-only mode and browser messaging is disabled.",
+      "takeoverDisableDescription": [
+        "After disabling Takeover, the session returns to read-only mode and you cannot send more messages.",
+        "Session records created here may not sync to the {agent} client immediately. Restarting it usually refreshes the sync."
+      ],
       "takeoverEnableConfirm": "Enable Takeover",
       "takeoverDisableConfirm": "Disable Takeover",
       "readOnlyPlaceholder": "Read-only - turn on Takeover to send messages",

@@ -787,6 +787,10 @@ export function SessionDetail({
   if (!session) return null
 
   const takeoverTarget = pendingTakeover ?? false
+  const takeoverAgent = runtimeLabel(session.runtime)
+  const takeoverDescription = (tSession.raw(
+    takeoverTarget ? "takeoverEnableDescription" : "takeoverDisableDescription",
+  ) as string[]).map((line) => line.replaceAll("{agent}", takeoverAgent))
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden overscroll-none">
@@ -914,8 +918,12 @@ export function SessionDetail({
             <DialogTitle>
               {takeoverTarget ? tSession("takeoverEnableTitle") : tSession("takeoverDisableTitle")}
             </DialogTitle>
-            <DialogDescription>
-              {takeoverTarget ? tSession("takeoverEnableDescription") : tSession("takeoverDisableDescription")}
+            <DialogDescription asChild>
+              <ul className="list-disc space-y-1 pl-5">
+                {takeoverDescription.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

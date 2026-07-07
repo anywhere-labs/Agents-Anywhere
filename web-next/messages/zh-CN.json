@@ -564,9 +564,16 @@
       "noWorkspaceRuntime": "这个会话没有连接器工作目录，无法使用文件和终端面板。",
       "takeover": "接管",
       "takeoverEnableTitle": "开启接管？",
-      "takeoverEnableDescription": "开启后，你可以在浏览器中继续这个会话。请避免同时在其他客户端发送消息，以免内容不同步。",
+      "takeoverEnableDescription": [
+        "开启后可在网页上接管这个会话。",
+        "消息可能不会立即同步到 {agent} 客户端，通常重启它们后即可刷新同步。",
+        "如果你同时在 Agents Anywhere 和 {agent} 客户端中操作此会话，可能导致意料外的结果。"
+      ],
       "takeoverDisableTitle": "关闭接管？",
-      "takeoverDisableDescription": "关闭后，会话将回到只读模式，无法在浏览器中发送消息。",
+      "takeoverDisableDescription": [
+        "关闭后会话将回到只读模式，无法继续发送消息。",
+        "这里产生的会话记录可能不会立即同步到 {agent} 客户端，通常重启它们后即可刷新同步。"
+      ],
       "takeoverEnableConfirm": "开启接管",
       "takeoverDisableConfirm": "关闭接管",
       "readOnlyPlaceholder": "只读模式 - 开启接管后可发送消息",
