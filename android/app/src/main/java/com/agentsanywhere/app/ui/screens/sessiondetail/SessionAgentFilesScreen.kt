@@ -322,10 +322,18 @@ internal fun DeviceFilesContent(
     val selectDeviceMessage = stringResource(R.string.files_select_device)
     val loadFilesFailedMessage = stringResource(R.string.files_load_failed)
     val openFileFailedMessage = stringResource(R.string.files_open_failed)
+    val isWindowsDevice = device?.deviceOs == "windows"
 
     fun load(path: String) {
         val current = device ?: return
-        val root = resolvedRoot?.takeIf { it.isNotBlank() } ?: "~"
+        val normalizedPath = normalizeWindowsDrivePath(path)
+        val root = if (isWindowsDevice) {
+            windowsDriveRoot(normalizedPath)
+                ?: resolvedRoot?.takeIf { it.isNotBlank() }
+                ?: "~"
+        } else {
+            resolvedRoot?.takeIf { it.isNotBlank() } ?: "~"
+        }
         if (!current.online) {
             error = deviceOfflineMessage
             return
@@ -336,13 +344,17 @@ internal fun DeviceFilesContent(
             controller.listFiles(
                 connectorId = current.id,
                 root = root,
-                path = normalizeWindowsDrivePath(path),
+                path = normalizedPath,
             )
                 .onSuccess {
                     val nextDirectory = it.normalizedRemotePaths()
                     directory = nextDirectory
-                    if (root == "~") {
-                        resolvedRoot = nextDirectory.path.takeIf { path -> path.isNotBlank() }
+                    resolvedRoot = if (isWindowsDevice) {
+                        windowsDriveRoot(nextDirectory.path)
+                    } else if (root == "~") {
+                        nextDirectory.path.takeIf { value -> value.isNotBlank() }
+                    } else {
+                        resolvedRoot
                     }
                 }
                 .onFailure { failure -> error = failure.message ?: loadFilesFailedMessage }
@@ -350,7 +362,7 @@ internal fun DeviceFilesContent(
         }
     }
 
-    LaunchedEffect(device?.id, device?.online) {
+    LaunchedEffect(device?.id, device?.online, device?.deviceOs) {
         selectedFile = null
         preview = null
         previewError = null
@@ -358,16 +370,16 @@ internal fun DeviceFilesContent(
         searchQuery = ""
         searchResult = SoraFileSearchResult()
         resolvedRoot = null
-        directory = FilesDirectory(path = ".")
+        directory = FilesDirectory(path = if (isWindowsDevice) "" else ".")
         error = when {
             device == null -> selectDeviceMessage
             !device.online -> deviceOfflineMessage
             else -> null
         }
-        if (device?.online == true) load(".")
+        if (device?.online == true) load(if (isWindowsDevice) "" else ".")
     }
 
-    LaunchedEffect(device?.id, selectedFile?.path) {
+    LaunchedEffect(device?.id, device?.deviceOs, selectedFile?.path) {
         val file = selectedFile ?: return@LaunchedEffect
         val current = device ?: return@LaunchedEffect
         if (!current.online) {
@@ -381,10 +393,18 @@ internal fun DeviceFilesContent(
         previewError = null
         searchQuery = ""
         searchResult = SoraFileSearchResult()
+        val filePath = normalizeWindowsDrivePath(file.path)
+        val root = if (isWindowsDevice) {
+            windowsDriveRoot(filePath)
+                ?: resolvedRoot?.takeIf { it.isNotBlank() }
+                ?: "~"
+        } else {
+            resolvedRoot?.takeIf { it.isNotBlank() } ?: "~"
+        }
         controller.readTextFile(
             connectorId = current.id,
-            root = resolvedRoot?.takeIf { it.isNotBlank() } ?: "~",
-            path = normalizeWindowsDrivePath(file.path),
+            root = root,
+            path = filePath,
         )
             .onSuccess { preview = it }
             .onFailure { failure -> previewError = failure.message ?: openFileFailedMessage }
@@ -393,7 +413,7 @@ internal fun DeviceFilesContent(
 
     Box(modifier = modifier.fillMaxSize()) {
         val file = selectedFile
-        val rootPath = resolvedRoot ?: "~"
+        val rootPath = if (isWindowsDevice && directory.path.isBlank()) "" else resolvedRoot ?: "~"
         if (file == null) {
             FileListContent(
                 rootPath = rootPath,
@@ -1630,6 +1650,7 @@ private fun parentPath(rawPath: String): String {
     val normalized = clean.replace('\\', '/')
     val slash = normalized.lastIndexOf("/")
     val parent = when {
+        Regex("^[A-Za-z]:/").containsMatchIn(normalized) && slash == 2 -> normalized.take(3)
         slash < 0 -> "."
         slash == 0 -> "/"
         else -> normalized.take(slash)
@@ -1651,6 +1672,12 @@ private fun FilesDirectory.normalizedRemotePaths(): FilesDirectory {
         path = normalizeWindowsDrivePath(path),
         entries = entries.map { entry -> entry.copy(path = normalizeWindowsDrivePath(entry.path)) },
     )
+}
+
+private fun windowsDriveRoot(rawPath: String): String? {
+    val normalized = normalizeWindowsDrivePath(rawPath).trim()
+    val match = Regex("^([A-Za-z]:)(?:[\\\\/].*)?$").find(normalized) ?: return null
+    return "${match.groupValues[1]}\\"
 }
 
 private fun normalizeWindowsDrivePath(rawPath: String): String {
