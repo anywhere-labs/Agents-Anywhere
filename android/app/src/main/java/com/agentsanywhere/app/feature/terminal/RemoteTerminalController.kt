@@ -81,6 +81,11 @@ class RemoteTerminalController(
     private var remoteTerminalGone = false
     private var ctrlLatched = false
     private var altLatched = false
+    private var pendingRemoteResizeCols: Int? = null
+    private var pendingRemoteResizeRows: Int? = null
+    private var remoteResizeGeneration = 0
+    private var lastSentRemoteResizeCols: Int? = null
+    private var lastSentRemoteResizeRows: Int? = null
     private val inputSeq = AtomicLong(0)
     private val frameSeq = AtomicLong(0)
     private val pendingInput = ArrayDeque<ByteArray>()
@@ -196,7 +201,7 @@ class RemoteTerminalController(
             emulator.resize(cols, rows, cellWidth, cellHeight)
             emitRedraw()
         }
-        sendFrame("resize", JSONObject().put("type", "resize").put("cols", cols).put("rows", rows).toString())
+        scheduleRemoteResize(cols, rows)
     }
 
     fun updateSize(cols: Int, rows: Int, cellWidth: Int, cellHeight: Int) {
@@ -279,6 +284,7 @@ class RemoteTerminalController(
         reconnectScheduled = false
         reconnectAttempts = 0
         remoteTerminalGone = false
+        cancelPendingRemoteResize()
         setLatched(ctrl = false, alt = false)
         synchronized(pendingInputLock) {
             pendingInput.clear()
@@ -306,6 +312,7 @@ class RemoteTerminalController(
         reconnectScheduled = false
         reconnectAttempts = 0
         remoteTerminalGone = false
+        cancelPendingRemoteResize()
         setLatched(ctrl = false, alt = false)
         synchronized(pendingInputLock) {
             pendingInput.clear()
@@ -331,7 +338,7 @@ class RemoteTerminalController(
                     }
                     diag("ws open terminal=$terminalId")
                     inputDiag("ws open status=${state.value.status} pending=${pendingInputSize()} terminal=$terminalId")
-                    sendFrame("resize", JSONObject().put("type", "resize").put("cols", lastCols).put("rows", lastRows).toString())
+                    sendRemoteResizeNow(lastCols, lastRows, force = true, reason = "ws-open")
                     flushPendingInput()
                     confirmOpenIfNoStreamFrame(webSocket)
                 }
@@ -529,9 +536,47 @@ class RemoteTerminalController(
         streamUrl = null
         reconnectScheduled = false
         remoteTerminalGone = false
+        cancelPendingRemoteResize()
         synchronized(pendingInputLock) {
             pendingInput.clear()
         }
+    }
+
+    private fun scheduleRemoteResize(cols: Int, rows: Int) {
+        pendingRemoteResizeCols = cols
+        pendingRemoteResizeRows = rows
+        val generation = ++remoteResizeGeneration
+        inputDiag("resize schedule cols=$cols rows=$rows gen=$generation terminal=$terminalId")
+        main.postDelayed({
+            if (generation != remoteResizeGeneration || manuallyClosed) return@postDelayed
+            val pendingCols = pendingRemoteResizeCols ?: return@postDelayed
+            val pendingRows = pendingRemoteResizeRows ?: return@postDelayed
+            pendingRemoteResizeCols = null
+            pendingRemoteResizeRows = null
+            sendRemoteResizeNow(pendingCols, pendingRows, force = false, reason = "settled")
+        }, REMOTE_RESIZE_DEBOUNCE_MS)
+    }
+
+    private fun cancelPendingRemoteResize() {
+        remoteResizeGeneration += 1
+        pendingRemoteResizeCols = null
+        pendingRemoteResizeRows = null
+    }
+
+    private fun sendRemoteResizeNow(cols: Int, rows: Int, force: Boolean, reason: String) {
+        if (cols <= 0 || rows <= 0) return
+        if (socket == null) {
+            inputDiag("resize skip no-socket reason=$reason cols=$cols rows=$rows terminal=$terminalId")
+            return
+        }
+        if (!force && cols == lastSentRemoteResizeCols && rows == lastSentRemoteResizeRows) {
+            inputDiag("resize skip duplicate reason=$reason cols=$cols rows=$rows terminal=$terminalId")
+            return
+        }
+        lastSentRemoteResizeCols = cols
+        lastSentRemoteResizeRows = rows
+        inputDiag("resize send reason=$reason cols=$cols rows=$rows force=$force terminal=$terminalId")
+        sendFrame("resize", JSONObject().put("type", "resize").put("cols", cols).put("rows", rows).toString())
     }
 
     private fun flushPendingInput() {
@@ -672,6 +717,7 @@ class RemoteTerminalController(
         private const val RECONNECT_DELAY_MS = 800L
         private const val STREAM_OPEN_GRACE_MS = 1_200L
         private const val MAX_RECONNECT_ATTEMPTS = 3
+        private const val REMOTE_RESIZE_DEBOUNCE_MS = 160L
     }
 }
 
