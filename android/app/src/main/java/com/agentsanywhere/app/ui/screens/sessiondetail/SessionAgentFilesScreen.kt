@@ -527,7 +527,8 @@ internal fun TerminalContent(
         terminalState.status == RemoteTerminalStatus.Exited ||
         terminalState.status == RemoteTerminalStatus.Error
         )
-    val emphasizedStatus = terminalState.status == RemoteTerminalStatus.Closed ||
+    val emphasizedStatus = terminalState.status == RemoteTerminalStatus.Connecting ||
+        terminalState.status == RemoteTerminalStatus.Closed ||
         terminalState.status == RemoteTerminalStatus.Exited ||
         terminalState.status == RemoteTerminalStatus.Error
 

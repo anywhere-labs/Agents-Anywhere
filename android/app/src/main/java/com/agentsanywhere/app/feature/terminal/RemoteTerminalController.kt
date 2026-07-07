@@ -327,6 +327,7 @@ class RemoteTerminalController(
                     diag("ws open terminal=$terminalId")
                     sendFrame("resize", JSONObject().put("type", "resize").put("cols", lastCols).put("rows", lastRows).toString())
                     flushPendingInput()
+                    confirmOpenIfNoStreamFrame(webSocket)
                 }
 
                 override fun onMessage(webSocket: WebSocket, text: String) {
@@ -416,6 +417,20 @@ class RemoteTerminalController(
                 state.value = RemoteTerminalState(status = RemoteTerminalStatus.Closed)
             }
         }
+    }
+
+    private fun confirmOpenIfNoStreamFrame(openSocket: WebSocket) {
+        main.postDelayed({
+            if (
+                socket === openSocket &&
+                !manuallyClosed &&
+                state.value.status == RemoteTerminalStatus.Connecting &&
+                !remoteTerminalGone
+            ) {
+                reconnectAttempts = 0
+                state.value = RemoteTerminalState(status = RemoteTerminalStatus.Open)
+            }
+        }, STREAM_OPEN_GRACE_MS)
     }
 
     private fun sendBytes(bytes: ByteArray) {
@@ -613,6 +628,7 @@ class RemoteTerminalController(
     private companion object {
         private const val DIAG_TAG = "AATerminal"
         private const val RECONNECT_DELAY_MS = 800L
+        private const val STREAM_OPEN_GRACE_MS = 1_200L
         private const val MAX_RECONNECT_ATTEMPTS = 3
     }
 }
