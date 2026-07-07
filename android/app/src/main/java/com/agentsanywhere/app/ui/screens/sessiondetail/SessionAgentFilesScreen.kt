@@ -1,7 +1,6 @@
 package com.agentsanywhere.app.ui.screens.sessiondetail
 
 import android.graphics.Typeface
-import android.util.Log
 import android.util.TypedValue
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -534,23 +533,17 @@ internal fun TerminalContent(
         terminalState.status == RemoteTerminalStatus.Error
 
     LaunchedEffect(terminalKey) {
-        Log.d(TERMINAL_SWITCH_TAG, "content start key=$terminalKey ctrl=${terminalController.debugId}")
         if (terminalKey != null) onStart()
     }
 
     DisposableEffect(terminalController) {
-        Log.d(TERMINAL_SWITCH_TAG, "content mount key=$terminalKey ctrl=${terminalController.debugId}")
-        onDispose {
-            Log.d(TERMINAL_SWITCH_TAG, "content dispose key=$terminalKey ctrl=${terminalController.debugId}")
-            terminalController.detach()
-        }
+        onDispose { terminalController.detach() }
     }
 
     val terminalClient = remember(terminalController, onVerticalDragChange) {
         remoteTerminalViewClient(terminalController, onVerticalDragChange)
     }
     val terminalView = remember(terminalController, context) {
-        Log.d(TERMINAL_SWITCH_TAG, "content create view key=$terminalKey ctrl=${terminalController.debugId}")
         RemoteTerminalView(context, null).apply {
             setTextSize(
                 TypedValue.applyDimension(
@@ -661,8 +654,6 @@ internal fun TerminalContent(
         )
     }
 }
-
-private const val TERMINAL_SWITCH_TAG = "AATerminalSwitch"
 
 @Composable
 private fun TerminalClearButton(
