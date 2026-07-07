@@ -306,7 +306,7 @@ struct RuntimeSettingsResponse: Decodable {
     let runtimeSettings: JSONValue?
     let runtimeSettingsOverride: JSONValue?
     let effectiveRunMode: String?
-    let defaultRunModeConfigured: Bool
+    let defaultRunModeConfigured: Bool?
     let schemaVersion: Int
     let serverTime: String
 }

@@ -163,6 +163,7 @@ class CodexAdapter:
                         "externalSessionId": thread_id,
                         "status": "idle",
                         "cwd": params.get("cwd"),
+                        **_runtime_settings_for_backend(params),
                     },
                 }
             ]
@@ -630,7 +631,9 @@ class CodexAdapter:
                 "sessionId": _required_string(params, "sessionId"),
                 "cwd": params.get("cwd"),
                 "model": params.get("model"),
+                "effort": params.get("effort"),
                 "approvalPolicy": params.get("approvalPolicy"),
+                "approvalsReviewer": params.get("approvalsReviewer"),
                 "sandbox": params.get("sandboxPolicy"),
                 "ephemeral": params.get("ephemeral", False),
             }
@@ -906,6 +909,20 @@ def _required_string(params: dict[str, Any], key: str) -> str:
 
 def _optional_string(value: Any) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+def _runtime_settings_for_backend(params: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key in ("model", "effort", "approvalPolicy", "approvalsReviewer"):
+        value = params.get(key)
+        if value is not None:
+            result[key] = value
+    sandbox_policy = params.get("sandboxPolicy")
+    if sandbox_policy is None:
+        sandbox_policy = params.get("sandbox")
+    if sandbox_policy is not None:
+        result["sandboxPolicy"] = sandbox_policy
+    return result
 
 
 def _sandbox_mode(value: Any) -> str | None:

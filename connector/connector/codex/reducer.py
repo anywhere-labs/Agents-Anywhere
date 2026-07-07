@@ -152,6 +152,7 @@ class TimelineReducer:
             "cwd": _string_value(thread.get("cwd")),
             "lastSyncedAt": utc_now(),
             "sourceObservedAt": utc_now(),
+            **_thread_runtime_settings(thread),
         }
         return ReductionResult(session_update=session_update, timeline_items=items)
 
@@ -871,6 +872,20 @@ def _extract_turn_id(params: dict[str, Any]) -> str | None:
 
 def _thread_id(thread: dict[str, Any]) -> str | None:
     return _string_value(thread.get("id")) or _string_value(thread.get("threadId")) or _nested_string(thread, "thread", "id")
+
+
+def _thread_runtime_settings(thread: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key in ("model", "effort", "approvalPolicy", "approvalsReviewer"):
+        value = _string_value(thread.get(key))
+        if value is not None:
+            result[key] = value
+    sandbox_policy = thread.get("sandboxPolicy")
+    if sandbox_policy is None:
+        sandbox_policy = thread.get("sandbox")
+    if isinstance(sandbox_policy, dict):
+        result["sandboxPolicy"] = sandbox_policy
+    return result
 
 
 def _string_value(value: Any) -> str | None:

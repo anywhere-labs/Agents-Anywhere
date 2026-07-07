@@ -40,6 +40,7 @@ from agent_server.core.models import (
     ConnectorIngestResponse,
     TimelineItemIn,
 )
+from agent_server.core.runtime_config import normalize_runtime_settings
 from agent_server.services.attachments import AttachmentService
 from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.connector_ingest import ConnectorIngestService
@@ -222,6 +223,44 @@ def _safe_header_value(value: str) -> str:
     # already knows the canonical name from its turn.start request — this is
     # only a debug aid.
     return value.encode("latin-1", errors="replace").decode("latin-1")
+
+
+def _runtime_settings_patch_from_session_update(runtime: str, params: dict[str, Any]) -> dict[str, Any]:
+    raw: dict[str, Any] = {}
+    for key in (
+        "permissionMode",
+        "model",
+        "effort",
+        "approvalPolicy",
+        "approvalsReviewer",
+        "sandboxPolicy",
+    ):
+        if key in params and params[key] is not None:
+            raw[key] = params[key]
+    if "sandboxPolicy" not in raw:
+        sandbox_policy = _sandbox_policy_from_connector_value(params.get("sandbox"))
+        if sandbox_policy is not None:
+            raw["sandboxPolicy"] = sandbox_policy
+    if not raw:
+        return {}
+    normalized = normalize_runtime_settings(runtime, raw)
+    return {
+        key: value
+        for key, value in normalized.items()
+        if key in {"permissionMode", "model", "effort"} and value is not None
+    }
+
+
+def _sandbox_policy_from_connector_value(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, dict):
+        return value
+    if value in {"danger-full-access", "dangerFullAccess"}:
+        return {"type": "dangerFullAccess"}
+    if value in {"read-only", "readOnly"}:
+        return {"type": "readOnly"}
+    if value in {"workspace-write", "workspaceWrite"}:
+        return {"type": "workspaceWrite"}
+    return None
 
 
 @router.websocket("/connector/ws")
@@ -479,6 +518,8 @@ async def apply_connector_notification(
             return IngestEffect()
         local_state = _local_session_state(params)
         session_id = params["sessionId"]
+        runtime = params.get("runtime") or "codex"
+        runtime_settings_patch = _runtime_settings_patch_from_session_update(runtime, params)
         external_session_id = params.get("externalSessionId")
         try:
             if isinstance(external_session_id, str):
@@ -497,6 +538,8 @@ async def apply_connector_notification(
                 source_observed_at=params.get("sourceObservedAt"),
                 last_activity_at=params.get("lastActivityAt"),
             )
+            if runtime_settings_patch:
+                await db.patch_session_runtime_settings(session_id, runtime_settings_patch)
             await db.refresh_session_status_from_timeline(session_id)
             return IngestEffect(session_id=session_id, session_changed=True)
         except KeyError:
@@ -512,7 +555,7 @@ async def apply_connector_notification(
             session = await db.upsert_connector_session(
                 connector_id=connector_id,
                 session_id=session_id,
-                runtime=params.get("runtime") or "codex",
+                runtime=runtime,
                 external_session_id=external_session_id if isinstance(external_session_id, str) else None,
                 title=params.get("title"),
                 cwd=params.get("cwd"),
@@ -521,6 +564,8 @@ async def apply_connector_notification(
                 source_observed_at=params.get("sourceObservedAt"),
                 last_activity_at=params.get("lastActivityAt"),
             )
+            if runtime_settings_patch:
+                await db.patch_session_runtime_settings(session.id, runtime_settings_patch)
             await db.refresh_session_status_from_timeline(session.id)
             return IngestEffect(session_id=session.id, session_changed=True)
     elif method == "timeline.sync":

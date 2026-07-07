@@ -43,6 +43,10 @@ class FakeCodexRpc:
                     "title": "Demo thread",
                     "cwd": "/repo",
                     "status": {"type": "idle"},
+                    "model": "gpt-5.4",
+                    "effort": "high",
+                    "approvalPolicy": "never",
+                    "sandboxPolicy": {"type": "dangerFullAccess"},
                     "turns": [
                         {
                             "id": "turn_1",
@@ -1069,6 +1073,31 @@ def test_adapter_maps_thread_start_sandbox_policy_to_mode() -> None:
     asyncio.run(exercise())
 
 
+def test_adapter_create_session_reports_runtime_settings_to_backend() -> None:
+    async def exercise() -> None:
+        rpc = FakeCodexRpc()
+        adapter = CodexAdapter(rpc=rpc)  # type: ignore[arg-type]
+
+        created = await adapter.create_session(
+            {
+                "sessionId": "sess_1",
+                "cwd": "/repo",
+                "model": "gpt-5.4",
+                "effort": "high",
+                "approvalPolicy": "never",
+                "sandbox": {"type": "dangerFullAccess"},
+            }
+        )
+
+        session_update = created["backendNotifications"][0]["params"]
+        assert session_update["model"] == "gpt-5.4"
+        assert session_update["effort"] == "high"
+        assert session_update["approvalPolicy"] == "never"
+        assert session_update["sandboxPolicy"] == {"type": "dangerFullAccess"}
+
+    asyncio.run(exercise())
+
+
 def test_adapter_creates_stable_session_id_for_new_thread() -> None:
     async def exercise() -> None:
         rpc = FakeCodexRpc()
@@ -1210,6 +1239,10 @@ async def _exercise_existing_thread_sync() -> None:
     assert result["backendNotifications"][0]["params"]["sessionId"] == session_id
     assert result["backendNotifications"][0]["params"]["externalSessionId"] == "thr_existing"
     assert result["backendNotifications"][0]["params"]["lastActivityAt"] == "2026-05-20T15:35:18Z"
+    assert result["backendNotifications"][0]["params"]["model"] == "gpt-5.4"
+    assert result["backendNotifications"][0]["params"]["effort"] == "high"
+    assert result["backendNotifications"][0]["params"]["approvalPolicy"] == "never"
+    assert result["backendNotifications"][0]["params"]["sandboxPolicy"] == {"type": "dangerFullAccess"}
     assert ("thread/list", {"limit": 100, "sortKey": "updated_at"}) in rpc.requests
     assert ("thread/resume", {"threadId": "thr_existing"}) in rpc.requests
     assert ("thread/read", {"threadId": "thr_existing", "includeTurns": True}) in rpc.requests
