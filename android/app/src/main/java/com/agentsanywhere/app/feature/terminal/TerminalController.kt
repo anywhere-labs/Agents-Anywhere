@@ -1,7 +1,5 @@
 package com.agentsanywhere.app.feature.terminal
 
-import android.os.SystemClock
-import android.util.Log
 import com.agentsanywhere.app.api.ApiException
 import com.agentsanywhere.app.api.RemoteTerminal
 import com.agentsanywhere.app.api.TerminalApi
@@ -26,12 +24,11 @@ class TerminalController(
                     ?: throw IllegalStateException("This session has no workspace.")
                 val auth = authSession()
                 val label = sessionTerminalLabel(session.id)
-                val reusableTerminal = findReusableTerminal(
+                val terminal = findReusableTerminal(
                     auth = auth,
                     connectorId = session.connectorId,
                     label = label,
-                )
-                val terminal = reusableTerminal ?: terminalApi.createTerminal(
+                ) ?: terminalApi.createTerminal(
                     serverUrl = auth.serverUrl,
                     authorizationToken = auth.accessToken,
                     deviceId = session.connectorId,
@@ -40,10 +37,6 @@ class TerminalController(
                     rows = rows,
                     ephemeralGroupId = ephemeralGroupId,
                     label = label,
-                )
-                terminalRouteDiag(
-                    "open workspace connector=${session.connectorId} session=${session.id} label=\"$label\" " +
-                        "root=\"$root\" requested=${cols}x$rows reused=${reusableTerminal != null} ${terminal.routeSummary()}",
                 )
                 WorkspaceTerminalConnection(
                     connectorId = session.connectorId,
@@ -67,12 +60,11 @@ class TerminalController(
             runCatching {
                 val auth = authSession()
                 val label = deviceTerminalLabel(connectorId)
-                val reusableTerminal = findReusableTerminal(
+                val terminal = findReusableTerminal(
                     auth = auth,
                     connectorId = connectorId,
                     label = label,
-                )
-                val terminal = reusableTerminal ?: terminalApi.createTerminal(
+                ) ?: terminalApi.createTerminal(
                     serverUrl = auth.serverUrl,
                     authorizationToken = auth.accessToken,
                     deviceId = connectorId,
@@ -81,10 +73,6 @@ class TerminalController(
                     rows = rows,
                     ephemeralGroupId = ephemeralGroupId,
                     label = label,
-                )
-                terminalRouteDiag(
-                    "open device connector=$connectorId label=\"$label\" root=\"~\" requested=${cols}x$rows " +
-                        "reused=${reusableTerminal != null} ${terminal.routeSummary()}",
                 )
                 WorkspaceTerminalConnection(
                     connectorId = connectorId,
@@ -114,8 +102,6 @@ class TerminalController(
                 .filter { it.label == label }
                 .sortedByDescending { it.scrollbackSeq }
                 .firstOrNull()
-        }.onFailure { error ->
-            terminalRouteDiag("list failed connector=$connectorId label=\"$label\" error=${error::class.java.simpleName}: ${error.message}")
         }.getOrNull()
     }
 
@@ -151,17 +137,7 @@ class TerminalController(
         val accessToken: String,
     )
 
-    private fun terminalRouteDiag(message: String) {
-        Log.d(INPUT_DIAG_TAG, "t=${SystemClock.uptimeMillis()} route $message")
-    }
-
-    private fun RemoteTerminal.routeSummary(): String {
-        return "terminal=$terminalId status=$status cwd=\"$cwd\" size=${cols}x$rows " +
-            "scrollbackSeq=$scrollbackSeq scrollbackBytes=$scrollbackBytes pid=$pid"
-    }
-
     private companion object {
-        private const val INPUT_DIAG_TAG = "AATerminalInput"
         private const val TERMINAL_LABEL_MAX_CHARS = 64
 
         private fun sessionTerminalLabel(sessionId: String): String {

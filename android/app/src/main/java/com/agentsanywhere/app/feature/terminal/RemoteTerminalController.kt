@@ -94,8 +94,6 @@ class RemoteTerminalController(
     private val frameSeq = AtomicLong(0)
     private val pendingInput = ArrayDeque<ByteArray>()
     private val pendingInputLock = Any()
-    private val echoTraceLock = Any()
-    private val pendingEchoTraces = ArrayDeque<InputEchoTrace>()
 
     val isCtrlLatched: Boolean get() = ctrlLatched
     val isAltLatched: Boolean get() = altLatched
@@ -298,7 +296,6 @@ class RemoteTerminalController(
         synchronized(pendingInputLock) {
             pendingInput.clear()
         }
-        clearEchoTraces()
         if (terminalId != null && state.value.status != RemoteTerminalStatus.Exited) {
             state.value = RemoteTerminalState(status = RemoteTerminalStatus.Closed)
         }
@@ -327,7 +324,6 @@ class RemoteTerminalController(
         synchronized(pendingInputLock) {
             pendingInput.clear()
         }
-        clearEchoTraces()
         state.value = RemoteTerminalState()
         return if (currentConnectorId != null && currentTerminalId != null) {
             TerminalCloseTarget(currentConnectorId, currentTerminalId)
@@ -415,7 +411,6 @@ class RemoteTerminalController(
                 val data = runCatching { Base64.getDecoder().decode(json.optString("data")) }.getOrNull() ?: return
                 diag("rx output seq=$seq bytes=${data.size} lastSeen=$lastSeenSeq terminal=$terminalId")
                 inputDiag("rx output seq=$seq bytes=${data.size} status=${state.value.status} pending=${pendingInputSize()} terminal=$terminalId")
-                traceOutputEcho(seq, data.size)
                 reconnectAttempts = 0
                 remoteTerminalGone = false
                 state.value = RemoteTerminalState(status = RemoteTerminalStatus.Open)
@@ -480,7 +475,6 @@ class RemoteTerminalController(
         val encoded = Base64.getEncoder().encodeToString(bytes)
         diag("input#$localInputSeq send bytes=${bytes.size} terminal=$terminalId")
         inputDiag("input#$localInputSeq send bytes=${bytes.size} encodedChars=${encoded.length} terminal=$terminalId")
-        traceInputAwaitingEcho(localInputSeq, bytes.size)
         sendFrame("input", JSONObject().put("type", "input").put("data", encoded).toString())
     }
 
@@ -547,57 +541,6 @@ class RemoteTerminalController(
         synchronized(pendingInputLock) {
             pendingInput.clear()
         }
-        clearEchoTraces()
-    }
-
-    private fun traceInputAwaitingEcho(inputId: Long, byteCount: Int) {
-        val sentAt = SystemClock.uptimeMillis()
-        synchronized(echoTraceLock) {
-            pendingEchoTraces.addLast(
-                InputEchoTrace(
-                    inputId = inputId,
-                    byteCount = byteCount,
-                    sentAt = sentAt,
-                    terminalId = terminalId,
-                ),
-            )
-            while (pendingEchoTraces.size > MAX_ECHO_TRACE_INPUTS) {
-                pendingEchoTraces.removeFirst()
-            }
-        }
-        inputDiag("echo input#$inputId await-output bytes=$byteCount pendingEcho=${pendingEchoTraceCount()} terminal=$terminalId")
-        scheduleEchoWaitLog(inputId, sentAt, ECHO_WAIT_WARN_MS)
-        scheduleEchoWaitLog(inputId, sentAt, ECHO_WAIT_SLOW_MS)
-    }
-
-    private fun scheduleEchoWaitLog(inputId: Long, sentAt: Long, delayMs: Long) {
-        main.postDelayed({
-            val trace = synchronized(echoTraceLock) {
-                pendingEchoTraces.firstOrNull { it.inputId == inputId && it.sentAt == sentAt }
-            } ?: return@postDelayed
-            inputDiag(
-                "echo input#${trace.inputId} still-waiting dt=${SystemClock.uptimeMillis() - trace.sentAt}ms " +
-                    "bytes=${trace.byteCount} pendingEcho=${pendingEchoTraceCount()} terminal=${trace.terminalId}",
-            )
-        }, delayMs)
-    }
-
-    private fun traceOutputEcho(outputSeq: Long, byteCount: Int) {
-        val now = SystemClock.uptimeMillis()
-        val trace = synchronized(echoTraceLock) {
-            if (pendingEchoTraces.isEmpty()) null else pendingEchoTraces.removeFirst()
-        }
-        if (trace == null) return
-        inputDiag(
-            "echo input#${trace.inputId} first-output seq=$outputSeq dt=${now - trace.sentAt}ms " +
-                "inputBytes=${trace.byteCount} outputBytes=$byteCount pendingEcho=${pendingEchoTraceCount()} terminal=${trace.terminalId}",
-        )
-    }
-
-    private fun clearEchoTraces() {
-        synchronized(echoTraceLock) {
-            pendingEchoTraces.clear()
-        }
     }
 
     private fun scheduleRemoteResize(cols: Int, rows: Int) {
@@ -653,7 +596,6 @@ class RemoteTerminalController(
         for (bytes in queued) {
             val encoded = Base64.getEncoder().encodeToString(bytes)
             inputDiag("flush input bytes=${bytes.size} encodedChars=${encoded.length} terminal=$terminalId")
-            traceInputAwaitingEcho(inputSeq.incrementAndGet(), bytes.size)
             sendFrame("input", JSONObject().put("type", "input").put("data", encoded).toString())
         }
     }
@@ -784,12 +726,6 @@ class RemoteTerminalController(
         }
     }
 
-    private fun pendingEchoTraceCount(): Int {
-        return synchronized(echoTraceLock) {
-            pendingEchoTraces.size
-        }
-    }
-
     override fun onTextChanged(changedSession: TerminalSession?) = emitRedraw()
     override fun onTitleChanged(changedSession: TerminalSession?) = Unit
     override fun onSessionFinished(finishedSession: TerminalSession?) = Unit
@@ -822,13 +758,6 @@ class RemoteTerminalController(
         val terminalId: String,
     )
 
-    private data class InputEchoTrace(
-        val inputId: Long,
-        val byteCount: Int,
-        val sentAt: Long,
-        val terminalId: String?,
-    )
-
     private companion object {
         private const val DIAG_TAG = "AATerminal"
         private const val INPUT_DIAG_TAG = "AATerminalInput"
@@ -838,9 +767,6 @@ class RemoteTerminalController(
         private const val MAX_RECONNECT_ATTEMPTS = 3
         private const val REMOTE_RESIZE_DEBOUNCE_MS = 160L
         private const val OUTPUT_DRAIN_DELAY_MS = 16L
-        private const val MAX_ECHO_TRACE_INPUTS = 128
-        private const val ECHO_WAIT_WARN_MS = 300L
-        private const val ECHO_WAIT_SLOW_MS = 1_000L
     }
 }
 
