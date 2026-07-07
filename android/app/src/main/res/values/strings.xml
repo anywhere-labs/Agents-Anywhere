@@ -368,6 +368,7 @@
     <string name="files_terminal_disconnected">Disconnected. Tap to reconnect.</string>
     <string name="files_terminal_exited">Exited. Tap to reconnect.</string>
     <string name="files_terminal_error">Connection disconnected. Tap to reconnect.</string>
+    <string name="files_terminal_clear">Clear terminal</string>
     <string name="files_loading">Loading files...</string>
     <string name="files_empty_directory">This directory is empty.</string>
     <string name="files_loading_file">Loading file...</string>

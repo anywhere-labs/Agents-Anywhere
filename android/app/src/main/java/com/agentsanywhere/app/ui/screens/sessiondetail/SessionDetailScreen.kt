@@ -70,9 +70,8 @@ import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailState
 import com.agentsanywhere.app.feature.sessiondetail.SessionStreamEvent
 import com.agentsanywhere.app.feature.sessiondetail.TimelineApproval
-import com.agentsanywhere.app.feature.terminal.RemoteTerminalController
 import com.agentsanywhere.app.feature.terminal.RemoteTerminalForegroundService
-import com.agentsanywhere.app.feature.terminal.TerminalController
+import com.agentsanywhere.app.feature.terminal.RemoteTerminalPool
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentSession
 import com.agentsanywhere.app.model.SessionStatus
@@ -100,7 +99,7 @@ fun SessionDetailScreen(
     devices: List<AgentDevice>,
     controller: SessionDetailController,
     filesController: FilesController,
-    terminalController: TerminalController,
+    terminalPool: RemoteTerminalPool,
     composerDraftStore: SessionComposerDraftStore,
     onSessionChanged: (AgentSession) -> Unit = {},
 ) {
@@ -138,7 +137,7 @@ fun SessionDetailScreen(
     val refetchInFlight = remember(sessionId) { AtomicBoolean(false) }
     val olderInFlight = remember(sessionId) { AtomicBoolean(false) }
     val streamOpen = remember(sessionId) { AtomicBoolean(false) }
-    val remoteTerminal = remember(sessionId, terminalController) { RemoteTerminalController(terminalController) }
+    val remoteTerminal = remember(sessionId, terminalPool) { terminalPool.forSession(sessionId) }
 
     var appVisible by remember(lifecycleOwner) {
         mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
@@ -632,12 +631,6 @@ fun SessionDetailScreen(
             refetchInFlight.set(false)
             olderInFlight.set(false)
             lifecycleOwner.lifecycle.removeObserver(observer)
-        }
-    }
-
-    DisposableEffect(remoteTerminal) {
-        onDispose {
-            remoteTerminal.closeAndDispose()
         }
     }
 

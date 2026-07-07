@@ -111,6 +111,7 @@ import com.composables.icons.lucide.KeyRound
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Search
 import com.composables.icons.lucide.Terminal
+import com.composables.icons.lucide.Trash2
 import com.termux.terminal.TextStyle as TermuxTextStyle
 import com.termux.view.RemoteTerminalView
 import com.termux.view.RemoteTerminalViewClient
@@ -265,7 +266,11 @@ internal fun SessionAgentFilesScreen(
                     val current = session ?: return@TerminalContent
                     terminalController.ensureStarted(current)
                 },
-                onRestart = {
+                onReconnect = {
+                    val current = session ?: return@TerminalContent
+                    terminalController.reconnect(current)
+                },
+                onClear = {
                     val current = session ?: return@TerminalContent
                     terminalController.restart(current)
                 },
@@ -494,7 +499,8 @@ internal fun TerminalContent(
     terminalKey: Any?,
     canReconnect: Boolean,
     onStart: suspend () -> Unit,
-    onRestart: suspend () -> Unit,
+    onReconnect: suspend () -> Unit,
+    onClear: suspend () -> Unit,
     onVerticalDragChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -527,6 +533,10 @@ internal fun TerminalContent(
 
     LaunchedEffect(terminalKey) {
         if (terminalKey != null) onStart()
+    }
+
+    DisposableEffect(terminalController) {
+        onDispose { terminalController.detach() }
     }
 
     val terminalClient = remember(terminalController, onVerticalDragChange) {
@@ -586,7 +596,7 @@ internal fun TerminalContent(
                     .then(
                         if (reconnectable) {
                             Modifier.noRippleClickable {
-                                scope.launch { onRestart() }
+                                scope.launch { onReconnect() }
                             }
                         } else {
                             Modifier
@@ -632,6 +642,47 @@ internal fun TerminalContent(
                     .padding(bottom = imeBottom),
             )
         }
+        TerminalClearButton(
+            darkMode = darkMode,
+            enabled = terminalKey != null,
+            onClick = { scope.launch { onClear() } },
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 10.dp, end = 18.dp)
+                .zIndex(1f),
+        )
+    }
+}
+
+@Composable
+private fun TerminalClearButton(
+    darkMode: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val background = if (darkMode) Color(0xDD18181B) else Color(0xEEFFFFFF)
+    val border = if (darkMode) Color(0xFF3F3F46) else Color(0xFFE7E5E0)
+    val icon = if (enabled) {
+        if (darkMode) Color(0xFFFCA5A5) else Color(0xFFB42318)
+    } else {
+        if (darkMode) Color(0xFF71717A) else Color(0xFFA7A5A0)
+    }
+    Box(
+        modifier = modifier
+            .size(34.dp)
+            .clip(CircleShape)
+            .background(background)
+            .border(1.dp, border, CircleShape)
+            .then(if (enabled) Modifier.noRippleClickable(onClick = onClick) else Modifier),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = Lucide.Trash2,
+            contentDescription = stringResource(R.string.files_terminal_clear),
+            tint = icon,
+            modifier = Modifier.size(17.dp),
+        )
     }
 }
 

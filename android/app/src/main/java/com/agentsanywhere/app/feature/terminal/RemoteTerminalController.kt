@@ -85,12 +85,13 @@ class RemoteTerminalController(
 
     suspend fun ensureStarted(session: AgentSession) {
         if (terminalId != null && connectorId == session.connectorId) {
+            reconnectExistingIfNeeded()
             return
         }
         if (terminalId != null) {
             clearLocalScreen()
         }
-        close()
+        detach()
         if (session.cwd.isNullOrBlank()) {
             state.value = RemoteTerminalState(status = RemoteTerminalStatus.Error, message = "This session has no workspace.")
             return
@@ -122,12 +123,13 @@ class RemoteTerminalController(
 
     suspend fun ensureStarted(device: AgentDevice) {
         if (terminalId != null && connectorId == device.id) {
+            reconnectExistingIfNeeded()
             return
         }
         if (terminalId != null) {
             clearLocalScreen()
         }
-        close()
+        detach()
         if (!device.online) {
             state.value = RemoteTerminalState(status = RemoteTerminalStatus.Error, message = "This device is offline.")
             return
@@ -155,6 +157,26 @@ class RemoteTerminalController(
                     message = error.message ?: "Could not open terminal.",
                 )
             }
+    }
+
+    suspend fun reconnect(session: AgentSession) {
+        if (terminalId != null && connectorId == session.connectorId && state.value.status != RemoteTerminalStatus.Exited) {
+            reconnectExistingIfNeeded(force = true)
+        } else if (terminalId != null && connectorId == session.connectorId) {
+            restart(session)
+        } else {
+            ensureStarted(session)
+        }
+    }
+
+    suspend fun reconnect(device: AgentDevice) {
+        if (terminalId != null && connectorId == device.id && state.value.status != RemoteTerminalStatus.Exited) {
+            reconnectExistingIfNeeded(force = true)
+        } else if (terminalId != null && connectorId == device.id) {
+            restart(device)
+        } else {
+            ensureStarted(device)
+        }
     }
 
     fun resize(cols: Int, rows: Int, cellWidth: Int, cellHeight: Int) {
@@ -241,19 +263,25 @@ class RemoteTerminalController(
         }
     }
 
-    fun closeAndDispose() {
-        val target = detachTerminalForClose()
-        if (target == null) {
-            terminalScope.cancel()
-            return
+    fun detach() {
+        diag("detach requested terminal=$terminalId")
+        manuallyClosed = true
+        socket?.close(1000, "detached")
+        socket = null
+        reconnectScheduled = false
+        reconnectAttempts = 0
+        setLatched(ctrl = false, alt = false)
+        synchronized(pendingInputLock) {
+            pendingInput.clear()
         }
-        terminalScope.launch {
-            try {
-                terminalController.closeTerminal(target.connectorId, target.terminalId)
-            } finally {
-                terminalScope.cancel()
-            }
+        if (terminalId != null && state.value.status != RemoteTerminalStatus.Exited) {
+            state.value = RemoteTerminalState(status = RemoteTerminalStatus.Closed)
         }
+    }
+
+    fun disposeLocal() {
+        detach()
+        terminalScope.cancel()
     }
 
     private fun detachTerminalForClose(): TerminalCloseTarget? {
@@ -324,15 +352,39 @@ class RemoteTerminalController(
         )
     }
 
+    private fun reconnectExistingIfNeeded(force: Boolean = false) {
+        val url = streamUrl ?: return
+        if (!force && (socket != null || state.value.status == RemoteTerminalStatus.Connecting)) return
+        socket?.close(1000, "reconnect")
+        socket = null
+        manuallyClosed = false
+        reconnectScheduled = false
+        reconnectAttempts = 0
+        state.value = RemoteTerminalState(status = RemoteTerminalStatus.Connecting)
+        connectSocket(url.withFromSeq(lastSeenSeq))
+    }
+
     private fun handleFrame(text: String) {
         val json = runCatching { JSONObject(text) }.getOrNull() ?: return
         when (json.optString("type")) {
-            "replay", "output" -> {
+            "replay" -> {
                 val seq = if (json.has("seq")) json.optLong("seq", -1L) else -1L
                 if (seq > 0 && seq <= lastSeenSeq) return
                 if (seq > 0) lastSeenSeq = seq
                 val data = runCatching { Base64.getDecoder().decode(json.optString("data")) }.getOrNull() ?: return
-                diag("rx ${json.optString("type")} seq=$seq bytes=${data.size} lastSeen=$lastSeenSeq terminal=$terminalId")
+                diag("rx replay seq=$seq bytes=${data.size} lastSeen=$lastSeenSeq terminal=$terminalId")
+                main.post {
+                    emulator.reset()
+                    emulator.append(data, data.size)
+                    emitRedraw()
+                }
+            }
+            "output" -> {
+                val seq = if (json.has("seq")) json.optLong("seq", -1L) else -1L
+                if (seq > 0 && seq <= lastSeenSeq) return
+                if (seq > 0) lastSeenSeq = seq
+                val data = runCatching { Base64.getDecoder().decode(json.optString("data")) }.getOrNull() ?: return
+                diag("rx output seq=$seq bytes=${data.size} lastSeen=$lastSeenSeq terminal=$terminalId")
                 main.post {
                     emulator.append(data, data.size)
                     emitRedraw()
