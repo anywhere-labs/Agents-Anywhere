@@ -72,6 +72,8 @@ const SCROLL_TO_BOTTOM_PRUNE_CHECK_MS = 120
 const INITIAL_TIMELINE_LIMIT = 100
 const TIMELINE_PAGE_LIMIT = 100
 const LOAD_OLDER_SCROLL_THRESHOLD = 96
+const SESSION_REFRESH_RETRY_LIMIT = 3
+const SESSION_REFRESH_RETRY_DELAY_MS = 700
 const COMPOSER_DRAFT_STORAGE_PREFIX = "agents-anywhere.sessionComposerDraft.v1."
 const COMPOSER_BLUR_LAYERS = buildComposerBlurLayers({
   height: 144,
@@ -165,6 +167,12 @@ function writeComposerDraft(sessionId: string, value: string) {
   }
 }
 
+function hasRealTimelineItemForClientMessage(items: TimelineItem[], clientMessageId: string): boolean {
+  return items.some((item) =>
+    !isOptimisticTimelineItem(item) && timelineClientMessageId(item) === clientMessageId,
+  )
+}
+
 export function SessionDetail({
   token,
   sessionId,
@@ -183,6 +191,7 @@ export function SessionDetail({
     getOptimisticSessionState,
     isOptimisticSession,
     markOptimisticMessageFailed,
+    sessionRefreshRequest,
   } = useWorkspace()
   const [state, setState] = React.useState<SessionStateResponse | null>(null)
   const [loading, setLoading] = React.useState(true)
@@ -350,7 +359,41 @@ export function SessionDetail({
     setState((current) => current ? { ...next, items: preserveOptimisticItems(next.items, current.items) } : next)
     nextSeqRef.current = Math.max(nextSeqRef.current, next.nextSeq)
     onSessionUpdated?.(next.session)
+    return next
   }, [markAutoScrollIfNearBottom, onSessionUpdated, sessionId, token])
+
+  React.useEffect(() => {
+    if (!sessionRefreshRequest || sessionRefreshRequest.sessionId !== sessionId || isLocalOptimisticSession) return
+    let cancelled = false
+    let retryTimer: number | null = null
+
+    const run = async (attempt: number) => {
+      try {
+        const next = await refresh({ scrollToBottom: true })
+        if (cancelled) return
+        const clientMessageId = sessionRefreshRequest.clientMessageId
+        if (!clientMessageId || hasRealTimelineItemForClientMessage(next.items, clientMessageId)) return
+        if (attempt >= SESSION_REFRESH_RETRY_LIMIT) return
+        retryTimer = window.setTimeout(() => {
+          retryTimer = null
+          void run(attempt + 1)
+        }, SESSION_REFRESH_RETRY_DELAY_MS)
+      } catch {
+        if (cancelled || attempt >= SESSION_REFRESH_RETRY_LIMIT) return
+        retryTimer = window.setTimeout(() => {
+          retryTimer = null
+          void run(attempt + 1)
+        }, SESSION_REFRESH_RETRY_DELAY_MS)
+      }
+    }
+
+    void run(0)
+
+    return () => {
+      cancelled = true
+      if (retryTimer !== null) window.clearTimeout(retryTimer)
+    }
+  }, [isLocalOptimisticSession, refresh, sessionId, sessionRefreshRequest])
 
   const loadOlderTimeline = React.useCallback(async () => {
     if (loadingOlderRef.current || loadingOlder || !state?.hasMore) return
