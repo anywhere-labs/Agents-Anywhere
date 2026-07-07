@@ -564,9 +564,16 @@
       "noWorkspaceRuntime": "这个会话没有连接器工作目录，无法使用文件和终端面板。",
       "takeover": "接管",
       "takeoverEnableTitle": "开启接管？",
-      "takeoverEnableDescription": "开启后，你可以从浏览器发送消息并控制这个正在运行的会话。在此程序中发出的消息可能不会立刻同步到运行此会话的其他客户端（如 Codex 桌面客户端），一般来说重启他们可以同步消息。接管正在运行的会话或者使用其他客户端向已接管的会话发送消息可能导致意料外的结果。",
+      "takeoverEnableDescription": [
+        "开启后可在网页上接管这个会话。",
+        "消息可能不会立即同步到 {agent} 客户端，通常重启它们后即可刷新同步。",
+        "如果你同时在 Agents Anywhere 和 {agent} 客户端中操作此会话，可能导致意料外的结果。"
+      ],
       "takeoverDisableTitle": "关闭接管？",
-      "takeoverDisableDescription": "关闭后，会话会回到只读模式，Composer 将被禁用。其他客户端的记录可能不会自动同步，一般来说重启他们可以同步在此程序中的会话记录。",
+      "takeoverDisableDescription": [
+        "关闭后会话将回到只读模式，无法继续发送消息。",
+        "这里产生的会话记录可能不会立即同步到 {agent} 客户端，通常重启它们后即可刷新同步。"
+      ],
       "takeoverEnableConfirm": "开启接管",
       "takeoverDisableConfirm": "关闭接管",
       "readOnlyPlaceholder": "只读模式 - 开启接管后可发送消息",
