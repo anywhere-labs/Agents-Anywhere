@@ -46,6 +46,15 @@ type WorkspaceEntry = {
 
 export type WorkspaceSelection = WorkspaceEntry
 
+const HOME_RESOLVE_TIMEOUT_MS = 8_000
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(() => reject(new Error("request timed out")), ms)
+    promise.then(resolve, reject).finally(() => window.clearTimeout(timeout))
+  })
+}
+
 // ── File browser dialog ────────────────────────────────────────
 
 function FileBrowserDialog({
@@ -209,12 +218,10 @@ export function WorkspacePicker({
   connectorId,
   value,
   onChange,
-  loading = false,
 }: {
   connectorId?: string
   value?: WorkspaceSelection | null
   onChange?: (workspace: WorkspaceSelection) => void
-  loading?: boolean
 } = {}) {
   const { session: authSession } = useAuth()
   const { connectors, sessions, openPairDeviceDialog } = useWorkspace()
@@ -237,14 +244,16 @@ export function WorkspacePicker({
     }
     let cancelled = false
     setResolvingHomePath(true)
-    dashboardApi
-      .connectorFsList(authSession.accessToken, activeConnector.id, { root: "~", path: "." })
+    withTimeout(
+      dashboardApi.connectorFsList(authSession.accessToken, activeConnector.id, { root: "~", path: "." }),
+      HOME_RESOLVE_TIMEOUT_MS,
+    )
       .then((response) => {
         if (cancelled) return
         setResolvedHomePath(response.result.path || "")
       })
       .catch(() => {
-        if (!cancelled) setResolvedHomePath("")
+        if (!cancelled) setResolvedHomePath("~")
       })
       .finally(() => {
         if (!cancelled) setResolvingHomePath(false)
@@ -319,21 +328,6 @@ export function WorkspacePicker({
     )
   }
 
-  if (loading || resolvingHomePath) {
-    return (
-      <button
-        type="button"
-        disabled
-        className="flex w-full items-center gap-3 rounded-xl border border-border px-4 py-3 text-left text-sm opacity-100"
-      >
-        <Folder className="size-4 shrink-0 text-muted-foreground" />
-        <Spinner className="size-4 shrink-0 text-muted-foreground" />
-        <span className="h-3 w-28 rounded-full bg-muted-foreground/20" />
-        <span className="h-3 min-w-0 flex-1 rounded-full bg-muted-foreground/10" />
-      </button>
-    )
-  }
-
   return (
     <>
       <DropdownMenu>
@@ -347,6 +341,7 @@ export function WorkspacePicker({
             <span className="truncate code-mono text-xs text-muted-foreground">
               {workspace.path || t("resolvingHome")}
             </span>
+            {resolvingHomePath ? <Spinner className="size-3.5 shrink-0 text-muted-foreground" /> : null}
             <ChevronDown className="ml-auto size-4 shrink-0 text-muted-foreground" />
           </button>
         </DropdownMenuTrigger>
@@ -365,6 +360,7 @@ export function WorkspacePicker({
                 {homeWorkspace.path || t("resolvingHome")}
               </span>
             </div>
+            {resolvingHomePath ? <Spinner className="ml-auto size-3.5 shrink-0 text-muted-foreground" /> : null}
             {isHome && <Check className="ml-auto size-3.5 shrink-0" />}
           </DropdownMenuItem>
 
