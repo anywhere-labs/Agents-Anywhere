@@ -39,6 +39,11 @@ class RemoteTerminalController(
     val modifierState = MutableStateFlow(TerminalModifierState())
     val redraws = MutableSharedFlow<Unit>(extraBufferCapacity = 64)
     var onRedraw: (() -> Unit)? = null
+
+    private val main = Handler(Looper.getMainLooper())
+    private val outputBuffer = RemoteTerminalOutputBuffer()
+    private var redrawScheduled = false
+
     val emulator = TerminalEmulator(
         object : TerminalOutput() {
             override fun write(data: ByteArray, offset: Int, count: Int) {
@@ -63,8 +68,6 @@ class RemoteTerminalController(
         this,
     )
 
-    private val main = Handler(Looper.getMainLooper())
-    private val outputBuffer = RemoteTerminalOutputBuffer()
     private val http = OkHttpClient()
     private val terminalScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val sendMutex = Mutex()
@@ -93,7 +96,6 @@ class RemoteTerminalController(
     private val pendingInputLock = Any()
     private val echoTraceLock = Any()
     private val pendingEchoTraces = ArrayDeque<InputEchoTrace>()
-    private var redrawScheduled = false
 
     val isCtrlLatched: Boolean get() = ctrlLatched
     val isAltLatched: Boolean get() = altLatched
