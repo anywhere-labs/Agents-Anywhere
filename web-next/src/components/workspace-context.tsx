@@ -14,8 +14,16 @@ import { useAuth } from "@/components/auth/auth-context"
 import { dashboardApi } from "@/features/dashboard/api"
 import type {
   ConnectorView as RealConnectorView,
+  SessionStateResponse,
   SessionView as RealSessionView,
+  TimelineItem,
 } from "@/features/dashboard/types"
+import {
+  isOptimisticTimelineItem,
+  markOptimisticItemFailed,
+  mergeTimelineItems,
+  timelineClientMessageId,
+} from "@/components/session/optimistic-timeline"
 
 // ─── Panel / page types ───────────────────────────────────────
 
@@ -38,6 +46,13 @@ export type ComposerInsertion = {
   id: number
   sessionId: string
   text: string
+}
+
+export type OptimisticSessionMessage = {
+  clientMessageId: string
+  sessionId: string
+  item: TimelineItem
+  session?: RealSessionView
 }
 
 // ─── Hash routing helpers ─────────────────────────────────────
@@ -180,6 +195,7 @@ type WorkspaceState = {
   firstDevicePromptOpen: boolean
   pairDeviceDialogOpen: boolean
   composerInsertion: ComposerInsertion | null
+  optimisticMessages: OptimisticSessionMessage[]
 
   // Actions
   openSession: (id: string) => void
@@ -200,6 +216,13 @@ type WorkspaceState = {
   renameSession: (id: string, title: string) => Promise<boolean>
   markSessionRead: (id: string) => void
   upsertSession: (session: RealSessionView) => void
+  addOptimisticMessage: (message: OptimisticSessionMessage) => void
+  bindOptimisticSession: (localSessionId: string, session: RealSessionView) => void
+  clearResolvedOptimisticMessages: (sessionId: string, items: TimelineItem[]) => void
+  getOptimisticItems: (sessionId: string) => TimelineItem[]
+  getOptimisticSessionState: (sessionId: string) => SessionStateResponse | null
+  isOptimisticSession: (sessionId: string) => boolean
+  markOptimisticMessageFailed: (clientMessageId: string, message: string) => void
   appendPathToComposer: (path: string) => boolean
   refreshData: () => void
 }
@@ -279,6 +302,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [firstDevicePromptOpen, setFirstDevicePromptOpen] = React.useState(false)
   const [pairDeviceDialogOpen, setPairDeviceDialogOpen] = React.useState(false)
   const [composerInsertion, setComposerInsertion] = React.useState<ComposerInsertion | null>(null)
+  const [optimisticMessages, setOptimisticMessages] = React.useState<OptimisticSessionMessage[]>([])
   const firstDeviceWizardCheckedRef = React.useRef(false)
   const composerInsertionSeqRef = React.useRef(0)
 
@@ -562,6 +586,104 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     })
   }, [])
 
+  const addOptimisticMessage = React.useCallback((message: OptimisticSessionMessage) => {
+    setOptimisticMessages((prev) => {
+      const index = prev.findIndex((item) => item.clientMessageId === message.clientMessageId)
+      if (index === -1) return [...prev, message]
+      const next = [...prev]
+      next[index] = message
+      return next
+    })
+    if (message.session) {
+      const mapped = mapSession(message.session)
+      setSessions((prev) => {
+        const index = prev.findIndex((item) => item.id === mapped.id)
+        if (index === -1) return [mapped, ...prev]
+        const next = [...prev]
+        next[index] = mapped
+        return next
+      })
+    }
+  }, [])
+
+  const bindOptimisticSession = React.useCallback((localSessionId: string, session: RealSessionView) => {
+    setOptimisticMessages((prev) =>
+      prev.map((message) =>
+        message.sessionId === localSessionId || message.sessionId === session.id
+          ? {
+              ...message,
+              sessionId: session.id,
+              session,
+              item: { ...message.item, sessionId: session.id },
+            }
+          : message,
+      ),
+    )
+    const mapped = mapSession(session)
+    setSessions((prev) => {
+      const withoutLocal = prev.filter((item) => item.id !== localSessionId)
+      const index = withoutLocal.findIndex((item) => item.id === mapped.id)
+      if (index === -1) return [mapped, ...withoutLocal]
+      const next = [...withoutLocal]
+      next[index] = mapped
+      return next
+    })
+    if (route.page === "session" && route.sessionId === localSessionId) {
+      pushRoute({ page: "session", sessionId: session.id })
+    }
+  }, [pushRoute, route])
+
+  const markOptimisticMessageFailed = React.useCallback((clientMessageId: string, message: string) => {
+    setOptimisticMessages((prev) =>
+      prev.map((entry) =>
+        entry.clientMessageId === clientMessageId
+          ? { ...entry, item: markOptimisticItemFailed(entry.item, message) }
+          : entry,
+      ),
+    )
+  }, [])
+
+  const clearResolvedOptimisticMessages = React.useCallback((sessionId: string, items: TimelineItem[]) => {
+    const resolvedClientMessageIds = new Set(
+      items
+        .filter((item) => !isOptimisticTimelineItem(item))
+        .map(timelineClientMessageId)
+        .filter((id): id is string => Boolean(id)),
+    )
+    if (resolvedClientMessageIds.size === 0) return
+    setOptimisticMessages((prev) =>
+      prev.filter(
+        (message) => message.sessionId !== sessionId || !resolvedClientMessageIds.has(message.clientMessageId),
+      ),
+    )
+  }, [])
+
+  const getOptimisticItems = React.useCallback((sessionId: string) => {
+    return optimisticMessages
+      .filter((message) => message.sessionId === sessionId)
+      .map((message) => message.item)
+  }, [optimisticMessages])
+
+  const getOptimisticSessionState = React.useCallback((sessionId: string): SessionStateResponse | null => {
+    const messages = optimisticMessages.filter((message) => message.sessionId === sessionId)
+    const session = messages.find((message) => message.session)?.session
+    if (!session) return null
+    const items = mergeTimelineItems([], messages.map((message) => message.item))
+    const nextSeq = items.reduce((max, item) => Math.max(max, item.updatedSeq), 0)
+    return {
+      session,
+      items,
+      approvals: [],
+      nextSeq,
+      hasMore: false,
+      serverTime: new Date().toISOString(),
+    }
+  }, [optimisticMessages])
+
+  const isOptimisticSession = React.useCallback((sessionId: string) => {
+    return optimisticMessages.some((message) => message.sessionId === sessionId && message.session?.id === sessionId)
+  }, [optimisticMessages])
+
   const appendPathToComposer = React.useCallback((path: string) => {
     if (route.page !== "session" || !route.sessionId) return false
     const targetSession = sessions.find((session) => session.id === route.sessionId)
@@ -603,6 +725,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     firstDevicePromptOpen,
     pairDeviceDialogOpen,
     composerInsertion,
+    optimisticMessages,
     openSession,
     goHome,
     navigate,
@@ -621,6 +744,13 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     renameSession,
     markSessionRead,
     upsertSession,
+    addOptimisticMessage,
+    bindOptimisticSession,
+    clearResolvedOptimisticMessages,
+    getOptimisticItems,
+    getOptimisticSessionState,
+    isOptimisticSession,
+    markOptimisticMessageFailed,
     appendPathToComposer,
     refreshData: fetchData,
   }
