@@ -1,5 +1,6 @@
 package com.agentsanywhere.app.ui.screens.terminal
 
+import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -68,8 +69,17 @@ fun TerminalScreen(
 
     BackHandler { navigate(AppDestination.Sessions) }
 
+    LaunchedEffect(selectedDeviceId, selectedDevice?.id, terminalController) {
+        Log.d(
+            TERMINAL_SWITCH_TAG,
+            "screen selectedDeviceId=$selectedDeviceId selected=${selectedDevice?.id} " +
+                "ctrl=${terminalController.debugId} devices=${devices.size}",
+        )
+    }
+
     LaunchedEffect(devices) {
         if (devices.none { it.id == selectedDeviceId && it.online }) {
+            Log.d(TERMINAL_SWITCH_TAG, "screen selected offline/missing=$selectedDeviceId choose=${devices.firstOrNull { it.online }?.id}")
             selectedDeviceId = devices.firstOrNull { it.online }?.id
         }
     }
@@ -85,7 +95,10 @@ fun TerminalScreen(
             selectedDevice = selectedDevice,
             darkMode = darkMode,
             onBack = { navigate(AppDestination.Sessions) },
-            onSelectDevice = { selectedDeviceId = it.id },
+            onSelectDevice = {
+                Log.d(TERMINAL_SWITCH_TAG, "screen select device from=$selectedDeviceId to=${it.id}")
+                selectedDeviceId = it.id
+            },
         )
         if (devices.isEmpty()) {
             AppEmptyState(
@@ -112,6 +125,8 @@ fun TerminalScreen(
         }
     }
 }
+
+private const val TERMINAL_SWITCH_TAG = "AATerminalSwitch"
 
 @Composable
 private fun TerminalHeader(

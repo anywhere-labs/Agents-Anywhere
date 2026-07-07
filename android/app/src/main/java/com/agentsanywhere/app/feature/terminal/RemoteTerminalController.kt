@@ -39,6 +39,7 @@ class RemoteTerminalController(
     val modifierState = MutableStateFlow(TerminalModifierState())
     val redraws = MutableSharedFlow<Unit>(extraBufferCapacity = 64)
     var onRedraw: (() -> Unit)? = null
+    val debugId: String = Integer.toHexString(System.identityHashCode(this))
 
     private val main = Handler(Looper.getMainLooper())
     private val outputBuffer = RemoteTerminalOutputBuffer()
@@ -101,7 +102,12 @@ class RemoteTerminalController(
     val isAltLatched: Boolean get() = altLatched
 
     suspend fun ensureStarted(session: AgentSession) {
+        diag(
+            "ensure session request session=${session.id} connector=${session.connectorId} " +
+                "state=${state.value.status} currentConnector=$connectorId terminal=$terminalId socket=${socket != null}",
+        )
         if (terminalId != null && connectorId == session.connectorId) {
+            diag("ensure session reuse existing terminal=$terminalId")
             reconnectExistingIfNeeded()
             return
         }
@@ -115,6 +121,7 @@ class RemoteTerminalController(
             state.value = RemoteTerminalState(status = RemoteTerminalStatus.Error, message = "This session has no workspace.")
             return
         }
+        diag("ensure session open begin session=${session.id} connector=${session.connectorId} cols=$lastCols rows=$lastRows")
         state.value = RemoteTerminalState(status = RemoteTerminalStatus.Connecting)
         terminalController.openWorkspaceTerminal(
             session = session,
@@ -142,7 +149,12 @@ class RemoteTerminalController(
     }
 
     suspend fun ensureStarted(device: AgentDevice) {
+        diag(
+            "ensure device request device=${device.id} online=${device.online} " +
+                "state=${state.value.status} currentConnector=$connectorId terminal=$terminalId socket=${socket != null}",
+        )
         if (terminalId != null && connectorId == device.id) {
+            diag("ensure device reuse existing terminal=$terminalId device=${device.id}")
             reconnectExistingIfNeeded()
             return
         }
@@ -156,6 +168,7 @@ class RemoteTerminalController(
             state.value = RemoteTerminalState(status = RemoteTerminalStatus.Error, message = "This device is offline.")
             return
         }
+        diag("ensure device open begin device=${device.id} cols=$lastCols rows=$lastRows")
         state.value = RemoteTerminalState(status = RemoteTerminalStatus.Connecting)
         terminalController.openDeviceTerminal(
             connectorId = device.id,
@@ -808,12 +821,12 @@ class RemoteTerminalController(
     override fun logStackTrace(tag: String?, e: Exception?) = Unit
 
     private fun diag(message: String) {
-        Log.d(DIAG_TAG, message)
+        Log.d(DIAG_TAG, "ctrl=$debugId $message")
     }
 
     private fun inputDiag(message: String) {
         if (INPUT_DIAG_ENABLED) {
-            Log.d(INPUT_DIAG_TAG, "t=${SystemClock.uptimeMillis()} $message")
+            Log.d(INPUT_DIAG_TAG, "t=${SystemClock.uptimeMillis()} ctrl=$debugId $message")
         }
     }
 
