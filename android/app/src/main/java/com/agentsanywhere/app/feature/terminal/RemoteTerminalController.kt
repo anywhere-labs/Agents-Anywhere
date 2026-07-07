@@ -64,6 +64,7 @@ class RemoteTerminalController(
     private val sendMutex = Mutex()
     private val groupId = "mobile_${UUID.randomUUID()}"
     private var socket: WebSocket? = null
+    private var streamOpen = false
     private var connectorId: String? = null
     private var terminalId: String? = null
     private var streamUrl: String? = null
@@ -271,6 +272,7 @@ class RemoteTerminalController(
         manuallyClosed = true
         socket?.close(1000, "detached")
         socket = null
+        streamOpen = false
         reconnectScheduled = false
         reconnectAttempts = 0
         remoteTerminalGone = false
@@ -293,6 +295,7 @@ class RemoteTerminalController(
         manuallyClosed = true
         socket?.close(1000, "closed")
         socket = null
+        streamOpen = false
         val currentConnectorId = connectorId
         val currentTerminalId = terminalId
         connectorId = null
@@ -315,6 +318,7 @@ class RemoteTerminalController(
 
     private fun connectSocket(url: String) {
         manuallyClosed = false
+        streamOpen = false
         diag("ws connecting terminal=$terminalId fromSeq=${url.substringAfter("fromSeq=", "0").substringBefore("&")}")
         socket = http.newWebSocket(
             Request.Builder().url(url).build(),
@@ -324,6 +328,7 @@ class RemoteTerminalController(
                         webSocket.close(1000, "stale")
                         return
                     }
+                    streamOpen = true
                     diag("ws open terminal=$terminalId")
                     sendFrame("resize", JSONObject().put("type", "resize").put("cols", lastCols).put("rows", lastRows).toString())
                     flushPendingInput()
@@ -339,6 +344,7 @@ class RemoteTerminalController(
                     diag("ws closed code=$code reason=$reason manual=$manuallyClosed terminal=$terminalId")
                     if (socket !== webSocket) return
                     socket = null
+                    streamOpen = false
                     if (!manuallyClosed) {
                         scheduleReconnect()
                     }
@@ -348,6 +354,7 @@ class RemoteTerminalController(
                     diag("ws failure ${t::class.java.simpleName}: ${t.message} manual=$manuallyClosed terminal=$terminalId")
                     if (socket !== webSocket) return
                     socket = null
+                    streamOpen = false
                     if (!manuallyClosed) {
                         scheduleReconnect()
                     }
@@ -361,6 +368,7 @@ class RemoteTerminalController(
         if (!force && (socket != null || state.value.status == RemoteTerminalStatus.Connecting)) return
         socket?.close(1000, "reconnect")
         socket = null
+        streamOpen = false
         manuallyClosed = false
         reconnectScheduled = false
         reconnectAttempts = 0
@@ -378,6 +386,7 @@ class RemoteTerminalController(
                 if (seq > 0) lastSeenSeq = seq
                 val data = runCatching { Base64.getDecoder().decode(json.optString("data")) }.getOrNull() ?: return
                 diag("rx replay seq=$seq bytes=${data.size} lastSeen=$lastSeenSeq terminal=$terminalId")
+                streamOpen = true
                 reconnectAttempts = 0
                 remoteTerminalGone = false
                 state.value = RemoteTerminalState(status = RemoteTerminalStatus.Open)
@@ -393,6 +402,7 @@ class RemoteTerminalController(
                 if (seq > 0) lastSeenSeq = seq
                 val data = runCatching { Base64.getDecoder().decode(json.optString("data")) }.getOrNull() ?: return
                 diag("rx output seq=$seq bytes=${data.size} lastSeen=$lastSeenSeq terminal=$terminalId")
+                streamOpen = true
                 reconnectAttempts = 0
                 remoteTerminalGone = false
                 state.value = RemoteTerminalState(status = RemoteTerminalStatus.Open)
@@ -406,6 +416,7 @@ class RemoteTerminalController(
                 manuallyClosed = true
                 socket?.close(1000, "terminal exited")
                 socket = null
+                streamOpen = false
                 state.value = RemoteTerminalState(status = RemoteTerminalStatus.Exited)
             }
             "error" -> {
@@ -414,6 +425,9 @@ class RemoteTerminalController(
                 if (message?.contains("terminal not found", ignoreCase = true) == true) {
                     remoteTerminalGone = true
                 }
+                socket?.close(1000, "terminal error")
+                socket = null
+                streamOpen = false
                 state.value = RemoteTerminalState(status = RemoteTerminalStatus.Closed)
             }
         }
@@ -435,17 +449,25 @@ class RemoteTerminalController(
 
     private fun sendBytes(bytes: ByteArray) {
         val localInputSeq = inputSeq.incrementAndGet()
-        if (state.value.status != RemoteTerminalStatus.Open) {
+        val targetSocket = socket
+        val canSendNow = targetSocket != null && streamOpen && !manuallyClosed && !remoteTerminalGone
+        if (!canSendNow) {
             if (terminalId != null && streamUrl != null && !manuallyClosed) {
                 synchronized(pendingInputLock) {
                     pendingInput.addLast(bytes)
                 }
                 diag("input#$localInputSeq queued bytes=${bytes.size} status=${state.value.status} terminal=$terminalId")
-                scheduleReconnect()
+                if (targetSocket == null) {
+                    scheduleReconnect()
+                }
             } else {
                 diag("input#$localInputSeq dropped bytes=${bytes.size} status=${state.value.status} terminal=$terminalId manual=$manuallyClosed")
             }
             return
+        }
+        if (state.value.status != RemoteTerminalStatus.Open) {
+            reconnectAttempts = 0
+            state.value = RemoteTerminalState(status = RemoteTerminalStatus.Open)
         }
         val encoded = Base64.getEncoder().encodeToString(bytes)
         diag("input#$localInputSeq send bytes=${bytes.size} terminal=$terminalId")
@@ -498,6 +520,7 @@ class RemoteTerminalController(
     private fun forgetRemoteTerminal() {
         socket?.close(1000, "forgotten")
         socket = null
+        streamOpen = false
         connectorId = null
         terminalId = null
         streamUrl = null
