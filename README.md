@@ -257,7 +257,7 @@ If you want to try it, scan the WeCom, Feishu, or QQ QR code below, join the gro
 
 | WeCom | Feishu | QQ | Discord |
 | --- | --- | --- | --- |
-| <img src="docs/contact/wechat-beta.jpeg" alt="WeCom beta access group QR code" width="180"> | <img src="docs/contact/feishu-beta.jpeg" alt="Feishu beta access group QR code" width="180"> | <img src="docs/contact/qq-beta.jpeg" alt="QQ beta access group QR code" width="180"> | <img src="docs/contact/discord-beta.jpeg" alt="Discord community QR code" width="180"> |
+| <img src="docs/contact/wecom-beta.jpeg" alt="WeCom beta access group QR code" width="180"> | <img src="docs/contact/feishu-beta.jpeg" alt="Feishu beta access group QR code" width="180"> | <img src="docs/contact/qq-beta.jpeg" alt="QQ beta access group QR code" width="180"> | <img src="docs/contact/discord-beta.jpeg" alt="Discord community QR code" width="180"> |
 | China beta access group | China beta access group | China beta access group | International community |
 
 For overseas users, the hosted beta is not open yet. Join Discord for community updates.
