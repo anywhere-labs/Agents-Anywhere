@@ -35,7 +35,6 @@ import {
   effortFieldForModel,
   effectiveFieldValue,
   optionLabel,
-  permissionLabelKey,
   type ComposerPermissionLabelKey,
   runtimeConfigFields,
   validEffortValue,
@@ -320,10 +319,7 @@ export function TaskComposer() {
   const selectedPermissionOption = permissionOptions.find((option) => option.id === selectedPermissionMode)
   const modelLabel = optionLabel(modelField, selectedModel || runtimeSettings.model, t("defaultModel"))
   const effortLabel = optionLabel(effortField, selectedReasoning || runtimeSettings.effort, t("defaultReasoning"))
-  const selectedPermissionLabelKey = permissionLabelKey(selectedPermissionMode)
-  const permissionLabel = selectedPermissionLabelKey
-    ? t(selectedPermissionLabelKey)
-    : selectedPermissionOption?.label ?? t(approvalMode.labelKey)
+  const permissionLabel = selectedPermissionOption?.label ?? t(approvalMode.labelKey)
   const canCreate =
     Boolean(authSession?.accessToken && selectedConnector && selectedAgent) &&
     !creating &&
@@ -458,7 +454,7 @@ export function TaskComposer() {
                           onSelect={() => setSelectedPermissionMode(item.id)}
                         >
                           <Check className={cn("size-3.5", selectedPermissionMode === item.id ? "opacity-100" : "opacity-0")} />
-                          <span>{permissionLabelKey(item.id) ? t(permissionLabelKey(item.id)!) : item.label}</span>
+                          <span>{item.label}</span>
                         </DropdownMenuItem>
                       ))
                     ) : (

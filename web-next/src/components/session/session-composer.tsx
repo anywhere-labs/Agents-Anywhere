@@ -27,7 +27,6 @@ import {
   effortFieldForModel,
   effectiveFieldValue,
   optionLabel,
-  permissionLabelKey,
   runtimeConfigFields,
   validEffortValue,
 } from "@/features/dashboard/runtime-config"
@@ -110,10 +109,7 @@ export function SessionComposer({
   const permissionValue = stringSetting(runtimeSettings?.permissionMode)
   const modelValue = effectiveFieldValue(modelField, runtimeSettings?.model)
   const effortValue = effectiveFieldValue(effortField, runtimeSettings?.effort)
-  const selectedPermissionLabelKey = permissionLabelKey(permissionValue)
-  const permissionLabel = selectedPermissionLabelKey
-    ? tNew(selectedPermissionLabelKey)
-    : optionLabel(permissionField, runtimeSettings?.permissionMode, tNew("permissionMode"))
+  const permissionLabel = optionLabel(permissionField, runtimeSettings?.permissionMode, tNew("permissionMode"))
   const modelLabel = optionLabel(modelField, runtimeSettings?.model, tNew("model"))
   const effortLabel = optionLabel(effortField, runtimeSettings?.effort, tNew("reasoning"))
   const hasSelectors = Boolean(permissionField || modelField || effortField)
@@ -216,9 +212,7 @@ export function SessionComposer({
                           onSelect={() => onPatchRuntimeSettings({ permissionMode: item.id })}
                         >
                           <Check className={cn("size-3.5", permissionValue === item.id ? "opacity-100" : "opacity-0")} />
-                          <span>
-                            {permissionLabelKey(item.id) ? tNew(permissionLabelKey(item.id)!) : item.label}
-                          </span>
+                          <span>{item.label}</span>
                         </DropdownMenuItem>
                       ))}
                     </DropdownMenuContent>

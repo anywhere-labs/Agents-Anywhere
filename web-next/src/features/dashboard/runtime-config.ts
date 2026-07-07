@@ -88,17 +88,3 @@ export type ComposerPermissionLabelKey =
   | "autoApprove"
   | "fullAccess"
   | "readOnly";
-
-const PERMISSION_LABEL_KEYS: Record<string, ComposerPermissionLabelKey> = {
-  ask: "askApproval",
-  default: "askApproval",
-  acceptEdits: "askApproval",
-  auto: "autoApprove",
-  fullAccess: "fullAccess",
-  bypassPermissions: "fullAccess",
-  plan: "readOnly",
-};
-
-export function permissionLabelKey(value: unknown): ComposerPermissionLabelKey | null {
-  return typeof value === "string" ? PERMISSION_LABEL_KEYS[value] ?? null : null;
-}

@@ -472,8 +472,8 @@
     },
     "panels": {
       "files": {
-        "addToComposer": "添加到输入区",
-        "addToComposerNoSession": "需要在已开启接管的会话里添加路径。",
+        "addToComposer": "添加到 Composer",
+        "addToComposerNoSession": "需要在已开启接管的会话里才能添加到 Composer。",
         "title": "文件",
         "goParent": "前往上级目录",
         "refresh": "刷新",
@@ -491,7 +491,7 @@
         "parent": "上级目录",
         "preview": "预览",
         "previewLoading": "正在加载 {name}...",
-        "pathAddedToComposer": "已添加到输入区",
+        "pathAddedToComposer": "已添加到 Composer",
         "pathCopied": "已复制路径",
         "binaryUnavailable": "二进制文件（{size} 字节），无法预览。",
         "truncated": "已截断"
@@ -549,7 +549,7 @@
       "memoryLoading": "加载中...",
       "external": "外部 ID",
       "next": "下一步迁移",
-      "nextDescription": "主界面外壳稳定后，会继续把会话时间线、输入区、运行时面板、审批和附件迁移到这个区域。",
+      "nextDescription": "主界面外壳稳定后，会继续把会话时间线、Composer、运行时面板、审批和附件迁移到这个区域。",
       "none": "无",
       "overview": "会话概览",
       "runtime": "运行时",
@@ -566,7 +566,7 @@
       "takeoverEnableTitle": "开启接管？",
       "takeoverEnableDescription": "开启后，你可以从浏览器发送消息并控制这个正在运行的会话。在此程序中发出的消息可能不会立刻同步到运行此会话的其他客户端（如 Codex 桌面客户端），一般来说重启他们可以同步消息。接管正在运行的会话或者使用其他客户端向已接管的会话发送消息可能导致意料外的结果。",
       "takeoverDisableTitle": "关闭接管？",
-      "takeoverDisableDescription": "关闭后，会话会回到只读模式，输入区将被禁用。其他客户端的记录可能不会自动同步，一般来说重启他们可以同步在此程序中的会话记录。",
+      "takeoverDisableDescription": "关闭后，会话会回到只读模式，Composer 将被禁用。其他客户端的记录可能不会自动同步，一般来说重启他们可以同步在此程序中的会话记录。",
       "takeoverEnableConfirm": "开启接管",
       "takeoverDisableConfirm": "关闭接管",
       "readOnlyPlaceholder": "只读模式 - 开启接管后可发送消息",
