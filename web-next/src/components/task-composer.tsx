@@ -132,6 +132,7 @@ export function TaskComposer() {
     onlineConnectors.find((connector) => connector.id === selectedDevice) ??
     onlineConnectors[0] ??
     null
+  const selectedConnectorId = selectedConnector?.id ?? ""
   const agentOptions = React.useMemo(
     () => selectedConnector ? attachedRuntimes(selectedConnector).map((runtime) => ({ id: runtime, label: runtimeLabel(runtime) })) : [],
     [selectedConnector],
@@ -202,7 +203,7 @@ export function TaskComposer() {
   }, [selectedConnector?.id])
 
   React.useEffect(() => {
-    const connectorId = selectedConnector?.id
+    const connectorId = selectedConnectorId
 
     if (!connectorId || agentOptions.length === 0) {
       if (selectedAgent) setSelectedAgent("")
@@ -228,10 +229,10 @@ export function TaskComposer() {
     if (!agentOptions.some((option) => option.id === selectedAgent)) {
       setSelectedAgent(agentOptions[0]?.id ?? "")
     }
-  }, [agentOptions, preference, preferenceLoaded, selectedAgent, selectedConnector?.id])
+  }, [agentOptions, preference, preferenceLoaded, selectedAgent, selectedConnectorId])
 
   React.useEffect(() => {
-    if (!authSession?.accessToken || !selectedConnector || !selectedAgent) {
+    if (!authSession?.accessToken || !selectedConnectorId || !selectedAgent) {
       setRuntimeSchema(null)
       setRuntimeSettings({})
       setRuntimeConfigLoading(false)
@@ -243,7 +244,7 @@ export function TaskComposer() {
     setRuntimeSettings({})
     Promise.all([
       dashboardApi.getRuntimeConfigSchema(authSession.accessToken, selectedAgent),
-      dashboardApi.getConnectorAgentSettings(authSession.accessToken, selectedConnector.id, selectedAgent),
+      dashboardApi.getConnectorAgentSettings(authSession.accessToken, selectedConnectorId, selectedAgent),
       dashboardApi.getAgentDefaults(authSession.accessToken),
     ])
       .then(([schemaResponse, settingsResponse, defaultsResponse]) => {
@@ -266,7 +267,7 @@ export function TaskComposer() {
     return () => {
       cancelled = true
     }
-  }, [authSession?.accessToken, selectedAgent, selectedConnector])
+  }, [authSession?.accessToken, selectedAgent, selectedConnectorId])
 
   const runtimeFields = React.useMemo(
     () => runtimeConfigFields(runtimeSchema, runtimeSettings, "session"),
