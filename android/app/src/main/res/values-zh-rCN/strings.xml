@@ -292,8 +292,8 @@
     <string name="session_device_offline_body">设备重新连接后，这个会话才能继续接收消息。</string>
     <string name="session_enable_takeover_title">开启接管？</string>
     <string name="session_disable_takeover_title">关闭接管？</string>
-    <string name="session_enable_takeover_body">开启后可在手机上接管这个会话。消息可能不会立即同步到 %1$s 桌面端/CLI；如果 %1$s 桌面端/CLI 仍在运行，继续发送可能产生不可预期的结果。</string>
-    <string name="session_disable_takeover_body">关闭后会话将变为只读，不能继续发送消息。</string>
+    <string name="session_enable_takeover_body">&#8226; 开启后可在网页上接管这个会话。\n&#8226; 消息可能不会立即同步到 %1$s 客户端，通常重启它们后即可刷新同步。\n&#8226; 如果你同时在 Agents Anywhere 和 %1$s 客户端中操作此会话，可能导致意料外的结果。</string>
+    <string name="session_disable_takeover_body">&#8226; 关闭后会话将回到只读模式，无法继续发送消息。\n&#8226; 这里产生的会话记录可能不会立即同步到 %1$s 客户端，通常重启它们后即可刷新同步。</string>
     <string name="session_send_anyway_title">仍要发送？</string>
     <string name="session_send_anyway_body">这个会话处于错误状态。发送后会尝试开始新一轮对话。</string>
     <string name="session_approval_fallback">允许这次 %1$s 请求？</string>

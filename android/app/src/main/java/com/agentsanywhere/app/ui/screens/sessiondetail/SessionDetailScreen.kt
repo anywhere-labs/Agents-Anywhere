@@ -1003,7 +1003,7 @@ private fun TakeoverConfirmDialog(
     val message = if (enabled) {
         stringResource(R.string.session_enable_takeover_body, agentLabel)
     } else {
-        stringResource(R.string.session_disable_takeover_body)
+        stringResource(R.string.session_disable_takeover_body, agentLabel)
     }
 
     Dialog(

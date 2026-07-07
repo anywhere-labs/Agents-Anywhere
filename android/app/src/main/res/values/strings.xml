@@ -290,10 +290,10 @@
     <string name="session_title_fallback">Session</string>
     <string name="session_device_offline_title">Device is offline</string>
     <string name="session_device_offline_body">This session can\'t receive messages until its device reconnects.</string>
-    <string name="session_enable_takeover_title">Enable takeover?</string>
-    <string name="session_disable_takeover_title">Disable takeover?</string>
-    <string name="session_enable_takeover_body">Take over this session from your phone. Messages may not sync to %1$s desktop app/CLI right away. Sending while %1$s desktop app/CLI is still running may cause unexpected results.</string>
-    <string name="session_disable_takeover_body">This session will become read-only. You won\'t be able to send messages.</string>
+    <string name="session_enable_takeover_title">Turn on takeover?</string>
+    <string name="session_disable_takeover_title">Turn off takeover?</string>
+    <string name="session_enable_takeover_body">&#8226; Once enabled, you can take over this session from Agents Anywhere on the web.\n&#8226; Messages may not show up in the %1$s client right away. Restarting them usually refreshes the sync.\n&#8226; If you work in both Agents Anywhere and the %1$s client at the same time, the session may behave unexpectedly.</string>
+    <string name="session_disable_takeover_body">&#8226; After takeover is turned off, this session goes back to read-only mode and you can no longer send messages.\n&#8226; The history created here may not show up in the %1$s client right away. Restarting them usually refreshes the sync.</string>
     <string name="session_send_anyway_title">Send anyway?</string>
     <string name="session_send_anyway_body">This session is in an error state. Sending will try to start a new turn.</string>
     <string name="session_approval_fallback">Allow this %1$s request?</string>
