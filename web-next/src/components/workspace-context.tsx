@@ -53,6 +53,13 @@ export type OptimisticSessionMessage = {
   sessionId: string
   item: TimelineItem
   session?: RealSessionView
+  localSessionId?: string
+}
+
+export type SessionRefreshRequest = {
+  id: number
+  sessionId: string
+  clientMessageId?: string
 }
 
 // ─── Hash routing helpers ─────────────────────────────────────
@@ -196,6 +203,7 @@ type WorkspaceState = {
   pairDeviceDialogOpen: boolean
   composerInsertion: ComposerInsertion | null
   optimisticMessages: OptimisticSessionMessage[]
+  sessionRefreshRequest: SessionRefreshRequest | null
 
   // Actions
   openSession: (id: string) => void
@@ -223,6 +231,7 @@ type WorkspaceState = {
   getOptimisticSessionState: (sessionId: string) => SessionStateResponse | null
   isOptimisticSession: (sessionId: string) => boolean
   markOptimisticMessageFailed: (clientMessageId: string, message: string) => void
+  requestSessionRefresh: (sessionId: string, clientMessageId?: string) => void
   appendPathToComposer: (path: string) => boolean
   refreshData: () => void
 }
@@ -303,8 +312,11 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [pairDeviceDialogOpen, setPairDeviceDialogOpen] = React.useState(false)
   const [composerInsertion, setComposerInsertion] = React.useState<ComposerInsertion | null>(null)
   const [optimisticMessages, setOptimisticMessages] = React.useState<OptimisticSessionMessage[]>([])
+  const [sessionRefreshRequest, setSessionRefreshRequest] = React.useState<SessionRefreshRequest | null>(null)
   const firstDeviceWizardCheckedRef = React.useRef(false)
   const composerInsertionSeqRef = React.useRef(0)
+  const sessionRefreshRequestSeqRef = React.useRef(0)
+  const routeRef = React.useRef<ParsedRoute>({ page: "home" })
 
   // ── Fetch data from mock API ──────────────────────────────
   const initialLoadDoneRef = React.useRef(false)
@@ -394,14 +406,21 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   // ── Hash routing ──────────────────────────────────────────
   React.useEffect(() => {
     // Correct from hash immediately on mount, then keep in sync.
-    setRoute(parseHash(window.location.hash))
+    const initialRoute = parseHash(window.location.hash)
+    routeRef.current = initialRoute
+    setRoute(initialRoute)
     setRouteReady(true)
-    const handler = () => React.startTransition(() => setRoute(parseHash(window.location.hash)))
+    const handler = () => {
+      const nextRoute = parseHash(window.location.hash)
+      routeRef.current = nextRoute
+      React.startTransition(() => setRoute(nextRoute))
+    }
     window.addEventListener("hashchange", handler)
     return () => window.removeEventListener("hashchange", handler)
   }, [])
 
   const pushRoute = React.useCallback((r: ParsedRoute) => {
+    routeRef.current = r
     window.location.hash = buildHash(r)
     React.startTransition(() => setRoute(r))
   }, [])
@@ -628,10 +647,11 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       next[index] = mapped
       return next
     })
-    if (route.page === "session" && route.sessionId === localSessionId) {
+    const currentRoute = routeRef.current
+    if (currentRoute.page === "session" && currentRoute.sessionId === localSessionId) {
       pushRoute({ page: "session", sessionId: session.id })
     }
-  }, [pushRoute, route])
+  }, [pushRoute])
 
   const markOptimisticMessageFailed = React.useCallback((clientMessageId: string, message: string) => {
     setOptimisticMessages((prev) =>
@@ -681,8 +701,17 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   }, [optimisticMessages])
 
   const isOptimisticSession = React.useCallback((sessionId: string) => {
-    return optimisticMessages.some((message) => message.sessionId === sessionId && message.session?.id === sessionId)
+    return optimisticMessages.some((message) => message.localSessionId === sessionId && message.sessionId === sessionId)
   }, [optimisticMessages])
+
+  const requestSessionRefresh = React.useCallback((sessionId: string, clientMessageId?: string) => {
+    sessionRefreshRequestSeqRef.current += 1
+    setSessionRefreshRequest({
+      id: sessionRefreshRequestSeqRef.current,
+      sessionId,
+      clientMessageId,
+    })
+  }, [])
 
   const appendPathToComposer = React.useCallback((path: string) => {
     if (route.page !== "session" || !route.sessionId) return false
@@ -726,6 +755,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     pairDeviceDialogOpen,
     composerInsertion,
     optimisticMessages,
+    sessionRefreshRequest,
     openSession,
     goHome,
     navigate,
@@ -751,6 +781,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     getOptimisticSessionState,
     isOptimisticSession,
     markOptimisticMessageFailed,
+    requestSessionRefresh,
     appendPathToComposer,
     refreshData: fetchData,
   }

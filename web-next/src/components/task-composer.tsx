@@ -111,6 +111,7 @@ export function TaskComposer() {
     connectors,
     markOptimisticMessageFailed,
     openSession,
+    requestSessionRefresh,
     upsertSession,
     refreshData,
   } = useWorkspace()
@@ -377,6 +378,7 @@ export function TaskComposer() {
     addOptimisticMessage({
       clientMessageId,
       sessionId: localSessionId,
+      localSessionId,
       session: optimisticSession,
       item: buildOptimisticUserMessage({
         sessionId: localSessionId,
@@ -432,6 +434,7 @@ export function TaskComposer() {
         },
       )
       upsertSession(takeover.session)
+      requestSessionRefresh(sessionId, clientMessageId)
       refreshData()
     } catch (err) {
       const message = err instanceof Error ? err.message : t("createFailed")
