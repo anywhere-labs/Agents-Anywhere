@@ -24,7 +24,7 @@ Run Codex, Claude Code, and more agents on your Mac, Windows PC, Linux devbox, o
 ---
 
 > [!IMPORTANT]
-> 中国区线上服务已在 Beta 中，目前免费试用，仅对中国用户开放。想申请试用，请跳转到 [Beta Access And Contact](#beta-access-and-contact)加入交流群。
+> 中国区线上服务已在 Beta 中，目前免费试用，仅对中国用户开放。想申请内测，请跳转到 [Beta Access And Contact](#beta-access-and-contact)，扫码进群并联系管理员。
 
 ## What Is Agents Anywhere?
 
@@ -253,11 +253,11 @@ For Android, download the APK from [GitHub Releases](https://github.com/anywhere
 
 Agents Anywhere now provides a hosted beta service. The service is currently free, in beta, and open by application for users in China only.
 
-If you want to try it, scan the WeCom, Feishu, or QQ QR code below, join the group, and contact an admin.
+If you want to try it, scan the WeChat, Feishu, or QQ QR code below, join a group, and contact an admin.
 
-| WeCom | Feishu | QQ | Discord |
+| WeChat | Feishu | QQ | Discord |
 | --- | --- | --- | --- |
-| <img src="docs/contact/wecom-beta.jpeg" alt="WeCom beta access group QR code" width="180"> | <img src="docs/contact/feishu-beta.jpeg" alt="Feishu beta access group QR code" width="180"> | <img src="docs/contact/qq-beta.jpeg" alt="QQ beta access group QR code" width="180"> | <img src="docs/contact/discord-beta.jpeg" alt="Discord community QR code" width="180"> |
+| <img src="docs/contact/wechat-beta.png" alt="WeChat beta access group QR code" width="180"> | <img src="docs/contact/feishu-beta.jpeg" alt="Feishu beta access group QR code" width="180"> | <img src="docs/contact/qq-beta.jpeg" alt="QQ beta access group QR code" width="180"> | <img src="docs/contact/discord-beta.jpeg" alt="Discord community QR code" width="180"> |
 | China beta access group | China beta access group | China beta access group | International community |
 
 For overseas users, the hosted beta is not open yet. Join Discord for community updates.
