@@ -136,8 +136,6 @@ public final class RemoteTerminalView extends View {
 
     private static final String LOG_TAG = "TerminalView";
     private static final String DEBUG_LOG_TAG = "AATerminal";
-    private static final String INPUT_LOG_TAG = "AATerminalInput";
-    private static final boolean INPUT_DIAG_ENABLED = true;
     private long mImeEvents;
     private long mKeyEvents;
     private long mCodePointEvents;
@@ -375,7 +373,6 @@ public final class RemoteTerminalView extends View {
             @Override
             public boolean commitText(CharSequence text, int newCursorPosition) {
                 logIme("commitText len=" + (text == null ? 0 : text.length()) + " cursor=" + newCursorPosition);
-                inputDebug("IME commitText len=" + (text == null ? 0 : text.length()) + " cursor=" + newCursorPosition + " focus=" + hasFocus());
                 if (TERMINAL_VIEW_KEY_LOGGING_ENABLED) {
                     mClient.logInfo(LOG_TAG, "IME: commitText(\"" + text + "\", " + newCursorPosition + ")");
                 }
@@ -409,7 +406,6 @@ public final class RemoteTerminalView extends View {
                 stopTextSelectionMode();
                 final int textLengthInChars = text.length();
                 logIme("sendTextToTerminal len=" + textLengthInChars);
-                inputDebug("IME sendTextToTerminal len=" + textLengthInChars + " session=" + (mTermSession != null));
                 for (int i = 0; i < textLengthInChars; i++) {
                     char firstChar = text.charAt(i);
                     int codePoint;
@@ -459,7 +455,6 @@ public final class RemoteTerminalView extends View {
                         }
                     }
 
-                    inputDebug("IME dispatchCodePoint cp=" + codePoint + " ctrl=" + ctrlHeld + " index=" + i + "/" + textLengthInChars);
                     inputCodePoint(KEY_EVENT_SOURCE_SOFT_KEYBOARD, codePoint, ctrlHeld, false);
                 }
             }
@@ -804,7 +799,6 @@ public final class RemoteTerminalView extends View {
         if (shouldLog(mKeyEvents)) {
             debug("onKeyDown #" + mKeyEvents + " keyCode=" + keyCode + " action=" + event.getAction() + " repeat=" + event.getRepeatCount() + " ctrl=" + event.isCtrlPressed() + " alt=" + event.isAltPressed());
         }
-        inputDebug("onKeyDown #" + mKeyEvents + " keyCode=" + keyCode + " action=" + event.getAction() + " repeat=" + event.getRepeatCount() + " source=" + event.getDeviceId());
         if (TERMINAL_VIEW_KEY_LOGGING_ENABLED)
             mClient.logInfo(LOG_TAG, "onKeyDown(keyCode=" + keyCode + ", isSystem()=" + event.isSystem() + ", event=" + event + ")");
         if (mEmulator == null) return true;
@@ -887,7 +881,6 @@ public final class RemoteTerminalView extends View {
         if (shouldLog(mCodePointEvents)) {
             debug("inputCodePoint #" + mCodePointEvents + " source=" + eventSource + " cp=" + codePoint + " ctrl=" + controlDownFromEvent + " alt=" + leftAltDownFromEvent);
         }
-        inputDebug("inputCodePoint #" + mCodePointEvents + " source=" + eventSource + " cp=" + codePoint + " ctrl=" + controlDownFromEvent + " alt=" + leftAltDownFromEvent + " session=" + (mTermSession != null));
         if (TERMINAL_VIEW_KEY_LOGGING_ENABLED) {
             mClient.logInfo(LOG_TAG, "inputCodePoint(eventSource=" + eventSource + ", codePoint=" + codePoint + ", controlDownFromEvent=" + controlDownFromEvent + ", leftAltDownFromEvent="
                 + leftAltDownFromEvent + ")");
@@ -948,7 +941,6 @@ public final class RemoteTerminalView extends View {
             }
 
             // If left alt, send escape before the code point to make e.g. Alt+B and Alt+F work in readline:
-            inputDebug("writeCodePoint #" + mCodePointEvents + " cp=" + codePoint + " alt=" + altDown);
             mTermSession.writeCodePoint(altDown, codePoint);
         }
     }
@@ -1086,12 +1078,6 @@ public final class RemoteTerminalView extends View {
     private static void debug(String message) {
         // ponytail: temporary terminal probe, remove after freeze is diagnosed.
         Log.d(DEBUG_LOG_TAG, message);
-    }
-
-    private static void inputDebug(String message) {
-        if (INPUT_DIAG_ENABLED) {
-            Log.d(INPUT_LOG_TAG, "t=" + SystemClock.uptimeMillis() + " view " + message);
-        }
     }
 
     private CharSequence getText() {

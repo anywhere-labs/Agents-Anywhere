@@ -2,7 +2,6 @@ package com.agentsanywhere.app.feature.terminal
 
 import android.os.Handler
 import android.os.Looper
-import android.os.SystemClock
 import android.util.Log
 import android.view.KeyEvent
 import com.agentsanywhere.app.model.AgentDevice
@@ -47,10 +46,6 @@ class RemoteTerminalController(
     val emulator = TerminalEmulator(
         object : TerminalOutput() {
             override fun write(data: ByteArray, offset: Int, count: Int) {
-                inputDiag(
-                    "terminalOutput.write bytes=$count status=${state.value.status} socket=${socket != null} " +
-                        "pending=${pendingInputSize()} terminal=$terminalId",
-                )
                 sendBytes(data.copyOfRange(offset, offset + count))
             }
 
@@ -344,7 +339,6 @@ class RemoteTerminalController(
                         return
                     }
                     diag("ws open terminal=$terminalId")
-                    inputDiag("ws open status=${state.value.status} pending=${pendingInputSize()} terminal=$terminalId")
                     sendRemoteResizeNow(lastCols, lastRows, force = true, reason = "ws-open")
                     flushPendingInput()
                     confirmOpenIfNoStreamFrame(webSocket)
@@ -398,7 +392,6 @@ class RemoteTerminalController(
                 if (seq > 0) lastSeenSeq = seq
                 val data = runCatching { Base64.getDecoder().decode(json.optString("data")) }.getOrNull() ?: return
                 diag("rx replay seq=$seq bytes=${data.size} lastSeen=$lastSeenSeq terminal=$terminalId")
-                inputDiag("rx replay seq=$seq bytes=${data.size} status=${state.value.status} pending=${pendingInputSize()} terminal=$terminalId")
                 reconnectAttempts = 0
                 remoteTerminalGone = false
                 state.value = RemoteTerminalState(status = RemoteTerminalStatus.Open)
@@ -410,7 +403,6 @@ class RemoteTerminalController(
                 if (seq > 0) lastSeenSeq = seq
                 val data = runCatching { Base64.getDecoder().decode(json.optString("data")) }.getOrNull() ?: return
                 diag("rx output seq=$seq bytes=${data.size} lastSeen=$lastSeenSeq terminal=$terminalId")
-                inputDiag("rx output seq=$seq bytes=${data.size} status=${state.value.status} pending=${pendingInputSize()} terminal=$terminalId")
                 reconnectAttempts = 0
                 remoteTerminalGone = false
                 state.value = RemoteTerminalState(status = RemoteTerminalStatus.Open)
@@ -442,7 +434,6 @@ class RemoteTerminalController(
                 state.value.status == RemoteTerminalStatus.Connecting &&
                 !remoteTerminalGone
             ) {
-                inputDiag("confirm open grace elapsed status=${state.value.status} pending=${pendingInputSize()} terminal=$terminalId")
                 reconnectAttempts = 0
                 state.value = RemoteTerminalState(status = RemoteTerminalStatus.Open)
             }
@@ -451,30 +442,20 @@ class RemoteTerminalController(
 
     private fun sendBytes(bytes: ByteArray) {
         val localInputSeq = inputSeq.incrementAndGet()
-        inputDiag(
-            "input#$localInputSeq begin bytes=${bytes.size} status=${state.value.status} socket=${socket != null} " +
-                "manual=$manuallyClosed pending=${pendingInputSize()} terminal=$terminalId",
-        )
         if (state.value.status != RemoteTerminalStatus.Open) {
             if (terminalId != null && streamUrl != null && !manuallyClosed) {
                 synchronized(pendingInputLock) {
                     pendingInput.addLast(bytes)
                 }
                 diag("input#$localInputSeq queued bytes=${bytes.size} status=${state.value.status} terminal=$terminalId")
-                inputDiag(
-                    "input#$localInputSeq queued bytes=${bytes.size} status=${state.value.status} socket=${socket != null} " +
-                        "pending=${pendingInputSize()} terminal=$terminalId",
-                )
                 scheduleReconnect()
             } else {
                 diag("input#$localInputSeq dropped bytes=${bytes.size} status=${state.value.status} terminal=$terminalId manual=$manuallyClosed")
-                inputDiag("input#$localInputSeq dropped bytes=${bytes.size} status=${state.value.status} terminal=$terminalId manual=$manuallyClosed")
             }
             return
         }
         val encoded = Base64.getEncoder().encodeToString(bytes)
         diag("input#$localInputSeq send bytes=${bytes.size} terminal=$terminalId")
-        inputDiag("input#$localInputSeq send bytes=${bytes.size} encodedChars=${encoded.length} terminal=$terminalId")
         sendFrame("input", JSONObject().put("type", "input").put("data", encoded).toString())
     }
 
@@ -482,21 +463,14 @@ class RemoteTerminalController(
         val targetSocket = socket
         if (targetSocket == null) {
             diag("frame $kind skipped no-socket terminal=$terminalId")
-            inputDiag("frame $kind skipped no-socket status=${state.value.status} pending=${pendingInputSize()} terminal=$terminalId")
             return
         }
         val localFrameSeq = frameSeq.incrementAndGet()
-        val startedAt = SystemClock.uptimeMillis()
-        inputDiag("frame#$localFrameSeq enqueue kind=$kind chars=${frame.length} status=${state.value.status} terminal=$terminalId")
         terminalScope.launch {
             val accepted = sendMutex.withLock {
                 if (socket !== targetSocket || manuallyClosed) null else targetSocket.send(frame)
             }
             diag("frame#$localFrameSeq $kind accepted=$accepted terminal=$terminalId")
-            inputDiag(
-                "frame#$localFrameSeq done kind=$kind accepted=$accepted dt=${SystemClock.uptimeMillis() - startedAt}ms " +
-                    "socketSame=${socket === targetSocket} status=${state.value.status} terminal=$terminalId",
-            )
             if (accepted == false && !manuallyClosed) {
                 main.post {
                     state.value = RemoteTerminalState(status = RemoteTerminalStatus.Closed)
@@ -547,7 +521,6 @@ class RemoteTerminalController(
         pendingRemoteResizeCols = cols
         pendingRemoteResizeRows = rows
         val generation = ++remoteResizeGeneration
-        inputDiag("resize schedule cols=$cols rows=$rows gen=$generation terminal=$terminalId")
         main.postDelayed({
             if (generation != remoteResizeGeneration || manuallyClosed) return@postDelayed
             val pendingCols = pendingRemoteResizeCols ?: return@postDelayed
@@ -567,16 +540,13 @@ class RemoteTerminalController(
     private fun sendRemoteResizeNow(cols: Int, rows: Int, force: Boolean, reason: String) {
         if (cols <= 0 || rows <= 0) return
         if (socket == null) {
-            inputDiag("resize skip no-socket reason=$reason cols=$cols rows=$rows terminal=$terminalId")
             return
         }
         if (!force && cols == lastSentRemoteResizeCols && rows == lastSentRemoteResizeRows) {
-            inputDiag("resize skip duplicate reason=$reason cols=$cols rows=$rows terminal=$terminalId")
             return
         }
         lastSentRemoteResizeCols = cols
         lastSentRemoteResizeRows = rows
-        inputDiag("resize send reason=$reason cols=$cols rows=$rows force=$force terminal=$terminalId")
         sendFrame("resize", JSONObject().put("type", "resize").put("cols", cols).put("rows", rows).toString())
     }
 
@@ -592,10 +562,8 @@ class RemoteTerminalController(
         }
         if (queued.isEmpty()) return
         diag("flush queued inputs count=${queued.size} terminal=$terminalId")
-        inputDiag("flush queued inputs count=${queued.size} status=${state.value.status} terminal=$terminalId")
         for (bytes in queued) {
             val encoded = Base64.getEncoder().encodeToString(bytes)
-            inputDiag("flush input bytes=${bytes.size} encodedChars=${encoded.length} terminal=$terminalId")
             sendFrame("input", JSONObject().put("type", "input").put("data", encoded).toString())
         }
     }
@@ -720,12 +688,6 @@ class RemoteTerminalController(
         }
     }
 
-    private fun pendingInputSize(): Int {
-        return synchronized(pendingInputLock) {
-            pendingInput.size
-        }
-    }
-
     override fun onTextChanged(changedSession: TerminalSession?) = emitRedraw()
     override fun onTitleChanged(changedSession: TerminalSession?) = Unit
     override fun onSessionFinished(finishedSession: TerminalSession?) = Unit
@@ -747,12 +709,6 @@ class RemoteTerminalController(
         Log.d(DIAG_TAG, message)
     }
 
-    private fun inputDiag(message: String) {
-        if (INPUT_DIAG_ENABLED) {
-            Log.d(INPUT_DIAG_TAG, "t=${SystemClock.uptimeMillis()} $message")
-        }
-    }
-
     private data class TerminalCloseTarget(
         val connectorId: String,
         val terminalId: String,
@@ -760,8 +716,6 @@ class RemoteTerminalController(
 
     private companion object {
         private const val DIAG_TAG = "AATerminal"
-        private const val INPUT_DIAG_TAG = "AATerminalInput"
-        private const val INPUT_DIAG_ENABLED = true
         private const val RECONNECT_DELAY_MS = 800L
         private const val STREAM_OPEN_GRACE_MS = 1_200L
         private const val MAX_RECONNECT_ATTEMPTS = 3
