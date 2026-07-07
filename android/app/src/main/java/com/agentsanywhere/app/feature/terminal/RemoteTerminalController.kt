@@ -843,7 +843,7 @@ class RemoteTerminalController(
     )
 
     private companion object {
-        private const val DIAG_TAG = "AATerminal"
+        private const val DIAG_TAG = "AATerminalSwitch"
         private const val INPUT_DIAG_TAG = "AATerminalInput"
         private const val INPUT_DIAG_ENABLED = true
         private const val RECONNECT_DELAY_MS = 800L
