@@ -731,7 +731,7 @@ fun SessionDetailScreen(
         }
         else -> null
     }
-    val showInterrupt = inputEnabled && (serverBusy || state.interrupting) && draft.isBlank() && attachments.isEmpty()
+    val showInterrupt = inputEnabled && (serverBusy || state.interrupting)
     val replyTarget = state.session?.runtimeLabel?.takeIf { it.isNotBlank() }
         ?: stringResource(R.string.session_agent_fallback)
     val placeholder = when {
