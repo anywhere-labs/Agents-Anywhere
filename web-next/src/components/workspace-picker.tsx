@@ -232,6 +232,7 @@ export function WorkspacePicker({
     connectors.find((c) => c.id === connectorId) ??
     connectors.find((c) => c.status === "online") ??
     connectors[0]
+  const activeConnectorId = activeConnector?.id
   const hasOnlineConnector = connectors.some((c) => c.status === "online")
   const [resolvedHomePath, setResolvedHomePath] = React.useState("")
   const [resolvingHomePath, setResolvingHomePath] = React.useState(false)
@@ -263,11 +264,13 @@ export function WorkspacePicker({
     }
   }, [activeConnector?.id, authSession?.accessToken])
 
-  // Derive recent unique workspaces from session CWDs
+  // Derive recent unique workspaces for the active connector from session CWDs.
   const recentWorkspaces = React.useMemo<WorkspaceEntry[]>(() => {
+    if (!activeConnectorId) return []
     const seen = new Set<string>()
     const result: WorkspaceEntry[] = []
     for (const s of sessions) {
+      if (s.connectorId !== activeConnectorId) continue
       if (!s.cwd || seen.has(s.cwd)) continue
       seen.add(s.cwd)
       const isWin = s.cwd.includes("\\")
@@ -277,16 +280,16 @@ export function WorkspacePicker({
       if (result.length >= 5) break
     }
     return result
-  }, [sessions])
+  }, [activeConnectorId, sessions])
 
   const homeWorkspace: WorkspaceEntry = React.useMemo(() => {
-    return { label: t("home"), path: resolvedHomePath, connectorId: activeConnector?.id }
-  }, [activeConnector?.id, resolvedHomePath, t])
+    return { label: t("home"), path: resolvedHomePath, connectorId: activeConnectorId }
+  }, [activeConnectorId, resolvedHomePath, t])
 
   const [internalWorkspace, setInternalWorkspace] = React.useState<WorkspaceEntry>(homeWorkspace)
   const [dialogOpen, setDialogOpen] = React.useState(false)
   const valueBelongsToActiveConnector =
-    Boolean(value?.path) && (!activeConnector?.id || value?.connectorId === activeConnector.id)
+    Boolean(value?.path) && (!activeConnectorId || value?.connectorId === activeConnectorId)
   const workspace = valueBelongsToActiveConnector ? value! : internalWorkspace
 
   const updateWorkspace = React.useCallback(
@@ -298,17 +301,17 @@ export function WorkspacePicker({
   )
 
   React.useEffect(() => {
-    if (value?.connectorId && activeConnector?.id && value.connectorId !== activeConnector.id) {
-      setInternalWorkspace({ label: t("home"), path: "", connectorId: activeConnector.id })
+    if (value?.connectorId && activeConnectorId && value.connectorId !== activeConnectorId) {
+      setInternalWorkspace({ label: t("home"), path: "", connectorId: activeConnectorId })
     }
     if (!homeWorkspace.path) return
     if (!value) {
       setInternalWorkspace(homeWorkspace)
       onChange?.(homeWorkspace)
-    } else if (activeConnector?.id && value.connectorId !== activeConnector.id) {
+    } else if (activeConnectorId && value.connectorId !== activeConnectorId) {
       onChange?.(homeWorkspace)
     }
-  }, [activeConnector?.id, homeWorkspace, onChange, value])
+  }, [activeConnectorId, homeWorkspace, onChange, value])
 
   const isHome = Boolean(homeWorkspace.path && workspace.path === homeWorkspace.path)
 
@@ -405,7 +408,7 @@ export function WorkspacePicker({
           const sep = isWin ? "\\" : "/"
           const parts = path.split(sep)
           const label = parts[parts.length - 1] || path
-          updateWorkspace({ label, path, connectorId: activeConnector?.id })
+          updateWorkspace({ label, path, connectorId: activeConnectorId })
         }}
       />
     </>
