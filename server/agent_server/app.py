@@ -79,7 +79,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             await app.state.store.set_all_connectors_offline()
             await app.state.store.close()
 
-    app = FastAPI(title="Agent Server", version="0.1.6", lifespan=lifespan)
+    app = FastAPI(title="Agent Server", version="0.1.7.2", lifespan=lifespan)
     cors_origins = os.environ.get("AGENT_SERVER_CORS_ORIGINS")
     app.add_middleware(
         CORSMiddleware,

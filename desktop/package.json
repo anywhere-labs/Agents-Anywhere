@@ -1,7 +1,7 @@
 {
   "name": "agents-anywhere-desktop",
   "private": true,
-  "version": "0.1.7",
+  "version": "0.1.7.2",
   "description": "Desktop connector controller for Agents Anywhere",
   "type": "module",
   "main": "electron/main.cjs",
