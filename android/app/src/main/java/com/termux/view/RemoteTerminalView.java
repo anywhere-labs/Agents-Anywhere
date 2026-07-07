@@ -137,7 +137,8 @@ public final class RemoteTerminalView extends View {
     private static final String LOG_TAG = "TerminalView";
     private static final String DEBUG_LOG_TAG = "AATerminal";
     private static final String INPUT_LOG_TAG = "AATerminalInput";
-    private static final boolean INPUT_DIAG_ENABLED = true;
+    private static final boolean DEBUG_LOGGING_ENABLED = false;
+    private static final boolean INPUT_DIAG_ENABLED = false;
     private long mImeEvents;
     private long mKeyEvents;
     private long mCodePointEvents;
@@ -1084,8 +1085,9 @@ public final class RemoteTerminalView extends View {
     }
 
     private static void debug(String message) {
-        // ponytail: temporary terminal probe, remove after freeze is diagnosed.
-        Log.d(DEBUG_LOG_TAG, message);
+        if (DEBUG_LOGGING_ENABLED) {
+            Log.d(DEBUG_LOG_TAG, message);
+        }
     }
 
     private static void inputDebug(String message) {

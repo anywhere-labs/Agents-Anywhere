@@ -90,6 +90,7 @@ class RemoteTerminalController(
     private var remoteResizeGeneration = 0
     private var lastSentRemoteResizeCols: Int? = null
     private var lastSentRemoteResizeRows: Int? = null
+    private val lifecycleGeneration = AtomicLong(0)
     private val inputSeq = AtomicLong(0)
     private val frameSeq = AtomicLong(0)
     private val pendingInput = ArrayDeque<ByteArray>()
@@ -115,6 +116,8 @@ class RemoteTerminalController(
             state.value = RemoteTerminalState(status = RemoteTerminalStatus.Error, message = "This session has no workspace.")
             return
         }
+        val generation = lifecycleGeneration.get()
+        manuallyClosed = false
         state.value = RemoteTerminalState(status = RemoteTerminalStatus.Connecting)
         terminalController.openWorkspaceTerminal(
             session = session,
@@ -123,6 +126,10 @@ class RemoteTerminalController(
             ephemeralGroupId = groupId,
         )
             .onSuccess { connection ->
+                if (!isCurrentLifecycle(generation) || manuallyClosed) {
+                    diag("open ignored stale workspace terminal=${connection.terminal.terminalId} generation=$generation current=${lifecycleGeneration.get()}")
+                    return@onSuccess
+                }
                 connectorId = connection.connectorId
                 terminalId = connection.terminal.terminalId
                 streamUrl = connection.streamUrl
@@ -130,9 +137,10 @@ class RemoteTerminalController(
                 reconnectAttempts = 0
                 remoteTerminalGone = false
                 diag("terminal opened connector=${connection.connectorId} terminal=${connection.terminal.terminalId}")
-                connectSocket(connection.streamUrl)
+                connectSocket(connection.streamUrl, generation)
             }
             .onFailure { error ->
+                if (!isCurrentLifecycle(generation) || manuallyClosed) return@onFailure
                 diag("open failed ${error::class.java.simpleName}: ${error.message}")
                 state.value = RemoteTerminalState(
                     status = RemoteTerminalStatus.Error,
@@ -156,6 +164,8 @@ class RemoteTerminalController(
             state.value = RemoteTerminalState(status = RemoteTerminalStatus.Error, message = "This device is offline.")
             return
         }
+        val generation = lifecycleGeneration.get()
+        manuallyClosed = false
         state.value = RemoteTerminalState(status = RemoteTerminalStatus.Connecting)
         terminalController.openDeviceTerminal(
             connectorId = device.id,
@@ -164,6 +174,10 @@ class RemoteTerminalController(
             ephemeralGroupId = groupId,
         )
             .onSuccess { connection ->
+                if (!isCurrentLifecycle(generation) || manuallyClosed) {
+                    diag("open ignored stale device terminal=${connection.terminal.terminalId} generation=$generation current=${lifecycleGeneration.get()}")
+                    return@onSuccess
+                }
                 connectorId = connection.connectorId
                 terminalId = connection.terminal.terminalId
                 streamUrl = connection.streamUrl
@@ -171,9 +185,10 @@ class RemoteTerminalController(
                 reconnectAttempts = 0
                 remoteTerminalGone = false
                 diag("terminal opened connector=${connection.connectorId} terminal=${connection.terminal.terminalId}")
-                connectSocket(connection.streamUrl)
+                connectSocket(connection.streamUrl, generation)
             }
             .onFailure { error ->
+                if (!isCurrentLifecycle(generation) || manuallyClosed) return@onFailure
                 diag("open failed ${error::class.java.simpleName}: ${error.message}")
                 state.value = RemoteTerminalState(
                     status = RemoteTerminalStatus.Error,
@@ -287,6 +302,7 @@ class RemoteTerminalController(
 
     fun detach() {
         diag("detach requested terminal=$terminalId")
+        lifecycleGeneration.incrementAndGet()
         manuallyClosed = true
         socket?.close(1000, "detached")
         socket = null
@@ -294,12 +310,16 @@ class RemoteTerminalController(
         reconnectAttempts = 0
         remoteTerminalGone = false
         cancelPendingRemoteResize()
+        outputBuffer.clear()
         setLatched(ctrl = false, alt = false)
         synchronized(pendingInputLock) {
             pendingInput.clear()
         }
         clearEchoTraces()
-        if (terminalId != null && state.value.status != RemoteTerminalStatus.Exited) {
+        if (
+            (terminalId != null || state.value.status == RemoteTerminalStatus.Connecting) &&
+            state.value.status != RemoteTerminalStatus.Exited
+        ) {
             state.value = RemoteTerminalState(status = RemoteTerminalStatus.Closed)
         }
     }
@@ -311,6 +331,7 @@ class RemoteTerminalController(
 
     private fun detachTerminalForClose(): TerminalCloseTarget? {
         diag("close requested terminal=$terminalId")
+        lifecycleGeneration.incrementAndGet()
         manuallyClosed = true
         socket?.close(1000, "closed")
         socket = null
@@ -323,6 +344,7 @@ class RemoteTerminalController(
         reconnectAttempts = 0
         remoteTerminalGone = false
         cancelPendingRemoteResize()
+        outputBuffer.clear()
         setLatched(ctrl = false, alt = false)
         synchronized(pendingInputLock) {
             pendingInput.clear()
@@ -336,14 +358,15 @@ class RemoteTerminalController(
         }
     }
 
-    private fun connectSocket(url: String) {
+    private fun connectSocket(url: String, generation: Long) {
+        if (!isCurrentLifecycle(generation) || manuallyClosed) return
         manuallyClosed = false
         diag("ws connecting terminal=$terminalId fromSeq=${url.substringAfter("fromSeq=", "0").substringBefore("&")}")
         socket = http.newWebSocket(
             Request.Builder().url(url).build(),
             object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
-                    if (socket !== webSocket || manuallyClosed) {
+                    if (!isActiveSocket(webSocket, generation)) {
                         webSocket.close(1000, "stale")
                         return
                     }
@@ -355,25 +378,25 @@ class RemoteTerminalController(
                 }
 
                 override fun onMessage(webSocket: WebSocket, text: String) {
-                    if (socket !== webSocket || manuallyClosed) return
+                    if (!isActiveSocket(webSocket, generation)) return
                     handleFrame(text)
                 }
 
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                     diag("ws closed code=$code reason=$reason manual=$manuallyClosed terminal=$terminalId")
-                    if (socket !== webSocket) return
+                    if (socket !== webSocket || !isCurrentLifecycle(generation)) return
                     socket = null
                     if (!manuallyClosed) {
-                        scheduleReconnect()
+                        scheduleReconnect(generation)
                     }
                 }
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                     diag("ws failure ${t::class.java.simpleName}: ${t.message} manual=$manuallyClosed terminal=$terminalId")
-                    if (socket !== webSocket) return
+                    if (socket !== webSocket || !isCurrentLifecycle(generation)) return
                     socket = null
                     if (!manuallyClosed) {
-                        scheduleReconnect()
+                        scheduleReconnect(generation)
                     }
                 }
             },
@@ -383,6 +406,7 @@ class RemoteTerminalController(
     private fun reconnectExistingIfNeeded(force: Boolean = false) {
         val url = streamUrl ?: return
         if (!force && (socket != null || state.value.status == RemoteTerminalStatus.Connecting)) return
+        val generation = lifecycleGeneration.get()
         socket?.close(1000, "reconnect")
         socket = null
         manuallyClosed = false
@@ -390,7 +414,7 @@ class RemoteTerminalController(
         reconnectAttempts = 0
         remoteTerminalGone = false
         state.value = RemoteTerminalState(status = RemoteTerminalStatus.Connecting)
-        connectSocket(url.withFromSeq(lastSeenSeq))
+        connectSocket(url.withFromSeq(lastSeenSeq), generation)
     }
 
     private fun handleFrame(text: String) {
@@ -511,9 +535,9 @@ class RemoteTerminalController(
         }
     }
 
-    private fun scheduleReconnect() {
+    private fun scheduleReconnect(generation: Long = lifecycleGeneration.get()) {
         val originalUrl = streamUrl ?: return
-        if (manuallyClosed || terminalId == null) return
+        if (manuallyClosed || terminalId == null || !isCurrentLifecycle(generation)) return
         if (reconnectScheduled) return
         if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
             diag("reconnect exhausted terminal=$terminalId lastSeen=$lastSeenSeq")
@@ -529,12 +553,21 @@ class RemoteTerminalController(
         state.value = RemoteTerminalState(status = RemoteTerminalStatus.Closed)
         main.postDelayed({
             reconnectScheduled = false
-            if (manuallyClosed || socket != null || terminalId == null || streamUrl != originalUrl) return@postDelayed
-            connectSocket(originalUrl.withFromSeq(lastSeenSeq))
+            if (
+                manuallyClosed ||
+                socket != null ||
+                terminalId == null ||
+                streamUrl != originalUrl ||
+                !isCurrentLifecycle(generation)
+            ) {
+                return@postDelayed
+            }
+            connectSocket(originalUrl.withFromSeq(lastSeenSeq), generation)
         }, RECONNECT_DELAY_MS)
     }
 
     private fun forgetRemoteTerminal() {
+        lifecycleGeneration.incrementAndGet()
         socket?.close(1000, "forgotten")
         socket = null
         connectorId = null
@@ -548,6 +581,14 @@ class RemoteTerminalController(
             pendingInput.clear()
         }
         clearEchoTraces()
+    }
+
+    private fun isCurrentLifecycle(generation: Long): Boolean {
+        return lifecycleGeneration.get() == generation
+    }
+
+    private fun isActiveSocket(webSocket: WebSocket, generation: Long): Boolean {
+        return socket === webSocket && !manuallyClosed && isCurrentLifecycle(generation)
     }
 
     private fun traceInputAwaitingEcho(inputId: Long, byteCount: Int) {
@@ -808,7 +849,9 @@ class RemoteTerminalController(
     override fun logStackTrace(tag: String?, e: Exception?) = Unit
 
     private fun diag(message: String) {
-        Log.d(DIAG_TAG, message)
+        if (DIAG_ENABLED) {
+            Log.d(DIAG_TAG, message)
+        }
     }
 
     private fun inputDiag(message: String) {
@@ -832,7 +875,8 @@ class RemoteTerminalController(
     private companion object {
         private const val DIAG_TAG = "AATerminal"
         private const val INPUT_DIAG_TAG = "AATerminalInput"
-        private const val INPUT_DIAG_ENABLED = true
+        private const val DIAG_ENABLED = false
+        private const val INPUT_DIAG_ENABLED = false
         private const val RECONNECT_DELAY_MS = 800L
         private const val STREAM_OPEN_GRACE_MS = 1_200L
         private const val MAX_RECONNECT_ATTEMPTS = 3
