@@ -73,6 +73,7 @@ class RemoteTerminalController(
     private var lastCols = 80
     private var lastRows = 24
     private var manuallyClosed = false
+    private var remoteTerminalGone = false
     private var ctrlLatched = false
     private var altLatched = false
     private val inputSeq = AtomicLong(0)
@@ -109,6 +110,7 @@ class RemoteTerminalController(
                 streamUrl = connection.streamUrl
                 lastSeenSeq = 0L
                 reconnectAttempts = 0
+                remoteTerminalGone = false
                 diag("terminal opened connector=${connection.connectorId} terminal=${connection.terminal.terminalId}")
                 connectSocket(connection.streamUrl)
             }
@@ -147,6 +149,7 @@ class RemoteTerminalController(
                 streamUrl = connection.streamUrl
                 lastSeenSeq = 0L
                 reconnectAttempts = 0
+                remoteTerminalGone = false
                 diag("terminal opened connector=${connection.connectorId} terminal=${connection.terminal.terminalId}")
                 connectSocket(connection.streamUrl)
             }
@@ -270,6 +273,7 @@ class RemoteTerminalController(
         socket = null
         reconnectScheduled = false
         reconnectAttempts = 0
+        remoteTerminalGone = false
         setLatched(ctrl = false, alt = false)
         synchronized(pendingInputLock) {
             pendingInput.clear()
@@ -296,6 +300,7 @@ class RemoteTerminalController(
         streamUrl = null
         reconnectScheduled = false
         reconnectAttempts = 0
+        remoteTerminalGone = false
         setLatched(ctrl = false, alt = false)
         synchronized(pendingInputLock) {
             pendingInput.clear()
@@ -319,8 +324,6 @@ class RemoteTerminalController(
                         webSocket.close(1000, "stale")
                         return
                     }
-                    reconnectAttempts = 0
-                    state.value = RemoteTerminalState(status = RemoteTerminalStatus.Open)
                     diag("ws open terminal=$terminalId")
                     sendFrame("resize", JSONObject().put("type", "resize").put("cols", lastCols).put("rows", lastRows).toString())
                     flushPendingInput()
@@ -360,6 +363,7 @@ class RemoteTerminalController(
         manuallyClosed = false
         reconnectScheduled = false
         reconnectAttempts = 0
+        remoteTerminalGone = false
         state.value = RemoteTerminalState(status = RemoteTerminalStatus.Connecting)
         connectSocket(url.withFromSeq(lastSeenSeq))
     }
@@ -373,6 +377,9 @@ class RemoteTerminalController(
                 if (seq > 0) lastSeenSeq = seq
                 val data = runCatching { Base64.getDecoder().decode(json.optString("data")) }.getOrNull() ?: return
                 diag("rx replay seq=$seq bytes=${data.size} lastSeen=$lastSeenSeq terminal=$terminalId")
+                reconnectAttempts = 0
+                remoteTerminalGone = false
+                state.value = RemoteTerminalState(status = RemoteTerminalStatus.Open)
                 main.post {
                     emulator.reset()
                     emulator.append(data, data.size)
@@ -385,6 +392,9 @@ class RemoteTerminalController(
                 if (seq > 0) lastSeenSeq = seq
                 val data = runCatching { Base64.getDecoder().decode(json.optString("data")) }.getOrNull() ?: return
                 diag("rx output seq=$seq bytes=${data.size} lastSeen=$lastSeenSeq terminal=$terminalId")
+                reconnectAttempts = 0
+                remoteTerminalGone = false
+                state.value = RemoteTerminalState(status = RemoteTerminalStatus.Open)
                 main.post {
                     emulator.append(data, data.size)
                     emitRedraw()
@@ -400,11 +410,10 @@ class RemoteTerminalController(
             "error" -> {
                 diag("rx error ${json.optString("message")} terminal=$terminalId")
                 val message = json.optString("message").takeIf { it.isNotBlank() }
-                state.value = if (message == null) {
-                    RemoteTerminalState(status = RemoteTerminalStatus.Closed)
-                } else {
-                    RemoteTerminalState(status = RemoteTerminalStatus.Error, message = message)
+                if (message?.contains("terminal not found", ignoreCase = true) == true) {
+                    remoteTerminalGone = true
                 }
+                state.value = RemoteTerminalState(status = RemoteTerminalStatus.Closed)
             }
         }
     }
@@ -454,18 +463,34 @@ class RemoteTerminalController(
         if (reconnectScheduled) return
         if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
             diag("reconnect exhausted terminal=$terminalId lastSeen=$lastSeenSeq")
+            if (remoteTerminalGone) {
+                forgetRemoteTerminal()
+            }
             state.value = RemoteTerminalState(status = RemoteTerminalStatus.Closed)
             return
         }
         reconnectAttempts += 1
         reconnectScheduled = true
         diag("reconnect scheduled attempt=$reconnectAttempts terminal=$terminalId lastSeen=$lastSeenSeq")
-        state.value = RemoteTerminalState(status = RemoteTerminalStatus.Connecting)
+        state.value = RemoteTerminalState(status = RemoteTerminalStatus.Closed)
         main.postDelayed({
             reconnectScheduled = false
             if (manuallyClosed || socket != null || terminalId == null || streamUrl != originalUrl) return@postDelayed
             connectSocket(originalUrl.withFromSeq(lastSeenSeq))
         }, RECONNECT_DELAY_MS)
+    }
+
+    private fun forgetRemoteTerminal() {
+        socket?.close(1000, "forgotten")
+        socket = null
+        connectorId = null
+        terminalId = null
+        streamUrl = null
+        reconnectScheduled = false
+        remoteTerminalGone = false
+        synchronized(pendingInputLock) {
+            pendingInput.clear()
+        }
     }
 
     private fun flushPendingInput() {
@@ -588,7 +613,7 @@ class RemoteTerminalController(
     private companion object {
         private const val DIAG_TAG = "AATerminal"
         private const val RECONNECT_DELAY_MS = 800L
-        private const val MAX_RECONNECT_ATTEMPTS = 5
+        private const val MAX_RECONNECT_ATTEMPTS = 3
     }
 }
 

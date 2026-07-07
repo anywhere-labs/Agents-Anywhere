@@ -23,11 +23,11 @@ class TerminalController(
                 val root = session.cwd?.takeIf { it.isNotBlank() }
                     ?: throw IllegalStateException("This session has no workspace.")
                 val auth = authSession()
+                val label = sessionTerminalLabel(session.id)
                 val terminal = findReusableTerminal(
                     auth = auth,
                     connectorId = session.connectorId,
-                    expectedRoot = root,
-                    labelPrefix = WORKSPACE_LABEL_PREFIX,
+                    label = label,
                 ) ?: terminalApi.createTerminal(
                     serverUrl = auth.serverUrl,
                     authorizationToken = auth.accessToken,
@@ -36,7 +36,7 @@ class TerminalController(
                     cols = cols,
                     rows = rows,
                     ephemeralGroupId = ephemeralGroupId,
-                    label = WORKSPACE_LABEL,
+                    label = label,
                 )
                 WorkspaceTerminalConnection(
                     connectorId = session.connectorId,
@@ -59,11 +59,11 @@ class TerminalController(
         return withContext(Dispatchers.IO) {
             runCatching {
                 val auth = authSession()
+                val label = deviceTerminalLabel(connectorId)
                 val terminal = findReusableTerminal(
                     auth = auth,
                     connectorId = connectorId,
-                    expectedRoot = null,
-                    labelPrefix = DEVICE_LABEL_PREFIX,
+                    label = label,
                 ) ?: terminalApi.createTerminal(
                     serverUrl = auth.serverUrl,
                     authorizationToken = auth.accessToken,
@@ -72,7 +72,7 @@ class TerminalController(
                     cols = cols,
                     rows = rows,
                     ephemeralGroupId = ephemeralGroupId,
-                    label = DEVICE_LABEL,
+                    label = label,
                 )
                 WorkspaceTerminalConnection(
                     connectorId = connectorId,
@@ -89,8 +89,7 @@ class TerminalController(
     private fun findReusableTerminal(
         auth: ApiAuth,
         connectorId: String,
-        expectedRoot: String?,
-        labelPrefix: String,
+        label: String,
     ): RemoteTerminal? {
         return runCatching {
             terminalApi.listTerminals(
@@ -100,24 +99,10 @@ class TerminalController(
             )
                 .asSequence()
                 .filter { it.status != "exited" }
-                .filter { terminal ->
-                    if (expectedRoot == null) {
-                        terminal.label.startsWith(labelPrefix)
-                    } else {
-                        samePath(terminal.cwd, expectedRoot)
-                    }
-                }
+                .filter { it.label == label }
                 .sortedByDescending { it.scrollbackSeq }
                 .firstOrNull()
         }.getOrNull()
-    }
-
-    private fun samePath(left: String, right: String): Boolean {
-        val a = left.trim().trimEnd('/', '\\')
-        val b = right.trim().trimEnd('/', '\\')
-        if (a.isBlank() || b.isBlank()) return false
-        val ignoreCase = a.getOrNull(1) == ':' || b.getOrNull(1) == ':'
-        return a.equals(b, ignoreCase = ignoreCase)
     }
 
     suspend fun closeTerminal(
@@ -153,10 +138,22 @@ class TerminalController(
     )
 
     private companion object {
-        private const val WORKSPACE_LABEL_PREFIX = "Agents Anywhere Session"
-        private const val DEVICE_LABEL_PREFIX = "Agents Anywhere Device"
-        private const val WORKSPACE_LABEL = "Agents Anywhere Session"
-        private const val DEVICE_LABEL = "Agents Anywhere Device"
+        private const val TERMINAL_LABEL_MAX_CHARS = 64
+
+        private fun sessionTerminalLabel(sessionId: String): String {
+            return uniqueTerminalLabel("AA Session", sessionId)
+        }
+
+        private fun deviceTerminalLabel(connectorId: String): String {
+            return uniqueTerminalLabel("AA Device", connectorId)
+        }
+
+        private fun uniqueTerminalLabel(prefix: String, id: String): String {
+            val hash = id.hashCode().toUInt().toString(16)
+            val maxIdLength = TERMINAL_LABEL_MAX_CHARS - prefix.length - hash.length - 2
+            val trimmedId = id.take(maxIdLength.coerceAtLeast(8))
+            return "$prefix $trimmedId $hash"
+        }
     }
 }
 
