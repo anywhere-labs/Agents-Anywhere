@@ -64,6 +64,7 @@ class RemoteTerminalController(
     )
 
     private val main = Handler(Looper.getMainLooper())
+    private val outputBuffer = RemoteTerminalOutputBuffer()
     private val http = OkHttpClient()
     private val terminalScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val sendMutex = Mutex()
@@ -92,6 +93,7 @@ class RemoteTerminalController(
     private val pendingInputLock = Any()
     private val echoTraceLock = Any()
     private val pendingEchoTraces = ArrayDeque<InputEchoTrace>()
+    private var redrawScheduled = false
 
     val isCtrlLatched: Boolean get() = ctrlLatched
     val isAltLatched: Boolean get() = altLatched
@@ -102,9 +104,11 @@ class RemoteTerminalController(
             return
         }
         if (terminalId != null) {
+            detach()
             clearLocalScreen()
+        } else {
+            detach()
         }
-        detach()
         if (session.cwd.isNullOrBlank()) {
             state.value = RemoteTerminalState(status = RemoteTerminalStatus.Error, message = "This session has no workspace.")
             return
@@ -141,9 +145,11 @@ class RemoteTerminalController(
             return
         }
         if (terminalId != null) {
+            detach()
             clearLocalScreen()
+        } else {
+            detach()
         }
-        detach()
         if (!device.online) {
             state.value = RemoteTerminalState(status = RemoteTerminalStatus.Error, message = "This device is offline.")
             return
@@ -258,19 +264,18 @@ class RemoteTerminalController(
     }
 
     suspend fun restart(session: AgentSession) {
-        clearLocalScreen()
         close()
         ensureStarted(session)
     }
 
     suspend fun restart(device: AgentDevice) {
-        clearLocalScreen()
         close()
         ensureStarted(device)
     }
 
     suspend fun close() {
         val target = detachTerminalForClose()
+        clearLocalScreen()
         if (target != null) {
             withContext(Dispatchers.IO) {
                 terminalController.closeTerminal(target.connectorId, target.terminalId)
@@ -399,11 +404,7 @@ class RemoteTerminalController(
                 reconnectAttempts = 0
                 remoteTerminalGone = false
                 state.value = RemoteTerminalState(status = RemoteTerminalStatus.Open)
-                main.post {
-                    emulator.reset()
-                    emulator.append(data, data.size)
-                    emitRedraw()
-                }
+                enqueueTerminalOutput(data, resetBeforeAppend = true)
             }
             "output" -> {
                 val seq = if (json.has("seq")) json.optLong("seq", -1L) else -1L
@@ -416,10 +417,7 @@ class RemoteTerminalController(
                 reconnectAttempts = 0
                 remoteTerminalGone = false
                 state.value = RemoteTerminalState(status = RemoteTerminalStatus.Open)
-                main.post {
-                    emulator.append(data, data.size)
-                    emitRedraw()
-                }
+                enqueueTerminalOutput(data)
             }
             "exit" -> {
                 diag("rx exit code=${json.opt("exitCode")} reason=${json.optString("reason")} terminal=$terminalId")
@@ -543,6 +541,7 @@ class RemoteTerminalController(
         reconnectScheduled = false
         remoteTerminalGone = false
         cancelPendingRemoteResize()
+        outputBuffer.clear()
         synchronized(pendingInputLock) {
             pendingInput.clear()
         }
@@ -712,10 +711,48 @@ class RemoteTerminalController(
     private fun codePointString(codePoint: Int): String = String(Character.toChars(codePoint))
 
     private fun clearLocalScreen() {
+        val generation = outputBuffer.clear()
         val data = "\u001b[H\u001b[2J\u001b[3J".toByteArray(Charsets.UTF_8)
         main.post {
+            if (!outputBuffer.isCurrentGeneration(generation)) return@post
             emulator.append(data, data.size)
             emitRedraw()
+        }
+    }
+
+    private fun enqueueTerminalOutput(data: ByteArray, resetBeforeAppend: Boolean = false) {
+        val decision = outputBuffer.enqueue(data, resetBeforeAppend = resetBeforeAppend)
+        if (decision.shouldSchedule) {
+            scheduleOutputDrain(decision.generation)
+        }
+    }
+
+    private fun scheduleOutputDrain(generation: Long) {
+        main.postDelayed({
+            drainTerminalOutput(generation)
+        }, OUTPUT_DRAIN_DELAY_MS)
+    }
+
+    private fun drainTerminalOutput(generation: Long) {
+        val batch = outputBuffer.drain(generation)
+        if (batch == null) {
+            outputBuffer.finishDrain(generation)
+            return
+        }
+
+        if (batch.resetBeforeAppend) {
+            emulator.reset()
+        }
+        if (batch.hasData) {
+            emulator.append(batch.data, batch.data.size)
+        }
+        if (batch.resetBeforeAppend || batch.hasData) {
+            emitRedraw()
+        }
+
+        val next = outputBuffer.finishDrain(generation)
+        if (next.shouldSchedule) {
+            scheduleOutputDrain(next.generation)
         }
     }
 
@@ -726,8 +763,17 @@ class RemoteTerminalController(
     }
 
     private fun emitRedraw() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            main.post { emitRedraw() }
+            return
+        }
+        if (redrawScheduled) return
+        redrawScheduled = true
         redraws.tryEmit(Unit)
         onRedraw?.invoke()
+        main.post {
+            redrawScheduled = false
+        }
     }
 
     private fun pendingInputSize(): Int {
@@ -789,6 +835,7 @@ class RemoteTerminalController(
         private const val STREAM_OPEN_GRACE_MS = 1_200L
         private const val MAX_RECONNECT_ATTEMPTS = 3
         private const val REMOTE_RESIZE_DEBOUNCE_MS = 160L
+        private const val OUTPUT_DRAIN_DELAY_MS = 16L
         private const val MAX_ECHO_TRACE_INPUTS = 128
         private const val ECHO_WAIT_WARN_MS = 300L
         private const val ECHO_WAIT_SLOW_MS = 1_000L
