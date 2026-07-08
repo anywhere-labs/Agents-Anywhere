@@ -45,6 +45,7 @@ class RemoteTerminalController(
     val emulator = TerminalEmulator(
         object : TerminalOutput() {
             override fun write(data: ByteArray, offset: Int, count: Int) {
+                if (shouldSuppressTerminalResponse(data, offset, count)) return
                 sendBytes(data.copyOfRange(offset, offset + count))
             }
 
@@ -75,6 +76,7 @@ class RemoteTerminalController(
     private var lastSeenSeq = 0L
     private var lastCols = 80
     private var lastRows = 24
+    private var remoteDeviceOs: String? = null
     private var manuallyClosed = false
     private var remoteTerminalGone = false
     private var ctrlLatched = false
@@ -93,6 +95,7 @@ class RemoteTerminalController(
     val isAltLatched: Boolean get() = altLatched
 
     suspend fun ensureStarted(session: AgentSession) {
+        remoteDeviceOs = null
         if (terminalId != null && connectorId == session.connectorId) {
             reconnectExistingIfNeeded()
             return
@@ -134,6 +137,7 @@ class RemoteTerminalController(
     }
 
     suspend fun ensureStarted(device: AgentDevice) {
+        remoteDeviceOs = device.deviceOs
         if (terminalId != null && connectorId == device.id) {
             reconnectExistingIfNeeded()
             return
@@ -620,6 +624,38 @@ class RemoteTerminalController(
     }
 
     private fun codePointString(codePoint: Int): String = String(Character.toChars(codePoint))
+
+    private fun shouldSuppressTerminalResponse(data: ByteArray, offset: Int, count: Int): Boolean {
+        if (!remoteDeviceOs.equals("windows", ignoreCase = true)) return false
+        return isPrivateDeviceAttributesResponse(data, offset, count)
+    }
+
+    private fun isPrivateDeviceAttributesResponse(data: ByteArray, offset: Int, count: Int): Boolean {
+        if (count < 4) return false
+        val end = offset + count
+        var index = offset
+        val first = data[index].toInt() and 0xFF
+        if (first == 0x1B) {
+            if (index + 2 >= end || data[index + 1] != '['.code.toByte()) return false
+            index += 2
+        } else if (first == 0x9B) {
+            index += 1
+        } else {
+            return false
+        }
+
+        if (index >= end || data[index] != '?'.code.toByte()) return false
+        index += 1
+        if (index >= end) return false
+
+        while (index < end - 1) {
+            val value = data[index].toInt() and 0xFF
+            if (value !in '0'.code..'9'.code && value != ';'.code) return false
+            index += 1
+        }
+
+        return index == end - 1 && data[index] == 'c'.code.toByte()
+    }
 
     private fun clearLocalScreen() {
         val generation = outputBuffer.clear()

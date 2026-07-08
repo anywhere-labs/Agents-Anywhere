@@ -527,8 +527,8 @@ internal fun TerminalContent(
         terminalState.status == RemoteTerminalStatus.Exited ||
         terminalState.status == RemoteTerminalStatus.Error
         )
-    val emphasizedStatus = terminalState.status == RemoteTerminalStatus.Connecting ||
-        terminalState.status == RemoteTerminalStatus.Closed ||
+    val isConnecting = terminalState.status == RemoteTerminalStatus.Connecting
+    val emphasizedStatus = terminalState.status == RemoteTerminalStatus.Closed ||
         terminalState.status == RemoteTerminalStatus.Exited ||
         terminalState.status == RemoteTerminalStatus.Error
 
@@ -563,7 +563,13 @@ internal fun TerminalContent(
                             Modifier
                         },
                     )
-                if (emphasizedStatus) {
+                if (isConnecting) {
+                    TerminalConnectingBanner(
+                        message = statusText,
+                        darkMode = darkMode,
+                        modifier = Modifier.padding(top = 8.dp, bottom = 8.dp),
+                    )
+                } else if (emphasizedStatus) {
                     AuthErrorNotice(
                         message = statusText,
                         modifier = statusModifier,
@@ -607,6 +613,36 @@ internal fun TerminalContent(
                 .align(Alignment.TopEnd)
                 .padding(top = 10.dp, end = 18.dp)
                 .zIndex(1f),
+        )
+    }
+}
+
+@Composable
+private fun TerminalConnectingBanner(
+    message: String,
+    darkMode: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val background = if (darkMode) Color(0xFF16181A) else Color(0xFFF3F5F7)
+    val border = if (darkMode) Color(0xFF30343A) else Color(0xFFD9DEE5)
+    val text = if (darkMode) Color(0xFFC8D0DA) else Color(0xFF47515F)
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(background)
+            .border(1.dp, border)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Text(
+            text = message,
+            color = text,
+            fontSize = 12.sp,
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }
