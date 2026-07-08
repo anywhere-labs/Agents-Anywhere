@@ -21,6 +21,10 @@ function missingEnvKeys() {
   return REQUIRED_ENV.filter((key) => envValue(key).length === 0);
 }
 
+function signingNameQualifier() {
+  return envValue("MACOS_SIGN_IDENTITY").replace(/^Developer ID Application:\s*/i, "").trim();
+}
+
 function writeP12FromEnv(certPath) {
   const clean = envValue("MAC_CERT_P12_BASE64").replace(/\s+/g, "");
   if (!/^[A-Za-z0-9+/=]+$/.test(clean)) {
@@ -82,7 +86,7 @@ try {
   const env = {
     ...process.env,
     CSC_KEYCHAIN: keychainPath,
-    CSC_NAME: envValue("MACOS_SIGN_IDENTITY"),
+    CSC_NAME: signingNameQualifier(),
     APPLE_ID: envValue("APPLE_ID"),
     APPLE_APP_SPECIFIC_PASSWORD: envValue("APPLE_APP_SPECIFIC_PASSWORD"),
     APPLE_TEAM_ID: envValue("APPLE_TEAM_ID"),
