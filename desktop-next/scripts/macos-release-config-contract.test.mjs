@@ -26,17 +26,13 @@ for (const key of [
 
 const mainSource = readFileSync(join(projectDir, "electron/main.cjs"), "utf8");
 
-assert.match(mainSource, /function connectorRuntimeDir\(\)[\s\S]*userDataPath\("connector-runtime"\)/, "packaged connector runtime cwd must be under userData");
-assert.match(mainSource, /function bundledConnectorDir\(\)[\s\S]*process\.resourcesPath,\s*"connector"/, "packaged connector source must be read from resources");
-assert.match(mainSource, /function connectorRuntimeProjectDir\(\)[\s\S]*path\.join\(connectorRuntimeDir\(\),\s*"connector"\)/, "packaged connector project must live under userData");
-assert.match(mainSource, /function connectorWorkingDir\(\)[\s\S]*app\.isPackaged \? connectorRuntimeDir\(\) : state\.connectorDir/, "packaged connector cwd must use userData while dev keeps source cwd");
-assert.match(mainSource, /function resolveConnectorDir\(\)[\s\S]*if \(app\.isPackaged\) return connectorRuntimeProjectDir\(\)/, "packaged connector project must not point into the signed app bundle");
-assert.match(mainSource, /fs\.rmSync\(connectorRuntimeProjectDir\(\), \{ recursive: true, force: true \}\)/, "packaged connector runtime project must refresh stale bundled dependencies");
-assert.match(mainSource, /fs\.cpSync\(bundledConnectorDir\(\), connectorRuntimeProjectDir\(\)/, "packaged connector source must be copied to a writable runtime project");
-assert.match(mainSource, /UV_PROJECT_ENVIRONMENT:\s*connectorUvEnvironmentPath\(\)/, "uv virtualenv must be outside the signed app bundle");
-assert.match(mainSource, /UV_CACHE_DIR:\s*connectorUvCacheDir\(\)/, "uv cache must be outside the signed app bundle");
-assert.match(mainSource, /cwd:\s*connectorWorkingDir\(\)/, "connector RPC cwd must not be the bundled resource directory");
-assert.doesNotMatch(mainSource, /cwd:\s*state\.connectorDir/, "connector RPC must not use the signed connector resource as cwd");
+assert.match(mainSource, /function resolveConnectorDir\(\)[\s\S]*if \(app\.isPackaged\) return path\.join\(process\.resourcesPath,\s*"connector"\)/, "packaged connector source must stay in app resources");
+assert.match(mainSource, /cwd:\s*state\.connectorDir/, "connector RPC should run from the packaged connector resource");
+assert.doesNotMatch(mainSource, /connectorRuntimeDir/, "packaged connector runtime must not be copied to userData");
+assert.doesNotMatch(mainSource, /connectorRuntimeProjectDir/, "packaged connector runtime must not be copied to userData");
+assert.doesNotMatch(mainSource, /ensureConnectorRuntimeDirs/, "packaged connector runtime must not be copied to userData");
+assert.doesNotMatch(mainSource, /UV_PROJECT_ENVIRONMENT:\s*connectorUvEnvironmentPath\(\)/, "uv virtualenv must not be redirected to userData by this release contract");
+assert.doesNotMatch(mainSource, /UV_CACHE_DIR:\s*connectorUvCacheDir\(\)/, "uv cache must not be redirected to userData by this release contract");
 assert.doesNotMatch(mainSource, /"--locked"/, "packaged uv run must not require a lockfile that is not bundled");
 
 console.log("macos release signing config ok");

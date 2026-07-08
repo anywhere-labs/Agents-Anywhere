@@ -134,45 +134,6 @@ function defaultConnectorStateDbPath() {
   return path.join(path.dirname(configPath), "connector-state.sqlite3");
 }
 
-function connectorRuntimeDir() {
-  return userDataPath("connector-runtime");
-}
-
-function bundledConnectorDir() {
-  return path.join(process.resourcesPath, "connector");
-}
-
-function connectorRuntimeProjectDir() {
-  return path.join(connectorRuntimeDir(), "connector");
-}
-
-function connectorUvEnvironmentPath() {
-  return path.join(connectorRuntimeDir(), ".venv");
-}
-
-function connectorUvCacheDir() {
-  return userDataPath("uv-cache");
-}
-
-function connectorWorkingDir() {
-  return app.isPackaged ? connectorRuntimeDir() : state.connectorDir;
-}
-
-function ensureConnectorRuntimeDirs() {
-  if (!app.isPackaged) return;
-  fs.mkdirSync(connectorRuntimeDir(), { recursive: true });
-  fs.mkdirSync(connectorUvCacheDir(), { recursive: true });
-  if (!fs.existsSync(path.join(bundledConnectorDir(), "pyproject.toml"))) return;
-  fs.rmSync(connectorRuntimeProjectDir(), { recursive: true, force: true });
-  fs.cpSync(bundledConnectorDir(), connectorRuntimeProjectDir(), {
-    recursive: true,
-    filter(source) {
-      const name = path.basename(source);
-      return name !== ".venv" && name !== "__pycache__" && !source.endsWith(".pyc");
-    },
-  });
-}
-
 function readJson(filePath, fallback) {
   try {
     return JSON.parse(fs.readFileSync(filePath, "utf8"));
@@ -372,12 +333,6 @@ function connectorEnv() {
     PYTHONUNBUFFERED: "1",
     FORCE_COLOR: "0",
   };
-  if (app.isPackaged) {
-    Object.assign(env, {
-      UV_PROJECT_ENVIRONMENT: connectorUvEnvironmentPath(),
-      UV_CACHE_DIR: connectorUvCacheDir(),
-    });
-  }
   const pypiIndexUrl = typeof state.uvPypiIndexUrl === "string" ? state.uvPypiIndexUrl.trim() : "";
   if (pypiIndexUrl) {
     env.UV_INDEX_URL = pypiIndexUrl;
@@ -480,7 +435,7 @@ function normalizeShellEnvironment(value) {
 }
 
 function resolveConnectorDir() {
-  if (app.isPackaged) return connectorRuntimeProjectDir();
+  if (app.isPackaged) return path.join(process.resourcesPath, "connector");
   return path.resolve(__dirname, "..", "..", "connector");
 }
 
@@ -871,7 +826,6 @@ function waitForMainWindowReady() {
 function startRpcProcess(options = {}) {
   if (rpcProcess) return;
   const requiresConfig = options.requiresConfig !== false;
-  ensureConnectorRuntimeDirs();
   const setupIssue = refreshLocalSetupState();
   if (setupIssue && (requiresConfig || setupIssue !== "configMissing")) {
     mergeConnectorState({
@@ -899,7 +853,7 @@ function startRpcProcess(options = {}) {
     return;
   }
   rpcProcess = spawn(uvPath, args, {
-    cwd: connectorWorkingDir(),
+    cwd: state.connectorDir,
     env: connectorEnv(),
     detached: process.platform !== "win32",
     windowsHide: true,
@@ -1176,7 +1130,6 @@ app.whenReady().then(async () => {
   state.settingsPath = userDataPath("desktop-settings.json");
   state.logPath = userDataPath("logs");
   state.connectorDir = resolveConnectorDir();
-  ensureConnectorRuntimeDirs();
   loadDesktopSettings();
   shellEnvironment = await readShellEnvironment();
   initLogSeq();
