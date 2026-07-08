@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -63,6 +63,15 @@ function runNotaryTool(args, options = {}) {
     throw new Error(`notarytool ${args[0]} failed${output ? `:\n${output}` : ""}`);
   }
   return result.stdout;
+}
+
+function runStapler(args) {
+  const result = spawnSync("/usr/bin/xcrun", ["stapler", ...args], {
+    stdio: "inherit",
+  });
+  if (result.status !== 0) {
+    throw new Error(`stapler ${args[0]} exited with ${result.status}`);
+  }
 }
 
 function tryDeleteKeychain(keychainPath) {
@@ -130,6 +139,36 @@ function runYarnDist(env) {
   return runYarn(["electron-builder", `-c.directories.output=${outputDir}`], env);
 }
 
+function releaseOutputDir() {
+  return macosReleaseOutputDir() || "release";
+}
+
+function notarizeAndStapleDmgs(outputDir, keychainPath, buildStartedAt) {
+  for (const entry of readdirSync(outputDir, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith(".dmg")) continue;
+    const dmgPath = join(outputDir, entry.name);
+    const stats = statSync(dmgPath);
+    if (stats.mtimeMs + 10_000 < buildStartedAt) continue;
+    console.log(`Notarizing DMG ${dmgPath}`);
+    runNotaryTool(
+      [
+        "submit",
+        dmgPath,
+        "--keychain",
+        keychainPath,
+        "--keychain-profile",
+        NOTARY_KEYCHAIN_PROFILE,
+        "--wait",
+        "--output-format",
+        "json",
+      ],
+      { stdio: "inherit" },
+    );
+    runStapler(["staple", dmgPath]);
+    runStapler(["validate", dmgPath]);
+  }
+}
+
 const missing = missingEnvKeys();
 if (missing.length > 0) {
   console.error(`Missing required macOS signing environment variables: ${missing.join(", ")}`);
@@ -145,6 +184,7 @@ const keychainPassword = randomBytes(24).toString("hex");
 let exitCode = 1;
 
 try {
+  const buildStartedAt = Date.now();
   writeP12FromEnv(certPath);
   setupKeychain(keychainPath, keychainPassword, certPath);
   setupNotaryProfile(keychainPath);
@@ -165,6 +205,9 @@ try {
   const result = runYarnDist(env);
   if (result.error) throw result.error;
   exitCode = typeof result.status === "number" ? result.status : 1;
+  if (exitCode === 0) {
+    notarizeAndStapleDmgs(releaseOutputDir(), keychainPath, buildStartedAt);
+  }
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   exitCode = 1;
