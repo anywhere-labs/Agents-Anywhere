@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 
+const NOTARY_KEYCHAIN_PROFILE = "agents-anywhere-notary";
+
 const REQUIRED_ENV = [
   "MAC_CERT_P12_BASE64",
   "CSC_KEY_PASSWORD",
@@ -50,12 +52,48 @@ function runSecurity(args, options = {}) {
   return result.stdout;
 }
 
+function runNotaryTool(args, options = {}) {
+  const result = spawnSync("/usr/bin/xcrun", ["notarytool", ...args], {
+    stdio: options.stdio ?? "pipe",
+    encoding: "utf8",
+    input: options.input,
+  });
+  if (result.status !== 0) {
+    const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
+    throw new Error(`notarytool ${args[0]} failed${output ? `:\n${output}` : ""}`);
+  }
+  return result.stdout;
+}
+
+function tryDeleteKeychain(keychainPath) {
+  spawnSync("/usr/bin/security", ["delete-keychain", keychainPath], {
+    stdio: "ignore",
+  });
+}
+
 function setupKeychain(keychainPath, keychainPassword, certPath) {
   runSecurity(["create-keychain", "-p", keychainPassword, keychainPath]);
   runSecurity(["set-keychain-settings", "-lut", "21600", keychainPath]);
   runSecurity(["unlock-keychain", "-p", keychainPassword, keychainPath]);
   runSecurity(["import", certPath, "-P", envValue("CSC_KEY_PASSWORD"), "-A", "-t", "cert", "-f", "pkcs12", "-k", keychainPath]);
   runSecurity(["set-key-partition-list", "-S", "apple-tool:,apple:,codesign:", "-s", "-k", keychainPassword, keychainPath]);
+}
+
+function setupNotaryProfile(keychainPath) {
+  runNotaryTool(
+    [
+      "store-credentials",
+      NOTARY_KEYCHAIN_PROFILE,
+      "--apple-id",
+      envValue("APPLE_ID"),
+      "--team-id",
+      envValue("APPLE_TEAM_ID"),
+      "--keychain",
+      keychainPath,
+      "--validate",
+    ],
+    { input: `${envValue("APPLE_APP_SPECIFIC_PASSWORD")}\n` },
+  );
 }
 
 function runYarnDist(env) {
@@ -83,15 +121,21 @@ let exitCode = 1;
 try {
   writeP12FromEnv(certPath);
   setupKeychain(keychainPath, keychainPassword, certPath);
+  setupNotaryProfile(keychainPath);
   const env = {
     ...process.env,
     CSC_KEYCHAIN: keychainPath,
     CSC_NAME: signingNameQualifier(),
-    APPLE_ID: envValue("APPLE_ID"),
-    APPLE_APP_SPECIFIC_PASSWORD: envValue("APPLE_APP_SPECIFIC_PASSWORD"),
-    APPLE_TEAM_ID: envValue("APPLE_TEAM_ID"),
+    APPLE_KEYCHAIN: keychainPath,
+    APPLE_KEYCHAIN_PROFILE: NOTARY_KEYCHAIN_PROFILE,
   };
   delete env.CSC_LINK;
+  delete env.APPLE_ID;
+  delete env.APPLE_APP_SPECIFIC_PASSWORD;
+  delete env.APPLE_TEAM_ID;
+  delete env.APPLE_API_KEY;
+  delete env.APPLE_API_KEY_ID;
+  delete env.APPLE_API_ISSUER;
   const result = runYarnDist(env);
   if (result.error) throw result.error;
   exitCode = typeof result.status === "number" ? result.status : 1;
@@ -99,6 +143,7 @@ try {
   console.error(error instanceof Error ? error.message : String(error));
   exitCode = 1;
 } finally {
+  tryDeleteKeychain(keychainPath);
   rmSync(tempDir, { recursive: true, force: true });
 }
 

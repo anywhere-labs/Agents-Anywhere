@@ -9,6 +9,7 @@ const projectDir = join(scriptDir, "..");
 const packageJson = JSON.parse(readFileSync(join(projectDir, "package.json"), "utf8"));
 const mac = packageJson.build?.mac ?? {};
 
+assert.deepEqual(packageJson.dependencies ?? {}, {}, "desktop package must not ship build-time frontend dependencies as production node_modules");
 assert.equal(mac.hardenedRuntime, true, "macOS release builds must enable hardenedRuntime");
 assert.notEqual(mac.identity, "-", "macOS release builds must not force ad-hoc signing");
 assert.equal(mac.entitlements, "build/entitlements.mac.plist");
@@ -35,5 +36,10 @@ assert.doesNotMatch(mainSource, /ensureConnectorRuntimeDirs/, "packaged connecto
 assert.doesNotMatch(mainSource, /UV_PROJECT_ENVIRONMENT:\s*connectorUvEnvironmentPath\(\)/, "uv virtualenv must not be redirected to userData by this release contract");
 assert.doesNotMatch(mainSource, /UV_CACHE_DIR:\s*connectorUvCacheDir\(\)/, "uv cache must not be redirected to userData by this release contract");
 assert.doesNotMatch(mainSource, /"--locked"/, "packaged uv run must not require a lockfile that is not bundled");
+
+const signedBuildScript = readFileSync(join(projectDir, "scripts/dist-mac-signed.mjs"), "utf8");
+
+assert.match(signedBuildScript, /APPLE_KEYCHAIN_PROFILE/, "signed macOS builds should use a notary keychain profile");
+assert.match(signedBuildScript, /delete env\.APPLE_APP_SPECIFIC_PASSWORD/, "signed macOS builds must not pass the app-specific password to electron-builder");
 
 console.log("macos release signing config ok");
