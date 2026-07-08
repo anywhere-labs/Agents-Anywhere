@@ -96,12 +96,38 @@ function setupNotaryProfile(keychainPath) {
   );
 }
 
-function runYarnDist(env) {
+function macosReleaseOutputDir() {
+  const value = envValue("MACOS_RELEASE_OUTPUT_DIR").trim();
+  if (value.length === 0) return "";
+  if (value.startsWith("/") || value.includes("\0") || value.includes("..")) {
+    throw new Error("MACOS_RELEASE_OUTPUT_DIR must be a simple relative output directory");
+  }
+  return value;
+}
+
+function runYarn(args, env) {
   const command = process.platform === "win32" ? "yarn.cmd" : "yarn";
-  return spawnSync(command, ["dist"], {
+  return spawnSync(command, args, {
     stdio: "inherit",
     env,
   });
+}
+
+function runYarnChecked(args, env) {
+  const result = runYarn(args, env);
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(`yarn ${args.join(" ")} exited with ${result.status}`);
+  }
+}
+
+function runYarnDist(env) {
+  const outputDir = macosReleaseOutputDir();
+  if (!outputDir) return runYarn(["dist"], env);
+
+  runYarnChecked(["bundle:uv"], env);
+  runYarnChecked(["build"], env);
+  return runYarn(["electron-builder", `-c.directories.output=${outputDir}`], env);
 }
 
 const missing = missingEnvKeys();
