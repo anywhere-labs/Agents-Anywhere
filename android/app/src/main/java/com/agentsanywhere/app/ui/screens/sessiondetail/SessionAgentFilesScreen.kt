@@ -41,6 +41,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -74,10 +75,21 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.zIndex
 import com.agentsanywhere.app.R
+import com.agentsanywhere.app.feature.files.canonicalRemotePaths
+import com.agentsanywhere.app.feature.files.displayRemotePath
 import com.agentsanywhere.app.feature.files.FileEntry
+import com.agentsanywhere.app.feature.files.fileNameFromRemotePath
 import com.agentsanywhere.app.feature.files.FilesController
 import com.agentsanywhere.app.feature.files.FilesDirectory
+import com.agentsanywhere.app.feature.files.initialRemoteFilePath
+import com.agentsanywhere.app.feature.files.isWindowsDeviceOs
+import com.agentsanywhere.app.feature.files.isWindowsDriveOverview
+import com.agentsanywhere.app.feature.files.normalizeRemotePath
+import com.agentsanywhere.app.feature.files.remoteFileRequest
+import com.agentsanywhere.app.feature.files.remoteParentPath
+import com.agentsanywhere.app.feature.files.remoteRootForPath
 import com.agentsanywhere.app.feature.files.TextFile
+import com.agentsanywhere.app.feature.files.windowsDriveRoot
 import com.agentsanywhere.app.feature.terminal.RemoteTerminalController
 import com.agentsanywhere.app.feature.terminal.RemoteTerminalStatus
 import com.agentsanywhere.app.feature.terminal.TerminalShortcut
@@ -100,6 +112,7 @@ import com.composables.icons.lucide.KeyRound
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Search
 import com.composables.icons.lucide.Terminal
+import com.composables.icons.lucide.Trash2
 import com.termux.terminal.TextStyle as TermuxTextStyle
 import com.termux.view.RemoteTerminalView
 import com.termux.view.RemoteTerminalViewClient
@@ -110,6 +123,7 @@ import kotlin.math.roundToInt
 @Composable
 internal fun SessionAgentFilesScreen(
     session: AgentSession?,
+    device: AgentDevice?,
     filesController: FilesController,
     terminalController: RemoteTerminalController,
     darkMode: Boolean,
@@ -136,6 +150,7 @@ internal fun SessionAgentFilesScreen(
     val noWorkspaceMessage = stringResource(R.string.files_session_no_workspace)
     val loadFilesFailedMessage = stringResource(R.string.files_load_failed)
     val openFileFailedMessage = stringResource(R.string.files_open_failed)
+    val deviceOs = device?.deviceOs ?: session?.cwd?.takeIf { windowsDriveRoot(it) != null }?.let { "windows" }
 
     DisposableEffect(Unit) {
         onDispose { onTerminalVerticalDragChange(false) }
@@ -148,21 +163,26 @@ internal fun SessionAgentFilesScreen(
             error = noWorkspaceMessage
             return
         }
+        val request = remoteFileRequest(
+            targetPath = path,
+            deviceOs = deviceOs,
+            fallbackRoot = root,
+        )
         loading = true
         error = null
         scope.launch {
             filesController.listFiles(
                 connectorId = current.connectorId,
-                root = root,
-                path = path,
+                root = request.root,
+                path = request.path,
             )
-                .onSuccess { directory = it.normalizedRemotePaths() }
+                .onSuccess { directory = it.canonicalRemotePaths(request, deviceOs) }
                 .onFailure { failure -> error = failure.message ?: loadFilesFailedMessage }
             loading = false
         }
     }
 
-    LaunchedEffect(session?.id, session?.cwd) {
+    LaunchedEffect(session?.id, session?.cwd, deviceOs) {
         selectedFile = null
         preview = null
         previewError = null
@@ -177,11 +197,11 @@ internal fun SessionAgentFilesScreen(
         }
     }
 
-    LaunchedEffect(session?.id, session?.cwd, openFilePath) {
-        val path = normalizeWindowsDrivePath(openFilePath.orEmpty()).trim()
+    LaunchedEffect(session?.id, session?.cwd, deviceOs, openFilePath) {
+        val path = normalizeRemotePath(openFilePath.orEmpty()).trim()
         if (path.isBlank()) return@LaunchedEffect
         selectedFile = FileEntry(
-            name = fileNameFromPath(path),
+            name = fileNameFromRemotePath(path),
             path = path,
             isDirectory = false,
             size = null,
@@ -195,7 +215,7 @@ internal fun SessionAgentFilesScreen(
         onOpenFileRequestConsumed(openFilePath.orEmpty())
     }
 
-    LaunchedEffect(session?.id, session?.cwd, selectedFile?.path) {
+    LaunchedEffect(session?.id, session?.cwd, deviceOs, selectedFile?.path) {
         val file = selectedFile
         if (file == null) return@LaunchedEffect
         val current = session
@@ -211,10 +231,15 @@ internal fun SessionAgentFilesScreen(
         previewError = null
         searchQuery = ""
         searchResult = SoraFileSearchResult()
+        val filePath = normalizeRemotePath(file.path)
         filesController.readTextFile(
             connectorId = current.connectorId,
-            root = root,
-            path = file.path,
+            root = remoteRootForPath(
+                targetPath = filePath,
+                deviceOs = deviceOs,
+                fallbackRoot = root,
+            ),
+            path = filePath,
         )
             .onSuccess { preview = it }
             .onFailure { failure -> previewError = failure.message ?: openFileFailedMessage }
@@ -242,7 +267,11 @@ internal fun SessionAgentFilesScreen(
                     val current = session ?: return@TerminalContent
                     terminalController.ensureStarted(current)
                 },
-                onRestart = {
+                onReconnect = {
+                    val current = session ?: return@TerminalContent
+                    terminalController.reconnect(current)
+                },
+                onClear = {
                     val current = session ?: return@TerminalContent
                     terminalController.restart(current)
                 },
@@ -254,6 +283,7 @@ internal fun SessionAgentFilesScreen(
             if (file == null) {
                 FileListContent(
                     rootPath = session?.cwd,
+                    deviceOs = deviceOs,
                     directory = directory,
                     loading = loading,
                     error = error,
@@ -271,6 +301,7 @@ internal fun SessionAgentFilesScreen(
             } else {
                 FilePreviewContent(
                     rootPath = session?.cwd,
+                    deviceOs = deviceOs,
                     file = file,
                     preview = preview,
                     loading = previewLoading,
@@ -322,10 +353,16 @@ internal fun DeviceFilesContent(
     val selectDeviceMessage = stringResource(R.string.files_select_device)
     val loadFilesFailedMessage = stringResource(R.string.files_load_failed)
     val openFileFailedMessage = stringResource(R.string.files_open_failed)
+    val deviceOs = device?.deviceOs
+    val isWindowsDevice = isWindowsDeviceOs(deviceOs)
 
     fun load(path: String) {
         val current = device ?: return
-        val root = resolvedRoot?.takeIf { it.isNotBlank() } ?: "~"
+        val request = remoteFileRequest(
+            targetPath = path,
+            deviceOs = deviceOs,
+            fallbackRoot = resolvedRoot?.takeIf { it.isNotBlank() } ?: "~",
+        )
         if (!current.online) {
             error = deviceOfflineMessage
             return
@@ -335,14 +372,18 @@ internal fun DeviceFilesContent(
         scope.launch {
             controller.listFiles(
                 connectorId = current.id,
-                root = root,
-                path = normalizeWindowsDrivePath(path),
+                root = request.root,
+                path = request.path,
             )
                 .onSuccess {
-                    val nextDirectory = it.normalizedRemotePaths()
+                    val nextDirectory = it.canonicalRemotePaths(request, deviceOs)
                     directory = nextDirectory
-                    if (root == "~") {
-                        resolvedRoot = nextDirectory.path.takeIf { path -> path.isNotBlank() }
+                    resolvedRoot = if (isWindowsDevice) {
+                        windowsDriveRoot(nextDirectory.path)
+                    } else if (request.root == "~") {
+                        nextDirectory.path.takeIf { value -> value.isNotBlank() }
+                    } else {
+                        resolvedRoot
                     }
                 }
                 .onFailure { failure -> error = failure.message ?: loadFilesFailedMessage }
@@ -350,7 +391,7 @@ internal fun DeviceFilesContent(
         }
     }
 
-    LaunchedEffect(device?.id, device?.online) {
+    LaunchedEffect(device?.id, device?.online, device?.deviceOs) {
         selectedFile = null
         preview = null
         previewError = null
@@ -358,16 +399,16 @@ internal fun DeviceFilesContent(
         searchQuery = ""
         searchResult = SoraFileSearchResult()
         resolvedRoot = null
-        directory = FilesDirectory(path = ".")
+        directory = FilesDirectory(path = initialRemoteFilePath(deviceOs))
         error = when {
             device == null -> selectDeviceMessage
             !device.online -> deviceOfflineMessage
             else -> null
         }
-        if (device?.online == true) load(".")
+        if (device?.online == true) load(if (isWindowsDevice) "" else ".")
     }
 
-    LaunchedEffect(device?.id, selectedFile?.path) {
+    LaunchedEffect(device?.id, device?.deviceOs, selectedFile?.path) {
         val file = selectedFile ?: return@LaunchedEffect
         val current = device ?: return@LaunchedEffect
         if (!current.online) {
@@ -381,10 +422,16 @@ internal fun DeviceFilesContent(
         previewError = null
         searchQuery = ""
         searchResult = SoraFileSearchResult()
+        val filePath = normalizeRemotePath(file.path)
+        val root = remoteRootForPath(
+            targetPath = filePath,
+            deviceOs = deviceOs,
+            fallbackRoot = resolvedRoot?.takeIf { it.isNotBlank() } ?: "~",
+        )
         controller.readTextFile(
             connectorId = current.id,
-            root = resolvedRoot?.takeIf { it.isNotBlank() } ?: "~",
-            path = normalizeWindowsDrivePath(file.path),
+            root = root,
+            path = filePath,
         )
             .onSuccess { preview = it }
             .onFailure { failure -> previewError = failure.message ?: openFileFailedMessage }
@@ -393,10 +440,11 @@ internal fun DeviceFilesContent(
 
     Box(modifier = modifier.fillMaxSize()) {
         val file = selectedFile
-        val rootPath = resolvedRoot ?: "~"
+        val rootPath = if (isWindowsDriveOverview(directory.path, deviceOs)) "" else resolvedRoot ?: "~"
         if (file == null) {
             FileListContent(
                 rootPath = rootPath,
+                deviceOs = deviceOs,
                 directory = directory,
                 loading = loading,
                 error = error,
@@ -414,6 +462,7 @@ internal fun DeviceFilesContent(
         } else {
             FilePreviewContent(
                 rootPath = rootPath,
+                deviceOs = deviceOs,
                 file = file,
                 preview = preview,
                 loading = previewLoading,
@@ -451,14 +500,14 @@ internal fun TerminalContent(
     terminalKey: Any?,
     canReconnect: Boolean,
     onStart: suspend () -> Unit,
-    onRestart: suspend () -> Unit,
+    onReconnect: suspend () -> Unit,
+    onClear: suspend () -> Unit,
     onVerticalDragChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val terminalState by terminalController.state.collectAsState()
     val modifierState by terminalController.modifierState.collectAsState()
     val density = LocalDensity.current
-    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val imeBottomPx = WindowInsets.ime.getBottom(density)
     val imeBottom = with(density) { imeBottomPx.toDp() }
@@ -478,6 +527,7 @@ internal fun TerminalContent(
         terminalState.status == RemoteTerminalStatus.Exited ||
         terminalState.status == RemoteTerminalStatus.Error
         )
+    val isConnecting = terminalState.status == RemoteTerminalStatus.Connecting
     val emphasizedStatus = terminalState.status == RemoteTerminalStatus.Closed ||
         terminalState.status == RemoteTerminalStatus.Exited ||
         terminalState.status == RemoteTerminalStatus.Error
@@ -486,44 +536,8 @@ internal fun TerminalContent(
         if (terminalKey != null) onStart()
     }
 
-    val terminalClient = remember(terminalController, onVerticalDragChange) {
-        remoteTerminalViewClient(terminalController, onVerticalDragChange)
-    }
-    val terminalView = remember(terminalController, context) {
-        RemoteTerminalView(context, null).apply {
-            setTextSize(
-                TypedValue.applyDimension(
-                    TypedValue.COMPLEX_UNIT_SP,
-                    12f,
-                    context.resources.displayMetrics,
-                ).roundToInt(),
-            )
-            setTypeface(Typeface.MONOSPACE)
-            setRemoteTerminalViewClient(terminalClient)
-            attachSession(terminalController)
-            applyTerminalColors(terminalController, darkMode)
-        }
-    }
-
-    DisposableEffect(terminalView, terminalController) {
-        val redraw: () -> Unit = {
-            terminalView.post {
-                if (terminalView.currentSession === terminalController) {
-                    terminalView.onScreenUpdated()
-                }
-            }
-        }
-        terminalController.onRedraw = redraw
-        terminalView.post {
-            if (terminalView.currentSession === terminalController) {
-                terminalView.onScreenUpdated()
-            }
-        }
-        onDispose {
-            if (terminalController.onRedraw === redraw) {
-                terminalController.onRedraw = null
-            }
-        }
+    DisposableEffect(terminalController) {
+        onDispose { terminalController.detach() }
     }
 
     Box(
@@ -543,13 +557,19 @@ internal fun TerminalContent(
                     .then(
                         if (reconnectable) {
                             Modifier.noRippleClickable {
-                                scope.launch { onRestart() }
+                                scope.launch { onReconnect() }
                             }
                         } else {
                             Modifier
                         },
                     )
-                if (emphasizedStatus) {
+                if (isConnecting) {
+                    TerminalConnectingBanner(
+                        message = statusText,
+                        darkMode = darkMode,
+                        modifier = Modifier.padding(top = 8.dp, bottom = 8.dp),
+                    )
+                } else if (emphasizedStatus) {
                     AuthErrorNotice(
                         message = statusText,
                         modifier = statusModifier,
@@ -565,14 +585,10 @@ internal fun TerminalContent(
                     )
                 }
             }
-            AndroidView(
-                factory = { terminalView },
-                update = {
-                    it.setRemoteTerminalViewClient(terminalClient)
-                    it.attachSession(terminalController)
-                    applyTerminalColors(terminalController, darkMode)
-                    it.invalidate()
-                },
+            TerminalAndroidView(
+                terminalController = terminalController,
+                darkMode = darkMode,
+                onVerticalDragChange = onVerticalDragChange,
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
@@ -589,6 +605,140 @@ internal fun TerminalContent(
                     .padding(bottom = imeBottom),
             )
         }
+        TerminalClearButton(
+            darkMode = darkMode,
+            enabled = terminalKey != null,
+            onClick = { scope.launch { onClear() } },
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 10.dp, end = 18.dp)
+                .zIndex(1f),
+        )
+    }
+}
+
+@Composable
+private fun TerminalConnectingBanner(
+    message: String,
+    darkMode: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val background = if (darkMode) Color(0xFF16181A) else Color(0xFFF3F5F7)
+    val border = if (darkMode) Color(0xFF30343A) else Color(0xFFD9DEE5)
+    val text = if (darkMode) Color(0xFFC8D0DA) else Color(0xFF47515F)
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(background)
+            .border(1.dp, border)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Text(
+            text = message,
+            color = text,
+            fontSize = 12.sp,
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun TerminalAndroidView(
+    terminalController: RemoteTerminalController,
+    darkMode: Boolean,
+    onVerticalDragChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    key(terminalController) {
+        val context = LocalContext.current
+        val terminalClient = remember(terminalController, onVerticalDragChange) {
+            remoteTerminalViewClient(terminalController, onVerticalDragChange)
+        }
+        val terminalView = remember(context, terminalController) {
+            RemoteTerminalView(context, null).apply {
+                setTextSize(
+                    TypedValue.applyDimension(
+                        TypedValue.COMPLEX_UNIT_SP,
+                        12f,
+                        context.resources.displayMetrics,
+                    ).roundToInt(),
+                )
+                setTypeface(Typeface.MONOSPACE)
+                setRemoteTerminalViewClient(terminalClient)
+                attachSession(terminalController)
+                applyTerminalColors(terminalController, darkMode)
+            }
+        }
+
+        DisposableEffect(terminalView, terminalController) {
+            val redraw: () -> Unit = {
+                terminalView.post {
+                    if (terminalView.currentSession === terminalController) {
+                        terminalView.onScreenUpdated()
+                    }
+                }
+            }
+            terminalController.onRedraw = redraw
+            terminalView.post {
+                if (terminalView.currentSession === terminalController) {
+                    terminalView.onScreenUpdated()
+                }
+            }
+            onDispose {
+                if (terminalController.onRedraw === redraw) {
+                    terminalController.onRedraw = null
+                }
+                terminalView.releaseSession()
+            }
+        }
+
+        AndroidView(
+            factory = { terminalView },
+            update = {
+                it.setRemoteTerminalViewClient(terminalClient)
+                it.attachSession(terminalController)
+                applyTerminalColors(terminalController, darkMode)
+                it.invalidate()
+            },
+            modifier = modifier,
+        )
+    }
+}
+
+@Composable
+private fun TerminalClearButton(
+    darkMode: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val background = if (darkMode) Color(0xDD18181B) else Color(0xEEFFFFFF)
+    val border = if (darkMode) Color(0xFF3F3F46) else Color(0xFFE7E5E0)
+    val icon = if (enabled) {
+        if (darkMode) Color(0xFFFCA5A5) else Color(0xFFB42318)
+    } else {
+        if (darkMode) Color(0xFF71717A) else Color(0xFFA7A5A0)
+    }
+    Box(
+        modifier = modifier
+            .size(34.dp)
+            .clip(CircleShape)
+            .background(background)
+            .border(1.dp, border, CircleShape)
+            .then(if (enabled) Modifier.noRippleClickable(onClick = onClick) else Modifier),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = Lucide.Trash2,
+            contentDescription = stringResource(R.string.files_terminal_clear),
+            tint = icon,
+            modifier = Modifier.size(17.dp),
+        )
     }
 }
 
@@ -731,6 +881,7 @@ private fun TerminalShortcutRow(
 @Composable
 private fun FileListContent(
     rootPath: String?,
+    deviceOs: String?,
     directory: FilesDirectory,
     loading: Boolean,
     error: String?,
@@ -741,6 +892,7 @@ private fun FileListContent(
     onOpenDirectory: (String) -> Unit,
     onOpenFile: (FileEntry) -> Unit,
 ) {
+    val windowsDriveOverviewLabel = stringResource(R.string.files_windows_drives)
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -748,7 +900,12 @@ private fun FileListContent(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         PathBar(
-            path = displayPath(rootPath, directory.path),
+            path = displayRemotePath(
+                root = rootPath,
+                rawPath = directory.path,
+                deviceOs = deviceOs,
+                windowsDriveOverviewLabel = windowsDriveOverviewLabel,
+            ),
             darkMode = darkMode,
         )
         LazyColumn(
@@ -760,12 +917,21 @@ private fun FileListContent(
                 error != null && directory.entries.isEmpty() -> item { FilesMessage(error.orEmpty(), darkMode) }
                 !loading && directory.entries.isEmpty() -> item { FilesMessage(stringResource(R.string.files_empty_directory), darkMode) }
             }
-            val parent = parentPath(directory.path)
-            if (parent.isNotBlank()) {
+            val parent = remoteParentPath(
+                rawPath = directory.path,
+                deviceOs = deviceOs,
+                allowWindowsDriveOverview = isWindowsDeviceOs(deviceOs),
+            )
+            if (parent != null) {
                 item("..") {
                     FolderRow(
                         name = "..",
-                        copyPath = displayPath(rootPath, parent),
+                        copyPath = displayRemotePath(
+                            root = rootPath,
+                            rawPath = parent,
+                            deviceOs = deviceOs,
+                            windowsDriveOverviewLabel = windowsDriveOverviewLabel,
+                        ),
                         darkMode = darkMode,
                         menuOpen = openActionPath == parent,
                         onOpenMenu = { onOpenActionPath(parent) },
@@ -778,7 +944,12 @@ private fun FileListContent(
                 if (entry.isDirectory) {
                     FolderRow(
                         name = entry.name,
-                        copyPath = displayPath(rootPath, entry.path),
+                        copyPath = displayRemotePath(
+                            root = rootPath,
+                            rawPath = entry.path,
+                            deviceOs = deviceOs,
+                            windowsDriveOverviewLabel = windowsDriveOverviewLabel,
+                        ),
                         darkMode = darkMode,
                         menuOpen = openActionPath == entry.path,
                         onOpenMenu = { onOpenActionPath(entry.path) },
@@ -788,7 +959,12 @@ private fun FileListContent(
                 } else {
                     FileRow(
                         entry = entry,
-                        copyPath = displayPath(rootPath, entry.path),
+                        copyPath = displayRemotePath(
+                            root = rootPath,
+                            rawPath = entry.path,
+                            deviceOs = deviceOs,
+                            windowsDriveOverviewLabel = windowsDriveOverviewLabel,
+                        ),
                         darkMode = darkMode,
                         menuOpen = openActionPath == entry.path,
                         onOpenMenu = { onOpenActionPath(entry.path) },
@@ -805,6 +981,7 @@ private fun FileListContent(
 @Composable
 private fun FilePreviewContent(
     rootPath: String?,
+    deviceOs: String?,
     file: FileEntry,
     preview: TextFile?,
     loading: Boolean,
@@ -819,6 +996,7 @@ private fun FilePreviewContent(
     onSearchQueryChange: (String) -> Unit,
     onSearchResult: (SoraFileSearchResult) -> Unit,
 ) {
+    val windowsDriveOverviewLabel = stringResource(R.string.files_windows_drives)
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -826,7 +1004,12 @@ private fun FilePreviewContent(
         verticalArrangement = Arrangement.spacedBy(9.dp),
     ) {
         PreviewBreadcrumb(
-            path = displayPath(rootPath, file.path),
+            path = displayRemotePath(
+                root = rootPath,
+                rawPath = file.path,
+                deviceOs = deviceOs,
+                windowsDriveOverviewLabel = windowsDriveOverviewLabel,
+            ),
             darkMode = darkMode,
             onBackToFiles = onBackToFiles,
         )
@@ -1614,45 +1797,4 @@ private fun fileIconFor(name: String, knownCode: Boolean): ImageVector {
         knownCode -> Lucide.FileCode
         else -> Lucide.FileText
     }
-}
-
-private fun displayPath(root: String?, rawPath: String): String {
-    val base = root.orEmpty().trim().trimEnd('/', '\\')
-    val path = normalizeWindowsDrivePath(rawPath).trim().replace('\\', '/')
-    if (path.isBlank() || path == "." || path == "/") return base.ifBlank { "." }
-    if (path.startsWith("/") || Regex("^[A-Za-z]:/.*").matches(path)) return path
-    return if (base.isBlank()) path else "$base/${path.trimStart('/')}"
-}
-
-private fun parentPath(rawPath: String): String {
-    val clean = normalizeWindowsDrivePath(rawPath).trim().trimEnd('/', '\\').ifBlank { "." }
-    if (clean == "." || clean == "/" || Regex("^[A-Za-z]:[\\\\/]?$").matches(clean)) return ""
-    val normalized = clean.replace('\\', '/')
-    val slash = normalized.lastIndexOf("/")
-    val parent = when {
-        slash < 0 -> "."
-        slash == 0 -> "/"
-        else -> normalized.take(slash)
-    }
-    return if (clean.contains('\\') && Regex("^[A-Za-z]:/").containsMatchIn(parent)) {
-        parent.replace('/', '\\')
-    } else {
-        parent
-    }
-}
-
-private fun fileNameFromPath(rawPath: String): String {
-    val normalized = normalizeWindowsDrivePath(rawPath).trim().trimEnd('/', '\\').replace('\\', '/')
-    return normalized.substringAfterLast('/').ifBlank { normalized.ifBlank { "Untitled" } }
-}
-
-private fun FilesDirectory.normalizedRemotePaths(): FilesDirectory {
-    return copy(
-        path = normalizeWindowsDrivePath(path),
-        entries = entries.map { entry -> entry.copy(path = normalizeWindowsDrivePath(entry.path)) },
-    )
-}
-
-private fun normalizeWindowsDrivePath(rawPath: String): String {
-    return rawPath.replace(Regex("^/([A-Za-z]:)(?=$|[\\\\/])"), "$1")
 }

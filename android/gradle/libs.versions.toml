@@ -48,6 +48,7 @@ androidx-navigation-compose = { module = "androidx.navigation:navigation-compose
 lucide-icons = { module = "com.composables:icons-lucide-android", version.ref = "lucideIcons" }
 mlkit-barcode-scanning = { module = "com.google.mlkit:barcode-scanning", version.ref = "mlkitBarcode" }
 okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
+junit = { module = "junit:junit", version = "4.13.2" }
 sora-bom = { module = "io.github.rosemoe:editor-bom", version.ref = "soraEditor" }
 sora-editor = { module = "io.github.rosemoe:editor" }
 sora-language-textmate = { module = "io.github.rosemoe:language-textmate" }

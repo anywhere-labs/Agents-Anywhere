@@ -14,19 +14,39 @@ class TerminalApi(
         rows: Int,
         cwd: String = ".",
         ephemeralGroupId: String,
+        label: String = "Agents Anywhere",
     ): RemoteTerminal {
         val body = JSONObject().apply {
             put("cols", cols)
             put("rows", rows)
             put("cwd", cwd)
             put("ephemeralGroupId", ephemeralGroupId)
+            put("label", label)
         }
         return client.postJson(
             serverUrl = serverUrl,
-            path = "/connectors/${deviceId.urlEncode()}/terminals?root=${root.urlEncode()}",
+            path = "/connectors/${deviceId.urlEncode()}/terminals-v2?root=${root.urlEncode()}",
             body = body,
             authorizationToken = authorizationToken,
-        ).getJSONObject("terminal").toRemoteTerminal()
+        ).getJSONObject("result").toRemoteTerminal()
+    }
+
+    fun listTerminals(
+        serverUrl: String,
+        authorizationToken: String,
+        deviceId: String,
+    ): List<RemoteTerminal> {
+        val terminals = client.getJson(
+            serverUrl = serverUrl,
+            path = "/connectors/${deviceId.urlEncode()}/terminals-v2",
+            authorizationToken = authorizationToken,
+        ).getJSONObject("result").optJSONArray("terminals") ?: return emptyList()
+        return buildList {
+            for (index in 0 until terminals.length()) {
+                val terminal = terminals.optJSONObject(index) ?: continue
+                add(terminal.toRemoteTerminal())
+            }
+        }
     }
 
     fun closeTerminal(
@@ -37,7 +57,7 @@ class TerminalApi(
     ) {
         client.deleteJson(
             serverUrl = serverUrl,
-            path = "/connectors/${deviceId.urlEncode()}/terminals/${terminalId.urlEncode()}",
+            path = "/connectors/${deviceId.urlEncode()}/terminals-v2/${terminalId.urlEncode()}",
             authorizationToken = authorizationToken,
         )
     }
@@ -50,7 +70,7 @@ class TerminalApi(
         fromSeq: Long = 0,
     ): String {
         return serverUrl.toWebSocketBase() +
-            "/connectors/${deviceId.urlEncode()}/terminals/${terminalId.urlEncode()}/stream" +
+            "/connectors/${deviceId.urlEncode()}/terminals-v2/${terminalId.urlEncode()}/stream" +
             "?fromSeq=$fromSeq&token=${authorizationToken.urlEncode()}"
     }
 
@@ -66,6 +86,7 @@ class TerminalApi(
             pid = if (has("pid") && !isNull("pid")) optInt("pid") else null,
             status = optString("status", "starting"),
             exitCode = if (has("exitCode") && !isNull("exitCode")) optInt("exitCode") else null,
+            scrollbackBytes = optLong("scrollbackBytes", 0L),
             scrollbackSeq = optInt("scrollbackSeq", 0),
         )
     }

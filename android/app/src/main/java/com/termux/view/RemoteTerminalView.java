@@ -16,7 +16,6 @@ import android.text.Editable;
 import android.text.InputType;
 import android.text.TextUtils;
 import android.util.AttributeSet;
-import android.util.Log;
 import android.view.ActionMode;
 import android.view.HapticFeedbackConstants;
 import android.view.InputDevice;
@@ -135,7 +134,6 @@ public final class RemoteTerminalView extends View {
     public final static int KEY_EVENT_SOURCE_SOFT_KEYBOARD = 0;
 
     private static final String LOG_TAG = "TerminalView";
-    private static final String DEBUG_LOG_TAG = "AATerminal";
     private long mImeEvents;
     private long mKeyEvents;
     private long mCodePointEvents;
@@ -1066,6 +1064,16 @@ public final class RemoteTerminalView extends View {
         return mTermSession;
     }
 
+    public void releaseSession() {
+        stopTerminalCursorBlinker();
+        if (!mScroller.isFinished()) mScroller.abortAnimation();
+        removeCallbacks(mShowFloatingToolbar);
+        mTermSession = null;
+        mEmulator = null;
+        mCombiningAccent = 0;
+        mImeComposing = false;
+    }
+
     private void logIme(String message) {
         mImeEvents++;
         if (shouldLog(mImeEvents)) debug("IME #" + mImeEvents + " " + message);
@@ -1076,8 +1084,7 @@ public final class RemoteTerminalView extends View {
     }
 
     private static void debug(String message) {
-        // ponytail: temporary terminal probe, remove after freeze is diagnosed.
-        Log.d(DEBUG_LOG_TAG, message);
+        // Local terminal diagnostics are intentionally disabled on the input/render hot path.
     }
 
     private CharSequence getText() {
@@ -1502,6 +1509,7 @@ public final class RemoteTerminalView extends View {
             getViewTreeObserver().removeOnTouchModeChangeListener(mTextSelectionCursorController);
             mTextSelectionCursorController.onDetached();
         }
+        releaseSession();
     }
 
 

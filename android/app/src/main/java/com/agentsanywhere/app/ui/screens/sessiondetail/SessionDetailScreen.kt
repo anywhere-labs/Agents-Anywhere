@@ -70,9 +70,8 @@ import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailState
 import com.agentsanywhere.app.feature.sessiondetail.SessionStreamEvent
 import com.agentsanywhere.app.feature.sessiondetail.TimelineApproval
-import com.agentsanywhere.app.feature.terminal.RemoteTerminalController
 import com.agentsanywhere.app.feature.terminal.RemoteTerminalForegroundService
-import com.agentsanywhere.app.feature.terminal.TerminalController
+import com.agentsanywhere.app.feature.terminal.RemoteTerminalPool
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentSession
 import com.agentsanywhere.app.model.SessionStatus
@@ -100,7 +99,7 @@ fun SessionDetailScreen(
     devices: List<AgentDevice>,
     controller: SessionDetailController,
     filesController: FilesController,
-    terminalController: TerminalController,
+    terminalPool: RemoteTerminalPool,
     composerDraftStore: SessionComposerDraftStore,
     onSessionChanged: (AgentSession) -> Unit = {},
 ) {
@@ -138,7 +137,7 @@ fun SessionDetailScreen(
     val refetchInFlight = remember(sessionId) { AtomicBoolean(false) }
     val olderInFlight = remember(sessionId) { AtomicBoolean(false) }
     val streamOpen = remember(sessionId) { AtomicBoolean(false) }
-    val remoteTerminal = remember(sessionId, terminalController) { RemoteTerminalController(terminalController) }
+    val remoteTerminal = remember(sessionId, terminalPool) { terminalPool.forSession(sessionId) }
 
     var appVisible by remember(lifecycleOwner) {
         mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
@@ -635,12 +634,6 @@ fun SessionDetailScreen(
         }
     }
 
-    DisposableEffect(remoteTerminal) {
-        onDispose {
-            remoteTerminal.closeAndDispose()
-        }
-    }
-
     LaunchedEffect(sessionId, initialSession) {
         val session = initialSession
         if (session != null && session.id == sessionId) {
@@ -731,7 +724,7 @@ fun SessionDetailScreen(
         }
         else -> null
     }
-    val showInterrupt = inputEnabled && (serverBusy || state.interrupting) && draft.isBlank() && attachments.isEmpty()
+    val showInterrupt = inputEnabled && (serverBusy || state.interrupting)
     val replyTarget = state.session?.runtimeLabel?.takeIf { it.isNotBlank() }
         ?: stringResource(R.string.session_agent_fallback)
     val placeholder = when {
@@ -859,6 +852,7 @@ fun SessionDetailScreen(
             } else {
                 SessionAgentFilesScreen(
                     session = state.session,
+                    device = devices.firstOrNull { device -> device.id == state.session?.connectorId },
                     filesController = filesController,
                     terminalController = remoteTerminal,
                     darkMode = darkMode,
@@ -1002,7 +996,7 @@ private fun TakeoverConfirmDialog(
     val message = if (enabled) {
         stringResource(R.string.session_enable_takeover_body, agentLabel)
     } else {
-        stringResource(R.string.session_disable_takeover_body)
+        stringResource(R.string.session_disable_takeover_body, agentLabel)
     }
 
     Dialog(

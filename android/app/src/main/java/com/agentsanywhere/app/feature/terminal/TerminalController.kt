@@ -23,7 +23,12 @@ class TerminalController(
                 val root = session.cwd?.takeIf { it.isNotBlank() }
                     ?: throw IllegalStateException("This session has no workspace.")
                 val auth = authSession()
-                val terminal = terminalApi.createTerminal(
+                val label = sessionTerminalLabel(session.id)
+                val terminal = findReusableTerminal(
+                    auth = auth,
+                    connectorId = session.connectorId,
+                    label = label,
+                ) ?: terminalApi.createTerminal(
                     serverUrl = auth.serverUrl,
                     authorizationToken = auth.accessToken,
                     deviceId = session.connectorId,
@@ -31,6 +36,7 @@ class TerminalController(
                     cols = cols,
                     rows = rows,
                     ephemeralGroupId = ephemeralGroupId,
+                    label = label,
                 )
                 WorkspaceTerminalConnection(
                     connectorId = session.connectorId,
@@ -53,7 +59,12 @@ class TerminalController(
         return withContext(Dispatchers.IO) {
             runCatching {
                 val auth = authSession()
-                val terminal = terminalApi.createTerminal(
+                val label = deviceTerminalLabel(connectorId)
+                val terminal = findReusableTerminal(
+                    auth = auth,
+                    connectorId = connectorId,
+                    label = label,
+                ) ?: terminalApi.createTerminal(
                     serverUrl = auth.serverUrl,
                     authorizationToken = auth.accessToken,
                     deviceId = connectorId,
@@ -61,6 +72,7 @@ class TerminalController(
                     cols = cols,
                     rows = rows,
                     ephemeralGroupId = ephemeralGroupId,
+                    label = label,
                 )
                 WorkspaceTerminalConnection(
                     connectorId = connectorId,
@@ -72,6 +84,25 @@ class TerminalController(
                 throw IllegalStateException(error.message ?: "Could not open terminal.", error)
             }
         }
+    }
+
+    private fun findReusableTerminal(
+        auth: ApiAuth,
+        connectorId: String,
+        label: String,
+    ): RemoteTerminal? {
+        return runCatching {
+            terminalApi.listTerminals(
+                serverUrl = auth.serverUrl,
+                authorizationToken = auth.accessToken,
+                deviceId = connectorId,
+            )
+                .asSequence()
+                .filter { it.status != "exited" }
+                .filter { it.label == label }
+                .sortedByDescending { it.scrollbackSeq }
+                .firstOrNull()
+        }.getOrNull()
     }
 
     suspend fun closeTerminal(
@@ -105,6 +136,25 @@ class TerminalController(
         val serverUrl: String,
         val accessToken: String,
     )
+
+    private companion object {
+        private const val TERMINAL_LABEL_MAX_CHARS = 64
+
+        private fun sessionTerminalLabel(sessionId: String): String {
+            return uniqueTerminalLabel("AA Session", sessionId)
+        }
+
+        private fun deviceTerminalLabel(connectorId: String): String {
+            return uniqueTerminalLabel("AA Device", connectorId)
+        }
+
+        private fun uniqueTerminalLabel(prefix: String, id: String): String {
+            val hash = id.hashCode().toUInt().toString(16)
+            val maxIdLength = TERMINAL_LABEL_MAX_CHARS - prefix.length - hash.length - 2
+            val trimmedId = id.take(maxIdLength.coerceAtLeast(8))
+            return "$prefix $trimmedId $hash"
+        }
+    }
 }
 
 data class WorkspaceTerminalConnection(

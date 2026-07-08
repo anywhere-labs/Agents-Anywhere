@@ -22,12 +22,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -41,7 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.feature.sessions.SessionsState
-import com.agentsanywhere.app.feature.terminal.RemoteTerminalController
+import com.agentsanywhere.app.feature.terminal.RemoteTerminalPool
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.navigation.AppDestination
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
@@ -53,13 +51,12 @@ import com.composables.icons.lucide.ChevronDown
 import com.composables.icons.lucide.ChevronLeft
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Monitor
-import kotlinx.coroutines.launch
 
 @Composable
 fun TerminalScreen(
     navigate: (AppDestination) -> Unit,
     state: SessionsState,
-    terminalController: RemoteTerminalController,
+    terminalPool: RemoteTerminalPool,
     onPairDevice: () -> Unit,
 ) {
     val colors = LocalAAColors.current
@@ -67,19 +64,13 @@ fun TerminalScreen(
     val devices = remember(state.devices) { state.devices.sortedForDevicesPage() }
     var selectedDeviceId by remember { mutableStateOf(devices.firstOrNull { it.online }?.id) }
     val selectedDevice = devices.firstOrNull { it.id == selectedDeviceId && it.online }
-    val scope = rememberCoroutineScope()
+    val terminalController = remember(selectedDevice?.id, terminalPool) { terminalPool.forDevice(selectedDevice?.id) }
 
     BackHandler { navigate(AppDestination.Sessions) }
 
     LaunchedEffect(devices) {
         if (devices.none { it.id == selectedDeviceId && it.online }) {
             selectedDeviceId = devices.firstOrNull { it.online }?.id
-        }
-    }
-
-    DisposableEffect(Unit) {
-        onDispose {
-            scope.launch { terminalController.close() }
         }
     }
 
@@ -113,7 +104,8 @@ fun TerminalScreen(
                 terminalKey = selectedDevice.id,
                 canReconnect = selectedDevice.online,
                 onStart = { terminalController.ensureStarted(selectedDevice) },
-                onRestart = { terminalController.restart(selectedDevice) },
+                onReconnect = { terminalController.reconnect(selectedDevice) },
+                onClear = { terminalController.restart(selectedDevice) },
                 onVerticalDragChange = {},
                 modifier = Modifier.weight(1f),
             )

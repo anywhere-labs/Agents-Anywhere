@@ -11,5 +11,6 @@ data class RemoteTerminal(
     val pid: Int?,
     val status: String,
     val exitCode: Int?,
+    val scrollbackBytes: Long,
     val scrollbackSeq: Int,
 )

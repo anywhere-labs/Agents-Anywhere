@@ -45,7 +45,7 @@ import com.agentsanywhere.app.feature.sessions.withPatchedSession
 import com.agentsanywhere.app.feature.sessions.withPatchedSessions
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeSettingsState
-import com.agentsanywhere.app.feature.terminal.RemoteTerminalController
+import com.agentsanywhere.app.feature.terminal.RemoteTerminalPool
 import com.agentsanywhere.app.feature.terminal.TerminalController
 import com.agentsanywhere.app.model.MobileLoginQrPayload
 import com.agentsanywhere.app.feature.auth.OAuthPendingStatus
@@ -145,8 +145,8 @@ fun AgentsAnywhereApp(
             sessionStore = sessionStore,
         )
     }
-    val standaloneRemoteTerminalController = remember(terminalController) {
-        RemoteTerminalController(terminalController)
+    val remoteTerminalPool = remember(terminalController) {
+        RemoteTerminalPool(terminalController)
     }
     val currentDestination = AppDestination.valueOf(destinationName)
     val hasAuthSession = sessionStore.hasAuthSession()
@@ -283,8 +283,7 @@ fun AgentsAnywhereApp(
         languageMode = languageMode,
         sessionDetailController = sessionDetailController,
         filesController = filesController,
-        terminalController = terminalController,
-        standaloneRemoteTerminalController = standaloneRemoteTerminalController,
+        remoteTerminalPool = remoteTerminalPool,
         pendingMobileLoginQr = pendingMobileLoginQr,
         oauthFlow = oauthFlow,
         oauthErrorMessage = oauthErrorMessage,
@@ -317,6 +316,7 @@ fun AgentsAnywhereApp(
         onClearAvatar = { authController.clearAvatar() },
         onChangePassword = { password -> authController.changePassword(password) },
         onSignOut = {
+            remoteTerminalPool.disposeLocal()
             authController.signOut()
             sessionsState = SessionsState()
             selectedSessionId = null
@@ -517,8 +517,7 @@ private fun AgentsAnywhereNavHost(
     languageMode: String,
     sessionDetailController: SessionDetailController,
     filesController: FilesController,
-    terminalController: TerminalController,
-    standaloneRemoteTerminalController: RemoteTerminalController,
+    remoteTerminalPool: RemoteTerminalPool,
     pendingMobileLoginQr: MobileLoginQrPayload?,
     oauthFlow: OAuthFlowState?,
     oauthErrorMessage: String?,
@@ -659,7 +658,7 @@ private fun AgentsAnywhereNavHost(
                     devices = sessionsState.devices,
                     controller = sessionDetailController,
                     filesController = filesController,
-                    terminalController = terminalController,
+                    terminalPool = remoteTerminalPool,
                     composerDraftStore = sessionComposerDraftStore,
                     onSessionChanged = onSessionChanged,
                 )
@@ -695,7 +694,7 @@ private fun AgentsAnywhereNavHost(
                 AppDestination.Terminal -> TerminalScreen(
                     navigate = navigate,
                     state = sessionsState,
-                    terminalController = standaloneRemoteTerminalController,
+                    terminalPool = remoteTerminalPool,
                     onPairDevice = { pairDeviceSheetOpen = true },
                 )
                 AppDestination.Files -> FilesScreen(
