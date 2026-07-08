@@ -2,10 +2,12 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 
 const REQUIRED_ENV = [
   "MAC_CERT_P12_BASE64",
   "CSC_KEY_PASSWORD",
+  "MACOS_SIGN_IDENTITY",
   "APPLE_ID",
   "APPLE_APP_SPECIFIC_PASSWORD",
   "APPLE_TEAM_ID",
@@ -32,6 +34,26 @@ function writeP12FromEnv(certPath) {
   chmodSync(certPath, 0o600);
 }
 
+function runSecurity(args, options = {}) {
+  const result = spawnSync("/usr/bin/security", args, {
+    stdio: options.stdio ?? "pipe",
+    encoding: "utf8",
+  });
+  if (result.status !== 0) {
+    const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
+    throw new Error(`security ${args[0]} failed${output ? `:\n${output}` : ""}`);
+  }
+  return result.stdout;
+}
+
+function setupKeychain(keychainPath, keychainPassword, certPath) {
+  runSecurity(["create-keychain", "-p", keychainPassword, keychainPath]);
+  runSecurity(["set-keychain-settings", "-lut", "21600", keychainPath]);
+  runSecurity(["unlock-keychain", "-p", keychainPassword, keychainPath]);
+  runSecurity(["import", certPath, "-P", envValue("CSC_KEY_PASSWORD"), "-A", "-t", "cert", "-f", "pkcs12", "-k", keychainPath]);
+  runSecurity(["set-key-partition-list", "-S", "apple-tool:,apple:,codesign:", "-s", "-k", keychainPassword, keychainPath]);
+}
+
 function runYarnDist(env) {
   const command = process.platform === "win32" ? "yarn.cmd" : "yarn";
   return spawnSync(command, ["dist"], {
@@ -50,18 +72,22 @@ if (missing.length > 0) {
 
 const tempDir = mkdtempSync(join(tmpdir(), "agents-anywhere-macos-sign-"));
 const certPath = join(tempDir, "developer-id-application.p12");
+const keychainPath = join(tempDir, "agents-anywhere-signing.keychain-db");
+const keychainPassword = randomBytes(24).toString("hex");
 let exitCode = 1;
 
 try {
   writeP12FromEnv(certPath);
+  setupKeychain(keychainPath, keychainPassword, certPath);
   const env = {
     ...process.env,
-    CSC_LINK: certPath,
-    CSC_KEY_PASSWORD: envValue("CSC_KEY_PASSWORD"),
+    CSC_KEYCHAIN: keychainPath,
+    CSC_NAME: envValue("MACOS_SIGN_IDENTITY"),
     APPLE_ID: envValue("APPLE_ID"),
     APPLE_APP_SPECIFIC_PASSWORD: envValue("APPLE_APP_SPECIFIC_PASSWORD"),
     APPLE_TEAM_ID: envValue("APPLE_TEAM_ID"),
   };
+  delete env.CSC_LINK;
   const result = runYarnDist(env);
   if (result.error) throw result.error;
   exitCode = typeof result.status === "number" ? result.status : 1;
