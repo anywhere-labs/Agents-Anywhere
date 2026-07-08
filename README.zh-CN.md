@@ -237,7 +237,23 @@ Agents Anywhere 由三个部分组成：
 | --- | --- | --- |
 | Windows | 0.1.6 | 从 [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases) 下载 Connector App |
 | macOS | 0.1.6 | 从 [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases) 下载 Connector App |
-| Linux | 0.1.6 | 复制配对 UI 里显示的命令 |
+
+#### Linux：使用命令行配对
+
+Linux 设备直接在 Web 端发起配对，并选择 **使用命令行配对**。复制 Web 端显示的命令，粘贴到 Linux 终端里运行即可。
+
+注意保持这个终端会话存活。如果关闭终端，`anywhere-cli` 进程也会退出，Linux 设备就会下线。最简单的持久化方式是把配对命令放到 `screen` 里运行：
+
+```bash
+screen -S anywhere
+# 在这里粘贴并运行 Web 配对页面给出的命令
+```
+
+Connector 在线后，可以按 `Ctrl-A`，再按 `D` 退出但不关闭会话。之后需要回到这个会话时运行：
+
+```bash
+screen -r anywhere
+```
 
 ### Step 3：配对 Device
 
