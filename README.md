@@ -238,9 +238,13 @@ Prepare the Connector on the device that runs Codex / Claude Code.
 | Windows | 0.1.6 | Download the Connector App from [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases) |
 | macOS | 0.1.6 | Download the Connector App from [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases) |
 
+### Step 3: Pair The Device
+
+Follow the Web UI to start pairing the device. You can also start pairing from the mobile app.
+
 #### Linux: Pair From The Command Line
 
-On Linux, start pairing from the Web UI and choose **Use command-line pairing**. Copy the command shown by the Web UI, then paste and run it in the Linux terminal.
+On Linux, choose **Use command-line pairing** in the Web pairing flow. Copy the command shown by the Web UI, then paste and run it in the Linux terminal.
 
 Keep that terminal session alive. If the terminal is closed, the `anywhere-cli` process exits and the Linux device goes offline. For a simple persistent session, run the pairing command inside `screen`:
 
@@ -254,10 +258,6 @@ After the Connector is online, detach from the session with `Ctrl-A`, then `D`. 
 ```bash
 screen -r anywhere
 ```
-
-### Step 3: Pair The Device
-
-Follow the Web UI to start pairing the device. You can also start pairing from the mobile app.
 
 ### Step 4: Start Chatting
 
