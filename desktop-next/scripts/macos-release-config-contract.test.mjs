@@ -13,6 +13,7 @@ assert.equal(mac.hardenedRuntime, true, "macOS release builds must enable harden
 assert.notEqual(mac.identity, "-", "macOS release builds must not force ad-hoc signing");
 assert.equal(mac.entitlements, "build/entitlements.mac.plist");
 assert.equal(mac.entitlementsInherit, "build/entitlements.mac.plist");
+assert.equal(mac.notarize, true, "macOS release builds must enable notarization");
 
 const entitlements = readFileSync(join(projectDir, "build/entitlements.mac.plist"), "utf8");
 

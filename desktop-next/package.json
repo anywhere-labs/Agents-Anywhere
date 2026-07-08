@@ -16,7 +16,8 @@
     "typecheck": "tsc --noEmit",
     "bundle:uv": "node scripts/prepare-uv.mjs",
     "pack": "yarn bundle:uv && yarn build && electron-builder --dir",
-    "dist": "yarn bundle:uv && yarn build && electron-builder"
+    "dist": "yarn bundle:uv && yarn build && electron-builder",
+    "dist:mac:signed": "node scripts/dist-mac-signed.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
@@ -123,6 +124,7 @@
       "hardenedRuntime": true,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": true,
       "gatekeeperAssess": false,
       "target": "dmg"
     },
