@@ -5,9 +5,9 @@
   <img src="docs/brand/agents-anywhere-wordmark-light.png" alt="Agents Anywhere" width="420">
 </picture>
 
-<h3>Control any coding agent on any device from your phone.</h3>
+<h3>用手机控制任何设备上的编程 Agent。</h3>
 
-Run Codex, Claude Code, and more agents on your Mac, Windows PC, Linux devbox, or cloud sandbox. Use the mobile app to chat with sessions, preview files and code, approve actions, and open a terminal on that device.
+让 Codex、Claude Code 和更多 Agent 继续运行在你的 Mac、Windows 电脑、Linux devbox 或云沙箱里。你可以用手机和 Session 对话、预览文件和代码、处理审批，并打开那台设备上的远程终端。
 
 ![Python](https://img.shields.io/badge/Python-3.12+-3776AB)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.136+-009688)
@@ -17,132 +17,132 @@ Run Codex, Claude Code, and more agents on your Mac, Windows PC, Linux devbox, o
 ![Yarn](https://img.shields.io/badge/Yarn-4.6-2C8EBB)
 ![Docker](https://img.shields.io/badge/Docker-ready-2496ED)
 
-[Docker Quickstart](#quickstart-run-the-full-app-with-docker) · [Onboarding](#onboarding) · [Downloads](https://github.com/anywhere-labs/Agents-Anywhere/releases) · [Docker Docs](docker/README.md) · [简体中文](README.zh-CN.md)
+[Docker Quickstart](#quickstartdocker-启动完整应用) · [首次使用](#首次使用流程) · [Downloads](https://github.com/anywhere-labs/Agents-Anywhere/releases) · [Docker 文档](docker/README.md) · [English](README.en.md)
 
 </div>
 
 ---
 
 > [!IMPORTANT]
-> 中国区线上服务已在 Beta 中，目前免费试用，仅对中国用户开放。想申请内测，请跳转到 [Beta Access And Contact](#beta-access-and-contact)，扫码进群并联系管理员。
+> 中国区 Beta 已上线，目前免费试用，仅对中国用户开放。想申请内测，请跳转到 [申请内测与联系方式](#申请内测与联系方式)，扫码进群并联系管理员。
 
-## What Is Agents Anywhere?
+## Agents Anywhere 是什么？
 
-Agents Anywhere lets you control coding agents running on another device from your phone.
+Agents Anywhere 让你用手机控制正在别的设备上运行的编程 Agent。
 
-Run Codex, Claude Code, and more agents on a Mac, Windows PC, Linux server, remote devbox, or cloud sandbox. Agents Anywhere connects your phone to those devices, so you can view and control the agent sessions running there.
+你可以在 Mac、Windows 电脑、Linux 服务器、远程 devbox 或云沙箱上运行 Codex / Claude Code。Agents Anywhere 会把手机连接到这些设备，让你随时查看和控制设备上的 Agent Session。
 
-From your phone, you can:
+在手机上，你可以：
 
-- Talk to the running session and take over when it needs direction.
-- Preview files, code, logs, and runtime state from the remote device.
-- Approve, interrupt, continue, or sync long-running work.
-- Open a remote terminal on the device where the agent is actually running.
+- 和正在运行的 Session 对话，在需要时接管任务。
+- 预览远程设备上的文件、代码、日志和 Runtime 状态。
+- 处理审批、打断、继续或同步长时间运行的任务。
+- 打开远程终端，直接操作 Agent 所在的那台设备。
 
-Agents Anywhere is the remote, not a new agent host. Your code stays on the original device, your agent uses that device's local files and permissions, and your model accounts remain with your own Claude Code / Codex toolchain.
+Agents Anywhere 是遥控器，不是新的 Agent 运行环境。你的代码仍然留在原设备上，Agent 仍然使用那台设备的本地文件和权限，模型账号和模型费用也仍然来自你自己的 Claude Code / Codex 等工具链。
 
-When you are at a desktop, you can also use the Web console. It provides the same session, device, approval, file, and terminal controls for browser-based and self-hosted team workflows.
+如果你在电脑前，也可以直接使用 Web 控制台。Web 端提供同样的 Session、Device、审批、文件和终端管理能力，适合桌面浏览器和团队自托管场景。
 
-## Product Preview
+## 产品预览
 
 **Web**
 
-![Web console](docs/screenshots/web-console.png)
+![Web 控制台](docs/screenshots/web-console.png)
 
-**Mobile**
+**移动端**
 
-![Mobile sessions](docs/screenshots/mobile-sessions.png)
+![移动端 Session](docs/screenshots/mobile-sessions.png)
 
-**Mobile: files and terminal**
+**移动端：文件与终端**
 
-![Mobile files and terminal](docs/screenshots/mobile-files-terminal.png)
+![移动端文件与终端](docs/screenshots/mobile-files-terminal.png)
 
-## Current Capabilities
+## 当前能力
 
-- **Unified session workspace.** Create, inspect, pin, archive, mark read, take over, and manage sessions.
-- **Codex-first runtime integration.** The Connector discovers local Codex and Claude runtimes and reports capabilities. Codex is the best-supported adapter today; Claude has basic support and is still being expanded.
-- **Approvals and sync.** Supports interrupt, sync, approval resolution, and timeline polling/SSE.
-- **Local file access.** Browse workspaces, read/write files, upload content, and download content through an online Connector.
-- **Remote shell and terminal.** Run one-shot shell commands, shell tasks, and interactive terminals.
-- **Device pairing.** Pair the machine that owns your workspace through the Windows/macOS Connector app or the Linux Connector CLI.
-- **Self-hosted backend.** The FastAPI backend supports SQLite for local development and PostgreSQL for production-style deployments.
-- **Web and Android clients.** Use the Web console or Android app to manage sessions, devices, approvals, files, terminals, and remote control workflows.
+- **统一 Session 工作台。** 创建、查看、置顶、归档、标记已读、接管和管理多条 Session。
+- **Codex 优先的 Runtime 集成。** Connector 会发现本机 Codex 和 Claude，并上报可用能力。目前 Codex 是适配最完整的 Runtime；Claude 已支持基础流程，仍在继续完善。
+- **审批与同步。** 支持打断、同步、审批处理和 timeline 轮询/SSE。
+- **本地文件访问。** 通过在线 Connector 浏览工作目录、读取/写入文件、上传和下载内容。
+- **远程 shell 与终端。** 支持一次性 shell 命令、shell task 和交互式 terminal。
+- **设备配对。** 通过 Windows/macOS Connector App 或 Linux Connector CLI，把真正拥有工作区的机器接入控制面。
+- **自托管后端。** FastAPI 后端支持 SQLite 本地开发和 PostgreSQL 生产风格部署。
+- **Web 和 Android 客户端。** 使用 Web 控制台或 Android App 管理 Session、Device、审批、文件、终端和远程控制流程。
 
-## Supported Agents And Runtimes
+## 支持的 Agent 与 Runtime
 
-Agents Anywhere does not replace your agent. It runs next to an existing runtime through the Connector:
+Agents Anywhere 不替代你的 Agent，而是通过 Connector 运行在现有 Runtime 旁边：
 
 ![Codex](https://img.shields.io/badge/Codex-best%20supported-111111)
 ![Claude](https://img.shields.io/badge/Claude-basic%20support-666666)
-![More agents](https://img.shields.io/badge/more%20agents-coming%20soon-lightgrey)
+![更多 Agent](https://img.shields.io/badge/more%20agents-coming%20soon-lightgrey)
 
-| Runtime | Status | Notes |
+| Runtime | 当前状态 | 说明 |
 | --- | --- | --- |
-| Codex | ✅ | Supports runtime discovery, session sync, timeline updates, approvals, interrupt/takeover, filesystem access, shell tasks, interactive terminals, and runtime settings. |
-| Claude Code | ✅ | Supports discovery and the basic session/control flow. Deeper capabilities are still being improved. |
-| Cursor | Coming soon | Not yet available as a usable adapter. |
-| OpenCode | Coming soon | Not yet available as a usable adapter. |
-| Gemini CLI | Coming soon | Not yet available as a usable adapter. |
+| Codex | ✅ | 支持 Runtime 发现、Session 同步、timeline 更新、审批、打断/接管、文件访问、shell task、交互式 terminal 和 Runtime 设置。 |
+| Claude Code | ✅ | 支持发现和基础 Session/控制流程，更多深度能力仍在继续完善。 |
+| Cursor | Coming soon | 暂未提供可用 adapter。 |
+| OpenCode | Coming soon | 暂未提供可用 adapter。 |
+| Gemini CLI | Coming soon | 暂未提供可用 adapter。 |
 
-Connector adapters are extensible. New runtimes should reuse the existing session, timeline, approval, filesystem, and terminal capabilities where possible.
+Connector adapter 是可扩展的；新增 Runtime 时，应优先复用现有的 session、timeline、approval、filesystem 和 terminal 能力。
 
-## Supported Client And Connector Platforms
+## 支持的客户端与 Connector 平台
 
 ![Web](https://img.shields.io/badge/Web-primary%20client-111111)
 ![iOS](https://img.shields.io/badge/iOS-in%20development-lightgrey)
 ![Android](https://img.shields.io/badge/Android-available-3DDC84)
 ![Desktop Connector](https://img.shields.io/badge/Desktop%20Connector-available-111111)
 
-| Platform / surface | Status | Notes |
+| 平台 / 入口 | 状态 | 说明 |
 | --- | --- | --- |
-| Web console | ✅ | Supports sessions, devices, approvals, files, terminals, runtime settings, team/admin management, and session detail. |
-| Android | ✅ | Download the APK from [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases). Supports sessions, devices, approvals, files, terminals, and mobile control workflows. |
-| iOS | Coming soon | In development. |
-| Windows / macOS Connector app | ✅ | Download from [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases). Supports pairing, logs, tray behavior, and startup controls. |
-| Linux Connector CLI | ✅ | Use the Python CLI from `connector/` or `uvx anywhere-cli` for Linux servers, devboxes, and headless machines. |
+| Web 控制台 | ✅ | 支持 Session、Device、审批、文件、终端、Runtime 设置、团队/管理员管理和 Session 详情。 |
+| Android | ✅ | 可从 [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases) 下载 APK。支持 Session、Device、审批、文件、终端和移动端控制工作流。 |
+| iOS | Coming soon | 正在开发中。 |
+| Windows / macOS Connector App | ✅ | 可从 [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases) 下载。支持配对、日志、托盘和开机启动控制。 |
+| Linux Connector CLI | ✅ | 使用 `connector/` 里的 Python CLI 或 `uvx anywhere-cli`，适合 Linux 服务器、开发机和 headless 环境。 |
 
-This repository currently includes the Web frontends, FastAPI backend, Connector CLI, Windows/macOS Connector app, the Android native client, and iOS work in progress. Web and Android are the main supported client surfaces today; the Connector app/CLI is what links your own machines into the control plane.
+当前仓库已包含 Web 前端、FastAPI 后端、Connector CLI、Windows/macOS Connector App、Android 原生客户端，以及开发中的 iOS 客户端代码。Web 和 Android 是当前主要支持的客户端入口；Connector App/CLI 用来把你自己的机器接入控制面。
 
-Want to run it now? Jump to [Docker Quickstart](#quickstart-run-the-full-app-with-docker). After the server is running, continue to [Onboarding](#onboarding).
+想直接跑起来，可以跳到 [Docker Quickstart](#quickstartdocker-启动完整应用)；服务启动后，继续看 [首次使用流程](#首次使用流程)。
 
-## FAQ
+## 常见问题
 
-**Where does my code actually run?**
-On the machine running the Connector. The backend handles auth, state, file metadata, and RPC routing; it does not execute your code on the server.
+**我的代码到底跑在哪？**
+跑在 Connector 所在的机器上。后端负责认证、状态、文件元数据和 RPC 转发，不把你的代码搬到服务器上执行。
 
-**What do I install on my dev machine?**
-Install the Connector on the machine that owns your workspace and local agent runtime. On Windows and macOS, use the Agents Anywhere Connector desktop app. On Linux, use the Python CLI in `connector/` or `uvx anywhere-cli`.
+**需要在开发机上装什么？**
+需要在拥有工作区和本地 Agent Runtime 的机器上安装 Connector。Windows 和 macOS 使用 Agents Anywhere Connector 桌面 App；Linux 使用 `connector/` 里的 Python CLI 或 `uvx anywhere-cli`。
 
-**Do my model accounts go through Agents Anywhere?**
-No. The Connector uses the Codex / Claude runtime and login state already present on your machine. Agents Anywhere does not proxy model account credentials.
+**模型账号会经过 Agents Anywhere 吗？**
+不会。Connector 使用本机已有的 Codex / Claude Runtime 和登录状态，Agents Anywhere 不代理模型账号凭据。
 
-**Codex and Claude already provide official remote control. Why use Agents Anywhere?**
-Official remote control is usually tied to each vendor's subscription account and product surface. Agents Anywhere does not need to bind to your model subscription account; it only needs the Connector to reach a runtime that is already logged in locally. The goal is one unified entry point for multiple agents: Codex, Claude, and more agents over time. More adapters are in development, and Connector adapter contributions are welcome.
+**Codex、Claude 已经有官方远程控制，为什么还要用 Agents Anywhere？**
+官方远程控制通常绑定各自的订阅账号和产品体系；Agents Anywhere 的控制面不需要绑定你的模型订阅账号，只需要 Connector 能在本机访问你已经登录好的 Runtime。它的目标是做一个多 Agent 的统一入口：同一个 Web 控制台里接入 Codex、Claude，以及未来更多 Agent。更多适配正在开发中，也欢迎贡献新的 Connector adapter。
 
-**Can I self-host it?**
-Yes. The Docker quickstart runs the Web console, FastAPI backend, and PostgreSQL together. For deployment variants and environment variables, see [docker/README.md](docker/README.md).
+**可以自托管吗？**
+可以。Docker quickstart 会一起启动 Web 控制台、FastAPI 后端和 PostgreSQL。更多部署方式和环境变量请看 [docker/README.md](docker/README.md)。
 
-**Which agents are supported today?**
-The current code focuses on Codex and Claude. Codex is the most complete adapter today. Claude supports the basic flow and is still being expanded. Other runtimes are coming soon and can be added by implementing Connector adapters.
+**当前支持哪些 Agent？**
+当前代码重点集成 Codex 和 Claude。Codex 是目前最完整的适配目标；Claude 已支持基础流程，仍在继续完善。其他 Runtime 处于 coming soon 状态，可以通过新增 Connector adapter 的方式扩展。
 
-## Technical Guide
+## 技术说明
 
-The sections above describe the product: Agents Anywhere solves the problem of agents running elsewhere while humans still need to take over. The sections below cover the architecture, Docker quickstart, onboarding, and Connector platform choices. For detailed Docker deployment options, local development images, environment variables, and verification commands, see [docker/README.md](docker/README.md).
+上面是产品层面的说明：Agents Anywhere 解决的是“Agent 跑在别处，但人需要随时接管”的问题。下面介绍系统架构、Docker quickstart、首次使用流程和 Connector 平台选择。详细的 Docker 部署方式、本地开发镜像、环境变量和验证命令请看 [docker/README.md](docker/README.md)。
 
-## Architecture
+## 架构
 
 ```mermaid
 flowchart LR
-    Web["Web Console<br/>browser client"]
-    Server["FastAPI Server<br/>auth / sessions / RPC broker / files"]
-    Connector["Connector<br/>desktop app or CLI"]
-    Runtime["Local Agent Runtime<br/>Codex / Claude today<br/>more coming soon"]
-    Workspace["Local Workspace<br/>files / shell / terminal"]
+    Web["Web 控制台<br/>浏览器客户端"]
+    Server["FastAPI Server<br/>认证 / Session / RPC broker / 文件"]
+    Connector["Connector<br/>桌面 App 或 CLI"]
+    Runtime["本地 Agent Runtime<br/>当前支持 Codex / Claude<br/>更多 coming soon"]
+    Workspace["本地工作区<br/>文件 / shell / terminal"]
 
     Web <-->|HTTP / WebSocket| Server
     Server <-->|Connector WebSocket| Connector
     Connector <-->|runtime adapter| Runtime
-    Connector <-->|local permissions| Workspace
+    Connector <-->|本地权限| Workspace
 
     classDef primary fill:#111,stroke:#555,color:#fff;
     classDef local fill:#f5f5f5,stroke:#aaa,color:#111;
@@ -150,19 +150,19 @@ flowchart LR
     class Connector,Runtime,Workspace local;
 ```
 
-Repository layout:
+仓库结构：
 
 ```text
-server/      FastAPI backend, SQLite/PostgreSQL storage, Connector RPC broker
-connector/   Local daemon and CLI for Codex / Claude runtime integration
-desktop/     Windows/macOS Electron app for running the local Connector
-web-next/    Next.js + shadcn Web console
-web/         Legacy React + Vite frontend kept as a fallback/reference
-docker/      Development, production, and PostgreSQL compose deployment files
-docs/        Shared reference notes
+server/      FastAPI 后端，SQLite/PostgreSQL 存储，Connector RPC broker
+connector/   本地守护进程和 CLI，集成 Codex / Claude runtime
+desktop/     Windows/macOS Electron App，用于运行本机 Connector
+web-next/    Next.js + shadcn Web 控制台
+web/         旧版 React + Vite 前端，保留作 fallback/reference
+docker/      开发、生产和 PostgreSQL compose 部署文件
+docs/        共享参考文档
 ```
 
-Package-specific docs:
+各包文档：
 
 - [Server](server/README.md)
 - [Connector](connector/README.md)
@@ -170,9 +170,9 @@ Package-specific docs:
 - [Web Next](web-next/)
 - [Docker](docker/README.md)
 
-## Quickstart: Run The Full App With Docker
+## Quickstart：Docker 启动完整应用
 
-Run the PostgreSQL-backed stack from the repository root:
+从仓库根目录运行 PostgreSQL compose：
 
 ```bash
 POSTGRES_PASSWORD=change-me \
@@ -180,45 +180,45 @@ AGENT_SERVER_SECRET=change-me-too \
 docker compose -f docker/docker-compose.postgres.yml up --build
 ```
 
-Open:
+打开：
 
 ```text
 http://127.0.0.1:5174
 ```
 
-This starts two services:
+这会启动两个服务：
 
-- `postgres-next`: PostgreSQL 17 with a persistent Docker volume.
-- `server-next`: FastAPI backend published on host port `5174`; it serves the statically exported `web-next` UI and handles API/WebSocket paths from the same origin.
+- `postgres-next` 服务运行 PostgreSQL 17。
+- `server-next` 服务运行 FastAPI 后端，发布在宿主机 `5174` 端口；它会同源托管静态导出的 `web-next` UI，并处理 API/WebSocket 路径。
 
-The first startup on an empty database logs a setup token. Use it in the Web UI to create the first admin user.
+首次启动空数据库时，服务日志会输出 setup token。用它在 Web UI 中创建第一个管理员用户。
 
-For custom ports, production secrets, SQLite/manual Docker runs, mirrors, connector images, and local development containers, see [docker/README.md](docker/README.md).
+自定义端口、生产环境密钥、SQLite/manual Docker 启动、镜像源、Connector 镜像和本地开发容器，请看 [docker/README.md](docker/README.md)。
 
-## Onboarding
+## 首次使用流程
 
-After the Docker stack or server is running, follow this first-run flow.
+Docker stack 或 server 启动后，按下面流程完成第一次配置。
 
-### Step 0: Understand The Three Parts
+### Step 0：先理解三个部分
 
-Agents Anywhere has three main parts:
+Agents Anywhere 由三个部分组成：
 
-- **Client**: The entry point you use directly, including the Web console, iOS app, and Android app.
-- **Server**: The middle service that handles accounts, devices, session state, and command routing.
-- **Connector App**: The local app running on the controlled device, such as your Mac, Windows PC, Linux server, or devbox.
+- **Client**：你直接使用的入口，包括 Web 控制台、iOS App 和 Android App。
+- **Server**：中间服务，负责账号、设备、Session 状态和指令转发。
+- **Connector App**：运行在被控设备上的本地程序，比如你的 Mac、Windows 电脑、Linux 服务器或 devbox。
 
-In short: you send a command from a Client, the command goes to the Server first, and then the Server forwards it to the Connector App on the controlled device. The Connector App operates the local Codex / Claude Code runtime on that device to complete the task. Your code, terminal, and agent runtime all stay on the controlled device.
+简单来说：你在 Client 上发出指令，指令先到 Server，再转发给被控设备上的 Connector App。Connector App 会在那台设备上操作本地的 Codex / Claude Code 等 Agent，完成任务。你的代码、终端和 Agent 运行环境仍然都在被控设备本地。
 
-### Step 1: Create The Admin Account
+### Step 1：创建 Admin 账号
 
-Open the Web console, paste the setup token from the server logs, and create the first account. This account becomes the default administrator.
+打开 Web 控制台，填入服务端日志里的 setup token，创建第一个账号。这个账号会成为默认管理员。
 
 > [!TIP]
-> What is a setup token?
+> setup token 是什么？
 >
-> On a new deployment, there are no users yet, and the first successful registration becomes the administrator. To prevent someone else from claiming a public instance before you do, Agents Anywhere requires the first registration to include the setup token printed by the backend.
+> 新部署的服务还没有用户时，第一个注册成功的人会成为管理员。为了避免服务暴露到公网后被别人抢先注册，Agents Anywhere 要求第一次注册必须填写后端日志里打印出来的 setup token。
 >
-> Look for a log block like this in the backend service startup logs:
+> 请在后端服务启动日志中查找类似下面的内容：
 >
 > ```text
 > AGENT SERVER  ·  first-run setup required
@@ -227,56 +227,56 @@ Open the Web console, paste the setup token from the server logs, and create the
 >   setup-token: xxxxxxxxxxxxxxxxxxxxxxxx
 > ```
 >
-> Copy the value after `setup-token:` and paste it into the Web registration page.
+> 复制 `setup-token:` 后面的值，粘贴到 Web 注册页即可。
 
-### Step 2: Prepare The Connector
+### Step 2：准备 Connector
 
-Prepare the Connector on the device that runs Codex / Claude Code.
+在运行 Codex / Claude Code 的设备上准备 Connector。
 
-| OS | Version | Action |
+| OS | 版本 | 操作 |
 | --- | --- | --- |
-| Windows | 0.1.6 | Download the Connector App from [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases) |
-| macOS | 0.1.6 | Download the Connector App from [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases) |
+| Windows | 0.1.6 | 从 [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases) 下载 Connector App |
+| macOS | 0.1.6 | 从 [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases) 下载 Connector App |
 
-### Step 3: Pair The Device
+### Step 3：配对 Device
 
-Follow the Web UI to start pairing the device. You can also start pairing from the mobile app.
+按照 Web 端 UI 引导发起配对。你也可以在手机端发起配对。
 
-#### Linux: Pair From The Command Line
+#### Linux：使用命令行配对
 
-On Linux, choose **Use command-line pairing** in the Web pairing flow. Copy the command shown by the Web UI, then paste and run it in the Linux terminal.
+Linux 设备在 Web 端配对流程里选择 **使用命令行配对**。复制 Web 端显示的命令，粘贴到 Linux 终端里运行即可。
 
-Keep that terminal session alive. If the terminal is closed, the `anywhere-cli` process exits and the Linux device goes offline. For a simple persistent session, run the pairing command inside `screen`:
+注意保持这个终端会话存活。如果关闭终端，`anywhere-cli` 进程也会退出，Linux 设备就会下线。最简单的持久化方式是把配对命令放到 `screen` 里运行：
 
 ```bash
 screen -S anywhere
-# Paste and run the command from the Web pairing UI here.
+# 在这里粘贴并运行 Web 配对页面给出的命令
 ```
 
-After the Connector is online, detach from the session with `Ctrl-A`, then `D`. To return later:
+Connector 在线后，可以按 `Ctrl-A`，再按 `D` 退出但不关闭会话。之后需要回到这个会话时运行：
 
 ```bash
 screen -r anywhere
 ```
 
-### Step 4: Start Chatting
+### Step 4：开始聊天
 
-Once the Device is online, you can start chatting with the Agent from the Web console or the mobile app.
+Device 在线后，就可以在 Web 控制台或手机端和 Agent 开始聊天。
 
-For Android, download the APK from [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases). iOS is still in development.
+Android 用户可以从 [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases) 下载 APK。iOS 仍在开发中。
 
-## Beta Access And Contact
+## 申请内测与联系方式
 
-Agents Anywhere now provides a hosted beta service. The service is currently free, in beta, and open by application for users in China only.
+Agents Anywhere 已经提供线上 Beta 服务。当前服务免费、仍处于 Beta 阶段，并且只面向中国用户开放，需要申请后使用。
 
-If you want to try it, scan the WeChat, Feishu, or QQ QR code below, join a group, and contact an admin.
+如果你想试用，请扫码加入微信群、飞书群或 QQ 群，并联系管理员开通。
 
-| WeChat | Feishu | QQ | Discord |
+| 微信群 | 飞书群 | QQ 群 | Discord |
 | --- | --- | --- | --- |
-| <img src="docs/contact/wechat-beta.png" alt="WeChat beta access group QR code" width="180"> | <img src="docs/contact/feishu-beta.jpeg" alt="Feishu beta access group QR code" width="180"> | <img src="docs/contact/qq-beta.jpeg" alt="QQ beta access group QR code" width="180"> | <img src="docs/contact/discord-beta.jpeg" alt="Discord community QR code" width="180"> |
-| China beta access group | China beta access group | China beta access group | International community |
+| <img src="docs/contact/wechat-beta.png" alt="微信群二维码" width="180"> | <img src="docs/contact/feishu-beta.jpeg" alt="飞书群二维码" width="180"> | <img src="docs/contact/qq-beta.jpeg" alt="QQ 群二维码" width="180"> | <img src="docs/contact/discord-beta.jpeg" alt="Discord 社区二维码" width="180"> |
+| 微信 已支持机器人自助注册 | 中国区 Beta 试用群 | QQ 已支持机器人自助注册 | 海外社区 |
 
-For overseas users, the hosted beta is not open yet. Join Discord for community updates.
+海外用户入口暂未开放。可以先加入 Discord 获取后续社区和开放计划更新。
 
 ## Star History
 
@@ -288,6 +288,6 @@ For overseas users, the hosted beta is not open yet. Join Discord for community 
  </picture>
 </a>
 
-## License
+## 开源许可
 
 [MIT](LICENSE)

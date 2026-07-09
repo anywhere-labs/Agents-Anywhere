@@ -17,7 +17,7 @@
 ![Yarn](https://img.shields.io/badge/Yarn-4.6-2C8EBB)
 ![Docker](https://img.shields.io/badge/Docker-ready-2496ED)
 
-[Docker Quickstart](#quickstartdocker-启动完整应用) · [首次使用](#首次使用流程) · [Downloads](https://github.com/anywhere-labs/Agents-Anywhere/releases) · [Docker 文档](docker/README.md) · [English](README.md)
+[Docker Quickstart](#quickstartdocker-启动完整应用) · [首次使用](#首次使用流程) · [Downloads](https://github.com/anywhere-labs/Agents-Anywhere/releases) · [Docker 文档](docker/README.md) · [English](README.en.md)
 
 </div>
 
