@@ -46,7 +46,7 @@ class RemoteTerminalController(
         object : TerminalOutput() {
             override fun write(data: ByteArray, offset: Int, count: Int) {
                 if (shouldSuppressTerminalResponse(data, offset, count)) return
-                sendBytes(data.copyOfRange(offset, offset + count))
+                sendImmediateBytes(data.copyOfRange(offset, offset + count))
             }
 
             override fun titleChanged(oldTitle: String?, newTitle: String?) = Unit
@@ -90,6 +90,10 @@ class RemoteTerminalController(
     private val frameSeq = AtomicLong(0)
     private val pendingInput = ArrayDeque<ByteArray>()
     private val pendingInputLock = Any()
+    private val inputBuffer = RemoteTerminalInputBuffer(
+        scheduleFlush = { delayMs, flush -> main.postDelayed(flush, delayMs) },
+        emit = { bytes -> sendBytesNow(bytes) },
+    )
 
     val isCtrlLatched: Boolean get() = ctrlLatched
     val isAltLatched: Boolean get() = altLatched
@@ -101,10 +105,10 @@ class RemoteTerminalController(
             return
         }
         if (terminalId != null) {
-            detach()
+            detach(clearQueuedInput = true)
             clearLocalScreen()
         } else {
-            detach()
+            detach(clearQueuedInput = true)
         }
         if (session.cwd.isNullOrBlank()) {
             state.value = RemoteTerminalState(status = RemoteTerminalStatus.Error, message = "This session has no workspace.")
@@ -143,10 +147,10 @@ class RemoteTerminalController(
             return
         }
         if (terminalId != null) {
-            detach()
+            detach(clearQueuedInput = true)
             clearLocalScreen()
         } else {
-            detach()
+            detach(clearQueuedInput = true)
         }
         if (!device.online) {
             state.value = RemoteTerminalState(status = RemoteTerminalStatus.Error, message = "This device is offline.")
@@ -224,19 +228,20 @@ class RemoteTerminalController(
 
     fun sendText(text: String) {
         if (text.isEmpty()) return
+        val hasModifier = ctrlLatched || altLatched
         val data = when {
             ctrlLatched -> text.firstOrNull()?.let { codePointString(controlCodePoint(it.code)) } ?: text
             altLatched -> "\u001b$text"
             else -> text
         }
         setLatched(ctrl = false, alt = false)
-        sendBytes(data.toByteArray(Charsets.UTF_8))
+        sendUserBytes(data.toByteArray(Charsets.UTF_8), immediate = hasModifier)
     }
 
     fun sendRawText(text: String) {
         if (text.isEmpty()) return
         setLatched(ctrl = false, alt = false)
-        sendBytes(text.toByteArray(Charsets.UTF_8))
+        sendUserBytes(text.toByteArray(Charsets.UTF_8))
     }
 
     fun sendCodePoint(codePoint: Int, controlDown: Boolean, altDown: Boolean) {
@@ -246,7 +251,7 @@ class RemoteTerminalController(
         val mappedCodePoint = if (control) controlCodePoint(codePoint) else codePoint
         setLatched(ctrl = false, alt = false)
         val text = codePointString(mappedCodePoint)
-        sendBytes((if (alt) "\u001b$text" else text).toByteArray(Charsets.UTF_8))
+        sendUserBytes((if (alt) "\u001b$text" else text).toByteArray(Charsets.UTF_8), immediate = control || alt)
     }
 
     fun sendShortcut(shortcut: TerminalShortcut) {
@@ -281,8 +286,13 @@ class RemoteTerminalController(
         }
     }
 
-    fun detach() {
+    fun detach(clearQueuedInput: Boolean = false) {
         diag("detach requested terminal=$terminalId")
+        if (!clearQueuedInput) {
+            inputBuffer.drainBufferedBytes()?.let { bufferedInput ->
+                sendBytesNow(bufferedInput, direct = true)
+            }
+        }
         manuallyClosed = true
         socket?.close(1000, "detached")
         socket = null
@@ -291,8 +301,11 @@ class RemoteTerminalController(
         remoteTerminalGone = false
         cancelPendingRemoteResize()
         setLatched(ctrl = false, alt = false)
+        if (clearQueuedInput) {
+            inputBuffer.clear()
+        }
         synchronized(pendingInputLock) {
-            pendingInput.clear()
+            if (clearQueuedInput) pendingInput.clear()
         }
         if (terminalId != null && state.value.status != RemoteTerminalStatus.Exited) {
             state.value = RemoteTerminalState(status = RemoteTerminalStatus.Closed)
@@ -300,7 +313,7 @@ class RemoteTerminalController(
     }
 
     fun disposeLocal() {
-        detach()
+        detach(clearQueuedInput = true)
         terminalScope.cancel()
     }
 
@@ -319,6 +332,7 @@ class RemoteTerminalController(
         remoteTerminalGone = false
         cancelPendingRemoteResize()
         setLatched(ctrl = false, alt = false)
+        inputBuffer.clear()
         synchronized(pendingInputLock) {
             pendingInput.clear()
         }
@@ -343,6 +357,7 @@ class RemoteTerminalController(
                     }
                     diag("ws open terminal=$terminalId")
                     sendRemoteResizeNow(lastCols, lastRows, force = true, reason = "ws-open")
+                    inputBuffer.flush()
                     flushPendingInput()
                     confirmOpenIfNoStreamFrame(webSocket)
                 }
@@ -443,9 +458,17 @@ class RemoteTerminalController(
         }, STREAM_OPEN_GRACE_MS)
     }
 
-    private fun sendBytes(bytes: ByteArray) {
+    private fun sendUserBytes(bytes: ByteArray, immediate: Boolean = false) {
+        inputBuffer.send(bytes, immediate = immediate || RemoteTerminalInputBuffer.shouldFlushImmediately(bytes))
+    }
+
+    private fun sendImmediateBytes(bytes: ByteArray) {
+        inputBuffer.send(bytes, immediate = true)
+    }
+
+    private fun sendBytesNow(bytes: ByteArray, direct: Boolean = false) {
         val localInputSeq = inputSeq.incrementAndGet()
-        if (state.value.status != RemoteTerminalStatus.Open) {
+        if (state.value.status != RemoteTerminalStatus.Open || socket == null) {
             if (terminalId != null && streamUrl != null && !manuallyClosed) {
                 synchronized(pendingInputLock) {
                     pendingInput.addLast(bytes)
@@ -459,7 +482,18 @@ class RemoteTerminalController(
         }
         val encoded = Base64.getEncoder().encodeToString(bytes)
         diag("input#$localInputSeq send bytes=${bytes.size} terminal=$terminalId")
-        sendFrame("input", JSONObject().put("type", "input").put("data", encoded).toString())
+        val frame = JSONObject().put("type", "input").put("data", encoded).toString()
+        if (direct) {
+            val accepted = socket?.send(frame) == true
+            diag("input#$localInputSeq direct accepted=$accepted terminal=$terminalId")
+            if (!accepted && terminalId != null && streamUrl != null && !manuallyClosed) {
+                synchronized(pendingInputLock) {
+                    pendingInput.addLast(bytes)
+                }
+            }
+            return
+        }
+        sendFrame("input", frame)
     }
 
     private fun sendFrame(kind: String, frame: String) {
@@ -515,6 +549,7 @@ class RemoteTerminalController(
         remoteTerminalGone = false
         cancelPendingRemoteResize()
         outputBuffer.clear()
+        inputBuffer.clear()
         synchronized(pendingInputLock) {
             pendingInput.clear()
         }
@@ -605,7 +640,7 @@ class RemoteTerminalController(
             emulator.isCursorKeysApplicationMode,
             emulator.isKeypadApplicationMode,
         )?.let {
-            sendBytes(it.toByteArray(Charsets.UTF_8))
+            sendImmediateBytes(it.toByteArray(Charsets.UTF_8))
         }
     }
 
