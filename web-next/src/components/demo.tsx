@@ -8,6 +8,7 @@ import { AppSidebar } from "@/components/app-sidebar"
 import { TaskComposer } from "@/components/task-composer"
 import { SessionView } from "@/components/session-view"
 import { SettingsPage } from "@/components/pages/settings-page"
+import { DashboardPage } from "@/components/pages/dashboard-page"
 import { TeamPage } from "@/components/pages/team-page"
 import { ServicePage } from "@/components/pages/service-page"
 import { DevicePage } from "@/components/pages/device-page"
@@ -202,9 +203,10 @@ function WorkspaceMain() {
   if (!routeReady || (!isNewSession && isLoading)) {
     return <LoadingState className="h-full bg-background" />
   }
-  const effectivePage = !isAdmin && (page === "team" || page === "service") ? "home" : page
+  const effectivePage = !isAdmin && (page === "dashboard" || page === "team" || page === "service") ? "home" : page
   const content =
     effectivePage === "settings" ? <SettingsPage /> :
+    effectivePage === "dashboard" ? <DashboardPage /> :
     effectivePage === "team" ? <TeamPage /> :
     effectivePage === "service" ? <ServicePage /> :
     effectivePage === "session" ? <SessionView /> :

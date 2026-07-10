@@ -488,6 +488,95 @@ export type UserAgentDefaultsResponse = {
   serverTime: string;
 };
 
+export type DashboardSegment = "light" | "medium" | "heavy" | "all";
+
+export type AdminDashboardIntensitySettings = {
+  basis: "turns";
+  lightMax: number;
+  mediumMax: number;
+};
+
+export type AdminDashboardHistogramSettings = {
+  turns: number[];
+  sessions: number[];
+};
+
+export type AdminDashboardSettings = {
+  intensity: AdminDashboardIntensitySettings;
+  histogramBins: AdminDashboardHistogramSettings;
+  serverTime?: string | null;
+};
+
+export type AdminDashboardSettingsUpdate = {
+  intensity?: AdminDashboardIntensitySettings;
+  histogramBins?: AdminDashboardHistogramSettings;
+};
+
+export type AdminDashboardSummary = {
+  totalUsers: number;
+  newUsers: number;
+  dau: number;
+  wau: number;
+  mau: number;
+  totalTurns: number;
+  activeSessions: number;
+  avgTurnsPerActiveUser: number;
+  avgActiveSessionsPerActiveUser: number;
+  totalDevices: number;
+  avgDevicesPerUser: number;
+};
+
+export type AdminDashboardSeriesPoint = AdminDashboardSummary & {
+  date: string;
+};
+
+export type AdminDashboardBreakdownItem = {
+  key: string;
+  label: string;
+  value: number;
+  percent: number;
+};
+
+export type AdminDashboardHistogramBucket = {
+  key: string;
+  label: string;
+  count: number;
+  min: number | null;
+  max: number | null;
+};
+
+export type AdminDashboardUserSegmentItem = {
+  segment: Exclude<DashboardSegment, "all">;
+  label: string;
+  count: number;
+};
+
+export type AdminDashboardOverviewResponse = {
+  range: {
+    fromDate: string;
+    toDate: string;
+    timezone: string;
+  };
+  summary: AdminDashboardSummary;
+  series: AdminDashboardSeriesPoint[];
+  turnHistogram: AdminDashboardHistogramBucket[];
+  sessionHistogram: AdminDashboardHistogramBucket[];
+  userSegments: AdminDashboardUserSegmentItem[];
+  deviceBreakdown: AdminDashboardBreakdownItem[];
+  agentBreakdown: AdminDashboardBreakdownItem[];
+  sessionAgentBreakdown: AdminDashboardBreakdownItem[];
+  settings: AdminDashboardSettings;
+  serverTime: string;
+};
+
+export type AdminDashboardSnapshotResponse = {
+  date: string;
+  computedAt: string;
+  metrics: number;
+  users: number;
+  serverTime: string;
+};
+
 export type DashboardState = {
   me: AuthMe;
   connectors: ConnectorView[];

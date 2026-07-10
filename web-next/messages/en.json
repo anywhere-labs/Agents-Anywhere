@@ -209,6 +209,7 @@
       "password": "Password"
     },
     "nav": {
+      "dashboard": "Dashboard",
       "service": "Service",
       "settings": "Settings",
       "team": "Team"
@@ -305,6 +306,7 @@
       "clear": "Clear filters"
     },
     "nav": {
+      "dashboard": "Dashboard",
       "service": "Service",
       "settings": "Settings",
       "team": "Team"
@@ -995,6 +997,62 @@
       "oneDayAgo": "1d ago",
       "daysAgo": "{count}d ago",
       "weeksAgo": "{count}w ago"
+    },
+    "opsDashboard": {
+      "title": "Dashboard",
+      "description": "Operational metrics for users, turns, sessions, devices, and agents.",
+      "from": "From",
+      "to": "To",
+      "load": "Load",
+      "refreshToday": "Refresh today",
+      "refreshSaved": "Today's snapshot refreshed.",
+      "refreshFailed": "Failed to refresh today's snapshot.",
+      "loadFailed": "Failed to load dashboard.",
+      "settingsSaved": "Dashboard settings saved.",
+      "settingsFailed": "Failed to save dashboard settings.",
+      "exportFailed": "Failed to export users.",
+      "trend": "Metric trend",
+      "deviceBreakdown": "Device mix",
+      "agentBreakdown": "Agent mix",
+      "sessionAgentBreakdown": "Active session agent mix",
+      "turnHistogram": "Turns per user",
+      "sessionHistogram": "Active sessions per user",
+      "userSegments": "User intensity",
+      "intensitySettings": "Intensity thresholds",
+      "intensityDescription": "Classify users by turns in the selected range.",
+      "saveSettings": "Save settings",
+      "lightMax": "Light max turns",
+      "mediumMax": "Medium max turns",
+      "turnBins": "Turn buckets",
+      "sessionBins": "Session buckets",
+      "exportUsers": "Export users",
+      "breakdown": "Breakdown",
+      "name": "Name",
+      "value": "Value",
+      "percent": "Share",
+      "tabs": {
+        "overview": "Overview",
+        "usage": "Usage",
+        "users": "Users",
+        "devices": "Devices",
+        "agents": "Agents",
+        "export": "Export"
+      },
+      "metrics": {
+        "dau": "DAU",
+        "totalUsers": "Total users",
+        "newUsers": "New users",
+        "mau": "MAU",
+        "turns": "Turns",
+        "activeSessions": "Active sessions",
+        "avgDevices": "Avg. devices/user"
+      },
+      "segments": {
+        "all": "All users",
+        "light": "Light users",
+        "medium": "Medium users",
+        "heavy": "Heavy users"
+      }
     },
     "service": {
       "title": "Service",

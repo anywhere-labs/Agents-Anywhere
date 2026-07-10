@@ -1,6 +1,10 @@
 import { ApiClient, apiClient } from "@/lib/api";
 import type {
   AgentCatalogResponse,
+  AdminDashboardOverviewResponse,
+  AdminDashboardSettings,
+  AdminDashboardSettingsUpdate,
+  AdminDashboardSnapshotResponse,
   ArchiveAllResponse,
   BulkArchiveResponse,
   ArchiveAllScope,
@@ -37,7 +41,8 @@ import type {
   TerminalListResponse,
   TerminalResponse,
   TerminalSnapshotResult,
-  UserAgentDefaultsResponse
+  UserAgentDefaultsResponse,
+  DashboardSegment
 } from "@/features/dashboard/types";
 
 export type SessionStateQuery = {
@@ -49,6 +54,56 @@ export type SessionStateQuery = {
 
 export class DashboardApi {
   constructor(private readonly client: ApiClient = apiClient) {}
+
+  getAdminDashboardOverview(
+    token: string,
+    query: { from?: string; to?: string; tz?: string } = {},
+  ): Promise<AdminDashboardOverviewResponse> {
+    return this.client.get<AdminDashboardOverviewResponse>(
+      "/admin/dashboard/overview",
+      { token, query },
+    );
+  }
+
+  getAdminDashboardSettings(token: string): Promise<AdminDashboardSettings> {
+    return this.client.get<AdminDashboardSettings>("/admin/dashboard/settings", { token });
+  }
+
+  updateAdminDashboardSettings(
+    token: string,
+    body: AdminDashboardSettingsUpdate,
+  ): Promise<AdminDashboardSettings> {
+    return this.client.patch<AdminDashboardSettings>(
+      "/admin/dashboard/settings",
+      body,
+      { token },
+    );
+  }
+
+  refreshAdminDashboardToday(
+    token: string,
+    tz = "Asia/Shanghai",
+  ): Promise<AdminDashboardSnapshotResponse> {
+    return this.client.post<AdminDashboardSnapshotResponse>(
+      "/admin/dashboard/snapshots/today",
+      {},
+      { token, query: { tz } },
+    );
+  }
+
+  exportAdminDashboardUsersUrl(query: {
+    date?: string;
+    from?: string;
+    to?: string;
+    segment?: DashboardSegment;
+  }): string {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(query)) {
+      if (value) params.set(key, value);
+    }
+    const suffix = params.toString();
+    return `/admin/dashboard/users/export${suffix ? `?${suffix}` : ""}`;
+  }
 
   listConnectors(token: string): Promise<ConnectorListResponse> {
     return this.client.get<ConnectorListResponse>("/connectors", { token });
