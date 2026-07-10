@@ -216,6 +216,109 @@ class AdminUserListResponse(BaseModel):
     serverTime: str
 
 
+DashboardSegment = Literal["light", "medium", "heavy", "all"]
+
+
+class DashboardIntensitySettings(BaseModel):
+    basis: Literal["turns"] = "turns"
+    lightMax: int = Field(default=10, ge=0)
+    mediumMax: int = Field(default=50, ge=0)
+
+
+class DashboardHistogramSettings(BaseModel):
+    turns: list[int] = Field(default_factory=lambda: [0, 5, 20, 100])
+    sessions: list[int] = Field(default_factory=lambda: [0, 1, 5, 20])
+
+
+class DashboardSettingsView(BaseModel):
+    intensity: DashboardIntensitySettings = Field(default_factory=DashboardIntensitySettings)
+    histogramBins: DashboardHistogramSettings = Field(default_factory=DashboardHistogramSettings)
+    serverTime: str | None = None
+
+
+class DashboardSettingsUpdateRequest(BaseModel):
+    intensity: DashboardIntensitySettings | None = None
+    histogramBins: DashboardHistogramSettings | None = None
+
+
+class DashboardRange(BaseModel):
+    fromDate: str
+    toDate: str
+    timezone: str
+
+
+class DashboardSummary(BaseModel):
+    totalUsers: int = 0
+    newUsers: int = 0
+    dau: int = 0
+    wau: int = 0
+    mau: int = 0
+    totalTurns: int = 0
+    activeSessions: int = 0
+    avgTurnsPerActiveUser: float = 0
+    avgActiveSessionsPerActiveUser: float = 0
+    totalDevices: int = 0
+    avgDevicesPerUser: float = 0
+
+
+class DashboardSeriesPoint(BaseModel):
+    date: str
+    totalUsers: int = 0
+    newUsers: int = 0
+    dau: int = 0
+    wau: int = 0
+    mau: int = 0
+    totalTurns: int = 0
+    activeSessions: int = 0
+    avgTurnsPerActiveUser: float = 0
+    avgActiveSessionsPerActiveUser: float = 0
+    totalDevices: int = 0
+    avgDevicesPerUser: float = 0
+
+
+class DashboardBreakdownItem(BaseModel):
+    key: str
+    label: str
+    value: float
+    percent: float = 0
+
+
+class DashboardHistogramBucket(BaseModel):
+    key: str
+    label: str
+    count: int
+    min: int | None = None
+    max: int | None = None
+
+
+class DashboardUserSegmentItem(BaseModel):
+    segment: Literal["light", "medium", "heavy"]
+    label: str
+    count: int
+
+
+class DashboardOverviewResponse(BaseModel):
+    range: DashboardRange
+    summary: DashboardSummary
+    series: list[DashboardSeriesPoint]
+    turnHistogram: list[DashboardHistogramBucket]
+    sessionHistogram: list[DashboardHistogramBucket]
+    userSegments: list[DashboardUserSegmentItem]
+    deviceBreakdown: list[DashboardBreakdownItem]
+    agentBreakdown: list[DashboardBreakdownItem]
+    sessionAgentBreakdown: list[DashboardBreakdownItem]
+    settings: DashboardSettingsView
+    serverTime: str
+
+
+class DashboardSnapshotResponse(BaseModel):
+    date: str
+    computedAt: str
+    metrics: int
+    users: int
+    serverTime: str
+
+
 class OAuthProviderPublicConfig(BaseModel):
     enabled: bool = False
     provider: str = "oidc"
