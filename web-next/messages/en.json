@@ -1058,7 +1058,8 @@
         "all": "All users",
         "light": "Light users",
         "medium": "Medium users",
-        "heavy": "Heavy users"
+        "heavy": "Heavy users",
+        "userShare": "{percent} of users"
       }
     },
     "service": {

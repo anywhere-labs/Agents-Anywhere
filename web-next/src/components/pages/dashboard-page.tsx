@@ -332,7 +332,7 @@ function UsageTab({ overview }: { overview: AdminDashboardOverviewResponse }) {
         data={overview.sessionHistogram}
         axisDescription={t("axes.sessionHistogram")}
       />
-      <SegmentPanel items={overview.userSegments} />
+      <SegmentPanel items={overview.userSegments} totalUsers={overview.summary.totalUsers} />
       <section className="rounded-xl border border-border bg-card">
         <div className="px-5 py-4">
           <h2 className="text-base font-semibold">{t("sessionAgentBreakdown")}</h2>
@@ -361,8 +361,20 @@ function UsersTab({
   if (!settingsDraft) return null
   return (
     <div className="flex flex-col gap-4">
-      <div className="grid gap-3 md:grid-cols-3">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
         <MetricCard label={t("metrics.totalUsers")} value={overview.summary.totalUsers} />
+        <MetricCard
+          label={t("metrics.dau")}
+          value={overview.summary.dau}
+          helper={t("metrics.userShare", { percent: userShare(overview.summary.dau, overview.summary.totalUsers) })}
+        />
+        <MetricCard
+          label={t("metrics.activeUsers")}
+          value={overview.summary.activeUsers}
+          helper={t("metrics.userShare", {
+            percent: userShare(overview.summary.activeUsers, overview.summary.totalUsers),
+          })}
+        />
         <MetricCard label={t("metrics.newUsers")} value={overview.summary.newUsers} />
         <MetricCard label={t("metrics.mau")} value={overview.summary.mau} />
       </div>
@@ -421,7 +433,7 @@ function UsersTab({
           />
         </div>
       </section>
-      <SegmentPanel items={overview.userSegments} />
+      <SegmentPanel items={overview.userSegments} totalUsers={overview.summary.totalUsers} />
     </div>
   )
 }
@@ -545,7 +557,13 @@ function HistogramPanel({
   )
 }
 
-function SegmentPanel({ items }: { items: AdminDashboardOverviewResponse["userSegments"] }) {
+function SegmentPanel({
+  items,
+  totalUsers,
+}: {
+  items: AdminDashboardOverviewResponse["userSegments"]
+  totalUsers: number
+}) {
   const t = useTranslations("pages.opsDashboard")
   return (
     <section className="rounded-xl border border-border bg-card">
@@ -558,6 +576,9 @@ function SegmentPanel({ items }: { items: AdminDashboardOverviewResponse["userSe
           <div key={item.segment} className="rounded-lg border border-border px-4 py-3">
             <p className="text-sm text-muted-foreground">{t(`segments.${item.segment}`)}</p>
             <p className="mt-2 text-2xl font-semibold tabular-nums">{item.count.toLocaleString()}</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {t("segments.userShare", { percent: userShare(item.count, totalUsers) })}
+            </p>
           </div>
         ))}
       </div>

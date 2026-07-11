@@ -1058,7 +1058,8 @@
         "all": "全部用户",
         "light": "低度用户",
         "medium": "中度用户",
-        "heavy": "重度用户"
+        "heavy": "重度用户",
+        "userShare": "占总用户 {percent}"
       }
     },
     "service": {
