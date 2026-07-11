@@ -1015,8 +1015,12 @@
       "deviceBreakdown": "设备占比",
       "agentBreakdown": "Agent 占比",
       "sessionAgentBreakdown": "活跃会话 Agent 占比",
-      "turnHistogram": "用户 Turn 分布",
-      "sessionHistogram": "用户活跃会话分布",
+      "turnHistogram": "每个用户的 Turn 数分布",
+      "sessionHistogram": "每个用户的活跃会话数分布",
+      "axes": {
+        "turnHistogram": "横轴：Turn 数区间 · 纵轴：用户数",
+        "sessionHistogram": "横轴：活跃会话数区间 · 纵轴：用户数"
+      },
       "userSegments": "用户强度",
       "intensitySettings": "强度阈值",
       "intensityDescription": "按所选时间范围内的 Turn 数划分用户。",

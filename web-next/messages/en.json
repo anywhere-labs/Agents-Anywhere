@@ -1015,8 +1015,12 @@
       "deviceBreakdown": "Device mix",
       "agentBreakdown": "Agent mix",
       "sessionAgentBreakdown": "Active session agent mix",
-      "turnHistogram": "Turns per user",
-      "sessionHistogram": "Active sessions per user",
+      "turnHistogram": "Turns per user distribution",
+      "sessionHistogram": "Active sessions per user distribution",
+      "axes": {
+        "turnHistogram": "X-axis: turn count range · Y-axis: users",
+        "sessionHistogram": "X-axis: active session count range · Y-axis: users"
+      },
       "userSegments": "User intensity",
       "intensitySettings": "Intensity thresholds",
       "intensityDescription": "Classify users by turns in the selected range.",

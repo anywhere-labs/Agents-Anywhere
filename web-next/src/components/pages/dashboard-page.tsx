@@ -322,8 +322,16 @@ function UsageTab({ overview }: { overview: AdminDashboardOverviewResponse }) {
   const t = useTranslations("pages.opsDashboard")
   return (
     <div className="grid gap-4 xl:grid-cols-2">
-      <HistogramPanel title={t("turnHistogram")} data={overview.turnHistogram} />
-      <HistogramPanel title={t("sessionHistogram")} data={overview.sessionHistogram} />
+      <HistogramPanel
+        title={t("turnHistogram")}
+        data={overview.turnHistogram}
+        axisDescription={t("axes.turnHistogram")}
+      />
+      <HistogramPanel
+        title={t("sessionHistogram")}
+        data={overview.sessionHistogram}
+        axisDescription={t("axes.sessionHistogram")}
+      />
       <SegmentPanel items={overview.userSegments} />
       <section className="rounded-xl border border-border bg-card">
         <div className="px-5 py-4">
@@ -509,19 +517,22 @@ function TrendChart({ data }: { data: AdminDashboardOverviewResponse["series"] }
 function HistogramPanel({
   title,
   data,
+  axisDescription,
 }: {
   title: string
   data: Array<{ label: string; count: number }>
+  axisDescription: string
 }) {
   return (
     <section className="rounded-xl border border-border bg-card">
       <div className="px-5 py-4">
         <h2 className="text-base font-semibold">{title}</h2>
+        <p className="mt-1 text-xs text-muted-foreground">{axisDescription}</p>
       </div>
       <Separator />
       <div className="p-5">
         <ChartContainer config={distributionConfig} className="h-[240px] w-full">
-          <BarChart data={data}>
+          <BarChart data={data} margin={{ left: 8, right: 8 }}>
             <CartesianGrid vertical={false} />
             <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} />
             <YAxis tickLine={false} axisLine={false} tickMargin={8} width={36} />
