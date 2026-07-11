@@ -483,9 +483,9 @@ function TrendChart({ data }: { data: AdminDashboardOverviewResponse["series"] }
         <XAxis dataKey="date" tickLine={false} axisLine={false} tickMargin={8} minTickGap={24} />
         <YAxis tickLine={false} axisLine={false} tickMargin={8} width={42} />
         <ChartTooltip content={<ChartTooltipContent />} />
-        <Area type="monotone" dataKey="dau" stroke="var(--color-dau)" fill="var(--color-dau)" fillOpacity={0.12} />
-        <Area type="monotone" dataKey="totalTurns" stroke="var(--color-totalTurns)" fill="var(--color-totalTurns)" fillOpacity={0.08} />
-        <Area type="monotone" dataKey="activeSessions" stroke="var(--color-activeSessions)" fill="var(--color-activeSessions)" fillOpacity={0.08} />
+        <Area type="monotone" dataKey="dau" stroke="var(--color-dau)" strokeWidth={2} fill="var(--color-dau)" fillOpacity={0.12} />
+        <Area type="monotone" dataKey="totalTurns" stroke="var(--color-totalTurns)" strokeWidth={2} fill="var(--color-totalTurns)" fillOpacity={0.1} />
+        <Area type="monotone" dataKey="activeSessions" stroke="var(--color-activeSessions)" strokeWidth={2} fill="var(--color-activeSessions)" fillOpacity={0.08} />
       </AreaChart>
     </ChartContainer>
   )
