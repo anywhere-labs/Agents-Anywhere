@@ -41,6 +41,7 @@ from agent_server.infra.repositories.facade import Store
 
 
 DASHBOARD_SETTINGS_KEY = "settings"
+DASHBOARD_SNAPSHOT_VERSION = 2
 SNAPSHOT_REFRESH_SECONDS = 300
 METRIC_KEYS = {
     "totalUsers": "users.total",
@@ -224,6 +225,10 @@ class AdminDashboardService:
         if latest is None:
             await self._compute_snapshot(target_date, timezone=timezone)
             return
+        version = await self._snapshot_version(target_date)
+        if version != DASHBOARD_SNAPSHOT_VERSION:
+            await self._compute_snapshot(target_date, timezone=timezone)
+            return
         if refresh_today and _snapshot_age_seconds(latest) > SNAPSHOT_REFRESH_SECONDS:
             await self._compute_snapshot(target_date, timezone=timezone)
 
@@ -298,6 +303,7 @@ class AdminDashboardService:
         avg_devices = _ratio(device_snapshot.total_devices, total_users)
         computed_at = utc_now()
         metrics: list[dict[str, Any]] = [
+            _metric(target_date, "snapshot.version", DASHBOARD_SNAPSHOT_VERSION, computed_at),
             _metric(target_date, "users.total", total_users, computed_at),
             _metric(target_date, "users.new", new_users, computed_at),
             _metric(target_date, "users.dau", dau, computed_at),
@@ -431,6 +437,20 @@ class AdminDashboardService:
                 )
             ).first()
         return str(row[0]) if row is not None and row[0] else None
+
+    async def _snapshot_version(self, target_date: date) -> int | None:
+        async with self._store.engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    select(dashboard_daily_metrics_t.c.value).where(
+                        dashboard_daily_metrics_t.c.date == target_date.isoformat(),
+                        dashboard_daily_metrics_t.c.metric_key == "snapshot.version",
+                        dashboard_daily_metrics_t.c.dimension_key == "",
+                        dashboard_daily_metrics_t.c.dimension_value == "",
+                    )
+                )
+            ).first()
+        return int(row[0]) if row is not None and row[0] is not None else None
 
     async def _read_metrics(
         self,

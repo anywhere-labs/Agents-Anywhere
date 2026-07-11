@@ -8,9 +8,11 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from fastapi.testclient import TestClient
+from sqlalchemy import insert
 
 from agent_server.app import create_app
 from agent_server.core.models import TimelineItemIn
+from agent_server.infra.db import dashboard_daily_metrics as dashboard_daily_metrics_t
 
 
 def make_client(tmp_path) -> TestClient:
@@ -243,6 +245,36 @@ def test_admin_dashboard_ignores_connector_history_for_usage_metrics(tmp_path):
             session_id=imported.id,
             item=_history_user_message(imported.id, "turn_history_1", 2, "codex"),
         )
+        async with store.engine.begin() as conn:
+            await conn.execute(
+                insert(dashboard_daily_metrics_t),
+                [
+                    {
+                        "date": current,
+                        "metric_key": "users.dau",
+                        "dimension_key": "",
+                        "dimension_value": "",
+                        "value": 9,
+                        "computed_at": f"{current}T00:00:00Z",
+                    },
+                    {
+                        "date": current,
+                        "metric_key": "usage.turns",
+                        "dimension_key": "",
+                        "dimension_value": "",
+                        "value": 99,
+                        "computed_at": f"{current}T00:00:00Z",
+                    },
+                    {
+                        "date": current,
+                        "metric_key": "usage.active_sessions",
+                        "dimension_key": "",
+                        "dimension_value": "",
+                        "value": 12,
+                        "computed_at": f"{current}T00:00:00Z",
+                    },
+                ],
+            )
 
     asyncio.run(seed_history_import())
 
