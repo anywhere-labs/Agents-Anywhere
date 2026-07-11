@@ -14,7 +14,9 @@ from sqlalchemy import and_, delete, func, insert, select
 
 from agent_server.core.models import (
     DashboardBreakdownItem,
+    DashboardHistogramSettings,
     DashboardHistogramBucket,
+    DashboardIntensitySettings,
     DashboardOverviewResponse,
     DashboardRange,
     DashboardSegment,
@@ -41,7 +43,7 @@ from agent_server.infra.repositories.facade import Store
 
 
 DASHBOARD_SETTINGS_KEY = "settings"
-DASHBOARD_SNAPSHOT_VERSION = 3
+DASHBOARD_SNAPSHOT_VERSION = 4
 SNAPSHOT_REFRESH_SECONDS = 300
 METRIC_KEYS = {
     "totalUsers": "users.total",
@@ -103,6 +105,10 @@ class AdminDashboardService:
         self._store = store
 
     async def get_settings(self) -> DashboardSettingsView:
+        settings, _customized = await self._load_settings()
+        return settings.model_copy(update={"serverTime": utc_now()})
+
+    async def _load_settings(self) -> tuple[DashboardSettingsView, bool]:
         async with self._store.engine.connect() as conn:
             row = (
                 await conn.execute(
@@ -113,9 +119,11 @@ class AdminDashboardService:
             ).first()
         if row is None:
             settings = DashboardSettingsView()
+            customized = False
         else:
             settings = DashboardSettingsView.model_validate(_json_loads(row.value_json) or {})
-        return _normalized_settings(settings).model_copy(update={"serverTime": utc_now()})
+            customized = True
+        return _normalized_settings(settings), customized
 
     async def update_settings(
         self,
@@ -169,7 +177,7 @@ class AdminDashboardService:
         if from_date > to_date:
             raise ValueError("from date must be before or equal to to date")
         tz = _timezone(timezone)
-        settings = await self.get_settings()
+        settings, customized_settings = await self._load_settings()
         today = datetime.now(tz).date()
         for day in _date_range(from_date, to_date):
             await self.ensure_snapshot(day, timezone=timezone, refresh_today=day == today)
@@ -179,15 +187,16 @@ class AdminDashboardService:
         series = [_series_point(day, metrics.get(day.isoformat(), {})) for day in _date_range(from_date, to_date)]
         summary = _summary_from_series(series[-1] if series else None)
         range_facts = list(facts.values())
+        effective_settings = settings if customized_settings else _settings_for_facts(range_facts)
         turn_histogram = _histogram(
             [int(row["turns"] or 0) for row in range_facts],
-            settings.histogramBins.turns,
+            effective_settings.histogramBins.turns,
         )
         session_histogram = _histogram(
             [int(row["active_sessions"] or 0) for row in range_facts],
-            settings.histogramBins.sessions,
+            effective_settings.histogramBins.sessions,
         )
-        user_segments = _segment_counts(range_facts, settings)
+        user_segments = _segment_counts(range_facts, effective_settings)
         latest_metrics = metrics.get(to_date.isoformat(), {})
         return DashboardOverviewResponse(
             range=DashboardRange(
@@ -203,7 +212,7 @@ class AdminDashboardService:
             deviceBreakdown=_breakdown(latest_metrics, "devices.by_os", DEVICE_LABELS),
             agentBreakdown=_breakdown(latest_metrics, "agents.installed", AGENT_LABELS),
             sessionAgentBreakdown=_breakdown(latest_metrics, "sessions.by_agent", AGENT_LABELS),
-            settings=settings,
+            settings=effective_settings.model_copy(update={"serverTime": utc_now()}),
             serverTime=utc_now(),
         )
 
@@ -242,8 +251,13 @@ class AdminDashboardService:
     ) -> bytes:
         if from_date > to_date:
             raise ValueError("from date must be before or equal to to date")
-        settings = await self.get_settings()
-        rows = await self._export_rows(from_date, to_date, segment, settings)
+        settings, customized_settings = await self._load_settings()
+        rows = await self._export_rows(
+            from_date,
+            to_date,
+            segment,
+            settings if customized_settings else None,
+        )
         return _xlsx(
             "Users",
             [
@@ -276,7 +290,7 @@ class AdminDashboardService:
         *,
         timezone: str,
     ) -> DashboardSnapshotResponse:
-        settings = await self.get_settings()
+        settings, customized_settings = await self._load_settings()
         start_utc, end_utc = _day_bounds_utc(target_date, timezone)
         users = await self._load_users(end_utc=end_utc)
         device_snapshot = await self._load_device_snapshot()
@@ -285,6 +299,8 @@ class AdminDashboardService:
             end_utc=end_utc,
             device_snapshot=device_snapshot,
         )
+        fact_rows_for_settings = [_fact_row(fact) for fact in facts.values()]
+        effective_settings = settings if customized_settings else _settings_for_facts(fact_rows_for_settings)
         total_users = len(users)
         new_users = sum(1 for row in users.values() if _in_range(row["created_at"], start_utc, end_utc))
         dau = len(facts)
@@ -351,7 +367,7 @@ class AdminDashboardService:
                     dimension_value=key,
                 )
             )
-        for item in _segment_counts([_fact_row(fact) for fact in facts.values()], settings):
+        for item in _segment_counts(fact_rows_for_settings, effective_settings):
             metrics.append(
                 _metric(
                     target_date,
@@ -362,7 +378,7 @@ class AdminDashboardService:
                     dimension_value=item.segment,
                 )
             )
-        for bucket in _histogram([fact.turns for fact in facts.values()], settings.histogramBins.turns):
+        for bucket in _histogram([fact.turns for fact in facts.values()], effective_settings.histogramBins.turns):
             metrics.append(
                 _metric(
                     target_date,
@@ -375,7 +391,7 @@ class AdminDashboardService:
             )
         for bucket in _histogram(
             [len(fact.active_sessions) for fact in facts.values()],
-            settings.histogramBins.sessions,
+            effective_settings.histogramBins.sessions,
         ):
             metrics.append(
                 _metric(
@@ -722,7 +738,7 @@ class AdminDashboardService:
         from_date: date,
         to_date: date,
         segment: DashboardSegment,
-        settings: DashboardSettingsView,
+        settings: DashboardSettingsView | None,
     ) -> list[list[Any]]:
         async with self._store.engine.connect() as conn:
             fact_rows = (
@@ -770,9 +786,10 @@ class AdminDashboardService:
                 item[key] = max(item[key], int(row[key] or 0)) if key.endswith("_devices") or key.endswith("_agents") or key == "devices" else item[key] + int(row[key] or 0)
             item["active_days"] += 1
             item["last_activity_at"] = _max_iso(item["last_activity_at"], row["last_activity_at"])
+        effective_settings = settings or _settings_for_facts(list(aggregated.values()))
         output: list[list[Any]] = []
         for user_id, item in sorted(aggregated.items()):
-            current_segment = _segment_for_turns(item["turns"], settings)
+            current_segment = _segment_for_turns(item["turns"], effective_settings)
             if segment != "all" and current_segment != segment:
                 continue
             user = users.get(user_id)
@@ -897,8 +914,56 @@ def _normalized_settings(settings: DashboardSettingsView) -> DashboardSettingsVi
 
 
 def _normalized_bins(values: list[int]) -> list[int]:
-    result = sorted({max(0, int(value)) for value in values})
+    result = sorted({0, *(max(0, int(value)) for value in values)})
     return result or [0]
+
+
+def _settings_for_facts(facts: list[dict[str, Any]]) -> DashboardSettingsView:
+    turns = [max(0, int(row.get("turns") or 0)) for row in facts]
+    sessions = [max(0, int(row.get("active_sessions") or 0)) for row in facts]
+    light_max, medium_max = _auto_intensity_bounds(turns)
+    return _normalized_settings(
+        DashboardSettingsView(
+            intensity=DashboardIntensitySettings(lightMax=light_max, mediumMax=medium_max),
+            histogramBins=DashboardHistogramSettings(
+                turns=_auto_bins(turns),
+                sessions=_auto_bins(sessions),
+            ),
+        )
+    )
+
+
+def _auto_intensity_bounds(values: list[int]) -> tuple[int, int]:
+    positive = sorted(value for value in values if value > 0)
+    if not positive:
+        return 0, 0
+    light_max = _percentile_nearest_rank(positive, 0.5)
+    medium_max = _percentile_nearest_rank(positive, 0.8)
+    return light_max, max(light_max, medium_max)
+
+
+def _auto_bins(values: list[int]) -> list[int]:
+    positive = sorted(value for value in values if value > 0)
+    if not positive:
+        return [0]
+    candidates = [0]
+    for percentile in (0.5, 0.8, 0.95):
+        candidates.append(_percentile_lower(positive, percentile))
+    return _normalized_bins(candidates)
+
+
+def _percentile_nearest_rank(values: list[int], percentile: float) -> int:
+    if not values:
+        return 0
+    index = max(0, min(len(values) - 1, int(len(values) * percentile + 0.999999) - 1))
+    return values[index]
+
+
+def _percentile_lower(values: list[int], percentile: float) -> int:
+    if not values:
+        return 0
+    index = max(0, min(len(values) - 1, int((len(values) - 1) * percentile)))
+    return values[index]
 
 
 def _segment_for_turns(turns: int, settings: DashboardSettingsView) -> str:
@@ -933,9 +998,10 @@ def _histogram(values: list[int], bins: list[int]) -> list[DashboardHistogramBuc
     for index, start in enumerate(normalized):
         end = normalized[index + 1] if index + 1 < len(normalized) else None
         if end is None:
-            key = f"{start}+"
+            lower = start if index == 0 else start + 1
+            key = f"{lower}+"
             label = key
-            min_value = start
+            min_value = lower
             max_value = None
         elif start == 0:
             key = f"{start}-{end}"
@@ -952,8 +1018,9 @@ def _histogram(values: list[int], bins: list[int]) -> list[DashboardHistogramBuc
         matched = False
         for index, start in enumerate(normalized):
             end = normalized[index + 1] if index + 1 < len(normalized) else None
-            if end is None and value >= start:
-                counts[f"{start}+"] += 1
+            if end is None and (value >= start if index == 0 else value > start):
+                lower = start if index == 0 else start + 1
+                counts[f"{lower}+"] += 1
                 matched = True
                 break
             if end is not None and start <= value <= end:

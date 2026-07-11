@@ -215,7 +215,18 @@ def test_admin_dashboard_overview_builds_daily_snapshot(tmp_path):
         "codex": 1.0,
         "claude": 1.0,
     }
-    assert body["userSegments"][0] == {"segment": "light", "label": "Light", "count": 2}
+    assert body["settings"]["intensity"] == {"basis": "turns", "lightMax": 1, "mediumMax": 2}
+    assert body["settings"]["histogramBins"]["turns"] == [0, 1]
+    assert body["settings"]["histogramBins"]["sessions"] == [0, 1]
+    assert body["turnHistogram"] == [
+        {"key": "0-1", "label": "0-1", "count": 1, "min": 0, "max": 1},
+        {"key": "2+", "label": "2+", "count": 1, "min": 2, "max": None},
+    ]
+    assert {item["segment"]: item["count"] for item in body["userSegments"]} == {
+        "light": 1,
+        "medium": 1,
+        "heavy": 0,
+    }
     assert len(body["series"]) == 1
     assert body["series"][0]["activeUsers"] == 2
 
