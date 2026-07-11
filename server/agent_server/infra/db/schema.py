@@ -101,6 +101,19 @@ users = Table(
 )
 
 
+platform_user_activity = Table(
+    "platform_user_activity",
+    metadata,
+    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("activity_date", Text, nullable=False),
+    Column("first_seen_at", Text, nullable=False),
+    Column("last_seen_at", Text, nullable=False),
+    Column("event_count", Integer, nullable=False, server_default="0"),
+    PrimaryKeyConstraint("user_id", "activity_date"),
+    Index("idx_platform_user_activity_last_seen", "last_seen_at"),
+)
+
+
 oauth_accounts = Table(
     "oauth_accounts",
     metadata,
@@ -202,6 +215,7 @@ sessions = Table(
     Column("id", Text, primary_key=True),
     Column("connector_id", Text, ForeignKey("connectors.id"), nullable=False),
     Column("runtime", Text, nullable=False),
+    Column("origin", Text, nullable=False, server_default="connector_import"),
     Column("runtime_settings_override", Text),
     Column("external_session_id", Text),
     Column("title", Text),

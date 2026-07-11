@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -75,6 +75,7 @@ def _enable_sqlite_fk(engine: AsyncEngine) -> None:
 async def init_db(engine: AsyncEngine) -> None:
     async with engine.begin() as conn:
         await conn.run_sync(metadata.create_all)
+        await _ensure_compat_schema_async(conn)
 
 
 def init_db_sync(async_url: str) -> None:
@@ -104,6 +105,8 @@ def init_db_sync(async_url: str) -> None:
 
         try:
             metadata.create_all(sync_engine)
+            with sync_engine.begin() as conn:
+                _ensure_compat_schema_sync(conn)
         finally:
             sync_engine.dispose()
         return
@@ -135,3 +138,42 @@ def init_db_sync(async_url: str) -> None:
     if captured:
         raise captured[0]
 
+
+async def _ensure_compat_schema_async(conn) -> None:  # noqa: ANN001 - SQLAlchemy connection
+    if not await _column_exists_async(conn, "sessions", "origin"):
+        await conn.execute(text("ALTER TABLE sessions ADD COLUMN origin TEXT NOT NULL DEFAULT 'connector_import'"))
+
+
+async def _column_exists_async(conn, table: str, column: str) -> bool:  # noqa: ANN001 - SQLAlchemy connection
+    if conn.dialect.name == SQLITE_BACKEND:
+        rows = (await conn.execute(text(f"PRAGMA table_info({table})"))).all()
+        return any(row[1] == column for row in rows)
+    rows = (
+        await conn.execute(
+            text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = :table AND column_name = :column"
+            ),
+            {"table": table, "column": column},
+        )
+    ).all()
+    return bool(rows)
+
+
+def _ensure_compat_schema_sync(conn) -> None:  # noqa: ANN001 - SQLAlchemy connection
+    if not _column_exists_sync(conn, "sessions", "origin"):
+        conn.execute(text("ALTER TABLE sessions ADD COLUMN origin TEXT NOT NULL DEFAULT 'connector_import'"))
+
+
+def _column_exists_sync(conn, table: str, column: str) -> bool:  # noqa: ANN001 - SQLAlchemy connection
+    if conn.dialect.name == SQLITE_BACKEND:
+        rows = conn.execute(text(f"PRAGMA table_info({table})")).all()
+        return any(row[1] == column for row in rows)
+    rows = conn.execute(
+        text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = :table AND column_name = :column"
+        ),
+        {"table": table, "column": column},
+    ).all()
+    return bool(rows)

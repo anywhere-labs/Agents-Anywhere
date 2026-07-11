@@ -10,7 +10,7 @@ from typing import Any
 from xml.sax.saxutils import escape
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import and_, delete, func, insert, or_, select
+from sqlalchemy import and_, delete, func, insert, select
 
 from agent_server.core.models import (
     DashboardBreakdownItem,
@@ -31,6 +31,7 @@ from agent_server.infra.db import (
     dashboard_daily_metrics as dashboard_daily_metrics_t,
     dashboard_settings as dashboard_settings_t,
     dashboard_user_daily_facts as dashboard_user_daily_facts_t,
+    platform_user_activity as platform_user_activity_t,
     sessions as sessions_t,
     timeline_items as timeline_items_t,
     users as users_t,
@@ -549,20 +550,27 @@ class AdminDashboardService:
             return fact
 
         async with self._store.engine.connect() as conn:
+            activity_rows = (
+                await conn.execute(
+                    select(
+                        platform_user_activity_t.c.user_id,
+                        func.max(platform_user_activity_t.c.last_seen_at).label("last_activity_at"),
+                    )
+                    .where(_between(platform_user_activity_t.c.last_seen_at, start_utc, end_utc))
+                    .group_by(platform_user_activity_t.c.user_id)
+                )
+            ).mappings().all()
             session_rows = (
                 await conn.execute(
                     select(
                         sessions_t.c.id,
                         sessions_t.c.created_at,
-                        sessions_t.c.last_activity_at,
                         connectors_t.c.user_id,
                     )
                     .join(connectors_t, connectors_t.c.id == sessions_t.c.connector_id)
                     .where(
-                        or_(
-                            _between(sessions_t.c.created_at, start_utc, end_utc),
-                            _between(sessions_t.c.last_activity_at, start_utc, end_utc),
-                        )
+                        sessions_t.c.origin == "platform",
+                        _between(sessions_t.c.created_at, start_utc, end_utc),
                     )
                 )
             ).mappings().all()
@@ -575,7 +583,10 @@ class AdminDashboardService:
                     )
                     .join(sessions_t, sessions_t.c.id == timeline_items_t.c.session_id)
                     .join(connectors_t, connectors_t.c.id == sessions_t.c.connector_id)
-                    .where(_between(timeline_items_t.c.item_time, start_utc, end_utc))
+                    .where(
+                        _platform_user_message_filter(),
+                        _between(timeline_items_t.c.item_time, start_utc, end_utc),
+                    )
                     .group_by(timeline_items_t.c.session_id, connectors_t.c.user_id)
                 )
             ).mappings().all()
@@ -583,28 +594,30 @@ class AdminDashboardService:
                 await conn.execute(
                     select(
                         connectors_t.c.user_id,
-                        func.count().label("turns"),
+                        func.count(
+                            func.distinct(func.coalesce(timeline_items_t.c.turn_id, timeline_items_t.c.id))
+                        ).label("turns"),
                         func.max(timeline_items_t.c.item_time).label("last_activity_at"),
                     )
                     .join(sessions_t, sessions_t.c.id == timeline_items_t.c.session_id)
                     .join(connectors_t, connectors_t.c.id == sessions_t.c.connector_id)
                     .where(
-                        timeline_items_t.c.type == "turn.start",
+                        _platform_user_message_filter(),
                         _between(timeline_items_t.c.item_time, start_utc, end_utc),
                     )
                     .group_by(connectors_t.c.user_id)
                 )
             ).mappings().all()
 
+        for row in activity_rows:
+            fact = fact_for(row["user_id"])
+            fact.last_activity_at = _max_iso(fact.last_activity_at, row["last_activity_at"])
         for row in session_rows:
             user_id = row["user_id"]
             fact = fact_for(user_id)
             fact.active_sessions.add(row["id"])
-            if _in_range(row["created_at"], start_utc, end_utc):
-                fact.created_sessions += 1
-                fact.last_activity_at = _max_iso(fact.last_activity_at, row["created_at"])
-            if _in_range(row["last_activity_at"], start_utc, end_utc):
-                fact.last_activity_at = _max_iso(fact.last_activity_at, row["last_activity_at"])
+            fact.created_sessions += 1
+            fact.last_activity_at = _max_iso(fact.last_activity_at, row["created_at"])
         for row in timeline_session_rows:
             fact = fact_for(row["user_id"])
             fact.active_sessions.add(row["session_id"])
@@ -621,10 +634,8 @@ class AdminDashboardService:
             session_rows = (
                 await conn.execute(
                     select(sessions_t.c.id, sessions_t.c.runtime).where(
-                        or_(
-                            _between(sessions_t.c.created_at, start_utc, end_utc),
-                            _between(sessions_t.c.last_activity_at, start_utc, end_utc),
-                        )
+                        sessions_t.c.origin == "platform",
+                        _between(sessions_t.c.created_at, start_utc, end_utc),
                     )
                 )
             ).mappings().all()
@@ -632,7 +643,10 @@ class AdminDashboardService:
                 await conn.execute(
                     select(sessions_t.c.id, sessions_t.c.runtime)
                     .join(timeline_items_t, timeline_items_t.c.session_id == sessions_t.c.id)
-                    .where(_between(timeline_items_t.c.item_time, start_utc, end_utc))
+                    .where(
+                        _platform_user_message_filter(),
+                        _between(timeline_items_t.c.item_time, start_utc, end_utc),
+                    )
                     .group_by(sessions_t.c.id, sessions_t.c.runtime)
                 )
             ).mappings().all()
@@ -645,15 +659,20 @@ class AdminDashboardService:
     async def _count_active_users_between(self, *, start_utc: str, end_utc: str) -> int:
         active: set[str] = set()
         async with self._store.engine.connect() as conn:
+            activity_users = (
+                await conn.execute(
+                    select(platform_user_activity_t.c.user_id)
+                    .where(_between(platform_user_activity_t.c.last_seen_at, start_utc, end_utc))
+                    .group_by(platform_user_activity_t.c.user_id)
+                )
+            ).all()
             session_users = (
                 await conn.execute(
                     select(connectors_t.c.user_id)
                     .join(sessions_t, sessions_t.c.connector_id == connectors_t.c.id)
                     .where(
-                        or_(
-                            _between(sessions_t.c.created_at, start_utc, end_utc),
-                            _between(sessions_t.c.last_activity_at, start_utc, end_utc),
-                        )
+                        sessions_t.c.origin == "platform",
+                        _between(sessions_t.c.created_at, start_utc, end_utc),
                     )
                     .group_by(connectors_t.c.user_id)
                 )
@@ -663,10 +682,14 @@ class AdminDashboardService:
                     select(connectors_t.c.user_id)
                     .join(sessions_t, sessions_t.c.connector_id == connectors_t.c.id)
                     .join(timeline_items_t, timeline_items_t.c.session_id == sessions_t.c.id)
-                    .where(_between(timeline_items_t.c.item_time, start_utc, end_utc))
+                    .where(
+                        _platform_user_message_filter(),
+                        _between(timeline_items_t.c.item_time, start_utc, end_utc),
+                    )
                     .group_by(connectors_t.c.user_id)
                 )
             ).all()
+        active.update(str(row[0]) for row in activity_users if row[0])
         active.update(str(row[0]) for row in session_users if row[0])
         active.update(str(row[0]) for row in timeline_users if row[0])
         return len(active)
@@ -786,6 +809,14 @@ def _date_range(from_date: date, to_date: date) -> list[date]:
 
 def _between(column: Any, start_utc: str, end_utc: str) -> Any:
     return and_(column.is_not(None), column >= start_utc, column < end_utc)
+
+
+def _platform_user_message_filter() -> Any:
+    return and_(
+        timeline_items_t.c.type == "message",
+        timeline_items_t.c.role == "user",
+        timeline_items_t.c.payload_json.like('%"clientMessageId"%'),
+    )
 
 
 def _in_range(value: str | None, start_utc: str, end_utc: str) -> bool:

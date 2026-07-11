@@ -144,6 +144,7 @@ class SessionRunService:
             status="idle",
             last_synced_at=utc_now(),
             runtime_settings_override=runtime_settings_override,
+            origin="platform",
         )
         if session.runtimeSettings != runtime_settings_override:
             session = session.model_copy(

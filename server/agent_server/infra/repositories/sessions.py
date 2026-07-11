@@ -3,6 +3,10 @@ from __future__ import annotations
 from agent_server.infra.repositories.store_support import *
 
 
+def _normalize_session_origin(value: str | None) -> str:
+    return "platform" if value == "platform" else "connector_import"
+
+
 class SessionRepositoryMixin:
     async def create_session(
         self,
@@ -37,6 +41,7 @@ class SessionRepositoryMixin:
                     id=session_id,
                     connector_id=connector_id,
                     runtime=runtime,
+                    origin="platform",
                     runtime_settings_override=(
                         _json_dumps(runtime_settings_override)
                         if runtime_settings_override is not None
@@ -70,9 +75,11 @@ class SessionRepositoryMixin:
         source_observed_at: str | None = None,
         last_activity_at: str | None = None,
         runtime_settings_override: dict[str, Any] | None = None,
+        origin: str = "connector_import",
     ) -> SessionView:
         has_runtime_settings_override = runtime_settings_override is not None
         now = utc_now()
+        normalized_origin = _normalize_session_origin(origin)
         async with self._engine.begin() as conn:
             connector = (
                 await conn.execute(
@@ -111,6 +118,7 @@ class SessionRepositoryMixin:
                         id=session_id,
                         connector_id=connector_id,
                         runtime=runtime,
+                        origin=normalized_origin,
                         runtime_settings_override=(
                             _json_dumps(runtime_settings_override)
                             if runtime_settings_override is not None

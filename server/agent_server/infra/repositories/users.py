@@ -17,6 +17,42 @@ class UserRepositoryMixin:
         return normalized
 
 
+    async def record_platform_activity(self, user_id: str, *, occurred_at: str | None = None) -> None:
+        now = occurred_at or utc_now()
+        activity_date = now[:10]
+        async with self._engine.begin() as conn:
+            existing = (
+                await conn.execute(
+                    select(platform_user_activity_t.c.user_id).where(
+                        platform_user_activity_t.c.user_id == user_id,
+                        platform_user_activity_t.c.activity_date == activity_date,
+                    )
+                )
+            ).first()
+            if existing is None:
+                await conn.execute(
+                    insert(platform_user_activity_t).values(
+                        user_id=user_id,
+                        activity_date=activity_date,
+                        first_seen_at=now,
+                        last_seen_at=now,
+                        event_count=1,
+                    )
+                )
+                return
+            await conn.execute(
+                update(platform_user_activity_t)
+                .where(
+                    platform_user_activity_t.c.user_id == user_id,
+                    platform_user_activity_t.c.activity_date == activity_date,
+                )
+                .values(
+                    last_seen_at=now,
+                    event_count=platform_user_activity_t.c.event_count + 1,
+                )
+            )
+
+
     async def create_user(
         self,
         *,

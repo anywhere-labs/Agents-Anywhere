@@ -67,6 +67,7 @@ async def seed_dashboard_activity(client: TestClient) -> dict[str, str]:
         title="Admin Codex",
         cwd="/repo",
         status="idle",
+        origin="platform",
     )
     bob_session = await store.upsert_connector_session(
         connector_id=bob_connector,
@@ -76,6 +77,7 @@ async def seed_dashboard_activity(client: TestClient) -> dict[str, str]:
         title="Bob Claude",
         cwd="/repo",
         status="idle",
+        origin="platform",
     )
     await store.upsert_timeline_item(
         session_id=admin_session.id,
@@ -83,11 +85,23 @@ async def seed_dashboard_activity(client: TestClient) -> dict[str, str]:
     )
     await store.upsert_timeline_item(
         session_id=admin_session.id,
-        item=_turn_start(admin_session.id, "turn_admin_2", 2, "codex"),
+        item=_platform_user_message(admin_session.id, "turn_admin_1", 2, "codex", "cm_admin_1"),
+    )
+    await store.upsert_timeline_item(
+        session_id=admin_session.id,
+        item=_turn_start(admin_session.id, "turn_admin_2", 3, "codex"),
+    )
+    await store.upsert_timeline_item(
+        session_id=admin_session.id,
+        item=_platform_user_message(admin_session.id, "turn_admin_2", 4, "codex", "cm_admin_2"),
     )
     await store.upsert_timeline_item(
         session_id=bob_session.id,
         item=_turn_start(bob_session.id, "turn_bob_1", 1, "claude"),
+    )
+    await store.upsert_timeline_item(
+        session_id=bob_session.id,
+        item=_platform_user_message(bob_session.id, "turn_bob_1", 2, "claude", "cm_bob_1"),
     )
     return admin_headers
 
@@ -109,6 +123,53 @@ def _turn_start(session_id: str, turn_id: str, order_seq: int, runtime: str) -> 
         orderSeq=order_seq,
         revision=1,
         contentHash=f"sha256:{turn_id}",
+    )
+
+
+def _platform_user_message(
+    session_id: str,
+    turn_id: str,
+    order_seq: int,
+    runtime: str,
+    client_message_id: str,
+) -> TimelineItemIn:
+    return TimelineItemIn(
+        id=f"tl_msg_{client_message_id}",
+        sessionId=session_id,
+        turnId=turn_id,
+        type="message",
+        status="done",
+        role="user",
+        content={"text": "Run it", "format": "markdown"},
+        source={
+            "runtime": runtime,
+            "turnId": turn_id,
+            "event": "item/completed",
+            "clientMessageId": client_message_id,
+        },
+        orderSeq=order_seq,
+        revision=1,
+        contentHash=f"sha256:{client_message_id}",
+    )
+
+
+def _history_user_message(session_id: str, turn_id: str, order_seq: int, runtime: str) -> TimelineItemIn:
+    return TimelineItemIn(
+        id=f"tl_history_msg_{turn_id}",
+        sessionId=session_id,
+        turnId=turn_id,
+        type="message",
+        status="done",
+        role="user",
+        content={"text": "Local history", "format": "markdown"},
+        source={
+            "runtime": runtime,
+            "turnId": turn_id,
+            "event": "history/response_item",
+        },
+        orderSeq=order_seq,
+        revision=1,
+        contentHash=f"sha256:history:{turn_id}",
     )
 
 
@@ -153,6 +214,57 @@ def test_admin_dashboard_overview_builds_daily_snapshot(tmp_path):
     }
     assert body["userSegments"][0] == {"segment": "light", "label": "Light", "count": 2}
     assert len(body["series"]) == 1
+
+
+def test_admin_dashboard_ignores_connector_history_for_usage_metrics(tmp_path):
+    client = make_client(tmp_path)
+    store = client.app.state.store
+    admin_headers = register_admin(client)
+    connector_id = create_connector(client, admin_headers, "admin-mac")
+    current = today()
+
+    async def seed_history_import() -> None:
+        await store.set_connector_status(connector_id, "offline", device_os="macos")
+        await store.attach_runtime(connector_id, "codex", {"selected": {"source": "path", "path": "/bin/codex"}})
+        imported = await store.upsert_connector_session(
+            connector_id=connector_id,
+            session_id="sess_imported_codex",
+            runtime="codex",
+            external_session_id="thr_imported",
+            title="Imported history",
+            cwd="/repo",
+            status="idle",
+        )
+        await store.upsert_timeline_item(
+            session_id=imported.id,
+            item=_turn_start(imported.id, "turn_history_1", 1, "codex"),
+        )
+        await store.upsert_timeline_item(
+            session_id=imported.id,
+            item=_history_user_message(imported.id, "turn_history_1", 2, "codex"),
+        )
+
+    asyncio.run(seed_history_import())
+
+    response = client.get(
+        "/admin/dashboard/overview",
+        headers=admin_headers,
+        params={"from": current, "to": current},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["summary"]["dau"] == 1
+    assert body["summary"]["totalTurns"] == 0
+    assert body["summary"]["activeSessions"] == 0
+    assert {item["key"]: item["value"] for item in body["sessionAgentBreakdown"]} == {
+        "codex": 0.0,
+        "claude": 0.0,
+    }
+    assert {item["key"]: item["value"] for item in body["agentBreakdown"]} == {
+        "codex": 1.0,
+        "claude": 0.0,
+    }
 
 
 def test_admin_dashboard_settings_drive_segments_and_export(tmp_path):
