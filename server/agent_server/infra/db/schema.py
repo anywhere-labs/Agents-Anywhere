@@ -3,6 +3,7 @@ from __future__ import annotations
 from sqlalchemy import (
     Column,
     ForeignKey,
+    Float,
     Index,
     Integer,
     MetaData,
@@ -97,6 +98,19 @@ users = Table(
     Column("avatar", Text),
     Column("created_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
+)
+
+
+platform_user_activity = Table(
+    "platform_user_activity",
+    metadata,
+    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("activity_date", Text, nullable=False),
+    Column("first_seen_at", Text, nullable=False),
+    Column("last_seen_at", Text, nullable=False),
+    Column("event_count", Integer, nullable=False, server_default="0"),
+    PrimaryKeyConstraint("user_id", "activity_date"),
+    Index("idx_platform_user_activity_last_seen", "last_seen_at"),
 )
 
 
@@ -201,6 +215,7 @@ sessions = Table(
     Column("id", Text, primary_key=True),
     Column("connector_id", Text, ForeignKey("connectors.id"), nullable=False),
     Column("runtime", Text, nullable=False),
+    Column("origin", Text, nullable=False, server_default="connector_import"),
     Column("runtime_settings_override", Text),
     Column("external_session_id", Text),
     Column("title", Text),
@@ -252,6 +267,52 @@ timeline_items = Table(
     PrimaryKeyConstraint("session_id", "id"),
     Index("idx_timeline_items_session_updated_seq", "session_id", "updated_seq"),
     Index("idx_timeline_items_session_item_time", "session_id", "item_time"),
+    Index("idx_timeline_items_item_time_type_role", "item_time", "type", "role"),
+)
+
+
+dashboard_daily_metrics = Table(
+    "dashboard_daily_metrics",
+    metadata,
+    Column("date", Text, nullable=False),
+    Column("metric_key", Text, nullable=False),
+    Column("dimension_key", Text, nullable=False, server_default=""),
+    Column("dimension_value", Text, nullable=False, server_default=""),
+    Column("value", Float, nullable=False),
+    Column("computed_at", Text, nullable=False),
+    PrimaryKeyConstraint("date", "metric_key", "dimension_key", "dimension_value"),
+    Index("idx_dashboard_daily_metrics_date", "date"),
+)
+
+
+dashboard_user_daily_facts = Table(
+    "dashboard_user_daily_facts",
+    metadata,
+    Column("date", Text, nullable=False),
+    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("turns", Integer, nullable=False, server_default="0"),
+    Column("active_sessions", Integer, nullable=False, server_default="0"),
+    Column("created_sessions", Integer, nullable=False, server_default="0"),
+    Column("devices", Integer, nullable=False, server_default="0"),
+    Column("macos_devices", Integer, nullable=False, server_default="0"),
+    Column("windows_devices", Integer, nullable=False, server_default="0"),
+    Column("linux_devices", Integer, nullable=False, server_default="0"),
+    Column("unknown_devices", Integer, nullable=False, server_default="0"),
+    Column("codex_agents", Integer, nullable=False, server_default="0"),
+    Column("claude_agents", Integer, nullable=False, server_default="0"),
+    Column("last_activity_at", Text),
+    Column("computed_at", Text, nullable=False),
+    PrimaryKeyConstraint("date", "user_id"),
+    Index("idx_dashboard_user_daily_facts_user_date", "user_id", "date"),
+)
+
+
+dashboard_settings = Table(
+    "dashboard_settings",
+    metadata,
+    Column("key", Text, primary_key=True),
+    Column("value_json", Text, nullable=False),
+    Column("updated_at", Text, nullable=False),
 )
 
 

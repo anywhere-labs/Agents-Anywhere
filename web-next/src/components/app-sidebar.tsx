@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Search, Plus, Settings, Users, Server, LogOut, Pin, Archive, CheckCheck, Copy, FolderOpen, Pencil } from "lucide-react"
+import { Search, Plus, Settings, Users, Server, LogOut, Pin, Archive, CheckCheck, Copy, FolderOpen, Pencil, LayoutDashboard } from "lucide-react"
 import { toast } from "sonner"
 import { PairDeviceDialog } from "@/components/pair-device-dialog"
 
@@ -262,6 +262,10 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
             </DropdownMenuItem>
             {isAdmin ? (
               <>
+                <DropdownMenuItem className="gap-3 py-2.5" onClick={() => navigate("dashboard")}>
+                  <LayoutDashboard className="size-4 text-muted-foreground" />
+                  {t("nav.dashboard")}
+                </DropdownMenuItem>
                 <DropdownMenuItem className="gap-3 py-2.5" onClick={() => navigate("team")}>
                   <Users className="size-4 text-muted-foreground" />
                   {t("nav.team")}

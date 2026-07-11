@@ -35,12 +35,13 @@ export type PanelMode = "docked" | "floating" | "closed"
  *   home                         →  #/
  *   session/:id                  →  #/session/s1
  *   settings/:tab                →  #/settings/account
+ *   dashboard                    →  #/dashboard
  *   team                         →  #/team
  *   service                      →  #/service
  *   device/:id                   →  #/device/conn-3
  *   device/:id/workspace/:path   →  #/device/conn-3/workspace/~path~
  */
-export type AppPage = "home" | "session" | "settings" | "team" | "service" | "device" | "device-workspace"
+export type AppPage = "home" | "session" | "settings" | "dashboard" | "team" | "service" | "device" | "device-workspace"
 
 export type ComposerInsertion = {
   id: number
@@ -68,6 +69,7 @@ type ParsedRoute =
   | { page: "home" }
   | { page: "session"; sessionId: string }
   | { page: "settings"; tab: string }
+  | { page: "dashboard" }
   | { page: "team" }
   | { page: "service" }
   | { page: "device"; connectorId: string }
@@ -87,6 +89,8 @@ function parseHash(hash: string): ParsedRoute {
       return parts[1] ? { page: "session", sessionId: parts[1] } : { page: "home" }
     case "settings":
       return { page: "settings", tab: parts[1] ?? "account" }
+    case "dashboard":
+      return { page: "dashboard" }
     case "team":
       return { page: "team" }
     case "service":
@@ -109,6 +113,7 @@ function buildHash(route: ParsedRoute): string {
     case "home":      return "#/"
     case "session":   return `#/session/${route.sessionId}`
     case "settings":  return `#/settings/${route.tab}`
+    case "dashboard": return "#/dashboard"
     case "team":      return "#/team"
     case "service":   return "#/service"
     case "device":    return `#/device/${route.connectorId}`
@@ -472,6 +477,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       if (page === "home") pushRoute({ page: "home" })
       else if (page === "session") pushRoute({ page: "session", sessionId: sub ?? "" })
       else if (page === "settings") pushRoute({ page: "settings", tab: sub ?? "account" })
+      else if (page === "dashboard") pushRoute({ page: "dashboard" })
       else if (page === "team") pushRoute({ page: "team" })
       else if (page === "service") pushRoute({ page: "service" })
     },
@@ -728,7 +734,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
   // ── Derived route fields ──────────────────────────────────
 
-  const validPages: AppPage[] = ["home", "session", "settings", "team", "service", "device", "device-workspace"]
+  const validPages: AppPage[] = ["home", "session", "settings", "dashboard", "team", "service", "device", "device-workspace"]
   const page: AppPage = validPages.includes(route.page as AppPage) ? (route.page as AppPage) : "home"
 
   const activeSessionId = route.page === "session" ? route.sessionId : null

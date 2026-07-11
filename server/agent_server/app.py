@@ -17,6 +17,7 @@ from loguru import logger
 from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.api import (
     admin,
+    admin_dashboard,
     agents,
     approvals,
     auth,
@@ -108,6 +109,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
 
     app.include_router(auth.router)
     app.include_router(admin.router)
+    app.include_router(admin_dashboard.router)
     app.include_router(service.router)
     app.include_router(oauth.router)
     app.include_router(connectors.router)

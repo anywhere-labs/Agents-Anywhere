@@ -108,6 +108,7 @@ async def current_user(
         raise HTTPException(status_code=401, detail="user no longer exists") from None
     if user.disabled:
         raise HTTPException(status_code=403, detail="account disabled")
+    await db.record_platform_activity(user.userId)
     return user
 
 
