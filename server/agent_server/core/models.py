@@ -251,6 +251,7 @@ class DashboardSummary(BaseModel):
     totalUsers: int = 0
     newUsers: int = 0
     dau: int = 0
+    activeUsers: int = 0
     wau: int = 0
     mau: int = 0
     totalTurns: int = 0
@@ -266,6 +267,7 @@ class DashboardSeriesPoint(BaseModel):
     totalUsers: int = 0
     newUsers: int = 0
     dau: int = 0
+    activeUsers: int = 0
     wau: int = 0
     mau: int = 0
     totalTurns: int = 0

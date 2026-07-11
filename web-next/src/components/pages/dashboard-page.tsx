@@ -58,12 +58,14 @@ const DEFAULT_TZ = "Asia/Shanghai"
 const CHART_COLORS = ["#60a5fa", "#34d399", "#f59e0b", "#f87171", "#a78bfa"]
 const TREND_COLORS = {
   dau: "#60a5fa",
+  activeUsers: "#a78bfa",
   totalTurns: "#34d399",
   activeSessions: "#f59e0b",
 } as const
 
 const trendConfig = {
   dau: { label: "DAU", color: TREND_COLORS.dau },
+  activeUsers: { label: "Active users", color: TREND_COLORS.activeUsers },
   totalTurns: { label: "Turns", color: TREND_COLORS.totalTurns },
   activeSessions: { label: "Sessions", color: TREND_COLORS.activeSessions },
 } satisfies ChartConfig
@@ -277,7 +279,7 @@ function DashboardContent({
       />
     )
   }
-  if (tab === "devices") return <BreakdownTab titleKey="devices" items={overview.deviceBreakdown} />
+  if (tab === "devices") return <DevicesTab overview={overview} />
   if (tab === "agents") return <AgentsTab overview={overview} />
   if (tab === "export") return <ExportTab overview={overview} onExport={onExport} />
   return <OverviewTab overview={overview} />
@@ -288,10 +290,20 @@ function OverviewTab({ overview }: { overview: AdminDashboardOverviewResponse })
   return (
     <div className="flex flex-col gap-4">
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label={t("metrics.dau")} value={overview.summary.dau} />
+        <MetricCard
+          label={t("metrics.dau")}
+          value={overview.summary.dau}
+          helper={t("metrics.userShare", { percent: userShare(overview.summary.dau, overview.summary.totalUsers) })}
+        />
+        <MetricCard
+          label={t("metrics.activeUsers")}
+          value={overview.summary.activeUsers}
+          helper={t("metrics.userShare", {
+            percent: userShare(overview.summary.activeUsers, overview.summary.totalUsers),
+          })}
+        />
         <MetricCard label={t("metrics.turns")} value={overview.summary.totalTurns} />
         <MetricCard label={t("metrics.activeSessions")} value={overview.summary.activeSessions} />
-        <MetricCard label={t("metrics.avgDevices")} value={overview.summary.avgDevicesPerUser.toFixed(2)} />
       </div>
       <section className="rounded-xl border border-border bg-card">
         <div className="px-5 py-4">
@@ -302,10 +314,6 @@ function OverviewTab({ overview }: { overview: AdminDashboardOverviewResponse })
           <TrendChart data={overview.series} />
         </div>
       </section>
-      <div className="grid gap-4 xl:grid-cols-2">
-        <BreakdownPanel title={t("deviceBreakdown")} items={overview.deviceBreakdown} />
-        <BreakdownPanel title={t("agentBreakdown")} items={overview.agentBreakdown} />
-      </div>
     </div>
   )
 }
@@ -410,18 +418,18 @@ function UsersTab({
   )
 }
 
-function BreakdownTab({
-  titleKey,
-  items,
-}: {
-  titleKey: "devices"
-  items: AdminDashboardBreakdownItem[]
-}) {
+function DevicesTab({ overview }: { overview: AdminDashboardOverviewResponse }) {
   const t = useTranslations("pages.opsDashboard")
   return (
-    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_24rem]">
-      <BreakdownPie title={t(`tabs.${titleKey}`)} items={items} />
-      <BreakdownPanel title={t("breakdown")} items={items} />
+    <div className="flex flex-col gap-4">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <MetricCard label={t("metrics.avgDevices")} value={overview.summary.avgDevicesPerUser.toFixed(2)} />
+        <MetricCard label={t("metrics.totalDevices")} value={overview.summary.totalDevices} />
+      </div>
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_24rem]">
+        <BreakdownPie title={t("tabs.devices")} items={overview.deviceBreakdown} />
+        <BreakdownPanel title={t("breakdown")} items={overview.deviceBreakdown} />
+      </div>
     </div>
   )
 }
@@ -467,7 +475,7 @@ function ExportTab({
   )
 }
 
-function MetricCard({ label, value }: { label: string; value: string | number }) {
+function MetricCard({ label, value, helper }: { label: string; value: string | number; helper?: string }) {
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -475,6 +483,7 @@ function MetricCard({ label, value }: { label: string; value: string | number })
       </CardHeader>
       <CardContent>
         <div className="text-2xl font-semibold tabular-nums">{formatValue(value)}</div>
+        {helper ? <p className="mt-1 text-xs text-muted-foreground">{helper}</p> : null}
       </CardContent>
     </Card>
   )
@@ -489,6 +498,7 @@ function TrendChart({ data }: { data: AdminDashboardOverviewResponse["series"] }
         <YAxis tickLine={false} axisLine={false} tickMargin={8} width={42} />
         <ChartTooltip content={<ChartTooltipContent />} />
         <Area type="monotone" dataKey="dau" stroke={TREND_COLORS.dau} strokeWidth={2} fill={TREND_COLORS.dau} fillOpacity={0.12} />
+        <Area type="monotone" dataKey="activeUsers" stroke={TREND_COLORS.activeUsers} strokeWidth={2} fill={TREND_COLORS.activeUsers} fillOpacity={0.1} />
         <Area type="monotone" dataKey="totalTurns" stroke={TREND_COLORS.totalTurns} strokeWidth={2} fill={TREND_COLORS.totalTurns} fillOpacity={0.1} />
         <Area type="monotone" dataKey="activeSessions" stroke={TREND_COLORS.activeSessions} strokeWidth={2} fill={TREND_COLORS.activeSessions} fillOpacity={0.08} />
       </AreaChart>
@@ -683,4 +693,8 @@ function parseNumberList(value: string) {
 
 function formatValue(value: string | number) {
   return typeof value === "number" ? value.toLocaleString() : value
+}
+
+function userShare(value: number, total: number) {
+  return `${total > 0 ? ((value / total) * 100).toFixed(1) : "0.0"}%`
 }

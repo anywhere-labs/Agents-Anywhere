@@ -1045,7 +1045,10 @@
         "mau": "MAU",
         "turns": "Turn",
         "activeSessions": "活跃会话",
-        "avgDevices": "人均设备"
+        "activeUsers": "活跃用户",
+        "avgDevices": "人均设备",
+        "totalDevices": "总设备",
+        "userShare": "占总用户 {percent}"
       },
       "segments": {
         "all": "全部用户",

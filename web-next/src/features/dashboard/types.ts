@@ -516,6 +516,7 @@ export type AdminDashboardSummary = {
   totalUsers: number;
   newUsers: number;
   dau: number;
+  activeUsers: number;
   wau: number;
   mau: number;
   totalTurns: number;

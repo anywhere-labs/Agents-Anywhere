@@ -41,12 +41,13 @@ from agent_server.infra.repositories.facade import Store
 
 
 DASHBOARD_SETTINGS_KEY = "settings"
-DASHBOARD_SNAPSHOT_VERSION = 2
+DASHBOARD_SNAPSHOT_VERSION = 3
 SNAPSHOT_REFRESH_SECONDS = 300
 METRIC_KEYS = {
     "totalUsers": "users.total",
     "newUsers": "users.new",
     "dau": "users.dau",
+    "activeUsers": "users.active_session_users",
     "wau": "users.wau",
     "mau": "users.mau",
     "totalTurns": "usage.turns",
@@ -287,6 +288,7 @@ class AdminDashboardService:
         total_users = len(users)
         new_users = sum(1 for row in users.values() if _in_range(row["created_at"], start_utc, end_utc))
         dau = len(facts)
+        active_users = sum(1 for fact in facts.values() if fact.active_sessions)
         wau = await self._count_active_users_between(
             start_utc=_period_start_utc(target_date, timezone, days=7),
             end_utc=end_utc,
@@ -307,6 +309,7 @@ class AdminDashboardService:
             _metric(target_date, "users.total", total_users, computed_at),
             _metric(target_date, "users.new", new_users, computed_at),
             _metric(target_date, "users.dau", dau, computed_at),
+            _metric(target_date, "users.active_session_users", active_users, computed_at),
             _metric(target_date, "users.wau", wau, computed_at),
             _metric(target_date, "users.mau", mau, computed_at),
             _metric(target_date, "usage.turns", total_turns, computed_at),
@@ -981,6 +984,7 @@ def _series_point(
         totalUsers=int(values["totalUsers"]),
         newUsers=int(values["newUsers"]),
         dau=int(values["dau"]),
+        activeUsers=int(values["activeUsers"]),
         wau=int(values["wau"]),
         mau=int(values["mau"]),
         totalTurns=int(values["totalTurns"]),

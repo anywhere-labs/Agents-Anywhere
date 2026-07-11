@@ -195,6 +195,7 @@ def test_admin_dashboard_overview_builds_daily_snapshot(tmp_path):
     assert body["summary"]["totalUsers"] == 2
     assert body["summary"]["newUsers"] == 2
     assert body["summary"]["dau"] == 2
+    assert body["summary"]["activeUsers"] == 2
     assert body["summary"]["totalTurns"] == 3
     assert body["summary"]["activeSessions"] == 2
     assert body["summary"]["avgTurnsPerActiveUser"] == 1.5
@@ -216,6 +217,7 @@ def test_admin_dashboard_overview_builds_daily_snapshot(tmp_path):
     }
     assert body["userSegments"][0] == {"segment": "light", "label": "Light", "count": 2}
     assert len(body["series"]) == 1
+    assert body["series"][0]["activeUsers"] == 2
 
 
 def test_admin_dashboard_ignores_connector_history_for_usage_metrics(tmp_path):
@@ -287,6 +289,7 @@ def test_admin_dashboard_ignores_connector_history_for_usage_metrics(tmp_path):
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["summary"]["dau"] == 1
+    assert body["summary"]["activeUsers"] == 0
     assert body["summary"]["totalTurns"] == 0
     assert body["summary"]["activeSessions"] == 0
     assert {item["key"]: item["value"] for item in body["sessionAgentBreakdown"]} == {

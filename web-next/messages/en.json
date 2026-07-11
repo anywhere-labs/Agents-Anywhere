@@ -1045,7 +1045,10 @@
         "mau": "MAU",
         "turns": "Turns",
         "activeSessions": "Active sessions",
-        "avgDevices": "Avg. devices/user"
+        "activeUsers": "Active users",
+        "avgDevices": "Avg. devices/user",
+        "totalDevices": "Total devices",
+        "userShare": "{percent} of users"
       },
       "segments": {
         "all": "All users",
