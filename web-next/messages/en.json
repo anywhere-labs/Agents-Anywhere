@@ -1010,8 +1010,8 @@
       "loadFailed": "Failed to load dashboard.",
       "settingsSaved": "Dashboard settings saved.",
       "settingsFailed": "Failed to save dashboard settings.",
-      "exportFailed": "Failed to export users.",
       "trend": "Metric trend",
+      "userTrend": "User trend",
       "deviceBreakdown": "Device mix",
       "agentBreakdown": "Agent mix",
       "sessionAgentBreakdown": "Active session agent mix",
@@ -1029,7 +1029,6 @@
       "mediumMax": "Medium max turns",
       "turnBins": "Turn buckets",
       "sessionBins": "Session buckets",
-      "exportUsers": "Export users",
       "breakdown": "Breakdown",
       "name": "Name",
       "value": "Value",
@@ -1039,8 +1038,7 @@
         "usage": "Usage",
         "users": "Users",
         "devices": "Devices",
-        "agents": "Agents",
-        "export": "Export"
+        "agents": "Agents"
       },
       "metrics": {
         "dau": "DAU",
@@ -1055,7 +1053,6 @@
         "userShare": "{percent} of users"
       },
       "segments": {
-        "all": "All users",
         "light": "Light users",
         "medium": "Medium users",
         "heavy": "Heavy users",

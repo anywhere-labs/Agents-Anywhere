@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import io
 import json
-import zipfile
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
-from xml.sax.saxutils import escape
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import and_, delete, func, insert, select
@@ -19,7 +16,6 @@ from agent_server.core.models import (
     DashboardIntensitySettings,
     DashboardOverviewResponse,
     DashboardRange,
-    DashboardSegment,
     DashboardSeriesPoint,
     DashboardSettingsUpdateRequest,
     DashboardSettingsView,
@@ -241,48 +237,6 @@ class AdminDashboardService:
             return
         if refresh_today and _snapshot_age_seconds(latest) > SNAPSHOT_REFRESH_SECONDS:
             await self._compute_snapshot(target_date, timezone=timezone)
-
-    async def export_users_xlsx(
-        self,
-        *,
-        from_date: date,
-        to_date: date,
-        segment: DashboardSegment,
-    ) -> bytes:
-        if from_date > to_date:
-            raise ValueError("from date must be before or equal to to date")
-        settings, customized_settings = await self._load_settings()
-        rows = await self._export_rows(
-            from_date,
-            to_date,
-            segment,
-            settings if customized_settings else None,
-        )
-        return _xlsx(
-            "Users",
-            [
-                [
-                    "User ID",
-                    "Role",
-                    "Created At",
-                    "Disabled",
-                    "Segment",
-                    "Turns",
-                    "Active Sessions",
-                    "Created Sessions",
-                    "Active Days",
-                    "Devices",
-                    "macOS Devices",
-                    "Windows Devices",
-                    "Linux Devices",
-                    "Unknown Devices",
-                    "Codex Agents",
-                    "Claude Code Agents",
-                    "Last Activity At",
-                ],
-                *rows,
-            ],
-        )
 
     async def _compute_snapshot(
         self,
@@ -733,90 +687,6 @@ class AdminDashboardService:
         active.update(str(row[0]) for row in timeline_users if row[0])
         return len(active)
 
-    async def _export_rows(
-        self,
-        from_date: date,
-        to_date: date,
-        segment: DashboardSegment,
-        settings: DashboardSettingsView | None,
-    ) -> list[list[Any]]:
-        async with self._store.engine.connect() as conn:
-            fact_rows = (
-                await conn.execute(
-                    select(dashboard_user_daily_facts_t).where(
-                        dashboard_user_daily_facts_t.c.date >= from_date.isoformat(),
-                        dashboard_user_daily_facts_t.c.date <= to_date.isoformat(),
-                    )
-                )
-            ).mappings().all()
-            user_rows = (await conn.execute(select(users_t))).mappings().all()
-        users = {row["id"]: row for row in user_rows}
-        aggregated: dict[str, dict[str, Any]] = {}
-        for row in fact_rows:
-            user_id = row["user_id"]
-            item = aggregated.setdefault(
-                user_id,
-                {
-                    "turns": 0,
-                    "active_sessions": 0,
-                    "created_sessions": 0,
-                    "active_days": 0,
-                    "devices": 0,
-                    "macos_devices": 0,
-                    "windows_devices": 0,
-                    "linux_devices": 0,
-                    "unknown_devices": 0,
-                    "codex_agents": 0,
-                    "claude_agents": 0,
-                    "last_activity_at": None,
-                },
-            )
-            for key in (
-                "turns",
-                "active_sessions",
-                "created_sessions",
-                "devices",
-                "macos_devices",
-                "windows_devices",
-                "linux_devices",
-                "unknown_devices",
-                "codex_agents",
-                "claude_agents",
-            ):
-                item[key] = max(item[key], int(row[key] or 0)) if key.endswith("_devices") or key.endswith("_agents") or key == "devices" else item[key] + int(row[key] or 0)
-            item["active_days"] += 1
-            item["last_activity_at"] = _max_iso(item["last_activity_at"], row["last_activity_at"])
-        effective_settings = settings or _settings_for_facts(list(aggregated.values()))
-        output: list[list[Any]] = []
-        for user_id, item in sorted(aggregated.items()):
-            current_segment = _segment_for_turns(item["turns"], effective_settings)
-            if segment != "all" and current_segment != segment:
-                continue
-            user = users.get(user_id)
-            output.append(
-                [
-                    user_id,
-                    user["role"] if user else "",
-                    user["created_at"] if user else "",
-                    bool(user["disabled"]) if user else "",
-                    current_segment,
-                    item["turns"],
-                    item["active_sessions"],
-                    item["created_sessions"],
-                    item["active_days"],
-                    item["devices"],
-                    item["macos_devices"],
-                    item["windows_devices"],
-                    item["linux_devices"],
-                    item["unknown_devices"],
-                    item["codex_agents"],
-                    item["claude_agents"],
-                    item["last_activity_at"] or "",
-                ]
-            )
-        return output
-
-
 def _timezone(name: str) -> ZoneInfo:
     try:
         return ZoneInfo(name)
@@ -1106,72 +976,3 @@ def _snapshot_age_seconds(computed_at: str) -> float:
     except ValueError:
         return float("inf")
     return (datetime.now(UTC) - parsed.astimezone(UTC)).total_seconds()
-
-
-def _xlsx(sheet_name: str, rows: list[list[Any]]) -> bytes:
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("[Content_Types].xml", _xlsx_content_types())
-        zf.writestr("_rels/.rels", _xlsx_root_rels())
-        zf.writestr("xl/workbook.xml", _xlsx_workbook(sheet_name))
-        zf.writestr("xl/_rels/workbook.xml.rels", _xlsx_workbook_rels())
-        zf.writestr("xl/worksheets/sheet1.xml", _xlsx_sheet(rows))
-    return buffer.getvalue()
-
-
-def _xlsx_content_types() -> str:
-    return """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
-<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
-<Default Extension="xml" ContentType="application/xml"/>
-<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
-<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
-</Types>"""
-
-
-def _xlsx_root_rels() -> str:
-    return """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
-</Relationships>"""
-
-
-def _xlsx_workbook(sheet_name: str) -> str:
-    return f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
-<sheets><sheet name="{escape(sheet_name)}" sheetId="1" r:id="rId1"/></sheets>
-</workbook>"""
-
-
-def _xlsx_workbook_rels() -> str:
-    return """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
-</Relationships>"""
-
-
-def _xlsx_sheet(rows: list[list[Any]]) -> str:
-    row_xml = []
-    for row_index, row in enumerate(rows, start=1):
-        cells = []
-        for col_index, value in enumerate(row, start=1):
-            ref = f"{_xlsx_column(col_index)}{row_index}"
-            if isinstance(value, bool):
-                cells.append(f'<c r="{ref}" t="inlineStr"><is><t>{str(value).lower()}</t></is></c>')
-            elif isinstance(value, int | float):
-                cells.append(f'<c r="{ref}"><v>{value}</v></c>')
-            else:
-                cells.append(f'<c r="{ref}" t="inlineStr"><is><t>{escape(str(value))}</t></is></c>')
-        row_xml.append(f'<row r="{row_index}">{"".join(cells)}</row>')
-    return f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-<sheetData>{"".join(row_xml)}</sheetData>
-</worksheet>"""
-
-
-def _xlsx_column(index: int) -> str:
-    letters = ""
-    while index:
-        index, remainder = divmod(index - 1, 26)
-        letters = chr(65 + remainder) + letters
-    return letters

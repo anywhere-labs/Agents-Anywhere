@@ -488,7 +488,7 @@ export type UserAgentDefaultsResponse = {
   serverTime: string;
 };
 
-export type DashboardSegment = "light" | "medium" | "heavy" | "all";
+export type DashboardSegment = "light" | "medium" | "heavy";
 
 export type AdminDashboardIntensitySettings = {
   basis: "turns";
@@ -547,7 +547,7 @@ export type AdminDashboardHistogramBucket = {
 };
 
 export type AdminDashboardUserSegmentItem = {
-  segment: Exclude<DashboardSegment, "all">;
+  segment: DashboardSegment;
   label: string;
   count: number;
 };

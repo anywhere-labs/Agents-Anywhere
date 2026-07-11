@@ -15,7 +15,6 @@ import {
 } from "recharts"
 import {
   ChevronLeft,
-  Download,
   Gauge,
   Laptop,
   LineChart,
@@ -47,12 +46,10 @@ import type {
   AdminDashboardBreakdownItem,
   AdminDashboardOverviewResponse,
   AdminDashboardSettings,
-  DashboardSegment,
 } from "@/features/dashboard/types"
-import { downloadBlob } from "@/lib/download"
 import { cn } from "@/lib/utils"
 
-type DashboardTab = "overview" | "usage" | "users" | "devices" | "agents" | "export"
+type DashboardTab = "overview" | "usage" | "users" | "devices" | "agents"
 
 const DEFAULT_TZ = "Asia/Shanghai"
 const CHART_COLORS = ["#60a5fa", "#34d399", "#f59e0b", "#f87171", "#a78bfa"]
@@ -80,7 +77,6 @@ const navItems: { id: DashboardTab; icon: typeof LineChart; labelKey: string }[]
   { id: "users", icon: Users, labelKey: "users" },
   { id: "devices", icon: Laptop, labelKey: "devices" },
   { id: "agents", icon: SlidersHorizontal, labelKey: "agents" },
-  { id: "export", icon: Download, labelKey: "export" },
 ]
 
 export function DashboardPage() {
@@ -150,23 +146,6 @@ export function DashboardPage() {
       toast.error(err instanceof Error ? err.message : t("settingsFailed"))
     } finally {
       setSavingSettings(false)
-    }
-  }
-
-  const exportUsers = async (segment: DashboardSegment) => {
-    if (!token || !overview) return
-    try {
-      const blob = await dashboardApi.downloadBlob(
-        token,
-        dashboardApi.exportAdminDashboardUsersUrl({
-          from: overview.range.fromDate,
-          to: overview.range.toDate,
-          segment,
-        }),
-      )
-      downloadBlob(blob, `dashboard-users-${overview.range.fromDate}-${overview.range.toDate}-${segment}.xlsx`)
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : t("exportFailed"))
     }
   }
 
@@ -241,7 +220,6 @@ export function DashboardPage() {
               savingSettings={savingSettings}
               onSettingsChange={setSettingsDraft}
               onSaveSettings={saveSettings}
-              onExport={exportUsers}
             />
           ) : null}
         </main>
@@ -257,7 +235,6 @@ function DashboardContent({
   savingSettings,
   onSettingsChange,
   onSaveSettings,
-  onExport,
 }: {
   tab: DashboardTab
   overview: AdminDashboardOverviewResponse
@@ -265,12 +242,10 @@ function DashboardContent({
   savingSettings: boolean
   onSettingsChange: (settings: AdminDashboardSettings) => void
   onSaveSettings: () => void
-  onExport: (segment: DashboardSegment) => void
 }) {
-  if (tab === "usage") return <UsageTab overview={overview} />
-  if (tab === "users") {
+  if (tab === "usage") {
     return (
-      <UsersTab
+      <UsageTab
         overview={overview}
         settingsDraft={settingsDraft}
         savingSettings={savingSettings}
@@ -279,9 +254,9 @@ function DashboardContent({
       />
     )
   }
+  if (tab === "users") return <UsersTab overview={overview} />
   if (tab === "devices") return <DevicesTab overview={overview} />
   if (tab === "agents") return <AgentsTab overview={overview} />
-  if (tab === "export") return <ExportTab overview={overview} onExport={onExport} />
   return <OverviewTab overview={overview} />
 }
 
@@ -318,33 +293,7 @@ function OverviewTab({ overview }: { overview: AdminDashboardOverviewResponse })
   )
 }
 
-function UsageTab({ overview }: { overview: AdminDashboardOverviewResponse }) {
-  const t = useTranslations("pages.opsDashboard")
-  return (
-    <div className="grid gap-4 xl:grid-cols-2">
-      <HistogramPanel
-        title={t("turnHistogram")}
-        data={overview.turnHistogram}
-        axisDescription={t("axes.turnHistogram")}
-      />
-      <HistogramPanel
-        title={t("sessionHistogram")}
-        data={overview.sessionHistogram}
-        axisDescription={t("axes.sessionHistogram")}
-      />
-      <SegmentPanel items={overview.userSegments} totalUsers={overview.summary.totalUsers} />
-      <section className="rounded-xl border border-border bg-card">
-        <div className="px-5 py-4">
-          <h2 className="text-base font-semibold">{t("sessionAgentBreakdown")}</h2>
-        </div>
-        <Separator />
-        <BreakdownTable items={overview.sessionAgentBreakdown} />
-      </section>
-    </div>
-  )
-}
-
-function UsersTab({
+function UsageTab({
   overview,
   settingsDraft,
   savingSettings,
@@ -361,22 +310,27 @@ function UsersTab({
   if (!settingsDraft) return null
   return (
     <div className="flex flex-col gap-4">
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-        <MetricCard label={t("metrics.totalUsers")} value={overview.summary.totalUsers} />
-        <MetricCard
-          label={t("metrics.dau")}
-          value={overview.summary.dau}
-          helper={t("metrics.userShare", { percent: userShare(overview.summary.dau, overview.summary.totalUsers) })}
+      <div className="grid gap-4 xl:grid-cols-2">
+        <HistogramPanel
+          title={t("turnHistogram")}
+          data={overview.turnHistogram}
+          axisDescription={t("axes.turnHistogram")}
         />
-        <MetricCard
-          label={t("metrics.activeUsers")}
-          value={overview.summary.activeUsers}
-          helper={t("metrics.userShare", {
-            percent: userShare(overview.summary.activeUsers, overview.summary.totalUsers),
-          })}
+        <HistogramPanel
+          title={t("sessionHistogram")}
+          data={overview.sessionHistogram}
+          axisDescription={t("axes.sessionHistogram")}
         />
-        <MetricCard label={t("metrics.newUsers")} value={overview.summary.newUsers} />
-        <MetricCard label={t("metrics.mau")} value={overview.summary.mau} />
+      </div>
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_24rem]">
+        <SegmentPanel items={overview.userSegments} totalUsers={overview.summary.totalUsers} />
+        <section className="rounded-xl border border-border bg-card">
+          <div className="px-5 py-4">
+            <h2 className="text-base font-semibold">{t("sessionAgentBreakdown")}</h2>
+          </div>
+          <Separator />
+          <BreakdownTable items={overview.sessionAgentBreakdown} />
+        </section>
       </div>
       <section className="rounded-xl border border-border bg-card">
         <div className="flex items-center justify-between gap-4 px-5 py-4">
@@ -433,7 +387,40 @@ function UsersTab({
           />
         </div>
       </section>
-      <SegmentPanel items={overview.userSegments} totalUsers={overview.summary.totalUsers} />
+    </div>
+  )
+}
+
+function UsersTab({ overview }: { overview: AdminDashboardOverviewResponse }) {
+  const t = useTranslations("pages.opsDashboard")
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+        <MetricCard label={t("metrics.totalUsers")} value={overview.summary.totalUsers} />
+        <MetricCard
+          label={t("metrics.dau")}
+          value={overview.summary.dau}
+          helper={t("metrics.userShare", { percent: userShare(overview.summary.dau, overview.summary.totalUsers) })}
+        />
+        <MetricCard
+          label={t("metrics.activeUsers")}
+          value={overview.summary.activeUsers}
+          helper={t("metrics.userShare", {
+            percent: userShare(overview.summary.activeUsers, overview.summary.totalUsers),
+          })}
+        />
+        <MetricCard label={t("metrics.newUsers")} value={overview.summary.newUsers} />
+        <MetricCard label={t("metrics.mau")} value={overview.summary.mau} />
+      </div>
+      <section className="rounded-xl border border-border bg-card">
+        <div className="px-5 py-4">
+          <h2 className="text-base font-semibold">{t("userTrend")}</h2>
+        </div>
+        <Separator />
+        <div className="p-5">
+          <UserTrendChart data={overview.series} />
+        </div>
+      </section>
     </div>
   )
 }
@@ -466,35 +453,6 @@ function AgentsTab({ overview }: { overview: AdminDashboardOverviewResponse }) {
   )
 }
 
-function ExportTab({
-  overview,
-  onExport,
-}: {
-  overview: AdminDashboardOverviewResponse
-  onExport: (segment: DashboardSegment) => void
-}) {
-  const t = useTranslations("pages.opsDashboard")
-  return (
-    <section className="rounded-xl border border-border bg-card">
-      <div className="px-5 py-4">
-        <h2 className="text-base font-semibold">{t("exportUsers")}</h2>
-        <p className="mt-0.5 text-sm text-muted-foreground">
-          {overview.range.fromDate} - {overview.range.toDate}
-        </p>
-      </div>
-      <Separator />
-      <div className="grid gap-3 p-5 sm:grid-cols-2 xl:grid-cols-4">
-        {(["all", "light", "medium", "heavy"] as DashboardSegment[]).map((segment) => (
-          <Button key={segment} type="button" variant="outline" onClick={() => onExport(segment)}>
-            <Download data-icon="inline-start" />
-            {t(`segments.${segment}`)}
-          </Button>
-        ))}
-      </div>
-    </section>
-  )
-}
-
 function MetricCard({ label, value, helper }: { label: string; value: string | number; helper?: string }) {
   return (
     <Card>
@@ -506,6 +464,21 @@ function MetricCard({ label, value, helper }: { label: string; value: string | n
         {helper ? <p className="mt-1 text-xs text-muted-foreground">{helper}</p> : null}
       </CardContent>
     </Card>
+  )
+}
+
+function UserTrendChart({ data }: { data: AdminDashboardOverviewResponse["series"] }) {
+  return (
+    <ChartContainer config={trendConfig} className="h-[300px] w-full">
+      <AreaChart data={data} margin={{ left: 8, right: 8 }}>
+        <CartesianGrid vertical={false} />
+        <XAxis dataKey="date" tickLine={false} axisLine={false} tickMargin={8} minTickGap={24} />
+        <YAxis tickLine={false} axisLine={false} tickMargin={8} width={42} />
+        <ChartTooltip content={<ChartTooltipContent />} />
+        <Area type="monotone" dataKey="dau" stroke={TREND_COLORS.dau} strokeWidth={2} fill={TREND_COLORS.dau} fillOpacity={0.12} />
+        <Area type="monotone" dataKey="activeUsers" stroke={TREND_COLORS.activeUsers} strokeWidth={2} fill={TREND_COLORS.activeUsers} fillOpacity={0.1} />
+      </AreaChart>
+    </ChartContainer>
   )
 }
 

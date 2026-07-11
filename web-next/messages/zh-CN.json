@@ -1010,8 +1010,8 @@
       "loadFailed": "加载看板失败。",
       "settingsSaved": "看板设置已保存。",
       "settingsFailed": "保存看板设置失败。",
-      "exportFailed": "导出用户失败。",
       "trend": "指标趋势",
+      "userTrend": "用户趋势",
       "deviceBreakdown": "设备占比",
       "agentBreakdown": "Agent 占比",
       "sessionAgentBreakdown": "活跃会话 Agent 占比",
@@ -1029,7 +1029,6 @@
       "mediumMax": "中度用户上限",
       "turnBins": "Turn 分桶",
       "sessionBins": "会话分桶",
-      "exportUsers": "导出用户",
       "breakdown": "明细",
       "name": "名称",
       "value": "数量",
@@ -1039,8 +1038,7 @@
         "usage": "使用",
         "users": "用户",
         "devices": "设备",
-        "agents": "Agent",
-        "export": "导出"
+        "agents": "Agent"
       },
       "metrics": {
         "dau": "DAU",
@@ -1055,7 +1053,6 @@
         "userShare": "占总用户 {percent}"
       },
       "segments": {
-        "all": "全部用户",
         "light": "低度用户",
         "medium": "中度用户",
         "heavy": "重度用户",

@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import zipfile
 from datetime import datetime
-from io import BytesIO
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -313,7 +311,7 @@ def test_admin_dashboard_ignores_connector_history_for_usage_metrics(tmp_path):
     }
 
 
-def test_admin_dashboard_settings_drive_segments_and_export(tmp_path):
+def test_admin_dashboard_settings_drive_segments(tmp_path):
     client = make_client(tmp_path)
     admin_headers = asyncio.run(seed_dashboard_activity(client))
     current = today()
@@ -337,20 +335,6 @@ def test_admin_dashboard_settings_drive_segments_and_export(tmp_path):
         "medium": 1,
         "heavy": 1,
     }
-
-    export = client.get(
-        "/admin/dashboard/users/export",
-        headers=admin_headers,
-        params={"date": current, "segment": "heavy"},
-    )
-    assert export.status_code == 200, export.text
-    assert export.headers["content-type"].startswith(
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-    with zipfile.ZipFile(BytesIO(export.content)) as zf:
-        sheet = zf.read("xl/worksheets/sheet1.xml").decode()
-    assert "admin" in sheet
-    assert "bob" not in sheet
 
 
 def test_admin_dashboard_rejects_non_admin(tmp_path):

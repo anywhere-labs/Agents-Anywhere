@@ -216,9 +216,6 @@ class AdminUserListResponse(BaseModel):
     serverTime: str
 
 
-DashboardSegment = Literal["light", "medium", "heavy", "all"]
-
-
 class DashboardIntensitySettings(BaseModel):
     basis: Literal["turns"] = "turns"
     lightMax: int = Field(default=10, ge=0)

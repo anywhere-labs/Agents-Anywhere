@@ -41,8 +41,7 @@ import type {
   TerminalListResponse,
   TerminalResponse,
   TerminalSnapshotResult,
-  UserAgentDefaultsResponse,
-  DashboardSegment
+  UserAgentDefaultsResponse
 } from "@/features/dashboard/types";
 
 export type SessionStateQuery = {
@@ -89,20 +88,6 @@ export class DashboardApi {
       {},
       { token, query: { tz } },
     );
-  }
-
-  exportAdminDashboardUsersUrl(query: {
-    date?: string;
-    from?: string;
-    to?: string;
-    segment?: DashboardSegment;
-  }): string {
-    const params = new URLSearchParams();
-    for (const [key, value] of Object.entries(query)) {
-      if (value) params.set(key, value);
-    }
-    const suffix = params.toString();
-    return `/admin/dashboard/users/export${suffix ? `?${suffix}` : ""}`;
   }
 
   listConnectors(token: string): Promise<ConnectorListResponse> {
