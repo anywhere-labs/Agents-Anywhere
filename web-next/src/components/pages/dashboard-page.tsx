@@ -55,12 +55,17 @@ import { cn } from "@/lib/utils"
 type DashboardTab = "overview" | "usage" | "users" | "devices" | "agents" | "export"
 
 const DEFAULT_TZ = "Asia/Shanghai"
-const CHART_COLORS = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)"]
+const CHART_COLORS = ["#60a5fa", "#34d399", "#f59e0b", "#f87171", "#a78bfa"]
+const TREND_COLORS = {
+  dau: "#60a5fa",
+  totalTurns: "#34d399",
+  activeSessions: "#f59e0b",
+} as const
 
 const trendConfig = {
-  dau: { label: "DAU", color: "var(--chart-1)" },
-  totalTurns: { label: "Turns", color: "var(--chart-2)" },
-  activeSessions: { label: "Sessions", color: "var(--chart-3)" },
+  dau: { label: "DAU", color: TREND_COLORS.dau },
+  totalTurns: { label: "Turns", color: TREND_COLORS.totalTurns },
+  activeSessions: { label: "Sessions", color: TREND_COLORS.activeSessions },
 } satisfies ChartConfig
 
 const distributionConfig = {
@@ -483,9 +488,9 @@ function TrendChart({ data }: { data: AdminDashboardOverviewResponse["series"] }
         <XAxis dataKey="date" tickLine={false} axisLine={false} tickMargin={8} minTickGap={24} />
         <YAxis tickLine={false} axisLine={false} tickMargin={8} width={42} />
         <ChartTooltip content={<ChartTooltipContent />} />
-        <Area type="monotone" dataKey="dau" stroke="var(--color-dau)" strokeWidth={2} fill="var(--color-dau)" fillOpacity={0.12} />
-        <Area type="monotone" dataKey="totalTurns" stroke="var(--color-totalTurns)" strokeWidth={2} fill="var(--color-totalTurns)" fillOpacity={0.1} />
-        <Area type="monotone" dataKey="activeSessions" stroke="var(--color-activeSessions)" strokeWidth={2} fill="var(--color-activeSessions)" fillOpacity={0.08} />
+        <Area type="monotone" dataKey="dau" stroke={TREND_COLORS.dau} strokeWidth={2} fill={TREND_COLORS.dau} fillOpacity={0.12} />
+        <Area type="monotone" dataKey="totalTurns" stroke={TREND_COLORS.totalTurns} strokeWidth={2} fill={TREND_COLORS.totalTurns} fillOpacity={0.1} />
+        <Area type="monotone" dataKey="activeSessions" stroke={TREND_COLORS.activeSessions} strokeWidth={2} fill={TREND_COLORS.activeSessions} fillOpacity={0.08} />
       </AreaChart>
     </ChartContainer>
   )
