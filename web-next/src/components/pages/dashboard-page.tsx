@@ -56,6 +56,7 @@ const CHART_COLORS = ["#60a5fa", "#34d399", "#f59e0b", "#f87171", "#a78bfa"]
 const TREND_COLORS = {
   dau: "#60a5fa",
   activeUsers: "#a78bfa",
+  newUsers: "#f87171",
   totalTurns: "#34d399",
   activeSessions: "#f59e0b",
 } as const
@@ -63,6 +64,7 @@ const TREND_COLORS = {
 const trendConfig = {
   dau: { label: "DAU", color: TREND_COLORS.dau },
   activeUsers: { label: "Active users", color: TREND_COLORS.activeUsers },
+  newUsers: { label: "New users", color: TREND_COLORS.newUsers },
   totalTurns: { label: "Turns", color: TREND_COLORS.totalTurns },
   activeSessions: { label: "Sessions", color: TREND_COLORS.activeSessions },
 } satisfies ChartConfig
@@ -477,6 +479,7 @@ function UserTrendChart({ data }: { data: AdminDashboardOverviewResponse["series
         <ChartTooltip content={<ChartTooltipContent />} />
         <Area type="monotone" dataKey="dau" stroke={TREND_COLORS.dau} strokeWidth={2} fill={TREND_COLORS.dau} fillOpacity={0.12} />
         <Area type="monotone" dataKey="activeUsers" stroke={TREND_COLORS.activeUsers} strokeWidth={2} fill={TREND_COLORS.activeUsers} fillOpacity={0.1} />
+        <Area type="monotone" dataKey="newUsers" stroke={TREND_COLORS.newUsers} strokeWidth={2} fill={TREND_COLORS.newUsers} fillOpacity={0.08} />
       </AreaChart>
     </ChartContainer>
   )
