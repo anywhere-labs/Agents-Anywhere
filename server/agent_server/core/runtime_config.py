@@ -1,12 +1,24 @@
 from __future__ import annotations
 
+import re
 from copy import deepcopy
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
 
-RuntimeName = Literal["codex", "claude", "opencode", "acp"]
+# Keep in sync with agent_server.core.models.RuntimeName.
+RuntimeName = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z][a-z0-9_]*$",
+    ),
+]
+
+_RUNTIME_ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
 class RuntimeConfigOption(BaseModel):
@@ -40,14 +52,18 @@ class RuntimeConfigField(BaseModel):
 class RuntimeConfigSchema(BaseModel):
     runtime: RuntimeName
     schemaVersion: int = Field(ge=1)
-    fields: list[RuntimeConfigField] = Field(min_length=1)
+    # Empty fields allowed for ACP agents without a settings UI yet.
+    fields: list[RuntimeConfigField] = Field(default_factory=list)
 
     @field_validator("runtime")
     @classmethod
     def _supported_runtime(cls, value: str) -> str:
-        if value not in {"claude", "codex"}:
-            raise ValueError("runtime config schema is only seeded for claude and codex")
-        return value
+        text = value.strip() if isinstance(value, str) else ""
+        if not text or len(text) > 64 or not _RUNTIME_ID_RE.fullmatch(text):
+            raise ValueError(
+                "runtime must be a lowercase snake_case id (1–64 chars, e.g. gemini, grok_build)"
+            )
+        return text
 
 
 class RuntimeSettingsPatchRequest(BaseModel):
@@ -55,12 +71,20 @@ class RuntimeSettingsPatchRequest(BaseModel):
 
 
 class RuntimeSettingsResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     connectorId: str | None = None
     sessionId: str | None = None
     runtime: RuntimeName
     settings: dict[str, Any]
     runtimeSettings: dict[str, Any] | None = None
     runtimeSettingsOverride: dict[str, Any] | None = None
+    # Optional effective schema (may include ACP-discovered model options).
+    configSchema: RuntimeConfigSchema | None = Field(
+        default=None,
+        serialization_alias="schema",
+        validation_alias="schema",
+    )
     schemaVersion: int
     serverTime: str
 
@@ -84,10 +108,121 @@ DEFAULT_RUNTIME_SETTINGS: dict[str, dict[str, Any]] = {
         "model": None,
         "effort": None,
     },
+    "gemini": {
+        "permissionMode": None,
+        "model": None,
+        "effort": None,
+    },
+    "grok_build": {
+        "permissionMode": None,
+        "model": None,
+        "effort": None,
+    },
+    "cursor": {
+        "permissionMode": None,
+        "model": None,
+        "effort": None,
+    },
+    "codebuddy": {
+        "permissionMode": "acceptEdits",
+        "model": None,
+        "effort": None,
+    },
 }
 
 
+def _acp_model_schema(
+    runtime: str,
+    *,
+    schema_version: int,
+    models: list[tuple[str, str]],
+    permission_modes: list[tuple[str, str]] | None = None,
+) -> RuntimeConfigSchema:
+    fields: list[RuntimeConfigField] = []
+    if permission_modes:
+        fields.append(
+            RuntimeConfigField(
+                key="permissionMode",
+                label="Permission mode",
+                type="enum",
+                allowSessionOverride=True,
+                options=[
+                    RuntimeConfigOption(value=value, label=label) for value, label in permission_modes
+                ],
+            )
+        )
+    fields.append(
+        RuntimeConfigField(
+            key="model",
+            label="Model",
+            type="enum",
+            allowSessionOverride=True,
+            options=[RuntimeConfigOption(value=value, label=label) for value, label in models],
+        )
+    )
+    return RuntimeConfigSchema(runtime=runtime, schemaVersion=schema_version, fields=fields)
+
+
 DEFAULT_RUNTIME_CONFIG_SCHEMAS: dict[str, RuntimeConfigSchema] = {
+    "gemini": _acp_model_schema(
+        "gemini",
+        schema_version=1,
+        models=[
+            ("auto", "Auto"),
+            ("gemini-2.5-pro", "Gemini 2.5 Pro"),
+            ("gemini-2.5-flash", "Gemini 2.5 Flash"),
+            ("gemini-2.0-flash", "Gemini 2.0 Flash"),
+        ],
+    ),
+    "grok_build": _acp_model_schema(
+        "grok_build",
+        schema_version=1,
+        models=[
+            ("auto", "Auto / default"),
+            ("grok-4", "Grok 4"),
+            ("grok-4.5", "Grok 4.5"),
+            ("grok-code", "Grok Code"),
+        ],
+    ),
+    "cursor": _acp_model_schema(
+        "cursor",
+        schema_version=1,
+        models=[
+            ("auto", "Auto"),
+            ("default", "Default"),
+        ],
+        permission_modes=[
+            ("agent", "Agent"),
+            ("plan", "Plan"),
+            ("ask", "Ask"),
+        ],
+    ),
+    "codebuddy": _acp_model_schema(
+        "codebuddy",
+        schema_version=1,
+        models=[
+            ("default-model", "Default"),
+            ("gemini-3.1-pro", "Gemini 3.1 Pro"),
+            ("gemini-3.0-flash", "Gemini 3.0 Flash"),
+            ("gemini-3.5-flash", "Gemini 3.5 Flash"),
+            ("gemini-2.5-pro", "Gemini 2.5 Pro"),
+            ("gemini-2.5-flash", "Gemini 2.5 Flash"),
+            ("gpt-5.5", "GPT-5.5"),
+            ("gpt-5.4", "GPT-5.4"),
+            ("gpt-5.3-codex", "GPT-5.3 Codex"),
+            ("deepseek-v3-2-volc", "DeepSeek V3.2"),
+            ("glm-5.0", "GLM-5.0"),
+            ("kimi-k2.5", "Kimi K2.5"),
+        ],
+        permission_modes=[
+            ("default", "Ask permissions"),
+            ("acceptEdits", "Accept edits"),
+            ("plan", "Plan mode"),
+            ("bypassPermissions", "Bypass permissions"),
+            ("dontAsk", "Don't ask"),
+            ("auto", "Auto"),
+        ],
+    ),
     "claude": RuntimeConfigSchema(
         runtime="claude",
         schemaVersion=4,
@@ -204,7 +339,8 @@ def runtime_schema_key(runtime: str) -> str:
 def default_runtime_settings(runtime: str) -> dict[str, Any]:
     settings = DEFAULT_RUNTIME_SETTINGS.get(runtime)
     if settings is None:
-        raise ValueError(f"unsupported runtime: {runtime}")
+        # ACP / unknown agents: empty defaults (no model/permission schema yet).
+        return {}
     return deepcopy(settings)
 
 
@@ -252,10 +388,13 @@ def validate_runtime_settings(
     *,
     session_override: bool,
 ) -> dict[str, Any]:
-    if runtime not in DEFAULT_RUNTIME_CONFIG_SCHEMAS:
-        raise ValueError(f"unsupported runtime: {runtime}")
     if not isinstance(settings, dict):
         raise ValueError("settings must be an object")
+    if runtime not in DEFAULT_RUNTIME_CONFIG_SCHEMAS and not schema.fields:
+        # Unknown ACP runtime with empty schema: accept empty object only.
+        if settings:
+            raise ValueError(f"{runtime} does not accept settings yet")
+        return {}
     allowed_paths = _field_paths(schema.fields, session_override=session_override)
     normalized: dict[str, Any] = {}
     for key, value in settings.items():
@@ -336,6 +475,104 @@ def schema_with_user_agent_defaults(
 
     _attach_default_model_efforts(result)
     return result
+
+
+def merge_schema_with_agent_options(
+    schema: RuntimeConfigSchema,
+    *,
+    model_options: list[dict[str, Any]] | None = None,
+    mode_options: list[dict[str, Any]] | None = None,
+    config_options: list[dict[str, Any]] | None = None,
+) -> RuntimeConfigSchema:
+    """Overlay live agent options (from ACP configOptions) onto a base schema.
+
+    Prefer explicit modelOptions/modeOptions; otherwise parse ACP configOptions.
+    """
+    result = deepcopy(schema)
+    models = list(model_options or [])
+    modes = list(mode_options or [])
+    if config_options and (not models or not modes):
+        from_models, from_modes = _options_from_acp_config(config_options)
+        if not models:
+            models = from_models
+        if not modes:
+            modes = from_modes
+
+    if models:
+        model_field = next((field for field in result.fields if field.key == "model"), None)
+        options = [
+            RuntimeConfigOption(
+                value=str(item.get("value")),
+                label=str(item.get("label") or item.get("name") or item.get("value")),
+            )
+            for item in models
+            if item.get("value") is not None
+        ]
+        if model_field is None and options:
+            result.fields.append(
+                RuntimeConfigField(
+                    key="model",
+                    label="Model",
+                    type="enum",
+                    allowSessionOverride=True,
+                    options=options,
+                )
+            )
+        elif model_field is not None and options:
+            model_field.options = options
+
+    if modes:
+        mode_field = next((field for field in result.fields if field.key == "permissionMode"), None)
+        options = [
+            RuntimeConfigOption(
+                value=str(item.get("value")),
+                label=str(item.get("label") or item.get("name") or item.get("value")),
+            )
+            for item in modes
+            if item.get("value") is not None
+        ]
+        if mode_field is None and options:
+            result.fields.append(
+                RuntimeConfigField(
+                    key="permissionMode",
+                    label="Mode",
+                    type="enum",
+                    allowSessionOverride=True,
+                    options=options,
+                )
+            )
+        elif mode_field is not None and options:
+            mode_field.options = options
+
+    return result
+
+
+def _options_from_acp_config(
+    config_options: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    models: list[dict[str, Any]] = []
+    modes: list[dict[str, Any]] = []
+    for opt in config_options:
+        if not isinstance(opt, dict):
+            continue
+        category = str(opt.get("category") or "")
+        option_id = str(opt.get("id") or "").lower()
+        values = opt.get("options") if isinstance(opt.get("options"), list) else []
+        parsed = [
+            {
+                "value": str(entry.get("value")),
+                "label": str(entry.get("name") or entry.get("label") or entry.get("value")),
+            }
+            for entry in values
+            if isinstance(entry, dict) and entry.get("value") is not None
+        ]
+        if not parsed:
+            continue
+        if category == "model" or option_id in {"model", "llm", "models"}:
+            models = parsed
+        elif category == "mode" or option_id in {"mode", "permission", "permissionmode"}:
+            modes = parsed
+    return models, modes
 
 
 def claude_efforts_for_model(model: Any) -> frozenset[str]:
