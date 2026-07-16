@@ -159,7 +159,10 @@ function runtimeLabel(runtime: string): string {
   if (runtime === "codex") return "Codex"
   if (runtime === "claude") return "Claude"
   if (runtime === "opencode") return "OpenCode"
+  if (runtime === "gemini") return "Gemini CLI"
+  if (runtime === "grok_build") return "Grok Build"
   if (runtime === "cursor") return "Cursor"
+  if (runtime === "codebuddy") return "CodeBuddy"
   return runtime.slice(0, 1).toUpperCase() + runtime.slice(1)
 }
 

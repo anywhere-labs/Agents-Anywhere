@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { ArrowDown, ChevronDown, CircleAlert, Loader2 } from "lucide-react"
+import { ArrowDown, ChevronDown, CircleAlert, KeyRound, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -173,6 +173,11 @@ function hasRealTimelineItemForClientMessage(items: TimelineItem[], clientMessag
   )
 }
 
+function isAuthenticationErrorMessage(message: string | null | undefined): boolean {
+  if (!message) return false
+  return /auth|login|unauthor/i.test(message)
+}
+
 export function SessionDetail({
   token,
   sessionId,
@@ -183,14 +188,17 @@ export function SessionDetail({
   const tSession = useTranslations("dashboard.session")
   const tNew = useTranslations("dashboard.new")
   const tCommon = useTranslations("common")
+  const tDevice = useTranslations("dashboard.device")
   const {
     addOptimisticMessage,
     clearResolvedOptimisticMessages,
     composerInsertion,
+    connectors,
     getOptimisticItems,
     getOptimisticSessionState,
     isOptimisticSession,
     markOptimisticMessageFailed,
+    refreshData,
     sessionRefreshRequest,
   } = useWorkspace()
   const [state, setState] = React.useState<SessionStateResponse | null>(null)
@@ -199,6 +207,7 @@ export function SessionDetail({
   const [sending, setSending] = React.useState(false)
   const [interrupting, setInterrupting] = React.useState(false)
   const [takeoverBusy, setTakeoverBusy] = React.useState(false)
+  const [signingIn, setSigningIn] = React.useState(false)
   const [resolvingApprovalId, setResolvingApprovalId] = React.useState<string | null>(null)
   const [resolvingStatus, setResolvingStatus] = React.useState<ApprovalResolveStatus | null>(null)
   const [runtimeSchema, setRuntimeSchema] = React.useState<RuntimeConfigSchema | null>(null)
@@ -499,7 +508,8 @@ export function SessionDetail({
     ])
       .then(([schemaResponse, settingsResponse]) => {
         if (cancelled) return
-        setRuntimeSchema(schemaResponse.schema)
+        // Prefer session settings schema when it includes ACP-discovered model options.
+        setRuntimeSchema(settingsResponse.schema ?? schemaResponse.schema)
         setRuntimeSettings(settingsResponse.runtimeSettings ?? settingsResponse.settings ?? {})
       })
       .catch((err) => {
@@ -835,9 +845,111 @@ export function SessionDetail({
     takeoverTarget ? "takeoverEnableDescription" : "takeoverDisableDescription",
   ) as string[]).map((line) => line.replaceAll("{agent}", takeoverAgent))
 
+  const connector = connectors.find((item) => item.id === session.connectorId) ?? null
+  const agentReport = connector?.runtimeCapabilities?.attached?.[session.runtime]?.report
+  const failedAuthFromTimeline = (state?.items ?? []).some((item) => {
+    if (item.status !== "failed") return false
+    const content = item.content ?? {}
+    const text = [
+      content.text,
+      content.message,
+      content.error,
+      content.detail,
+    ]
+      .filter((value) => typeof value === "string" && value)
+      .join(" ")
+    return isAuthenticationErrorMessage(text)
+  })
+  const needsAuth =
+    agentReport?.authStatus === "required" ||
+    isAuthenticationErrorMessage(error) ||
+    failedAuthFromTimeline
+  const authMethods = agentReport?.authMethods ?? []
+
+  const signInAgent = async (methodId?: string) => {
+    if (!token || !session.connectorId || signingIn) return
+    setSigningIn(true)
+    try {
+      toast.message(tDevice("agentSignInStarted", { name: session.runtime }), {
+        description: tDevice("agentSignInStartedHint"),
+      })
+      const response = await dashboardApi.authenticateConnectorAgent(
+        token,
+        session.connectorId,
+        session.runtime,
+        methodId,
+      )
+      refreshData()
+      try {
+        const settings = await dashboardApi.getSessionRuntimeSettings(token, session.id)
+        if (settings.schema) setRuntimeSchema(settings.schema)
+        setRuntimeSettings(settings.runtimeSettings ?? settings.settings ?? {})
+      } catch {
+        /* best-effort */
+      }
+      if (response.authStatus === "ok") {
+        toast.success(response.message || tDevice("agentSignInSuccess", { name: session.runtime }))
+      } else {
+        toast.error(
+          response.message || response.authHint || tDevice("agentSignInFailed", { name: session.runtime }),
+        )
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : tDevice("agentSignInFailed", { name: session.runtime }))
+    } finally {
+      setSigningIn(false)
+    }
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden overscroll-none">
-      {error ? (
+      {needsAuth ? (
+        <Alert className="mx-auto mt-4 w-[calc(100%-2rem)] max-w-3xl border-amber-500/40 bg-amber-500/5">
+          <CircleAlert className="text-amber-600 dark:text-amber-400" />
+          <AlertTitle className="text-amber-700 dark:text-amber-300">
+            {tNew("authRequiredTitle", { name: session.runtime })}
+          </AlertTitle>
+          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span className="text-sm">
+              {agentReport?.authHint || error || tNew("authRequiredBody")}
+              {authMethods.length > 0 ? (
+                <span className="mt-1 block text-xs opacity-80">
+                  {tDevice("authMethods")}: {authMethods.map((m) => m.name).join(", ")}
+                </span>
+              ) : null}
+            </span>
+            <div className="flex shrink-0 flex-wrap gap-2">
+              {authMethods.length > 1 ? (
+                authMethods.map((method) => (
+                  <Button
+                    key={method.id}
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="gap-1"
+                    disabled={signingIn || connector?.status !== "online"}
+                    onClick={() => void signInAgent(method.id)}
+                  >
+                    <KeyRound className="size-3.5" />
+                    {signingIn ? tDevice("signingIn") : method.name || method.id}
+                  </Button>
+                ))
+              ) : (
+                <Button
+                  type="button"
+                  size="sm"
+                  className="gap-1"
+                  disabled={signingIn || connector?.status !== "online"}
+                  onClick={() => void signInAgent(authMethods[0]?.id)}
+                >
+                  <KeyRound className="size-3.5" />
+                  {signingIn ? tDevice("signingIn") : tDevice("signInAgent")}
+                </Button>
+              )}
+            </div>
+          </AlertDescription>
+        </Alert>
+      ) : error ? (
         <Alert variant="destructive" className="mx-auto mt-4 w-[calc(100%-2rem)] max-w-3xl">
           <CircleAlert />
           <AlertTitle>{tSession("refreshFailed")}</AlertTitle>

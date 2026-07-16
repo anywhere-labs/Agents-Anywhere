@@ -1,9 +1,10 @@
 "use client"
 
 import * as React from "react"
-import { Monitor, ChevronDown, ArrowUp, Loader2, Check } from "lucide-react"
+import { Monitor, ChevronDown, ArrowUp, Loader2, Check, KeyRound, AlertCircle } from "lucide-react"
 import { toast } from "sonner"
 
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { Spinner } from "@/components/ui/spinner"
@@ -157,6 +158,13 @@ export function TaskComposer() {
   const [prompt, setPrompt] = React.useState("")
   const [runtimeSchema, setRuntimeSchema] = React.useState<RuntimeConfigSchema | null>(null)
   const [runtimeSettings, setRuntimeSettings] = React.useState<Record<string, unknown>>({})
+  const [signingIn, setSigningIn] = React.useState(false)
+
+  const selectedAgentReport = selectedConnector?.runtimeCapabilities?.attached?.[selectedAgent]?.report
+  const agentNeedsAuth =
+    selectedAgentReport?.authStatus === "required" ||
+    selectedAgentReport?.authStatus === "unknown"
+  const agentAuthMethods = selectedAgentReport?.authMethods ?? []
   const [runtimeConfigLoading, setRuntimeConfigLoading] = React.useState(false)
   const [creating, setCreating] = React.useState(false)
   const [createTick, setCreateTick] = React.useState(0)
@@ -260,7 +268,8 @@ export function TaskComposer() {
       .then(([schemaResponse, settingsResponse, defaultsResponse]) => {
         if (cancelled) return
         const userDefaultSettings = defaultsResponse.runtimes[selectedAgent]?.settings ?? {}
-        setRuntimeSchema(schemaResponse.schema)
+        // Prefer device-merged schema (live ACP modelOptions from the connector report).
+        setRuntimeSchema(settingsResponse.schema ?? schemaResponse.schema)
         setRuntimeSettings({
           ...userDefaultSettings,
           ...(settingsResponse.runtimeSettings ?? settingsResponse.settings ?? {}),
@@ -439,9 +448,63 @@ export function TaskComposer() {
     } catch (err) {
       const message = err instanceof Error ? err.message : t("createFailed")
       markOptimisticMessageFailed(clientMessageId, message)
-      toast.error(message)
+      const isAuthError = /auth|login|unauthor/i.test(message)
+      if (isAuthError && authSession?.accessToken && selectedConnector) {
+        toast.error(message, {
+          action: {
+            label: t("signInAgent"),
+            onClick: () => {
+              void signInSelectedAgent()
+            },
+          },
+          duration: 12_000,
+        })
+      } else {
+        toast.error(message)
+      }
     } finally {
       setCreating(false)
+    }
+  }
+
+  const signInSelectedAgent = async (methodId?: string) => {
+    if (!authSession?.accessToken || !selectedConnector || !selectedAgent || signingIn) return
+    setSigningIn(true)
+    try {
+      toast.message(t("agentSignInStarted", { name: selectedAgent }), {
+        description: t("agentSignInStartedHint"),
+      })
+      const response = await dashboardApi.authenticateConnectorAgent(
+        authSession.accessToken,
+        selectedConnector.id,
+        selectedAgent,
+        methodId,
+      )
+      refreshData()
+      // Reload schema so live model list appears after auth.
+      try {
+        const settings = await dashboardApi.getConnectorAgentSettings(
+          authSession.accessToken,
+          selectedConnector.id,
+          selectedAgent,
+        )
+        if (settings.schema) setRuntimeSchema(settings.schema)
+        setRuntimeSettings((prev) => ({
+          ...prev,
+          ...(settings.runtimeSettings ?? settings.settings ?? {}),
+        }))
+      } catch {
+        /* best-effort */
+      }
+      if (response.authStatus === "ok") {
+        toast.success(response.message || t("agentSignInSuccess", { name: selectedAgent }))
+      } else {
+        toast.error(response.message || response.authHint || t("agentSignInFailed", { name: selectedAgent }))
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t("agentSignInFailed", { name: selectedAgent }))
+    } finally {
+      setSigningIn(false)
     }
   }
 
@@ -460,6 +523,54 @@ export function TaskComposer() {
           <span>{creating ? `${t("creatingBase")}${".".repeat((createTick % 3) + 1)}` : typedTitle}</span>
           <span className="ml-1 inline-block h-[0.9em] w-0.5 translate-y-[0.1em] rounded-full bg-muted-foreground motion-safe:animate-[composer-caret_1s_steps(1,end)_infinite]" aria-hidden="true" />
         </h1>
+
+        {agentNeedsAuth && selectedConnector && selectedAgent ? (
+          <Alert className="mb-4 border-amber-500/40 bg-amber-500/5">
+            <AlertCircle className="text-amber-600 dark:text-amber-400" />
+            <AlertTitle className="text-amber-700 dark:text-amber-300">
+              {t("authRequiredTitle", { name: selectedAgent })}
+            </AlertTitle>
+            <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <span className="text-sm">
+                {selectedAgentReport?.authHint || t("authRequiredBody")}
+                {agentAuthMethods.length > 0 ? (
+                  <span className="mt-1 block text-xs opacity-80">
+                    {t("authMethods")}: {agentAuthMethods.map((m) => m.name).join(", ")}
+                  </span>
+                ) : null}
+              </span>
+              <div className="flex shrink-0 flex-wrap gap-2">
+                {agentAuthMethods.length > 1 ? (
+                  agentAuthMethods.map((method) => (
+                    <Button
+                      key={method.id}
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="gap-1"
+                      disabled={signingIn || selectedConnector.status !== "online"}
+                      onClick={() => void signInSelectedAgent(method.id)}
+                    >
+                      <KeyRound className="size-3.5" />
+                      {signingIn ? t("signingIn") : method.name || method.id}
+                    </Button>
+                  ))
+                ) : (
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="gap-1"
+                    disabled={signingIn || selectedConnector.status !== "online"}
+                    onClick={() => void signInSelectedAgent(agentAuthMethods[0]?.id)}
+                  >
+                    <KeyRound className="size-3.5" />
+                    {signingIn ? t("signingIn") : t("signInAgent")}
+                  </Button>
+                )}
+              </div>
+            </AlertDescription>
+          </Alert>
+        ) : null}
 
         <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20">
           <div className="space-y-3 px-6 pt-6">
@@ -712,6 +823,10 @@ function runtimeLabel(runtime: string): string {
   if (runtime === "codex") return "Codex"
   if (runtime === "claude") return "Claude Code"
   if (runtime === "opencode") return "OpenCode"
+  if (runtime === "gemini") return "Gemini CLI"
+  if (runtime === "grok_build") return "Grok Build"
+  if (runtime === "cursor") return "Cursor"
+  if (runtime === "codebuddy") return "CodeBuddy"
   return runtime.slice(0, 1).toUpperCase() + runtime.slice(1)
 }
 
