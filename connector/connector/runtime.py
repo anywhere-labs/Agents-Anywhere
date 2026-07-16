@@ -18,18 +18,19 @@ from websockets.exceptions import ConnectionClosed
 from websockets.asyncio.client import ClientConnection
 
 from connector.adapter import Adapter
+from connector.acp.adapter import AcpAdapter
 from connector.capabilities import (
+    discover_acp_capability,
     discover_claude_capability,
     discover_codex_capability,
     discover_runtime_capabilities,
 )
-from connector.claude.history_adapter import ClaudeHistoryAdapter
-from connector.claude.sdk_adapter import ClaudeSdkAdapter
 from connector.claude.preferences import read_local_preferences
 from connector.codex.adapter import CodexAdapter
 from connector.codex.rpc import JsonRpcStdioClient
 from connector.launch import LaunchTarget, launch_target
 from connector.local_ops import create_local_ops
+from connector.registry import build_default_adapters
 from connector.sync_state import SqliteSyncStateStore, SyncStateStore
 
 
@@ -149,20 +150,14 @@ class BackendRpcClient:
         if adapters is not None:
             self.adapters: dict[str, Adapter] = dict(adapters)
         else:
-            # Default: Codex + Claude (the latter still stubbed in Task 2; real
-            # implementation arrives in Task 3+). `adapter=` kwarg stays as a
-            # single-adapter override for existing tests.
-            self.adapters = {
-                "codex": adapter
-                or CodexAdapter(
-                    notification_sink=self.send_backend_notification,
-                    sync_state_store=self.sync_state_store,
-                ),
-                "claude": ClaudeSdkAdapter(
-                    notification_sink=self.send_backend_notification,
-                    history_adapter=ClaudeHistoryAdapter(sync_state_store=self.sync_state_store),
-                ),
-            }
+            # Default: native Codex/Claude + built-in ACP agent manifests.
+            # `adapter=` remains a single-adapter override for existing tests.
+            self.adapters = build_default_adapters(
+                notification_sink=self.send_backend_notification,
+                sync_state_store=self.sync_state_store,
+            )
+            if adapter is not None:
+                self.adapters["codex"] = adapter
         for ad in self.adapters.values():
             if getattr(ad, "notification_sink", None) is None:
                 ad.notification_sink = self.send_backend_notification
@@ -418,6 +413,42 @@ class BackendRpcClient:
                 raise ValueError("missing runtime")
             await self._force_resync_runtime(runtime)
             return {"runtime": runtime, "resynced": True}
+        if method == "runtime.authenticate":
+            # User-triggered interactive ACP login (browser OAuth). Never auto-run.
+            runtime = params.get("runtime")
+            if not isinstance(runtime, str) or not runtime:
+                raise ValueError("missing runtime")
+            adapter = self.adapters.get(runtime)
+            if not isinstance(adapter, AcpAdapter):
+                raise ValueError(
+                    f"runtime.authenticate is only supported for ACP agents; got {runtime!r}"
+                )
+            result = await adapter.authenticate_interactive(params)
+            if isinstance(result, dict):
+                # Keep in-memory discovery report in sync for subsequent scans.
+                report_fields = {
+                    key: result[key]
+                    for key in (
+                        "authStatus",
+                        "authMethods",
+                        "authHint",
+                        "modelOptions",
+                        "modeOptions",
+                        "configOptions",
+                    )
+                    if result.get(key) is not None
+                }
+                if report_fields:
+                    existing = {}
+                    if self._runtime_capabilities and isinstance(
+                        self._runtime_capabilities.get("runtimes"), dict
+                    ):
+                        prev = self._runtime_capabilities["runtimes"].get(runtime)
+                        if isinstance(prev, dict):
+                            existing = dict(prev)
+                    existing.update(report_fields)
+                    self._record_runtime_report(runtime, existing)
+            return result
         raise ValueError(f"unsupported connector method: {method}")
 
     async def send_notification(self, method: str, params: dict[str, Any]) -> None:
@@ -553,6 +584,9 @@ class BackendRpcClient:
         self._runtime_capabilities = discovery.report
         await self._rewire_codex(getattr(discovery, "codex_target", None) or discovery.codex_bin)
         self._rewire_claude(getattr(discovery, "claude_target", None) or discovery.claude_bin)
+        acp_targets = getattr(discovery, "acp_targets", None) or {}
+        for runtime_id, target in acp_targets.items():
+            self._rewire_acp(runtime_id, target)
         await self.send_notification("connector.capabilitiesUpdated", discovery.report)
 
     async def _rewire_codex(self, codex_target: LaunchTarget | str | None) -> None:
@@ -582,8 +616,17 @@ class BackendRpcClient:
             return
         claude = self.adapters.get("claude")
         target = claude_target if isinstance(claude_target, LaunchTarget) else launch_target("cli", claude_target)
-        if isinstance(claude, ClaudeSdkAdapter):
-            claude.claude_target = target
+        if claude is not None and hasattr(claude, "claude_target"):
+            claude.claude_target = target  # type: ignore[attr-defined]
+
+    def _rewire_acp(self, runtime: str, target: LaunchTarget | str | None) -> None:
+        adapter = self.adapters.get(runtime)
+        if not isinstance(adapter, AcpAdapter):
+            return
+        if not target:
+            return
+        launch = target if isinstance(target, LaunchTarget) else launch_target("cli", target)
+        adapter.rewire(launch)
 
     async def _scan_runtime(
         self, runtime: str, path: str | None
@@ -608,7 +651,14 @@ class BackendRpcClient:
             self._rewire_claude(claude_target)
             self._record_runtime_report("claude", report)
             return {"runtime": "claude", "report": report}
-        raise ValueError(f"unsupported runtime {runtime!r}")
+        # ACP / manifest-driven agents
+        report, acp_target = await discover_acp_capability(runtime, extra_candidate=path)
+        error = report.get("error") if isinstance(report.get("error"), dict) else {}
+        if error.get("code") == "unknown_acp_runtime":
+            raise ValueError(f"unsupported runtime {runtime!r}")
+        self._rewire_acp(runtime, acp_target)
+        self._record_runtime_report(runtime, report)
+        return {"runtime": runtime, "report": report}
 
     async def _force_resync_runtime(self, runtime: str) -> None:
         adapter = self.adapters.get(runtime)

@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from connector.acp.discovery import discover_acp_manifest
+from connector.acp.manifest import AgentManifest, load_builtin_manifests
 from connector.launch import LaunchTarget, launch_target, path_exists_for_launch
 from connector.codex.rpc import JsonRpcStdioClient, codex_candidate_paths
 
@@ -26,26 +28,58 @@ class RuntimeDiscovery:
     claude_bin: str | None = None
     codex_target: LaunchTarget | None = None
     claude_target: LaunchTarget | None = None
+    acp_targets: dict[str, LaunchTarget | None] | None = None
 
 
 async def discover_runtime_capabilities() -> RuntimeDiscovery:
     started = time.perf_counter()
     codex_report, codex_target = await discover_codex_capability()
     claude_report, claude_target = await discover_claude_capability()
+    runtimes: dict[str, Any] = {
+        "codex": codex_report,
+        "claude": claude_report,
+    }
+    acp_targets: dict[str, LaunchTarget | None] = {}
+    for manifest in load_builtin_manifests():
+        report, target = await discover_acp_manifest(manifest)
+        runtimes[manifest.id] = report
+        acp_targets[manifest.id] = target
     return RuntimeDiscovery(
         report={
             "version": 1,
             "checkedAt": _now_iso(),
             "elapsedMs": round((time.perf_counter() - started) * 1000, 1),
-            "runtimes": {
-                "codex": codex_report,
-                "claude": claude_report,
-            },
+            "runtimes": runtimes,
         },
         codex_bin=codex_target.path if codex_target else None,
         claude_bin=claude_target.path if claude_target else None,
         codex_target=codex_target,
         claude_target=claude_target,
+        acp_targets=acp_targets,
+    )
+
+
+async def discover_acp_capability(
+    runtime: str,
+    *,
+    extra_candidate: str | None = None,
+    manifests: list[AgentManifest] | None = None,
+) -> tuple[dict[str, Any], LaunchTarget | None]:
+    for manifest in manifests if manifests is not None else load_builtin_manifests():
+        if manifest.id == runtime:
+            return await discover_acp_manifest(manifest, extra_candidate=extra_candidate)
+    return (
+        {
+            "history": "unavailable",
+            "execution": "unavailable",
+            "transport": "acp",
+            "error": {
+                "code": "unknown_acp_runtime",
+                "message": f"No ACP manifest registered for runtime {runtime!r}",
+            },
+            "checked": [],
+        },
+        None,
     )
 
 
