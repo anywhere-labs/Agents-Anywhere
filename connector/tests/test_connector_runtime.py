@@ -151,7 +151,9 @@ def test_connector_config_saves_and_loads_local_json(tmp_path) -> None:
 
     assert saved_path == path
     assert loaded == config
-    assert oct(path.stat().st_mode & 0o777) == "0o600"
+    # POSIX mode bits are not meaningfully enforced on Windows NTFS.
+    if sys.platform != "win32":
+        assert oct(path.stat().st_mode & 0o777) == "0o600"
 
 
 def test_connector_coalesces_duplicate_timeline_upserts_within_batch() -> None:
@@ -592,9 +594,10 @@ async def _exercise_ingest_reauth_on_401() -> None:
 async def _exercise_local_ops(tmp_path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    (workspace / "hello.txt").write_text("hello\n", encoding="utf-8")
+    # Use write_bytes so Windows does not translate "\n" to "\r\n".
+    (workspace / "hello.txt").write_bytes(b"hello\n")
     outside = tmp_path / "outside.txt"
-    outside.write_text("outside\n", encoding="utf-8")
+    outside.write_bytes(b"outside\n")
 
     client = BackendRpcClient(
         ConnectorConfig(
@@ -634,12 +637,14 @@ async def _exercise_local_ops(tmp_path) -> None:
     assert fallback_list_result["path"] == str(workspace)
     assert [entry["name"] for entry in fallback_list_result["entries"]] == ["created.txt", "hello.txt"]
 
+    # cmd.exe has no `pwd`; bare `cd` prints the working directory on Windows.
+    print_cwd = "cd" if sys.platform == "win32" else "pwd"
     shell_result = await client.dispatch(
         "shell.exec",
         {
             "root": str(workspace),
             "cwd": str(workspace),
-            "command": "pwd",
+            "command": print_cwd,
             "timeoutMs": 5000,
         },
     )
@@ -660,7 +665,7 @@ async def _exercise_local_ops(tmp_path) -> None:
             "sessionId": "sess_1",
             "root": str(workspace),
             "cwd": str(workspace),
-            "command": "pwd",
+            "command": print_cwd,
             "timeoutMs": 5000,
         },
     )
