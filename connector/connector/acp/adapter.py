@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import secrets
 import tempfile
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -21,6 +22,7 @@ from connector.acp.reducer import AcpTimelineReducer, map_approval_status_to_opt
 from connector.acp.rpc import AcpJsonRpcClient, AcpJsonRpcError
 from connector.launch import LaunchTarget, launch_target
 from connector.logging import logger
+from connector.perf import StageTimer, elapsed_ms, log_stage
 from connector.time import utc_now
 
 
@@ -31,6 +33,17 @@ AttachmentDownloader = Callable[[str, str], Awaitable[tuple[bytes, str, str]]]
 _DEFAULT_MAX_TURN_SECONDS = 60 * 60
 # User-triggered interactive OAuth (browser) — allow several minutes to complete.
 _INTERACTIVE_AUTH_TIMEOUT_S = 5 * 60
+# Bound session/new: fail fast instead of hanging near UI/RPC ceilings.
+_SESSION_NEW_TIMEOUT_S = 20.0
+_AUTH_ERROR_TOKENS = (
+    "auth",
+    "login",
+    "unauthor",
+    "api key",
+    "credential",
+    "not configured",
+    "token",
+)
 
 
 @dataclass(slots=True)
@@ -55,6 +68,7 @@ class _SessionRuntime:
     config_options: list[dict[str, Any]] = field(default_factory=list)
     # Short lock only for claiming/releasing a turn (not held for the whole turn).
     claim_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    turn_timer: StageTimer | None = None
 
 
 @dataclass(slots=True)
@@ -73,6 +87,8 @@ class AcpAdapter:
     _auth_methods: list[dict[str, Any]] = field(default_factory=list, init=False, repr=False)
     _sessions: dict[str, _SessionRuntime] = field(default_factory=dict, init=False, repr=False)
     _start_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
+    _auth_status: str = field(default="unknown", init=False, repr=False)
+    _auth_hint: str | None = field(default=None, init=False, repr=False)
     # external_session_id -> last known ACP configOptions from session/new|set_config
 
     @property
@@ -95,48 +111,36 @@ class AcpAdapter:
         session_id = _optional_string(params.get("sessionId")) or f"sess_{self.runtime}_{secrets.token_urlsafe(10)}"
         cwd = _require_cwd(params)
         runtime = self._runtime_for(session_id, params)
+        timer = StageTimer()
+        # Skip spawn/session/new when a prior probe already proved auth is missing.
+        self._raise_if_auth_blocked()
         client = await self._ensure_client()
         try:
+            # Bound cold session/new (Cursor/Grok historically hung well past UI timeouts).
             result = await client.request(
                 "session/new",
                 {
                     "cwd": cwd,
                     "mcpServers": params.get("mcpServers") if isinstance(params.get("mcpServers"), list) else [],
                 },
+                timeout=_SESSION_NEW_TIMEOUT_S,
             )
-        except AcpJsonRpcError as exc:
+        except (AcpJsonRpcError, TimeoutError, asyncio.TimeoutError) as exc:
             stderr = client.stderr_excerpt if client else ""
             detail = str(exc)
-            lowered = detail.lower()
-            if "auth" in lowered or "login" in lowered or "unauthor" in lowered:
-                methods = summarize_auth_methods(self._auth_methods)
-                names = ", ".join(m["name"] for m in methods) or "interactive login"
-                detail = (
-                    f"Authentication required for {self.manifest.display_name}. "
-                    f"ACP auth methods: {names}. "
-                    "Use Sign in in Agents Anywhere to complete browser OAuth on this device "
-                    "(interactive TUI login does not always satisfy headless ACP)."
-                )
-                # Keep device report / UI in sync so Sign-in buttons appear.
-                try:
-                    await self._emit(
-                        "runtime.optionsUpdated",
-                        {
-                            "runtime": self.runtime,
-                            "authStatus": "required",
-                            "authMethods": methods,
-                            "authHint": detail,
-                            "sourceObservedAt": utc_now(),
-                        },
-                    )
-                except Exception:
-                    pass
+            if _is_authish_error(detail):
+                detail = await self._mark_auth_required(detail)
             if stderr:
                 detail = f"{detail}; stderr={stderr[:800]}"
+            if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
+                detail = (
+                    f"{self.runtime} session/new timed out after {_SESSION_NEW_TIMEOUT_S:.0f}s: {detail}"
+                )
             raise AcpJsonRpcError(detail) from exc
         external = _optional_string(result.get("sessionId")) or _optional_string(result.get("session_id"))
         if not external:
             raise AcpJsonRpcError(f"{self.runtime} session/new did not return sessionId")
+        self._set_auth_status("ok")
         runtime.external_session_id = external
         runtime.cwd = cwd
         runtime.reducer = AcpTimelineReducer(runtime=self.runtime)
@@ -146,6 +150,20 @@ class AcpAdapter:
         await self._apply_session_settings(client, runtime, params)
         model_options = extract_model_options(runtime.config_options)
         mode_options = extract_mode_options(runtime.config_options)
+        elapsed = timer.elapsed_ms()
+        log_stage(
+            "adapter.create_session",
+            elapsed,
+            runtime=self.runtime,
+            session_id=session_id,
+        )
+        logger.info(
+            "{} session created session_id={} external={} elapsed_ms={}",
+            self.runtime,
+            session_id,
+            external,
+            elapsed,
+        )
         await self._emit(
             "session.updated",
             {
@@ -244,6 +262,7 @@ class AcpAdapter:
             return {"threads": [], "skippedThreads": [], "backendNotifications": []}
 
     async def start_turn(self, params: dict[str, Any]) -> dict[str, Any]:
+        sync_timer = StageTimer()
         session_id = _required(params, "sessionId")
         content = _required(params, "content")
         runtime = self._runtime_for(session_id, params)
@@ -260,9 +279,17 @@ class AcpAdapter:
             runtime.client_message_id = _optional_string(params.get("clientMessageId"))
             if runtime.reducer is None:
                 runtime.reducer = AcpTimelineReducer(runtime=self.runtime)
+            runtime.turn_timer = StageTimer()
             runtime.active_task = asyncio.create_task(
                 self._drive_turn(runtime=runtime, params=params, content=content, turn_id=turn_id)
             )
+        log_stage(
+            "adapter.start_turn_sync",
+            sync_timer.elapsed_ms(),
+            runtime=self.runtime,
+            session_id=session_id,
+            turn_id=turn_id,
+        )
         return {"turnId": turn_id}
 
     async def interrupt_turn(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -331,6 +358,7 @@ class AcpAdapter:
     ) -> None:
         assert runtime.reducer is not None
         max_turn_s = _max_turn_seconds(self.manifest)
+        outcome = "done"
         try:
             reduced = runtime.reducer.turn_start(
                 session_id=runtime.session_id,
@@ -356,6 +384,7 @@ class AcpAdapter:
                 )
             except AcpJsonRpcError as exc:
                 if runtime.interrupted:
+                    outcome = "cancelled"
                     end = runtime.reducer.turn_end(
                         session_id=runtime.session_id,
                         turn_id=turn_id,
@@ -367,6 +396,8 @@ class AcpAdapter:
                     return
                 raise exc
             stop_reason = _optional_string(result.get("stopReason") or result.get("stop_reason"))
+            if runtime.interrupted:
+                outcome = "cancelled"
             end = runtime.reducer.turn_end(
                 session_id=runtime.session_id,
                 turn_id=turn_id,
@@ -376,8 +407,10 @@ class AcpAdapter:
             )
             await self._emit_reduction(end)
         except asyncio.CancelledError:
+            outcome = "cancelled"
             raise
         except Exception as exc:
+            outcome = "cancelled" if runtime.interrupted else "failed"
             logger.exception(
                 "ACP turn failed runtime={} session_id={} turn_id={}",
                 self.runtime,
@@ -405,6 +438,15 @@ class AcpAdapter:
                 },
             )
         finally:
+            timer = runtime.turn_timer
+            if timer is not None:
+                timer.mark_turn_complete(
+                    outcome=outcome,
+                    runtime=self.runtime,
+                    session_id=runtime.session_id,
+                    turn_id=turn_id,
+                )
+                runtime.turn_timer = None
             async with runtime.claim_lock:
                 if runtime.active_turn_id == turn_id:
                     runtime.active_turn_id = None
@@ -459,7 +501,7 @@ class AcpAdapter:
                 )
         return blocks
 
-    async def _ensure_client(self) -> AcpJsonRpcClient:
+    async def _ensure_client(self, *, skip_auto_auth: bool = False) -> AcpJsonRpcClient:
         async with self._start_lock:
             if (
                 not self._needs_restart
@@ -470,6 +512,7 @@ class AcpAdapter:
                 return self._client
             await self._shutdown_client_unlocked()
             command = self._command()
+            started = time.perf_counter()
             # Process cwd is launch context only (None → inherit connector cwd).
             # Per-session workspace is always passed via session/new|load cwd.
             factory = self.client_factory or (
@@ -482,6 +525,8 @@ class AcpAdapter:
                 exit_handler=self._on_client_exit,
             )
             try:
+                # Cap initialize: cold agent spawn (esp. Cursor via shell shims)
+                # previously hung for the default 120s and blocked UI.
                 init = await client.request(
                     "initialize",
                     {
@@ -495,8 +540,9 @@ class AcpAdapter:
                             "version": _connector_version(),
                         },
                     },
+                    timeout=45.0,
                 )
-            except AcpJsonRpcError as exc:
+            except (AcpJsonRpcError, TimeoutError, asyncio.TimeoutError) as exc:
                 stderr = client.stderr_excerpt
                 await self._shutdown_client_unlocked()
                 detail = str(exc)
@@ -512,11 +558,25 @@ class AcpAdapter:
             )
             auth_methods = init.get("authMethods") if isinstance(init.get("authMethods"), list) else []
             self._auth_methods = [m for m in auth_methods if isinstance(m, dict)]
-            await self._maybe_authenticate(client)
+            if not skip_auto_auth:
+                await self._maybe_authenticate(client)
             self._client = client
             self._initialized = True
             self._needs_restart = False
+            log_stage(
+                "adapter.ensure_client",
+                elapsed_ms(started),
+                runtime=self.runtime,
+                command=" ".join(str(part) for part in command[:6]),
+            )
             return client
+
+    async def warm_start(self) -> None:
+        """Best-effort pre-spawn of the ACP process so first session is faster."""
+        try:
+            await self._ensure_client()
+        except Exception as exc:
+            logger.info("{} warm_start skipped: {}", self.runtime, exc)
 
     async def _shutdown_client(self) -> None:
         async with self._start_lock:
@@ -663,20 +723,31 @@ class AcpAdapter:
                     continue
 
     async def authenticate_interactive(self, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        """User-triggered interactive ACP login (opens browser once).
+        """User-triggered ACP login (browser OAuth or headless re-check).
 
-        Never called from discovery/reconnect. Credentials, if any, are stored by
-        the agent CLI itself after a successful OAuth — AA does not persist tokens.
+        Never called from discovery/reconnect. First reuses local CLI credentials
+        via session/new; only then calls authenticate for the chosen method.
         """
         params = params if isinstance(params, dict) else {}
         requested = _optional_string(params.get("methodId") or params.get("method_id"))
-        client = await self._ensure_client()
+        # Skip auto headless auth on ensure — we re-probe and auth intentionally below.
+        client = await self._ensure_client(skip_auto_auth=True)
         method_ids = [
             str(item.get("id") or item.get("methodId") or "")
             for item in self._auth_methods
             if (item.get("id") or item.get("methodId"))
         ]
         method_ids = [mid for mid in method_ids if mid]
+
+        # Many agents (Cursor/Gemini) already have disk credentials — session/new
+        # succeeds without calling authenticate (which often times out).
+        probe = await self._probe_auth_and_options(client)
+        if probe.get("authStatus") == "ok":
+            probe["methodId"] = requested or "local_session"
+            probe["reusedLocalCredentials"] = True
+            await self._emit_auth_status(probe)
+            return probe
+
         if requested:
             if requested not in method_ids:
                 raise AcpJsonRpcError(
@@ -685,7 +756,6 @@ class AcpAdapter:
                 )
             ordered = [requested]
         else:
-            # Prefer interactive (what the user clicked for); fall back to headless.
             ordered = order_interactive_auth_method_ids(
                 method_ids,
                 preferred=list(self.manifest.preferred_auth_method_ids),
@@ -696,18 +766,18 @@ class AcpAdapter:
                     preferred=list(self.manifest.preferred_auth_method_ids),
                 )
         if not ordered:
-            # No auth methods advertised — try a probe; agent may already be logged in.
-            probe = await self._probe_auth_and_options(client)
             await self._emit_auth_status(probe)
             return probe
 
         last_error: str | None = None
         used_method: str | None = None
         for mid in ordered:
+            # cursor_login / gemini-api-key can hang when re-prompting; use a longer
+            # budget only for explicit user-triggered sign-in.
             timeout = (
                 _INTERACTIVE_AUTH_TIMEOUT_S
                 if is_interactive_auth_method(mid)
-                else 8.0
+                else 45.0
             )
             try:
                 logger.info(
@@ -734,6 +804,13 @@ class AcpAdapter:
                 continue
 
         if used_method is None:
+            # Last chance: local credentials may still work without authenticate RPC.
+            probe = await self._probe_auth_and_options(client)
+            if probe.get("authStatus") == "ok":
+                probe["methodId"] = "local_session"
+                probe["reusedLocalCredentials"] = True
+                await self._emit_auth_status(probe)
+                return probe
             methods = summarize_auth_methods(self._auth_methods)
             names = ", ".join(m["name"] for m in methods) or "interactive login"
             detail = (
@@ -742,21 +819,20 @@ class AcpAdapter:
             )
             if last_error:
                 detail = f"{detail} Last error: {last_error}"
+            if self.manifest.pre_auth_hint:
+                detail = f"{detail} Hint: {self.manifest.pre_auth_hint}"
             raise AcpJsonRpcError(detail)
 
         probe = await self._probe_auth_and_options(client)
         probe["methodId"] = used_method
         if probe.get("authStatus") != "ok":
-            # Some agents succeed authenticate but still require process restart
-            # to pick up disk-cached credentials — restart once and re-probe.
             logger.info(
                 "{} auth method={} returned but session still requires auth; restarting agent process",
                 self.runtime,
                 used_method,
             )
             self._needs_restart = True
-            client = await self._ensure_client()
-            # Headless re-auth after restart (token should now be on disk).
+            client = await self._ensure_client(skip_auto_auth=True)
             await self._maybe_authenticate(client)
             probe = await self._probe_auth_and_options(client)
             probe["methodId"] = used_method
@@ -764,6 +840,55 @@ class AcpAdapter:
 
         await self._emit_auth_status(probe)
         return probe
+
+    def _raise_if_auth_blocked(self) -> None:
+        if self._auth_status != "required":
+            return
+        methods = summarize_auth_methods(self._auth_methods)
+        names = ", ".join(m["name"] for m in methods) or "interactive login"
+        detail = self._auth_hint or (
+            f"Authentication required for {self.manifest.display_name}. "
+            f"ACP auth methods: {names}. "
+            "Use Sign in in Agents Anywhere to complete browser OAuth on this device "
+            "(interactive TUI login does not always satisfy headless ACP)."
+        )
+        raise AcpJsonRpcError(detail)
+
+    def _set_auth_status(self, status: str, hint: str | None = None) -> None:
+        self._auth_status = status
+        if status == "required":
+            self._auth_hint = hint or self._auth_hint
+        elif status == "ok":
+            self._auth_hint = None
+
+    async def _mark_auth_required(self, raw_detail: str) -> str:
+        methods = summarize_auth_methods(self._auth_methods)
+        names = ", ".join(m["name"] for m in methods) or "interactive login"
+        detail = (
+            f"Authentication required for {self.manifest.display_name}. "
+            f"ACP auth methods: {names}. "
+            "Use Sign in in Agents Anywhere to complete browser OAuth on this device "
+            "(interactive TUI login does not always satisfy headless ACP)."
+        )
+        if self.manifest.pre_auth_hint:
+            detail = f"{detail} Hint: {self.manifest.pre_auth_hint}"
+        elif raw_detail and not _is_authish_error(raw_detail):
+            detail = f"{detail} ({raw_detail[:200]})"
+        self._set_auth_status("required", detail)
+        try:
+            await self._emit(
+                "runtime.optionsUpdated",
+                {
+                    "runtime": self.runtime,
+                    "authStatus": "required",
+                    "authMethods": methods,
+                    "authHint": detail,
+                    "sourceObservedAt": utc_now(),
+                },
+            )
+        except Exception:
+            pass
+        return detail
 
     async def _probe_auth_and_options(self, client: AcpJsonRpcClient) -> dict[str, Any]:
         """session/new probe: authStatus + live model/mode options."""
@@ -781,24 +906,27 @@ class AcpAdapter:
                 session = await client.request(
                     "session/new",
                     {"cwd": tmp, "mcpServers": []},
-                    timeout=30.0,
+                    timeout=_SESSION_NEW_TIMEOUT_S,
                 )
             except AcpJsonRpcError as exc:
-                message = str(exc).lower()
-                if "auth" in message or "login" in message or "unauthor" in message:
-                    probe["authStatus"] = "required"
+                message = str(exc)
+                if _is_authish_error(message):
                     names = ", ".join(m["name"] for m in methods) or "interactive login"
-                    probe["authHint"] = (
+                    probe["authStatus"] = "required"
+                    probe["authHint"] = self.manifest.pre_auth_hint or (
                         f"{self.manifest.display_name} still requires authentication "
-                        f"({names}). Complete the browser login on the device running "
-                        "the connector, then try again."
+                        f"({names}). Complete login on the device running the connector, "
+                        "then try again."
                     )
+                    self._set_auth_status("required", probe["authHint"])
                     return probe
                 probe["authStatus"] = "unknown"
-                probe["error"] = str(exc)
+                probe["error"] = message
+                self._set_auth_status("unknown")
                 return probe
 
         probe["authStatus"] = "ok"
+        self._set_auth_status("ok")
         config_options = session.get("configOptions") if isinstance(session.get("configOptions"), list) else []
         config_options = [opt for opt in config_options if isinstance(opt, dict)]
         if config_options:
@@ -823,25 +951,27 @@ class AcpAdapter:
         return probe
 
     async def _emit_auth_status(self, probe: dict[str, Any]) -> None:
+        status = str(probe.get("authStatus") or "unknown")
+        hint = probe.get("authHint") if isinstance(probe.get("authHint"), str) else None
+        self._set_auth_status(status, hint)
         payload: dict[str, Any] = {
             "runtime": self.runtime,
-            "authStatus": probe.get("authStatus") or "unknown",
+            "authStatus": status,
             "authMethods": probe.get("authMethods") or summarize_auth_methods(self._auth_methods),
             "sourceObservedAt": utc_now(),
         }
-        if probe.get("authHint"):
-            payload["authHint"] = probe["authHint"]
+        if hint:
+            payload["authHint"] = hint
         for key in ("configOptions", "modelOptions", "modeOptions"):
             if probe.get(key) is not None:
                 payload[key] = probe[key]
         await self._emit("runtime.optionsUpdated", payload)
 
     async def _maybe_authenticate(self, client: AcpJsonRpcClient) -> bool:
-        """Try headless-only auth methods. Never invoke interactive OAuth/browser flows.
+        """Best-effort headless auth only. Never open browser OAuth.
 
-        Returns True if no auth methods are advertised or a headless method succeeds.
-        Interactive methods (browser OAuth) must not be called here: a short timeout
-        still opens tabs, and init/session start would spam the user.
+        Avoids expensive session/new probes on every ensure_client (was adding
+        10–20s before the first user turn). Real auth is verified on session/new.
         """
         if not self._auth_methods:
             return True
@@ -856,18 +986,14 @@ class AcpAdapter:
             preferred=list(self.manifest.preferred_auth_method_ids),
         )
         if not ordered:
-            logger.info(
-                "{} only interactive ACP auth methods available; skip auto-auth methods={}",
-                self.runtime,
-                method_ids,
-            )
-            return False
+            # Interactive-only agents (CodeBuddy): skip; session/new will surface auth.
+            return True
         for mid in ordered:
             try:
                 await client.request(
                     "authenticate",
                     {"methodId": mid, "_meta": {"headless": True}},
-                    timeout=8.0,
+                    timeout=4.0,
                 )
                 logger.info("{} authenticated via method={}", self.runtime, mid)
                 return True
@@ -879,12 +1005,13 @@ class AcpAdapter:
                     exc,
                 )
                 continue
-        logger.warning(
-            "{} no headless ACP auth method succeeded; methods={}",
+        # Do not fail ensure_client — create_session will report auth errors.
+        logger.info(
+            "{} headless auth not confirmed; will verify on session/new methods={}",
             self.runtime,
             method_ids,
         )
-        return False
+        return True
 
     def _command(self) -> list[str]:
         if self.launch is not None:
@@ -999,6 +1126,29 @@ class AcpAdapter:
         if reduced.session_update:
             await self._emit("session.updated", reduced.session_update)
         for item in reduced.timeline_items:
+            item_type = item.get("type") if isinstance(item, dict) else None
+            timer = None
+            session_id = item.get("sessionId") if isinstance(item, dict) else None
+            if isinstance(session_id, str):
+                session_runtime = self._sessions.get(session_id)
+                timer = session_runtime.turn_timer if session_runtime is not None else None
+            if timer is not None and item_type not in {"turn.start", "turn.end"}:
+                if (
+                    item_type == "message"
+                    and isinstance(item, dict)
+                    and item.get("role") == "assistant"
+                    and isinstance(item.get("content"), dict)
+                    and (
+                        (isinstance(item["content"].get("text"), str) and item["content"]["text"].strip())
+                        or (isinstance(item["content"].get("rawText"), str) and item["content"]["rawText"].strip())
+                    )
+                ):
+                    timer.mark_first_timeline(
+                        runtime=self.runtime,
+                        session_id=session_id,
+                        turn_id=item.get("turnId") if isinstance(item, dict) else None,
+                        stage_alias="adapter.first_assistant_token",
+                    )
             await self._emit("timeline.itemUpsert", {"sessionId": item["sessionId"], "item": item})
         if reduced.approval:
             await self._emit("approval.requested", reduced.approval)
@@ -1025,6 +1175,11 @@ def _require_cwd(params: dict[str, Any]) -> str:
     if not cwd:
         raise ValueError("missing cwd: ACP sessions require an absolute workspace path")
     return cwd
+
+
+def _is_authish_error(message: str) -> bool:
+    lowered = message.lower()
+    return any(token in lowered for token in _AUTH_ERROR_TOKENS)
 
 
 def _attachments_metadata(params: dict[str, Any]) -> list[dict[str, Any]] | None:

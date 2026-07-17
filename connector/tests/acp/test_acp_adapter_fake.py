@@ -6,9 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from connector.acp.adapter import AcpAdapter
+from connector.acp.adapter import AcpAdapter, _is_authish_error
 from connector.acp.manifest import AgentManifest
+from connector.acp.rpc import AcpJsonRpcError
 from connector.launch import LaunchTarget
+from connector.logging import logger
 from tests.contract.helpers import (
     assert_approval_schema,
     assert_timeline_item_schema,
@@ -52,6 +54,12 @@ def test_acp_adapter_basic_text_turn_with_fake_agent(monkeypatch) -> None:
     monkeypatch.setenv("FAKE_ACP_SCENARIO", "basic_text")
 
     notifications: list[tuple[str, dict]] = []
+    log_messages: list[str] = []
+
+    def log_sink(message: object) -> None:
+        log_messages.append(str(message).rstrip("\n"))
+
+    sink_id = logger.add(log_sink, level="INFO", format="{message}")
 
     async def sink(method: str, params: dict) -> None:
         notifications.append((method, params))
@@ -81,7 +89,10 @@ def test_acp_adapter_basic_text_turn_with_fake_agent(monkeypatch) -> None:
             await runtime.active_task
         await adapter.close()
 
-    asyncio.run(run())
+    try:
+        asyncio.run(run())
+    finally:
+        logger.remove(sink_id)
 
     items = collect_item_upserts(notifications)
     assert items
@@ -94,6 +105,14 @@ def test_acp_adapter_basic_text_turn_with_fake_agent(monkeypatch) -> None:
         if item.get("type") == "message" and item.get("role") == "assistant"
     ]
     assert any(t == "PONG" for t in texts)
+
+    stage_lines = [line for line in log_messages if line.startswith("stage=")]
+    stages = [line.split()[0].removeprefix("stage=") for line in stage_lines]
+    assert "adapter.ensure_client" in stages or "adapter.create_session" in stages
+    assert "adapter.create_session" in stages
+    assert "adapter.start_turn_sync" in stages
+    assert "adapter.turn_complete" in stages
+    assert any("outcome=done" in line for line in stage_lines if "adapter.turn_complete" in line)
 
 
 @pytest.mark.contract
@@ -307,3 +326,55 @@ def test_manifest_builtins_load() -> None:
     manifests = load_builtin_manifests()
     ids = {m.id for m in manifests}
     assert {"gemini", "cursor", "codebuddy", "grok_build"} <= ids
+
+
+def test_is_authish_error_matches_common_messages() -> None:
+    assert _is_authish_error("Authentication required")
+    assert _is_authish_error("missing API key")
+    assert _is_authish_error("please login first")
+    assert not _is_authish_error("connection refused")
+
+
+def test_create_session_fast_fails_when_cached_auth_required() -> None:
+    started: list[bool] = []
+
+    def factory(cmd, env, cwd):
+        started.append(True)
+        return _fake_client_factory(cmd, env, cwd)
+
+    adapter = AcpAdapter(
+        manifest=_fake_manifest(),
+        launch=_launch(),
+        client_factory=factory,
+    )
+    adapter._set_auth_status("required", "Sign in required for Fake ACP")
+
+    async def run() -> None:
+        with pytest.raises(AcpJsonRpcError, match="Sign in required"):
+            await adapter.create_session({"sessionId": "sess_blocked", "cwd": _CWD})
+
+    asyncio.run(run())
+    assert started == [], "cached auth required must not spawn the ACP process"
+
+
+@pytest.mark.contract
+def test_create_session_caches_auth_required_after_auth_failure(monkeypatch) -> None:
+    monkeypatch.chdir(_CWD)
+    monkeypatch.setenv("FAKE_ACP_SCENARIO", "interactive_auth")
+
+    adapter = AcpAdapter(
+        manifest=_fake_manifest(),
+        launch=_launch(),
+        client_factory=_fake_client_factory,
+    )
+
+    async def run() -> None:
+        with pytest.raises(AcpJsonRpcError, match="[Aa]uth"):
+            await adapter.create_session({"sessionId": "sess_auth_fail", "cwd": _CWD})
+        assert adapter._auth_status == "required"
+        # Second attempt must fail immediately without another cold session/new wait.
+        with pytest.raises(AcpJsonRpcError, match="[Aa]uth"):
+            await adapter.create_session({"sessionId": "sess_auth_fail2", "cwd": _CWD})
+        await adapter.close()
+
+    asyncio.run(run())

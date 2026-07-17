@@ -75,3 +75,10 @@ def test_order_interactive_for_user_triggered_login() -> None:
     )
     assert ordered == ["external", "iOA", "selfhosted"]
     assert all(is_interactive_auth_method(m) for m in ordered)
+
+
+def test_cursor_login_is_not_interactive() -> None:
+    """cursor_login reuses agent login credentials; must not open browser OAuth spam."""
+    assert not is_interactive_auth_method("cursor_login")
+    assert not is_interactive_auth_method("gemini-api-key")
+    assert order_headless_auth_method_ids(["cursor_login", "iOA"]) == ["cursor_login"]

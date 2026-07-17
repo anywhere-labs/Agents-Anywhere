@@ -614,9 +614,12 @@
       "sendFailed": "Failed to send message.",
       "updateTakeoverFailed": "Failed to update takeover.",
       "interruptFailed": "Failed to interrupt session.",
+      "interruptedLocally": "Interrupted",
+
       "resolveApprovalFailed": "Failed to resolve approval.",
       "updateRuntimeSettingsFailed": "Failed to update runtime settings.",
       "noActivity": "No activity yet.",
+      "awaitingFirstReply": "Waiting for {runtime}...",
       "runtimeWorking": "{runtime} is working...",
       "approvalRequested": "Approval requested",
       "approve": "Approve",

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from agent_server.infra.connector_rpc import ConnectorOfflineError, ConnectorRpcError, ConnectorRpcManager
 from agent_server.core.models import MessageCreateRequest, RpcResponsePayload, SessionCreateRequest
+from agent_server.infra.perf import elapsed_ms, log_stage
 from agent_server.infra.runtimes.serializers import serializer_for_runtime
 from agent_server.infra.repositories.facade import Store
 from agent_server.core.utc import utc_now
@@ -75,6 +77,9 @@ class SessionRunService:
 
         if not self._manager.is_online(payload.connectorId):
             raise SessionRunConflictError("connector is offline")
+        auth_blocked = _acp_auth_blocked_detail(connector, payload.runtime)
+        if auth_blocked is not None:
+            raise SessionRunUpstreamError(auth_blocked)
         try:
             runtime_settings_override = await self._store.get_initial_runtime_settings_for_connector_agent(
                 payload.connectorId,
@@ -162,6 +167,7 @@ class SessionRunService:
         *,
         user_id: str,
     ) -> RpcResponsePayload:
+        prep_started = time.perf_counter()
         try:
             session = await self._store.get_session(session_id, user_id=user_id)
         except KeyError:
@@ -221,6 +227,13 @@ class SessionRunService:
             external_session_id=session.externalSessionId,
             params=params,
         )
+        log_stage(
+            "server.message_prep",
+            elapsed_ms(prep_started),
+            runtime=session.runtime,
+            session_id=session_id,
+            connector_id=session.connectorId,
+        )
         try:
             result = await self._manager.request(
                 session.connectorId,
@@ -235,6 +248,16 @@ class SessionRunService:
             await self._store.set_session_status(session_id, "error")
             await self._store.clear_active_run(session_id)
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
+        turn_id = result.get("turnId") if isinstance(result, dict) else None
+        if isinstance(turn_id, str) and turn_id:
+            log_stage(
+                "server.turn_start_accepted",
+                elapsed_ms(prep_started),
+                runtime=session.runtime,
+                session_id=session_id,
+                turn_id=turn_id,
+                connector_id=session.connectorId,
+            )
         return RpcResponsePayload(ok=True, result=result)
 
     async def _attachment_payloads(
@@ -322,10 +345,54 @@ class SessionRunService:
             raise SessionRunConflictError(str(exc)) from exc
         except ConnectorRpcError as exc:
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
-        if _interrupt_target_not_found(result):
+        # Always reconcile run/status after interrupt so UI cannot stick on "running"
+        # when the agent had no interruptible client (e.g. Claude connect hang).
+        if _interrupt_target_not_found(result) or _interrupt_cleared_without_client(result):
             await self._store.clear_active_run(session_id)
             await self._store.refresh_session_status_from_timeline(session_id)
+            if (await self._store.get_session(session_id, user_id=user_id)).status in {
+                "running",
+                "waiting_approval",
+            }:
+                await self._store.set_session_status(session_id, "idle")
+        elif isinstance(result, dict) and result.get("interrupted") is True:
+            await self._store.clear_active_run(session_id)
+            await self._store.refresh_session_status_from_timeline(session_id)
+            if (await self._store.get_session(session_id, user_id=user_id)).status in {
+                "running",
+                "waiting_approval",
+            }:
+                await self._store.set_session_status(session_id, "idle")
         return RpcResponsePayload(ok=True, result=result)
+
+
+# Non-ACP drivers keep their own auth/create paths; skip report-based short-circuit.
+_NON_ACP_RUNTIMES = frozenset({"claude", "codex"})
+
+
+def _acp_auth_blocked_detail(connector: Any, runtime: str) -> str | None:
+    """Return a ready-to-surface error when ACP report already says auth is required."""
+    if runtime in _NON_ACP_RUNTIMES:
+        return None
+    caps = getattr(connector, "runtimeCapabilities", None)
+    attached = getattr(caps, "attached", None) if caps is not None else None
+    if not isinstance(attached, dict):
+        return None
+    agent = attached.get(runtime)
+    if agent is None:
+        return None
+    report = getattr(agent, "report", None)
+    if not isinstance(report, dict):
+        return None
+    if report.get("authStatus") != "required":
+        return None
+    hint = report.get("authHint")
+    if isinstance(hint, str) and hint.strip():
+        return hint.strip()
+    return (
+        f"Authentication required for {runtime}. "
+        "Sign in on the device from Agents Anywhere, then try again."
+    )
 
 
 def _interrupt_target_not_found(result: object) -> bool:
@@ -335,6 +402,20 @@ def _interrupt_target_not_found(result: object) -> bool:
         return False
     reason = result.get("reason")
     return reason in {"thread_not_found", "turn_not_found"}
+
+
+def _interrupt_cleared_without_client(result: object) -> bool:
+    if not isinstance(result, dict):
+        return False
+    if result.get("interrupted") is True and result.get("reason") == "task_cancelled":
+        return True
+    if result.get("interrupted") is not False:
+        return False
+    reason = str(result.get("reason") or "")
+    return reason in {
+        "no active Claude SDK client",
+        "session not registered",
+    }
 
 
 def _timeline_attachment_payload(value: dict[str, Any]) -> dict[str, Any]:

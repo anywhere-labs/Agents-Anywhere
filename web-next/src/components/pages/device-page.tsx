@@ -567,18 +567,21 @@ function workspacesFromSessions(sessions: DeviceSession[]): ConnectorWorkspace[]
 function agentsFromConnector(connector: DeviceConnector | null): AgentRow[] {
   if (!connector) return []
   return Object.entries(connector.runtimeCapabilities.attached)
-    .map(([runtime, agent]) => ({
-      runtime,
-      agent,
-      healthy: reportIsHealthy(agent),
-      reason: runtimeIssueReason(agent.report),
-    }))
+    .map(([runtime, agent]) => {
+      const attached = agent as AttachedAgent
+      return {
+        runtime,
+        agent: attached,
+        healthy: reportIsHealthy(attached),
+        reason: runtimeIssueReason(attached.report),
+      }
+    })
     .sort((a, b) => a.runtime.localeCompare(b.runtime))
 }
 
 function allSupportedAgentsHealthy(connector: DeviceConnector) {
   return ADD_AGENT_RUNTIME_OPTIONS.every(({ id }) => {
-    const agent = connector.runtimeCapabilities.attached[id]
+    const agent = connector.runtimeCapabilities.attached[id] as AttachedAgent | undefined
     return agent ? reportIsHealthy(agent) : false
   })
 }

@@ -1,9 +1,10 @@
 "use client"
 
 import * as React from "react"
-import { ArrowDown, ChevronDown, CircleAlert, KeyRound, Loader2 } from "lucide-react"
+import { ArrowDown, ChevronDown, CircleAlert, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 
+import { AgentAuthBanner } from "@/components/agent-auth-banner"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
@@ -34,13 +35,20 @@ import { isCreatedFileChange } from "@/components/session/session-tool-cards"
 import { SessionComposer, type AttachedFile } from "@/components/session/session-composer"
 import {
   buildOptimisticUserMessage,
+  dedupeAdjacentUserMessages,
   isOptimisticTimelineItem,
   markOptimisticItemFailed,
   mergeTimelineItems,
   preserveOptimisticItems,
   timelineClientMessageId,
 } from "@/components/session/optimistic-timeline"
-import { recordsOf, runtimeLabel, sortTimelineItems, textOf } from "@/components/session/session-utils"
+import {
+  hasAssistantTextAfterLatestUser,
+  recordsOf,
+  runtimeLabel,
+  sortTimelineItems,
+  textOf,
+} from "@/components/session/session-utils"
 import { useWorkspace } from "@/components/workspace-context"
 
 type SessionDetailProps = {
@@ -237,7 +245,9 @@ export function SessionDetail({
 
   const applyOptimisticItems = React.useCallback((next: SessionStateResponse): SessionStateResponse => ({
     ...next,
-    items: mergeTimelineItems(next.items, getOptimisticItems(sessionId)),
+    items: dedupeAdjacentUserMessages(
+      mergeTimelineItems(next.items, getOptimisticItems(sessionId)),
+    ),
   }), [getOptimisticItems, sessionId])
   const applyOptimisticItemsRef = React.useRef(applyOptimisticItems)
   const clearResolvedOptimisticMessagesRef = React.useRef(clearResolvedOptimisticMessages)
@@ -516,12 +526,16 @@ export function SessionDetail({
         if (cancelled) return
         setRuntimeSchema(null)
         setRuntimeSettings(null)
-        toast.error(err instanceof Error ? err.message : tSession("loadRuntimeSettingsFailed"))
+        // Avoid noisy toasts for transient / validation issues when switching sessions.
+        const message = err instanceof Error ? err.message : String(err)
+        if (!/string_pattern_mismatch|String should match pattern/i.test(message)) {
+          toast.error(err instanceof Error ? err.message : tSession("loadRuntimeSettingsFailed"))
+        }
       })
     return () => {
       cancelled = true
     }
-  }, [isLocalOptimisticSession, session?.id, session?.runtime, token])
+  }, [isLocalOptimisticSession, session?.id, session?.runtime, token, tSession])
 
   React.useEffect(() => {
     if (isLocalOptimisticSession) return
@@ -666,9 +680,30 @@ export function SessionDetail({
     setInterrupting(true)
     try {
       await dashboardApi.interruptSession(token, session.id)
+      // Optimistically clear busy state so the stop button never looks dead.
+      setState((current) =>
+        current
+          ? {
+              ...current,
+              session: { ...current.session, status: "idle" },
+              items: current.items.map((item) =>
+                item.status === "pending" && isOptimisticTimelineItem(item)
+                  ? markOptimisticItemFailed(item, tSession("interruptedLocally"))
+                  : item,
+              ),
+            }
+          : current,
+      )
+      onSessionUpdated?.({ ...session, status: "idle" })
       await refresh()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : tSession("interruptFailed"))
+      // Still try to resync — agent may have ended the turn while interrupt failed.
+      try {
+        await refresh()
+      } catch {
+        /* ignore */
+      }
     } finally {
       setInterrupting(false)
     }
@@ -818,14 +853,33 @@ export function SessionDetail({
     () => new Set(approvals.map((approval) => approval.targetItemId).filter((id): id is string => Boolean(id))),
     [approvals],
   )
-  const timelineGroups = React.useMemo(
-    () => groupTimelineItems(state?.items ?? [], approvalTargetIds),
-    [approvalTargetIds, state?.items],
+  const timelineItems = React.useMemo(
+    () => dedupeAdjacentUserMessages(state?.items ?? []),
+    [state?.items],
   )
+  const timelineGroups = React.useMemo(
+    () => groupTimelineItems(timelineItems, approvalTargetIds),
+    [approvalTargetIds, timelineItems],
+  )
+  const hasPendingUser = timelineItems.some(
+    (item) => item.role === "user" && item.status === "pending",
+  )
+  // Hide spinner once the first assistant token for this turn is visible (TTFB).
+  const hasFirstAssistantToken = hasAssistantTextAfterLatestUser(timelineItems)
+  const showWorking = Boolean(
+    session &&
+      (session.status === "running" || session.status === "waiting_approval" || hasPendingUser) &&
+      !hasFirstAssistantToken,
+  )
+  const workingLabel =
+    showWorking && session
+      ? tSession("awaitingFirstReply", { runtime: runtimeLabel(session.runtime) })
+      : ""
 
-  if (loading && !session) return <SessionSkeleton />
+  // Prefer shell with fallback session over full-page skeleton to avoid layout jump.
+  if (loading && !session && !fallbackSession) return <SessionSkeleton />
 
-  if (error && !session) {
+  if (error && !session && !fallbackSession) {
     return (
       <div className="mx-auto flex h-full max-w-3xl items-center justify-center px-6">
         <Alert variant="destructive">
@@ -903,60 +957,6 @@ export function SessionDetail({
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden overscroll-none">
-      {needsAuth ? (
-        <Alert className="mx-auto mt-4 w-[calc(100%-2rem)] max-w-3xl border-amber-500/40 bg-amber-500/5">
-          <CircleAlert className="text-amber-600 dark:text-amber-400" />
-          <AlertTitle className="text-amber-700 dark:text-amber-300">
-            {tNew("authRequiredTitle", { name: session.runtime })}
-          </AlertTitle>
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <span className="text-sm">
-              {agentReport?.authHint || error || tNew("authRequiredBody")}
-              {authMethods.length > 0 ? (
-                <span className="mt-1 block text-xs opacity-80">
-                  {tDevice("authMethods")}: {authMethods.map((m) => m.name).join(", ")}
-                </span>
-              ) : null}
-            </span>
-            <div className="flex shrink-0 flex-wrap gap-2">
-              {authMethods.length > 1 ? (
-                authMethods.map((method) => (
-                  <Button
-                    key={method.id}
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="gap-1"
-                    disabled={signingIn || connector?.status !== "online"}
-                    onClick={() => void signInAgent(method.id)}
-                  >
-                    <KeyRound className="size-3.5" />
-                    {signingIn ? tDevice("signingIn") : method.name || method.id}
-                  </Button>
-                ))
-              ) : (
-                <Button
-                  type="button"
-                  size="sm"
-                  className="gap-1"
-                  disabled={signingIn || connector?.status !== "online"}
-                  onClick={() => void signInAgent(authMethods[0]?.id)}
-                >
-                  <KeyRound className="size-3.5" />
-                  {signingIn ? tDevice("signingIn") : tDevice("signInAgent")}
-                </Button>
-              )}
-            </div>
-          </AlertDescription>
-        </Alert>
-      ) : error ? (
-        <Alert variant="destructive" className="mx-auto mt-4 w-[calc(100%-2rem)] max-w-3xl">
-          <CircleAlert />
-          <AlertTitle>{tSession("refreshFailed")}</AlertTitle>
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      ) : null}
-
       <div className="relative min-h-0 flex-1 overflow-hidden">
         <ScrollArea
           viewportRef={timelineRef}
@@ -969,12 +969,34 @@ export function SessionDetail({
               pendingApprovals.length > 0 && "pt-32",
             )}
           >
+            {needsAuth ? (
+              <AgentAuthBanner
+                className="sticky top-0 z-[1] max-w-full"
+                compact
+                agentName={runtimeLabel(session.runtime)}
+                methods={authMethods}
+                hint={agentReport?.authHint || error}
+                signingIn={signingIn}
+                disabled={connector?.status !== "online"}
+                onSignIn={(methodId) => void signInAgent(methodId)}
+              />
+            ) : error ? (
+              <Alert variant="destructive" className="max-w-full min-w-0">
+                <CircleAlert />
+                <AlertTitle>{tSession("refreshFailed")}</AlertTitle>
+                <AlertDescription className="break-words">{error}</AlertDescription>
+              </Alert>
+            ) : null}
             {loadingOlder ? (
-              <div className="flex justify-center py-2 text-muted-foreground">
+              <div className="flex h-6 items-center justify-center text-muted-foreground">
                 <Loader2 className="size-4 animate-spin" />
               </div>
             ) : null}
-            {loading && !state ? <SessionSkeletonInline /> : null}
+            {loading && !state ? (
+              <div className="min-h-[8rem]" aria-hidden="true">
+                <SessionSkeletonInline />
+              </div>
+            ) : null}
             {state && state.items.length === 0 && detachedApprovals.length === 0 ? (
               <p className="py-12 text-center text-sm text-muted-foreground">{tSession("noActivity")}</p>
             ) : null}
@@ -1012,12 +1034,17 @@ export function SessionDetail({
                 onResolveApproval={handleResolveApproval}
               />
             ))}
-            {session.status === "running" ? (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="size-4 animate-spin" />
-                <span>{tSession("runtimeWorking", { runtime: runtimeLabel(session.runtime) })}</span>
-              </div>
-            ) : null}
+            {/* Fixed-height working row avoids layout jump when status flips. */}
+            <div
+              className={cn(
+                "flex h-7 items-center gap-2 text-sm text-muted-foreground transition-opacity",
+                showWorking ? "opacity-100" : "pointer-events-none opacity-0",
+              )}
+              aria-hidden={!showWorking}
+            >
+              <Loader2 className={cn("size-4", showWorking && "animate-spin")} />
+              <span>{workingLabel}</span>
+            </div>
           </div>
         </ScrollArea>
         {showScrollBottom ? (

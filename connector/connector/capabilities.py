@@ -15,6 +15,7 @@ from connector.acp.discovery import discover_acp_manifest
 from connector.acp.manifest import AgentManifest, load_builtin_manifests
 from connector.launch import LaunchTarget, launch_target, path_exists_for_launch
 from connector.codex.rpc import JsonRpcStdioClient, codex_candidate_paths
+from connector.logging import logger
 
 
 _CODEX_CHECK_TIMEOUT_S = 8.0
@@ -32,23 +33,50 @@ class RuntimeDiscovery:
 
 
 async def discover_runtime_capabilities() -> RuntimeDiscovery:
+    """Discover all runtimes in parallel with *light* ACP probes.
+
+    Previously every ACP agent was deep-probed sequentially (spawn + session/new),
+    which could take minutes and starve the event loop / reconnect loop.
+    """
     started = time.perf_counter()
-    codex_report, codex_target = await discover_codex_capability()
-    claude_report, claude_target = await discover_claude_capability()
+    manifests = load_builtin_manifests()
+
+    async def _one_acp(manifest: AgentManifest) -> tuple[str, dict[str, Any], LaunchTarget | None]:
+        report, target = await discover_acp_manifest(manifest, deep_probe=False)
+        return manifest.id, report, target
+
+    codex_task = asyncio.create_task(discover_codex_capability())
+    claude_task = asyncio.create_task(discover_claude_capability())
+    acp_tasks = [asyncio.create_task(_one_acp(m)) for m in manifests]
+
+    codex_report, codex_target = await codex_task
+    claude_report, claude_target = await claude_task
+    acp_results = await asyncio.gather(*acp_tasks, return_exceptions=True)
+
     runtimes: dict[str, Any] = {
         "codex": codex_report,
         "claude": claude_report,
     }
     acp_targets: dict[str, LaunchTarget | None] = {}
-    for manifest in load_builtin_manifests():
-        report, target = await discover_acp_manifest(manifest)
-        runtimes[manifest.id] = report
-        acp_targets[manifest.id] = target
+    for result in acp_results:
+        if isinstance(result, BaseException):
+            logger.exception("ACP discovery task failed: {}", result)
+            continue
+        runtime_id, report, target = result
+        runtimes[runtime_id] = report
+        acp_targets[runtime_id] = target
+
+    elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
+    logger.info(
+        "runtime capability discovery finished elapsed_ms={} acp_agents={}",
+        elapsed_ms,
+        len(acp_targets),
+    )
     return RuntimeDiscovery(
         report={
             "version": 1,
             "checkedAt": _now_iso(),
-            "elapsedMs": round((time.perf_counter() - started) * 1000, 1),
+            "elapsedMs": elapsed_ms,
             "runtimes": runtimes,
         },
         codex_bin=codex_target.path if codex_target else None,
