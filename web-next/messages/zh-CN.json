@@ -936,6 +936,7 @@
       "loadFailed": "无法加载账号。",
       "mobileQrFailed": "生成二维码失败。",
       "mobileConfirmFailed": "确认移动端登录失败。",
+      "mobileLoopbackBlocked": "当前页面是 127.0.0.1/localhost，二维码里的地址手机会连不上。请用同一 Wi-Fi 打开电脑局域网地址（例如 http://192.168.x.x:18080）后再生成二维码。",
       "mobileRiskDescription": "为 {userId} 创建一个短期有效的二维码。只确认你本人发起的扫码。",
       "mobileScanDescription": "使用移动端应用扫描此二维码继续。",
       "mobileRiskNote": "任何能够扫描并被确认此二维码的人，都可以作为 {userId} 登录。请保持此屏幕私密。",

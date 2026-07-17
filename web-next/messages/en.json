@@ -936,6 +936,7 @@
       "loadFailed": "Failed to load account.",
       "mobileQrFailed": "Failed to generate QR code.",
       "mobileConfirmFailed": "Failed to confirm mobile sign-in.",
+      "mobileLoopbackBlocked": "This page is on 127.0.0.1/localhost, so the QR would embed an address your phone cannot reach. Open the PC over the same Wi-Fi (for example http://192.168.x.x:18080), then generate the QR again.",
       "mobileRiskDescription": "Create a short-lived QR code for {userId}. Only approve a scan you started yourself.",
       "mobileScanDescription": "Scan this QR code from the mobile app to continue.",
       "mobileRiskNote": "Anyone who can scan and confirm this QR code can sign in as {userId}. Keep this screen private.",

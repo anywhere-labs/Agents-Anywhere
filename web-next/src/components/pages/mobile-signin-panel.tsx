@@ -37,13 +37,18 @@ function formatExpiry(value: string): string {
 
 function resolveMobileWebUrl(): string {
   if (typeof window === "undefined") return ""
-  const { hostname, origin } = window.location
-  const isLocalDev = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1"
-  if (isLocalDev) {
-    const api = process.env.NEXT_PUBLIC_AGENTS_ANYWHERE_API
-    if (api) return api.replace(/\/$/, "")
+  // Phone apps call this URL directly. Always embed the browser origin so LAN
+  // access (e.g. http://192.168.x.x:18080) works; never rewrite to 127.0.0.1 API.
+  return window.location.origin.replace(/\/$/, "")
+}
+
+function isLoopbackWebUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase()
+    return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]"
+  } catch {
+    return true
   }
-  return origin.replace(/\/$/, "")
 }
 
 function mobileLoginQrPayload(qr: MobileLoginQrCreateResponse) {
@@ -83,7 +88,16 @@ export function MobileSignInPanel({ token, userId }: Props) {
     setOpen(value)
   }, [busy, reset])
 
+  const webUrl = typeof window !== "undefined" ? resolveMobileWebUrl() : ""
+  const loopbackBlocked = Boolean(webUrl && isLoopbackWebUrl(webUrl))
+
   const generateQr = React.useCallback(async () => {
+    const origin = resolveMobileWebUrl()
+    if (!origin || isLoopbackWebUrl(origin)) {
+      setError(t("mobileLoopbackBlocked"))
+      setStep("confirm_risk")
+      return
+    }
     setStep("generating")
     setError(null)
     try {
@@ -180,7 +194,14 @@ export function MobileSignInPanel({ token, userId }: Props) {
             </Alert>
           )}
 
-          {step === "confirm_risk" && (
+          {step === "confirm_risk" && loopbackBlocked && (
+            <Alert variant="destructive">
+              <ShieldAlert className="size-4" />
+              <AlertDescription>{t("mobileLoopbackBlocked")}</AlertDescription>
+            </Alert>
+          )}
+
+          {step === "confirm_risk" && !loopbackBlocked && (
             <Alert>
               <ShieldAlert className="size-4" />
               <AlertDescription>{t("mobileRiskNote", { userId })}</AlertDescription>
@@ -242,7 +263,7 @@ export function MobileSignInPanel({ token, userId }: Props) {
                 <Button variant="outline" onClick={() => handleOpen(false)}>
                   {t("cancel")}
                 </Button>
-                <Button onClick={() => void generateQr()}>
+                <Button onClick={() => void generateQr()} disabled={loopbackBlocked}>
                   {t("generateQr")}
                 </Button>
               </>
