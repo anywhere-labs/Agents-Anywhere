@@ -391,6 +391,11 @@ function XtermHost({
         scrollback: 5000,
         convertEol: true,
         allowProposedApi: true,
+        // Windows ConPTY + PowerShell: avoid DA query/response junk like `[?1;2c`.
+        windowsPty: {
+          backend: "conpty",
+          buildNumber: 19041,
+        },
       })
       fit = new FitAddon()
       term.loadAddon(fit)
@@ -401,6 +406,8 @@ function XtermHost({
 
       term.onData((data) => {
         if (socket?.readyState !== WebSocket.OPEN) return
+        // Drop device-attribute replies that some shells echo as typed input.
+        if (isTerminalControlNoise(data)) return
         socket.send(JSON.stringify({ type: "input", data: utf8ToBase64(data) }))
       })
 
@@ -438,11 +445,11 @@ function XtermHost({
         if (message.type === "replay") {
           lastSeenSeq = message.seq
           term.reset()
-          term.write(base64ToBytes(message.data))
+          term.write(sanitizeTerminalOutput(base64ToBytes(message.data)))
         } else if (message.type === "output") {
           if (message.seq <= lastSeenSeq) return
           lastSeenSeq = message.seq
-          term.write(base64ToBytes(message.data))
+          term.write(sanitizeTerminalOutput(base64ToBytes(message.data)))
         } else if (message.type === "exit") {
           printExit(message.exitCode)
         } else if (message.type === "error") {
@@ -507,6 +514,30 @@ function base64ToBytes(base64: string): Uint8Array {
   const bytes = new Uint8Array(binary.length)
   for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index)
   return bytes
+}
+
+/** CSI Device Attributes responses / echoes that pollute PowerShell prompts on Windows. */
+const DA_RESPONSE_RE = /(?:\u001b)?\[\?[0-9;]*c/g
+
+function sanitizeTerminalOutput(data: Uint8Array): Uint8Array {
+  // Fast path: skip if no '[' (common for DA junk `[?1;2c`)
+  let hasBracket = false
+  for (let i = 0; i < data.length; i += 1) {
+    if (data[i] === 0x5b /* [ */ || data[i] === 0x1b /* ESC */) {
+      hasBracket = true
+      break
+    }
+  }
+  if (!hasBracket) return data
+  const text = new TextDecoder("utf-8", { fatal: false }).decode(data)
+  const cleaned = text.replace(DA_RESPONSE_RE, "")
+  if (cleaned === text) return data
+  return new TextEncoder().encode(cleaned)
+}
+
+function isTerminalControlNoise(data: string): boolean {
+  // Primary/secondary DA replies sometimes show up as onData (typed input).
+  return /^(?:\u001b)?\[\?[0-9;]*c$/.test(data)
 }
 
 type TerminalStreamMessage =
