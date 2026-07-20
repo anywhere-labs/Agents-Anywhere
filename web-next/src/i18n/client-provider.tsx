@@ -19,7 +19,7 @@ const messagesByLocale = {
 } satisfies Record<AppLocale, Record<string, unknown>>
 
 export function I18nProvider({ children }: { children: React.ReactNode }) {
-  const [locale, setLocale] = React.useState<AppLocale>(initialLocale)
+  const [locale, setLocale] = React.useState<AppLocale>(routing.defaultLocale)
 
   React.useEffect(() => {
     const nextLocale = readStoredLocale() ?? detectBrowserLocale()
@@ -32,13 +32,12 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
   }, [locale])
 
   return (
-    <NextIntlClientProvider locale={locale} messages={messagesByLocale[locale]}>
+    <NextIntlClientProvider
+      locale={locale}
+      messages={messagesByLocale[locale]}
+      timeZone="Asia/Shanghai"
+    >
       {children}
     </NextIntlClientProvider>
   )
-}
-
-function initialLocale(): AppLocale {
-  if (typeof window === "undefined") return routing.defaultLocale
-  return readStoredLocale() ?? detectBrowserLocale()
 }
