@@ -1,7 +1,4 @@
-import createNextIntlPlugin from "next-intl/plugin";
 import type { NextConfig } from "next";
-
-const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
 
 const apiNamespace = "/api/v2";
 const apiTarget = process.env.AGENTS_ANYWHERE_API ?? "http://127.0.0.1:8000";
@@ -39,4 +36,4 @@ const nextConfig: NextConfig = {
       })
 };
 
-export default withNextIntl(nextConfig);
+export default nextConfig;
