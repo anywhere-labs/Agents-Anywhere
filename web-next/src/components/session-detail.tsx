@@ -517,29 +517,41 @@ export function SessionDetail({
     let cancelled = false
     let socket: WebSocket | null = null
     let reconnectTimer: number | null = null
+    let delayedRefetchTimer: number | null = null
+    let refetchPromise: Promise<void> | null = null
+    let recoveryPromise: Promise<void> | null = null
     let snapshotReady = false
     let bufferedEvents: ProtocolEventEnvelope[] = []
     const refetch = () => {
+      if (refetchPromise) return refetchPromise
       markAutoScrollIfNearBottom()
-      loadInitialSessionState(token, sessionId)
+      refetchPromise = loadInitialSessionState(token, sessionId)
         .then((next) => {
           if (cancelled) return
           const merged = applyOptimisticItemsRef.current(next)
           clearResolvedOptimisticMessagesRef.current(sessionId, merged.items)
-          nextSeqRef.current = Math.max(nextSeqRef.current, next.nextSeq)
+          nextSeqRef.current = Math.max(nextSeqRef.current, cursorSequence(next.eventCursor) || next.nextSeq)
           setState((current) => current ? { ...merged, items: preserveOptimisticItems(merged.items, current.items) } : merged)
           onSessionUpdated?.(next.session)
         })
         .catch(() => undefined)
+        .finally(() => {
+          refetchPromise = null
+        })
+      return refetchPromise
+    }
+
+    const scheduleRefetch = () => {
+      if (cancelled || refetchPromise || delayedRefetchTimer !== null) return
+      delayedRefetchTimer = window.setTimeout(() => {
+        delayedRefetchTimer = null
+        void refetch()
+      }, 1200)
     }
 
     const applyEvent = (event: ProtocolEventEnvelope) => {
       if (cancelled || event.sessionId !== sessionId) return
-      if (event.type === "keepalive" || event.sequence <= nextSeqRef.current) return
-      if (event.sequence > nextSeqRef.current + 1 && nextSeqRef.current > 0) {
-        void recoverEvents(nextSeqRef.current)
-        return
-      }
+      if (event.type === "keepalive") return
       if (event.type === "session.refetch_required") {
         refetch()
         return
@@ -552,16 +564,26 @@ export function SessionDetail({
     }
 
     const recoverEvents = async (afterSeq: number) => {
+      if (recoveryPromise) return recoveryPromise
       try {
-        const recovery = await dashboardApi.getSessionEvents(token, sessionId, `seq:${afterSeq}`)
-        if (cancelled) return
-        if (recovery.snapshotRequired) {
-          refetch()
-          return
-        }
-        for (const event of recovery.events) applyEvent(event)
+        recoveryPromise = dashboardApi.getSessionEvents(token, sessionId, `seq:${afterSeq}`)
+          .then((recovery) => {
+            if (cancelled) return
+            if (recovery.snapshotRequired) {
+              scheduleRefetch()
+              return
+            }
+            for (const event of recovery.events) applyEvent(event)
+          })
+          .catch(() => {
+            scheduleRefetch()
+          })
+          .finally(() => {
+            recoveryPromise = null
+          })
+        return recoveryPromise
       } catch {
-        refetch()
+        scheduleRefetch()
       }
     }
 
@@ -626,6 +648,7 @@ export function SessionDetail({
     return () => {
       cancelled = true
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
+      if (delayedRefetchTimer !== null) window.clearTimeout(delayedRefetchTimer)
       socket?.close()
     }
   }, [
@@ -1216,14 +1239,16 @@ function mergeSessionEvent(
 
   const nextNotices = notice ? mergeNotices(current.notices, [notice]) : current.notices
   const nextItems = item ? mergeTimelineItems(current.items, [item]) : current.items
+  const nextSession = session && session.updatedSeq >= current.session.updatedSeq ? session : current.session
+  const nextSeq = Math.max(current.nextSeq, event.sequence)
 
   return {
     ...current,
-    session: session ?? current.session,
+    session: nextSession,
     items: nextItems,
     notices: nextNotices,
-    nextSeq: Math.max(current.nextSeq, event.sequence),
-    eventCursor: event.cursor,
+    nextSeq,
+    eventCursor: event.sequence >= current.nextSeq ? event.cursor : current.eventCursor,
     effectiveCapabilities: effectiveCapabilities ?? current.effectiveCapabilities,
     serverTime: event.emittedAt ?? current.serverTime,
   }

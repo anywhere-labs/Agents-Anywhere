@@ -66,14 +66,14 @@ router = APIRouter(tags=["connector-ingress"])
 class IngestEffect:
     """What one applied notification wants pushed to SSE subscribers.
 
-    Event-Carried State Transfer: the high-frequency path (timeline.itemUpsert
-    during streaming) carries the item payload itself, so the browser applies
-    it directly and never calls GET /state. Only bulk/ambiguous changes
-    (timeline.sync) set `needs_refetch`, which is rare (turn-end + ~30s sync).
+    Event-Carried State Transfer: timeline.itemUpsert and non-destructive
+    timeline.sync carry committed item payloads so the browser applies them
+    directly. Only destructive snapshot replacement asks clients to refetch.
     """
 
     session_id: str | None = None
     item: dict[str, Any] | None = None
+    items: list[dict[str, Any]] | None = None
     session_changed: bool = False
     approvals_changed: bool = False
     notices_changed: bool = False
@@ -95,6 +95,8 @@ async def _publish_effects(
         )
         if eff.item is not None:
             bucket["items"].append(eff.item)
+        if eff.items:
+            bucket["items"].extend(eff.items)
         bucket["session"] = bucket["session"] or eff.session_changed
         bucket["approvals"] = bucket["approvals"] or eff.approvals_changed
         bucket["notices"] = bucket["notices"] or eff.notices_changed
@@ -577,14 +579,15 @@ async def apply_connector_notification(
             return IngestEffect()
         items = [_timeline_item_for_session(item, session_id) for item in items]
         items = await _tag_active_run_user_messages(db, session_id, items)
-        if await _should_replace_timeline_snapshot(db, session_id, items):
-            await db.replace_timeline_snapshot(
+        should_replace_snapshot = await _should_replace_timeline_snapshot(db, session_id, items)
+        if should_replace_snapshot:
+            stored_items = await db.replace_timeline_snapshot(
                 session_id=session_id,
                 source_observed_at=params.get("sourceObservedAt"),
                 items=items,
             )
         else:
-            await db.replace_timeline(
+            stored_items = await db.replace_timeline(
                 session_id=session_id,
                 source_observed_at=params.get("sourceObservedAt"),
                 items=items,
@@ -606,14 +609,15 @@ async def apply_connector_notification(
                         turn_id=item.turnId,
                         reason="turn_finished",
                     )
-        # Bulk replace can also remove items — let the client do one /state to
-        # reconcile rather than trying to diff a removal over SSE. Low frequency
-        # (turn-end snapshot + ~30s periodic sync), so no refetch storm.
+        # Snapshot replacement can remove items or assign one revision to many
+        # items, so clients should reconcile from the HTTP snapshot. Normal
+        # timeline.sync merges with existing items and can be projected over WS.
         return IngestEffect(
             session_id=session_id,
-            needs_refetch=True,
             session_changed=True,
             notices_changed=any(item.type == "turn.end" for item in items),
+            needs_refetch=should_replace_snapshot,
+            items=[item.model_dump(mode="json") for item in stored_items] if not should_replace_snapshot else None,
         )
     elif method == "timeline.itemUpsert":
         item = TimelineItemIn.model_validate(params["item"])

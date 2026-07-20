@@ -5068,6 +5068,57 @@ def test_session_ws_projects_timeline_and_notice_events(tmp_path):
         assert "notice.created" in event_types or "notice.updated" in event_types
 
 
+def test_session_ws_projects_codex_timeline_sync_items_without_refetch(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    ticket = ws_ticket(client, session_id, headers)
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "notifications": [
+                    {
+                        "method": "timeline.sync",
+                        "params": {
+                            "sessionId": session_id,
+                            "items": [
+                                {
+                                    "id": "tl_ws_sync_message",
+                                    "sessionId": session_id,
+                                    "turnId": "turn_ws_sync",
+                                    "type": "message",
+                                    "status": "done",
+                                    "role": "assistant",
+                                    "content": {"text": "synced over ws"},
+                                    "source": {
+                                        "runtime": "codex",
+                                        "sessionId": "thr_1",
+                                        "turnId": "turn_ws_sync",
+                                        "itemId": "msg_sync",
+                                        "itemType": "agentMessage",
+                                    },
+                                    "orderSeq": 1,
+                                    "revision": 1,
+                                    "contentHash": "sha256:ws-sync-message",
+                                }
+                            ],
+                        },
+                    }
+                ],
+            },
+        )
+        assert response.status_code == 200, response.text
+
+        received = [ws.receive_json() for _ in range(2)]
+        assert "session.refetch_required" not in {event["type"] for event in received}
+        timeline_events = [event for event in received if event["type"] == "timeline.item_created"]
+        assert timeline_events
+        assert timeline_events[0]["payload"]["item"]["content"]["text"] == "synced over ws"
+
+
 def test_session_events_recovery_returns_json_events(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
