@@ -19,8 +19,10 @@ class FakeResponse:
 
 
 class FakeHttpClient:
+    calls: list[tuple[str, dict[str, Any] | None]] = []
+
     def __init__(self, *args: Any, **kwargs: Any) -> None:
-        self.calls: list[tuple[str, dict[str, Any] | None]] = []
+        return None
 
     async def __aenter__(self) -> FakeHttpClient:
         return self
@@ -30,9 +32,9 @@ class FakeHttpClient:
 
     async def post(self, url: str, json: dict[str, Any] | None = None) -> FakeResponse:
         self.calls.append((url, json))
-        if url.endswith("/pairing/start"):
+        if url.endswith("/api/v2/pairing/start"):
             return FakeResponse({"pairingId": "pair_1", "code": "123456"})
-        if url.endswith("/pairing/poll"):
+        if url.endswith("/api/v2/pairing/poll"):
             return FakeResponse(
                 {
                     "status": "claimed",
@@ -83,6 +85,7 @@ class FakeBackendRpcClient:
 def test_pair_starts_connector_after_saving_credentials(monkeypatch, tmp_path, capsys) -> None:
     config_path = tmp_path / "connector.json"
     FakeBackendRpcClient.started_configs = []
+    FakeHttpClient.calls = []
     monkeypatch.setattr(cli_module.httpx, "AsyncClient", FakeHttpClient)
     monkeypatch.setattr(cli_module, "BackendRpcClient", FakeBackendRpcClient)
 
@@ -101,12 +104,17 @@ def test_pair_starts_connector_after_saving_credentials(monkeypatch, tmp_path, c
     loaded = ConnectorConfig.load(config_path)
     assert loaded.connector_id == "conn_1"
     assert [config.connector_id for config in FakeBackendRpcClient.started_configs] == ["conn_1"]
+    assert [url for url, _json in FakeHttpClient.calls] == [
+        "http://127.0.0.1:8000/api/v2/pairing/start",
+        "http://127.0.0.1:8000/api/v2/pairing/poll",
+    ]
     assert "connection will stop when this shell session ends" in capsys.readouterr().out
 
 
 def test_pair_no_start_only_saves_credentials(monkeypatch, tmp_path) -> None:
     config_path = tmp_path / "connector.json"
     FakeBackendRpcClient.started_configs = []
+    FakeHttpClient.calls = []
     monkeypatch.setattr(cli_module.httpx, "AsyncClient", FakeHttpClient)
     monkeypatch.setattr(cli_module, "BackendRpcClient", FakeBackendRpcClient)
 
@@ -125,11 +133,16 @@ def test_pair_no_start_only_saves_credentials(monkeypatch, tmp_path) -> None:
 
     assert ConnectorConfig.load(config_path).connector_token == "cxt_secret"
     assert FakeBackendRpcClient.started_configs == []
+    assert [url for url, _json in FakeHttpClient.calls] == [
+        "http://127.0.0.1:8000/api/v2/pairing/start",
+        "http://127.0.0.1:8000/api/v2/pairing/poll",
+    ]
 
 
 def test_pair_accepts_legacy_server_url_flag(monkeypatch, tmp_path) -> None:
     config_path = tmp_path / "connector.json"
     FakeBackendRpcClient.started_configs = []
+    FakeHttpClient.calls = []
     monkeypatch.setattr(cli_module.httpx, "AsyncClient", FakeHttpClient)
     monkeypatch.setattr(cli_module, "BackendRpcClient", FakeBackendRpcClient)
 
@@ -148,6 +161,7 @@ def test_pair_accepts_legacy_server_url_flag(monkeypatch, tmp_path) -> None:
     asyncio.run(cli_module._pair(args))
 
     assert ConnectorConfig.load(config_path).connector_id == "conn_1"
+    assert FakeHttpClient.calls[0][0] == "http://127.0.0.1:8000/api/v2/pairing/start"
 
 
 def test_login_alias_is_still_accepted() -> None:

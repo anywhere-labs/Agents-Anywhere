@@ -149,7 +149,7 @@ async def _pair(args: argparse.Namespace) -> None:
     server_url = await _resolve_server_url_for_pair(args.server or args.server_url, timeout=10)
     async with httpx.AsyncClient(timeout=30) as client:
         start_response = await client.post(
-            f"{server_url}/pairing/start",
+            _api_v2_url(server_url, "/pairing/start"),
             json={"serverUrl": server_url, "ttlSeconds": int(args.timeout)},
         )
         start_response.raise_for_status()
@@ -161,7 +161,7 @@ async def _pair(args: argparse.Namespace) -> None:
         print("Claim it from the web UI")
         # print(
         #     "curl -s "
-        #     f"{server_url}/pairing/claim "
+        #     f"{_api_v2_url(server_url, '/pairing/claim')} "
         #     "-H 'content-type: application/json' "
         #     f"-d '{{\"code\":\"{code}\",\"name\":\"local-codex\",\"userId\":\"local\",\"serverUrl\":\"{server_url}\"}}'"
         # )
@@ -169,7 +169,7 @@ async def _pair(args: argparse.Namespace) -> None:
 
         deadline = time.monotonic() + args.timeout
         while time.monotonic() < deadline:
-            poll_response = await client.post(f"{server_url}/pairing/poll", json={"pairingId": pairing_id})
+            poll_response = await client.post(_api_v2_url(server_url, "/pairing/poll"), json={"pairingId": pairing_id})
             poll_response.raise_for_status()
             payload = poll_response.json()
             if payload["status"] == "claimed" and payload.get("config"):
@@ -186,6 +186,11 @@ async def _pair(args: argparse.Namespace) -> None:
             await asyncio.sleep(args.poll_interval)
 
     raise TimeoutError("pairing timed out")
+
+
+def _api_v2_url(server_url: str, path: str) -> str:
+    normalized_path = path if path.startswith("/") else f"/{path}"
+    return f"{server_url.rstrip('/')}/api/v2{normalized_path}"
 
 
 async def _run_cli_connector(config: ConnectorConfig, *, config_path: str | Path | None) -> None:
