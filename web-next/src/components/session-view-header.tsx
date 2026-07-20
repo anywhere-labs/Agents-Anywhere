@@ -232,8 +232,8 @@ function SessionMetaBadge({
   const timelineSummary = memorySnapshot
     ? t("timelineSummary", { count: memorySnapshot.items.length, seq: memorySnapshot.nextSeq })
     : t("memoryLoading")
-  const approvalsSummary = memorySnapshot
-    ? t("approvalsPending", { count: memorySnapshot.pendingApprovalCount })
+  const interactionsSummary = memorySnapshot
+    ? t("interactionsPending", { count: memorySnapshot.pendingInteractionCount })
     : t("memoryLoading")
   const rows = [
     [t("device"), connectorName ?? session.connectorId],
@@ -243,7 +243,7 @@ function SessionMetaBadge({
     [t("sessionId"), session.id],
     [t("externalId"), memorySnapshot?.session.externalSessionId ?? t("none")],
     [t("timeline"), timelineSummary],
-    [t("approvals"), approvalsSummary],
+    [t("interactions"), interactionsSummary],
   ] as const
 
   return (

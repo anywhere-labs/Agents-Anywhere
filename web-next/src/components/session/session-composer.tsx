@@ -39,7 +39,7 @@ export type { AttachedFile }
 
 export function SessionComposer({
   session,
-  pendingApprovalCount,
+  pendingInteractionCount,
   sending,
   interrupting,
   takeoverBusy,
@@ -54,7 +54,7 @@ export function SessionComposer({
   onToggleTakeover,
 }: {
   session: SessionView
-  pendingApprovalCount: number
+  pendingInteractionCount: number
   sending: boolean
   interrupting: boolean
   takeoverBusy: boolean
@@ -72,16 +72,18 @@ export function SessionComposer({
   const tNew = useTranslations("dashboard.new")
   const { attachments, isDragging, add, remove, clear, onDragEnter, onDragLeave, onDragOver, onDrop } =
     useAttachments()
-  const isBusy = session.status === "running" || session.status === "waiting_approval"
+  const isBusy = session.status === "running" || session.status === "blocked"
+  const isStopping = session.status === "stopping"
+  const isPending = session.status === "pending"
   const connectorOnline = session.connectorStatus === "online"
   const canSend =
     connectorOnline &&
     session.takeover &&
     !sending &&
     !interrupting &&
-    (session.status === "idle" || session.status === "error")
+    session.status === "idle"
   const hasInput = value.trim().length > 0 || attachments.length > 0
-  const showInterrupt = isBusy
+  const showInterrupt = (session.status === "running" || session.status === "blocked" || session.status === "pending") && !isStopping
   const settingsFields = runtimeConfigFields(runtimeSchema, runtimeSettings, "session")
   const permissionField = settingsFields.find((field) => field.key === "permissionMode")
   const modelField = settingsFields.find((field) => field.key === "model")
@@ -117,13 +119,11 @@ export function SessionComposer({
     ? tSession("readOnlyPlaceholder")
     : !connectorOnline
       ? tSession("deviceOfflinePlaceholder")
-      : pendingApprovalCount > 0
+      : pendingInteractionCount > 0
         ? tSession("waitingApprovalPlaceholder")
-        : isBusy
+        : isStopping || isPending || isBusy
           ? tSession("busyPlaceholder")
-          : session.status === "error"
-            ? tSession("errorPlaceholder")
-            : tSession("replyPlaceholder")
+          : tSession("replyPlaceholder")
 
   const submit = async () => {
     if (!canSend || !hasInput) return

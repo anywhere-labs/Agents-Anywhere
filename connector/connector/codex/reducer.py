@@ -22,6 +22,7 @@ class ReductionResult:
     session_update: dict[str, Any] | None = None
     timeline_items: list[dict[str, Any]] = field(default_factory=list)
     approvals: list[dict[str, Any]] = field(default_factory=list)
+    notices: list[dict[str, Any]] = field(default_factory=list)
 
 
 class TimelineReducer:
@@ -280,6 +281,16 @@ class TimelineReducer:
                 event=method,
             )
             return ReductionResult(timeline_items=[item])
+
+        compact_notice = _compact_notice_from_notification(
+            method=method,
+            params=params,
+            session_id=session_id,
+            thread_id=thread_id,
+            turn_id=turn_id,
+        )
+        if compact_notice is not None:
+            return ReductionResult(notices=[compact_notice])
 
         if method in CODEX_APPROVAL_METHODS:
             approval = self._approval_from_request(method, message, params, session_id, thread_id, turn_id)
@@ -859,6 +870,99 @@ def _client_message_text_matches(actual: str, expected: str) -> bool:
 def _short_hash(value: Any, *, length: int = 20) -> str:
     encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()[:length]
+
+
+def _stable_notice_id(kind: str, *values: Any) -> str:
+    return f"notice_{kind}_{_short_hash(values, length=24)}"
+
+
+def _compact_notice_from_notification(
+    *,
+    method: str | None,
+    params: dict[str, Any],
+    session_id: str,
+    thread_id: str | None,
+    turn_id: str | None,
+) -> dict[str, Any] | None:
+    if not _is_compact_notification(method, params):
+        return None
+    state = _compact_state(method, params)
+    severity = "error" if state == "failed" else "success" if state == "completed" else "info"
+    title = _string_value(params.get("title")) or {
+        "started": "Compacting context",
+        "failed": "Compact failed",
+        "completed": "Compact completed",
+    }.get(state, "Compact update")
+    message = _string_value(params.get("message")) or _string_value(params.get("summary"))
+    if message is None and state == "completed":
+        message = "The session context was compacted."
+    elif message is None and state == "started":
+        message = "The runtime is compacting the session context."
+    elif message is None and state == "failed":
+        message = "The runtime could not compact the session context."
+    operation_id = _string_value(params.get("operationId"))
+    revision_value = params.get("revision")
+    revision = int(revision_value) if isinstance(revision_value, (int, str)) and str(revision_value).isdigit() else 1
+    return {
+        "noticeId": _string_value(params.get("noticeId")) or _stable_notice_id(
+            "compact",
+            session_id,
+            turn_id,
+            thread_id,
+            state,
+            params.get("compactId") or params.get("id"),
+        ),
+        "type": "notification",
+        "sessionId": session_id,
+        "source": {
+            "runtime": "codex",
+            "adapter": "codex",
+            **({"operationId": operation_id} if operation_id else {}),
+        },
+        "title": title,
+        "message": message,
+        "severity": severity,
+        "status": "open",
+        "context": {
+            "reason": "compact",
+            "turnId": turn_id,
+            "threadId": thread_id,
+            "state": state,
+            "payload": params,
+        },
+        "metadata": {
+            "category": "compact",
+            "state": state,
+        },
+        "revision": revision,
+        "createdAt": _string_value(params.get("createdAt")) or utc_now(),
+    }
+
+
+def _is_compact_notification(method: str | None, params: dict[str, Any]) -> bool:
+    values = [
+        method,
+        _string_value(params.get("type")),
+        _string_value(params.get("kind")),
+        _string_value(params.get("event")),
+        _string_value(params.get("category")),
+    ]
+    return any(value is not None and "compact" in value.lower() for value in values)
+
+
+def _compact_state(method: str | None, params: dict[str, Any]) -> str:
+    status = (
+        _string_value(params.get("status"))
+        or _string_value(params.get("state"))
+        or _string_value(params.get("phase"))
+        or method
+        or ""
+    ).lower()
+    if any(token in status for token in ("fail", "error")):
+        return "failed"
+    if any(token in status for token in ("start", "begin", "running")):
+        return "started"
+    return "completed"
 
 
 def _extract_thread_id(params: dict[str, Any]) -> str | None:

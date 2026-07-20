@@ -8,7 +8,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { JsonBlock, TimelineStatusBadge, ToolCard } from "@/components/session/session-tool-cards"
 import { openSessionFilePreview } from "@/components/markdown-text"
 import { cn } from "@/lib/utils"
-import type { Approval, ApprovalResolveStatus, SessionView, TimelineItem } from "@/features/dashboard/types"
+import type { Notice, SessionView, TimelineItem } from "@/features/dashboard/types"
 import { firstTextOf, messageText, recordsOf, textOf } from "@/components/session/session-utils"
 import { extractAttachments, stripInjectedAttachmentMentions } from "@/features/dashboard/attachments"
 import { MessageAttachments } from "@/components/session/message-attachments"
@@ -20,18 +20,18 @@ export function TimelineEntry({
   token,
   session,
   item,
-  approval,
-  resolvingApprovalId,
-  resolvingStatus,
-  onResolveApproval,
+  interaction,
+  resolvingNoticeId,
+  resolvingActionId,
+  onRespondInteraction,
 }: {
   token: string
   session: SessionView
   item: TimelineItem
-  approval?: Approval
-  resolvingApprovalId: string | null
-  resolvingStatus: ApprovalResolveStatus | null
-  onResolveApproval: (approvalId: string, status: ApprovalResolveStatus) => void
+  interaction?: Notice
+  resolvingNoticeId: string | null
+  resolvingActionId: string | null
+  onRespondInteraction: (noticeId: string, actionId: string) => void
 }) {
   if (item.type === "turn.start" || item.type === "turn.end") return null
   if (item.type === "message") return <MessageCard token={token} session={session} item={item} />
@@ -41,10 +41,10 @@ export function TimelineEntry({
         item={item}
         token={token}
         session={session}
-        approval={approval}
-        resolvingApprovalId={resolvingApprovalId}
-        resolvingStatus={resolvingStatus}
-        onResolveApproval={onResolveApproval}
+        interaction={interaction}
+        resolvingNoticeId={resolvingNoticeId}
+        resolvingActionId={resolvingActionId}
+        onRespondInteraction={onRespondInteraction}
       />
     )
   }

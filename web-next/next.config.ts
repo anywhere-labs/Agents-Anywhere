@@ -27,7 +27,6 @@ const nextConfig: NextConfig = {
             "/admin/:path*",
             "/health",
             "/agents/:path*",
-            "/approvals/:path*",
             "/connectors/:path*",
             "/pairing/:path*",
             "/sessions/:path*",

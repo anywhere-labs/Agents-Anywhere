@@ -53,7 +53,7 @@ export type ConnectorView = {
   }
 }
 
-export type SessionStatus = "idle" | "running" | "waiting_approval" | "error"
+export type SessionStatus = "idle" | "pending" | "running" | "stopping" | "blocked"
 
 export type SessionView = {
   id: string
@@ -254,17 +254,17 @@ const mockSessions: SessionView[] = [
   { id: "s3", connectorId: "conn-3", connectorStatus: "online", runtime: "Claude", title: "看一下 fastfetch", cwd: "/Users/t4wefan", status: "idle", takeover: false, pinned: false, archived: false, unread: false, lastReadSeq: 12, updatedSeq: 12, effectiveRunMode: "chat", updatedAt: "1 小时前" },
   { id: "s4", connectorId: "conn-1", connectorStatus: "online", runtime: "Codex", title: "更新一下仓库先", cwd: "C:\\Users\\admin\\repos\\agents-anywhere", status: "idle", takeover: false, pinned: true, archived: false, unread: false, lastReadSeq: 30, updatedSeq: 30, effectiveRunMode: "terminal", updatedAt: "2 小时前" },
   { id: "s5", connectorId: "conn-3", connectorStatus: "online", runtime: "Claude", title: "现在仓库是最新的吗", cwd: "/Users/t4wefan/repos", status: "idle", takeover: false, pinned: false, archived: false, unread: false, lastReadSeq: 10, updatedSeq: 10, updatedAt: "3 小时前" },
-  { id: "s6", connectorId: "conn-4", connectorStatus: "offline", runtime: "Claude", title: "这是猫还是老鼠", cwd: null, status: "error", takeover: false, pinned: false, archived: false, unread: true, lastReadSeq: 2, updatedSeq: 5, updatedAt: "昨天" },
+  { id: "s6", connectorId: "conn-4", connectorStatus: "offline", runtime: "Claude", title: "这是猫还是老鼠", cwd: null, status: "blocked", takeover: false, pinned: false, archived: false, unread: true, lastReadSeq: 2, updatedSeq: 5, updatedAt: "昨天" },
   { id: "s7", connectorId: "conn-2", connectorStatus: "offline", runtime: "Codex", title: "现在的 agents anywhere…", cwd: "C:\\Users\\admin\\dev", status: "idle", takeover: false, pinned: false, archived: false, unread: false, lastReadSeq: 20, updatedSeq: 20, updatedAt: "昨天" },
   { id: "s8", connectorId: "conn-3", connectorStatus: "online", runtime: "Claude", title: "你好", cwd: "/Users/t4wefan", status: "idle", takeover: false, pinned: false, archived: false, unread: false, lastReadSeq: 3, updatedSeq: 3, updatedAt: "昨天" },
   { id: "s9", connectorId: "conn-1", connectorStatus: "online", runtime: "Codex", title: "# Context from my IDE s…", cwd: "C:\\Users\\admin\\work", status: "idle", takeover: false, pinned: false, archived: false, unread: false, lastReadSeq: 7, updatedSeq: 7, updatedAt: "2 天前" },
-  { id: "s10", connectorId: "conn-3", connectorStatus: "online", runtime: "Codex", title: "Fix missing font warnin…", cwd: "/Users/t4wefan/code/web", status: "error", takeover: false, pinned: false, archived: false, unread: true, lastReadSeq: 4, updatedSeq: 9, updatedAt: "2 天前" },
+  { id: "s10", connectorId: "conn-3", connectorStatus: "online", runtime: "Codex", title: "Fix missing font warnin…", cwd: "/Users/t4wefan/code/web", status: "blocked", takeover: false, pinned: false, archived: false, unread: true, lastReadSeq: 4, updatedSeq: 9, updatedAt: "2 天前" },
   { id: "s11", connectorId: "conn-1", connectorStatus: "online", runtime: "Codex", title: "检查 connector 和 deskt…", cwd: "C:\\Users\\admin", status: "idle", takeover: false, pinned: false, archived: false, unread: false, lastReadSeq: 15, updatedSeq: 15, updatedAt: "3 天前" },
   { id: "s12", connectorId: "conn-3", connectorStatus: "online", runtime: "Claude", title: "https://github.com/Coi…", cwd: "/Users/t4wefan", status: "idle", takeover: false, pinned: false, archived: false, unread: false, lastReadSeq: 6, updatedSeq: 6, updatedAt: "3 天前" },
   { id: "s13", connectorId: "conn-4", connectorStatus: "offline", runtime: "Claude", title: "计算 MacBook Air 横向 …", cwd: null, status: "idle", takeover: false, pinned: false, archived: false, unread: false, lastReadSeq: 5, updatedSeq: 5, updatedAt: "4 天前" },
   { id: "s14", connectorId: "conn-1", connectorStatus: "online", runtime: "Codex", title: "创建 PyQt6 CV 基础项目", cwd: "C:\\Users\\admin\\projects\\cv", status: "idle", takeover: false, pinned: false, archived: false, unread: false, lastReadSeq: 22, updatedSeq: 22, updatedAt: "5 天前" },
   { id: "s15", connectorId: "conn-3", connectorStatus: "online", runtime: "Claude", title: "你可以控制我的电脑吗", cwd: "/Users/t4wefan", status: "idle", takeover: false, pinned: false, archived: false, unread: false, lastReadSeq: 4, updatedSeq: 4, updatedAt: "6 天前" },
-  { id: "s16", connectorId: "conn-2", connectorStatus: "offline", runtime: "Codex", title: "分析 PixPin 崩溃原因", cwd: null, status: "error", takeover: false, pinned: false, archived: false, unread: false, lastReadSeq: 8, updatedSeq: 11, updatedAt: "上周" },
+  { id: "s16", connectorId: "conn-2", connectorStatus: "offline", runtime: "Codex", title: "分析 PixPin 崩溃原因", cwd: null, status: "blocked", takeover: false, pinned: false, archived: false, unread: false, lastReadSeq: 8, updatedSeq: 11, updatedAt: "上周" },
   { id: "s17", connectorId: "conn-3", connectorStatus: "online", runtime: "Claude", title: "你看一下现在是什么情况", cwd: "/Users/t4wefan", status: "idle", takeover: false, pinned: false, archived: false, unread: false, lastReadSeq: 9, updatedSeq: 9, updatedAt: "上周" },
   { id: "s18", connectorId: "conn-4", connectorStatus: "offline", runtime: "Claude", title: "你是美国人吗", cwd: null, status: "idle", takeover: false, pinned: false, archived: false, unread: false, lastReadSeq: 2, updatedSeq: 2, updatedAt: "上周" },
   { id: "s19", connectorId: "conn-3", connectorStatus: "online", runtime: "Claude", title: "人民币是信用货币吗", cwd: "/Users/t4wefan", status: "idle", takeover: false, pinned: false, archived: false, unread: false, lastReadSeq: 3, updatedSeq: 3, updatedAt: "上周" },

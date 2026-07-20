@@ -2145,6 +2145,37 @@ def test_protocol_capabilities_ingest_and_read(tmp_path):
     }
 
 
+def test_notice_upsert_ingest_projects_notification_to_snapshot(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, access_token, session_id, headers = create_connector_and_session(client)
+
+    notice = {
+        "noticeId": "notice_compact_done",
+        "type": "notification",
+        "sessionId": session_id,
+        "source": {"runtime": "codex", "adapter": "codex"},
+        "title": "Compact completed",
+        "message": "The session context was compacted.",
+        "severity": "success",
+        "status": "open",
+        "context": {"reason": "compact", "state": "completed"},
+        "metadata": {"category": "compact", "state": "completed"},
+    }
+    ingest = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={"notifications": [{"method": "notice.upsert", "params": notice}]},
+    )
+
+    assert ingest.status_code == 200, ingest.text
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
+    assert snapshot.status_code == 200, snapshot.text
+    notices = snapshot.json()["notices"]
+    assert [item["noticeId"] for item in notices] == ["notice_compact_done"]
+    assert notices[0]["type"] == "notification"
+    assert notices[0]["metadata"]["category"] == "compact"
+
+
 def test_session_snapshot_includes_effective_capabilities(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, session_id, headers = create_connector_and_session(client)

@@ -19,15 +19,17 @@ import { createClientId } from "@/lib/id"
 import { cn } from "@/lib/utils"
 import { dashboardApi } from "@/features/dashboard/api"
 import type {
-  Approval,
-  ApprovalResolveStatus,
+  Notice,
+  ProtocolCapabilitySet,
+  ProtocolEventEnvelope,
   RuntimeConfigSchema,
+  SessionSnapshotResponse,
   SessionStateResponse,
   SessionView,
   TimelineItem,
 } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
-import { ApprovalCard, ApprovalHeaderNotice } from "@/components/session/session-approval-card"
+import { InteractionCard, InteractionHeaderNotice, NotificationCard } from "@/components/session/session-approval-card"
 import { SessionSkeleton, SessionSkeletonInline } from "@/components/session/session-skeleton"
 import { TimelineEntry } from "@/components/session/session-timeline-entry"
 import { isCreatedFileChange } from "@/components/session/session-tool-cards"
@@ -54,16 +56,17 @@ type SessionDetailProps = {
 export type SessionMemorySnapshot = {
   session: SessionView
   items: TimelineItem[]
-  approvals: Approval[]
+  notices: Notice[]
   nextSeq: number
   hasMore: boolean
   serverTime: string
-  pendingApprovalCount: number
+  pendingInteractionCount: number
 }
 
-type SessionEventEnvelope = Partial<SessionStateResponse> & {
-  sessionId?: string
-  refetch?: boolean
+type SessionRemoteState = SessionStateResponse & {
+  notices: Notice[]
+  eventCursor: string
+  effectiveCapabilities: ProtocolCapabilitySet | null
 }
 
 const AUTO_SCROLL_BOTTOM_DISTANCE = 180
@@ -137,11 +140,21 @@ function buildComposerBlurLayers({
   })
 }
 
-async function loadInitialSessionState(token: string, sessionId: string): Promise<SessionStateResponse> {
-  const state = await dashboardApi.getLatestSessionState(token, sessionId, INITIAL_TIMELINE_LIMIT)
+async function loadInitialSessionState(token: string, sessionId: string): Promise<SessionRemoteState> {
+  return sessionStateFromSnapshot(await dashboardApi.getSessionSnapshot(token, sessionId, INITIAL_TIMELINE_LIMIT))
+}
+
+function sessionStateFromSnapshot(snapshot: SessionSnapshotResponse): SessionRemoteState {
   return {
-    ...state,
-    items: sortTimelineItems(state.items),
+    session: snapshot.session,
+    items: sortTimelineItems(snapshot.timeline.items),
+    approvals: [],
+    notices: snapshot.notices,
+    nextSeq: snapshot.timeline.nextSeq,
+    hasMore: snapshot.timeline.hasMore,
+    serverTime: snapshot.serverTime,
+    eventCursor: snapshot.eventCursor,
+    effectiveCapabilities: snapshot.effectiveCapabilities,
   }
 }
 
@@ -193,14 +206,14 @@ export function SessionDetail({
     markOptimisticMessageFailed,
     sessionRefreshRequest,
   } = useWorkspace()
-  const [state, setState] = React.useState<SessionStateResponse | null>(null)
+  const [state, setState] = React.useState<SessionRemoteState | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
   const [sending, setSending] = React.useState(false)
   const [interrupting, setInterrupting] = React.useState(false)
   const [takeoverBusy, setTakeoverBusy] = React.useState(false)
-  const [resolvingApprovalId, setResolvingApprovalId] = React.useState<string | null>(null)
-  const [resolvingStatus, setResolvingStatus] = React.useState<ApprovalResolveStatus | null>(null)
+  const [resolvingNoticeId, setResolvingNoticeId] = React.useState<string | null>(null)
+  const [resolvingActionId, setResolvingActionId] = React.useState<string | null>(null)
   const [runtimeSchema, setRuntimeSchema] = React.useState<RuntimeConfigSchema | null>(null)
   const [runtimeSettings, setRuntimeSettings] = React.useState<Record<string, unknown> | null>(null)
   const [runtimeSettingsBusy, setRuntimeSettingsBusy] = React.useState(false)
@@ -226,7 +239,7 @@ export function SessionDetail({
   const composerDraft = composerDraftState.sessionId === sessionId ? composerDraftState.value : ""
   const isLocalOptimisticSession = isOptimisticSession(sessionId)
 
-  const applyOptimisticItems = React.useCallback((next: SessionStateResponse): SessionStateResponse => ({
+  const applyOptimisticItems = React.useCallback((next: SessionRemoteState): SessionRemoteState => ({
     ...next,
     items: mergeTimelineItems(next.items, getOptimisticItems(sessionId)),
   }), [getOptimisticItems, sessionId])
@@ -245,7 +258,14 @@ export function SessionDetail({
   React.useEffect(() => {
     const optimisticState = getOptimisticSessionState(sessionId)
     if (isLocalOptimisticSession) {
-      if (optimisticState) setState(optimisticState)
+      if (optimisticState) {
+        setState({
+          ...optimisticState,
+          notices: [],
+          eventCursor: `seq:${optimisticState.nextSeq}`,
+          effectiveCapabilities: null,
+        })
+      }
       return
     }
     const optimisticItems = getOptimisticItems(sessionId)
@@ -285,11 +305,11 @@ export function SessionDetail({
     onMemorySnapshotUpdated?.({
       session: state.session,
       items: state.items,
-      approvals: state.approvals,
+      notices: state.notices,
       nextSeq: state.nextSeq,
       hasMore: state.hasMore,
       serverTime: state.serverTime,
-      pendingApprovalCount: state.approvals.filter((approval) => approval.status === "pending").length,
+      pendingInteractionCount: blockingInteractions(state.notices, state.session.id).length,
     })
   }, [onMemorySnapshotUpdated, state])
 
@@ -445,7 +465,6 @@ export function SessionDetail({
   }, [loadOlderTimeline, updateScrollBottomState])
 
   React.useEffect(() => {
-    let cancelled = false
     initialScrollDoneRef.current = false
     setSending(false)
     setInterrupting(false)
@@ -455,31 +474,11 @@ export function SessionDetail({
     if (isLocalOptimisticSession) {
       const optimisticState = getOptimisticSessionStateRef.current(sessionId)
       if (optimisticState) {
-        setState(optimisticState)
+        setState({ ...optimisticState, notices: [], eventCursor: `seq:${optimisticState.nextSeq}`, effectiveCapabilities: null })
         nextSeqRef.current = optimisticState.nextSeq
       }
       setLoading(false)
-      return () => {
-        cancelled = true
-      }
-    }
-    loadInitialSessionState(token, sessionId)
-      .then((next) => {
-        if (cancelled) return
-        const merged = applyOptimisticItemsRef.current(next)
-        clearResolvedOptimisticMessagesRef.current(sessionId, merged.items)
-        setState(merged)
-        nextSeqRef.current = next.nextSeq
-        onSessionUpdated?.(next.session)
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : tSessionRef.current("loadFailed"))
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => {
-      cancelled = true
+      return
     }
   }, [
     isLocalOptimisticSession,
@@ -516,7 +515,10 @@ export function SessionDetail({
   React.useEffect(() => {
     if (isLocalOptimisticSession) return
     let cancelled = false
-    let eventSource: EventSource | null = null
+    let socket: WebSocket | null = null
+    let reconnectTimer: number | null = null
+    let snapshotReady = false
+    let bufferedEvents: ProtocolEventEnvelope[] = []
     const refetch = () => {
       markAutoScrollIfNearBottom()
       loadInitialSessionState(token, sessionId)
@@ -531,40 +533,100 @@ export function SessionDetail({
         .catch(() => undefined)
     }
 
-    try {
-      eventSource = new EventSource(dashboardApi.sessionEventsUrl(token, sessionId))
-      eventSource.onmessage = (event) => {
-        if (cancelled || !event.data) return
-        let envelope: SessionEventEnvelope | null = null
-        try {
-          envelope = JSON.parse(event.data) as SessionEventEnvelope
-        } catch {
-          return
-        }
-        if (!envelope || envelope.sessionId !== sessionId) return
-        if (envelope.refetch) {
+    const applyEvent = (event: ProtocolEventEnvelope) => {
+      if (cancelled || event.sessionId !== sessionId) return
+      if (event.type === "keepalive" || event.sequence <= nextSeqRef.current) return
+      if (event.sequence > nextSeqRef.current + 1 && nextSeqRef.current > 0) {
+        void recoverEvents(nextSeqRef.current)
+        return
+      }
+      if (event.type === "session.refetch_required") {
+        refetch()
+        return
+      }
+      markAutoScrollIfNearBottom()
+      setState((current) => mergeSessionEvent(current, event))
+      const item = readPayloadValue<TimelineItem>(event.payload.item)
+      if (item) clearResolvedOptimisticMessagesRef.current(sessionId, [item])
+      nextSeqRef.current = Math.max(nextSeqRef.current, event.sequence)
+    }
+
+    const recoverEvents = async (afterSeq: number) => {
+      try {
+        const recovery = await dashboardApi.getSessionEvents(token, sessionId, `seq:${afterSeq}`)
+        if (cancelled) return
+        if (recovery.snapshotRequired) {
           refetch()
           return
         }
-        markAutoScrollIfNearBottom()
-        setState((current) => mergeSessionState(current, envelope))
-        if (envelope.items) clearResolvedOptimisticMessagesRef.current(sessionId, envelope.items)
-        if (envelope.nextSeq) nextSeqRef.current = Math.max(nextSeqRef.current, envelope.nextSeq)
-        if (envelope.session) onSessionUpdated?.(envelope.session)
+        for (const event of recovery.events) applyEvent(event)
+      } catch {
+        refetch()
       }
-    } catch {
-      eventSource = null
     }
 
-    const intervalId = window.setInterval(() => {
-      if (eventSource?.readyState === EventSource.OPEN) return
-      refetch()
-    }, 3000)
+    const connect = async () => {
+      try {
+        const ticket = await dashboardApi.createWsTicket(token, createClientId("web"), sessionId)
+        if (cancelled) return
+        socket = new WebSocket(dashboardApi.sessionWebSocketUrl(sessionId, ticket.ticket))
+        socket.onmessage = (message) => {
+          if (cancelled || typeof message.data !== "string") return
+          const event = parseProtocolEvent(message.data)
+          if (!event) return
+          if (!snapshotReady) {
+            bufferedEvents.push(event)
+            return
+          }
+          applyEvent(event)
+        }
+        socket.onclose = () => {
+          if (cancelled) return
+          reconnectTimer = window.setTimeout(() => {
+            reconnectTimer = null
+            void connect()
+            void recoverEvents(nextSeqRef.current)
+          }, 1200)
+        }
+      } catch {
+        if (cancelled) return
+        reconnectTimer = window.setTimeout(() => {
+          reconnectTimer = null
+          void connect()
+        }, 2000)
+      }
+    }
+
+    void connect()
+
+    loadInitialSessionState(token, sessionId)
+      .then((next) => {
+        if (cancelled) return
+        setError(null)
+        const merged = applyOptimisticItemsRef.current(next)
+        clearResolvedOptimisticMessagesRef.current(sessionId, merged.items)
+        setState((current) => current ? { ...merged, items: preserveOptimisticItems(merged.items, current.items) } : merged)
+        nextSeqRef.current = cursorSequence(next.eventCursor) || next.nextSeq
+        onSessionUpdated?.(next.session)
+        snapshotReady = true
+        const pending = bufferedEvents
+        bufferedEvents = []
+        for (const event of pending.sort((a, b) => a.sequence - b.sequence)) applyEvent(event)
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          snapshotReady = true
+          setError(err instanceof Error ? err.message : tSessionRef.current("loadFailed"))
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
 
     return () => {
       cancelled = true
-      window.clearInterval(intervalId)
-      eventSource?.close()
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
+      socket?.close()
     }
   }, [
     isLocalOptimisticSession,
@@ -664,18 +726,19 @@ export function SessionDetail({
     }
   }
 
-  const handleResolveApproval = async (approvalId: string, status: ApprovalResolveStatus) => {
-    if (resolvingApprovalId) return
-    setResolvingApprovalId(approvalId)
-    setResolvingStatus(status)
+  const handleRespondInteraction = async (noticeId: string, actionId: string) => {
+    if (resolvingNoticeId) return
+    setResolvingNoticeId(noticeId)
+    setResolvingActionId(actionId)
     try {
-      await dashboardApi.resolveApproval(token, approvalId, status)
+      if (!session) return
+      await dashboardApi.respondInteraction(token, session.id, noticeId, actionId)
       await refresh()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : tSession("resolveApprovalFailed"))
+      toast.error(err instanceof Error ? err.message : tSession("resolveInteractionFailed"))
     } finally {
-      setResolvingApprovalId(null)
-      setResolvingStatus(null)
+      setResolvingNoticeId(null)
+      setResolvingActionId(null)
     }
   }
 
@@ -723,7 +786,7 @@ export function SessionDetail({
       return
     }
     updateScrollBottomState()
-  }, [scrollToBottomThrottled, session?.status, state?.approvals.length, state?.items.length, updateScrollBottomState])
+  }, [scrollToBottomThrottled, session?.status, state?.items.length, state?.notices.length, updateScrollBottomState])
 
   const scrollToBottomWithoutPruning = React.useCallback(() => {
     scrollToBottomThrottled()
@@ -797,20 +860,30 @@ export function SessionDetail({
     viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" })
     setShowScrollBottom(false)
   }, [distanceFromBottom, state?.items.length, updateScrollBottomState])
-  const approvals = state?.approvals ?? []
-  const approvalByTarget = React.useMemo(
-    () => new Map(approvals.map((approval) => [approval.targetItemId, approval])),
-    [approvals],
+  const interactions = React.useMemo(
+    () => openInteractions(state?.notices ?? [], session?.id ?? sessionId),
+    [session?.id, sessionId, state?.notices],
   )
-  const detachedApprovals = approvals.filter((approval) => approval.status === "pending" && !approval.targetItemId)
-  const pendingApprovals = approvals.filter((approval) => approval.status === "pending")
-  const approvalTargetIds = React.useMemo(
-    () => new Set(approvals.map((approval) => approval.targetItemId).filter((id): id is string => Boolean(id))),
-    [approvals],
+  const interactionByTarget = React.useMemo(
+    () => new Map(interactions.map((notice) => [noticeTimelineTargetId(notice), notice])),
+    [interactions],
+  )
+  const detachedInteractions = interactions.filter((notice) => !noticeTimelineTargetId(notice))
+  const detachedNotifications = React.useMemo(
+    () => openNotifications(state?.notices ?? []),
+    [state?.notices],
+  )
+  const blockingInteractionCount = React.useMemo(
+    () => blockingInteractions(state?.notices ?? [], session?.id ?? sessionId).length,
+    [session?.id, sessionId, state?.notices],
+  )
+  const interactionTargetIds = React.useMemo(
+    () => new Set(interactions.map(noticeTimelineTargetId).filter((id): id is string => Boolean(id))),
+    [interactions],
   )
   const timelineGroups = React.useMemo(
-    () => groupTimelineItems(state?.items ?? [], approvalTargetIds),
-    [approvalTargetIds, state?.items],
+    () => groupTimelineItems(state?.items ?? [], interactionTargetIds),
+    [interactionTargetIds, state?.items],
   )
 
   if (loading && !session) return <SessionSkeleton />
@@ -854,7 +927,7 @@ export function SessionDetail({
           <div
             className={cn(
               "mx-auto flex w-full min-w-0 max-w-4xl flex-col gap-3 overflow-hidden px-5 pb-44 pt-20",
-              pendingApprovals.length > 0 && "pt-32",
+              blockingInteractionCount > 0 && "pt-32",
             )}
           >
             {loadingOlder ? (
@@ -863,7 +936,7 @@ export function SessionDetail({
               </div>
             ) : null}
             {loading && !state ? <SessionSkeletonInline /> : null}
-            {state && state.items.length === 0 && detachedApprovals.length === 0 ? (
+            {state && state.items.length === 0 && detachedInteractions.length === 0 && detachedNotifications.length === 0 ? (
               <p className="py-12 text-center text-sm text-muted-foreground">{tSession("noActivity")}</p>
             ) : null}
             {timelineGroups.map((group) =>
@@ -873,10 +946,10 @@ export function SessionDetail({
                   group={group}
                   token={token}
                   session={session}
-                  approvalByTarget={approvalByTarget}
-                  resolvingApprovalId={resolvingApprovalId}
-                  resolvingStatus={resolvingStatus}
-                  onResolveApproval={handleResolveApproval}
+                  interactionByTarget={interactionByTarget}
+                  resolvingNoticeId={resolvingNoticeId}
+                  resolvingActionId={resolvingActionId}
+                  onRespondInteraction={handleRespondInteraction}
                 />
               ) : (
                 <TimelineEntry
@@ -884,21 +957,24 @@ export function SessionDetail({
                   token={token}
                   session={session}
                   item={group.item}
-                  approval={approvalByTarget.get(group.item.id)}
-                  resolvingApprovalId={resolvingApprovalId}
-                  resolvingStatus={resolvingStatus}
-                  onResolveApproval={handleResolveApproval}
+                  interaction={interactionByTarget.get(group.item.id)}
+                  resolvingNoticeId={resolvingNoticeId}
+                  resolvingActionId={resolvingActionId}
+                  onRespondInteraction={handleRespondInteraction}
                 />
               ),
             )}
-            {detachedApprovals.map((approval) => (
-              <ApprovalCard
-                key={approval.id}
-                approval={approval}
-                resolvingApprovalId={resolvingApprovalId}
-                resolvingStatus={resolvingStatus}
-                onResolveApproval={handleResolveApproval}
+            {detachedInteractions.map((notice) => (
+              <InteractionCard
+                key={notice.noticeId}
+                notice={notice}
+                resolvingNoticeId={resolvingNoticeId}
+                resolvingActionId={resolvingActionId}
+                onRespondInteraction={handleRespondInteraction}
               />
+            ))}
+            {detachedNotifications.map((notice) => (
+              <NotificationCard key={notice.noticeId} notice={notice} />
             ))}
             {session.status === "running" ? (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -922,8 +998,11 @@ export function SessionDetail({
         ) : null}
       </div>
 
-      {pendingApprovals.length > 0 ? (
-        <ApprovalHeaderNotice pendingApprovalCount={pendingApprovals.length} onResolveClick={scrollToBottomWithoutPruning} />
+      {blockingInteractionCount > 0 ? (
+        <InteractionHeaderNotice
+          blockingInteractionCount={blockingInteractionCount}
+          onResolveClick={scrollToBottomWithoutPruning}
+        />
       ) : null}
 
       <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 overflow-hidden">
@@ -934,7 +1013,7 @@ export function SessionDetail({
         <div className="pointer-events-auto relative">
           <SessionComposer
             session={session}
-            pendingApprovalCount={pendingApprovals.length}
+            pendingInteractionCount={blockingInteractionCount}
             sending={sending}
             interrupting={interrupting}
             takeoverBusy={takeoverBusy}
@@ -952,7 +1031,7 @@ export function SessionDetail({
       </div>
       <Dialog
         open={pendingTakeover !== null}
-        onOpenChange={(open) => {
+        onOpenChange={(open: boolean) => {
           if (!open && !takeoverBusy) setPendingTakeover(null)
         }}
       >
@@ -997,7 +1076,7 @@ type TimelineToolRunGroup = {
 
 type TimelineGroup = TimelineSingleGroup | TimelineToolRunGroup
 
-function groupTimelineItems(items: TimelineItem[], approvalTargetIds: Set<string>): TimelineGroup[] {
+function groupTimelineItems(items: TimelineItem[], interactionTargetIds: Set<string>): TimelineGroup[] {
   const groups: TimelineGroup[] = []
   let pendingTools: TimelineItem[] = []
 
@@ -1015,7 +1094,7 @@ function groupTimelineItems(items: TimelineItem[], approvalTargetIds: Set<string
   }
 
   for (const item of items) {
-    if (isToolRunBarItem(item) && !approvalTargetIds.has(item.id)) {
+    if (isToolRunBarItem(item) && !interactionTargetIds.has(item.id)) {
       pendingTools.push(item)
       continue
     }
@@ -1036,18 +1115,18 @@ function ToolRunGroup({
   group,
   token,
   session,
-  approvalByTarget,
-  resolvingApprovalId,
-  resolvingStatus,
-  onResolveApproval,
+  interactionByTarget,
+  resolvingNoticeId,
+  resolvingActionId,
+  onRespondInteraction,
 }: {
   group: TimelineToolRunGroup
   token: string
   session: SessionView
-  approvalByTarget: Map<string | null, Approval>
-  resolvingApprovalId: string | null
-  resolvingStatus: ApprovalResolveStatus | null
-  onResolveApproval: (approvalId: string, status: ApprovalResolveStatus) => void
+  interactionByTarget: Map<string | null, Notice>
+  resolvingNoticeId: string | null
+  resolvingActionId: string | null
+  onRespondInteraction: (noticeId: string, actionId: string) => void
 }) {
   const tSession = useTranslations("dashboard.session")
   const [open, setOpen] = React.useState(false)
@@ -1070,10 +1149,10 @@ function ToolRunGroup({
             token={token}
             session={session}
             item={item}
-            approval={approvalByTarget.get(item.id)}
-            resolvingApprovalId={resolvingApprovalId}
-            resolvingStatus={resolvingStatus}
-            onResolveApproval={onResolveApproval}
+            interaction={interactionByTarget.get(item.id)}
+            resolvingNoticeId={resolvingNoticeId}
+            resolvingActionId={resolvingActionId}
+            onRespondInteraction={onRespondInteraction}
           />
         ))}
       </div>
@@ -1120,31 +1199,101 @@ function toolRunSummary(
   return parts.length > 0 ? parts.join(", ") : tSession("toolSummaryItems", { count: items.length })
 }
 
-function mergeSessionState(
-  current: SessionStateResponse | null,
-  envelope: SessionEventEnvelope,
-): SessionStateResponse | null {
-  if (!current) {
-    if (envelope.session && envelope.items && envelope.approvals && typeof envelope.nextSeq === "number") {
-      return {
-        session: envelope.session,
-        items: sortTimelineItems(envelope.items),
-        approvals: envelope.approvals,
-        nextSeq: envelope.nextSeq,
-        hasMore: Boolean(envelope.hasMore),
-        serverTime: envelope.serverTime ?? new Date().toISOString(),
-      }
-    }
-    return current
-  }
+function mergeSessionEvent(
+  current: SessionRemoteState | null,
+  event: ProtocolEventEnvelope,
+): SessionRemoteState | null {
+  if (!current) return current
+
+  const session = readPayloadValue<SessionView>(event.payload.session)
+  const item = readPayloadValue<TimelineItem>(event.payload.item)
+  const notice = readPayloadValue<Notice>(event.payload.notice)
+  const effectiveCapabilities = readPayloadValue<ProtocolCapabilitySet>(event.payload.effectiveCapabilities)
+
+  const nextNotices = notice ? mergeNotices(current.notices, [notice]) : current.notices
+  const nextItems = item ? mergeTimelineItems(current.items, [item]) : current.items
 
   return {
     ...current,
-    session: envelope.session ?? current.session,
-    items: mergeTimelineItems(current.items, envelope.items ?? []),
-    approvals: envelope.approvals ?? current.approvals,
-    nextSeq: Math.max(current.nextSeq, envelope.nextSeq ?? current.nextSeq),
-    hasMore: envelope.hasMore ?? current.hasMore,
-    serverTime: envelope.serverTime ?? current.serverTime,
+    session: session ?? current.session,
+    items: nextItems,
+    notices: nextNotices,
+    nextSeq: Math.max(current.nextSeq, event.sequence),
+    eventCursor: event.cursor,
+    effectiveCapabilities: effectiveCapabilities ?? current.effectiveCapabilities,
+    serverTime: event.emittedAt ?? current.serverTime,
   }
+}
+
+function mergeNotices(current: Notice[], incoming: Notice[]): Notice[] {
+  if (incoming.length === 0) return current
+  const byId = new Map(current.map((notice) => [notice.noticeId, notice]))
+  for (const notice of incoming) {
+    const existing = byId.get(notice.noticeId)
+    if (!existing || existing.updatedSeq <= notice.updatedSeq) byId.set(notice.noticeId, notice)
+  }
+  return Array.from(byId.values()).sort((a, b) => a.updatedSeq - b.updatedSeq || a.noticeId.localeCompare(b.noticeId))
+}
+
+function parseProtocolEvent(data: string): ProtocolEventEnvelope | null {
+  try {
+    const event = JSON.parse(data) as Partial<ProtocolEventEnvelope>
+    if (!event || typeof event.type !== "string") return null
+    if (event.type === "keepalive") return null
+    if (typeof event.sessionId !== "string" || typeof event.sequence !== "number" || typeof event.cursor !== "string") {
+      return null
+    }
+    return {
+      protocolVersion: event.protocolVersion,
+      eventId: event.eventId,
+      sequence: event.sequence,
+      cursor: event.cursor,
+      type: event.type,
+      sessionId: event.sessionId,
+      emittedAt: event.emittedAt,
+      payload: event.payload ?? {},
+    }
+  } catch {
+    return null
+  }
+}
+
+function cursorSequence(cursor: string | null | undefined): number {
+  if (!cursor) return 0
+  const raw = cursor.startsWith("seq:") ? cursor.slice(4) : cursor
+  const value = Number(raw)
+  return Number.isFinite(value) ? value : 0
+}
+
+function readPayloadValue<T>(value: unknown): T | null {
+  return value && typeof value === "object" ? value as T : null
+}
+
+function openInteractions(notices: Notice[], _sessionId?: string): Notice[] {
+  return notices.filter((notice) =>
+    notice.type === "interaction" && (
+      notice.status === "open" ||
+      notice.status === "response_accepted" ||
+      notice.status === "resolving" ||
+      notice.status === "failed"
+    ),
+  )
+}
+
+function openNotifications(notices: Notice[]): Notice[] {
+  return notices.filter((notice) => notice.type === "notification" && notice.status === "open")
+}
+
+function blockingInteractions(notices: Notice[], sessionId: string): Notice[] {
+  return openInteractions(notices).filter((notice) =>
+    notice.blocking?.scope === "session" && notice.blocking.targetId === sessionId,
+  )
+}
+
+function noticeTimelineTargetId(notice: Notice): string | null {
+  const timelineItemId = notice.source.timelineItemId
+  if (typeof timelineItemId === "string" && timelineItemId) return timelineItemId
+  const contextTimelineItemId = notice.context.timelineItemId
+  if (typeof contextTimelineItemId === "string" && contextTimelineItemId) return contextTimelineItemId
+  return null
 }

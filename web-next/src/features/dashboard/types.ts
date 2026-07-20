@@ -47,9 +47,10 @@ export type ConnectorView = {
 
 export type SessionStatusValue =
   | "idle"
+  | "pending"
   | "running"
-  | "waiting_approval"
-  | "error";
+  | "stopping"
+  | "blocked";
 
 export type SessionView = {
   id: string;
@@ -163,6 +164,9 @@ export type SessionCreateRequest = {
   runtime: string;
   title?: string;
   cwd?: string;
+  runtimeSettings?: Record<string, unknown> | null;
+  modelSelectionId?: string | null;
+  permissionSelectionId?: string | null;
   approvalPolicy?: string;
   sandbox?: string;
 };
@@ -252,10 +256,173 @@ export type ApprovalResolveStatus =
   | "approved_for_session"
   | "rejected";
 
+export type ProtocolCapabilityScope = "adapter" | "runtime" | "session";
+
+export type ProtocolCapability = {
+  capabilityId: string;
+  version: string;
+  scope: ProtocolCapabilityScope;
+  runtime?: string | null;
+  sessionId?: string | null;
+  supported: boolean;
+  available: boolean;
+  allowed: boolean;
+  unavailableReason?: string | null;
+  parameters: Record<string, unknown>;
+};
+
+export type ProtocolCapabilitySet = {
+  revision: number;
+  capabilities: ProtocolCapability[];
+};
+
+export type ProtocolReasoningItem = {
+  displayName: string;
+  id: string;
+  fullModelId?: string | null;
+  selectionId: string;
+  description?: string | null;
+  default: boolean;
+  metadata: Record<string, unknown>;
+};
+
+export type ProtocolModelItem = {
+  displayName: string;
+  id: string;
+  selectionId?: string | null;
+  description?: string | null;
+  default: boolean;
+  reasoningItems: ProtocolReasoningItem[];
+  metadata: Record<string, unknown>;
+};
+
+export type ProtocolModelCatalog = {
+  runtime: string;
+  revision: number;
+  models: ProtocolModelItem[];
+};
+
+export type ProtocolModelCatalogResponse = {
+  catalog: ProtocolModelCatalog;
+  serverTime: string;
+};
+
+export type ProtocolPermissionItem = {
+  displayName: string;
+  id: string;
+  selectionId: string;
+  description?: string | null;
+  default: boolean;
+  metadata: Record<string, unknown>;
+};
+
+export type ProtocolPermissionCatalog = {
+  runtime: string;
+  revision: number;
+  permissions: ProtocolPermissionItem[];
+};
+
+export type ProtocolPermissionCatalogResponse = {
+  catalog: ProtocolPermissionCatalog;
+  serverTime: string;
+};
+
+export type NoticeStatus =
+  | "open"
+  | "response_accepted"
+  | "resolving"
+  | "resolved"
+  | "expired"
+  | "cancelled"
+  | "failed";
+
+export type NoticeActionStyle = "primary" | "secondary" | "danger";
+
+export type NoticeAction = {
+  actionId: string;
+  label: string;
+  style: NoticeActionStyle;
+  input: {
+    required: boolean;
+    schema?: Record<string, unknown> | null;
+    uiSchema?: Record<string, unknown> | null;
+  };
+};
+
+export type Notice = {
+  noticeId: string;
+  type: "notification" | "interaction";
+  sessionId: string;
+  source: Record<string, unknown>;
+  title: string;
+  message?: string | null;
+  severity: "info" | "success" | "warning" | "error";
+  status: NoticeStatus;
+  interactionType?: "approval" | "execution_error" | "confirmation" | "input_request" | "unknown" | null;
+  blocking?: { scope: "session"; targetId: string } | null;
+  responseRequired: boolean;
+  actions: NoticeAction[];
+  context: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  expiresAt?: string | null;
+  revision: number;
+  updatedSeq: number;
+  createdAt: string;
+  updatedAt: string;
+  resolvedAt?: string | null;
+};
+
+export type SessionTimelineSnapshot = {
+  items: TimelineItem[];
+  nextSeq: number;
+  hasMore: boolean;
+};
+
+export type SessionSnapshotResponse = {
+  session: SessionView;
+  timeline: SessionTimelineSnapshot;
+  approvals?: Approval[];
+  notices: Notice[];
+  effectiveCapabilities: ProtocolCapabilitySet;
+  runtimeCapabilities: ProtocolCapabilitySet;
+  catalogs: {
+    model?: ProtocolModelCatalog;
+    permission?: ProtocolPermissionCatalog;
+    [key: string]: unknown;
+  };
+  eventCursor: string;
+  serverTime: string;
+};
+
+export type ProtocolEventEnvelope = {
+  protocolVersion?: string;
+  eventId?: string;
+  sequence: number;
+  cursor: string;
+  type: string;
+  sessionId: string;
+  emittedAt?: string;
+  payload: Record<string, unknown>;
+};
+
+export type ProtocolEventRecoveryResponse = {
+  events: ProtocolEventEnvelope[];
+  nextCursor: string;
+  snapshotRequired: boolean;
+  serverTime: string;
+};
+
+export type WsTicketResponse = {
+  ticket: string;
+  expiresAt: string;
+  serverTime: string;
+};
+
 export type SessionStateResponse = {
   session: SessionView;
   items: TimelineItem[];
   approvals: Approval[];
+  notices?: Notice[];
   nextSeq: number;
   hasMore: boolean;
   serverTime: string;
@@ -393,9 +560,8 @@ export type AttachmentRef = {
 export type MessageSendOptions = {
   attachments?: AttachmentRef[];
   clientMessageId?: string;
-  mode?: string;
-  model?: string;
-  effort?: string;
+  modelSelectionId?: string | null;
+  permissionSelectionId?: string | null;
 };
 
 export type UploadedAttachment = {

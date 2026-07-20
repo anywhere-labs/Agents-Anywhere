@@ -111,7 +111,7 @@ type DeviceSession = {
   runtime: string
   title?: string | null
   cwd?: string | null
-  status: "idle" | "running" | "waiting_approval" | "error"
+  status: "idle" | "pending" | "running" | "stopping" | "blocked"
   takeover: boolean
   pinned: boolean
   archived: boolean
@@ -463,11 +463,11 @@ function SessionRow({
           "size-1.5 shrink-0 rounded-full border",
           session.status === "running"
             ? "border-emerald-500 bg-emerald-500"
-            : session.status === "error"
-              ? "border-red-500/70"
-              : session.status === "waiting_approval"
-                ? "border-amber-400/70"
-          : "border-muted-foreground/40",
+            : session.status === "blocked"
+              ? "border-amber-400/70"
+              : session.status === "pending" || session.status === "stopping"
+                ? "border-blue-400/70"
+                : "border-muted-foreground/40",
         )}
       />
       <button

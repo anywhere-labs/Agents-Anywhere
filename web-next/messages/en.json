@@ -596,7 +596,7 @@
       "sendFailed": "Failed to send message.",
       "updateTakeoverFailed": "Failed to update takeover.",
       "interruptFailed": "Failed to interrupt session.",
-      "resolveApprovalFailed": "Failed to resolve approval.",
+      "resolveInteractionFailed": "Failed to resolve interaction.",
       "updateRuntimeSettingsFailed": "Failed to update runtime settings.",
       "noActivity": "No activity yet.",
       "runtimeWorking": "{runtime} is working...",
@@ -611,13 +611,17 @@
       "collapseMessage": "Show less",
       "copyCode": "Copy code",
       "deviceOfflinePlaceholder": "Device is offline",
-      "waitingApprovalPlaceholder": "Waiting for your approval below...",
+      "waitingApprovalPlaceholder": "Waiting for your response below...",
       "busyPlaceholder": "Send an interrupt or wait for the current turn to finish",
       "errorPlaceholder": "This session has an error; sending will retry",
       "replyPlaceholder": "Reply, or interrupt with new instructions...",
       "dropFiles": "Drop files to attach",
       "approvalPending": "{count} approval request pending",
       "approvalPendingPlural": "{count} approval requests pending",
+      "interactionPending": "{count} interaction pending",
+      "interactionPendingPlural": "{count} interactions pending",
+      "interactions": "Interactions",
+      "interactionsPending": "{count} pending",
       "toolRan": "Ran {command}",
       "toolCommandFallback": "command",
       "toolChangedFiles": "Changed files",
@@ -635,10 +639,11 @@
       "loadCodeFailed": "Failed to load code"
     },
     "sessionStatus": {
-      "error": "Error",
       "idle": "Idle",
+      "pending": "Pending",
       "running": "Running",
-      "waiting_approval": "Waiting for approval"
+      "stopping": "Stopping",
+      "blocked": "Blocked"
     },
     "signOut": {
       "confirm": "Sign out",

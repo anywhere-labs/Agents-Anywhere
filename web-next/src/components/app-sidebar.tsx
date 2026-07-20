@@ -404,10 +404,10 @@ function SessionSidebarItem({
                       ? "border-primary bg-primary"
                       : item.status === "running"
                       ? "border-emerald-500 bg-emerald-500"
-                      : item.status === "error"
-                        ? "border-red-500/70"
-                        : item.status === "waiting_approval"
-                          ? "border-amber-400/70"
+                      : item.status === "blocked"
+                        ? "border-amber-400/70"
+                        : item.status === "pending" || item.status === "stopping"
+                          ? "border-blue-400/70"
                           : "border-muted-foreground/50",
                   )}
                 />

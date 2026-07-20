@@ -596,7 +596,7 @@
       "sendFailed": "无法发送消息。",
       "updateTakeoverFailed": "无法更新接管状态。",
       "interruptFailed": "无法中断会话。",
-      "resolveApprovalFailed": "无法处理确认请求。",
+      "resolveInteractionFailed": "无法处理交互请求。",
       "updateRuntimeSettingsFailed": "无法更新运行时设置。",
       "noActivity": "暂无活动。",
       "runtimeWorking": "{runtime} 正在工作...",
@@ -611,13 +611,17 @@
       "collapseMessage": "收起",
       "copyCode": "复制代码",
       "deviceOfflinePlaceholder": "设备已离线",
-      "waitingApprovalPlaceholder": "等待你在下方确认...",
+      "waitingApprovalPlaceholder": "等待你在下方处理交互...",
       "busyPlaceholder": "发送中断，或等待当前回合结束",
       "errorPlaceholder": "这个会话有错误，发送后会重试",
       "replyPlaceholder": "回复，或用新指令中断...",
       "dropFiles": "松开以添加附件",
       "approvalPending": "{count} 个确认请求待处理",
       "approvalPendingPlural": "{count} 个确认请求待处理",
+      "interactionPending": "{count} 个交互待处理",
+      "interactionPendingPlural": "{count} 个交互待处理",
+      "interactions": "交互",
+      "interactionsPending": "{count} 个待处理",
       "toolRan": "执行了 {command}",
       "toolCommandFallback": "命令",
       "toolChangedFiles": "修改了文件",
@@ -635,10 +639,11 @@
       "loadCodeFailed": "无法加载代码"
     },
     "sessionStatus": {
-      "error": "错误",
       "idle": "空闲",
+      "pending": "等待中",
       "running": "运行中",
-      "waiting_approval": "等待确认"
+      "stopping": "停止中",
+      "blocked": "阻塞"
     },
     "signOut": {
       "confirm": "退出登录",

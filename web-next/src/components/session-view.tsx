@@ -18,7 +18,7 @@ import { useWorkspace, type PanelId } from "@/components/workspace-context"
 import { useTranslations } from "next-intl"
 import { toast } from "sonner"
 import { dashboardApi } from "@/features/dashboard/api"
-import type { Approval, SessionView as SessionViewData, TimelineItem } from "@/features/dashboard/types"
+import type { Notice, SessionView as SessionViewData, TimelineItem } from "@/features/dashboard/types"
 import { sortTimelineItems } from "@/components/session/session-utils"
 
 const HORIZONTAL_LAYOUT_KEY = "aa-session-runtime-horizontal-layout"
@@ -77,7 +77,7 @@ export function SessionView() {
         source: "memory",
         session: memorySnapshot.session,
         items: sortTimelineItems(memorySnapshot.items),
-        approvals: memorySnapshot.approvals,
+        notices: memorySnapshot.notices,
         nextSeq: memorySnapshot.nextSeq,
         hasMore: memorySnapshot.hasMore,
         serverTime: memorySnapshot.serverTime,
@@ -93,7 +93,7 @@ export function SessionView() {
     setExporting(true)
     try {
       const allItems: TimelineItem[] = []
-      let approvals: Approval[] = []
+      let notices: Notice[] = []
       let afterSeq = 0
       let nextSeq = 0
       let sessionSnapshot: SessionViewData | null = null
@@ -102,7 +102,7 @@ export function SessionView() {
       while (true) {
         const page = await dashboardApi.getSessionState(token, session.id, afterSeq, 500)
         allItems.push(...page.items)
-        approvals = page.approvals
+        notices = page.notices ?? notices
         sessionSnapshot = page.session
         serverTime = page.serverTime
         nextSeq = page.nextSeq
@@ -117,7 +117,7 @@ export function SessionView() {
           source: "remote",
           session: sessionSnapshot,
           items: sortTimelineItems(allItems),
-          approvals,
+          notices,
           nextSeq,
           hasMore: false,
           serverTime,
@@ -213,7 +213,7 @@ function downloadTimelineJson(
     source: "memory" | "remote"
     session: SessionViewData | null
     items: TimelineItem[]
-    approvals: Approval[]
+    notices: Notice[]
     nextSeq: number
     hasMore: boolean
     serverTime: string | null

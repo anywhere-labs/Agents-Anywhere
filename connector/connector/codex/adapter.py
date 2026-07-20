@@ -781,6 +781,8 @@ def _backend_notifications_from_reduction(
             notifications.append({"method": timeline_method, "params": {"sessionId": session_id, "items": reduced.timeline_items}})
     for approval in reduced.approvals:
         notifications.append({"method": "approval.requested", "params": approval})
+    for notice in reduced.notices:
+        notifications.append({"method": "notice.upsert", "params": notice})
     return notifications
 
 

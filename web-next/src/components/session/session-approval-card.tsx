@@ -1,89 +1,79 @@
 "use client"
 
-import { Check, Loader2, ShieldCheck, X } from "lucide-react"
+import { Check, CircleAlert, CircleCheck, Info, Loader2, ShieldCheck, TriangleAlert, X } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import type { Approval, ApprovalResolveStatus } from "@/features/dashboard/types"
+import type { Notice } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
 
-type ApprovalCardProps = {
-  approval: Approval
-  resolvingApprovalId: string | null
-  resolvingStatus: ApprovalResolveStatus | null
-  onResolveApproval: (approvalId: string, status: ApprovalResolveStatus) => void
+type InteractionCardProps = {
+  notice: Notice
+  resolvingNoticeId: string | null
+  resolvingActionId: string | null
+  onRespondInteraction: (noticeId: string, actionId: string) => void
   compact?: boolean
 }
 
-export function ApprovalCard({
-  approval,
-  resolvingApprovalId,
-  resolvingStatus,
-  onResolveApproval,
+export function InteractionCard({
+  notice,
+  resolvingNoticeId,
+  resolvingActionId,
+  onRespondInteraction,
   compact,
-}: ApprovalCardProps) {
-  const tSession = useTranslations("dashboard.session")
-  const resolving = resolvingApprovalId === approval.id
-  const disabled = resolvingApprovalId !== null
+}: InteractionCardProps) {
+  const resolving = resolvingNoticeId === notice.noticeId
+  const disabled = resolvingNoticeId !== null || notice.status === "response_accepted" || notice.status === "resolving"
+  const Icon = notice.severity === "error" ? CircleAlert : ShieldCheck
   return (
-    <div className={cn("rounded-xl border border-border bg-muted/25 p-3", compact && "rounded-lg")}>
+    <div className={cn(
+      "rounded-xl border bg-muted/25 p-3",
+      notice.severity === "error" ? "border-destructive/35 bg-destructive/5" : "border-border",
+      compact && "rounded-lg",
+    )}>
       <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
         <div className="flex min-w-0 gap-2">
-          <ShieldCheck className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+          <Icon className={cn(
+            "mt-0.5 size-4 shrink-0",
+            notice.severity === "error" ? "text-destructive" : "text-muted-foreground",
+          )} />
           <div className="min-w-0">
-            <div className="wrap-break-word text-sm font-medium">{approval.title || tSession("approvalRequested")}</div>
-            {approval.description ? (
-              <p className="mt-0.5 wrap-break-word text-sm text-muted-foreground">{approval.description}</p>
+            <div className="wrap-break-word text-sm font-medium">{notice.title}</div>
+            {notice.message ? (
+              <p className="mt-0.5 wrap-break-word text-sm text-muted-foreground">{notice.message}</p>
+            ) : null}
+            {notice.status === "failed" ? (
+              <p className="mt-1 text-xs text-destructive">{interactionErrorMessage(notice)}</p>
             ) : null}
           </div>
         </div>
         <div className="flex flex-wrap justify-end gap-2 md:flex-nowrap">
-          {approval.choices.includes("reject") ? (
+          {notice.actions.map((action) => (
             <Button
-              variant="outline"
+              key={action.actionId}
+              variant={action.style === "primary" ? "default" : "outline"}
               size="sm"
               className="whitespace-nowrap"
               disabled={disabled}
-              onClick={() => onResolveApproval(approval.id, "rejected")}
+              onClick={() => onRespondInteraction(notice.noticeId, action.actionId)}
             >
-              {resolving && resolvingStatus === "rejected" ? <Loader2 className="size-3.5 animate-spin" /> : <X className="size-3.5" />}
-              {tSession("reject")}
+              {resolving && resolvingActionId === action.actionId
+                ? <Loader2 className="size-3.5 animate-spin" />
+                : actionIcon(action.actionId)}
+              {action.label}
             </Button>
-          ) : null}
-          {approval.choices.includes("approve_for_session") ? (
-            <Button
-              variant="outline"
-              size="sm"
-              className="whitespace-nowrap"
-              disabled={disabled}
-              onClick={() => onResolveApproval(approval.id, "approved_for_session")}
-            >
-              {resolving && resolvingStatus === "approved_for_session" ? <Loader2 className="size-3.5 animate-spin" /> : <ShieldCheck className="size-3.5" />}
-              {tSession("approveSession")}
-            </Button>
-          ) : null}
-          {approval.choices.includes("approve") ? (
-            <Button
-              size="sm"
-              className="whitespace-nowrap"
-              disabled={disabled}
-              onClick={() => onResolveApproval(approval.id, "approved")}
-            >
-              {resolving && resolvingStatus === "approved" ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
-              {tSession("approve")}
-            </Button>
-          ) : null}
+          ))}
         </div>
       </div>
     </div>
   )
 }
 
-export function ApprovalHeaderNotice({
-  pendingApprovalCount,
+export function InteractionHeaderNotice({
+  blockingInteractionCount,
   onResolveClick,
 }: {
-  pendingApprovalCount: number
+  blockingInteractionCount: number
   onResolveClick: () => void
 }) {
   const tSession = useTranslations("dashboard.session")
@@ -94,8 +84,8 @@ export function ApprovalHeaderNotice({
         <div className="flex min-w-0 items-center gap-2 text-foreground">
           <ShieldCheck className="size-4 shrink-0 text-amber-500" />
           <span className="min-w-0 truncate">
-            {tSession(pendingApprovalCount > 1 ? "approvalPendingPlural" : "approvalPending", {
-              count: pendingApprovalCount,
+            {tSession(blockingInteractionCount > 1 ? "interactionPendingPlural" : "interactionPending", {
+              count: blockingInteractionCount,
             })}
           </span>
         </div>
@@ -109,4 +99,55 @@ export function ApprovalHeaderNotice({
       </div>
     </div>
   )
+}
+
+export function NotificationCard({ notice }: { notice: Notice }) {
+  const Icon = notificationIcon(notice.severity)
+  return (
+    <div className={cn(
+      "rounded-xl border bg-muted/25 p-3",
+      notice.severity === "error" && "border-destructive/35 bg-destructive/5",
+      notice.severity === "warning" && "border-amber-500/30 bg-amber-500/5",
+      notice.severity === "success" && "border-emerald-500/30 bg-emerald-500/5",
+    )}>
+      <div className="flex min-w-0 gap-2">
+        <Icon className={cn(
+          "mt-0.5 size-4 shrink-0",
+          notice.severity === "error" && "text-destructive",
+          notice.severity === "warning" && "text-amber-500",
+          notice.severity === "success" && "text-emerald-500",
+          notice.severity === "info" && "text-muted-foreground",
+        )} />
+        <div className="min-w-0">
+          <div className="wrap-break-word text-sm font-medium">{notice.title}</div>
+          {notice.message ? (
+            <p className="mt-0.5 wrap-break-word text-sm text-muted-foreground">{notice.message}</p>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function actionIcon(actionId: string) {
+  if (actionId === "reject" || actionId === "cancel" || actionId === "dismiss") return <X className="size-3.5" />
+  if (actionId === "approve_for_session") return <ShieldCheck className="size-3.5" />
+  return <Check className="size-3.5" />
+}
+
+function notificationIcon(severity: Notice["severity"]) {
+  if (severity === "error") return CircleAlert
+  if (severity === "warning") return TriangleAlert
+  if (severity === "success") return CircleCheck
+  if (severity === "info") return Info
+  return Info
+}
+
+function interactionErrorMessage(notice: Notice): string {
+  const error = notice.context.error
+  if (typeof error === "string") return error
+  if (error && typeof error === "object" && "message" in error && typeof error.message === "string") {
+    return error.message
+  }
+  return "The response failed. Choose an action again."
 }

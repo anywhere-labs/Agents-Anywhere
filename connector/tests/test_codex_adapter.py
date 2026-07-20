@@ -334,6 +334,31 @@ def test_reducer_maps_codex_turn_and_message_notifications() -> None:
     assert [item["type"] for item in completed.timeline_items] == ["turn.start", "turn.end"]
 
 
+def test_reducer_maps_compact_to_notification() -> None:
+    reducer = TimelineReducer()
+    reducer.bind_session("sess_1", "thr_1")
+
+    reduced = reducer.reduce_notification(
+        {
+            "method": "turn/compact/completed",
+            "params": {
+                "threadId": "thr_1",
+                "turnId": "turn_1",
+                "summary": "Context compacted successfully.",
+            },
+        }
+    )
+
+    assert reduced.timeline_items == []
+    assert reduced.approvals == []
+    assert reduced.notices[0]["type"] == "notification"
+    assert reduced.notices[0]["sessionId"] == "sess_1"
+    assert reduced.notices[0]["title"] == "Compact completed"
+    assert reduced.notices[0]["message"] == "Context compacted successfully."
+    assert reduced.notices[0]["severity"] == "success"
+    assert reduced.notices[0]["metadata"] == {"category": "compact", "state": "completed"}
+
+
 def test_reducer_keeps_agent_delta_items_separate_by_item_id() -> None:
     reducer = TimelineReducer()
     reducer.bind_session("sess_1", "thr_1")

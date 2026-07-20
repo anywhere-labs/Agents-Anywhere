@@ -9,7 +9,6 @@ import type {
   BulkArchiveResponse,
   ArchiveAllScope,
   AttachmentUploadResponse,
-  ApprovalResolveStatus,
   ConnectorCreateResponse,
   ConnectorListResponse,
   ConnectorResponse,
@@ -26,6 +25,9 @@ import type {
   PairingClaimResponse,
   PairingPollResponse,
   PairingStartResponse,
+  ProtocolEventRecoveryResponse,
+  ProtocolModelCatalogResponse,
+  ProtocolPermissionCatalogResponse,
   RpcResponse,
   RuntimeConfigSchemaResponse,
   RuntimeSettingsResponse,
@@ -34,6 +36,7 @@ import type {
   SessionListResponse,
   SessionPatchRequest,
   SessionResponse,
+  SessionSnapshotResponse,
   SessionStateResponse,
   TakeoverResponse,
   TerminalCreateRequest,
@@ -41,7 +44,8 @@ import type {
   TerminalListResponse,
   TerminalResponse,
   TerminalSnapshotResult,
-  UserAgentDefaultsResponse
+  UserAgentDefaultsResponse,
+  WsTicketResponse,
 } from "@/features/dashboard/types";
 
 export type SessionStateQuery = {
@@ -249,8 +253,46 @@ export class DashboardApi {
     });
   }
 
-  sessionEventsUrl(token: string, sessionId: string): string {
-    return `${apiPath(`/sessions/${encodeURIComponent(sessionId)}/events`)}?token=${encodeURIComponent(token)}`;
+  getSessionSnapshot(
+    token: string,
+    sessionId: string,
+    limit = 200,
+  ): Promise<SessionSnapshotResponse> {
+    return this.client.get<SessionSnapshotResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/snapshot`,
+      { token, query: { limit } },
+    );
+  }
+
+  getSessionEvents(
+    token: string,
+    sessionId: string,
+    after: string,
+  ): Promise<ProtocolEventRecoveryResponse> {
+    return this.client.get<ProtocolEventRecoveryResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/events`,
+      { token, query: { after } },
+    );
+  }
+
+  createWsTicket(
+    token: string,
+    clientId: string,
+    sessionId: string,
+  ): Promise<WsTicketResponse> {
+    return this.client.post<WsTicketResponse>(
+      "/ws-ticket",
+      { clientId, scope: { sessionId } },
+      { token },
+    );
+  }
+
+  sessionWebSocketUrl(sessionId: string, ticket: string): string {
+    const path = `${apiPath(`/sessions/${encodeURIComponent(sessionId)}/ws`)}?ticket=${encodeURIComponent(ticket)}`;
+    if (typeof window === "undefined") return path;
+    const url = new URL(path, window.location.origin);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    return url.toString();
   }
 
   dashboardEventsUrl(token: string): string {
@@ -520,14 +562,16 @@ export class DashboardApi {
     );
   }
 
-  resolveApproval(
+  respondInteraction(
     token: string,
-    approvalId: string,
-    status: ApprovalResolveStatus,
+    sessionId: string,
+    noticeId: string,
+    actionId: string,
+    input?: Record<string, unknown> | null,
   ): Promise<RpcResponse<unknown>> {
     return this.client.post<RpcResponse<unknown>>(
-      `/approvals/${encodeURIComponent(approvalId)}/resolve`,
-      { status },
+      `/sessions/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(noticeId)}/respond`,
+      { actionId, ...(input ? { input } : {}) },
       { token },
     );
   }
@@ -538,16 +582,15 @@ export class DashboardApi {
     content: string,
     options: MessageSendOptions = {},
   ): Promise<RpcResponse<unknown>> {
-    const { attachments, clientMessageId, mode, model, effort } = options;
+    const { attachments, clientMessageId, modelSelectionId, permissionSelectionId } = options;
     return this.client.post<RpcResponse<unknown>>(
       `/sessions/${encodeURIComponent(sessionId)}/messages`,
       {
         content,
         ...(attachments && attachments.length > 0 ? { attachments } : {}),
         ...(clientMessageId ? { clientMessageId } : {}),
-        ...(mode ? { mode } : {}),
-        ...(model ? { model } : {}),
-        ...(effort ? { effort } : {}),
+        ...(modelSelectionId ? { modelSelectionId } : {}),
+        ...(permissionSelectionId ? { permissionSelectionId } : {}),
       },
       { token },
     );
@@ -584,16 +627,16 @@ export class DashboardApi {
     );
   }
 
-  listAgentModels(token: string, runtime: string): Promise<AgentCatalogResponse> {
-    return this.client.get<AgentCatalogResponse>(
-      `/agents/${encodeURIComponent(runtime)}/models`,
+  getAgentModelCatalog(token: string, runtime: string): Promise<ProtocolModelCatalogResponse> {
+    return this.client.get<ProtocolModelCatalogResponse>(
+      `/agents/${encodeURIComponent(runtime)}/model-catalog`,
       { token },
     );
   }
 
-  listAgentEfforts(token: string, runtime: string): Promise<AgentCatalogResponse> {
-    return this.client.get<AgentCatalogResponse>(
-      `/agents/${encodeURIComponent(runtime)}/efforts`,
+  getAgentPermissionCatalog(token: string, runtime: string): Promise<ProtocolPermissionCatalogResponse> {
+    return this.client.get<ProtocolPermissionCatalogResponse>(
+      `/agents/${encodeURIComponent(runtime)}/permission-catalog`,
       { token },
     );
   }

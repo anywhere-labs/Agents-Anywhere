@@ -38,36 +38,32 @@ import {
   optionLabel,
   type ComposerPermissionLabelKey,
   runtimeConfigFields,
-  validEffortValue,
 } from "@/features/dashboard/runtime-config"
-import type { RuntimeConfigSchema, SessionView as RealSessionView } from "@/features/dashboard/types"
+import type {
+  ProtocolModelCatalog,
+  ProtocolPermissionCatalog,
+  RuntimeConfigSchema,
+  SessionView as RealSessionView,
+} from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
 
 type ComposerPermissionMode = {
   id: "ask" | "full" | "readonly"
   labelKey: ComposerPermissionLabelKey
-  approvalPolicy?: string
-  sandbox?: string
 }
 
 const PERMISSION_MODES: [ComposerPermissionMode, ...ComposerPermissionMode[]] = [
   {
     id: "ask",
     labelKey: "askApproval",
-    approvalPolicy: undefined,
-    sandbox: undefined,
   },
   {
     id: "full",
     labelKey: "fullAccess",
-    approvalPolicy: "never",
-    sandbox: "danger-full-access",
   },
   {
     id: "readonly",
     labelKey: "readOnly",
-    approvalPolicy: "on-request",
-    sandbox: "read-only",
   },
 ]
 
@@ -157,6 +153,8 @@ export function TaskComposer() {
   const [prompt, setPrompt] = React.useState("")
   const [runtimeSchema, setRuntimeSchema] = React.useState<RuntimeConfigSchema | null>(null)
   const [runtimeSettings, setRuntimeSettings] = React.useState<Record<string, unknown>>({})
+  const [modelCatalog, setModelCatalog] = React.useState<ProtocolModelCatalog | null>(null)
+  const [permissionCatalog, setPermissionCatalog] = React.useState<ProtocolPermissionCatalog | null>(null)
   const [runtimeConfigLoading, setRuntimeConfigLoading] = React.useState(false)
   const [creating, setCreating] = React.useState(false)
   const [createTick, setCreateTick] = React.useState(0)
@@ -245,6 +243,8 @@ export function TaskComposer() {
     if (!authSession?.accessToken || !selectedConnectorId || !selectedAgent) {
       setRuntimeSchema(null)
       setRuntimeSettings({})
+      setModelCatalog(null)
+      setPermissionCatalog(null)
       setRuntimeConfigLoading(false)
       return
     }
@@ -252,12 +252,16 @@ export function TaskComposer() {
     setRuntimeConfigLoading(true)
     setRuntimeSchema(null)
     setRuntimeSettings({})
+    setModelCatalog(null)
+    setPermissionCatalog(null)
     Promise.all([
       dashboardApi.getRuntimeConfigSchema(authSession.accessToken, selectedAgent),
       dashboardApi.getConnectorAgentSettings(authSession.accessToken, selectedConnectorId, selectedAgent),
       dashboardApi.getAgentDefaults(authSession.accessToken),
+      dashboardApi.getAgentModelCatalog(authSession.accessToken, selectedAgent),
+      dashboardApi.getAgentPermissionCatalog(authSession.accessToken, selectedAgent),
     ])
-      .then(([schemaResponse, settingsResponse, defaultsResponse]) => {
+      .then(([schemaResponse, settingsResponse, defaultsResponse, modelCatalogResponse, permissionCatalogResponse]) => {
         if (cancelled) return
         const userDefaultSettings = defaultsResponse.runtimes[selectedAgent]?.settings ?? {}
         setRuntimeSchema(schemaResponse.schema)
@@ -265,11 +269,15 @@ export function TaskComposer() {
           ...userDefaultSettings,
           ...(settingsResponse.runtimeSettings ?? settingsResponse.settings ?? {}),
         })
+        setModelCatalog(modelCatalogResponse.catalog)
+        setPermissionCatalog(permissionCatalogResponse.catalog)
       })
       .catch(() => {
         if (cancelled) return
         setRuntimeSchema(null)
         setRuntimeSettings({})
+        setModelCatalog(null)
+        setPermissionCatalog(null)
       })
       .finally(() => {
         if (!cancelled) setRuntimeConfigLoading(false)
@@ -331,6 +339,8 @@ export function TaskComposer() {
   const modelLabel = optionLabel(modelField, selectedModel || runtimeSettings.model, t("defaultModel"))
   const effortLabel = optionLabel(effortField, selectedReasoning || runtimeSettings.effort, t("defaultReasoning"))
   const permissionLabel = selectedPermissionOption?.label ?? t(approvalMode.labelKey)
+  const modelSelectionId = modelSelectionIdForCatalog(modelCatalog, selectedModel, selectedReasoning)
+  const permissionSelectionId = permissionSelectionIdForCatalog(permissionCatalog, selectedPermissionMode)
   const canCreate =
     Boolean(authSession?.accessToken && selectedConnector && selectedAgent) &&
     !creating &&
@@ -399,8 +409,8 @@ export function TaskComposer() {
         runtime: selectedAgent,
         title: prompt.trim() || undefined,
         cwd: workspace?.path || undefined,
-        approvalPolicy: approvalMode.approvalPolicy,
-        sandbox: approvalMode.sandbox,
+        modelSelectionId,
+        permissionSelectionId,
       })
       const nextPreference = { connectorId: selectedConnector.id, agent: selectedAgent }
       writeNewSessionPreference(nextPreference)
@@ -409,14 +419,6 @@ export function TaskComposer() {
       const takeover = await dashboardApi.enableTakeover(authSession.accessToken, created.session.id)
       const sessionId = takeover.session.id
       bindOptimisticSession(localSessionId, takeover.session)
-      const settings: Record<string, unknown> = {}
-      const validSelectedReasoning = validEffortValue(effortField, selectedReasoning)
-      if (selectedPermissionMode) settings.permissionMode = selectedPermissionMode
-      if (selectedModel) settings.model = selectedModel
-      if (validSelectedReasoning) settings.effort = validSelectedReasoning
-      if (Object.keys(settings).length > 0) {
-        await dashboardApi.patchSessionRuntimeSettings(authSession.accessToken, sessionId, settings)
-      }
       const files = selectedAttachments.map((attachment) => attachment.file)
       const upload = files.length > 0
         ? await dashboardApi.uploadSessionAttachments(authSession.accessToken, sessionId, files)
@@ -429,8 +431,8 @@ export function TaskComposer() {
         {
           attachments: attachmentRefs,
           clientMessageId,
-          model: selectedModel || undefined,
-          effort: validSelectedReasoning || undefined,
+          modelSelectionId,
+          permissionSelectionId,
         },
       )
       upsertSession(takeover.session)
@@ -713,6 +715,28 @@ function runtimeLabel(runtime: string): string {
   if (runtime === "claude") return "Claude Code"
   if (runtime === "opencode") return "OpenCode"
   return runtime.slice(0, 1).toUpperCase() + runtime.slice(1)
+}
+
+function modelSelectionIdForCatalog(
+  catalog: ProtocolModelCatalog | null,
+  modelId: string,
+  reasoningId: string,
+): string | null {
+  if (!catalog || !modelId) return null
+  const model = catalog.models.find((item) => item.id === modelId)
+  if (!model) return null
+  if (reasoningId) {
+    return model.reasoningItems.find((item) => item.id === reasoningId)?.selectionId ?? null
+  }
+  return model.selectionId ?? model.reasoningItems.find((item) => item.default)?.selectionId ?? null
+}
+
+function permissionSelectionIdForCatalog(
+  catalog: ProtocolPermissionCatalog | null,
+  permissionId: string,
+): string | null {
+  if (!catalog || !permissionId) return null
+  return catalog.permissions.find((item) => item.id === permissionId)?.selectionId ?? null
 }
 
 function readNewSessionPreference(): NewSessionPreference | null {

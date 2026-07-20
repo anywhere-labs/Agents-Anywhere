@@ -40,6 +40,7 @@ from agent_server.core.models import (
     ConnectorAuthResponse,
     ConnectorIngestRequest,
     ConnectorIngestResponse,
+    NoticeIn,
     TimelineItemIn,
 )
 from agent_server.services.attachments import AttachmentService
@@ -651,6 +652,25 @@ async def apply_connector_notification(
             item=stored.model_dump(mode="json"),
             session_changed=item.type in ("turn.start", "turn.end"),
             notices_changed=item.type == "turn.end",
+        )
+    elif method == "notice.upsert":
+        try:
+            notice = NoticeIn.model_validate(params)
+        except ValidationError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "invalid_notice",
+                    "message": str(exc),
+                },
+            ) from exc
+        if await filter_.session_disabled(notice.sessionId):
+            return IngestEffect()
+        stored = await db.upsert_notice(notice)
+        return IngestEffect(
+            session_id=stored.sessionId,
+            session_changed=stored.blocking is not None,
+            notices_changed=True,
         )
     elif method == "approval.requested":
         approval = ApprovalIn.model_validate(params)

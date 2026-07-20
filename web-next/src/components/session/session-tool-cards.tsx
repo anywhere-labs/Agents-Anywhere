@@ -6,13 +6,13 @@ import { Check, ChevronDown, Code2, Copy, FilePenLine, Hammer, Loader2, Terminal
 import { Badge } from "@/components/ui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
-import { ApprovalCard } from "@/components/session/session-approval-card"
+import { InteractionCard } from "@/components/session/session-approval-card"
 import { MonacoCodeView, monacoLanguageForFile } from "@/components/monaco-code-view"
 import { openSessionFilePreview } from "@/components/markdown-text"
 import { cn } from "@/lib/utils"
 import { highlightCode } from "@/lib/code-highlight"
 import { dashboardApi } from "@/features/dashboard/api"
-import type { Approval, ApprovalResolveStatus, SessionView, TimelineItem } from "@/features/dashboard/types"
+import type { Notice, SessionView, TimelineItem } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
 import { commandText, firstTextOf, recordsOf, textOf } from "@/components/session/session-utils"
 
@@ -32,18 +32,18 @@ export function ToolCard({
   item,
   token,
   session,
-  approval,
-  resolvingApprovalId,
-  resolvingStatus,
-  onResolveApproval,
+  interaction,
+  resolvingNoticeId,
+  resolvingActionId,
+  onRespondInteraction,
 }: {
   item: TimelineItem
   token: string
   session: SessionView
-  approval?: Approval
-  resolvingApprovalId: string | null
-  resolvingStatus: ApprovalResolveStatus | null
-  onResolveApproval: (approvalId: string, status: ApprovalResolveStatus) => void
+  interaction?: Notice
+  resolvingNoticeId: string | null
+  resolvingActionId: string | null
+  onRespondInteraction: (noticeId: string, actionId: string) => void
 }) {
   const tSession = useTranslations("dashboard.session")
   const kind = timelineToolKind(item)
@@ -51,7 +51,7 @@ export function ToolCard({
   const output = textOf(item.content.outputPreview) || textOf(item.content.outputText) || textOf(item.content.error)
   const changes = recordsOf(item.content.changes)
   const title = timelineToolTitle(item, tSession)
-  const defaultOpen = Boolean(approval)
+  const defaultOpen = Boolean(interaction)
 
   return (
     <Collapsible defaultOpen={defaultOpen} className="min-w-0 max-w-full overflow-hidden">
@@ -73,13 +73,13 @@ export function ToolCard({
             changes={changes}
             fallback={item.content}
           />
-          {approval ? (
+          {interaction ? (
             <div className="mt-2">
-              <ApprovalCard
-                approval={approval}
-                resolvingApprovalId={resolvingApprovalId}
-                resolvingStatus={resolvingStatus}
-                onResolveApproval={onResolveApproval}
+              <InteractionCard
+                notice={interaction}
+                resolvingNoticeId={resolvingNoticeId}
+                resolvingActionId={resolvingActionId}
+                onRespondInteraction={onRespondInteraction}
                 compact
               />
             </div>

@@ -31,8 +31,9 @@ export function SessionFilterMenu() {
     { value: "all", label: t("filters.allStatus") },
     { value: "running", label: t("sessionStatus.running") },
     { value: "idle", label: t("sessionStatus.idle") },
-    { value: "waiting_approval", label: t("sessionStatus.waiting_approval") },
-    { value: "error", label: t("sessionStatus.error") },
+    { value: "pending", label: t("sessionStatus.pending") },
+    { value: "blocked", label: t("sessionStatus.blocked") },
+    { value: "stopping", label: t("sessionStatus.stopping") },
   ]
 
   // Derive unique runtimes from sessions
