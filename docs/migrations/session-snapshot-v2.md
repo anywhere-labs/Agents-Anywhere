@@ -35,6 +35,13 @@ Response:
     "revision": 3,
     "capabilities": []
   },
+  "catalogs": {
+    "model": {
+      "runtime": "codex",
+      "revision": 1,
+      "models": []
+    }
+  },
   "eventCursor": "seq:42",
   "serverTime": "2026-07-20T10:00:00Z"
 }

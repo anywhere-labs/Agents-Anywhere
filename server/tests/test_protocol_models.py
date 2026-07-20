@@ -5,6 +5,7 @@ from agent_server.core.protocol import (
     ProtocolCapability,
     ProtocolCapabilitySet,
     ProtocolHandshakeResponse,
+    protocol_selection_id,
 )
 
 
@@ -32,3 +33,25 @@ def test_protocol_handshake_response_selects_v1() -> None:
     response = ProtocolHandshakeResponse(selectedProtocolVersion=PROTOCOL_VERSION_1, serverVersion="0.2.0")
 
     assert response.selectedProtocolVersion == "1.0"
+
+
+def test_protocol_selection_id_is_stable_and_identity_based() -> None:
+    first = protocol_selection_id(
+        "codex",
+        "model",
+        {"model_id": "gpt-5.5", "reasoning_id": "xhigh"},
+    )
+    second = protocol_selection_id(
+        "codex",
+        "model",
+        {"reasoning_id": "xhigh", "model_id": "gpt-5.5"},
+    )
+    different = protocol_selection_id(
+        "codex",
+        "model",
+        {"model_id": "gpt-5.5", "reasoning_id": "high"},
+    )
+
+    assert first == second
+    assert first.startswith("sel_model_")
+    assert first != different

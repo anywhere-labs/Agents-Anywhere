@@ -4,10 +4,11 @@ from typing import Any
 
 from agent_server.infra.connector_rpc import ConnectorOfflineError, ConnectorRpcError, ConnectorRpcManager
 from agent_server.core.api_namespace import api_v2_path
-from agent_server.core.models import MessageCreateRequest, RpcResponsePayload, SessionCreateRequest
+from agent_server.core.models import MessageCreateRequest, RpcResponsePayload, RuntimeName, SessionCreateRequest
 from agent_server.infra.runtimes.serializers import serializer_for_runtime
 from agent_server.infra.repositories.facade import Store
 from agent_server.core.utc import utc_now
+from agent_server.services.model_catalog import build_model_catalog, resolve_model_selection
 
 
 class SessionRunError(RuntimeError):
@@ -31,7 +32,7 @@ class SessionRunUpstreamError(SessionRunError):
 
 
 class SessionRunInvalidConfigError(SessionRunError):
-    status_code = 500
+    status_code = 422
 
 
 class SessionRunService:
@@ -53,13 +54,19 @@ class SessionRunService:
             raise SessionRunNotFoundError("connector not found") from None
 
         connector_result = None
+        runtime_settings_patch = await self._runtime_settings_patch_with_model_selection(
+            runtime=payload.runtime,
+            user_id=user_id,
+            patch=payload.runtimeSettings,
+            model_selection_id=payload.modelSelectionId,
+        )
         if payload.externalSessionId is not None:
             try:
                 runtime_settings_override = await self._store.get_initial_runtime_settings_for_connector_agent(
                     payload.connectorId,
                     payload.runtime,
                     user_id=user_id,
-                    patch=payload.runtimeSettings,
+                    patch=runtime_settings_patch,
                 )
             except ValueError as exc:
                 raise SessionRunInvalidConfigError(str(exc)) from exc
@@ -81,14 +88,14 @@ class SessionRunService:
                 payload.connectorId,
                 payload.runtime,
                 user_id=user_id,
-                patch=payload.runtimeSettings,
+                patch=runtime_settings_patch,
             )
             connector_settings = await self._store.serialize_initial_settings_for_connector_agent(
                 payload.connectorId,
                 payload.runtime,
                 user_id=user_id,
                 cwd=payload.cwd,
-                patch=payload.runtimeSettings,
+                patch=runtime_settings_patch,
             )
         except ValueError as exc:
             raise SessionRunInvalidConfigError(str(exc)) from exc
@@ -185,6 +192,13 @@ class SessionRunService:
             )
         except ValueError as exc:
             raise SessionRunInvalidConfigError(str(exc)) from exc
+        selected_model: tuple[str, str | None] | None = None
+        if payload.modelSelectionId is not None:
+            selected_model = await self._resolve_model_selection(
+                runtime=session.runtime,
+                user_id=user_id,
+                model_selection_id=payload.modelSelectionId,
+            )
 
         await self._store.set_session_status(session_id, "running")
         params: dict[str, Any] = {
@@ -197,12 +211,13 @@ class SessionRunService:
             params["cwd"] = session.cwd
         if session.externalSessionId:
             params["externalSessionId"] = session.externalSessionId
-        if session.runtime == "claude" and payload.mode is not None:
-            params["permissionMode"] = payload.mode
-        if payload.model is not None:
-            params["model"] = payload.model
-        if payload.effort is not None:
-            params["effort"] = payload.effort
+        if selected_model is not None:
+            model, effort = selected_model
+            params["model"] = model
+            if effort is None:
+                params.pop("effort", None)
+            else:
+                params["effort"] = effort
         if payload.clientMessageId:
             params["clientMessageId"] = payload.clientMessageId
         if payload.attachments:
@@ -237,6 +252,50 @@ class SessionRunService:
             await self._store.clear_active_run(session_id)
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
         return RpcResponsePayload(ok=True, result=result)
+
+    async def _runtime_settings_patch_with_model_selection(
+        self,
+        *,
+        runtime: RuntimeName,
+        user_id: str,
+        patch: dict[str, Any] | None,
+        model_selection_id: str | None,
+    ) -> dict[str, Any] | None:
+        if patch is not None and ("model" in patch or "effort" in patch):
+            raise SessionRunInvalidConfigError(
+                "runtimeSettings.model and runtimeSettings.effort are not accepted; use modelSelectionId"
+            )
+        if model_selection_id is None:
+            return patch
+        model, effort = await self._resolve_model_selection(
+            runtime=runtime,
+            user_id=user_id,
+            model_selection_id=model_selection_id,
+        )
+        result = dict(patch or {})
+        result["model"] = model
+        result["effort"] = effort
+        return result
+
+    async def _resolve_model_selection(
+        self,
+        *,
+        runtime: RuntimeName,
+        user_id: str,
+        model_selection_id: str,
+    ) -> tuple[str, str | None]:
+        defaults = await self._store.get_user_agent_defaults(user_id)
+        runtime_defaults = defaults.get(runtime)
+        models = (
+            runtime_defaults["models"]
+            if runtime_defaults and runtime_defaults.get("models")
+            else await self._store.list_agent_models(runtime)
+        )
+        catalog = build_model_catalog(runtime=runtime, models=models)
+        try:
+            return resolve_model_selection(catalog, model_selection_id)
+        except KeyError:
+            raise SessionRunInvalidConfigError("invalid modelSelectionId") from None
 
     async def _attachment_payloads(
         self,

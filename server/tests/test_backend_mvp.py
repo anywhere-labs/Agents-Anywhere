@@ -253,6 +253,85 @@ def test_platform_session_create_uses_connector_returned_session_id(tmp_path):
     assert [session["id"] for session in listed if session["externalSessionId"] == "thr_created"] == ["sess_codex_created"]
 
 
+def test_session_create_resolves_model_selection_id(tmp_path):
+    app = create_app(tmp_path / "test.sqlite3")
+    client = TestClient(app)
+    headers = auth_headers(client)
+    connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
+    connector_id = connector_response.json()["connector"]["id"]
+    catalog = client.get("/agents/codex/model-catalog", headers=headers).json()["catalog"]
+    model = next(item for item in catalog["models"] if item["id"] == "gpt-5.5")
+    model_selection_id = next(item for item in model["reasoningItems"] if item["id"] == "xhigh")[
+        "selectionId"
+    ]
+
+    class FakeCreateRpc:
+        def __init__(self) -> None:
+            self.requests: list[tuple[str, dict[str, Any]]] = []
+
+        def is_online(self, requested_connector_id: str) -> bool:
+            return requested_connector_id == connector_id
+
+        async def request(self, requested_connector_id: str, method: str, params: dict[str, Any], *, timeout: float = 30) -> dict[str, str]:
+            self.requests.append((method, params))
+            assert requested_connector_id == connector_id
+            await app.state.store.upsert_connector_session(
+                connector_id=connector_id,
+                session_id="sess_codex_selected_model",
+                runtime="codex",
+                external_session_id="thr_selected_model",
+                title=None,
+                cwd="/repo",
+                status="idle",
+            )
+            return {"sessionId": "sess_codex_selected_model", "externalSessionId": "thr_selected_model"}
+
+    fake_rpc = FakeCreateRpc()
+    app.state.rpc = fake_rpc
+
+    response = client.post(
+        "/sessions",
+        headers=headers,
+        json={
+            "connectorId": connector_id,
+            "runtime": "codex",
+            "title": "Selected model",
+            "cwd": "/repo",
+            "modelSelectionId": model_selection_id,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    params = fake_rpc.requests[-1][1]
+    assert params["model"] == "gpt-5.5"
+    assert params["effort"] == "xhigh"
+
+
+def test_session_create_rejects_legacy_runtime_settings_model_fields(tmp_path):
+    app = create_app(tmp_path / "test.sqlite3")
+    client = TestClient(app)
+    headers = auth_headers(client)
+    connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
+    connector_id = connector_response.json()["connector"]["id"]
+    app.state.rpc = FakeLocalRpc()
+
+    response = client.post(
+        "/sessions",
+        headers=headers,
+        json={
+            "connectorId": connector_id,
+            "runtime": "codex",
+            "cwd": "/repo",
+            "runtimeSettings": {
+                "model": "gpt-5.5",
+                "effort": "xhigh",
+            },
+        },
+    )
+
+    assert response.status_code == 422
+
+
 def test_claude_session_create_allows_initial_missing_external_session_id(tmp_path):
     app = create_app(tmp_path / "test.sqlite3")
     client = TestClient(app)
@@ -1562,29 +1641,8 @@ def test_agent_catalog_lists_seeded_claude_entries(tmp_path):
     assert body["entries"][0]["displayLabel"] == "Ask permissions"
     assert body["entries"][0]["sortOrder"] == 1
 
-    models = client.get("/agents/claude/models", headers=headers).json()
-    model_keys = [entry["key"] for entry in models["entries"]]
-    assert model_keys == [
-        "claude-opus-4-7",
-        "claude-opus-4-7[1m]",
-        "claude-sonnet-4-6",
-        "claude-haiku-4-5",
-        "claude-opus-4-6",
-    ]
-    assert next(e for e in models["entries"] if e["isDefault"])["key"] == "claude-opus-4-7[1m]"
-    assert [entry["key"] for entry in models["entries"][0]["efforts"]] == [
-        "low",
-        "medium",
-        "high",
-        "xhigh",
-        "max",
-    ]
-    assert models["entries"][3]["efforts"] == []
-
-    efforts = client.get("/agents/claude/efforts", headers=headers).json()
-    effort_keys = [entry["key"] for entry in efforts["entries"]]
-    assert effort_keys == ["low", "medium", "high", "xhigh", "max"]
-    assert next(e for e in efforts["entries"] if e["isDefault"])["key"] == "max"
+    assert client.get("/agents/claude/models", headers=headers).status_code == 404
+    assert client.get("/agents/claude/efforts", headers=headers).status_code == 404
 
 
 def test_codex_agent_catalog_lists_seeded_entries(tmp_path):
@@ -1595,26 +1653,35 @@ def test_codex_agent_catalog_lists_seeded_entries(tmp_path):
     assert modes["runtime"] == "codex"
     assert modes["entries"] == []
 
-    models = client.get("/agents/codex/models", headers=headers).json()
-    assert models["runtime"] == "codex"
-    assert [entry["key"] for entry in models["entries"]] == [
-        "gpt-5.5",
-        "gpt-5.4",
-        "gpt-5.4-mini",
-        "gpt-5.3-codex",
-        "gpt-5.2",
-    ]
-    assert next(e for e in models["entries"] if e["isDefault"])["key"] == "gpt-5.5"
+    assert client.get("/agents/codex/models", headers=headers).status_code == 404
+    assert client.get("/agents/codex/efforts", headers=headers).status_code == 404
 
-    efforts = client.get("/agents/codex/efforts", headers=headers).json()
-    assert efforts["runtime"] == "codex"
-    assert [entry["key"] for entry in efforts["entries"]] == [
+
+def test_agent_model_catalog_nests_reasoning_selection_ids(tmp_path):
+    client = make_client(tmp_path)
+    headers = auth_headers(client)
+
+    response = client.get("/agents/claude/model-catalog", headers=headers)
+
+    assert response.status_code == 200, response.text
+    catalog = response.json()["catalog"]
+    assert catalog["runtime"] == "claude"
+    opus = next(model for model in catalog["models"] if model["id"] == "claude-opus-4-7")
+    assert opus["displayName"] == "Opus 4.7"
+    assert opus["selectionId"] is None
+    assert [item["id"] for item in opus["reasoningItems"]] == [
         "low",
         "medium",
         "high",
         "xhigh",
+        "max",
     ]
-    assert next(e for e in efforts["entries"] if e["isDefault"])["key"] == "xhigh"
+    assert all(item["selectionId"].startswith("sel_model_") for item in opus["reasoningItems"])
+    assert opus["reasoningItems"][0]["fullModelId"] == "claude-opus-4-7"
+
+    haiku = next(model for model in catalog["models"] if model["id"] == "claude-haiku-4-5")
+    assert haiku["selectionId"].startswith("sel_model_")
+    assert haiku["reasoningItems"] == []
 
 
 def test_agent_catalog_requires_authentication(tmp_path):
@@ -2006,6 +2073,9 @@ def test_session_snapshot_includes_effective_capabilities(tmp_path):
     assert idle_caps["session.interrupt"]["unavailableReason"] == "session_not_interruptible"
     assert idle_caps["session.steer"]["available"] is False
     assert idle_caps["catalog.model"]["available"] is True
+    model_catalog = idle_body["catalogs"]["model"]
+    assert model_catalog["runtime"] == "codex"
+    assert model_catalog["models"][0]["reasoningItems"][0]["selectionId"].startswith("sel_model_")
     assert idle_body["eventCursor"].startswith("seq:")
 
     asyncio.run(client.app.state.store.set_session_status(session_id, "running"))
@@ -2519,7 +2589,7 @@ def test_legacy_v1_capabilities_blob_migrates_to_v3_view_on_read(tmp_path):
     assert state["disabled"] == []
 
 
-def test_send_message_forwards_codex_model_effort_but_ignores_legacy_mode(tmp_path):
+def test_send_message_resolves_model_selection_id(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, session_id, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
@@ -2527,14 +2597,18 @@ def test_send_message_forwards_codex_model_effort_but_ignores_legacy_mode(tmp_pa
     asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
     client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
 
+    catalog = client.get("/agents/codex/model-catalog", headers=headers).json()["catalog"]
+    model = next(item for item in catalog["models"] if item["id"] == "gpt-5.5")
+    model_selection_id = next(item for item in model["reasoningItems"] if item["id"] == "xhigh")[
+        "selectionId"
+    ]
+
     response = client.post(
         f"/sessions/{session_id}/messages",
         headers=headers,
         json={
             "content": "hi",
-            "mode": "bypassPermissions",
-            "model": "claude-opus-4-7",
-            "effort": "max",
+            "modelSelectionId": model_selection_id,
         },
     )
 
@@ -2551,8 +2625,29 @@ def test_send_message_forwards_codex_model_effort_but_ignores_legacy_mode(tmp_pa
         "excludeTmpdirEnvVar": True,
         "excludeSlashTmp": True,
     }
-    assert params["model"] == "claude-opus-4-7"
-    assert params["effort"] == "max"
+    assert params["model"] == "gpt-5.5"
+    assert params["effort"] == "xhigh"
+
+
+def test_send_message_rejects_legacy_model_fields(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+    client.app.state.rpc = FakeLocalRpc()
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+
+    response = client.post(
+        f"/sessions/{session_id}/messages",
+        headers=headers,
+        json={
+            "content": "hi",
+            "model": "gpt-5.5",
+            "effort": "xhigh",
+            "mode": "auto",
+        },
+    )
+
+    assert response.status_code == 422
 
 
 def test_send_message_forwards_client_message_id_to_connector(tmp_path):
@@ -2859,12 +2954,11 @@ def test_send_message_carries_runtime_for_claude_session(tmp_path):
     response = client.post(
         f"/sessions/{session_id}/messages",
         headers=headers,
-        json={"content": "hi", "mode": "auto"},
+        json={"content": "hi"},
     )
     assert response.status_code == 200, response.text
     params = fake_rpc.requests[-1][2]
     assert params["runtime"] == "claude"
-    assert params["permissionMode"] == "auto"
     assert params["cwd"] == "/repo"
 
 

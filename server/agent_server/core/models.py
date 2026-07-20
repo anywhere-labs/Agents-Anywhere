@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 RuntimeName = Literal["codex", "claude", "opencode", "acp"]
@@ -535,12 +535,15 @@ class PairingPollResponse(BaseModel):
 
 
 class SessionCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     connectorId: str
     runtime: RuntimeName = "codex"
     externalSessionId: str | None = None
     title: str | None = None
     cwd: str | None = None
     runtimeSettings: dict[str, Any] | None = None
+    modelSelectionId: str | None = None
     # Forwarded to the connector's runtime-create RPC. For codex these map to
     # `thread/start.approvalPolicy` and `thread/start.sandbox` — set to
     # "never"/"danger-full-access" to disable approval prompts during testing.
@@ -693,14 +696,11 @@ class AttachmentRef(BaseModel):
 
 
 class MessageCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     content: str
     attachments: list[AttachmentRef] = Field(default_factory=list, max_length=10)
-    # Optional per-message overrides surfaced by the composer dropdowns. The
-    # backend forwards these to the connector as permissionMode / model /
-    # effort; what (if anything) consumes them is runtime-specific.
-    mode: str | None = None
-    model: str | None = None
-    effort: str | None = None
+    modelSelectionId: str | None = None
     # Client-generated id (e.g. optimistic temp id). Forwarded to the connector;
     # the connector tags the resulting timeline item so the frontend can
     # dedupe its optimistic placeholder against the real server item.

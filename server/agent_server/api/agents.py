@@ -17,6 +17,8 @@ from agent_server.core.runtime_config import (
     RuntimeConfigSchemaResponse,
     schema_with_user_agent_defaults,
 )
+from agent_server.core.protocol import ProtocolModelCatalogResponse
+from agent_server.services.model_catalog import build_model_catalog
 from agent_server.services.runtime_config import RuntimeConfigService
 from agent_server.infra.repositories.facade import Store
 from agent_server.core.utc import utc_now
@@ -73,44 +75,17 @@ async def list_agent_modes(
     )
 
 
-@router.get("/{runtime}/models", response_model=AgentCatalogResponse)
-async def list_agent_models(
+@router.get("/{runtime}/model-catalog", response_model=ProtocolModelCatalogResponse)
+async def get_agent_model_catalog(
     runtime: RuntimeName,
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
-) -> AgentCatalogResponse:
-    defaults = await db.get_user_agent_defaults(user_id)
-    runtime_defaults = defaults.get(runtime)
-    if runtime_defaults and runtime_defaults.get("models"):
-        return AgentCatalogResponse(
+) -> ProtocolModelCatalogResponse:
+    return ProtocolModelCatalogResponse(
+        catalog=build_model_catalog(
             runtime=runtime,
-            entries=runtime_defaults["models"],
-            serverTime=utc_now(),
-        )
-    return AgentCatalogResponse(
-        runtime=runtime,
-        entries=await db.list_agent_models(runtime),
-        serverTime=utc_now(),
-    )
-
-
-@router.get("/{runtime}/efforts", response_model=AgentCatalogResponse)
-async def list_agent_efforts(
-    runtime: RuntimeName,
-    user_id: str = Depends(current_user_id),
-    db: Store = Depends(get_store),
-) -> AgentCatalogResponse:
-    defaults = await db.get_user_agent_defaults(user_id)
-    runtime_defaults = defaults.get(runtime)
-    if runtime_defaults and runtime_defaults.get("models"):
-        return AgentCatalogResponse(
-            runtime=runtime,
-            entries=_efforts_from_models(runtime_defaults["models"]),
-            serverTime=utc_now(),
-        )
-    return AgentCatalogResponse(
-        runtime=runtime,
-        entries=await db.list_agent_efforts(runtime),
+            models=await _model_entries_for_user_runtime(db, user_id, runtime),
+        ),
         serverTime=utc_now(),
     )
 
@@ -137,6 +112,18 @@ async def get_runtime_config_schema(
     )
 
 
+async def _model_entries_for_user_runtime(
+    db: Store,
+    user_id: str,
+    runtime: RuntimeName,
+) -> list[AgentCatalogEntry]:
+    defaults = await db.get_user_agent_defaults(user_id)
+    runtime_defaults = defaults.get(runtime)
+    if runtime_defaults and runtime_defaults.get("models"):
+        return runtime_defaults["models"]
+    return await db.list_agent_models(runtime)
+
+
 def _agent_defaults_response(raw: dict[str, Any]) -> dict[str, UserAgentDefaultRuntime]:
     return {
         runtime: UserAgentDefaultRuntime(
@@ -147,15 +134,3 @@ def _agent_defaults_response(raw: dict[str, Any]) -> dict[str, UserAgentDefaultR
         )
         for runtime, item in raw.items()
     }
-
-
-def _efforts_from_models(models: list[AgentCatalogEntry]) -> list[AgentCatalogEntry]:
-    result: list[AgentCatalogEntry] = []
-    seen: set[str] = set()
-    for model in models:
-        for effort in model.efforts:
-            if effort.key in seen:
-                continue
-            seen.add(effort.key)
-            result.append(effort.model_copy(update={"efforts": []}))
-    return result

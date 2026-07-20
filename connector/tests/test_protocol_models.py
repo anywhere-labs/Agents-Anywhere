@@ -1,6 +1,15 @@
 from __future__ import annotations
 
-from connector.protocol import PROTOCOL_VERSION_1, ProtocolCapability, ProtocolCapabilitySet, RpcNotification
+from connector.protocol import (
+    PROTOCOL_VERSION_1,
+    ProtocolCapability,
+    ProtocolCapabilitySet,
+    ProtocolModelCatalog,
+    ProtocolModelItem,
+    ProtocolReasoningItem,
+    RpcNotification,
+    protocol_selection_id,
+)
 
 
 def test_connector_protocol_capability_set_round_trip() -> None:
@@ -25,3 +34,34 @@ def test_existing_rpc_notification_shape_is_preserved() -> None:
     assert notification.type == "notification"
     assert notification.method == "protocol.capabilitiesUpdated"
     assert PROTOCOL_VERSION_1 == "1.0"
+
+
+def test_connector_model_catalog_shape() -> None:
+    selection_id = protocol_selection_id(
+        "codex",
+        "model",
+        {"model_id": "gpt-5.5", "reasoning_id": "xhigh"},
+    )
+    catalog = ProtocolModelCatalog(
+        runtime="codex",
+        revision=1,
+        models=[
+            ProtocolModelItem(
+                displayName="GPT-5.5",
+                id="gpt-5.5",
+                reasoningItems=[
+                    ProtocolReasoningItem(
+                        displayName="Extra high",
+                        id="xhigh",
+                        fullModelId="gpt-5.5",
+                        selectionId=selection_id,
+                    )
+                ],
+            )
+        ],
+    )
+
+    dumped = catalog.model_dump(mode="json")
+
+    assert dumped["models"][0]["selectionId"] is None
+    assert dumped["models"][0]["reasoningItems"][0]["selectionId"] == selection_id
