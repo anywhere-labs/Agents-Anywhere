@@ -592,7 +592,7 @@ def test_reducer_maps_codex_approval_request() -> None:
         }
     )
 
-    assert reduced.session_update["status"] == "waiting_approval"
+    assert reduced.session_update["status"] == "blocked"
     assert reduced.timeline_items[0]["type"] == "tool"
     approval = reduced.approvals[0]
     assert approval["kind"] == "command"

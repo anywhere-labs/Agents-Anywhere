@@ -288,7 +288,7 @@ class TimelineReducer:
                 session_update=self._session_update(
                     session_id=session_id,
                     thread_id=thread_id,
-                    status="waiting_approval",
+                    status="blocked",
                 ),
                 timeline_items=[timeline_item] if timeline_item else [],
                 approvals=[approval],
@@ -373,7 +373,7 @@ class TimelineReducer:
                 session_update=self._session_update(
                     session_id=session_id,
                     thread_id=thread_id,
-                    status="error",
+                    status="blocked",
                 ),
                 timeline_items=[item],
             )
@@ -1192,7 +1192,7 @@ def _session_status_from_turn(turn: dict[str, Any]) -> str:
         return "idle"
     if result in {"interrupted", "cancelled"}:
         return "idle"
-    return "error"
+    return "blocked"
 
 
 def _session_status_from_thread(thread: dict[str, Any]) -> str:
@@ -1201,9 +1201,9 @@ def _session_status_from_thread(thread: dict[str, Any]) -> str:
     if status_type in {"running", "inProgress"}:
         return "running"
     if status_type == "waiting_approval":
-        return "waiting_approval"
+        return "blocked"
     if status_type == "error":
-        return "error"
+        return "blocked"
     return "idle"
 
 

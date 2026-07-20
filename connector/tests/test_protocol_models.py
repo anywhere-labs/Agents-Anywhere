@@ -6,6 +6,10 @@ from connector.protocol import (
     ProtocolCapabilitySet,
     ProtocolModelCatalog,
     ProtocolModelItem,
+    ProtocolNotice,
+    ProtocolNoticeAction,
+    ProtocolNoticeBlocking,
+    ProtocolNoticeSource,
     ProtocolPermissionCatalog,
     ProtocolPermissionItem,
     ProtocolReasoningItem,
@@ -90,3 +94,32 @@ def test_connector_permission_catalog_shape() -> None:
     dumped = catalog.model_dump(mode="json")
 
     assert dumped["permissions"][0]["selectionId"] == selection_id
+
+
+def test_connector_notice_interaction_shape() -> None:
+    notice = ProtocolNotice(
+        noticeId="notice_1",
+        type="interaction",
+        sessionId="sess_1",
+        source=ProtocolNoticeSource(runtime="codex", adapter="codex"),
+        title="Approve command execution",
+        message="The runtime is blocked until the user responds.",
+        severity="warning",
+        interactionType="approval",
+        status="open",
+        blocking=ProtocolNoticeBlocking(scope="session", targetId="sess_1"),
+        responseRequired=True,
+        actions=[
+            ProtocolNoticeAction(
+                actionId="allow_once",
+                label="Allow once",
+                style="primary",
+            )
+        ],
+    )
+
+    dumped = notice.model_dump(mode="json")
+
+    assert dumped["type"] == "interaction"
+    assert dumped["blocking"] == {"scope": "session", "targetId": "sess_1"}
+    assert dumped["actions"][0]["actionId"] == "allow_once"

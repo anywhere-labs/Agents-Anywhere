@@ -14,6 +14,18 @@ SUPPORTED_PROTOCOL_VERSIONS = [PROTOCOL_VERSION_1]
 ProtocolVersion = Literal["1.0"]
 RuntimeName = Literal["codex", "claude", "opencode", "acp"]
 ProtocolCapabilityScope = Literal["adapter", "runtime", "session"]
+ProtocolNoticeType = Literal["notification", "interaction"]
+ProtocolNoticeSeverity = Literal["info", "success", "warning", "error"]
+ProtocolInteractionStatus = Literal[
+    "open",
+    "response_accepted",
+    "resolving",
+    "resolved",
+    "expired",
+    "cancelled",
+    "failed",
+]
+ProtocolActionStyle = Literal["primary", "secondary", "danger", "default"]
 
 
 class RpcRequest(BaseModel):
@@ -105,6 +117,49 @@ class ProtocolPermissionCatalog(BaseModel):
     runtime: RuntimeName
     revision: int = Field(ge=0)
     permissions: list[ProtocolPermissionItem] = Field(default_factory=list)
+
+
+class ProtocolNoticeSource(BaseModel):
+    runtime: RuntimeName
+    adapter: str | None = None
+
+
+class ProtocolNoticeBlocking(BaseModel):
+    scope: Literal["session", "tool_call", "runtime"]
+    targetId: str
+
+
+class ProtocolNoticeActionInput(BaseModel):
+    required: bool = False
+    schema_: dict[str, Any] | None = Field(default=None, alias="schema")
+    uiSchema: dict[str, Any] | None = None
+
+
+class ProtocolNoticeAction(BaseModel):
+    actionId: str
+    label: str
+    style: ProtocolActionStyle = "default"
+    input: ProtocolNoticeActionInput = Field(default_factory=ProtocolNoticeActionInput)
+
+
+class ProtocolNotice(BaseModel):
+    noticeId: str
+    type: ProtocolNoticeType
+    sessionId: str | None = None
+    source: ProtocolNoticeSource
+    title: str
+    message: str
+    severity: ProtocolNoticeSeverity = "info"
+    createdAt: str | None = None
+    expiresAt: str | None = None
+    revision: int = Field(default=1, ge=1)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    interactionType: str | None = None
+    status: ProtocolInteractionStatus | None = None
+    blocking: ProtocolNoticeBlocking | None = None
+    responseRequired: bool = False
+    actions: list[ProtocolNoticeAction] = Field(default_factory=list)
+    context: dict[str, Any] = Field(default_factory=dict)
 
 
 def protocol_selection_id(runtime: str, catalog_type: str, identity: dict[str, Any]) -> str:
