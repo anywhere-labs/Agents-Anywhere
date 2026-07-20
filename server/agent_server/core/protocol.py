@@ -126,6 +126,39 @@ class ProtocolSessionSnapshotResponse(BaseModel):
     serverTime: str
 
 
+class ProtocolWsTicketScope(BaseModel):
+    sessionId: str
+
+
+class ProtocolWsTicketRequest(BaseModel):
+    clientId: str
+    scope: ProtocolWsTicketScope
+
+
+class ProtocolWsTicketResponse(BaseModel):
+    ticket: str
+    expiresAt: str
+    serverTime: str
+
+
+class ProtocolEventEnvelope(BaseModel):
+    protocolVersion: ProtocolVersion = PROTOCOL_VERSION_1
+    eventId: str
+    sequence: int
+    cursor: str
+    type: str
+    sessionId: str
+    emittedAt: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProtocolEventRecoveryResponse(BaseModel):
+    events: list[ProtocolEventEnvelope] = Field(default_factory=list)
+    nextCursor: str
+    snapshotRequired: bool = False
+    serverTime: str
+
+
 def protocol_selection_id(runtime: str, catalog_type: str, identity: dict[str, Any]) -> str:
     canonical_identity = json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     raw = f"1:{runtime}:{catalog_type}:{canonical_identity}".encode()

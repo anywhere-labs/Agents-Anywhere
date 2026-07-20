@@ -795,6 +795,16 @@ def interaction_notice_id(
     )
 
 
+def ws_ticket(client: TestClient, session_id: str, headers: dict[str, str], client_id: str = "web_test") -> str:
+    response = client.post(
+        "/ws-ticket",
+        headers=headers,
+        json={"clientId": client_id, "scope": {"sessionId": session_id}},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["ticket"]
+
+
 def test_connectors_can_be_listed_without_sessions(tmp_path):
     client = make_client(tmp_path)
     headers = auth_headers(client)
@@ -4958,6 +4968,120 @@ def test_dashboard_events_route_precedes_session_events(tmp_path):
     dashboard_index = paths.index("/api/v2/sessions/events/dashboard")
     session_events_index = paths.index("/api/v2/sessions/{session_id}/events")
     assert dashboard_index < session_events_index
+
+
+def test_ws_ticket_is_session_scoped_and_single_use(tmp_path):
+    client = make_client(tmp_path)
+    _, _, session_id, headers = create_connector_and_session(client)
+    ticket = ws_ticket(client, session_id, headers)
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        subscribed = ws.receive_json()
+        assert subscribed["type"] == "session.subscribed"
+        assert subscribed["sessionId"] == session_id
+
+    with pytest.raises(Exception):
+        with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}"):
+            pass
+
+
+def test_session_ws_projects_timeline_and_notice_events(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    ticket = ws_ticket(client, session_id, headers)
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "notifications": [
+                    {
+                        "method": "timeline.itemUpsert",
+                        "params": {
+                            "sessionId": session_id,
+                            "item": {
+                                "id": "tl_ws_failed",
+                                "sessionId": session_id,
+                                "turnId": "turn_ws",
+                                "type": "turn.end",
+                                "status": "failed",
+                                "role": None,
+                                "content": {
+                                    "result": "failed",
+                                    "error": {"code": "runtime_error", "message": "boom"},
+                                },
+                                "source": {
+                                    "runtime": "codex",
+                                    "sessionId": "thr_1",
+                                    "turnId": "turn_ws",
+                                    "event": "turn/completed",
+                                    "derivedKey": "turn-end",
+                                },
+                                "orderSeq": 1,
+                                "revision": 1,
+                                "contentHash": "sha256:ws-failed",
+                            },
+                        },
+                    }
+                ],
+            },
+        )
+        assert response.status_code == 200, response.text
+
+        received = [ws.receive_json() for _ in range(4)]
+        event_types = {event["type"] for event in received}
+        assert "timeline.item_created" in event_types
+        assert "session.status_changed" in event_types
+        assert "notice.created" in event_types or "notice.updated" in event_types
+
+
+def test_session_events_recovery_returns_json_events(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.itemUpsert",
+                    "params": {
+                        "sessionId": session_id,
+                        "item": {
+                            "id": "tl_recovery",
+                            "sessionId": session_id,
+                            "turnId": "turn_recovery",
+                            "type": "message",
+                            "status": "done",
+                            "role": "assistant",
+                            "content": {"text": "hello"},
+                            "source": {
+                                "runtime": "codex",
+                                "sessionId": "thr_1",
+                                "turnId": "turn_recovery",
+                                "itemId": "msg_1",
+                                "itemType": "agentMessage",
+                            },
+                            "orderSeq": 1,
+                            "revision": 1,
+                            "contentHash": "sha256:recovery",
+                        },
+                    },
+                }
+            ],
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    recovered = client.get(f"/sessions/{session_id}/events", headers=headers, params={"after": "seq:0"})
+    assert recovered.status_code == 200, recovered.text
+    body = recovered.json()
+    assert body["snapshotRequired"] is False
+    assert body["nextCursor"].startswith("seq:")
+    assert "timeline.item_created" in [event["type"] for event in body["events"]]
 
 
 def test_existing_connector_session_metadata_sync_does_not_rearm_unread(tmp_path):

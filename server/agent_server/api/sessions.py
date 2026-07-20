@@ -3,8 +3,11 @@ from __future__ import annotations
 from typing import Any
 
 import asyncio
+import hashlib
+import json
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
+from starlette.requests import HTTPConnection
 from starlette.responses import StreamingResponse
 
 from agent_server.infra.connector_rpc import ConnectorOfflineError, ConnectorRpcError, ConnectorRpcManager
@@ -33,6 +36,8 @@ from agent_server.core.models import (
 )
 from agent_server.core.protocol import (
     ProtocolCapabilitySet,
+    ProtocolEventEnvelope,
+    ProtocolEventRecoveryResponse,
     ProtocolSessionSnapshotResponse,
     ProtocolTimelineSnapshot,
 )
@@ -46,10 +51,15 @@ from agent_server.services.effective_capabilities import derive_session_effectiv
 from agent_server.services.model_catalog import build_model_catalog
 from agent_server.services.permission_catalog import build_permission_catalog
 from agent_server.infra.repositories.facade import Store
+from agent_server.infra.ws_tickets import ClientWsTicketManager
 from agent_server.core.utc import utc_now
 
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
+
+
+def _get_ws_tickets(conn: HTTPConnection) -> ClientWsTicketManager:
+    return conn.app.state.ws_tickets
 
 
 def _raise_session_run_error(exc: SessionRunError) -> None:
@@ -63,6 +73,133 @@ def _approval_status_for_action(action_id: str) -> str | None:
         "reject": "rejected",
         "cancel": "cancelled",
     }.get(action_id)
+
+
+def _parse_event_cursor(cursor: str) -> int:
+    if cursor.startswith("seq:"):
+        cursor = cursor[4:]
+    try:
+        return max(0, int(cursor))
+    except ValueError:
+        raise HTTPException(status_code=422, detail="invalid event cursor") from None
+
+
+def _protocol_event(
+    session_id: str,
+    *,
+    sequence: int,
+    event_type: str,
+    payload: dict[str, Any],
+) -> ProtocolEventEnvelope:
+    event_hash = hashlib.sha256(
+        json.dumps([event_type, payload], sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()[:12]
+    return ProtocolEventEnvelope(
+        eventId=f"evt_{sequence}_{event_hash}",
+        sequence=sequence,
+        cursor=f"seq:{sequence}",
+        type=event_type,
+        sessionId=session_id,
+        emittedAt=utc_now(),
+        payload=payload,
+    )
+
+
+def _timeline_events_from_items(session_id: str, items: list[dict[str, Any]]) -> list[ProtocolEventEnvelope]:
+    events: list[ProtocolEventEnvelope] = []
+    for item in items:
+        sequence = int(item.get("updatedSeq") or item.get("updated_seq") or 0)
+        if sequence <= 0:
+            continue
+        revision = int(item.get("revision") or 1)
+        events.append(
+            _protocol_event(
+                session_id,
+                sequence=sequence,
+                event_type="timeline.item_updated" if revision > 1 else "timeline.item_created",
+                payload={"item": item},
+            )
+        )
+    return events
+
+
+def _events_from_broker_message(message: str) -> list[ProtocolEventEnvelope]:
+    try:
+        payload = json.loads(message)
+    except json.JSONDecodeError:
+        return []
+    session_id = payload.get("sessionId")
+    if not isinstance(session_id, str):
+        return []
+    events = _timeline_events_from_items(session_id, payload.get("items") if isinstance(payload.get("items"), list) else [])
+    session = payload.get("session")
+    if isinstance(session, dict):
+        sequence = int(session.get("updatedSeq") or payload.get("nextSeq") or 0)
+        if sequence > 0:
+            events.append(
+                _protocol_event(
+                    session_id,
+                    sequence=sequence,
+                    event_type="session.status_changed",
+                    payload={"session": session, "status": session.get("status")},
+                )
+            )
+    notices = payload.get("notices")
+    if isinstance(notices, list):
+        for notice in notices:
+            if not isinstance(notice, dict):
+                continue
+            sequence = int(notice.get("updatedSeq") or payload.get("nextSeq") or 0)
+            if sequence <= 0:
+                continue
+            status = notice.get("status")
+            event_type = "notice.created" if status == "open" and int(notice.get("revision") or 1) == 1 else "notice.updated"
+            events.append(
+                _protocol_event(
+                    session_id,
+                    sequence=sequence,
+                    event_type=event_type,
+                    payload={"notice": notice},
+                )
+            )
+    if payload.get("refetch"):
+        sequence = int(payload.get("nextSeq") or 0)
+        if sequence > 0:
+            events.append(
+                _protocol_event(
+                    session_id,
+                    sequence=sequence,
+                    event_type="session.refetch_required",
+                    payload={"eventCursor": f"seq:{sequence}"},
+                )
+            )
+    events.sort(key=lambda event: event.sequence)
+    return events
+
+
+async def _publish_session_protocol_update(db: Store, broker: TimelineBroker, session_id: str) -> None:
+    next_seq = await db.get_session_seq(session_id)
+    envelope: dict[str, Any] = {
+        "sessionId": session_id,
+        "nextSeq": next_seq,
+        "session": (await db.get_session(session_id)).model_dump(mode="json"),
+        "notices": [notice.model_dump(mode="json") for notice in await db.list_open_notices(session_id)],
+    }
+    await broker.publish(session_id, envelope)
+
+
+async def _best_effort_publish_session_protocol_update(
+    db: Store,
+    broker: TimelineBroker,
+    session_id: str,
+    *,
+    user_id: str,
+) -> None:
+    try:
+        await db.get_session(session_id, user_id=user_id)
+        await _publish_session_protocol_update(db, broker, session_id)
+    except Exception:
+        return
 
 
 @router.post("")
@@ -421,56 +558,97 @@ async def dashboard_events(
 @router.get("/{session_id}/events")
 async def session_events(
     session_id: str,
-    token: str = Query(...),
+    after: str = Query("seq:0"),
+    user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
-    broker: TimelineBroker = Depends(get_timeline_broker),
-) -> StreamingResponse:
-    """SSE push channel. Browser EventSource can't set custom headers, so the
-    user access token comes in via ?token=… query param. Each event is a JSON
-    envelope `{sessionId, nextSeq}`; the client refetches the incremental
-    state on receipt — that keeps the cursor authoritative and survives
-    dropped events.
-    """
-    from agent_server.core.auth import verify_user_access_token
-
-    user_id = verify_user_access_token(token)
-    if user_id is None:
-        raise HTTPException(status_code=401, detail="invalid user access token")
+) -> ProtocolEventRecoveryResponse:
     try:
-        await db.get_session(session_id, user_id=user_id)
+        session = await db.get_session(session_id, user_id=user_id)
+        after_seq = _parse_event_cursor(after)
+        items, _has_more = await db.list_timeline_since(
+            session_id=session_id,
+            after_seq=after_seq,
+            limit=500,
+        )
+        notices = await db.list_open_notices(session_id)
+        next_seq = await db.get_session_seq(session_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
-
-    queue = await broker.register(session_id)
-
-    async def stream():
-        try:
-            # Initial frame asks the client to reconcile via one GET /state.
-            # This covers both first connect and every auto-reconnect (catch up
-            # whatever was missed while the SSE was down). Steady-state events
-            # afterwards carry item payloads directly — no refetch.
-            next_seq = await db.get_session_seq(session_id)
-            yield f'data: {{"sessionId":"{session_id}","nextSeq":{next_seq},"refetch":true}}\n\n'
-            while True:
-                try:
-                    # 15s heartbeat upper bound prevents proxies/clients from
-                    # closing an idle connection.
-                    message = await asyncio.wait_for(queue.get(), timeout=15.0)
-                    yield f"data: {message}\n\n"
-                except asyncio.TimeoutError:
-                    yield ": keepalive\n\n"
-        finally:
-            await broker.unregister(session_id, queue)
-
-    return StreamingResponse(
-        stream(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache, no-transform",
-            "X-Accel-Buffering": "no",
-            "Connection": "keep-alive",
-        },
+    events = _timeline_events_from_items(session_id, [item.model_dump(mode="json") for item in items])
+    if session.updatedSeq > after_seq:
+        events.append(
+            _protocol_event(
+                session_id,
+                sequence=session.updatedSeq,
+                event_type="session.status_changed",
+                payload={"session": session.model_dump(mode="json"), "status": session.status},
+            )
+        )
+    for notice in notices:
+        if notice.updatedSeq > after_seq:
+            events.append(
+                _protocol_event(
+                    session_id,
+                    sequence=notice.updatedSeq,
+                    event_type="notice.updated",
+                    payload={"notice": notice.model_dump(mode="json")},
+                )
+            )
+    events.sort(key=lambda event: event.sequence)
+    return ProtocolEventRecoveryResponse(
+        events=events,
+        nextCursor=f"seq:{next_seq}",
+        snapshotRequired=False,
+        serverTime=utc_now(),
     )
+
+
+@router.websocket("/{session_id}/ws")
+async def session_ws(
+    websocket: WebSocket,
+    session_id: str,
+    db: Store = Depends(get_store),
+    broker: TimelineBroker = Depends(get_timeline_broker),
+    tickets: ClientWsTicketManager = Depends(_get_ws_tickets),
+) -> None:
+    ticket_value = websocket.query_params.get("ticket")
+    if not isinstance(ticket_value, str) or not ticket_value:
+        await websocket.close(code=1008, reason="missing ticket")
+        return
+    ticket = tickets.consume(ticket_value, session_id=session_id)
+    if ticket is None:
+        await websocket.close(code=1008, reason="invalid ticket")
+        return
+    try:
+        await db.get_session(session_id, user_id=ticket.user_id)
+    except KeyError:
+        await websocket.close(code=1008, reason="session not found")
+        return
+
+    await websocket.accept()
+    queue = await broker.register(session_id)
+    try:
+        next_seq = await db.get_session_seq(session_id)
+        await websocket.send_json(
+            _protocol_event(
+                session_id,
+                sequence=next_seq,
+                event_type="session.subscribed",
+                payload={"clientId": ticket.client_id, "eventCursor": f"seq:{next_seq}"},
+            ).model_dump(mode="json")
+        )
+        while True:
+            try:
+                message = await asyncio.wait_for(queue.get(), timeout=15.0)
+            except asyncio.TimeoutError:
+                await websocket.send_json({"type": "keepalive", "serverTime": utc_now()})
+                continue
+            for event in _events_from_broker_message(message):
+                await websocket.send_json(event.model_dump(mode="json"))
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await broker.unregister(session_id, queue)
 
 
 @router.post("/{session_id}/takeover", response_model=TakeoverResponse)
@@ -509,10 +687,15 @@ async def send_message(
     payload: MessageCreateRequest,
     user_id: str = Depends(current_user_id),
     run_service: SessionRunService = Depends(get_session_run_service),
+    db: Store = Depends(get_store),
+    broker: TimelineBroker = Depends(get_timeline_broker),
 ) -> RpcResponsePayload:
     try:
-        return await run_service.send_message(session_id, payload, user_id=user_id)
+        result = await run_service.send_message(session_id, payload, user_id=user_id)
+        await _publish_session_protocol_update(db, broker, session_id)
+        return result
     except SessionRunError as exc:
+        await _best_effort_publish_session_protocol_update(db, broker, session_id, user_id=user_id)
         _raise_session_run_error(exc)
 
 
@@ -521,10 +704,15 @@ async def interrupt_session(
     session_id: str,
     user_id: str = Depends(current_user_id),
     run_service: SessionRunService = Depends(get_session_run_service),
+    db: Store = Depends(get_store),
+    broker: TimelineBroker = Depends(get_timeline_broker),
 ) -> RpcResponsePayload:
     try:
-        return await run_service.interrupt_session(session_id, user_id=user_id)
+        result = await run_service.interrupt_session(session_id, user_id=user_id)
+        await _publish_session_protocol_update(db, broker, session_id)
+        return result
     except SessionRunError as exc:
+        await _best_effort_publish_session_protocol_update(db, broker, session_id, user_id=user_id)
         _raise_session_run_error(exc)
 
 
@@ -535,6 +723,7 @@ async def respond_interaction(
     payload: InteractionRespondRequest,
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
+    broker: TimelineBroker = Depends(get_timeline_broker),
     approval_service: ApprovalService = Depends(get_approval_service),
 ) -> RpcResponsePayload:
     try:
@@ -564,7 +753,9 @@ async def respond_interaction(
             await db.update_notice_status(notice.noticeId, "failed", context_patch={"error": "invalid approval action"})
             raise HTTPException(status_code=422, detail="invalid approval action")
         try:
-            return await approval_service.resolve(approval_id, status, user_id=user_id)
+            result = await approval_service.resolve(approval_id, status, user_id=user_id)
+            await _publish_session_protocol_update(db, broker, session.id)
+            return result
         except ApprovalServiceError as exc:
             current_notice = await db.get_notice(notice.noticeId)
             if current_notice.status not in {"resolved", "expired", "cancelled"}:
@@ -573,13 +764,16 @@ async def respond_interaction(
                     "failed",
                     context_patch={"error": exc.detail},
                 )
+            await _publish_session_protocol_update(db, broker, session.id)
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     if notice.interactionType == "execution_error":
         await db.update_notice_status(notice.noticeId, "resolved")
         await db.refresh_session_status_from_timeline(session.id)
+        await _publish_session_protocol_update(db, broker, session.id)
         return RpcResponsePayload(ok=True, result={"resolved": True})
     await db.update_notice_status(notice.noticeId, "resolved")
     await db.refresh_session_status_from_timeline(session.id)
+    await _publish_session_protocol_update(db, broker, session.id)
     return RpcResponsePayload(ok=True, result={"resolved": True})
 
 

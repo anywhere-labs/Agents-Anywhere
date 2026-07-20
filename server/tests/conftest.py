@@ -27,6 +27,7 @@ _API_ROOTS = (
     "/oauth",
     "/pairing",
     "/sessions",
+    "/ws-ticket",
 )
 _TRUNCATE_SQL = (
     "TRUNCATE TABLE dashboard_daily_metrics, dashboard_user_daily_facts, dashboard_settings, "

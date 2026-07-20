@@ -20,6 +20,7 @@ from agent_server.api import (
     admin_dashboard,
     agents,
     auth,
+    client_ws,
     connector_ingress,
     connectors,
     oauth,
@@ -39,6 +40,7 @@ from agent_server.infra.terminal_broker import TerminalBroker
 from agent_server.infra.terminal_stream_hub import TerminalStreamHub
 from agent_server.core.utc import utc_now
 from agent_server.infra.timeline_broker import TimelineBroker
+from agent_server.infra.ws_tickets import ClientWsTicketManager
 
 
 CONNECTOR_PRESENCE_SWEEP_SECONDS = 5
@@ -99,6 +101,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     app.state.terminal_broker = TerminalBroker()
     app.state.terminal_stream_hub = TerminalStreamHub()
     app.state.timeline_broker = TimelineBroker()
+    app.state.ws_tickets = ClientWsTicketManager()
     app.state.setup_token = SetupToken()
     app.state.started_at_iso = utc_now()
     app.state.started_at_monotonic = time.monotonic()
@@ -113,6 +116,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     app.include_router(service.router, prefix=API_V2_PREFIX)
     app.include_router(oauth.router, prefix=API_V2_PREFIX)
     app.include_router(connectors.router, prefix=API_V2_PREFIX)
+    app.include_router(client_ws.router, prefix=API_V2_PREFIX)
     app.include_router(connector_ingress.router, prefix=API_V2_PREFIX)
     app.include_router(agents.router, prefix=API_V2_PREFIX)
     app.include_router(pairing.router, prefix=API_V2_PREFIX)

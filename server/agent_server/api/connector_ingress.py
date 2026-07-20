@@ -75,6 +75,7 @@ class IngestEffect:
     item: dict[str, Any] | None = None
     session_changed: bool = False
     approvals_changed: bool = False
+    notices_changed: bool = False
     needs_refetch: bool = False
 
 
@@ -89,12 +90,13 @@ async def _publish_effects(
             continue
         bucket = by_session.setdefault(
             eff.session_id,
-            {"items": [], "session": False, "approvals": False, "refetch": False},
+            {"items": [], "session": False, "approvals": False, "notices": False, "refetch": False},
         )
         if eff.item is not None:
             bucket["items"].append(eff.item)
         bucket["session"] = bucket["session"] or eff.session_changed
         bucket["approvals"] = bucket["approvals"] or eff.approvals_changed
+        bucket["notices"] = bucket["notices"] or eff.notices_changed
         bucket["refetch"] = bucket["refetch"] or eff.needs_refetch
 
     for session_id, bucket in by_session.items():
@@ -115,6 +117,10 @@ async def _publish_effects(
         if bucket["approvals"]:
             envelope["approvals"] = [
                 a.model_dump(mode="json") for a in await db.list_pending_approvals(session_id)
+            ]
+        if bucket["notices"]:
+            envelope["notices"] = [
+                n.model_dump(mode="json") for n in await db.list_open_notices(session_id)
             ]
         await timeline_broker.publish(session_id, envelope)
         await publish_dashboard_changed(
@@ -602,7 +608,12 @@ async def apply_connector_notification(
         # Bulk replace can also remove items — let the client do one /state to
         # reconcile rather than trying to diff a removal over SSE. Low frequency
         # (turn-end snapshot + ~30s periodic sync), so no refetch storm.
-        return IngestEffect(session_id=session_id, needs_refetch=True, session_changed=True)
+        return IngestEffect(
+            session_id=session_id,
+            needs_refetch=True,
+            session_changed=True,
+            notices_changed=any(item.type == "turn.end" for item in items),
+        )
     elif method == "timeline.itemUpsert":
         item = TimelineItemIn.model_validate(params["item"])
         session_id = await _resolve_timeline_session_id(connector_id, params["sessionId"], [item], db)
@@ -639,6 +650,7 @@ async def apply_connector_notification(
             session_id=session_id,
             item=stored.model_dump(mode="json"),
             session_changed=item.type in ("turn.start", "turn.end"),
+            notices_changed=item.type == "turn.end",
         )
     elif method == "approval.requested":
         approval = ApprovalIn.model_validate(params)
@@ -650,7 +662,10 @@ async def apply_connector_notification(
         await upsert_approval_interaction(db, stored_approval)
         await db.refresh_session_status_from_timeline(session_id)
         return IngestEffect(
-            session_id=session_id, approvals_changed=True, session_changed=True
+            session_id=session_id,
+            approvals_changed=True,
+            notices_changed=True,
+            session_changed=True,
         )
     elif method == "runtime.error":
         session_id = params.get("sessionId")
@@ -667,7 +682,12 @@ async def apply_connector_notification(
                 },
                 reason="runtime_error",
             )
-            return IngestEffect(session_id=session_id, session_changed=True, approvals_changed=True)
+            return IngestEffect(
+                session_id=session_id,
+                session_changed=True,
+                approvals_changed=True,
+                notices_changed=True,
+            )
         return IngestEffect()
     elif method == "shell.task.started" and tasks is not None:
         task_id = params.get("taskId")
