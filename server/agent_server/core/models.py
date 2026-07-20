@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 RuntimeName = Literal["codex", "claude", "opencode", "acp"]
 ConnectorStatus = Literal["offline", "online"]
 ConnectorDeviceOs = Literal["macos", "windows", "linux"]
-SessionStatus = Literal["idle", "running", "waiting_approval", "error"]
+SessionStatus = Literal["idle", "pending", "running", "stopping", "blocked"]
 TimelineType = Literal["turn.start", "turn.end", "message", "tool", "artifact", "system"]
 TimelineStatus = Literal[
     "pending",
@@ -681,6 +681,81 @@ class ApprovalIn(BaseModel):
 class Approval(ApprovalIn):
     updatedSeq: int
     createdAt: str
+
+
+NoticeType = Literal["notification", "interaction"]
+NoticeSeverity = Literal["info", "success", "warning", "error"]
+NoticeStatus = Literal[
+    "open",
+    "response_accepted",
+    "resolving",
+    "resolved",
+    "expired",
+    "cancelled",
+    "failed",
+]
+InteractionType = Literal["approval", "execution_error", "confirmation", "input_request", "unknown"]
+NoticeActionStyle = Literal["primary", "secondary", "danger"]
+
+
+class NoticeBlocking(BaseModel):
+    scope: Literal["session"]
+    targetId: str
+
+
+class NoticeActionInput(BaseModel):
+    required: bool = False
+    schema_: dict[str, Any] | None = Field(default=None, alias="schema")
+    uiSchema: dict[str, Any] | None = None
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class NoticeAction(BaseModel):
+    actionId: str
+    label: str
+    style: NoticeActionStyle = "secondary"
+    input: NoticeActionInput = Field(default_factory=NoticeActionInput)
+
+
+class NoticeSource(BaseModel):
+    runtime: RuntimeName | Literal["platform"] | None = None
+    adapter: str | None = None
+    approvalId: str | None = None
+    timelineItemId: str | None = None
+    operationId: str | None = None
+
+
+class NoticeIn(BaseModel):
+    noticeId: str
+    type: NoticeType
+    sessionId: str
+    source: NoticeSource = Field(default_factory=NoticeSource)
+    title: str
+    message: str | None = None
+    severity: NoticeSeverity = "info"
+    status: NoticeStatus = "open"
+    interactionType: InteractionType | None = None
+    blocking: NoticeBlocking | None = None
+    responseRequired: bool = False
+    actions: list[NoticeAction] = Field(default_factory=list)
+    context: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    expiresAt: str | None = None
+    revision: int = 1
+    createdAt: str | None = None
+    resolvedAt: str | None = None
+
+
+class Notice(NoticeIn):
+    updatedSeq: int
+    createdAt: str
+    updatedAt: str
+
+
+class InteractionRespondRequest(BaseModel):
+    actionId: str
+    input: dict[str, Any] | None = None
 
 
 class SessionStateResponse(BaseModel):

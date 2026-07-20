@@ -336,6 +336,33 @@ approvals = Table(
 )
 
 
+notices = Table(
+    "notices",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("session_id", Text, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False),
+    Column("type", Text, nullable=False),
+    Column("status", Text, nullable=False),
+    Column("interaction_type", Text),
+    Column("blocking_json", Text),
+    Column("response_required", Integer, nullable=False, server_default="0"),
+    Column("severity", Text, nullable=False),
+    Column("title", Text, nullable=False),
+    Column("message", Text),
+    Column("source_json", Text, nullable=False),
+    Column("actions_json", Text, nullable=False),
+    Column("context_json", Text, nullable=False),
+    Column("metadata_json", Text, nullable=False),
+    Column("revision", Integer, nullable=False),
+    Column("updated_seq", Integer, nullable=False),
+    Column("created_at", Text, nullable=False),
+    Column("updated_at", Text, nullable=False),
+    Column("expires_at", Text),
+    Column("resolved_at", Text),
+    Index("idx_notices_session_status", "session_id", "status"),
+)
+
+
 pairing_codes = Table(
     "pairing_codes",
     metadata,

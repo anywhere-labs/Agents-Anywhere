@@ -14,7 +14,6 @@ The web UI may still be served from `/`, locale routes such as `/en`, and static
 | `/.well-known/oauth-authorization-server` | `/api/v2/.well-known/oauth-authorization-server` |
 | `/admin/*` | `/api/v2/admin/*` |
 | `/agents/*` | `/api/v2/agents/*` |
-| `/approvals/*` | `/api/v2/approvals/*` |
 | `/connectors/*` | `/api/v2/connectors/*` |
 | `/pairing/*` | `/api/v2/pairing/*` |
 | `/sessions/*` | `/api/v2/sessions/*` |

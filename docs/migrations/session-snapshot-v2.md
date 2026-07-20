@@ -27,6 +27,7 @@ Response:
     "hasMore": false
   },
   "approvals": [],
+  "notices": [],
   "effectiveCapabilities": {
     "revision": 42,
     "capabilities": []
@@ -52,7 +53,7 @@ Response:
 }
 ```
 
-`approvals` is still the legacy approval projection for this slice. Notice / Interaction will replace it in a later migration.
+`notices` is the v2 UI input for notifications and interactions. Approval is rendered from `notices` as an interaction. `approvals` may still exist as a server-side source/projection during the database transition, but Web v2 should not render from it or call the old approval endpoint.
 
 `eventCursor` is currently derived from the session timeline sequence. The future WebSocket event stream can replace this with a dedicated protocol event cursor without changing the page startup model.
 

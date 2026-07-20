@@ -19,7 +19,6 @@ from agent_server.api import (
     admin,
     admin_dashboard,
     agents,
-    approvals,
     auth,
     connector_ingress,
     connectors,
@@ -120,7 +119,6 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     app.include_router(sessions.router, prefix=API_V2_PREFIX)
     app.include_router(sessions_fs.router, prefix=API_V2_PREFIX)
     app.include_router(sessions_terminal.router, prefix=API_V2_PREFIX)
-    app.include_router(approvals.router, prefix=API_V2_PREFIX)
 
     static_dir = os.environ.get("AGENT_SERVER_STATIC_DIR")
     if static_dir:

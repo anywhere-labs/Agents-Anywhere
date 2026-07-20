@@ -24,6 +24,8 @@ class TimelineRepositoryMixin:
 
 
     async def derive_session_status(self, session_id: str) -> str:
+        if await self.list_open_blocking_notices(session_id):
+            return "blocked"
         items = await self.timeline.read(session_id)
         started_turns = {item.turnId for item in items if item.type == "turn.start" and item.turnId}
         ended_turns = {item.turnId for item in items if item.type == "turn.end" and item.turnId}
@@ -39,14 +41,9 @@ class TimelineRepositoryMixin:
             or (approval.turnId not in started_turns and approval.turnId not in ended_turns)
             for approval in pending_approvals
         ):
-            return "waiting_approval"
+            return "blocked"
         if not open_turns:
-            latest_turn_end = max(
-                (item for item in items if item.type == "turn.end"),
-                key=lambda item: item.orderSeq,
-                default=None,
-            )
-            return "error" if latest_turn_end is not None and latest_turn_end.status == "failed" else "idle"
+            return "idle"
         return "running"
 
 

@@ -7,12 +7,19 @@ import json
 import time
 from typing import Any
 
+import pytest
 from conftest import ApiV2TestClient as TestClient
 
 from agent_server.api.sessions_terminal import _send_terminal_ws_error
 from agent_server.app import create_app
-from agent_server.infra.connector_rpc import ConnectorOfflineError, ConnectorRpcError, ConnectorRpcManager
+from agent_server.infra.connector_rpc import (
+    ConnectorOfflineError,
+    ConnectorRpcError,
+    ConnectorRpcManager,
+    DuplicateConnectorConnectionError,
+)
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
+from agent_server.services.notices import upsert_execution_error_interaction
 
 
 def make_client(tmp_path):
@@ -575,8 +582,9 @@ def wait_for_state(client: TestClient, session_id: str, headers: dict[str, str],
 
 
 class FakeApprovalRpc:
-    def __init__(self, *, fail: bool = False) -> None:
+    def __init__(self, *, fail: bool = False, gone: bool = False) -> None:
         self.fail = fail
+        self.gone = gone
         self.requests: list[tuple[str, str, dict[str, Any], float]] = []
 
     def is_online(self, connector_id: str) -> bool:
@@ -593,6 +601,8 @@ class FakeApprovalRpc:
         self.requests.append((connector_id, method, params, timeout))
         if self.fail:
             raise ConnectorRpcError("codex_error", "request gone")
+        if self.gone:
+            raise ConnectorRpcError("approval_not_found", "approval not found")
         if method == "capabilities.setActiveRuntimes":
             return {"runtimes": params.get("runtimes") or []}
         return {"resolved": True}
@@ -771,6 +781,20 @@ def ingest_pending_command_approval(client: TestClient, access_token: str, sessi
     assert response.status_code == 200
 
 
+def interaction_notice_id(
+    client: TestClient,
+    session_id: str,
+    headers: dict[str, str],
+    interaction_type: str,
+) -> str:
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers).json()
+    return next(
+        notice["noticeId"]
+        for notice in snapshot["notices"]
+        if notice["interactionType"] == interaction_type
+    )
+
+
 def test_connectors_can_be_listed_without_sessions(tmp_path):
     client = make_client(tmp_path)
     headers = auth_headers(client)
@@ -829,15 +853,32 @@ def test_rpc_manager_expires_stale_connector_heartbeats():
     assert not manager.is_online("conn_1")
 
 
-def test_old_replaced_connection_unregister_does_not_remove_current_connection():
+def test_active_duplicate_connector_connection_is_rejected():
     manager = ConnectorRpcManager()
     old = manager.register("conn_1", FakeWebSocket())  # type: ignore[arg-type]
+
+    with pytest.raises(DuplicateConnectorConnectionError):
+        manager.register("conn_1", FakeWebSocket())  # type: ignore[arg-type]
+
+    assert manager.is_online("conn_1")
+    assert manager.unregister("conn_1", old) is True
+    assert not manager.is_online("conn_1")
+
+
+def test_stale_connector_connection_can_be_replaced():
+    now = 0.0
+
+    def clock() -> float:
+        return now
+
+    manager = ConnectorRpcManager(heartbeat_timeout_seconds=60, clock=clock)
+    old = manager.register("conn_1", FakeWebSocket())  # type: ignore[arg-type]
+    now = 61.0
     current = manager.register("conn_1", FakeWebSocket())  # type: ignore[arg-type]
 
     assert manager.unregister("conn_1", old) is False
     assert manager.is_online("conn_1")
     assert manager.unregister("conn_1", current) is True
-    assert not manager.is_online("conn_1")
 
 
 def test_rpc_manager_unregisters_connector_when_ws_send_is_closed():
@@ -2746,14 +2787,20 @@ def test_send_message_forwards_client_message_id_to_connector(tmp_path):
     assert params["clientMessageId"] == "opt_abc"
 
 
-def test_send_message_allows_error_session_and_marks_running(tmp_path):
+def test_blocking_error_interaction_must_be_resolved_before_send(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, session_id, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
     client.app.state.rpc = fake_rpc
     asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
     client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
-    asyncio.run(client.app.state.store.set_session_status(session_id, "error"))
+    notice = asyncio.run(
+        upsert_execution_error_interaction(
+            client.app.state.store,
+            session_id=session_id,
+            error={"code": "runtime_error", "message": "boom"},
+        )
+    )
 
     response = client.post(
         f"/sessions/{session_id}/messages",
@@ -2761,6 +2808,19 @@ def test_send_message_allows_error_session_and_marks_running(tmp_path):
         json={"content": "try again"},
     )
 
+    assert response.status_code == 409
+    assert fake_rpc.requests == []
+    unblock = client.post(
+        f"/sessions/{session_id}/interactions/{notice.noticeId}/respond",
+        headers=headers,
+        json={"actionId": "continue"},
+    )
+    assert unblock.status_code == 200, unblock.text
+    response = client.post(
+        f"/sessions/{session_id}/messages",
+        headers=headers,
+        json={"content": "try again"},
+    )
     assert response.status_code == 200, response.text
     assert fake_rpc.requests[-1][1] == "turn.start"
     assert fake_rpc.requests[-1][2]["content"] == "try again"
@@ -2770,7 +2830,7 @@ def test_send_message_allows_error_session_and_marks_running(tmp_path):
             user_id=ADMIN_USER,
         ),
     )
-    assert session.status == "running"
+    assert session.status == "pending"
 
 
 def test_send_message_forwards_uploaded_attachment_metadata_to_connector(tmp_path):
@@ -3798,7 +3858,7 @@ def test_interrupt_does_not_mark_session_idle_before_turn_end(tmp_path):
 
     assert response.status_code == 200, response.text
     state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
-    assert state["session"]["status"] == "running"
+    assert state["session"]["status"] == "stopping"
 
 
 def test_approval_resolve_carries_runtime(tmp_path):
@@ -3807,15 +3867,30 @@ def test_approval_resolve_carries_runtime(tmp_path):
     ingest_pending_command_approval(client, access_token, session_id)
     fake_rpc = FakeApprovalRpc()
     client.app.state.rpc = fake_rpc
+    notice_id = interaction_notice_id(client, session_id, headers, "approval")
 
     response = client.post(
-        "/approvals/appr_1/resolve",
+        f"/sessions/{session_id}/interactions/{notice_id}/respond",
         headers=headers,
-        json={"status": "approved"},
+        json={"actionId": "approve"},
     )
     assert response.status_code == 200
     params = fake_rpc.requests[-1][2]
     assert params["runtime"] == "codex"
+
+
+def test_legacy_approval_api_is_removed(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    ingest_pending_command_approval(client, access_token, session_id)
+
+    response = client.post(
+        "/api/v2/approvals/appr_1/resolve",
+        headers=headers,
+        json={"status": "approved"},
+    )
+
+    assert response.status_code == 404
 
 
 def test_approval_request_with_external_session_id_resolves_to_server_session(tmp_path):
@@ -3862,10 +3937,11 @@ def test_approval_request_with_external_session_id_resolves_to_server_session(tm
 
     fake_rpc = FakeApprovalRpc()
     client.app.state.rpc = fake_rpc
+    notice_id = interaction_notice_id(client, session_id, headers, "approval")
     resolved = client.post(
-        "/approvals/appr_external_session/resolve",
+        f"/sessions/{session_id}/interactions/{notice_id}/respond",
         headers=headers,
-        json={"status": "approved"},
+        json={"actionId": "approve"},
     )
 
     assert resolved.status_code == 200, resolved.text
@@ -5191,11 +5267,12 @@ def test_approval_resolve_waits_for_connector_success_and_updates_target_item(tm
     ingest_pending_command_approval(client, access_token, session_id)
     fake_rpc = FakeApprovalRpc()
     client.app.state.rpc = fake_rpc
+    notice_id = interaction_notice_id(client, session_id, headers, "approval")
 
     response = client.post(
-        "/approvals/appr_1/resolve",
+        f"/sessions/{session_id}/interactions/{notice_id}/respond",
         headers=headers,
-        json={"status": "approved"},
+        json={"actionId": "approve"},
     )
 
     assert response.status_code == 200
@@ -5223,6 +5300,9 @@ def test_approval_resolve_waits_for_connector_success_and_updates_target_item(tm
     assert state["approvals"] == []
     assert state["session"]["status"] == "idle"
     assert state["items"][0]["status"] == "done"
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers).json()
+    approval_notices = [notice for notice in snapshot["notices"] if notice["interactionType"] == "approval"]
+    assert approval_notices == []
 
 
 def test_approval_resolve_keeps_pending_when_connector_fails(tmp_path):
@@ -5230,11 +5310,12 @@ def test_approval_resolve_keeps_pending_when_connector_fails(tmp_path):
     _, access_token, session_id, headers = create_connector_and_session(client)
     ingest_pending_command_approval(client, access_token, session_id)
     client.app.state.rpc = FakeApprovalRpc(fail=True)
+    notice_id = interaction_notice_id(client, session_id, headers, "approval")
 
     response = client.post(
-        "/approvals/appr_1/resolve",
+        f"/sessions/{session_id}/interactions/{notice_id}/respond",
         headers=headers,
-        json={"status": "approved"},
+        json={"actionId": "approve"},
     )
 
     assert response.status_code == 502
@@ -5242,6 +5323,58 @@ def test_approval_resolve_keeps_pending_when_connector_fails(tmp_path):
     assert state["approvals"][0]["status"] == "pending"
     assert state["items"][0]["status"] == "waiting_approval"
     assert state["items"][0]["content"]["approval"]["status"] == "pending"
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers).json()
+    approval_notice = next(notice for notice in snapshot["notices"] if notice["interactionType"] == "approval")
+    assert approval_notice["status"] == "failed"
+    assert snapshot["session"]["status"] == "blocked"
+
+
+def test_approval_interaction_expires_when_runtime_no_longer_accepts_response(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    ingest_pending_command_approval(client, access_token, session_id)
+    client.app.state.rpc = FakeApprovalRpc(gone=True)
+
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers).json()
+    notice_id = next(notice for notice in snapshot["notices"] if notice["interactionType"] == "approval")[
+        "noticeId"
+    ]
+
+    response = client.post(
+        f"/sessions/{session_id}/interactions/{notice_id}/respond",
+        headers=headers,
+        json={"actionId": "approve"},
+    )
+
+    assert response.status_code == 409
+    approval = asyncio.run(client.app.state.store.get_approval("appr_1"))
+    assert approval.status == "expired"
+    notice = asyncio.run(client.app.state.store.get_notice(notice_id))
+    assert notice.status == "expired"
+
+
+def test_session_stays_blocked_until_all_blocking_interactions_resolve(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    ingest_pending_command_approval(client, access_token, session_id)
+    error_notice = asyncio.run(
+        upsert_execution_error_interaction(
+            client.app.state.store,
+            session_id=session_id,
+            error={"code": "runtime_error", "message": "boom"},
+        )
+    )
+
+    response = client.post(
+        f"/sessions/{session_id}/interactions/{error_notice.noticeId}/respond",
+        headers=headers,
+        json={"actionId": "continue"},
+    )
+
+    assert response.status_code == 200, response.text
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers).json()
+    assert snapshot["session"]["status"] == "blocked"
+    assert [notice["interactionType"] for notice in snapshot["notices"]] == ["approval"]
 
 
 def test_interrupted_turn_closes_pending_approval_tool_item(tmp_path):
@@ -5289,6 +5422,58 @@ def test_interrupted_turn_closes_pending_approval_tool_item(tmp_path):
     tool = next(item for item in state["items"] if item["id"] == "tl_tool")
     assert tool["status"] == "cancelled"
     assert tool["content"]["approval"]["status"] == "cancelled"
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers).json()
+    assert snapshot["notices"] == []
+    assert snapshot["session"]["status"] == "idle"
+
+
+def test_failed_turn_creates_blocking_execution_error_interaction(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.itemUpsert",
+                    "params": {
+                        "sessionId": session_id,
+                        "item": {
+                            "id": "tl_turn_end_failed",
+                            "sessionId": session_id,
+                            "turnId": "turn_failed",
+                            "type": "turn.end",
+                            "status": "failed",
+                            "role": None,
+                            "content": {
+                                "result": "failed",
+                                "error": {"code": "runtime_process_exited", "message": "process exited"},
+                            },
+                            "source": {
+                                "runtime": "codex",
+                                "sessionId": "thr_1",
+                                "turnId": "turn_failed",
+                                "event": "turn/completed",
+                                "derivedKey": "turn-end",
+                            },
+                            "orderSeq": 2,
+                            "revision": 1,
+                            "contentHash": "sha256:failed",
+                        },
+                    },
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers).json()
+    assert snapshot["session"]["status"] == "blocked"
+    notice = next(notice for notice in snapshot["notices"] if notice["interactionType"] == "execution_error")
+    assert notice["blocking"] == {"scope": "session", "targetId": session_id}
+    assert notice["context"]["error"]["code"] == "runtime_process_exited"
 
 
 def test_connector_fs_read_does_not_require_takeover(tmp_path):

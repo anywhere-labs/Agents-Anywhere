@@ -50,7 +50,7 @@ def derive_session_effective_capabilities(
             online=online,
         )
         if capability_id == "session.interrupt":
-            status_available = session.status in {"running", "waiting_approval"}
+            status_available = session.status in {"pending", "running", "blocked"}
             available = available and status_available
             if unavailable_reason is None and not status_available:
                 unavailable_reason = "session_not_interruptible"

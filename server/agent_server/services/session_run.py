@@ -9,6 +9,7 @@ from agent_server.infra.runtimes.serializers import serializer_for_runtime
 from agent_server.infra.repositories.facade import Store
 from agent_server.core.utc import utc_now
 from agent_server.services.model_catalog import build_model_catalog, resolve_model_selection
+from agent_server.services.notices import upsert_execution_error_interaction
 from agent_server.services.permission_catalog import build_permission_catalog, resolve_permission_selection
 
 
@@ -181,7 +182,7 @@ class SessionRunService:
             raise SessionRunConflictError("session is read-only until takeover is enabled")
         if not self._manager.is_online(session.connectorId):
             raise SessionRunConflictError("connector is offline")
-        if session.status not in {"idle", "error"}:
+        if session.status != "idle":
             raise SessionRunConflictError(f"session is {session.status}")
         try:
             effective_settings = await self._store.get_effective_runtime_settings(
@@ -210,7 +211,6 @@ class SessionRunService:
                 model_selection_id=payload.modelSelectionId,
             )
 
-        await self._store.set_session_status(session_id, "running")
         params: dict[str, Any] = {
             "sessionId": session_id,
             "runtime": session.runtime,
@@ -241,6 +241,7 @@ class SessionRunService:
                 _timeline_attachment_payload(item) for item in attachment_payloads
             ]
 
+        await self._store.set_session_status(session_id, "pending")
         await self._store.start_active_run(
             session_id=session_id,
             runtime=session.runtime,
@@ -254,12 +255,26 @@ class SessionRunService:
                 params,
             )
         except ConnectorOfflineError as exc:
-            await self._store.set_session_status(session_id, "error")
             await self._store.clear_active_run(session_id)
+            await upsert_execution_error_interaction(
+                self._store,
+                session_id=session_id,
+                title="Dispatch failed",
+                message=str(exc),
+                error={"code": "connector_offline", "message": str(exc)},
+                reason="dispatch_failed",
+            )
             raise SessionRunConflictError(str(exc)) from exc
         except ConnectorRpcError as exc:
-            await self._store.set_session_status(session_id, "error")
             await self._store.clear_active_run(session_id)
+            await upsert_execution_error_interaction(
+                self._store,
+                session_id=session_id,
+                title="Dispatch failed",
+                message=exc.message or exc.code,
+                error={"code": exc.code, "message": exc.message or exc.code},
+                reason="dispatch_failed",
+            )
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
         return RpcResponsePayload(ok=True, result=result)
 
@@ -392,7 +407,7 @@ class SessionRunService:
         turn_id = active_run.get("turnId") if active_run else None
         if turn_id is None:
             turn_id = await self._store.get_open_turn_id(session_id)
-        if turn_id is None and session.status not in {"running", "waiting_approval"}:
+        if turn_id is None and session.status not in {"pending", "running", "blocked"}:
             raise SessionRunConflictError("no active turn to interrupt")
 
         params: dict[str, Any] = {
@@ -406,11 +421,15 @@ class SessionRunService:
         )
         if external_session_id:
             params["externalSessionId"] = external_session_id
+        previous_status = session.status
+        await self._store.set_session_status(session_id, "stopping")
         try:
             result = await self._manager.request(session.connectorId, "turn.interrupt", params)
         except ConnectorOfflineError as exc:
+            await self._store.set_session_status(session_id, previous_status)
             raise SessionRunConflictError(str(exc)) from exc
         except ConnectorRpcError as exc:
+            await self._store.set_session_status(session_id, previous_status)
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
         if _interrupt_target_not_found(result):
             await self._store.clear_active_run(session_id)

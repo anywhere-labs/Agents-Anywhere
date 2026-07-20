@@ -47,6 +47,11 @@ from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.connector_ingest import ConnectorIngestService
 from agent_server.services.timeline_effects import close_waiting_approval_items_for_finished_turn
 from agent_server.services.shell_tasks import ShellTaskManager
+from agent_server.services.notices import (
+    cancel_turn_blocking_interactions,
+    upsert_approval_interaction,
+    upsert_execution_error_interaction,
+)
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.terminal_broker import TerminalBroker
 from agent_server.infra.terminal_stream_hub import TerminalStreamHub
@@ -524,7 +529,7 @@ async def apply_connector_notification(
                 )
             await db.update_session_snapshot(
                 session_id=session_id,
-                status=params.get("status"),
+                status=_v2_session_status(params.get("status")),
                 title=params.get("title"),
                 cwd=params.get("cwd"),
                 external_session_id=external_session_id,
@@ -551,7 +556,7 @@ async def apply_connector_notification(
                 external_session_id=external_session_id if isinstance(external_session_id, str) else None,
                 title=params.get("title"),
                 cwd=params.get("cwd"),
-                status=params.get("status"),
+                status=_v2_session_status(params.get("status")),
                 last_synced_at=params.get("lastSyncedAt"),
                 source_observed_at=params.get("sourceObservedAt"),
                 last_activity_at=params.get("lastActivityAt"),
@@ -579,6 +584,21 @@ async def apply_connector_notification(
             )
         if any(item.type == "turn.end" for item in items):
             await _reconcile_active_run_from_timeline(db, session_id)
+        for item in items:
+            if item.type == "turn.end":
+                if _timeline_item_failed(item):
+                    await upsert_execution_error_interaction(
+                        db,
+                        session_id=session_id,
+                        timeline_item=item,
+                    )
+                else:
+                    await cancel_turn_blocking_interactions(
+                        db,
+                        session_id=session_id,
+                        turn_id=item.turnId,
+                        reason="turn_finished",
+                    )
         # Bulk replace can also remove items — let the client do one /state to
         # reconcile rather than trying to diff a removal over SSE. Low frequency
         # (turn-end snapshot + ~30s periodic sync), so no refetch storm.
@@ -599,6 +619,19 @@ async def apply_connector_notification(
             await db.update_active_run_turn_id(session_id, item.turnId)
         if item.type == "turn.end":
             await close_waiting_approval_items_for_finished_turn(db, session_id, item)
+            if _timeline_item_failed(item):
+                await upsert_execution_error_interaction(
+                    db,
+                    session_id=session_id,
+                    timeline_item=item,
+                )
+            else:
+                await cancel_turn_blocking_interactions(
+                    db,
+                    session_id=session_id,
+                    turn_id=item.turnId,
+                    reason="turn_finished",
+                )
             await db.clear_active_run(session_id)
         # Carry the committed item so the browser appends it directly. turn
         # boundaries also flip session.status, so refresh the session view then.
@@ -613,16 +646,28 @@ async def apply_connector_notification(
         if await filter_.session_disabled(session_id):
             return IngestEffect()
         approval = _approval_for_session(approval, session_id)
-        await db.upsert_approval(approval)
+        stored_approval = await db.upsert_approval(approval)
+        await upsert_approval_interaction(db, stored_approval)
         await db.refresh_session_status_from_timeline(session_id)
         return IngestEffect(
             session_id=session_id, approvals_changed=True, session_changed=True
         )
     elif method == "runtime.error":
         session_id = params.get("sessionId")
-        if isinstance(session_id, str):
-            await db.set_session_status(session_id, "error")
-            return IngestEffect(session_id=session_id, session_changed=True)
+        if isinstance(session_id, str) and not await filter_.session_disabled(session_id):
+            await upsert_execution_error_interaction(
+                db,
+                session_id=session_id,
+                title="Runtime error",
+                message=params.get("message") if isinstance(params.get("message"), str) else None,
+                error={
+                    "code": "runtime_error",
+                    "message": params.get("message") or "The runtime reported an error.",
+                    "details": params,
+                },
+                reason="runtime_error",
+            )
+            return IngestEffect(session_id=session_id, session_changed=True, approvals_changed=True)
         return IngestEffect()
     elif method == "shell.task.started" and tasks is not None:
         task_id = params.get("taskId")
@@ -730,10 +775,34 @@ def _local_session_state(params: dict[str, Any]) -> str:
     return "active"
 
 
+def _v2_session_status(value: Any) -> str | None:
+    if value is None:
+        return None
+    if value in {"idle", "pending", "running", "stopping", "blocked"}:
+        return str(value)
+    if value == "waiting_approval":
+        return "blocked"
+    if value == "error":
+        return "blocked"
+    return "idle"
+
+
 def _timeline_item_for_session(item: TimelineItemIn, session_id: str) -> TimelineItemIn:
     if item.sessionId == session_id:
         return item
     return TimelineItemIn.model_validate({**item.model_dump(), "sessionId": session_id})
+
+
+def _timeline_item_failed(item: TimelineItemIn) -> bool:
+    if item.status == "failed":
+        return True
+    if isinstance(item.content, dict):
+        result = item.content.get("result")
+        if result in {"failed", "error", "dispatch_failed"}:
+            return True
+        if isinstance(item.content.get("error"), dict):
+            return True
+    return False
 
 
 async def _should_replace_timeline_snapshot(

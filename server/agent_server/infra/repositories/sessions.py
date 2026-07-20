@@ -263,7 +263,7 @@ class SessionRepositoryMixin:
             .where(
                 sessions_t.c.connector_id == connector_id,
                 sessions_t.c.runtime == runtime,
-                sessions_t.c.status.in_(("running", "waiting_approval")),
+                sessions_t.c.status.in_(("pending", "running", "blocked", "stopping")),
                 connectors_t.c.revoked == 0,
             )
             .order_by(sessions_t.c.updated_at.asc())

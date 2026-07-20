@@ -7,6 +7,7 @@ from agent_server.infra.repositories.attachments import AttachmentRepositoryMixi
 from agent_server.infra.repositories.connectors import ConnectorRepositoryMixin
 from agent_server.infra.repositories.device_agents import DeviceAgentsRepositoryMixin
 from agent_server.infra.repositories.instance_settings_facade import InstanceSettingsRepositoryMixin
+from agent_server.infra.repositories.notices import NoticeRepositoryMixin
 from agent_server.infra.repositories.oauth import OAuthRepositoryMixin
 from agent_server.infra.repositories.runtime_config_facade import RuntimeConfigRepositoryMixin
 from agent_server.infra.repositories.sessions import SessionRepositoryMixin
@@ -28,6 +29,7 @@ class Store(
     ActiveRunRepositoryMixin,
     TimelineRepositoryMixin,
     ApprovalRepositoryMixin,
+    NoticeRepositoryMixin,
 ):
     def __init__(
         self,

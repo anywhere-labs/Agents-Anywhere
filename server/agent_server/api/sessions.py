@@ -10,6 +10,7 @@ from starlette.responses import StreamingResponse
 from agent_server.infra.connector_rpc import ConnectorOfflineError, ConnectorRpcError, ConnectorRpcManager
 from agent_server.deps import (
     current_user_id,
+    get_approval_service,
     get_rpc,
     get_runtime_config_service,
     get_session_run_service,
@@ -22,6 +23,7 @@ from agent_server.core.models import (
     BulkArchiveResponse,
     BulkReadRequest,
     MessageCreateRequest,
+    InteractionRespondRequest,
     RpcResponsePayload,
     SessionCreateRequest,
     SessionPatchRequest,
@@ -37,6 +39,7 @@ from agent_server.core.protocol import (
 from agent_server.core.runtime_config import RuntimeSettingsPatchRequest, RuntimeSettingsResponse
 from agent_server.services.runtime_config import RuntimeConfigService
 from agent_server.services.session_run import SessionRunError, SessionRunService
+from agent_server.services.approvals import ApprovalService, ApprovalServiceError
 from agent_server.services.connector_presence import with_effective_session_connector_status
 from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.effective_capabilities import derive_session_effective_capabilities
@@ -51,6 +54,15 @@ router = APIRouter(prefix="/sessions", tags=["sessions"])
 
 def _raise_session_run_error(exc: SessionRunError) -> None:
     raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+
+def _approval_status_for_action(action_id: str) -> str | None:
+    return {
+        "approve": "approved",
+        "approve_for_session": "approved_for_session",
+        "reject": "rejected",
+        "cancel": "cancelled",
+    }.get(action_id)
 
 
 @router.post("")
@@ -266,6 +278,7 @@ async def session_snapshot(
         session = with_effective_session_connector_status(manager, session)
         items, has_more = await db.list_timeline_latest(session_id=session_id, limit=limit)
         approvals = await db.list_pending_approvals(session_id)
+        notices = await db.list_open_notices(session_id)
         next_seq = await db.get_session_seq(session_id)
         runtime_capabilities = ProtocolCapabilitySet.model_validate(
             await db.get_protocol_capabilities(session.connectorId, user_id=user_id)
@@ -288,6 +301,7 @@ async def session_snapshot(
         session=session,
         timeline=ProtocolTimelineSnapshot(items=items, nextSeq=next_seq, hasMore=has_more),
         approvals=approvals,
+        notices=notices,
         effectiveCapabilities=effective_capabilities,
         runtimeCapabilities=runtime_capabilities,
         catalogs={
@@ -512,6 +526,61 @@ async def interrupt_session(
         return await run_service.interrupt_session(session_id, user_id=user_id)
     except SessionRunError as exc:
         _raise_session_run_error(exc)
+
+
+@router.post("/{session_id}/interactions/{notice_id}/respond", response_model=RpcResponsePayload)
+async def respond_interaction(
+    session_id: str,
+    notice_id: str,
+    payload: InteractionRespondRequest,
+    user_id: str = Depends(current_user_id),
+    db: Store = Depends(get_store),
+    approval_service: ApprovalService = Depends(get_approval_service),
+) -> RpcResponsePayload:
+    try:
+        session = await db.get_session(session_id, user_id=user_id)
+        notice = await db.get_notice(notice_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="interaction not found") from None
+    if notice.sessionId != session.id or notice.type != "interaction":
+        raise HTTPException(status_code=404, detail="interaction not found")
+    if notice.status not in {"open", "failed"}:
+        raise HTTPException(status_code=409, detail="interaction is not open")
+    allowed_actions = {action.actionId for action in notice.actions}
+    if payload.actionId not in allowed_actions:
+        raise HTTPException(status_code=422, detail="invalid interaction action")
+    await db.update_notice_status(
+        notice.noticeId,
+        "response_accepted",
+        context_patch={"response": {"actionId": payload.actionId, "input": payload.input or {}}},
+    )
+    if notice.interactionType == "approval":
+        approval_id = notice.context.get("approvalId")
+        if not isinstance(approval_id, str):
+            await db.update_notice_status(notice.noticeId, "failed", context_patch={"error": "missing approval id"})
+            raise HTTPException(status_code=422, detail="interaction is missing approval id")
+        status = _approval_status_for_action(payload.actionId)
+        if status is None:
+            await db.update_notice_status(notice.noticeId, "failed", context_patch={"error": "invalid approval action"})
+            raise HTTPException(status_code=422, detail="invalid approval action")
+        try:
+            return await approval_service.resolve(approval_id, status, user_id=user_id)
+        except ApprovalServiceError as exc:
+            current_notice = await db.get_notice(notice.noticeId)
+            if current_notice.status not in {"resolved", "expired", "cancelled"}:
+                await db.update_notice_status(
+                    notice.noticeId,
+                    "failed",
+                    context_patch={"error": exc.detail},
+                )
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    if notice.interactionType == "execution_error":
+        await db.update_notice_status(notice.noticeId, "resolved")
+        await db.refresh_session_status_from_timeline(session.id)
+        return RpcResponsePayload(ok=True, result={"resolved": True})
+    await db.update_notice_status(notice.noticeId, "resolved")
+    await db.refresh_session_status_from_timeline(session.id)
+    return RpcResponsePayload(ok=True, result={"resolved": True})
 
 
 @router.post("/{session_id}/sync", response_model=RpcResponsePayload)

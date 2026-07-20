@@ -213,8 +213,8 @@ Legacy transition mapping:
 | Legacy/current value | v2 projection |
 | --- | --- |
 | `waiting_approval` | `blocked` |
-| `error` | `idle` plus blocking `execution_error` interaction |
-| failed `turn.end` | `idle` plus blocking `execution_error` interaction |
+| `error` | `blocked` plus blocking `execution_error` interaction |
+| failed `turn.end` | `blocked` plus blocking `execution_error` interaction |
 | interrupted/cancelled `turn.end` | `idle` plus operation result/timeline item |
 
 ## Error as blocking Interaction
@@ -271,6 +271,18 @@ Example:
 ```
 
 Because this interaction is blocking, Web must not allow a normal new message until it is resolved. This keeps the user decision explicit and avoids silently continuing after a runtime error.
+
+The first v2 implementation does not close interactions by time. `expiresAt` can remain a display/protocol field, but Server does not automatically expire an interaction just because wall-clock time passed. Business invalidation is event-driven: runtime reset, turn end, interrupt, connector response saying the approval is no longer pending, session resync, or Server dispatch failure.
+
+`failed` is not considered resolved. It remains an open blocking state so Web can show the failure and let the user retry or choose another action. Blocking is released only when every open blocking interaction for the session reaches one of:
+
+```text
+resolved
+expired
+cancelled
+```
+
+If multiple blocking interactions exist, resolving one of them is not enough. Web keeps the session blocked until the snapshot/event stream shows no remaining open blocking interaction.
 
 ## Approval as Interaction
 
@@ -352,7 +364,7 @@ Web combines local and server state:
 | server `blocked` | Disable normal send; show blocking Interaction |
 | server `stopping` | Disable send/steer/interrupt |
 | server `idle` and no blocking interaction | Enable normal send if `session.send_message` available |
-| server `idle` with blocking `execution_error` | Disable normal send until user responds |
+| server `blocked` with blocking `execution_error` | Disable normal send until user responds |
 
 If HTTP response and WebSocket event arrive out of order, Web keeps the highest sequence/revision and must not regress state.
 
@@ -365,7 +377,7 @@ Connector should emit standard v2-compatible semantics:
 | Current connector output | Required v2 cleanup |
 | --- | --- |
 | `session.updated.status = waiting_approval` | Emit/translate to `blocked` |
-| `session.updated.status = error` | Emit/translate to `idle`; include error notice payload or enough error detail for Server to create one |
+| `session.updated.status = error` | Emit/translate to `blocked`; include error notice payload or enough error detail for Server to create one |
 | `approval.requested` | Keep as input temporarily or emit `notice.created` with `interactionType=approval` |
 | `timeline.itemUpsert` for failed `turn.end` | Include structured result/error sufficient for Server `execution_error` interaction |
 | Runtime capability discovery | Continue publishing `protocol.capabilitiesUpdated`; include session interaction capability where supported |
@@ -382,7 +394,7 @@ The first implementation can still accept current connector notifications at Ser
 5. Add recoverable event log/cursor endpoint.
 6. Convert timeline broker payloads into v2 event envelopes.
 7. Project approval requests into blocking approval interactions.
-8. Project runtime/turn errors into blocking `execution_error` interactions and `idle` session status.
+8. Project runtime/turn errors into blocking `execution_error` interactions and `blocked` session status.
 9. Add `pending` when message/session create is accepted.
 10. Add `stopping` when interrupt is accepted.
 11. Ensure Web v2 never receives `waiting_approval` or `error` as `session.status`.
@@ -390,8 +402,8 @@ The first implementation can still accept current connector notifications at Ser
 ## Connector implementation checklist
 
 1. Codex reducer maps approval block to `blocked`, not `waiting_approval`.
-2. Codex reducer maps runtime error session update to `idle`, not `error`, and keeps structured error content.
-3. Codex turn failure produces `turn.end` with result/error but session returns to `idle`.
+2. Codex reducer maps runtime error session update to `blocked`, not `error`, and keeps structured error content.
+3. Codex turn failure produces `turn.end` with result/error and allows Server to create blocking `execution_error`.
 4. Claude approval path emits or permits Server projection to blocking approval interaction.
 5. Claude failure path emits enough structured error detail for Server `execution_error` interaction.
 6. Connector protocol models include Notice / Interaction event shapes.
@@ -418,7 +430,7 @@ Minimum real E2E coverage before accepting the migration:
 2. Session detail first paint comes from snapshot.
 3. Running session streams timeline updates over WebSocket.
 4. Approval request becomes blocking Interaction; responding resumes the agent.
-5. Runtime failure returns session to `idle` and creates blocking `execution_error` Interaction.
+5. Runtime failure returns session to `blocked` and creates blocking `execution_error` Interaction.
 6. User cannot send another normal message until the blocking error interaction is resolved.
 7. Interrupt moves `running/blocked -> stopping -> idle`.
 8. Browser refresh reconnects WS, reloads snapshot, and does not duplicate timeline items.

@@ -20,7 +20,6 @@ _API_ROOTS = (
     "/.well-known",
     "/admin",
     "/agents",
-    "/approvals",
     "/auth",
     "/connector",
     "/connectors",
@@ -31,7 +30,7 @@ _API_ROOTS = (
 )
 _TRUNCATE_SQL = (
     "TRUNCATE TABLE dashboard_daily_metrics, dashboard_user_daily_facts, dashboard_settings, "
-    "timeline_items, approvals, session_active_runs, "
+    "timeline_items, approvals, notices, session_active_runs, "
     "sessions, "
     "device_agent_settings, pairing_codes, connectors, users, instance_settings, "
     "agent_modes, agent_models, agent_efforts RESTART IDENTITY CASCADE"

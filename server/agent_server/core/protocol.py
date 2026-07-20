@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from agent_server.core.models import Approval, RuntimeName, SessionView, TimelineItem
+from agent_server.core.models import Approval, Notice, RuntimeName, SessionView, TimelineItem
 
 
 PROTOCOL_VERSION_1 = "1.0"
@@ -118,6 +118,7 @@ class ProtocolSessionSnapshotResponse(BaseModel):
     session: SessionView
     timeline: ProtocolTimelineSnapshot
     approvals: list[Approval] = Field(default_factory=list)
+    notices: list[Notice] = Field(default_factory=list)
     effectiveCapabilities: ProtocolCapabilitySet
     runtimeCapabilities: ProtocolCapabilitySet
     catalogs: dict[str, Any] = Field(default_factory=dict)

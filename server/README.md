@@ -75,10 +75,10 @@ All product API, SSE, and WebSocket endpoints are namespaced under `/api/v2`.
   listing through connector RPC.
 - `/api/v2/connector/*`: connector auth, ingest, file transfer, and WebSocket RPC.
 - `/api/v2/pairing/*`: browser pairing flow for connector login/claim.
-- `/api/v2/agents/*`: runtime modes, models, efforts, and config schemas.
+- `/api/v2/agents/*`: runtime model catalogs, permission catalogs, and config schemas.
 - `/api/v2/sessions/*`: session lifecycle, runtime settings, events, takeover,
-  messages, interrupt, sync, filesystem, shell, terminal, and uploads.
-- `/api/v2/approvals/*`: approval resolution.
+  messages, interaction responses, interrupt, sync, filesystem, shell, terminal,
+  and uploads.
 
 See `../docs/api-v2-migration.md` for Web and Connector migration notes.
 

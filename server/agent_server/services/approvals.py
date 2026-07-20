@@ -5,6 +5,7 @@ from loguru import logger
 from agent_server.infra.connector_rpc import ConnectorOfflineError, ConnectorRpcError, ConnectorRpcManager
 from agent_server.core.models import RpcResponsePayload
 from agent_server.services.timeline_effects import apply_resolved_approval_to_target_item
+from agent_server.services.notices import resolve_approval_interaction
 from agent_server.infra.repositories.facade import Store
 
 
@@ -75,6 +76,7 @@ class ApprovalService:
             )
             approval = await self._store.resolve_approval(approval_id, status)
             await apply_resolved_approval_to_target_item(self._store, approval)
+            await resolve_approval_interaction(self._store, approval)
             await self._store.refresh_session_status_from_timeline(session.id)
             logger.info(
                 "approval resolve stored approval_id={} status={} session_id={} next_session_status={}",
@@ -108,5 +110,30 @@ class ApprovalService:
                 exc.code,
                 exc.message,
             )
+            if _approval_no_longer_pending(exc):
+                approval = await self._store.resolve_approval(approval_id, "expired")
+                await resolve_approval_interaction(
+                    self._store,
+                    approval,
+                    status="expired",
+                    reason="runtime_no_longer_accepts_response",
+                )
+                await self._store.refresh_session_status_from_timeline(approval.sessionId)
+                raise ApprovalConflictError("approval is no longer pending") from exc
+            try:
+                pending = await self._store.get_approval(approval_id)
+                await resolve_approval_interaction(
+                    self._store,
+                    pending,
+                    status="failed",
+                    reason=exc.message or exc.code,
+                )
+            except KeyError:
+                pass
             raise ApprovalUpstreamError(exc.message or exc.code) from exc
         return RpcResponsePayload(ok=True, result=result)
+
+
+def _approval_no_longer_pending(exc: ConnectorRpcError) -> bool:
+    text = f"{exc.code} {exc.message}".lower()
+    return any(fragment in text for fragment in ("not pending", "not found", "expired", "no longer"))
