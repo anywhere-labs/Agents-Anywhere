@@ -1896,6 +1896,63 @@ def test_capabilities_push_sends_server_owned_active_runtime_set(tmp_path):
     assert set(active_updates[-1][2]["runtimes"]) == {"codex", "claude"}
 
 
+def test_protocol_capabilities_ingest_and_read(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, _, headers = create_connector_and_session(client)
+
+    capability_set = {
+        "revision": 2,
+        "capabilities": [
+            {
+                "capabilityId": "session.interrupt",
+                "scope": "runtime",
+                "runtime": "codex",
+                "version": "1",
+                "supported": True,
+                "available": True,
+                "allowed": True,
+                "parameters": {"source": "discovery"},
+            }
+        ],
+    }
+    ingest = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={"notifications": [{"method": "protocol.capabilitiesUpdated", "params": capability_set}]},
+    )
+
+    assert ingest.status_code == 200, ingest.text
+    response = client.get(f"/connectors/{connector_id}/protocol/capabilities", headers=headers)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["connectorId"] == connector_id
+    assert body["capabilitySet"]["revision"] == 2
+    assert body["capabilitySet"]["capabilities"][0]["capabilityId"] == "session.interrupt"
+
+    stale = {
+        "revision": 1,
+        "capabilities": [
+            {
+                "capabilityId": "session.steer",
+                "scope": "runtime",
+                "runtime": "codex",
+            }
+        ],
+    }
+    stale_ingest = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={"notifications": [{"method": "protocol.capabilitiesUpdated", "params": stale}]},
+    )
+
+    assert stale_ingest.status_code == 200, stale_ingest.text
+    body = client.get(f"/connectors/{connector_id}/protocol/capabilities", headers=headers).json()
+    assert body["capabilitySet"]["revision"] == 2
+    assert {item["capabilityId"] for item in body["capabilitySet"]["capabilities"]} == {
+        "session.interrupt"
+    }
+
+
 # ── Delete (detach) ────────────────────────────────────────────────────────
 
 

@@ -488,6 +488,71 @@ class ConnectorRepositoryMixin:
                 .values(status="online", last_seen_at=now, updated_at=now)
             )
 
+    async def update_protocol_capabilities(
+        self,
+        connector_id: str,
+        capability_set: dict[str, Any],
+    ) -> bool:
+        revision = capability_set.get("revision")
+        if not isinstance(revision, int) or revision < 0:
+            raise ValueError("capability_set.revision must be a non-negative integer")
+        now = utc_now()
+        async with self._engine.begin() as conn:
+            row = (
+                await conn.execute(
+                    select(connectors_t.c.runtime_capabilities).where(
+                        connectors_t.c.id == connector_id,
+                        connectors_t.c.revoked == 0,
+                    )
+                )
+            ).mappings().first()
+            if row is None:
+                raise KeyError(connector_id)
+            state = _normalize_agents_blob(_json_loads(row["runtime_capabilities"]))
+            protocol_state = state.get("protocol")
+            if not isinstance(protocol_state, dict):
+                protocol_state = {}
+            current = protocol_state.get("capabilities")
+            current_revision = current.get("revision") if isinstance(current, dict) else None
+            if isinstance(current_revision, int) and current_revision > revision:
+                return False
+            protocol_state["capabilities"] = capability_set
+            protocol_state["capabilitiesUpdatedAt"] = now
+            state["protocol"] = protocol_state
+            await conn.execute(
+                update(connectors_t)
+                .where(connectors_t.c.id == connector_id, connectors_t.c.revoked == 0)
+                .values(runtime_capabilities=_json_dumps(state), updated_at=now)
+            )
+        return True
+
+    async def get_protocol_capabilities(
+        self,
+        connector_id: str,
+        *,
+        user_id: str | None = None,
+    ) -> dict[str, Any]:
+        query = select(
+            connectors_t.c.runtime_capabilities,
+            connectors_t.c.user_id,
+        ).where(
+            connectors_t.c.id == connector_id,
+            connectors_t.c.revoked == 0,
+        )
+        if user_id is not None:
+            query = query.where(connectors_t.c.user_id == user_id)
+        async with self._engine.connect() as conn:
+            row = (await conn.execute(query)).mappings().first()
+        if row is None:
+            raise KeyError(connector_id)
+        state = _normalize_agents_blob(_json_loads(row["runtime_capabilities"]))
+        protocol_state = state.get("protocol")
+        if isinstance(protocol_state, dict):
+            capabilities = protocol_state.get("capabilities")
+            if isinstance(capabilities, dict):
+                return capabilities
+        return {"revision": 0, "capabilities": []}
+
 
     def _connector_from_row(self, row: Any) -> ConnectorView:
         return ConnectorView(

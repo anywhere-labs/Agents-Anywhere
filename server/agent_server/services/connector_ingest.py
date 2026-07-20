@@ -39,10 +39,13 @@ class ConnectorIngestService:
 
         await self._store.record_connector_activity(connector_id)
         effects = []
-        saw_capabilities = False
+        saw_discovery_capabilities = False
+        saw_protocol_capabilities = False
         for notification in payload.notifications:
             if notification.method == "connector.capabilitiesUpdated":
-                saw_capabilities = True
+                saw_discovery_capabilities = True
+            elif notification.method == "protocol.capabilitiesUpdated":
+                saw_protocol_capabilities = True
             effects.append(
                 await apply_connector_notification(
                     connector_id,
@@ -55,14 +58,14 @@ class ConnectorIngestService:
                 )
             )
         await _publish_effects(self._store, self._timeline_broker, effects)
-        if saw_capabilities:
+        if saw_discovery_capabilities or saw_protocol_capabilities:
             await publish_dashboard_changed(
                 self._store,
                 self._timeline_broker,
                 connector_id=connector_id,
-                reason="connector.capabilities",
+                reason="protocol.capabilities" if saw_protocol_capabilities else "connector.capabilities",
             )
-        if saw_capabilities:
+        if saw_discovery_capabilities:
             await send_active_runtimes(self._manager, self._store, connector_id)
         return ConnectorIngestResponse(accepted=len(payload.notifications), serverTime=utc_now())
 
@@ -85,13 +88,16 @@ class ConnectorIngestService:
             self._terminal_stream_hub,
         )
         await _publish_effects(self._store, self._timeline_broker, [effect])
-        if method == "connector.capabilitiesUpdated":
+        if method in {"connector.capabilitiesUpdated", "protocol.capabilitiesUpdated"}:
             import asyncio
 
             await publish_dashboard_changed(
                 self._store,
                 self._timeline_broker,
                 connector_id=connector_id,
-                reason="connector.capabilities",
+                reason="protocol.capabilities"
+                if method == "protocol.capabilitiesUpdated"
+                else "connector.capabilities",
             )
-            asyncio.create_task(send_active_runtimes(self._manager, self._store, connector_id))
+            if method == "connector.capabilitiesUpdated":
+                asyncio.create_task(send_active_runtimes(self._manager, self._store, connector_id))

@@ -15,6 +15,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from loguru import logger
+from pydantic import ValidationError
 from starlette.requests import HTTPConnection
 
 from agent_server.core.auth import (
@@ -22,6 +23,7 @@ from agent_server.core.auth import (
     create_connector_access_token,
     verify_connector_access_token,
 )
+from agent_server.core.protocol import ProtocolCapabilitySet
 from agent_server.infra.connector_rpc import DuplicateConnectorConnectionError, ConnectorRpcManager
 from agent_server.deps import (
     get_attachment_service,
@@ -487,6 +489,25 @@ async def apply_connector_notification(
             await db.apply_discovery(connector_id, dict(params))
         except KeyError:
             logger.warning("capabilities update for unknown connector connector_id={}", connector_id)
+        return IngestEffect()
+    elif method == "protocol.capabilitiesUpdated":
+        try:
+            capability_set = ProtocolCapabilitySet.model_validate(params)
+        except ValidationError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "invalid_protocol_capabilities",
+                    "message": str(exc),
+                },
+            ) from exc
+        try:
+            await db.update_protocol_capabilities(
+                connector_id,
+                capability_set.model_dump(mode="json"),
+            )
+        except KeyError:
+            logger.warning("protocol capabilities update for unknown connector connector_id={}", connector_id)
         return IngestEffect()
     elif method == "session.updated":
         if await filter_.runtime_disabled(params.get("runtime")):

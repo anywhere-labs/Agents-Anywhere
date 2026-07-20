@@ -890,7 +890,17 @@ async def _exercise_capability_discovery(monkeypatch) -> None:
 
     await client._discover_and_publish_capabilities()
 
-    assert pushed == [("connector.capabilitiesUpdated", report)]
+    assert [method for method, _params in pushed] == [
+        "connector.capabilitiesUpdated",
+        "protocol.capabilitiesUpdated",
+    ]
+    assert pushed[0][1] == report
+    protocol_capabilities = pushed[1][1]
+    assert isinstance(protocol_capabilities["revision"], int)
+    capability_ids = {item["capabilityId"] for item in protocol_capabilities["capabilities"]}
+    assert "session.interrupt" in capability_ids
+    assert "session.steer" in capability_ids
+    assert "catalog.model" in capability_ids
 
 
 async def _exercise_codex_rewire_keeps_unchanged_running_rpc() -> None:

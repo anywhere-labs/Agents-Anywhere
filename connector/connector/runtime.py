@@ -22,6 +22,7 @@ from connector.capabilities import (
     discover_claude_capability,
     discover_codex_capability,
     discover_runtime_capabilities,
+    protocol_capability_set_from_discovery,
 )
 from connector.claude.history_adapter import ClaudeHistoryAdapter
 from connector.claude.sdk_adapter import ClaudeSdkAdapter
@@ -554,6 +555,14 @@ class BackendRpcClient:
         await self._rewire_codex(getattr(discovery, "codex_target", None) or discovery.codex_bin)
         self._rewire_claude(getattr(discovery, "claude_target", None) or discovery.claude_bin)
         await self.send_notification("connector.capabilitiesUpdated", discovery.report)
+        protocol_capabilities = protocol_capability_set_from_discovery(
+            discovery,
+            revision=int(time.time() * 1000),
+        )
+        await self.send_notification(
+            "protocol.capabilitiesUpdated",
+            protocol_capabilities.model_dump(mode="json"),
+        )
 
     async def _rewire_codex(self, codex_target: LaunchTarget | str | None) -> None:
         if not codex_target:

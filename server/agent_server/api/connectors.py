@@ -12,6 +12,7 @@ from loguru import logger
 
 from agent_server.core.auth import create_signed_token, verify_signed_token, verify_user_access_token
 from agent_server.core.api_namespace import api_v2_path
+from agent_server.core.protocol import ProtocolCapabilitiesResponse, ProtocolCapabilitySet
 from agent_server.infra.connector_rpc import (
     ConnectorOfflineError,
     ConnectorRpcError,
@@ -236,6 +237,23 @@ async def get_connector(
     except KeyError:
         raise HTTPException(status_code=404, detail="connector not found") from None
     return ConnectorResponse(connector=_connector_for_response(manager, connector), serverTime=utc_now())
+
+
+@router.get("/{connector_id}/protocol/capabilities", response_model=ProtocolCapabilitiesResponse)
+async def get_connector_protocol_capabilities(
+    connector_id: str,
+    user_id: str = Depends(current_user_id),
+    db: Store = Depends(get_store),
+) -> ProtocolCapabilitiesResponse:
+    try:
+        capability_set = await db.get_protocol_capabilities(connector_id, user_id=user_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="connector not found") from None
+    return ProtocolCapabilitiesResponse(
+        connectorId=connector_id,
+        capabilitySet=ProtocolCapabilitySet.model_validate(capability_set),
+        serverTime=utc_now(),
+    )
 
 
 @router.patch("/{connector_id}", response_model=ConnectorResponse)

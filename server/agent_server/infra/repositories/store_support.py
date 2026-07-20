@@ -149,13 +149,16 @@ def _normalize_agents_blob(raw: Any) -> dict[str, Any]:
     if not isinstance(raw, dict):
         return _default_agents_state_v3()
     if raw.get("version") == 3:
-        return {
+        normalized = {
             "version": 3,
             "lastDiscoveredAt": raw.get("lastDiscoveredAt"),
             "defaultsAppliedAt": raw.get("defaultsAppliedAt"),
             "observed": dict(raw.get("observed") or {}),
             "desired": dict(raw.get("desired") or {}),
         }
+        if isinstance(raw.get("protocol"), dict):
+            normalized["protocol"] = dict(raw["protocol"])
+        return normalized
 
     if raw.get("version") == 2:
         observed: dict[str, Any] = {}

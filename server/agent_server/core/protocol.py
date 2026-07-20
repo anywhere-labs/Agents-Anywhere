@@ -4,34 +4,14 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from agent_server.core.models import RuntimeName
+
 
 PROTOCOL_VERSION_1 = "1.0"
 SUPPORTED_PROTOCOL_VERSIONS = [PROTOCOL_VERSION_1]
 
 ProtocolVersion = Literal["1.0"]
-RuntimeName = Literal["codex", "claude", "opencode", "acp"]
 ProtocolCapabilityScope = Literal["adapter", "runtime", "session"]
-
-
-class RpcRequest(BaseModel):
-    id: str
-    type: Literal["request"] = "request"
-    method: str
-    params: Any = None
-
-
-class RpcResponse(BaseModel):
-    id: str
-    type: Literal["response"] = "response"
-    ok: bool
-    result: Any = None
-    error: dict[str, str] | None = None
-
-
-class RpcNotification(BaseModel):
-    type: Literal["notification"] = "notification"
-    method: str
-    params: Any = None
 
 
 class ProtocolAdapterIdentity(BaseModel):
@@ -43,6 +23,11 @@ class ProtocolHandshakeRequest(BaseModel):
     protocolVersions: list[str] = Field(min_length=1)
     connectorVersion: str
     adapters: list[ProtocolAdapterIdentity] = Field(default_factory=list)
+
+
+class ProtocolHandshakeResponse(BaseModel):
+    selectedProtocolVersion: ProtocolVersion
+    serverVersion: str
 
 
 class ProtocolCapability(BaseModel):
@@ -61,3 +46,9 @@ class ProtocolCapability(BaseModel):
 class ProtocolCapabilitySet(BaseModel):
     revision: int = Field(ge=0)
     capabilities: list[ProtocolCapability] = Field(default_factory=list)
+
+
+class ProtocolCapabilitiesResponse(BaseModel):
+    connectorId: str
+    capabilitySet: ProtocolCapabilitySet
+    serverTime: str
