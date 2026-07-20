@@ -599,6 +599,7 @@
       "resolveInteractionFailed": "无法处理交互请求。",
       "updateRuntimeSettingsFailed": "无法更新运行时设置。",
       "noActivity": "暂无活动。",
+      "runtimePending": "正在等待 {runtime} 开始...",
       "runtimeWorking": "{runtime} 正在工作...",
       "approvalRequested": "请求确认",
       "approve": "批准",

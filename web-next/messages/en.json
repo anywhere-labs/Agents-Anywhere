@@ -599,6 +599,7 @@
       "resolveInteractionFailed": "Failed to resolve interaction.",
       "updateRuntimeSettingsFailed": "Failed to update runtime settings.",
       "noActivity": "No activity yet.",
+      "runtimePending": "Waiting for {runtime} to start...",
       "runtimeWorking": "{runtime} is working...",
       "approvalRequested": "Approval requested",
       "approve": "Approve",

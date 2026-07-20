@@ -976,10 +976,14 @@ export function SessionDetail({
             {detachedNotifications.map((notice) => (
               <NotificationCard key={notice.noticeId} notice={notice} />
             ))}
-            {session.status === "running" ? (
+            {session.status === "pending" || session.status === "running" ? (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Loader2 className="size-4 animate-spin" />
-                <span>{tSession("runtimeWorking", { runtime: runtimeLabel(session.runtime) })}</span>
+                <span>
+                  {session.status === "pending"
+                    ? tSession("runtimePending", { runtime: runtimeLabel(session.runtime) })
+                    : tSession("runtimeWorking", { runtime: runtimeLabel(session.runtime) })}
+                </span>
               </div>
             ) : null}
           </div>
