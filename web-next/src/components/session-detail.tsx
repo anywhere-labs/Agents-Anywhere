@@ -553,7 +553,7 @@ export function SessionDetail({
       if (cancelled || event.sessionId !== sessionId) return
       if (event.type === "keepalive") return
       if (event.type === "session.refetch_required") {
-        refetch()
+        void recoverEvents(nextSeqRef.current)
         return
       }
       markAutoScrollIfNearBottom()
