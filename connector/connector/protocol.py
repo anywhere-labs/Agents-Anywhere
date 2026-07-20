@@ -92,6 +92,21 @@ class ProtocolModelCatalog(BaseModel):
     models: list[ProtocolModelItem] = Field(default_factory=list)
 
 
+class ProtocolPermissionItem(BaseModel):
+    displayName: str
+    id: str
+    selectionId: str
+    description: str | None = None
+    default: bool = False
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProtocolPermissionCatalog(BaseModel):
+    runtime: RuntimeName
+    revision: int = Field(ge=0)
+    permissions: list[ProtocolPermissionItem] = Field(default_factory=list)
+
+
 def protocol_selection_id(runtime: str, catalog_type: str, identity: dict[str, Any]) -> str:
     canonical_identity = json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     raw = f"1:{runtime}:{catalog_type}:{canonical_identity}".encode()

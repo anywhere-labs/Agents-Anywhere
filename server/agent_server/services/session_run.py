@@ -9,6 +9,7 @@ from agent_server.infra.runtimes.serializers import serializer_for_runtime
 from agent_server.infra.repositories.facade import Store
 from agent_server.core.utc import utc_now
 from agent_server.services.model_catalog import build_model_catalog, resolve_model_selection
+from agent_server.services.permission_catalog import build_permission_catalog, resolve_permission_selection
 
 
 class SessionRunError(RuntimeError):
@@ -59,6 +60,7 @@ class SessionRunService:
             user_id=user_id,
             patch=payload.runtimeSettings,
             model_selection_id=payload.modelSelectionId,
+            permission_selection_id=payload.permissionSelectionId,
         )
         if payload.externalSessionId is not None:
             try:
@@ -186,6 +188,14 @@ class SessionRunService:
                 session_id,
                 user_id=user_id,
             )
+            if payload.permissionSelectionId is not None:
+                effective_settings = {
+                    **effective_settings,
+                    "permissionMode": await self._resolve_permission_selection(
+                        runtime=session.runtime,
+                        permission_selection_id=payload.permissionSelectionId,
+                    ),
+                }
             runtime_params = serializer_for_runtime(session.runtime).serialize(
                 settings=effective_settings,
                 cwd=session.cwd,
@@ -260,21 +270,28 @@ class SessionRunService:
         user_id: str,
         patch: dict[str, Any] | None,
         model_selection_id: str | None,
+        permission_selection_id: str | None,
     ) -> dict[str, Any] | None:
-        if patch is not None and ("model" in patch or "effort" in patch):
+        if patch is not None and ("model" in patch or "effort" in patch or "permissionMode" in patch):
             raise SessionRunInvalidConfigError(
-                "runtimeSettings.model and runtimeSettings.effort are not accepted; use modelSelectionId"
+                "runtimeSettings.model, runtimeSettings.effort, and runtimeSettings.permissionMode are not accepted; use selection IDs"
             )
-        if model_selection_id is None:
+        if model_selection_id is None and permission_selection_id is None:
             return patch
-        model, effort = await self._resolve_model_selection(
-            runtime=runtime,
-            user_id=user_id,
-            model_selection_id=model_selection_id,
-        )
         result = dict(patch or {})
-        result["model"] = model
-        result["effort"] = effort
+        if model_selection_id is not None:
+            model, effort = await self._resolve_model_selection(
+                runtime=runtime,
+                user_id=user_id,
+                model_selection_id=model_selection_id,
+            )
+            result["model"] = model
+            result["effort"] = effort
+        if permission_selection_id is not None:
+            result["permissionMode"] = await self._resolve_permission_selection(
+                runtime=runtime,
+                permission_selection_id=permission_selection_id,
+            )
         return result
 
     async def _resolve_model_selection(
@@ -296,6 +313,19 @@ class SessionRunService:
             return resolve_model_selection(catalog, model_selection_id)
         except KeyError:
             raise SessionRunInvalidConfigError("invalid modelSelectionId") from None
+
+    async def _resolve_permission_selection(
+        self,
+        *,
+        runtime: RuntimeName,
+        permission_selection_id: str,
+    ) -> str:
+        permissions = await self._store.list_agent_modes(runtime)
+        catalog = build_permission_catalog(runtime=runtime, permissions=permissions)
+        try:
+            return resolve_permission_selection(catalog, permission_selection_id)
+        except KeyError:
+            raise SessionRunInvalidConfigError("invalid permissionSelectionId") from None
 
     async def _attachment_payloads(
         self,

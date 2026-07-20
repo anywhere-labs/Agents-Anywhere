@@ -40,6 +40,11 @@ Response:
       "runtime": "codex",
       "revision": 1,
       "models": []
+    },
+    "permission": {
+      "runtime": "codex",
+      "revision": 1,
+      "permissions": []
     }
   },
   "eventCursor": "seq:42",

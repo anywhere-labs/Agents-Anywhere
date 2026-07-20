@@ -41,6 +41,7 @@ from agent_server.services.connector_presence import with_effective_session_conn
 from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.effective_capabilities import derive_session_effective_capabilities
 from agent_server.services.model_catalog import build_model_catalog
+from agent_server.services.permission_catalog import build_permission_catalog
 from agent_server.infra.repositories.facade import Store
 from agent_server.core.utc import utc_now
 
@@ -276,6 +277,7 @@ async def session_snapshot(
             if runtime_defaults and runtime_defaults.get("models")
             else await db.list_agent_models(session.runtime)
         )
+        permissions = await db.list_agent_modes(session.runtime)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
     effective_capabilities = derive_session_effective_capabilities(
@@ -290,6 +292,7 @@ async def session_snapshot(
         runtimeCapabilities=runtime_capabilities,
         catalogs={
             "model": build_model_catalog(runtime=session.runtime, models=models),
+            "permission": build_permission_catalog(runtime=session.runtime, permissions=permissions),
         },
         eventCursor=f"seq:{next_seq}",
         serverTime=utc_now(),

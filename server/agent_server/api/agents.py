@@ -7,7 +7,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from agent_server.deps import current_user_id, get_runtime_config_service, get_store
 from agent_server.core.models import (
     AgentCatalogEntry,
-    AgentCatalogResponse,
     RuntimeName,
     UserAgentDefaultsResponse,
     UserAgentDefaultsUpdateRequest,
@@ -17,8 +16,9 @@ from agent_server.core.runtime_config import (
     RuntimeConfigSchemaResponse,
     schema_with_user_agent_defaults,
 )
-from agent_server.core.protocol import ProtocolModelCatalogResponse
+from agent_server.core.protocol import ProtocolModelCatalogResponse, ProtocolPermissionCatalogResponse
 from agent_server.services.model_catalog import build_model_catalog
+from agent_server.services.permission_catalog import build_permission_catalog
 from agent_server.services.runtime_config import RuntimeConfigService
 from agent_server.infra.repositories.facade import Store
 from agent_server.core.utc import utc_now
@@ -62,19 +62,6 @@ async def update_agent_defaults(
     )
 
 
-@router.get("/{runtime}/modes", response_model=AgentCatalogResponse)
-async def list_agent_modes(
-    runtime: RuntimeName,
-    _user_id: str = Depends(current_user_id),
-    db: Store = Depends(get_store),
-) -> AgentCatalogResponse:
-    return AgentCatalogResponse(
-        runtime=runtime,
-        entries=await db.list_agent_modes(runtime),
-        serverTime=utc_now(),
-    )
-
-
 @router.get("/{runtime}/model-catalog", response_model=ProtocolModelCatalogResponse)
 async def get_agent_model_catalog(
     runtime: RuntimeName,
@@ -85,6 +72,21 @@ async def get_agent_model_catalog(
         catalog=build_model_catalog(
             runtime=runtime,
             models=await _model_entries_for_user_runtime(db, user_id, runtime),
+        ),
+        serverTime=utc_now(),
+    )
+
+
+@router.get("/{runtime}/permission-catalog", response_model=ProtocolPermissionCatalogResponse)
+async def get_agent_permission_catalog(
+    runtime: RuntimeName,
+    _user_id: str = Depends(current_user_id),
+    db: Store = Depends(get_store),
+) -> ProtocolPermissionCatalogResponse:
+    return ProtocolPermissionCatalogResponse(
+        catalog=build_permission_catalog(
+            runtime=runtime,
+            permissions=await db.list_agent_modes(runtime),
         ),
         serverTime=utc_now(),
     )

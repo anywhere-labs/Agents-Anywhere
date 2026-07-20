@@ -88,6 +88,26 @@ class ProtocolModelCatalogResponse(BaseModel):
     serverTime: str
 
 
+class ProtocolPermissionItem(BaseModel):
+    displayName: str
+    id: str
+    selectionId: str
+    description: str | None = None
+    default: bool = False
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProtocolPermissionCatalog(BaseModel):
+    runtime: RuntimeName
+    revision: int = Field(ge=0)
+    permissions: list[ProtocolPermissionItem] = Field(default_factory=list)
+
+
+class ProtocolPermissionCatalogResponse(BaseModel):
+    catalog: ProtocolPermissionCatalog
+    serverTime: str
+
+
 class ProtocolTimelineSnapshot(BaseModel):
     items: list[TimelineItem] = Field(default_factory=list)
     nextSeq: int

@@ -6,6 +6,8 @@ from connector.protocol import (
     ProtocolCapabilitySet,
     ProtocolModelCatalog,
     ProtocolModelItem,
+    ProtocolPermissionCatalog,
+    ProtocolPermissionItem,
     ProtocolReasoningItem,
     RpcNotification,
     protocol_selection_id,
@@ -65,3 +67,26 @@ def test_connector_model_catalog_shape() -> None:
 
     assert dumped["models"][0]["selectionId"] is None
     assert dumped["models"][0]["reasoningItems"][0]["selectionId"] == selection_id
+
+
+def test_connector_permission_catalog_shape() -> None:
+    selection_id = protocol_selection_id(
+        "codex",
+        "permission",
+        {"permission_mode": "fullAccess"},
+    )
+    catalog = ProtocolPermissionCatalog(
+        runtime="codex",
+        revision=1,
+        permissions=[
+            ProtocolPermissionItem(
+                displayName="Full access",
+                id="fullAccess",
+                selectionId=selection_id,
+            )
+        ],
+    )
+
+    dumped = catalog.model_dump(mode="json")
+
+    assert dumped["permissions"][0]["selectionId"] == selection_id

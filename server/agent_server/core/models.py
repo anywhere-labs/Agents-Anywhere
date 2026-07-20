@@ -544,6 +544,7 @@ class SessionCreateRequest(BaseModel):
     cwd: str | None = None
     runtimeSettings: dict[str, Any] | None = None
     modelSelectionId: str | None = None
+    permissionSelectionId: str | None = None
     # Forwarded to the connector's runtime-create RPC. For codex these map to
     # `thread/start.approvalPolicy` and `thread/start.sandbox` — set to
     # "never"/"danger-full-access" to disable approval prompts during testing.
@@ -701,6 +702,7 @@ class MessageCreateRequest(BaseModel):
     content: str
     attachments: list[AttachmentRef] = Field(default_factory=list, max_length=10)
     modelSelectionId: str | None = None
+    permissionSelectionId: str | None = None
     # Client-generated id (e.g. optimistic temp id). Forwarded to the connector;
     # the connector tags the resulting timeline item so the frontend can
     # dedupe its optimistic placeholder against the real server item.

@@ -307,6 +307,59 @@ def test_session_create_resolves_model_selection_id(tmp_path):
     assert params["effort"] == "xhigh"
 
 
+def test_session_create_resolves_permission_selection_id(tmp_path):
+    app = create_app(tmp_path / "test.sqlite3")
+    client = TestClient(app)
+    headers = auth_headers(client)
+    connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
+    connector_id = connector_response.json()["connector"]["id"]
+    catalog = client.get("/agents/codex/permission-catalog", headers=headers).json()["catalog"]
+    permission_selection_id = next(
+        item for item in catalog["permissions"] if item["id"] == "fullAccess"
+    )["selectionId"]
+
+    class FakeCreateRpc:
+        def __init__(self) -> None:
+            self.requests: list[tuple[str, dict[str, Any]]] = []
+
+        def is_online(self, requested_connector_id: str) -> bool:
+            return requested_connector_id == connector_id
+
+        async def request(self, requested_connector_id: str, method: str, params: dict[str, Any], *, timeout: float = 30) -> dict[str, str]:
+            self.requests.append((method, params))
+            assert requested_connector_id == connector_id
+            await app.state.store.upsert_connector_session(
+                connector_id=connector_id,
+                session_id="sess_codex_selected_permission",
+                runtime="codex",
+                external_session_id="thr_selected_permission",
+                title=None,
+                cwd="/repo",
+                status="idle",
+            )
+            return {"sessionId": "sess_codex_selected_permission", "externalSessionId": "thr_selected_permission"}
+
+    fake_rpc = FakeCreateRpc()
+    app.state.rpc = fake_rpc
+
+    response = client.post(
+        "/sessions",
+        headers=headers,
+        json={
+            "connectorId": connector_id,
+            "runtime": "codex",
+            "title": "Selected permission",
+            "cwd": "/repo",
+            "permissionSelectionId": permission_selection_id,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    params = fake_rpc.requests[-1][1]
+    assert params["approvalPolicy"] == "never"
+    assert params["sandbox"] == {"type": "dangerFullAccess"}
+
+
 def test_session_create_rejects_legacy_runtime_settings_model_fields(tmp_path):
     app = create_app(tmp_path / "test.sqlite3")
     client = TestClient(app)
@@ -325,6 +378,7 @@ def test_session_create_rejects_legacy_runtime_settings_model_fields(tmp_path):
             "runtimeSettings": {
                 "model": "gpt-5.5",
                 "effort": "xhigh",
+                "permissionMode": "fullAccess",
             },
         },
     )
@@ -1626,21 +1680,11 @@ def test_rpc_manager_sends_request_and_matches_response():
     asyncio.run(_exercise_rpc_manager())
 
 
-def test_agent_catalog_lists_seeded_claude_entries(tmp_path):
+def test_legacy_agent_mode_catalog_is_removed(tmp_path):
     client = make_client(tmp_path)
     headers = auth_headers(client)
 
-    modes = client.get("/agents/claude/modes", headers=headers)
-    assert modes.status_code == 200, modes.text
-    body = modes.json()
-    assert body["runtime"] == "claude"
-    keys = [entry["key"] for entry in body["entries"]]
-    assert keys == ["default", "acceptEdits", "plan", "auto", "bypassPermissions"]
-    defaults = [entry["key"] for entry in body["entries"] if entry["isDefault"]]
-    assert defaults == ["default"]
-    assert body["entries"][0]["displayLabel"] == "Ask permissions"
-    assert body["entries"][0]["sortOrder"] == 1
-
+    assert client.get("/agents/claude/modes", headers=headers).status_code == 404
     assert client.get("/agents/claude/models", headers=headers).status_code == 404
     assert client.get("/agents/claude/efforts", headers=headers).status_code == 404
 
@@ -1649,12 +1693,38 @@ def test_codex_agent_catalog_lists_seeded_entries(tmp_path):
     client = make_client(tmp_path)
     headers = auth_headers(client)
 
-    modes = client.get("/agents/codex/modes", headers=headers).json()
-    assert modes["runtime"] == "codex"
-    assert modes["entries"] == []
-
+    assert client.get("/agents/codex/modes", headers=headers).status_code == 404
     assert client.get("/agents/codex/models", headers=headers).status_code == 404
     assert client.get("/agents/codex/efforts", headers=headers).status_code == 404
+
+
+def test_agent_permission_catalog_uses_selection_ids(tmp_path):
+    client = make_client(tmp_path)
+    headers = auth_headers(client)
+
+    claude = client.get("/agents/claude/permission-catalog", headers=headers)
+    assert claude.status_code == 200, claude.text
+    claude_catalog = claude.json()["catalog"]
+    assert claude_catalog["runtime"] == "claude"
+    assert [entry["id"] for entry in claude_catalog["permissions"]] == [
+        "default",
+        "acceptEdits",
+        "plan",
+        "auto",
+        "bypassPermissions",
+    ]
+    assert claude_catalog["permissions"][0]["displayName"] == "Ask permissions"
+    assert claude_catalog["permissions"][0]["selectionId"].startswith("sel_permission_")
+
+    codex = client.get("/agents/codex/permission-catalog", headers=headers)
+    assert codex.status_code == 200, codex.text
+    codex_catalog = codex.json()["catalog"]
+    assert [entry["id"] for entry in codex_catalog["permissions"]] == [
+        "ask",
+        "auto",
+        "fullAccess",
+    ]
+    assert all(entry["selectionId"].startswith("sel_permission_") for entry in codex_catalog["permissions"])
 
 
 def test_agent_model_catalog_nests_reasoning_selection_ids(tmp_path):
@@ -1686,24 +1756,28 @@ def test_agent_model_catalog_nests_reasoning_selection_ids(tmp_path):
 
 def test_agent_catalog_requires_authentication(tmp_path):
     client = make_client(tmp_path)
-    assert client.get("/agents/claude/modes").status_code == 401
+    assert client.get("/agents/claude/permission-catalog").status_code == 401
 
 
 def test_agent_catalog_rejects_unknown_runtime(tmp_path):
     client = make_client(tmp_path)
     headers = auth_headers(client)
     # RuntimeName Literal is enforced by pydantic; unknown runtimes 422.
-    assert client.get("/agents/python/modes", headers=headers).status_code == 422
+    assert client.get("/agents/python/permission-catalog", headers=headers).status_code == 422
 
 
 def test_seed_agent_catalog_is_idempotent(tmp_path):
     client = make_client(tmp_path)
     headers = auth_headers(client)
-    first = client.get("/agents/claude/modes", headers=headers).json()["entries"]
+    first = client.get("/agents/claude/permission-catalog", headers=headers).json()["catalog"][
+        "permissions"
+    ]
     # Re-seeding must not insert duplicates or alter labels.
     asyncio.run(client.app.state.store.seed_agent_catalog())
     asyncio.run(client.app.state.store.seed_agent_catalog())
-    second = client.get("/agents/claude/modes", headers=headers).json()["entries"]
+    second = client.get("/agents/claude/permission-catalog", headers=headers).json()["catalog"][
+        "permissions"
+    ]
     assert first == second
     assert len(first) == 5
 
@@ -2076,6 +2150,9 @@ def test_session_snapshot_includes_effective_capabilities(tmp_path):
     model_catalog = idle_body["catalogs"]["model"]
     assert model_catalog["runtime"] == "codex"
     assert model_catalog["models"][0]["reasoningItems"][0]["selectionId"].startswith("sel_model_")
+    permission_catalog = idle_body["catalogs"]["permission"]
+    assert permission_catalog["runtime"] == "codex"
+    assert permission_catalog["permissions"][0]["selectionId"].startswith("sel_permission_")
     assert idle_body["eventCursor"].startswith("seq:")
 
     asyncio.run(client.app.state.store.set_session_status(session_id, "running"))
