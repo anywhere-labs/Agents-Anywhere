@@ -15,6 +15,7 @@ from agent_server.core.auth import (
     hash_password_verifier,
     verify_signed_token,
 )
+from agent_server.core.api_namespace import api_v2_path
 from agent_server.deps import current_user, get_store
 from agent_server.core.models import (
     AuthConfigResponse,
@@ -551,7 +552,7 @@ def _password_hash_from_oauth_finalize(payload: OAuthFinalizeRequest) -> str | N
 
 
 def _oauth_redirect_uri(request: Request, *, return_to: str | None = None) -> str:
-    return f"{_oauth_public_origin(request, return_to=return_to)}/auth/oauth/callback"
+    return f"{_oauth_public_origin(request, return_to=return_to)}{api_v2_path('/auth/oauth/callback')}"
 
 
 def _oauth_public_origin(request: Request, *, return_to: str | None = None) -> str:

@@ -175,6 +175,6 @@ def test_pair_server_without_scheme_falls_back_to_http(monkeypatch) -> None:
 
     assert resolved == "http://anywhere.test:6664"
     assert FakeFallbackHttpClient.calls == [
-        "https://anywhere.test:6664/health",
-        "http://anywhere.test:6664/health",
+        "https://anywhere.test:6664/api/v2/health",
+        "http://anywhere.test:6664/api/v2/health",
     ]

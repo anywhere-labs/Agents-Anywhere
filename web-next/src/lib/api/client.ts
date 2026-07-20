@@ -19,6 +19,15 @@ export type ApiRequestOptions = Omit<RequestInit, "body"> & {
   query?: Record<string, string | number | boolean | null | undefined>;
 };
 
+export const API_NAMESPACE = "/api/v2";
+
+export function apiPath(path: string): string {
+  if (path.startsWith("http")) return path;
+  if (path === API_NAMESPACE || path.startsWith(`${API_NAMESPACE}/`)) return path;
+  const normalized = path.startsWith("/") ? path : `/${path}`;
+  return `${API_NAMESPACE}${normalized}`;
+}
+
 export class ApiClient {
   private readonly baseUrl: string;
   private readonly getToken?: ApiTokenProvider;
@@ -113,14 +122,15 @@ export class ApiClient {
     query?: ApiRequestOptions["query"],
   ): string {
     const base = this.baseUrl;
-    const raw = path.startsWith("http") ? path : `${base}${path}`;
+    const namespacedPath = apiPath(path);
+    const raw = namespacedPath.startsWith("http") ? namespacedPath : `${base}${namespacedPath}`;
     if (!query) return raw;
     const url = new URL(raw, typeof window === "undefined" ? "http://localhost" : window.location.origin);
     for (const [key, value] of Object.entries(query)) {
       if (value == null) continue;
       url.searchParams.set(key, String(value));
     }
-    if (path.startsWith("http") || base) return url.toString();
+    if (namespacedPath.startsWith("http") || base) return url.toString();
     return `${url.pathname}${url.search}${url.hash}`;
   }
 }

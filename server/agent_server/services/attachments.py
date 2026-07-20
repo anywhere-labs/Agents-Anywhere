@@ -8,6 +8,7 @@ from typing import Any
 from agent_server.infra.files import FileStorage
 from agent_server.core.models import UploadedAttachment
 from agent_server.core.auth import create_signed_token
+from agent_server.core.api_namespace import api_v2_path
 from agent_server.core.utc import utc_now
 
 
@@ -110,7 +111,7 @@ class AttachmentService:
             {"sessionId": session_id, "fileId": file_id},
             LOCAL_FILE_TOKEN_EXPIRES_IN,
         )
-        return f"/sessions/local/{session_id}/{file_id}?token={token}"
+        return f"{api_v2_path(f'/sessions/local/{session_id}/{file_id}')}?token={token}"
 
     async def read_connector_attachment(
         self,
@@ -145,8 +146,8 @@ class AttachmentService:
             sha256=saved["sha256"],
             mediaType=saved.get("mediaType") or fallback_media_type,
             createdAt=saved["createdAt"],
-            downloadUrl=f"/sessions/{session_id}/attachments/{saved['fileId']}",
-            openUrl=f"/sessions/{session_id}/attachments/{saved['fileId']}/open",
+            downloadUrl=api_v2_path(f"/sessions/{session_id}/attachments/{saved['fileId']}"),
+            openUrl=api_v2_path(f"/sessions/{session_id}/attachments/{saved['fileId']}/open"),
         )
 
     async def _persist_file_blob(

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from agent_server.infra.connector_rpc import ConnectorOfflineError, ConnectorRpcError, ConnectorRpcManager
+from agent_server.core.api_namespace import api_v2_path
 from agent_server.core.models import MessageCreateRequest, RpcResponsePayload, SessionCreateRequest
 from agent_server.infra.runtimes.serializers import serializer_for_runtime
 from agent_server.infra.repositories.facade import Store
@@ -263,8 +264,8 @@ class SessionRunService:
                     "mediaType": metadata.get("mediaType") or "",
                     "size": metadata.get("size"),
                     "sha256": metadata.get("sha256"),
-                    "downloadUrl": f"/connector/sessions/{session_id}/attachments/{file_id}/content",
-                    "platformOpenUrl": f"/sessions/{session_id}/attachments/{file_id}/open",
+                    "downloadUrl": api_v2_path(f"/connector/sessions/{session_id}/attachments/{file_id}/content"),
+                    "platformOpenUrl": api_v2_path(f"/sessions/{session_id}/attachments/{file_id}/open"),
                 }
             )
         return payloads

@@ -70,7 +70,7 @@ class TerminalApi(
         fromSeq: Long = 0,
     ): String {
         return serverUrl.toWebSocketBase() +
-            "/connectors/${deviceId.urlEncode()}/terminals-v2/${terminalId.urlEncode()}/stream" +
+            apiPath("/connectors/${deviceId.urlEncode()}/terminals-v2/${terminalId.urlEncode()}/stream") +
             "?fromSeq=$fromSeq&token=${authorizationToken.urlEncode()}"
     }
 

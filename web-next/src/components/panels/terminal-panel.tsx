@@ -12,6 +12,7 @@ import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { dashboardApi } from "@/features/dashboard/api"
 import type { TerminalView } from "@/features/dashboard/types"
+import { apiPath } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 type TerminalPanelBodyProps = {
@@ -530,7 +531,7 @@ function isTerminalStreamMessage(value: unknown): value is TerminalStreamMessage
 
 function connectorTerminalStreamUrl(connectorId: string, terminalId: string, token: string): string {
   const apiBase = process.env.NEXT_PUBLIC_AGENTS_ANYWHERE_API?.replace(/\/$/, "") || ""
-  const path = `/connectors/${encodeURIComponent(connectorId)}/terminals-v2/${encodeURIComponent(terminalId)}/stream`
+  const path = apiPath(`/connectors/${encodeURIComponent(connectorId)}/terminals-v2/${encodeURIComponent(terminalId)}/stream`)
   const url = new URL(path, apiBase || window.location.origin)
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:"
   url.searchParams.set("token", token)

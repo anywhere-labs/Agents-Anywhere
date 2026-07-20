@@ -7,7 +7,7 @@ import json
 import time
 from typing import Any
 
-from fastapi.testclient import TestClient
+from conftest import ApiV2TestClient as TestClient
 
 from agent_server.api.sessions_terminal import _send_terminal_ws_error
 from agent_server.app import create_app
@@ -2511,8 +2511,8 @@ def test_send_message_forwards_uploaded_attachment_metadata_to_connector(tmp_pat
             "mediaType": "text/markdown",
             "size": len(data),
             "sha256": hashlib.sha256(data).hexdigest(),
-            "downloadUrl": f"/connector/sessions/{session_id}/attachments/{attachment['fileId']}/content",
-            "platformOpenUrl": f"/sessions/{session_id}/attachments/{attachment['fileId']}/open",
+            "downloadUrl": f"/api/v2/connector/sessions/{session_id}/attachments/{attachment['fileId']}/content",
+            "platformOpenUrl": f"/api/v2/sessions/{session_id}/attachments/{attachment['fileId']}/open",
         }
     ]
     assert params["timelineAttachments"] == [
@@ -4576,9 +4576,15 @@ def test_session_updated_sync_timestamps_do_not_rearm_unread(tmp_path):
 
 def test_dashboard_events_route_precedes_session_events(tmp_path):
     client = make_client(tmp_path)
-    paths = [getattr(route, "path", "") for route in client.app.router.routes]
-    dashboard_index = paths.index("/sessions/events/dashboard")
-    session_events_index = paths.index("/sessions/{session_id}/events")
+    paths: list[str] = []
+    for route in client.app.router.routes:
+        effective_contexts = getattr(route, "effective_route_contexts", None)
+        if callable(effective_contexts):
+            paths.extend(getattr(context, "path", "") for context in effective_contexts())
+        else:
+            paths.append(getattr(route, "path", ""))
+    dashboard_index = paths.index("/api/v2/sessions/events/dashboard")
+    session_events_index = paths.index("/api/v2/sessions/{session_id}/events")
     assert dashboard_index < session_events_index
 
 
@@ -5071,7 +5077,7 @@ def test_connector_fs_read_prepares_transfer_without_persisting(tmp_path):
     )
     assert prepare_response.status_code == 200
     prepared = prepare_response.json()["result"]
-    assert prepared["downloadUrl"].startswith(f"/connectors/{connector_id}/fs/transfers/")
+    assert prepared["downloadUrl"].startswith(f"/api/v2/connectors/{connector_id}/fs/transfers/")
     assert "contentBase64" not in prepared
     assert fake_rpc.requests[0][1] == "fs.prepareDownload"
     assert fake_rpc.requests[0][2]["root"] == "/repo"
@@ -5435,8 +5441,8 @@ def test_client_uploads_attachment_and_connector_downloads_by_session(tmp_path):
     assert upload_body["name"] == "blob.bin"
     assert upload_body["size"] == len(data)
     assert upload_body["sha256"] == hashlib.sha256(data).hexdigest()
-    assert upload_body["downloadUrl"] == f"/sessions/{session_id}/attachments/{upload_body['fileId']}"
-    assert upload_body["openUrl"] == f"/sessions/{session_id}/attachments/{upload_body['fileId']}/open"
+    assert upload_body["downloadUrl"] == f"/api/v2/sessions/{session_id}/attachments/{upload_body['fileId']}"
+    assert upload_body["openUrl"] == f"/api/v2/sessions/{session_id}/attachments/{upload_body['fileId']}/open"
 
     download_response = client.get(upload_body["downloadUrl"], headers=headers)
 
@@ -5449,7 +5455,7 @@ def test_client_uploads_attachment_and_connector_downloads_by_session(tmp_path):
     open_response = client.get(upload_body["openUrl"], headers=headers, follow_redirects=False)
     assert open_response.status_code == 302
     local_url = open_response.headers["location"]
-    assert local_url.startswith(f"/sessions/local/{session_id}/{upload_body['fileId']}?token=")
+    assert local_url.startswith(f"/api/v2/sessions/local/{session_id}/{upload_body['fileId']}?token=")
 
     raw_response = client.get(local_url)
     assert raw_response.status_code == 200
@@ -5463,7 +5469,7 @@ def test_client_uploads_attachment_and_connector_downloads_by_session(tmp_path):
     assert client.get(f"{upload_body['openUrl']}-token", headers=headers).status_code == 404
 
     connector_download = client.get(
-        f"/connector/sessions/{session_id}/attachments/{upload_body['fileId']}/content",
+        f"/api/v2/connector/sessions/{session_id}/attachments/{upload_body['fileId']}/content",
         headers={"Authorization": f"Bearer {connector_access_token}"},
     )
     assert connector_download.status_code == 200

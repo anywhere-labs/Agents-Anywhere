@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from fastapi.testclient import TestClient
+from conftest import ApiV2TestClient as TestClient
 from sqlalchemy import insert
 
 from agent_server.app import create_app

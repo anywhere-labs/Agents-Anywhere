@@ -218,7 +218,7 @@ async def _resolve_server_url_for_pair(value: str | None, *, timeout: float = 10
     for candidate in candidates:
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.get(f"{candidate}/health")
+                response = await client.get(f"{candidate}/api/v2/health")
                 if response.status_code < 500:
                     return candidate
                 errors.append(f"{candidate}: HTTP {response.status_code}")

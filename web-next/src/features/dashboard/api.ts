@@ -1,4 +1,4 @@
-import { ApiClient, apiClient } from "@/lib/api";
+import { ApiClient, apiClient, apiPath } from "@/lib/api";
 import type {
   AgentCatalogResponse,
   AdminDashboardOverviewResponse,
@@ -250,11 +250,11 @@ export class DashboardApi {
   }
 
   sessionEventsUrl(token: string, sessionId: string): string {
-    return `/sessions/${encodeURIComponent(sessionId)}/events?token=${encodeURIComponent(token)}`;
+    return `${apiPath(`/sessions/${encodeURIComponent(sessionId)}/events`)}?token=${encodeURIComponent(token)}`;
   }
 
   dashboardEventsUrl(token: string): string {
-    return `/sessions/events/dashboard?token=${encodeURIComponent(token)}`;
+    return `${apiPath("/sessions/events/dashboard")}?token=${encodeURIComponent(token)}`;
   }
 
   connectorFsList(

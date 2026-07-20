@@ -31,6 +31,7 @@ from agent_server.api import (
     service,
 )
 from agent_server.core.setup_token import SetupToken
+from agent_server.core.api_namespace import API_V2_PREFIX
 from agent_server.services.shell_tasks import ShellTaskManager
 from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
@@ -65,8 +66,8 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         await app.state.store.set_all_connectors_offline()
         presence_task = asyncio.create_task(_connector_presence_watchdog(app))
         # If the user table is empty, eagerly generate + log the bootstrap
-        # token so the operator sees it on startup. Otherwise stay dormant —
-        # the token instance only generates one when /auth/* asks for it.
+        # token so the operator sees it on startup. Otherwise stay dormant;
+        # the token instance only generates one when /api/v2/auth/* asks for it.
         if await app.state.store.count_users() == 0:
             app.state.setup_token.snapshot()
         try:
@@ -103,23 +104,23 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     app.state.started_at_iso = utc_now()
     app.state.started_at_monotonic = time.monotonic()
 
-    @app.get("/health")
+    @app.get(f"{API_V2_PREFIX}/health")
     def health() -> dict[str, str]:
         return {"status": "ok", "serverTime": utc_now()}
 
-    app.include_router(auth.router)
-    app.include_router(admin.router)
-    app.include_router(admin_dashboard.router)
-    app.include_router(service.router)
-    app.include_router(oauth.router)
-    app.include_router(connectors.router)
-    app.include_router(connector_ingress.router)
-    app.include_router(agents.router)
-    app.include_router(pairing.router)
-    app.include_router(sessions.router)
-    app.include_router(sessions_fs.router)
-    app.include_router(sessions_terminal.router)
-    app.include_router(approvals.router)
+    app.include_router(auth.router, prefix=API_V2_PREFIX)
+    app.include_router(admin.router, prefix=API_V2_PREFIX)
+    app.include_router(admin_dashboard.router, prefix=API_V2_PREFIX)
+    app.include_router(service.router, prefix=API_V2_PREFIX)
+    app.include_router(oauth.router, prefix=API_V2_PREFIX)
+    app.include_router(connectors.router, prefix=API_V2_PREFIX)
+    app.include_router(connector_ingress.router, prefix=API_V2_PREFIX)
+    app.include_router(agents.router, prefix=API_V2_PREFIX)
+    app.include_router(pairing.router, prefix=API_V2_PREFIX)
+    app.include_router(sessions.router, prefix=API_V2_PREFIX)
+    app.include_router(sessions_fs.router, prefix=API_V2_PREFIX)
+    app.include_router(sessions_terminal.router, prefix=API_V2_PREFIX)
+    app.include_router(approvals.router, prefix=API_V2_PREFIX)
 
     static_dir = os.environ.get("AGENT_SERVER_STATIC_DIR")
     if static_dir:
@@ -163,7 +164,6 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
 
     return app
 
-# this is a comment
 def main() -> None:
     uvicorn.run(
         "agent_server.app:create_app",

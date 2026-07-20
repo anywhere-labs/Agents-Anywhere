@@ -1,5 +1,15 @@
 import Foundation
 
+private let apiNamespace = "/api/v2"
+
+private func apiPath(_ path: String) -> String {
+    if path == apiNamespace || path.hasPrefix("\(apiNamespace)/") {
+        return path
+    }
+    let normalized = path.hasPrefix("/") ? path : "/\(path)"
+    return "\(apiNamespace)\(normalized)"
+}
+
 enum APIClientError: LocalizedError {
     case invalidServerURL
     case invalidResponse
@@ -49,7 +59,7 @@ struct APIClient {
     }
 
     func oauthToken(code: String, codeVerifier: String) async throws -> OAuthTokenResponse {
-        guard let url = URL(string: "/oauth/token", relativeTo: serverURL)?.absoluteURL else {
+        guard let url = URL(string: apiPath("/oauth/token"), relativeTo: serverURL)?.absoluteURL else {
             throw APIClientError.invalidResponse
         }
         var request = URLRequest(url: url)
@@ -359,7 +369,7 @@ struct APIClient {
     ) async throws -> UserUploadResponse {
         let id = sessionId.urlPathComponentEncoded
         let boundary = "Boundary-\(UUID().uuidString)"
-        guard let url = URL(string: "/sessions/\(id)/attachments", relativeTo: serverURL)?.absoluteURL else {
+        guard let url = URL(string: apiPath("/sessions/\(id)/attachments"), relativeTo: serverURL)?.absoluteURL else {
             throw APIClientError.invalidResponse
         }
 
@@ -423,7 +433,7 @@ struct APIClient {
         let sid = sessionId.urlPathComponentEncoded
         let fid = attachment.fileId.urlPathComponentEncoded
         guard var components = URLComponents(
-            url: URL(string: "/sessions/\(sid)/attachments/\(fid)/open", relativeTo: serverURL)?.absoluteURL ?? serverURL,
+            url: URL(string: apiPath("/sessions/\(sid)/attachments/\(fid)/open"), relativeTo: serverURL)?.absoluteURL ?? serverURL,
             resolvingAgainstBaseURL: false,
         ) else {
             throw APIClientError.invalidResponse
@@ -454,7 +464,7 @@ struct APIClient {
         let sid = sessionId.urlPathComponentEncoded
         let fid = attachment.fileId.urlPathComponentEncoded
         guard var components = URLComponents(
-            url: URL(string: "/sessions/\(sid)/attachments/\(fid)", relativeTo: serverURL)?.absoluteURL ?? serverURL,
+            url: URL(string: apiPath("/sessions/\(sid)/attachments/\(fid)"), relativeTo: serverURL)?.absoluteURL ?? serverURL,
             resolvingAgainstBaseURL: false,
         ) else {
             throw APIClientError.invalidResponse
@@ -467,7 +477,7 @@ struct APIClient {
     func sessionEventsURL(token: String, sessionId: String) throws -> URL {
         let id = sessionId.urlPathComponentEncoded
         guard var components = URLComponents(
-            url: URL(string: "/sessions/\(id)/events", relativeTo: serverURL)?.absoluteURL ?? serverURL,
+            url: URL(string: apiPath("/sessions/\(id)/events"), relativeTo: serverURL)?.absoluteURL ?? serverURL,
             resolvingAgainstBaseURL: false,
         ) else {
             throw APIClientError.invalidResponse
@@ -483,7 +493,7 @@ struct APIClient {
         body: Encodable? = nil,
         token: String? = nil,
     ) async throws -> Response {
-        guard let url = URL(string: path, relativeTo: serverURL)?.absoluteURL else {
+        guard let url = URL(string: apiPath(path), relativeTo: serverURL)?.absoluteURL else {
             throw APIClientError.invalidResponse
         }
 

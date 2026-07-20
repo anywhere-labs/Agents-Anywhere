@@ -11,9 +11,24 @@ import asyncio
 import os
 
 import pytest
+from fastapi.testclient import TestClient
 
 
 _PG_PREFIX = "postgresql"
+_API_PREFIX = "/api/v2"
+_API_ROOTS = (
+    "/.well-known",
+    "/admin",
+    "/agents",
+    "/approvals",
+    "/auth",
+    "/connector",
+    "/connectors",
+    "/health",
+    "/oauth",
+    "/pairing",
+    "/sessions",
+)
 _TRUNCATE_SQL = (
     "TRUNCATE TABLE dashboard_daily_metrics, dashboard_user_daily_facts, dashboard_settings, "
     "timeline_items, approvals, session_active_runs, "
@@ -27,6 +42,24 @@ def _asyncpg_url(url: str) -> str:
     if url.startswith("postgresql+asyncpg:"):
         return "postgresql:" + url[len("postgresql+asyncpg:"):]
     return url
+
+
+def _api_v2_test_path(url: str) -> str:
+    if not url.startswith("/"):
+        return url
+    if url == _API_PREFIX or url.startswith(f"{_API_PREFIX}/"):
+        return url
+    if any(url == root or url.startswith(f"{root}/") or url.startswith(f"{root}?") for root in _API_ROOTS):
+        return f"{_API_PREFIX}{url}"
+    return url
+
+
+class ApiV2TestClient(TestClient):
+    def request(self, method: str, url: str, *args, **kwargs):
+        return super().request(method, _api_v2_test_path(str(url)), *args, **kwargs)
+
+    def websocket_connect(self, url: str, *args, **kwargs):
+        return super().websocket_connect(_api_v2_test_path(str(url)), *args, **kwargs)
 
 
 async def _truncate(url: str) -> None:

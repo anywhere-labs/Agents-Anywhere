@@ -5,6 +5,14 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 
+private const val API_NAMESPACE = "/api/v2"
+
+internal fun apiPath(path: String): String {
+    if (path == API_NAMESPACE || path.startsWith("$API_NAMESPACE/")) return path
+    val normalized = if (path.startsWith("/")) path else "/$path"
+    return "$API_NAMESPACE$normalized"
+}
+
 class ApiClient {
     fun getJson(
         serverUrl: String,
@@ -85,7 +93,7 @@ class ApiClient {
         onOpen: () -> Unit = {},
         onEvent: (JSONObject) -> Unit,
     ) {
-        val endpoint = URL("${serverUrl.trimEnd('/')}$path")
+        val endpoint = URL("${serverUrl.trimEnd('/')}${apiPath(path)}")
         val connection = (endpoint.openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = 10_000
@@ -138,7 +146,7 @@ class ApiClient {
         authorizationToken: String? = null,
     ): JSONObject {
         return try {
-            val endpoint = URL("${serverUrl.trimEnd('/')}$path")
+            val endpoint = URL("${serverUrl.trimEnd('/')}${apiPath(path)}")
             val boundary = "AA-${System.currentTimeMillis()}"
             val connection = (endpoint.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
@@ -193,7 +201,7 @@ class ApiClient {
         authorizationToken: String?,
     ): JSONObject {
         return try {
-            val endpoint = URL("${serverUrl.trimEnd('/')}$path")
+            val endpoint = URL("${serverUrl.trimEnd('/')}${apiPath(path)}")
             val bodyText = body?.toString()
 
             val connection = (endpoint.openConnection() as HttpURLConnection).apply {

@@ -63,6 +63,15 @@ CLAUDE_BIN=/path/to/claude
 The connector uses local runtime credentials and local filesystem permissions.
 Agents Anywhere does not proxy Claude or Codex account credentials.
 
+## API Namespace
+
+Connector configuration stores the server origin, for example
+`http://127.0.0.1:8000`; do not include `/api/v2` in `--server-url`.
+
+The connector adds the v2 namespace internally and talks to `/api/v2/connector/*`
+and `/api/v2/health`. See `../docs/api-v2-migration.md` for the migration
+rules.
+
 ## Local Operations
 
 The server can ask an online connector to perform local work:

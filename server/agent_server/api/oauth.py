@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
 from agent_server.core.auth import DEFAULT_USER_EXPIRES_IN, create_user_access_token
+from agent_server.core.api_namespace import api_v2_path
 from agent_server.core.models import (
     OAuthAuthorizeRequest,
     OAuthAuthorizeResponse,
@@ -28,8 +29,8 @@ async def oauth_metadata(request: Request) -> OAuthMetadataResponse:
     issuer = _public_origin(request)
     return OAuthMetadataResponse(
         issuer=issuer,
-        authorization_endpoint=f"{issuer}/oauth/authorize",
-        token_endpoint=f"{issuer}/oauth/token",
+        authorization_endpoint=f"{issuer}{api_v2_path('/oauth/authorize')}",
+        token_endpoint=f"{issuer}{api_v2_path('/oauth/token')}",
         response_types_supported=["code"],
         grant_types_supported=["authorization_code"],
         code_challenge_methods_supported=["S256"],

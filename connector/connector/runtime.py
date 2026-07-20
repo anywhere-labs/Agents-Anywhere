@@ -240,7 +240,7 @@ class BackendRpcClient:
 
     async def run_once(self) -> None:
         access_token = await self.ensure_access_token(force=True)
-        ws_url = _ws_url(self.config.server_url, "/connector/ws")
+        ws_url = _ws_url(self.config.server_url, _api_v2_path("/connector/ws"))
         logger.info("connecting backend websocket {}", ws_url)
         async with websockets.connect(
             ws_url,
@@ -273,7 +273,7 @@ class BackendRpcClient:
             client = self._new_http_client(timeout=30)
         try:
             response = await client.post(
-                urljoin(self.config.server_url + "/", "connector/auth"),
+                _api_v2_url(self.config.server_url, "/connector/auth"),
                 headers={
                     "Authorization": f"Connector {self.config.connector_id}:{self.config.connector_token}",
                 },
@@ -663,13 +663,13 @@ class BackendRpcClient:
             client = self._new_http_client(timeout=30)
         try:
             response = await client.get(
-                urljoin(self.config.server_url + "/", path),
+                _api_v2_url(self.config.server_url, path),
                 headers={"Authorization": f"Bearer {access_token}"},
             )
             if getattr(response, "status_code", None) == 401:
                 access_token = await self.ensure_access_token(force=True)
                 response = await client.get(
-                    urljoin(self.config.server_url + "/", path),
+                    _api_v2_url(self.config.server_url, path),
                     headers={"Authorization": f"Bearer {access_token}"},
                 )
                 if getattr(response, "status_code", None) == 401:
@@ -759,7 +759,7 @@ class BackendRpcClient:
         notifications: list[dict[str, Any]],
     ) -> httpx.Response:
         return await client.post(
-            urljoin(self.config.server_url + "/", "connector/ingest"),
+            _api_v2_url(self.config.server_url, "/connector/ingest"),
             headers={"Authorization": f"Bearer {access_token}"},
             json={"notifications": notifications},
             timeout=60,
@@ -778,7 +778,7 @@ class BackendRpcClient:
             response = await client.get(
                 urljoin(
                     self.config.server_url + "/",
-                    f"connector/sessions/{session_id}/attachments/{file_id}/content",
+                    _api_v2_path(f"/connector/sessions/{session_id}/attachments/{file_id}/content").lstrip("/"),
                 ),
                 headers={"Authorization": f"Bearer {access_token}"},
             )
@@ -787,7 +787,7 @@ class BackendRpcClient:
                 response = await client.get(
                     urljoin(
                         self.config.server_url + "/",
-                        f"connector/sessions/{session_id}/attachments/{file_id}/content",
+                        _api_v2_path(f"/connector/sessions/{session_id}/attachments/{file_id}/content").lstrip("/"),
                     ),
                     headers={"Authorization": f"Bearer {access_token}"},
                 )
@@ -819,7 +819,7 @@ class BackendRpcClient:
             raise FileNotFoundError(f"file not found: {path}")
         access_token = await self.ensure_access_token()
         timeout = httpx.Timeout(300.0, connect=30.0)
-        target = urljoin(self.config.server_url + "/", upload_url.lstrip("/"))
+        target = _api_v2_url(self.config.server_url, upload_url)
         headers = {"Authorization": f"Bearer {access_token}"}
         params_query = {"token": token}
         async with self._new_http_client(timeout=timeout) as client:
@@ -856,7 +856,7 @@ class BackendRpcClient:
         return {"terminalId": terminal_id, "connecting": True}
 
     async def _run_terminal_relay(self, terminal_id: str, token: str) -> None:
-        relay_url = _ws_url(self.config.server_url, f"/connector/terminals/{terminal_id}/relay")
+        relay_url = _ws_url(self.config.server_url, _api_v2_path(f"/connector/terminals/{terminal_id}/relay"))
         relay_url = f"{relay_url}?token={token}"
         logger.info("connecting terminal relay terminal_id={}", terminal_id)
         send_lock = asyncio.Lock()
@@ -988,6 +988,24 @@ def _coalesce_timeline_item_upserts(notifications: list[dict[str, Any]]) -> list
         for index, notification in enumerate(notifications)
         if index not in dropped
     ]
+
+
+API_V2_PREFIX = "/api/v2"
+
+
+def _api_v2_path(path: str) -> str:
+    if path.startswith("http://") or path.startswith("https://"):
+        return path
+    normalized = path if path.startswith("/") else f"/{path}"
+    if normalized == API_V2_PREFIX or normalized.startswith(f"{API_V2_PREFIX}/"):
+        return normalized
+    return f"{API_V2_PREFIX}{normalized}"
+
+
+def _api_v2_url(server_url: str, path: str) -> str:
+    if path.startswith("http://") or path.startswith("https://"):
+        return path
+    return urljoin(server_url + "/", _api_v2_path(path).lstrip("/"))
 
 
 def _ws_url(server_url: str, path: str) -> str:

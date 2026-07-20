@@ -39,7 +39,7 @@ the web UI to create the first admin user.
 Health check:
 
 ```bash
-curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/api/v2/health
 ```
 
 ## Environment
@@ -67,16 +67,20 @@ curl http://127.0.0.1:8000/health
 
 ## Main API Areas
 
-- `/auth/*`: bootstrap, register, login, current user, avatar, password change.
-- `/admin/*`: instance settings, runtime schemas, user management, service info.
-- `/connectors/*`: connector lifecycle, preferences, runtime capabilities, file
+All product API, SSE, and WebSocket endpoints are namespaced under `/api/v2`.
+
+- `/api/v2/auth/*`: bootstrap, register, login, current user, avatar, password change.
+- `/api/v2/admin/*`: instance settings, runtime schemas, user management, service info.
+- `/api/v2/connectors/*`: connector lifecycle, preferences, runtime capabilities, file
   listing through connector RPC.
-- `/connector/*`: connector auth, ingest, file transfer, and WebSocket RPC.
-- `/pairing/*`: browser pairing flow for connector login/claim.
-- `/agents/*`: runtime modes, models, efforts, and config schemas.
-- `/sessions/*`: session lifecycle, runtime settings, events, takeover,
+- `/api/v2/connector/*`: connector auth, ingest, file transfer, and WebSocket RPC.
+- `/api/v2/pairing/*`: browser pairing flow for connector login/claim.
+- `/api/v2/agents/*`: runtime modes, models, efforts, and config schemas.
+- `/api/v2/sessions/*`: session lifecycle, runtime settings, events, takeover,
   messages, interrupt, sync, filesystem, shell, terminal, and uploads.
-- `/approvals/*`: approval resolution.
+- `/api/v2/approvals/*`: approval resolution.
+
+See `../docs/api-v2-migration.md` for Web and Connector migration notes.
 
 ## Web Frontend
 

@@ -7,7 +7,7 @@ import base64
 import hashlib
 from urllib.parse import parse_qs, urlparse
 
-from fastapi.testclient import TestClient
+from conftest import ApiV2TestClient as TestClient
 
 from agent_server.app import create_app
 from agent_server.core.auth import hash_password
@@ -698,8 +698,8 @@ def test_setup_token_auto_regenerates_after_expiry(tmp_path):
 def test_oauth_metadata_advertises_authorization_code_pkce(tmp_path):
     client = make_client(tmp_path)
     body = client.get("/.well-known/oauth-authorization-server").json()
-    assert body["authorization_endpoint"].endswith("/oauth/authorize")
-    assert body["token_endpoint"].endswith("/oauth/token")
+    assert body["authorization_endpoint"].endswith("/api/v2/oauth/authorize")
+    assert body["token_endpoint"].endswith("/api/v2/oauth/token")
     assert body["grant_types_supported"] == ["authorization_code"]
     assert body["code_challenge_methods_supported"] == ["S256"]
 
@@ -764,7 +764,7 @@ def test_oauth_start_uses_return_to_origin_for_redirect_uri(tmp_path):
     assert response.status_code == 200, response.text
     authorize_url = response.json()["authorizeUrl"]
     query = parse_qs(urlparse(authorize_url).query)
-    assert query["redirect_uri"] == ["https://app.example.com/auth/oauth/callback"]
+    assert query["redirect_uri"] == ["https://app.example.com/api/v2/auth/oauth/callback"]
 
 
 def test_admin_oauth_client_configuration_is_closed(tmp_path):

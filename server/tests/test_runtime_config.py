@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from fastapi.testclient import TestClient
+from conftest import ApiV2TestClient as TestClient
 
 from agent_server.app import create_app
 
@@ -631,7 +631,7 @@ def test_changing_claude_settings_does_not_interrupt_running_sessions(tmp_path):
         )
         return session.id
 
-    session_id = asyncio.run(seed())
+    asyncio.run(seed())
 
     response = client.patch(
         f"/connectors/{connector_id}/agents/claude/settings",

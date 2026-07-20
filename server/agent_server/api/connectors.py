@@ -11,6 +11,7 @@ from fastapi.responses import StreamingResponse
 from loguru import logger
 
 from agent_server.core.auth import create_signed_token, verify_signed_token, verify_user_access_token
+from agent_server.core.api_namespace import api_v2_path
 from agent_server.infra.connector_rpc import (
     ConnectorOfflineError,
     ConnectorRpcError,
@@ -400,7 +401,7 @@ async def connector_fs_read(
             **result,
             "transferId": transfer.transfer_id,
             "token": transfer.token,
-            "downloadUrl": f"/connectors/{connector_id}/fs/transfers/{transfer.transfer_id}?token={transfer.token}",
+            "downloadUrl": f"{api_v2_path(f'/connectors/{connector_id}/fs/transfers/{transfer.transfer_id}')}?token={transfer.token}",
         },
     )
 
@@ -548,8 +549,8 @@ async def connector_fs_preview_read(
             "transferId": transfer.transfer_id,
             "token": transfer.token,
             "downloadUrl": (
-                f"/connectors/{connector_id}/fs/transfers/{transfer.transfer_id}"
-                f"?token={transfer.token}&previewAccessToken={urllib.parse.quote(payload.previewAccessToken)}"
+                api_v2_path(f"/connectors/{connector_id}/fs/transfers/{transfer.transfer_id}")
+                + f"?token={transfer.token}&previewAccessToken={urllib.parse.quote(payload.previewAccessToken)}"
             ),
         },
     )
@@ -591,7 +592,7 @@ async def connector_fs_transfer_download(
             "sessionId": _connector_scope_id(connector_id),
             "transferId": transfer.transfer_id,
             "token": transfer.token,
-            "uploadUrl": f"/connector/fs/transfers/{transfer.transfer_id}",
+            "uploadUrl": api_v2_path(f"/connector/fs/transfers/{transfer.transfer_id}"),
             "root": transfer.root,
             "path": transfer.path,
         },

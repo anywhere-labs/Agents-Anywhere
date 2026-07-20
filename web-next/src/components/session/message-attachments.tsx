@@ -6,6 +6,7 @@ import { Download, ExternalLink, FileText, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import type { ReconcileAttachment } from "@/features/dashboard/attachments"
+import { apiPath } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 type MessageAttachmentsProps = {
@@ -171,7 +172,7 @@ function AttachmentFileCard({
 }
 
 function attachmentOpenUrl(sessionId: string, fileId: string, token: string): string {
-  return `/sessions/${encodeURIComponent(sessionId)}/attachments/${encodeURIComponent(fileId)}/open?token=${encodeURIComponent(token)}`
+  return `${apiPath(`/sessions/${encodeURIComponent(sessionId)}/attachments/${encodeURIComponent(fileId)}/open`)}?token=${encodeURIComponent(token)}`
 }
 
 function isImageAttachment(attachment: ReconcileAttachment): boolean {

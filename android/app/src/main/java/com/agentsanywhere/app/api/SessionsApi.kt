@@ -221,7 +221,7 @@ class SessionsApi(
         sessionId: String,
         fileId: String,
     ): String {
-        return "${serverUrl.trimEnd('/')}/sessions/${sessionId.urlEncode()}/attachments/${fileId.urlEncode()}/open"
+        return "${serverUrl.trimEnd('/')}${apiPath("/sessions/${sessionId.urlEncode()}/attachments/${fileId.urlEncode()}/open")}"
     }
 
     fun interruptSession(
