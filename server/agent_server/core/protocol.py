@@ -5,6 +5,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from agent_server.core.models import RuntimeName
+from agent_server.core.models import Approval, SessionView, TimelineItem
 
 
 PROTOCOL_VERSION_1 = "1.0"
@@ -51,4 +52,20 @@ class ProtocolCapabilitySet(BaseModel):
 class ProtocolCapabilitiesResponse(BaseModel):
     connectorId: str
     capabilitySet: ProtocolCapabilitySet
+    serverTime: str
+
+
+class ProtocolTimelineSnapshot(BaseModel):
+    items: list[TimelineItem] = Field(default_factory=list)
+    nextSeq: int
+    hasMore: bool = False
+
+
+class ProtocolSessionSnapshotResponse(BaseModel):
+    session: SessionView
+    timeline: ProtocolTimelineSnapshot
+    approvals: list[Approval] = Field(default_factory=list)
+    effectiveCapabilities: ProtocolCapabilitySet
+    runtimeCapabilities: ProtocolCapabilitySet
+    eventCursor: str
     serverTime: str

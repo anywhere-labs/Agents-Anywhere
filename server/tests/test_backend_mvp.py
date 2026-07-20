@@ -1953,6 +1953,74 @@ def test_protocol_capabilities_ingest_and_read(tmp_path):
     }
 
 
+def test_session_snapshot_includes_effective_capabilities(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, session_id, headers = create_connector_and_session(client)
+    client.app.state.rpc = FakeLocalRpc()
+
+    capability_set = {
+        "revision": 3,
+        "capabilities": [
+            {
+                "capabilityId": "session.interrupt",
+                "scope": "runtime",
+                "runtime": "codex",
+                "supported": True,
+                "available": True,
+                "allowed": True,
+            },
+            {
+                "capabilityId": "session.steer",
+                "scope": "runtime",
+                "runtime": "codex",
+                "supported": True,
+                "available": True,
+                "allowed": True,
+            },
+            {
+                "capabilityId": "catalog.model",
+                "scope": "runtime",
+                "runtime": "codex",
+                "supported": True,
+                "available": True,
+                "allowed": True,
+            },
+        ],
+    }
+    ingest = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={"notifications": [{"method": "protocol.capabilitiesUpdated", "params": capability_set}]},
+    )
+    assert ingest.status_code == 200, ingest.text
+
+    idle_snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
+    assert idle_snapshot.status_code == 200, idle_snapshot.text
+    idle_body = idle_snapshot.json()
+    assert idle_body["runtimeCapabilities"]["revision"] == 3
+    idle_caps = {
+        item["capabilityId"]: item for item in idle_body["effectiveCapabilities"]["capabilities"]
+    }
+    assert idle_caps["session.send_message"]["available"] is True
+    assert idle_caps["session.interrupt"]["available"] is False
+    assert idle_caps["session.interrupt"]["unavailableReason"] == "session_not_interruptible"
+    assert idle_caps["session.steer"]["available"] is False
+    assert idle_caps["catalog.model"]["available"] is True
+    assert idle_body["eventCursor"].startswith("seq:")
+
+    asyncio.run(client.app.state.store.set_session_status(session_id, "running"))
+    running_snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
+    assert running_snapshot.status_code == 200, running_snapshot.text
+    running_caps = {
+        item["capabilityId"]: item
+        for item in running_snapshot.json()["effectiveCapabilities"]["capabilities"]
+    }
+    assert running_caps["session.send_message"]["available"] is False
+    assert running_caps["session.send_message"]["unavailableReason"] == "session_not_idle"
+    assert running_caps["session.interrupt"]["available"] is True
+    assert running_caps["session.steer"]["available"] is True
+
+
 # ── Delete (detach) ────────────────────────────────────────────────────────
 
 

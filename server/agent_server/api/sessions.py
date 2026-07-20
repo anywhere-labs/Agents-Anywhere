@@ -29,11 +29,17 @@ from agent_server.core.models import (
     SessionStateResponse,
     TakeoverResponse,
 )
+from agent_server.core.protocol import (
+    ProtocolCapabilitySet,
+    ProtocolSessionSnapshotResponse,
+    ProtocolTimelineSnapshot,
+)
 from agent_server.core.runtime_config import RuntimeSettingsPatchRequest, RuntimeSettingsResponse
 from agent_server.services.runtime_config import RuntimeConfigService
 from agent_server.services.session_run import SessionRunError, SessionRunService
 from agent_server.services.connector_presence import with_effective_session_connector_status
 from agent_server.services.dashboard_events import publish_dashboard_changed
+from agent_server.services.effective_capabilities import derive_session_effective_capabilities
 from agent_server.infra.repositories.facade import Store
 from agent_server.core.utc import utc_now
 
@@ -241,6 +247,40 @@ async def session_state(
         approvals=approvals,
         nextSeq=next_seq,
         hasMore=has_more,
+        serverTime=utc_now(),
+    )
+
+
+@router.get("/{session_id}/snapshot", response_model=ProtocolSessionSnapshotResponse)
+async def session_snapshot(
+    session_id: str,
+    limit: int = Query(200, ge=1, le=500),
+    user_id: str = Depends(current_user_id),
+    db: Store = Depends(get_store),
+    manager: ConnectorRpcManager = Depends(get_rpc),
+) -> ProtocolSessionSnapshotResponse:
+    try:
+        session = await db.get_session(session_id, user_id=user_id)
+        session = with_effective_session_connector_status(manager, session)
+        items, has_more = await db.list_timeline_latest(session_id=session_id, limit=limit)
+        approvals = await db.list_pending_approvals(session_id)
+        next_seq = await db.get_session_seq(session_id)
+        runtime_capabilities = ProtocolCapabilitySet.model_validate(
+            await db.get_protocol_capabilities(session.connectorId, user_id=user_id)
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="session not found") from None
+    effective_capabilities = derive_session_effective_capabilities(
+        session=session,
+        runtime_capabilities=runtime_capabilities,
+    )
+    return ProtocolSessionSnapshotResponse(
+        session=session,
+        timeline=ProtocolTimelineSnapshot(items=items, nextSeq=next_seq, hasMore=has_more),
+        approvals=approvals,
+        effectiveCapabilities=effective_capabilities,
+        runtimeCapabilities=runtime_capabilities,
+        eventCursor=f"seq:{next_seq}",
         serverTime=utc_now(),
     )
 
