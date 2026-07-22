@@ -57,16 +57,13 @@ Response:
 
 ## Connector
 
-After local runtime discovery, the connector publishes both:
+After the Server starts or stops a Runtime, the Connector publishes:
 
 ```text
-connector.capabilitiesUpdated
 protocol.capabilitiesUpdated
 ```
 
-`connector.capabilitiesUpdated` still carries the low-level discovery report used by server-side runtime attachment.
-
-`protocol.capabilitiesUpdated` carries the product-facing capability set used by clients. The current first slice maps:
+Runtime discovery, configuration, and activation are now managed by the separate device-runtime lifecycle API described in `runtime-lifecycle-v2.md`. Protocol capabilities describe product features of currently active Runtime adapters. The current mapping includes:
 
 - Codex: `session.interrupt`, `session.steer`, `session.interaction.approval`, `runtime.config`, `catalog.model`, `catalog.permission`, `catalog.effort`
 - Claude: `session.interrupt`, `runtime.config`, `catalog.model`, `catalog.permission`

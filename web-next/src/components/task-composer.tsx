@@ -36,8 +36,8 @@ import { dashboardApi } from "@/features/dashboard/api"
 import { createClientId } from "@/lib/id"
 import { cn } from "@/lib/utils"
 import { useElementWidth } from "@/hooks/use-element-width"
-import type { ComposerPermissionLabelKey } from "@/features/dashboard/runtime-config"
 import type {
+  DeviceRuntimeView,
   ProtocolModelCatalog,
   ProtocolPermissionCatalog,
   SessionView as RealSessionView,
@@ -45,33 +45,10 @@ import type {
 import { useTranslations } from "next-intl"
 import {
   modelIdsForSelectionId,
-  modelRuntimeSettingsForCatalog,
   modelSelectionIdForCatalog,
   permissionIdForSelectionId,
-  permissionIdForRuntimeSettings,
-  permissionRuntimeSettingsForCatalog,
   permissionSelectionIdForCatalog,
 } from "@/components/session/catalog-selection"
-
-type ComposerPermissionMode = {
-  id: "ask" | "full" | "readonly"
-  labelKey: ComposerPermissionLabelKey
-}
-
-const PERMISSION_MODES: [ComposerPermissionMode, ...ComposerPermissionMode[]] = [
-  {
-    id: "ask",
-    labelKey: "askApproval",
-  },
-  {
-    id: "full",
-    labelKey: "fullAccess",
-  },
-  {
-    id: "readonly",
-    labelKey: "readOnly",
-  },
-]
 
 const NEW_SESSION_PREFERENCE_KEY = "aa-new-session-preference-v1"
 const TITLE_WRITE_MS = 58
@@ -131,10 +108,48 @@ export function TaskComposer() {
     [t],
   )
 
-  // Derive online connectors for the device picker
+  const [runtimeInventory, setRuntimeInventory] = React.useState<Record<string, DeviceRuntimeView[]>>({})
+  const [runtimeInventoryLoading, setRuntimeInventoryLoading] = React.useState(true)
+
+  React.useEffect(() => {
+    if (!authSession?.accessToken) {
+      setRuntimeInventory({})
+      setRuntimeInventoryLoading(false)
+      return
+    }
+    const online = connectors.filter((connector) => connector.status === "online")
+    if (online.length === 0) {
+      setRuntimeInventory({})
+      setRuntimeInventoryLoading(false)
+      return
+    }
+    let cancelled = false
+    setRuntimeInventoryLoading(true)
+    Promise.allSettled(
+      online.map(async (connector) => ({
+        connectorId: connector.id,
+        response: await dashboardApi.getConnectorRuntimes(authSession.accessToken, connector.id),
+      })),
+    ).then((results) => {
+      if (cancelled) return
+      const next: Record<string, DeviceRuntimeView[]> = {}
+      for (const result of results) {
+        if (result.status === "fulfilled") next[result.value.connectorId] = result.value.response.runtimes
+      }
+      setRuntimeInventory(next)
+      setRuntimeInventoryLoading(false)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [authSession?.accessToken, connectors])
+
+  // New sessions can only target runtimes that the Server has activated and the Connector reports as running.
   const onlineConnectors = React.useMemo(
-    () => connectors.filter((connector) => connector.status === "online" && attachedRuntimes(connector).length > 0),
-    [connectors],
+    () => connectors.filter((connector) =>
+      connector.status === "online" && activeRuntimes(runtimeInventory[connector.id]).length > 0,
+    ),
+    [connectors, runtimeInventory],
   )
 
   const deviceOptions = React.useMemo(
@@ -154,21 +169,24 @@ export function TaskComposer() {
     null
   const selectedConnectorId = selectedConnector?.id ?? ""
   const agentOptions = React.useMemo(
-    () => selectedConnector ? attachedRuntimes(selectedConnector).map((runtime) => ({ id: runtime, label: runtimeLabel(runtime) })) : [],
-    [selectedConnector],
+    () => selectedConnector
+      ? activeRuntimes(runtimeInventory[selectedConnector.id]).map((runtime) => ({
+          id: runtime.runtimeId,
+          label: runtime.displayName,
+        }))
+      : [],
+    [runtimeInventory, selectedConnector],
   )
 
   const [selectedAgent, setSelectedAgent] = React.useState(agentOptions[0]?.id ?? "")
   const [selectedModel, setSelectedModel] = React.useState("")
   const [selectedReasoning, setSelectedReasoning] = React.useState("")
-  const [approval, setApproval] = React.useState<(typeof PERMISSION_MODES)[number]["id"]>("ask")
   const [selectedPermissionMode, setSelectedPermissionMode] = React.useState("")
   const [workspace, setWorkspace] = React.useState<WorkspaceSelection | null>(null)
   const [prompt, setPrompt] = React.useState("")
-  const [runtimeSettings, setRuntimeSettings] = React.useState<Record<string, unknown>>({})
   const [modelCatalog, setModelCatalog] = React.useState<ProtocolModelCatalog | null>(null)
   const [permissionCatalog, setPermissionCatalog] = React.useState<ProtocolPermissionCatalog | null>(null)
-  const [runtimeConfigLoading, setRuntimeConfigLoading] = React.useState(false)
+  const [catalogsLoading, setCatalogsLoading] = React.useState(false)
   const [creating, setCreating] = React.useState(false)
   const [createTick, setCreateTick] = React.useState(0)
   const [preferenceLoaded, setPreferenceLoaded] = React.useState(false)
@@ -257,36 +275,31 @@ export function TaskComposer() {
 
   React.useEffect(() => {
     if (!authSession?.accessToken || !selectedConnectorId || !selectedAgent) {
-      setRuntimeSettings({})
       setModelCatalog(null)
       setPermissionCatalog(null)
-      setRuntimeConfigLoading(false)
+      setCatalogsLoading(false)
       return
     }
     let cancelled = false
-    setRuntimeConfigLoading(true)
-    setRuntimeSettings({})
+    setCatalogsLoading(true)
     setModelCatalog(null)
     setPermissionCatalog(null)
     Promise.all([
-      dashboardApi.getConnectorAgentSettings(authSession.accessToken, selectedConnectorId, selectedAgent),
       dashboardApi.getAgentModelCatalog(authSession.accessToken, selectedAgent, selectedConnectorId),
       dashboardApi.getAgentPermissionCatalog(authSession.accessToken, selectedAgent, selectedConnectorId),
     ])
-      .then(([settingsResponse, modelCatalogResponse, permissionCatalogResponse]) => {
+      .then(([modelCatalogResponse, permissionCatalogResponse]) => {
         if (cancelled) return
-        setRuntimeSettings(settingsResponse.runtimeSettings ?? settingsResponse.settings ?? {})
         setModelCatalog(modelCatalogResponse.catalog)
         setPermissionCatalog(permissionCatalogResponse.catalog)
       })
       .catch(() => {
         if (cancelled) return
-        setRuntimeSettings({})
         setModelCatalog(null)
         setPermissionCatalog(null)
       })
       .finally(() => {
-        if (!cancelled) setRuntimeConfigLoading(false)
+        if (!cancelled) setCatalogsLoading(false)
       })
     return () => {
       cancelled = true
@@ -321,32 +334,23 @@ export function TaskComposer() {
   )
 
   React.useEffect(() => {
-    const settingsModel = typeof runtimeSettings.model === "string" ? runtimeSettings.model : ""
-    const nextModel = models.some((option) => option.id === settingsModel)
-      ? settingsModel
-      : models.find((option) => option.default)?.id ?? models[0]?.id ?? ""
+    const nextModel = models.find((option) => option.default)?.id ?? models[0]?.id ?? ""
     setSelectedModel((current) => current && models.some((option) => option.id === current) ? current : nextModel)
-  }, [models, runtimeSettings.model])
+  }, [models])
 
   React.useEffect(() => {
-    const settingsPermission = permissionIdForRuntimeSettings(permissionCatalog, runtimeSettings)
-    const nextPermissionMode = permissionOptions.some((option) => option.id === settingsPermission)
-      ? settingsPermission
-      : permissionOptions.find((option) => option.default)?.id ?? permissionOptions[0]?.id ?? ""
+    const nextPermissionMode = permissionOptions.find((option) => option.default)?.id ?? permissionOptions[0]?.id ?? ""
     setSelectedPermissionMode((current) =>
       current && permissionOptions.some((option) => option.id === current) ? current : nextPermissionMode,
     )
-  }, [permissionCatalog, permissionOptions, runtimeSettings])
+  }, [permissionOptions])
 
   React.useEffect(() => {
-    const settingsEffort = typeof runtimeSettings.effort === "string" ? runtimeSettings.effort : ""
-    const nextEffort = reasoningOptions.some((option) => option.id === settingsEffort)
-      ? settingsEffort
-      : reasoningOptions.find((option) => option.default)?.id ?? reasoningOptions[0]?.id ?? ""
+    const nextEffort = reasoningOptions.find((option) => option.default)?.id ?? reasoningOptions[0]?.id ?? ""
     setSelectedReasoning((current) =>
       current && reasoningOptions.some((option) => option.id === current) ? current : nextEffort,
     )
-  }, [reasoningOptions, runtimeSettings.effort])
+  }, [reasoningOptions])
 
   React.useEffect(() => {
     setSelectedReasoning((current) => {
@@ -357,7 +361,7 @@ export function TaskComposer() {
 
   React.useEffect(() => {
     if (!preferenceLoaded || !selectedConnectorId || !selectedAgent) return
-    if (runtimeConfigLoading || (!modelCatalog && !permissionCatalog)) return
+    if (catalogsLoading || (!modelCatalog && !permissionCatalog)) return
     const scope = newSessionSelectionScope(selectedConnectorId, selectedAgent)
     if (selectionPreferenceAppliedForScopeRef.current === scope) return
     const selectionPreference = preference?.selections?.[scope]
@@ -384,46 +388,40 @@ export function TaskComposer() {
     permissionOptions,
     preference,
     preferenceLoaded,
-    runtimeConfigLoading,
+    catalogsLoading,
     selectedAgent,
     selectedConnectorId,
   ])
 
-  const approvalMode = PERMISSION_MODES.find((o) => o.id === approval) ?? PERMISSION_MODES[0]
   const selectedPermissionOption = permissionOptions.find((option) => option.id === selectedPermissionMode)
   const modelLabel = selectedModelItem?.label ?? t("defaultModel")
   const selectedReasoningOption = reasoningOptions.find((option) => option.id === selectedReasoning)
   const effortLabel = selectedReasoningOption?.label ?? t("defaultReasoning")
-  const permissionLabel = selectedPermissionOption?.label ?? t(approvalMode.labelKey)
-  const permissionDrawerItems = permissionOptions.length > 0
-    ? permissionOptions
-    : PERMISSION_MODES.map((option) => ({ id: option.id, label: t(option.labelKey) }))
+  const permissionLabel = selectedPermissionOption?.label ?? t("permissionMode")
+  const permissionDrawerItems = permissionOptions
   const modelSelectionId = modelSelectionIdForCatalog(modelCatalog, selectedModel, selectedReasoning)
   const permissionSelectionId = permissionSelectionIdForCatalog(permissionCatalog, selectedPermissionMode)
   const requiresModelSelection = Boolean(modelCatalog && models.length > 0)
   const requiresPermissionSelection = Boolean(permissionCatalog && permissionOptions.length > 0)
-  const optimisticRuntimeSettings = {
-    ...runtimeSettings,
-    ...modelRuntimeSettingsForCatalog(modelCatalog, selectedModel, selectedReasoning),
-    ...permissionRuntimeSettingsForCatalog(permissionCatalog, selectedPermissionMode),
-  }
+  const hasSelectionSettings = models.length > 0 || permissionOptions.length > 0
   const canCreate =
     Boolean(authSession?.accessToken && selectedConnector && selectedAgent) &&
     !creating &&
-    !runtimeConfigLoading &&
+    !catalogsLoading &&
     (!requiresModelSelection || Boolean(modelSelectionId)) &&
     (!requiresPermissionSelection || Boolean(permissionSelectionId)) &&
     (prompt.trim().length > 0 || attachments.length > 0)
   const selectorsLoading =
-    Boolean(authSession?.accessToken && hasOnlineDevice && selectedConnector && selectedAgent) &&
-    runtimeConfigLoading
+    runtimeInventoryLoading || (
+      Boolean(authSession?.accessToken && hasOnlineDevice && selectedConnector && selectedAgent) && catalogsLoading
+    )
   const compactSelectors = composerWidth > 0 && composerWidth < 640
   const showCollapsedBrand = isMobile || sidebarState === "collapsed"
 
   const handleCreate = async () => {
     if (!authSession?.accessToken || !selectedConnector || !selectedAgent || creating) return
     if (!prompt.trim() && attachments.length === 0) return
-    if (runtimeConfigLoading) return
+    if (catalogsLoading) return
     if (requiresModelSelection && !modelSelectionId) return
     if (requiresPermissionSelection && !permissionSelectionId) return
     const localSessionId = createClientId("session")
@@ -455,8 +453,6 @@ export function TaskComposer() {
       sortAt: now,
       updatedSeq: 1,
       effectiveRunMode: "chat",
-      runtimeSettings: optimisticRuntimeSettings,
-      runtimeSettingsOverride: optimisticRuntimeSettings,
       modelSelectionId,
       permissionSelectionId,
     }
@@ -625,7 +621,7 @@ export function TaskComposer() {
                   />
                 ) : null}
 
-                {compactSelectors ? (
+                {compactSelectors && hasSelectionSettings ? (
                   <SelectionSettingsDrawer
                     disabled={selectorsLoading}
                     buttonLabel={t("selectionSettings")}
@@ -635,11 +631,8 @@ export function TaskComposer() {
                     modelLabel={t("modelAndReasoning")}
                     reasoningLabel={t("reasoning")}
                     permissionItems={permissionDrawerItems}
-                    selectedPermission={permissionOptions.length > 0 ? selectedPermissionMode : approval}
-                    onPermissionChange={(id) => {
-                      if (permissionOptions.length > 0) setSelectedPermissionMode(id)
-                      else setApproval(id as (typeof PERMISSION_MODES)[number]["id"])
-                    }}
+                    selectedPermission={selectedPermissionMode}
+                    onPermissionChange={setSelectedPermissionMode}
                     modelItems={hasOnlineDevice ? models : []}
                     selectedModel={selectedModel}
                     selectedReasoning={selectedReasoning}
@@ -648,9 +641,9 @@ export function TaskComposer() {
                       setSelectedReasoning(reasoningId)
                     }}
                   />
-                ) : (
+                ) : !compactSelectors ? (
                   <>
-                    <DropdownMenu>
+                    {permissionOptions.length > 0 ? <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground">
                           {permissionOptions.length > 0 ? <span className="size-1.5 rounded-full bg-primary" /> : null}
@@ -659,26 +652,18 @@ export function TaskComposer() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="start" className="w-64">
-                        {permissionOptions.length > 0 ? (
-                          permissionOptions.map((item) => (
-                            <DropdownMenuItem
-                              key={item.id}
-                              className="gap-2"
-                              onSelect={() => setSelectedPermissionMode(item.id)}
-                            >
-                              <Check className={cn("size-3.5", selectedPermissionMode === item.id ? "opacity-100" : "opacity-0")} />
-                              <span>{item.label}</span>
-                            </DropdownMenuItem>
-                          ))
-                        ) : (
-                          PERMISSION_MODES.map((opt) => (
-                            <DropdownMenuItem key={opt.id} onSelect={() => setApproval(opt.id)}>
-                              {t(opt.labelKey)}
-                            </DropdownMenuItem>
-                          ))
-                        )}
+                        {permissionOptions.map((item) => (
+                          <DropdownMenuItem
+                            key={item.id}
+                            className="gap-2"
+                            onSelect={() => setSelectedPermissionMode(item.id)}
+                          >
+                            <Check className={cn("size-3.5", selectedPermissionMode === item.id ? "opacity-100" : "opacity-0")} />
+                            <span>{item.label}</span>
+                          </DropdownMenuItem>
+                        ))}
                       </DropdownMenuContent>
-                    </DropdownMenu>
+                    </DropdownMenu> : null}
 
                     {hasOnlineDevice && models.length > 0 ? (
                       <DropdownMenu>
@@ -739,7 +724,7 @@ export function TaskComposer() {
                       </DropdownMenu>
                     ) : null}
                   </>
-                )}
+                ) : null}
               </>
             )}
 
@@ -767,8 +752,10 @@ export function TaskComposer() {
   )
 }
 
-function attachedRuntimes(connector: { runtimeCapabilities?: { attached?: Record<string, unknown> } }) {
-  return Object.keys(connector.runtimeCapabilities?.attached ?? {}).sort((a, b) => a.localeCompare(b))
+function activeRuntimes(runtimes: DeviceRuntimeView[] | undefined) {
+  return (runtimes ?? [])
+    .filter((runtime) => runtime.configured && runtime.active && runtime.status === "running")
+    .sort((a, b) => a.displayName.localeCompare(b.displayName))
 }
 
 function ComposerSelectorLoading({ className }: { className?: string }) {
@@ -833,13 +820,6 @@ function useTypewriterTitle(titles: string[], paused: boolean) {
   }, [paused, titleIndex, titles])
 
   return typedTitle
-}
-
-function runtimeLabel(runtime: string): string {
-  if (runtime === "codex") return "Codex"
-  if (runtime === "claude") return "Claude Code"
-  if (runtime === "opencode") return "OpenCode"
-  return runtime.slice(0, 1).toUpperCase() + runtime.slice(1)
 }
 
 function readNewSessionPreference(): NewSessionPreference | null {

@@ -2,37 +2,6 @@ import type { AuthMe } from "@/features/auth";
 
 export type ConnectorStatus = "offline" | "online";
 
-export type RuntimeCheckEntry = {
-  source: string;
-  path: string;
-  status: "ok" | "failed" | "missing";
-  reason?: string;
-  stage?: string;
-  version?: string;
-};
-
-export type RuntimeReport = {
-  history?: "ok" | "ok_empty" | "unavailable";
-  execution?: "ok" | "unavailable";
-  selected?: { source: string; path: string; version?: string };
-  checked?: RuntimeCheckEntry[];
-  error?: { code: string; message: string };
-  projectsDir?: string;
-  historyCheck?: Record<string, unknown>;
-};
-
-export type AttachedAgent = {
-  report: RuntimeReport;
-  attachedAt: string;
-};
-
-export type DeviceAgentsState = {
-  version: number;
-  lastDiscoveredAt: string | null;
-  attached: Record<string, AttachedAgent>;
-  disabled: string[];
-};
-
 export type ConnectorView = {
   id: string;
   userId: string;
@@ -40,9 +9,40 @@ export type ConnectorView = {
   deviceOs?: "macos" | "windows" | "linux" | null;
   status: ConnectorStatus;
   lastSeenAt: string | null;
-  runtimeCapabilities: DeviceAgentsState;
   createdAt: string;
   updatedAt: string;
+};
+
+export type DeviceRuntimeStatus =
+  | "stopped"
+  | "starting"
+  | "running"
+  | "stopping"
+  | "error"
+  | "unknown";
+
+export type DeviceRuntimeView = {
+  connectorId: string;
+  runtimeId: string;
+  runtimeType: string;
+  displayName: string;
+  present: boolean;
+  configured: boolean;
+  active: boolean;
+  status: DeviceRuntimeStatus;
+  discovery: Record<string, unknown>;
+  schema: Record<string, unknown> | null;
+  uiSchema: Record<string, unknown>;
+  config: Record<string, unknown> | null;
+  error: Record<string, unknown> | null;
+  lastDiscoveredAt: string;
+  updatedAt: string;
+};
+
+export type DeviceRuntimeListResponse = {
+  connectorId: string;
+  runtimes: DeviceRuntimeView[];
+  serverTime: string;
 };
 
 export type SessionStatusValue =
@@ -89,22 +89,6 @@ export type ConnectorListResponse = {
 
 export type ConnectorResponse = {
   connector: ConnectorView;
-  serverTime: string;
-};
-
-export type ConnectorRuntimeCapabilitiesResponse = {
-  connectorId: string;
-  runtimeCapabilities: DeviceAgentsState;
-  serverTime: string;
-};
-
-export type ConnectorRuntimeScanResponse = {
-  connectorId: string;
-  runtimeCapabilities: DeviceAgentsState;
-  scanned: {
-    runtime?: string;
-    report?: RuntimeReport;
-  };
   serverTime: string;
 };
 
@@ -166,7 +150,6 @@ export type SessionCreateRequest = {
   runtime: string;
   title?: string;
   cwd?: string;
-  runtimeSettings?: Record<string, unknown> | null;
   modelSelectionId?: string | null;
   permissionSelectionId?: string | null;
 };
@@ -578,51 +561,6 @@ export type UploadedAttachment = {
 
 export type AttachmentUploadResponse = {
   attachments: UploadedAttachment[];
-  serverTime: string;
-};
-
-export type RuntimeConfigOption = {
-  value: string | boolean;
-  label: string;
-  description?: string | null;
-  efforts?: RuntimeConfigOption[] | null;
-};
-
-export type RuntimeConfigField = {
-  key: string;
-  label: string;
-  type: "string" | "enum" | "boolean" | "object";
-  description?: string | null;
-  options?: RuntimeConfigOption[] | null;
-  runtimeOptionsSource?: string | null;
-  visibleWhen?: Record<string, unknown> | null;
-  allowSessionOverride: boolean;
-  hidden: boolean;
-  fields?: RuntimeConfigField[] | null;
-};
-
-export type RuntimeConfigSchema = {
-  runtime: string;
-  schemaVersion: number;
-  fields: RuntimeConfigField[];
-};
-
-export type RuntimeConfigSchemaResponse = {
-  runtime: string;
-  schema: RuntimeConfigSchema;
-  serverTime: string;
-};
-
-export type RuntimeSettingsResponse = {
-  connectorId?: string | null;
-  sessionId?: string | null;
-  runtime: string;
-  settings?: Record<string, unknown>;
-  runtimeSettings?: Record<string, unknown>;
-  runtimeSettingsOverride?: Record<string, unknown> | null;
-  effectiveRunMode?: "chat" | "terminal" | null;
-  defaultRunModeConfigured?: boolean;
-  schemaVersion?: number;
   serverTime: string;
 };
 

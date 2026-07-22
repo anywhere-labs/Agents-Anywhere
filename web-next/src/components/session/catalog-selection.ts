@@ -29,22 +29,6 @@ export function modelIdsForSelectionId(
   return null
 }
 
-export function modelRuntimeSettingsForCatalog(
-  catalog: ProtocolModelCatalog | null,
-  modelId: string,
-  reasoningId: string,
-): Record<string, unknown> {
-  if (!catalog || !modelId) return {}
-  const model = catalog.models.find((item) => item.id === modelId)
-  if (!model) return {}
-  const settings: Record<string, unknown> = { model: model.id }
-  const reasoning = reasoningId
-    ? model.reasoningItems.find((item) => item.id === reasoningId)
-    : model.reasoningItems.find((item) => item.default)
-  if (reasoning) settings.effort = reasoning.id
-  return settings
-}
-
 export function permissionSelectionIdForCatalog(
   catalog: ProtocolPermissionCatalog | null,
   permissionId: string,
@@ -68,15 +52,6 @@ export function permissionIdForRuntimeSettings(
   if (!catalog || !runtimeSettings) return ""
   const match = catalog.permissions.find((item) => runtimeSettingsMatchesPermission(runtimeSettings, item))
   return match?.id ?? ""
-}
-
-export function permissionRuntimeSettingsForCatalog(
-  catalog: ProtocolPermissionCatalog | null,
-  permissionId: string,
-): Record<string, unknown> {
-  if (!catalog || !permissionId) return {}
-  const item = catalog.permissions.find((permission) => permission.id === permissionId)
-  return item ? permissionRuntimeSettings(item) : {}
 }
 
 function runtimeSettingsMatchesPermission(

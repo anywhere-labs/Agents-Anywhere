@@ -38,19 +38,6 @@ export type ConnectorView = {
   deviceOs?: "macos" | "windows" | "linux" | null
   status: ConnectorStatus
   lastSeenAt?: string | null
-  runtimeCapabilities: {
-    version: number
-    lastDiscoveredAt?: string | null
-    attached: Record<string, {
-      attachedAt: string
-      report: {
-        selected?: { source: string; path: string; version?: string }
-        checked?: Array<{ source: string; path: string; status: "ok" | "failed" | "missing"; reason?: string }>
-        error?: { code: string; message: string }
-      }
-    }>
-    disabled: string[]
-  }
 }
 
 export type SessionStatus = "idle" | "pending" | "running" | "stopping" | "blocked"
@@ -192,21 +179,6 @@ const mockConnectors: ConnectorView[] = [
     name: "windowshome",
     status: "online",
     lastSeenAt: new Date().toISOString(),
-    runtimeCapabilities: {
-      version: 1,
-      lastDiscoveredAt: new Date().toISOString(),
-      attached: {
-        Codex: {
-          attachedAt: new Date(Date.now() - 3600000).toISOString(),
-          report: { selected: { source: "npm", path: "/usr/local/bin/codex", version: "1.2.0" } },
-        },
-        Claude: {
-          attachedAt: new Date(Date.now() - 7200000).toISOString(),
-          report: { selected: { source: "brew", path: "/opt/homebrew/bin/claude", version: "0.3.1" } },
-        },
-      },
-      disabled: [],
-    },
   },
   {
     id: "conn-2",
@@ -214,7 +186,6 @@ const mockConnectors: ConnectorView[] = [
     name: "windowslaptop",
     status: "offline",
     lastSeenAt: new Date(Date.now() - 86400000 * 2).toISOString(),
-    runtimeCapabilities: { version: 1, attached: {}, disabled: [] },
   },
   {
     id: "conn-3",
@@ -222,21 +193,6 @@ const mockConnectors: ConnectorView[] = [
     name: "macmini",
     status: "online",
     lastSeenAt: new Date().toISOString(),
-    runtimeCapabilities: {
-      version: 1,
-      lastDiscoveredAt: new Date().toISOString(),
-      attached: {
-        Codex: {
-          attachedAt: new Date(Date.now() - 1800000).toISOString(),
-          report: { selected: { source: "brew", path: "/opt/homebrew/bin/codex", version: "1.2.0" } },
-        },
-        Claude: {
-          attachedAt: new Date(Date.now() - 3600000).toISOString(),
-          report: { selected: { source: "brew", path: "/opt/homebrew/bin/claude", version: "0.3.1" } },
-        },
-      },
-      disabled: [],
-    },
   },
   {
     id: "conn-4",
@@ -244,7 +200,6 @@ const mockConnectors: ConnectorView[] = [
     name: "macbookair",
     status: "offline",
     lastSeenAt: new Date(Date.now() - 86400000 * 5).toISOString(),
-    runtimeCapabilities: { version: 1, attached: {}, disabled: [] },
   },
 ]
 
@@ -584,7 +539,6 @@ export async function createConnector(
     name: input.name,
     status: "offline",
     lastSeenAt: null,
-    runtimeCapabilities: { version: 1, attached: {}, disabled: [] },
   }
   mockNewConnectors.push(connector)
   mockConnectors.push(connector)

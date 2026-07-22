@@ -130,7 +130,6 @@ function mapConnector(connector: RealConnectorView): ConnectorView {
     deviceOs: connector.deviceOs,
     status: connector.status,
     lastSeenAt: connector.lastSeenAt,
-    runtimeCapabilities: connector.runtimeCapabilities,
   }
 }
 

@@ -12,8 +12,8 @@ import type {
   ConnectorListResponse,
   ConnectorResponse,
   ConnectorRevokeResponse,
-  ConnectorRuntimeCapabilitiesResponse,
-  ConnectorRuntimeScanResponse,
+  DeviceRuntimeListResponse,
+  DeviceRuntimeView,
   FsListResult,
   FsPreviewSessionResponse,
   FsPreviewTokenCreateResponse,
@@ -28,8 +28,6 @@ import type {
   ProtocolModelCatalogResponse,
   ProtocolPermissionCatalogResponse,
   RpcResponse,
-  RuntimeConfigSchemaResponse,
-  RuntimeSettingsResponse,
   SessionCreateRequest,
   SessionCreateResponse,
   SessionListResponse,
@@ -616,16 +614,6 @@ export class DashboardApi {
     );
   }
 
-  getRuntimeConfigSchema(
-    token: string,
-    runtime: string,
-  ): Promise<RuntimeConfigSchemaResponse> {
-    return this.client.get<RuntimeConfigSchemaResponse>(
-      `/agents/${encodeURIComponent(runtime)}/config-schema`,
-      { token },
-    );
-  }
-
   getAgentModelCatalog(
     token: string,
     runtime: string,
@@ -648,75 +636,64 @@ export class DashboardApi {
     );
   }
 
-  getConnectorAgentSettings(
+  getConnectorRuntimes(
     token: string,
     connectorId: string,
-    runtime: string,
-  ): Promise<RuntimeSettingsResponse> {
-    return this.client.get<RuntimeSettingsResponse>(
-      `/connectors/${encodeURIComponent(connectorId)}/agents/${encodeURIComponent(runtime)}/settings`,
+  ): Promise<DeviceRuntimeListResponse> {
+    return this.client.get<DeviceRuntimeListResponse>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtimes`,
       { token },
     );
   }
 
-  patchConnectorAgentSettings(
+  discoverConnectorRuntimes(
     token: string,
     connectorId: string,
-    runtime: string,
-    settings: Record<string, unknown>,
-  ): Promise<RuntimeSettingsResponse> {
-    return this.client.patch<RuntimeSettingsResponse>(
-      `/connectors/${encodeURIComponent(connectorId)}/agents/${encodeURIComponent(runtime)}/settings`,
-      { settings },
+  ): Promise<DeviceRuntimeListResponse> {
+    return this.client.post<DeviceRuntimeListResponse>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtimes/discover`,
+      {},
       { token },
     );
   }
 
-  deleteConnectorRuntime(
+  putConnectorRuntimeConfig(
     token: string,
     connectorId: string,
-    runtime: string,
-  ): Promise<ConnectorRuntimeCapabilitiesResponse> {
-    return this.client.delete<ConnectorRuntimeCapabilitiesResponse>(
-      `/connectors/${encodeURIComponent(connectorId)}/runtime-capabilities/${encodeURIComponent(runtime)}`,
+    runtimeId: string,
+    config: Record<string, unknown>,
+  ): Promise<DeviceRuntimeView> {
+    return this.client.put<DeviceRuntimeView>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtimes/${encodeURIComponent(runtimeId)}/config`,
+      { config },
       { token },
     );
   }
 
-  scanConnectorRuntime(
+  setConnectorRuntimeActive(
     token: string,
     connectorId: string,
-    runtime: string,
-    path?: string | null,
-  ): Promise<ConnectorRuntimeScanResponse> {
-    return this.client.post<ConnectorRuntimeScanResponse>(
-      `/connectors/${encodeURIComponent(connectorId)}/runtime-capabilities/scan`,
-      { runtime, ...(path && path.trim() ? { path: path.trim() } : {}) },
+    runtimeId: string,
+    active: boolean,
+  ): Promise<DeviceRuntimeView> {
+    return this.client.put<DeviceRuntimeView>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtimes/${encodeURIComponent(runtimeId)}/active`,
+      { active },
       { token },
     );
   }
 
-  getSessionRuntimeSettings(
+  deleteConnectorRuntimeConfig(
     token: string,
-    sessionId: string,
-  ): Promise<RuntimeSettingsResponse> {
-    return this.client.get<RuntimeSettingsResponse>(
-      `/sessions/${encodeURIComponent(sessionId)}/runtime-settings`,
+    connectorId: string,
+    runtimeId: string,
+  ): Promise<DeviceRuntimeView> {
+    return this.client.delete<DeviceRuntimeView>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtimes/${encodeURIComponent(runtimeId)}/config`,
       { token },
     );
   }
 
-  patchSessionRuntimeSettings(
-    token: string,
-    sessionId: string,
-    settings: Record<string, unknown>,
-  ): Promise<RuntimeSettingsResponse> {
-    return this.client.patch<RuntimeSettingsResponse>(
-      `/sessions/${encodeURIComponent(sessionId)}/runtime-settings`,
-      { settings },
-      { token },
-    );
-  }
 }
 
 export const dashboardApi = new DashboardApi();
