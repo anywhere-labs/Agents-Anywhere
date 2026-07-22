@@ -16,15 +16,7 @@ import {
 } from "@/components/ui/dialog"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker"
-import {
-  MessageScroller,
-  MessageScrollerButton,
-  MessageScrollerContent,
-  MessageScrollerItem,
-  MessageScrollerProvider,
-  MessageScrollerViewport,
-  useMessageScroller,
-} from "@/components/ui/message-scroller"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import { createClientId } from "@/lib/id"
 import { cn } from "@/lib/utils"
 import { dashboardApi } from "@/features/dashboard/api"
@@ -85,6 +77,9 @@ type SessionRemoteState = SessionStateResponse & {
   }
 }
 
+const AUTO_SCROLL_BOTTOM_DISTANCE = 180
+const SCROLL_TO_BOTTOM_INTERVAL_MS = 1000
+const SCROLL_TO_BOTTOM_PRUNE_CHECK_MS = 120
 const INITIAL_TIMELINE_LIMIT = 100
 const TIMELINE_PAGE_LIMIT = 100
 const LOAD_OLDER_SCROLL_THRESHOLD = 96
@@ -241,15 +236,23 @@ export function SessionDetail({
   const [takeoverBusy, setTakeoverBusy] = React.useState(false)
   const [resolvingNoticeId, setResolvingNoticeId] = React.useState<string | null>(null)
   const [resolvingActionId, setResolvingActionId] = React.useState<string | null>(null)
+  const [showScrollBottom, setShowScrollBottom] = React.useState(false)
   const [loadingOlder, setLoadingOlder] = React.useState(false)
-  const [scrollToEndRequest, setScrollToEndRequest] = React.useState(0)
   const [pendingTakeover, setPendingTakeover] = React.useState<boolean | null>(null)
   const [composerDraftState, setComposerDraftState] = React.useState<ComposerDraftState>(() => ({
     sessionId,
     value: readComposerDraft(sessionId),
   }))
+  const timelineRef = React.useRef<HTMLDivElement | null>(null)
   const nextSeqRef = React.useRef(0)
+  const autoScrollOnNextUpdateRef = React.useRef(false)
+  const forceScrollOnNextUpdateRef = React.useRef(false)
+  const initialScrollDoneRef = React.useRef(false)
   const loadingOlderRef = React.useRef(false)
+  const pendingPrependScrollRestoreRef = React.useRef<{ scrollHeight: number; scrollTop: number } | null>(null)
+  const lastScrollToBottomAtRef = React.useRef(0)
+  const scrollToBottomTimerRef = React.useRef<number | null>(null)
+  const pruneAfterScrollTimerRef = React.useRef<number | null>(null)
 
   const session = state?.session ?? fallbackSession
   const runtimeSettings = session?.runtimeSettings ?? null
@@ -331,8 +334,66 @@ export function SessionDetail({
     })
   }, [onMemorySnapshotUpdated, state])
 
+  const distanceFromBottom = React.useCallback(() => {
+    const viewport = timelineRef.current
+    if (!viewport) return 0
+    return viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight
+  }, [])
+
+  const updateScrollBottomState = React.useCallback(() => {
+    setShowScrollBottom(distanceFromBottom() > 96)
+  }, [distanceFromBottom])
+
+  const markAutoScrollIfNearBottom = React.useCallback(() => {
+    if (distanceFromBottom() <= AUTO_SCROLL_BOTTOM_DISTANCE) {
+      autoScrollOnNextUpdateRef.current = true
+    }
+  }, [distanceFromBottom])
+
+  const scrollToBottomThrottled = React.useCallback((behavior: ScrollBehavior = "smooth") => {
+    const run = () => {
+      window.requestAnimationFrame(() => {
+        const viewport = timelineRef.current
+        if (!viewport) return
+        viewport.scrollTo({ top: viewport.scrollHeight, behavior })
+        setShowScrollBottom(false)
+      })
+    }
+
+    const now = Date.now()
+    const remaining = SCROLL_TO_BOTTOM_INTERVAL_MS - (now - lastScrollToBottomAtRef.current)
+    if (remaining <= 0) {
+      if (scrollToBottomTimerRef.current !== null) {
+        window.clearTimeout(scrollToBottomTimerRef.current)
+        scrollToBottomTimerRef.current = null
+      }
+      lastScrollToBottomAtRef.current = now
+      run()
+      return
+    }
+
+    if (scrollToBottomTimerRef.current !== null) return
+    scrollToBottomTimerRef.current = window.setTimeout(() => {
+      scrollToBottomTimerRef.current = null
+      lastScrollToBottomAtRef.current = Date.now()
+      run()
+    }, remaining)
+  }, [])
+
+  React.useEffect(() => {
+    return () => {
+      if (scrollToBottomTimerRef.current !== null) {
+        window.clearTimeout(scrollToBottomTimerRef.current)
+      }
+      if (pruneAfterScrollTimerRef.current !== null) {
+        window.clearTimeout(pruneAfterScrollTimerRef.current)
+      }
+    }
+  }, [])
+
   const refresh = React.useCallback(async (options: { scrollToBottom?: boolean; preserveBottom?: boolean } = {}) => {
-    if (options.scrollToBottom) setScrollToEndRequest((current) => current + 1)
+    if (options.preserveBottom ?? true) markAutoScrollIfNearBottom()
+    if (options.scrollToBottom) forceScrollOnNextUpdateRef.current = true
     setError(null)
     const next = applyOptimisticItemsRef.current(await loadInitialSessionState(token, sessionId))
     clearResolvedOptimisticMessagesRef.current(sessionId, next.items)
@@ -340,7 +401,7 @@ export function SessionDetail({
     nextSeqRef.current = Math.max(nextSeqRef.current, next.nextSeq)
     onSessionUpdated?.(next.session)
     return next
-  }, [onSessionUpdated, sessionId, token])
+  }, [markAutoScrollIfNearBottom, onSessionUpdated, sessionId, token])
 
   React.useEffect(() => {
     if (!sessionRefreshRequest || sessionRefreshRequest.sessionId !== sessionId || isLocalOptimisticSession) return
@@ -380,6 +441,10 @@ export function SessionDetail({
     const oldestItem = state.items[0]
     if (!oldestItem) return
 
+    const viewport = timelineRef.current
+    const previousScrollHeight = viewport?.scrollHeight ?? 0
+    const previousScrollTop = viewport?.scrollTop ?? 0
+
     loadingOlderRef.current = true
     setLoadingOlder(true)
     try {
@@ -393,6 +458,10 @@ export function SessionDetail({
         if (!current) return current
         if (older.items.length === 0) return { ...current, hasMore: older.hasMore, serverTime: older.serverTime }
         const items = mergeTimelineItems(older.items, current.items)
+        pendingPrependScrollRestoreRef.current = {
+          scrollHeight: previousScrollHeight,
+          scrollTop: previousScrollTop,
+        }
         return {
           ...current,
           items,
@@ -409,25 +478,15 @@ export function SessionDetail({
     }
   }, [loadingOlder, sessionId, state?.hasMore, state?.items, tSession, token])
 
-  const handleTimelineScroll = React.useCallback((event: React.UIEvent<HTMLDivElement>) => {
-    const viewport = event.currentTarget
+  const handleTimelineScroll = React.useCallback(() => {
+    const viewport = timelineRef.current
+    updateScrollBottomState()
     if (!viewport || viewport.scrollTop > LOAD_OLDER_SCROLL_THRESHOLD) return
     void loadOlderTimeline()
-  }, [loadOlderTimeline])
-
-  const requestScrollToEnd = React.useCallback(() => {
-    setScrollToEndRequest((current) => current + 1)
-  }, [])
-
-  const pruneTimelineToInitialLimit = React.useCallback(() => {
-    setState((current) =>
-      current && current.items.length > INITIAL_TIMELINE_LIMIT
-        ? { ...current, items: current.items.slice(-INITIAL_TIMELINE_LIMIT) }
-        : current,
-    )
-  }, [])
+  }, [loadOlderTimeline, updateScrollBottomState])
 
   React.useEffect(() => {
+    initialScrollDoneRef.current = false
     setSending(false)
     setInterrupting(false)
     setError(null)
@@ -465,6 +524,7 @@ export function SessionDetail({
     let bufferedEvents: ProtocolEventEnvelope[] = []
     const refetch = () => {
       if (refetchPromise) return refetchPromise
+      markAutoScrollIfNearBottom()
       refetchPromise = loadInitialSessionState(token, sessionId)
         .then((next) => {
           if (cancelled) return
@@ -496,6 +556,7 @@ export function SessionDetail({
         void recoverEvents(nextSeqRef.current)
         return
       }
+      markAutoScrollIfNearBottom()
       setState((current) => mergeSessionEvent(current, event))
       const item = readPayloadValue<TimelineItem>(event.payload.item)
       if (item) clearResolvedOptimisticMessagesRef.current(sessionId, [item])
@@ -594,6 +655,7 @@ export function SessionDetail({
     }
   }, [
     isLocalOptimisticSession,
+    markAutoScrollIfNearBottom,
     onSessionUpdated,
     sessionId,
     token,
@@ -607,7 +669,7 @@ export function SessionDetail({
     if (!session || (!content.trim() && attachments.length === 0)) return false
     const clientMessageId = createClientId("msg")
     const messageText = content.trim() || tNew("attachmentOnlyPrompt")
-    requestScrollToEnd()
+    forceScrollOnNextUpdateRef.current = true
     const optimisticMessage = buildOptimisticUserMessage({
       sessionId: session.id,
       clientMessageId,
@@ -628,7 +690,6 @@ export function SessionDetail({
         items: mergeTimelineItems(current.items, [optimisticMessage]),
       }
     })
-    requestScrollToEnd()
     setSending(true)
     try {
       const files = attachments.map((attachment) => attachment.file)
@@ -641,7 +702,7 @@ export function SessionDetail({
         ...selections,
       })
       await refresh({ scrollToBottom: true })
-      requestScrollToEnd()
+      scrollToBottomThrottled()
       return true
     } catch (err) {
       const message = err instanceof Error ? err.message : tSession("sendFailed")
@@ -711,6 +772,105 @@ export function SessionDetail({
     }
   }
 
+  React.useLayoutEffect(() => {
+    const pendingPrependScrollRestore = pendingPrependScrollRestoreRef.current
+    if (pendingPrependScrollRestore) {
+      pendingPrependScrollRestoreRef.current = null
+      const viewport = timelineRef.current
+      if (viewport) {
+        viewport.scrollTop =
+          viewport.scrollHeight - pendingPrependScrollRestore.scrollHeight + pendingPrependScrollRestore.scrollTop
+      }
+      updateScrollBottomState()
+      return
+    }
+    if (!initialScrollDoneRef.current && state) {
+      initialScrollDoneRef.current = true
+      const viewport = timelineRef.current
+      if (viewport) {
+        viewport.scrollTop = viewport.scrollHeight
+        setShowScrollBottom(false)
+      }
+      return
+    }
+    if (forceScrollOnNextUpdateRef.current || autoScrollOnNextUpdateRef.current) {
+      forceScrollOnNextUpdateRef.current = false
+      autoScrollOnNextUpdateRef.current = false
+      scrollToBottomThrottled()
+      return
+    }
+    updateScrollBottomState()
+  }, [scrollToBottomThrottled, session?.status, state?.items.length, state?.notices.length, updateScrollBottomState])
+
+  const scrollToBottom = React.useCallback(() => {
+    const viewport = timelineRef.current
+    const shouldPrune = (state?.items.length ?? 0) > INITIAL_TIMELINE_LIMIT
+    if (!viewport) {
+      if (shouldPrune) {
+        setState((current) =>
+          current && current.items.length > INITIAL_TIMELINE_LIMIT
+            ? { ...current, items: current.items.slice(-INITIAL_TIMELINE_LIMIT) }
+            : current,
+        )
+      }
+      return
+    }
+
+    if (pruneAfterScrollTimerRef.current !== null) {
+      window.clearTimeout(pruneAfterScrollTimerRef.current)
+      pruneAfterScrollTimerRef.current = null
+    }
+
+    let settled = false
+    const pruneIfAtBottom = () => {
+      if (distanceFromBottom() > AUTO_SCROLL_BOTTOM_DISTANCE) return false
+      forceScrollOnNextUpdateRef.current = true
+      setState((current) =>
+        current && current.items.length > INITIAL_TIMELINE_LIMIT
+          ? { ...current, items: current.items.slice(-INITIAL_TIMELINE_LIMIT) }
+          : current,
+      )
+      return true
+    }
+    const cleanup = () => {
+      viewport.removeEventListener("scrollend", handleScrollEnd)
+      if (pruneAfterScrollTimerRef.current !== null) {
+        window.clearTimeout(pruneAfterScrollTimerRef.current)
+        pruneAfterScrollTimerRef.current = null
+      }
+    }
+    const finish = () => {
+      if (settled) return
+      if (shouldPrune && !pruneIfAtBottom()) return
+      settled = true
+      cleanup()
+      if (!shouldPrune) updateScrollBottomState()
+    }
+    const handleScrollEnd = () => {
+      if (settled) return
+      settled = true
+      cleanup()
+      if (shouldPrune && !pruneIfAtBottom()) {
+        updateScrollBottomState()
+      }
+    }
+    const scheduleCheck = () => {
+      if (settled) return
+      pruneAfterScrollTimerRef.current = window.setTimeout(() => {
+        pruneAfterScrollTimerRef.current = null
+        finish()
+        if (!settled) scheduleCheck()
+      }, SCROLL_TO_BOTTOM_PRUNE_CHECK_MS)
+    }
+
+    if (shouldPrune) {
+      viewport.addEventListener("scrollend", handleScrollEnd, { once: true })
+      scheduleCheck()
+    }
+    viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" })
+    setShowScrollBottom(false)
+  }, [distanceFromBottom, state?.items.length, updateScrollBottomState])
+
   const interactions = React.useMemo(
     () => openInteractions(state?.notices ?? [], session?.id ?? sessionId),
     [session?.id, sessionId, state?.notices],
@@ -775,133 +935,97 @@ export function SessionDetail({
       ) : null}
 
       <div className="relative min-h-0 flex-1 overflow-hidden">
-        <MessageScrollerProvider
-          autoScroll
-          defaultScrollPosition="last-anchor"
-          scrollEdgeThreshold={96}
-          scrollPreviousItemPeek={72}
+        <ScrollArea
+          viewportRef={timelineRef}
+          className="h-full"
+          viewportProps={{ onScroll: handleTimelineScroll }}
         >
-          <SessionScrollerCommands
-            scrollToEndRequest={scrollToEndRequest}
-            onAfterScrollToEnd={pruneTimelineToInitialLimit}
-          />
-          <MessageScroller>
-            <MessageScrollerViewport onScroll={handleTimelineScroll}>
-              <MessageScrollerContent
-                aria-busy={session.status === "pending" || session.status === "running"}
-                className={cn(
-                  "mx-auto flex w-full min-w-0 max-w-4xl flex-col gap-3 overflow-hidden px-5 pb-44 pt-20",
-                  blockingInteractionCount > 0 && "pb-[30rem]",
-                )}
-              >
-                {state?.hasMore || loadingOlder ? (
-                  <MessageScrollerItem messageId={`${session.id}:load-older`}>
-                    <div className="flex justify-center py-2 text-muted-foreground">
-                      {loadingOlder ? (
-                        <Loader2 className="size-4 animate-spin" />
-                      ) : (
-                        <Button type="button" variant="ghost" size="sm" onClick={() => void loadOlderTimeline()}>
-                          {tSession("loadOlder")}
-                        </Button>
-                      )}
-                    </div>
-                  </MessageScrollerItem>
-                ) : null}
-                {loading && !state ? (
-                  <MessageScrollerItem messageId={`${session.id}:loading`}>
-                    <SessionSkeletonInline />
-                  </MessageScrollerItem>
-                ) : null}
-                {state &&
-                state.items.length === 0 &&
-                detachedInteractions.length === 0 &&
-                detachedNotifications.length === 0 &&
-                blockingInteractionList.length === 0 ? (
-                  <MessageScrollerItem messageId={`${session.id}:empty`}>
-                    <p className="py-12 text-center text-sm text-muted-foreground">{tSession("noActivity")}</p>
-                  </MessageScrollerItem>
-                ) : null}
-                {timelineGroups.map((group) =>
-                  group.kind === "reconnect" ? (
-                    <MessageScrollerItem key={group.key} messageId={group.key}>
-                      <ReconnectGroup group={group} />
-                    </MessageScrollerItem>
-                  ) : group.kind === "tool-run" ? (
-                    <MessageScrollerItem key={group.key} messageId={group.key}>
-                      <ToolRunGroup
-                        group={group}
-                        token={token}
-                        session={session}
-                        interactionByTarget={interactionByTarget}
-                        resolvingNoticeId={resolvingNoticeId}
-                        resolvingActionId={resolvingActionId}
-                        onRespondInteraction={handleRespondInteraction}
-                      />
-                    </MessageScrollerItem>
-                  ) : (
-                    <MessageScrollerItem
-                      key={group.item.id}
-                      messageId={group.item.id}
-                      scrollAnchor={isUserTimelineMessage(group.item)}
-                    >
-                      <TimelineEntry
-                        token={token}
-                        session={session}
-                        item={group.item}
-                        interaction={interactionByTarget.get(group.item.id)}
-                        resolvingNoticeId={resolvingNoticeId}
-                        resolvingActionId={resolvingActionId}
-                        onRespondInteraction={handleRespondInteraction}
-                      />
-                    </MessageScrollerItem>
-                  ),
-                )}
-                {detachedInteractions.map((notice) => (
-                  <MessageScrollerItem key={notice.noticeId} messageId={notice.noticeId}>
-                    <InteractionCard
-                      notice={notice}
-                      resolvingNoticeId={resolvingNoticeId}
-                      resolvingActionId={resolvingActionId}
-                      onRespondInteraction={handleRespondInteraction}
-                    />
-                  </MessageScrollerItem>
-                ))}
-                {detachedNotifications.map((notice) => (
-                  <MessageScrollerItem key={notice.noticeId} messageId={notice.noticeId}>
-                    <NotificationCard notice={notice} />
-                  </MessageScrollerItem>
-                ))}
-                {session.status === "pending" || session.status === "running" ? (
-                  <MessageScrollerItem messageId={`${session.id}:status:${session.status}`}>
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <Loader2 className="size-4 animate-spin" />
-                      <span>
-                        {session.status === "pending"
-                          ? tSession("runtimePending", { runtime: runtimeLabel(session.runtime) })
-                          : tSession("runtimeWorking", { runtime: runtimeLabel(session.runtime) })}
-                      </span>
-                    </div>
-                  </MessageScrollerItem>
-                ) : null}
-              </MessageScrollerContent>
-            </MessageScrollerViewport>
-            <MessageScrollerButton
-              size="sm"
-              className={cn(
-                "z-30 h-8 gap-1.5 rounded-full border bg-background/95 px-3 shadow-lg backdrop-blur",
-                blockingInteractionCount > 0
-                  ? "data-[direction=end]:bottom-[26rem]"
-                  : "data-[direction=end]:bottom-36",
-              )}
-              onClick={() => {
-                window.setTimeout(pruneTimelineToInitialLimit, 300)
-              }}
-            >
-              <ArrowDown data-icon="inline-start" />
-              {tSession("bottom")}
-            </MessageScrollerButton>
-          </MessageScroller>
-        </MessageScrollerProvider>
+          <div
+            aria-busy={session.status === "pending" || session.status === "running"}
+            className={cn(
+              "mx-auto flex w-full min-w-0 max-w-4xl flex-col gap-3 overflow-hidden px-5 pb-44 pt-20",
+              blockingInteractionCount > 0 && "pb-[30rem]",
+            )}
+          >
+            {loadingOlder ? (
+              <div className="flex justify-center py-2 text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" />
+              </div>
+            ) : null}
+            {loading && !state ? <SessionSkeletonInline /> : null}
+            {state &&
+            state.items.length === 0 &&
+            detachedInteractions.length === 0 &&
+            detachedNotifications.length === 0 &&
+            blockingInteractionList.length === 0 ? (
+              <p className="py-12 text-center text-sm text-muted-foreground">{tSession("noActivity")}</p>
+            ) : null}
+            {timelineGroups.map((group) =>
+              group.kind === "reconnect" ? (
+                <ReconnectGroup key={group.key} group={group} />
+              ) : group.kind === "tool-run" ? (
+                <ToolRunGroup
+                  key={group.key}
+                  group={group}
+                  token={token}
+                  session={session}
+                  interactionByTarget={interactionByTarget}
+                  resolvingNoticeId={resolvingNoticeId}
+                  resolvingActionId={resolvingActionId}
+                  onRespondInteraction={handleRespondInteraction}
+                />
+              ) : (
+                <TimelineEntry
+                  key={group.item.id}
+                  token={token}
+                  session={session}
+                  item={group.item}
+                  interaction={interactionByTarget.get(group.item.id)}
+                  resolvingNoticeId={resolvingNoticeId}
+                  resolvingActionId={resolvingActionId}
+                  onRespondInteraction={handleRespondInteraction}
+                />
+              ),
+            )}
+            {detachedInteractions.map((notice) => (
+              <InteractionCard
+                key={notice.noticeId}
+                notice={notice}
+                resolvingNoticeId={resolvingNoticeId}
+                resolvingActionId={resolvingActionId}
+                onRespondInteraction={handleRespondInteraction}
+              />
+            ))}
+            {detachedNotifications.map((notice) => (
+              <NotificationCard key={notice.noticeId} notice={notice} />
+            ))}
+            {session.status === "pending" || session.status === "running" ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" />
+                <span>
+                  {session.status === "pending"
+                    ? tSession("runtimePending", { runtime: runtimeLabel(session.runtime) })
+                    : tSession("runtimeWorking", { runtime: runtimeLabel(session.runtime) })}
+                </span>
+              </div>
+            ) : null}
+          </div>
+        </ScrollArea>
+        {showScrollBottom ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            className={cn(
+              "absolute left-1/2 z-30 h-8 -translate-x-1/2 gap-1.5 rounded-full border bg-background/95 px-3 shadow-lg backdrop-blur",
+              blockingInteractionCount > 0 ? "bottom-[26rem]" : "bottom-36",
+            )}
+            onClick={scrollToBottom}
+          >
+            <ArrowDown data-icon="inline-start" />
+            {tSession("bottom")}
+          </Button>
+        ) : null}
       </div>
 
       <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 overflow-hidden">
@@ -1017,28 +1141,6 @@ function BlockingInteractionStack({
   )
 }
 
-function SessionScrollerCommands({
-  scrollToEndRequest,
-  onAfterScrollToEnd,
-}: {
-  scrollToEndRequest: number
-  onAfterScrollToEnd: () => void
-}) {
-  const { scrollToEnd } = useMessageScroller()
-  const lastHandledRequestRef = React.useRef(scrollToEndRequest)
-
-  React.useEffect(() => {
-    if (scrollToEndRequest === lastHandledRequestRef.current) return
-    lastHandledRequestRef.current = scrollToEndRequest
-    const didScroll = scrollToEnd({ behavior: "smooth" })
-    if (!didScroll) return
-    const timer = window.setTimeout(onAfterScrollToEnd, 300)
-    return () => window.clearTimeout(timer)
-  }, [onAfterScrollToEnd, scrollToEnd, scrollToEndRequest])
-
-  return null
-}
-
 type TimelineSingleGroup = {
   kind: "single"
   item: TimelineItem
@@ -1110,10 +1212,6 @@ function groupTimelineItems(items: TimelineItem[], interactionTargetIds: Set<str
 
 function isReconnectErrorItem(item: TimelineItem): boolean {
   return item.type === "system" && item.status === "failed" && reconnectMessage(item) !== null
-}
-
-function isUserTimelineMessage(item: TimelineItem): boolean {
-  return item.type === "message" && item.role === "user"
 }
 
 function reconnectMessage(item: TimelineItem): string | null {

@@ -1,8 +1,18 @@
 "use client"
 
 import { useRef, useState, useCallback, useEffect } from "react"
-import { Paperclip, X, FileText, ImageIcon } from "lucide-react"
+import { FileText, ImageIcon, Paperclip, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import {
+  Attachment,
+  AttachmentAction,
+  AttachmentActions,
+  AttachmentContent,
+  AttachmentDescription,
+  AttachmentGroup,
+  AttachmentMedia,
+  AttachmentTitle,
+} from "@/components/ui/attachment"
 import { cn } from "@/lib/utils"
 import { useTranslations } from "next-intl"
 
@@ -211,37 +221,36 @@ export function AttachmentPreviewList({ attachments, onRemove }: AttachmentPrevi
   const t = useTranslations("dashboard.new")
   if (attachments.length === 0) return null
   return (
-    <div className="flex flex-wrap gap-2">
+    <AttachmentGroup aria-label={t("attach")} role="group" tabIndex={0}>
       {attachments.map((file) => (
-        <div
-          key={file.id}
-          className="flex max-w-[220px] items-center gap-1.5 rounded-md border border-border bg-muted/50 px-2 py-1 text-xs"
-        >
-          {file.type === "image" ? (
-            file.preview ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={file.preview} alt="" className="size-5 shrink-0 rounded object-cover" />
+        <Attachment key={file.id} state="idle" size="sm" className="w-56">
+          <AttachmentMedia variant={file.type === "image" && file.preview ? "image" : "icon"}>
+            {file.type === "image" ? (
+              file.preview ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={file.preview} alt="" />
+              ) : (
+                <ImageIcon />
+              )
             ) : (
-              <ImageIcon className="size-3.5 shrink-0 text-muted-foreground" />
-            )
-          ) : (
-            <FileText className="size-3.5 shrink-0 text-muted-foreground" />
-          )}
-          <span className="truncate">{file.name}</span>
-          <span className="shrink-0 code-mono text-[10px] text-muted-foreground">
-            {formatBytes(file.size)}
-          </span>
-          <button
-            type="button"
-            aria-label={t("removeAttachmentNamed", { name: file.name })}
-            onClick={() => onRemove(file.id)}
-            className="ml-auto shrink-0 text-muted-foreground hover:text-foreground"
-          >
-            <X className="size-3" />
-          </button>
-        </div>
+              <FileText />
+            )}
+          </AttachmentMedia>
+          <AttachmentContent>
+            <AttachmentTitle>{file.name}</AttachmentTitle>
+            <AttachmentDescription>{formatBytes(file.size)}</AttachmentDescription>
+          </AttachmentContent>
+          <AttachmentActions>
+            <AttachmentAction
+              aria-label={t("removeAttachmentNamed", { name: file.name })}
+              onClick={() => onRemove(file.id)}
+            >
+              <X />
+            </AttachmentAction>
+          </AttachmentActions>
+        </Attachment>
       ))}
-    </div>
+    </AttachmentGroup>
   )
 }
 

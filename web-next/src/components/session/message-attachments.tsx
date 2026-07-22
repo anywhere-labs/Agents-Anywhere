@@ -1,13 +1,24 @@
 "use client"
 
 import { useState } from "react"
-import { Download, ExternalLink, FileText, Loader2 } from "lucide-react"
+import { Download, ExternalLink, FileText } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
+import {
+  Attachment,
+  AttachmentAction,
+  AttachmentActions,
+  AttachmentContent,
+  AttachmentDescription,
+  AttachmentGroup,
+  AttachmentMedia,
+  AttachmentTitle,
+  AttachmentTrigger,
+} from "@/components/ui/attachment"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import type { ReconcileAttachment } from "@/features/dashboard/attachments"
 import { apiPath } from "@/lib/api"
 import { cn } from "@/lib/utils"
+import { useTranslations } from "next-intl"
 
 type MessageAttachmentsProps = {
   token: string
@@ -22,19 +33,25 @@ export function MessageAttachments({
   attachments,
   align = "left",
 }: MessageAttachmentsProps) {
+  const t = useTranslations("dashboard.new")
   if (attachments.length === 0) return null
+
   return (
-    <div className={cn("flex flex-col gap-2", align === "right" && "items-end")}>
+    <AttachmentGroup
+      aria-label={t("attach")}
+      role="group"
+      tabIndex={0}
+      className={cn("w-full", align === "right" && "[&>[data-slot=attachment]:first-child]:ms-auto")}
+    >
       {attachments.map((attachment) => (
         <MessageAttachmentItem
           key={attachment.fileId}
           token={token}
           sessionId={sessionId}
           attachment={attachment}
-          align={align}
         />
       ))}
-    </div>
+    </AttachmentGroup>
   )
 }
 
@@ -42,41 +59,55 @@ function MessageAttachmentItem({
   token,
   sessionId,
   attachment,
-  align,
 }: {
   token: string
   sessionId: string
   attachment: ReconcileAttachment
-  align: "left" | "right"
 }) {
   const name = attachment.name || attachment.fileId
   const mediaType = attachment.mediaType || ""
   const openUrl = attachmentOpenUrl(sessionId, attachment.fileId, token)
   const isImage = isImageAttachment(attachment)
   const [previewOpen, setPreviewOpen] = useState(false)
+
   if (attachment.optimistic) {
-    return <AttachmentFileCard attachment={attachment} name={name} mediaType={mediaType} align={align} pending />
+    return (
+      <FileAttachment
+        attachment={attachment}
+        name={name}
+        mediaType={mediaType}
+        state="uploading"
+      />
+    )
   }
+
   if (isImage) {
     return (
       <>
-        <button
-          type="button"
-          aria-label={`Preview ${name}`}
-          onClick={() => setPreviewOpen(true)}
-          className={cn(
-            "block max-w-full overflow-hidden rounded-lg bg-muted/30 text-left shadow-sm ring-1 ring-border/60 transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-            "w-[min(360px,100%)]",
-          )}
+        <Attachment
+          orientation="vertical"
+          className="w-[min(320px,85vw)] has-data-[slot=attachment-content]:w-[min(320px,85vw)]"
         >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={openUrl}
-            alt={name}
-            className="max-h-72 w-full object-contain"
-            loading="lazy"
-          />
-        </button>
+          <AttachmentMedia variant="image">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={openUrl} alt={name} loading="lazy" />
+          </AttachmentMedia>
+          <AttachmentContent>
+            <AttachmentTitle>{name}</AttachmentTitle>
+            <AttachmentDescription>{attachmentDetails(mediaType, attachment.size)}</AttachmentDescription>
+          </AttachmentContent>
+          <AttachmentActions>
+            <AttachmentAction aria-label={`Preview ${name}`} onClick={() => setPreviewOpen(true)}>
+              <ExternalLink />
+            </AttachmentAction>
+            <AttachmentAction asChild aria-label={`Download ${name}`}>
+              <a href={openUrl} download={name}>
+                <Download />
+              </a>
+            </AttachmentAction>
+          </AttachmentActions>
+          <AttachmentTrigger aria-label={`Preview ${name}`} onClick={() => setPreviewOpen(true)} />
+        </Attachment>
         <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
           <DialogContent
             showCloseButton
@@ -92,83 +123,67 @@ function MessageAttachmentItem({
   }
 
   return (
-    <AttachmentFileCard
+    <FileAttachment
       attachment={attachment}
       name={name}
       mediaType={mediaType}
-      align={align}
       openUrl={openUrl}
     />
   )
 }
 
-function AttachmentFileCard({
+function FileAttachment({
   attachment,
   name,
   mediaType,
-  align,
   openUrl,
-  pending = false,
+  state = "done",
 }: {
   attachment: ReconcileAttachment
   name: string
   mediaType: string
-  align: "left" | "right"
   openUrl?: string
-  pending?: boolean
+  state?: "uploading" | "done"
 }) {
-  const details = [mediaType || "file", formatBytes(attachment.size)].filter(Boolean).join(" - ")
+  const pending = state === "uploading"
+  const details = attachmentDetails(mediaType, attachment.size)
 
   return (
-    <div
-      className={cn(
-        "max-w-full overflow-hidden rounded-lg border border-border/80 bg-background/80 text-foreground shadow-sm",
-        "w-[min(420px,100%)]",
-        align === "right" && "bg-background/70",
-        pending && "opacity-80",
-      )}
-    >
-      <div className="flex min-w-0 items-center gap-2 px-2.5 py-2">
-        <FileText className="size-4 shrink-0 text-muted-foreground" />
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-xs font-medium">{name}</div>
-          <div className="truncate text-[11px] text-muted-foreground">
-            {pending ? (
-              <span className="inline-flex items-center gap-1">
-                <Loader2 className="size-3 animate-spin" />
-                <span>{[details, "Pending"].filter(Boolean).join(" - ")}</span>
-              </span>
-            ) : (
-              details
-            )}
-          </div>
-        </div>
-        {pending ? (
-          <>
-            <Button variant="ghost" size="icon-sm" className="shrink-0" disabled aria-label={`Open ${name}`}>
-              <ExternalLink className="size-3.5" />
-            </Button>
-            <Button variant="ghost" size="icon-sm" className="shrink-0" disabled aria-label={`Download ${name}`}>
-              <Download className="size-3.5" />
-            </Button>
-          </>
-        ) : openUrl ? (
-          <>
-            <Button asChild variant="ghost" size="icon-sm" className="shrink-0">
-              <a href={openUrl} target="_blank" rel="noreferrer" aria-label={`Open ${name}`}>
-                <ExternalLink className="size-3.5" />
+    <Attachment state={state} className="w-[min(420px,85vw)]">
+      <AttachmentMedia>
+        <FileText />
+      </AttachmentMedia>
+      <AttachmentContent>
+        <AttachmentTitle>{name}</AttachmentTitle>
+        <AttachmentDescription>
+          {[details, pending ? "Pending" : null].filter(Boolean).join(" · ")}
+        </AttachmentDescription>
+      </AttachmentContent>
+      {openUrl ? (
+        <>
+          <AttachmentActions>
+            <AttachmentAction asChild aria-label={`Open ${name}`}>
+              <a href={openUrl} target="_blank" rel="noreferrer">
+                <ExternalLink />
               </a>
-            </Button>
-            <Button asChild variant="ghost" size="icon-sm" className="shrink-0">
-              <a href={openUrl} download={name} aria-label={`Download ${name}`}>
-                <Download className="size-3.5" />
+            </AttachmentAction>
+            <AttachmentAction asChild aria-label={`Download ${name}`}>
+              <a href={openUrl} download={name}>
+                <Download />
               </a>
-            </Button>
-          </>
-        ) : null}
-      </div>
-    </div>
+            </AttachmentAction>
+          </AttachmentActions>
+          <AttachmentTrigger asChild>
+            <a href={openUrl} target="_blank" rel="noreferrer" aria-label={`Open ${name}`} />
+          </AttachmentTrigger>
+        </>
+      ) : null}
+    </Attachment>
   )
+}
+
+function attachmentDetails(mediaType: string, size: number | undefined): string {
+  return [mediaType || "file", formatBytes(size)].filter(Boolean).join(" · ")
 }
 
 function attachmentOpenUrl(sessionId: string, fileId: string, token: string): string {
