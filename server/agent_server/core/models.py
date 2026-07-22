@@ -545,11 +545,6 @@ class SessionCreateRequest(BaseModel):
     runtimeSettings: dict[str, Any] | None = None
     modelSelectionId: str | None = None
     permissionSelectionId: str | None = None
-    # Forwarded to the connector's runtime-create RPC. For codex these map to
-    # `thread/start.approvalPolicy` and `thread/start.sandbox` — set to
-    # "never"/"danger-full-access" to disable approval prompts during testing.
-    approvalPolicy: str | None = None
-    sandbox: str | None = None
 
 
 class SessionView(BaseModel):
@@ -577,6 +572,8 @@ class SessionView(BaseModel):
     updatedSeq: int
     runtimeSettings: dict[str, Any] | None = None
     runtimeSettingsOverride: dict[str, Any] | None = None
+    modelSelectionId: str | None = None
+    permissionSelectionId: str | None = None
 
 
 class SessionPatchRequest(BaseModel):
@@ -782,50 +779,6 @@ class MessageCreateRequest(BaseModel):
     # the connector tags the resulting timeline item so the frontend can
     # dedupe its optimistic placeholder against the real server item.
     clientMessageId: str | None = None
-
-
-class AgentCatalogEntry(BaseModel):
-    runtime: RuntimeName
-    key: str
-    displayLabel: str
-    description: str | None = None
-    isDefault: bool
-    sortOrder: int
-    efforts: list["AgentCatalogEntry"] = Field(default_factory=list)
-
-
-class AgentCatalogResponse(BaseModel):
-    runtime: RuntimeName
-    entries: list[AgentCatalogEntry]
-    serverTime: str
-
-
-class UserAgentDefaultRuntime(BaseModel):
-    runtime: RuntimeName
-    enabled: bool = True
-    settings: dict[str, Any] = Field(default_factory=dict)
-    models: list[AgentCatalogEntry] = Field(default_factory=list)
-
-
-class UserAgentDefaultsResponse(BaseModel):
-    runtimes: dict[str, UserAgentDefaultRuntime]
-    serverTime: str
-
-
-class AgentCatalogEntryUpdate(BaseModel):
-    key: str = Field(min_length=1)
-    displayLabel: str = Field(min_length=1)
-    description: str | None = None
-    sortOrder: int = 0
-    efforts: list["AgentCatalogEntryUpdate"] | None = None
-
-
-class UserAgentDefaultRuntimeUpdate(BaseModel):
-    models: list[AgentCatalogEntryUpdate] | None = None
-
-
-class UserAgentDefaultsUpdateRequest(BaseModel):
-    runtimes: dict[str, UserAgentDefaultRuntimeUpdate] = Field(default_factory=dict)
 
 
 class ConnectorPreferencesResponse(BaseModel):

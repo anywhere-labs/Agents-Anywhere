@@ -60,6 +60,20 @@ class NoticeRepositoryMixin:
             ).mappings().all()
         return [_notice_from_row(row) for row in rows]
 
+    async def list_notices_since(self, session_id: str, after_seq: int) -> list[Notice]:
+        async with self._engine.connect() as conn:
+            rows = (
+                await conn.execute(
+                    select(notices_t)
+                    .where(
+                        notices_t.c.session_id == session_id,
+                        notices_t.c.updated_seq > after_seq,
+                    )
+                    .order_by(notices_t.c.updated_seq.asc())
+                )
+            ).mappings().all()
+        return [_notice_from_row(row) for row in rows]
+
     async def list_open_blocking_notices(self, session_id: str) -> list[Notice]:
         return [
             notice

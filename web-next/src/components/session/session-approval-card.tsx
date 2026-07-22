@@ -27,43 +27,49 @@ export function InteractionCard({
   const Icon = notice.severity === "error" ? CircleAlert : ShieldCheck
   return (
     <div className={cn(
-      "rounded-xl border bg-muted/25 p-3",
-      notice.severity === "error" ? "border-destructive/35 bg-destructive/5" : "border-border",
+      "rounded-xl border bg-card p-3 shadow-sm",
+      notice.severity === "error" ? "border-destructive/35" : "border-border",
       compact && "rounded-lg",
     )}>
-      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
-        <div className="flex min-w-0 gap-2">
-          <Icon className={cn(
-            "mt-0.5 size-4 shrink-0",
-            notice.severity === "error" ? "text-destructive" : "text-muted-foreground",
-          )} />
-          <div className="min-w-0">
-            <div className="wrap-break-word text-sm font-medium">{notice.title}</div>
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div className="flex min-w-0 gap-2">
+            <Icon className={cn(
+              "mt-0.5 size-4 shrink-0",
+              notice.severity === "error" ? "text-destructive" : "text-muted-foreground",
+            )} />
+            <div className="min-w-0">
+              <div className="wrap-break-word text-sm font-medium">{notice.title}</div>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2 md:justify-end md:flex-nowrap">
+            {notice.actions.map((action) => (
+              <Button
+                key={action.actionId}
+                variant={action.style === "primary" ? "default" : "outline"}
+                size="sm"
+                className="whitespace-nowrap"
+                disabled={disabled}
+                onClick={() => onRespondInteraction(notice.noticeId, action.actionId)}
+              >
+                {resolving && resolvingActionId === action.actionId
+                  ? <Loader2 className="size-3.5 animate-spin" />
+                  : actionIcon(action.actionId)}
+                {action.label}
+              </Button>
+            ))}
+          </div>
+        </div>
+        {notice.message || notice.status === "failed" ? (
+          <div className="min-w-0 pl-6">
             {notice.message ? (
-              <p className="mt-0.5 wrap-break-word text-sm text-muted-foreground">{notice.message}</p>
+              <p className="wrap-break-word text-sm text-muted-foreground">{notice.message}</p>
             ) : null}
             {notice.status === "failed" ? (
               <p className="mt-1 text-xs text-destructive">{interactionErrorMessage(notice)}</p>
             ) : null}
           </div>
-        </div>
-        <div className="flex flex-wrap justify-end gap-2 md:flex-nowrap">
-          {notice.actions.map((action) => (
-            <Button
-              key={action.actionId}
-              variant={action.style === "primary" ? "default" : "outline"}
-              size="sm"
-              className="whitespace-nowrap"
-              disabled={disabled}
-              onClick={() => onRespondInteraction(notice.noticeId, action.actionId)}
-            >
-              {resolving && resolvingActionId === action.actionId
-                ? <Loader2 className="size-3.5 animate-spin" />
-                : actionIcon(action.actionId)}
-              {action.label}
-            </Button>
-          ))}
-        </div>
+        ) : null}
       </div>
     </div>
   )

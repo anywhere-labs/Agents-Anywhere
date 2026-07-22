@@ -217,6 +217,37 @@
   color: var(--destructive);
 }
 
+.aa-mobile-panel {
+  display: flex;
+  min-height: 0;
+  height: 100%;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.aa-mobile-pathbar {
+  display: flex;
+  min-width: 0;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  padding: 0 0 10px;
+}
+
+.aa-mobile-pathbar .aa-fs-path-field {
+  flex: 1;
+}
+
+.aa-mobile-pathbar .aa-fs-path-field input {
+  height: 36px;
+  font-size: 14px;
+}
+
+.aa-mobile-files .aa-fs-browser {
+  min-height: 0;
+  flex: 1;
+}
+
 .aa-term {
   background: var(--aa-rt-surface);
   color: var(--foreground);

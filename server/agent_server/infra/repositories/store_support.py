@@ -24,11 +24,9 @@ from agent_server.core.auth import (
     verify_password_verifier,
 )
 from agent_server.infra.db import (
-    agent_efforts as agent_efforts_t,
-    agent_modes as agent_modes_t,
-    agent_models as agent_models_t,
     approvals as approvals_t,
     build_engine,
+    connector_runtime_catalogs as connector_runtime_catalogs_t,
     connector_terminal_roots as connector_terminal_roots_t,
     connectors as connectors_t,
     dashboard_daily_metrics as dashboard_daily_metrics_t,
@@ -46,7 +44,6 @@ from agent_server.infra.db import (
     platform_user_activity as platform_user_activity_t,
     sessions as sessions_t,
     timeline_items as timeline_items_t,
-    user_agent_defaults as user_agent_defaults_t,
     users as users_t,
 )
 from agent_server.infra.db.engine import (
@@ -55,7 +52,6 @@ from agent_server.infra.db.engine import (
 )
 from agent_server.infra.files import FileStorage, build_file_storage
 from agent_server.core.models import (
-    AgentCatalogEntry,
     Approval,
     ApprovalIn,
     ConnectorConfigBundle,
@@ -89,25 +85,6 @@ USERNAME_RE = re.compile(r"^[a-z0-9_-]{3,32}$")
 # instance_settings keys
 SETTING_REGISTRATION_OPEN = "registration_open"
 SETTING_OAUTH_REGISTRATION_OPEN = "oauth_registration_open"
-
-
-SUPPORTED_DEFAULT_AGENT_RUNTIMES = ("codex", "claude")
-
-
-def default_agent_settings(runtime: str) -> dict[str, Any]:
-    if runtime == "codex":
-        return {
-            "permissionMode": "ask",
-            "model": None,
-            "effort": None,
-        }
-    if runtime == "claude":
-        return {
-            "permissionMode": "acceptEdits",
-            "model": None,
-            "effort": None,
-        }
-    raise ValueError(f"unsupported runtime: {runtime}")
 SETTING_OAUTH_PROVIDER = "oauth_provider"
 
 UserRole = str  # "admin" | "member"
@@ -481,299 +458,6 @@ def _legacy_duplicate_key(item: TimelineItem) -> tuple[str, str | None, str, str
     if item.type not in {"message", "turn.start", "turn.end"}:
         return None
     return (item.type, item.turnId, derived_key.removeprefix("history-"), _json_dumps(item.content))
-
-
-# Catalog seeds. Mirror the picker UX of each runtime's TUI (Claude shift+cmd+M
-# for modes, shift+cmd+. for models / effort). Insert order is meaningful only
-# in that sort_order drives the dropdown order; the table itself is keyed by
-# (runtime, key) so re-running seed is idempotent.
-
-SEED_AGENT_MODES: list[dict[str, Any]] = [
-    {
-        "runtime": "claude",
-        "key": "default",
-        "display_label": "Ask permissions",
-        "description": "Prompt before destructive actions. Read-only commands run automatically.",
-        "is_default": 1,
-        "sort_order": 1,
-    },
-    {
-        "runtime": "claude",
-        "key": "acceptEdits",
-        "display_label": "Accept edits",
-        "description": "Auto-approve file edits; still ask for shell commands.",
-        "is_default": 0,
-        "sort_order": 2,
-    },
-    {
-        "runtime": "claude",
-        "key": "plan",
-        "display_label": "Plan mode",
-        "description": "Read-only planning. No writes, no commands.",
-        "is_default": 0,
-        "sort_order": 3,
-    },
-    {
-        "runtime": "claude",
-        "key": "auto",
-        "display_label": "Auto mode",
-        "description": "Run everything; background classifier flags risky actions.",
-        "is_default": 0,
-        "sort_order": 4,
-    },
-    {
-        "runtime": "claude",
-        "key": "bypassPermissions",
-        "display_label": "Bypass permissions ⚠️",
-        "description": "Skip every prompt. Only the rm -rf / hard-fuse remains.",
-        "is_default": 0,
-        "sort_order": 5,
-    },
-]
-
-
-SEED_AGENT_MODELS: list[dict[str, Any]] = [
-    {
-        "runtime": "claude",
-        "key": "claude-opus-4-7",
-        "display_label": "Opus 4.7",
-        "description": None,
-        "is_default": 0,
-        "sort_order": 1,
-    },
-    {
-        "runtime": "claude",
-        "key": "claude-opus-4-7[1m]",
-        "display_label": "Opus 4.7 1M",
-        "description": None,
-        "is_default": 1,
-        "sort_order": 2,
-    },
-    {
-        "runtime": "claude",
-        "key": "claude-sonnet-4-6",
-        "display_label": "Sonnet 4.6",
-        "description": None,
-        "is_default": 0,
-        "sort_order": 3,
-    },
-    {
-        "runtime": "claude",
-        "key": "claude-haiku-4-5",
-        "display_label": "Haiku 4.5",
-        "description": None,
-        "is_default": 0,
-        "sort_order": 4,
-    },
-    {
-        "runtime": "claude",
-        "key": "claude-opus-4-6",
-        "display_label": "Opus 4.6 Legacy",
-        "description": None,
-        "is_default": 0,
-        "sort_order": 5,
-    },
-    {
-        "runtime": "codex",
-        "key": "gpt-5.5",
-        "display_label": "GPT-5.5",
-        "description": None,
-        "is_default": 1,
-        "sort_order": 1,
-    },
-    {
-        "runtime": "codex",
-        "key": "gpt-5.4",
-        "display_label": "GPT-5.4",
-        "description": None,
-        "is_default": 0,
-        "sort_order": 2,
-    },
-    {
-        "runtime": "codex",
-        "key": "gpt-5.4-mini",
-        "display_label": "GPT-5.4 Mini",
-        "description": None,
-        "is_default": 0,
-        "sort_order": 3,
-    },
-    {
-        "runtime": "codex",
-        "key": "gpt-5.3-codex",
-        "display_label": "GPT-5.3 Codex",
-        "description": None,
-        "is_default": 0,
-        "sort_order": 4,
-    },
-    {
-        "runtime": "codex",
-        "key": "gpt-5.2",
-        "display_label": "GPT-5.2",
-        "description": None,
-        "is_default": 0,
-        "sort_order": 5,
-    },
-]
-
-
-def _seed_agent_catalog_sync(async_url: str) -> None:
-    """Idempotent synchronous seed for the agent catalog tables.
-
-    Mirrors init_db_sync's sqlite-fast-path / worker-thread-for-async-only
-    backends dance so the catalog is populated even when callers skip the
-    FastAPI lifespan (TestClient used without `with`).
-    """
-    if async_url.startswith("sqlite+aiosqlite:"):
-        sync_url = "sqlite:" + async_url[len("sqlite+aiosqlite:"):]
-    elif async_url.startswith("sqlite:"):
-        sync_url = async_url
-    else:
-        _seed_agent_catalog_async_in_thread(async_url)
-        return
-
-    sync_engine = create_engine(sync_url, future=True)
-    try:
-        with sync_engine.begin() as conn:
-            for table, rows in _CATALOG_SEED_PLAN:
-                _seed_table_sync(conn, table, rows)
-    finally:
-        sync_engine.dispose()
-
-
-def _seed_table_sync(conn: Any, table: Any, rows: list[dict[str, Any]]) -> None:
-    if not rows:
-        return
-    existing = conn.execute(
-        select(table.c.runtime, table.c.key).where(
-            table.c.runtime.in_({row["runtime"] for row in rows})
-        )
-    ).all()
-    present = {(row.runtime, row.key) for row in existing}
-    missing = [row for row in rows if (row["runtime"], row["key"]) not in present]
-    if missing:
-        conn.execute(insert(table), missing)
-
-
-def _seed_agent_catalog_async_in_thread(async_url: str) -> None:
-    import threading
-
-    captured: list[BaseException] = []
-
-    async def _run() -> None:
-        engine = create_async_engine(async_url, future=True)
-        try:
-            async with engine.begin() as conn:
-                for table, rows in _CATALOG_SEED_PLAN:
-                    if not rows:
-                        continue
-                    existing = (
-                        await conn.execute(
-                            select(table.c.runtime, table.c.key).where(
-                                table.c.runtime.in_({row["runtime"] for row in rows})
-                            )
-                        )
-                    ).all()
-                    present = {(row.runtime, row.key) for row in existing}
-                    missing = [row for row in rows if (row["runtime"], row["key"]) not in present]
-                    if missing:
-                        await conn.execute(insert(table), missing)
-        finally:
-            await engine.dispose()
-
-    def _runner() -> None:
-        try:
-            asyncio.run(_run())
-        except BaseException as exc:  # noqa: BLE001
-            captured.append(exc)
-
-    thread = threading.Thread(target=_runner, name="seed-agent-catalog-sync")
-    thread.start()
-    thread.join()
-    if captured:
-        raise captured[0]
-
-
-SEED_AGENT_EFFORTS: list[dict[str, Any]] = [
-    {
-        "runtime": "claude",
-        "key": "low",
-        "display_label": "Low",
-        "description": None,
-        "is_default": 0,
-        "sort_order": 1,
-    },
-    {
-        "runtime": "claude",
-        "key": "medium",
-        "display_label": "Medium",
-        "description": None,
-        "is_default": 0,
-        "sort_order": 2,
-    },
-    {
-        "runtime": "claude",
-        "key": "high",
-        "display_label": "High",
-        "description": None,
-        "is_default": 0,
-        "sort_order": 3,
-    },
-    {
-        "runtime": "claude",
-        "key": "xhigh",
-        "display_label": "Extra high",
-        "description": None,
-        "is_default": 0,
-        "sort_order": 4,
-    },
-    {
-        "runtime": "claude",
-        "key": "max",
-        "display_label": "Max",
-        "description": None,
-        "is_default": 1,
-        "sort_order": 5,
-    },
-    {
-        "runtime": "codex",
-        "key": "low",
-        "display_label": "Low",
-        "description": None,
-        "is_default": 0,
-        "sort_order": 1,
-    },
-    {
-        "runtime": "codex",
-        "key": "medium",
-        "display_label": "Medium",
-        "description": None,
-        "is_default": 0,
-        "sort_order": 2,
-    },
-    {
-        "runtime": "codex",
-        "key": "high",
-        "display_label": "High",
-        "description": None,
-        "is_default": 0,
-        "sort_order": 3,
-    },
-    {
-        "runtime": "codex",
-        "key": "xhigh",
-        "display_label": "Extra high",
-        "description": None,
-        "is_default": 1,
-        "sort_order": 4,
-    },
-]
-
-
-_CATALOG_SEED_PLAN: tuple[tuple[Any, list[dict[str, Any]]], ...] = (
-    (agent_modes_t, SEED_AGENT_MODES),
-    (agent_models_t, SEED_AGENT_MODELS),
-    (agent_efforts_t, SEED_AGENT_EFFORTS),
-)
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]

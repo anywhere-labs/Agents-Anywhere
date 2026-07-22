@@ -1,10 +1,11 @@
 "use client"
 
 import * as React from "react"
-import { Check, ChevronDown, Code2, Copy, FilePenLine, Hammer, Loader2, TerminalSquare } from "lucide-react"
+import { Check, ChevronDown, Code2, Copy, FilePenLine, Hammer, Loader2, TerminalSquare, X } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
 import { InteractionCard } from "@/components/session/session-approval-card"
 import { MonacoCodeView, monacoLanguageForFile } from "@/components/monaco-code-view"
@@ -51,18 +52,35 @@ export function ToolCard({
   const output = textOf(item.content.outputPreview) || textOf(item.content.outputText) || textOf(item.content.error)
   const changes = recordsOf(item.content.changes)
   const title = timelineToolTitle(item, tSession)
+  const hasDetail = Boolean(command || output || changes.length > 0 || interaction)
   const defaultOpen = Boolean(interaction)
+
+  if (!hasDetail) {
+    return (
+      <Marker className="w-full">
+        <MarkerIcon>
+          <ToolIcon kind={kind} status={item.status} />
+        </MarkerIcon>
+        <ToolStatusIcon status={item.status} />
+        <MarkerContent className="code-mono text-sm">{title}</MarkerContent>
+      </Marker>
+    )
+  }
 
   return (
     <Collapsible defaultOpen={defaultOpen} className="min-w-0 max-w-full overflow-hidden">
-      <div className="min-w-0 max-w-full space-y-2 overflow-hidden">
+      <div className="flex min-w-0 max-w-full flex-col gap-2 overflow-hidden">
         <CollapsibleTrigger asChild>
-          <button className="group flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-1 text-left text-muted-foreground transition-colors hover:bg-muted/35 hover:text-foreground">
-            <ChevronDown className="size-3.5 shrink-0 -rotate-90 transition-transform group-data-[state=open]:rotate-0" />
-            <ToolIcon kind={kind} status={item.status} />
-            <span className="code-mono min-w-0 flex-1 truncate text-sm">{title}</span>
-            <TimelineStatusBadge status={item.status} />
-          </button>
+          <Marker asChild className="w-full">
+            <button type="button" className="text-left">
+              <ChevronDown className="shrink-0 -rotate-90 transition-transform group-data-[state=open]/marker:rotate-0" />
+              <MarkerIcon>
+                <ToolIcon kind={kind} status={item.status} />
+              </MarkerIcon>
+              <ToolStatusIcon status={item.status} />
+              <MarkerContent className="code-mono text-sm">{title}</MarkerContent>
+            </button>
+          </Marker>
         </CollapsibleTrigger>
         <CollapsibleContent className="min-w-0 max-w-full overflow-hidden">
           <ToolDetailPanel
@@ -71,7 +89,6 @@ export function ToolCard({
             command={command}
             output={output}
             changes={changes}
-            fallback={item.content}
           />
           {interaction ? (
             <div className="mt-2">
@@ -124,17 +141,15 @@ export function ToolDetailPanel({
   command,
   output,
   changes,
-  fallback,
 }: {
   token: string
   session: SessionView
   command: string | null
   output: string | null
   changes: Array<Record<string, unknown>>
-  fallback: unknown
 }) {
   const hasContent = Boolean(command || output || changes.length > 0)
-  if (!hasContent) return <JsonBlock value={fallback} />
+  if (!hasContent) return null
   return (
     <div className="min-w-0 max-w-full overflow-hidden rounded-xl border border-border bg-background">
       {command ? <CodePanel label="command" code={command} language="bash" flush /> : null}
@@ -375,8 +390,32 @@ function ToolIcon({ kind, status }: { kind: string; status: TimelineItem["status
   const className = cn("size-4", status === "failed" ? "text-destructive" : "text-muted-foreground")
   if (kind === "command") return <TerminalSquare className={className} />
   if (kind === "file_change") return <FilePenLine className={className} />
-  if (status === "running") return <Loader2 className={cn(className, "animate-spin")} />
   return <Hammer className={className} />
+}
+
+function ToolStatusIcon({ status }: { status: TimelineItem["status"] }) {
+  if (status === "pending" || status === "running" || status === "waiting_approval") {
+    return (
+      <span aria-label={status} className="flex shrink-0 items-center justify-center text-muted-foreground">
+        <Loader2 className="size-3.5 animate-spin" />
+      </span>
+    )
+  }
+  if (status === "done") {
+    return (
+      <span aria-label={status} className="flex shrink-0 items-center justify-center text-muted-foreground">
+        <Check className="size-3.5" />
+      </span>
+    )
+  }
+  if (status === "failed" || status === "cancelled" || status === "interrupted") {
+    return (
+      <span aria-label={status} className="flex shrink-0 items-center justify-center text-destructive">
+        <X className="size-3.5" />
+      </span>
+    )
+  }
+  return null
 }
 
 export function TimelineStatusBadge({ status }: { status: TimelineItem["status"] }) {

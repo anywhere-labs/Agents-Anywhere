@@ -8,6 +8,7 @@ import { SessionDetail, type SessionMemorySnapshot } from "@/components/session-
 import { SessionViewHeader } from "@/components/session-view-header"
 import {
   FloatingRuntimePanels,
+  MobileRuntimePanelDrawers,
   PopupBlockedDialog,
   readSavedLayout,
   SessionRuntimePanels,
@@ -15,6 +16,7 @@ import {
 } from "@/components/session-runtime-panels"
 import { useAuth } from "@/components/auth/auth-context"
 import { useWorkspace, type PanelId } from "@/components/workspace-context"
+import { useIsMobile } from "@/hooks/use-mobile"
 import { useTranslations } from "next-intl"
 import { toast } from "sonner"
 import { dashboardApi } from "@/features/dashboard/api"
@@ -33,6 +35,7 @@ export function SessionView() {
   const t = useTranslations("dashboard.session")
   const [exporting, setExporting] = React.useState(false)
   const [memorySnapshot, setMemorySnapshot] = React.useState<SessionMemorySnapshot | null>(null)
+  const isMobile = useIsMobile()
   const {
     activeSessionId,
     sessions,
@@ -47,9 +50,10 @@ export function SessionView() {
   const token = authSession?.accessToken ?? null
   const connectorId = session?.connectorId ?? null
   const root = session?.cwd ?? "."
-  const dockedPanels = PANEL_IDS.filter((id) => panels[id] === "docked")
-  const floatingPanels = PANEL_IDS.filter((id) => panels[id] === "floating")
-  const hasDock = dockedPanels.length > 0
+  const availablePanelIds = isMobile ? (["files"] satisfies PanelId[]) : PANEL_IDS
+  const dockedPanels = isMobile ? [] : availablePanelIds.filter((id) => panels[id] === "docked")
+  const floatingPanels = availablePanelIds.filter((id) => panels[id] === "floating")
+  const hasDock = !isMobile && dockedPanels.length > 0
   const horizontalDefaultLayout = React.useMemo(
     () =>
       hasDock
@@ -196,13 +200,23 @@ export function SessionView() {
         </ResizablePanelGroup>
       </div>
 
-      <FloatingRuntimePanels
-        token={token}
-        connectorId={connectorId}
-        connectorDeviceOs={connector?.deviceOs}
-        root={root}
-        floatingPanels={floatingPanels}
-      />
+      {isMobile ? (
+        <MobileRuntimePanelDrawers
+          token={token}
+          connectorId={connectorId}
+          connectorDeviceOs={connector?.deviceOs}
+          root={root}
+          floatingPanels={floatingPanels}
+        />
+      ) : (
+        <FloatingRuntimePanels
+          token={token}
+          connectorId={connectorId}
+          connectorDeviceOs={connector?.deviceOs}
+          root={root}
+          floatingPanels={floatingPanels}
+        />
+      )}
       <PopupBlockedDialog />
     </>
   )

@@ -19,11 +19,12 @@ type TerminalPanelBodyProps = {
   token?: string | null
   connectorId?: string | null
   root?: string | null
+  variant?: "desktop" | "mobile"
   onClose?: () => void
   onPopOut?: () => void
 }
 
-export function TerminalPanelBody({ token, connectorId, root, onClose, onPopOut }: TerminalPanelBodyProps) {
+export function TerminalPanelBody({ token, connectorId, root, variant = "desktop", onClose, onPopOut }: TerminalPanelBodyProps) {
   const t = useTranslations("dashboard.panels.terminal")
   const effectiveRoot = root?.trim() || "."
   const [terms, setTerms] = React.useState<TerminalView[]>([])
@@ -164,6 +165,145 @@ export function TerminalPanelBody({ token, connectorId, root, onClose, onPopOut 
     setError(message)
   }, [])
 
+  const terminalTabs = (
+    <ScrollArea
+      className="aa-term-tabs-scroll"
+      contentWide
+      viewportProps={{
+        role: "tablist",
+        onWheel: (event: React.WheelEvent<HTMLDivElement>) => {
+          const scroll = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX
+          if (!scroll) return
+          event.currentTarget.scrollLeft += scroll
+          event.preventDefault()
+        },
+      }}
+    >
+      <div className="aa-term-tabs">
+        {terms.map((term) =>
+          renamingId === term.terminalId ? (
+            <input
+              key={term.terminalId}
+              className="aa-term-tab active"
+              value={renameText}
+              autoFocus
+              onChange={(event) => setRenameText(event.target.value)}
+              onBlur={() => void renameTerminal(term.terminalId, renameText || term.label)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") void renameTerminal(term.terminalId, renameText || term.label)
+                if (event.key === "Escape") setRenamingId(null)
+              }}
+              style={{ width: 120, padding: "0 8px" }}
+            />
+          ) : (
+            <button
+              key={term.terminalId}
+              role="tab"
+              type="button"
+              className={cn(
+                "aa-term-tab",
+                activeId === term.terminalId && "active",
+                term.status === "exited" && "exited",
+              )}
+              onClick={(event) => {
+                if (event.detail >= 3) {
+                  cancelScheduledRename()
+                  void closeTerminal(term.terminalId)
+                  return
+                }
+                setActiveId(term.terminalId)
+              }}
+              onAuxClick={(event) => {
+                if (event.button !== 1) return
+                event.preventDefault()
+                void closeTerminal(term.terminalId)
+              }}
+              onMouseDown={(event) => {
+                if (event.button === 1) event.preventDefault()
+              }}
+              onDoubleClick={() => scheduleRename(term)}
+              title={`${term.label} · ${t("pid")} ${term.pid ?? "?"}${
+                term.status === "exited" ? ` (${t("exitCode", { code: term.exitCode ?? "?" })})` : ""
+              }`}
+            >
+              <span className="dot" />
+              <span className="label">{term.label}</span>
+              <span
+                className="close"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  void closeTerminal(term.terminalId)
+                }}
+                aria-label={t("closeTerminal", { label: term.label })}
+              >
+                <X className="size-3" />
+              </span>
+            </button>
+          ),
+        )}
+        <button
+          className="aa-term-add"
+          type="button"
+          onClick={addTerminal}
+          disabled={!canConnect || busy}
+          title={t("newTerminal")}
+          aria-label={t("newTerminal")}
+        >
+          <Plus className="size-3.5" />
+        </button>
+      </div>
+      <ScrollBar orientation="horizontal" />
+    </ScrollArea>
+  )
+
+  const terminalHost = (
+    <div className="aa-term-host">
+      {error ? <div className="aa-term-status text-destructive">{error}</div> : null}
+      {!canConnect ? <div className="aa-term-status">{t("noConnector")}</div> : null}
+      {terms.map((term) => (
+        <div
+          key={`${connectorId}:${term.terminalId}`}
+          className={cn("aa-term-host-layer", activeId === term.terminalId && "active")}
+        >
+          {token && connectorId ? (
+            <XtermHost
+              token={token}
+              connectorId={connectorId}
+              terminal={term}
+              active={activeId === term.terminalId}
+              onError={handleTerminalError}
+            />
+          ) : null}
+        </div>
+      ))}
+      {terms.length === 0 && canConnect && !error ? <div className="aa-term-status">{t("noTerminal")}</div> : null}
+    </div>
+  )
+
+  if (variant === "mobile") {
+    return (
+      <div className="aa-mobile-panel aa-mobile-term">
+        <div className="aa-mobile-panel-toolbar">
+          {terminalTabs}
+          {onClose ? (
+            <Button
+              className="aa-rt-iconbtn aa-mobile-panel-close"
+              variant="ghost"
+              size="icon-sm"
+              type="button"
+              title={t("close")}
+              aria-label={t("close")}
+              onClick={onClose}
+            >
+              <X className="size-4" />
+            </Button>
+          ) : null}
+        </div>
+        {terminalHost}
+      </div>
+    )
+  }
+
   return (
     <Card size="sm" className="aa-rt-pane aa-term">
       <CardHeader className="aa-rt-hd">
@@ -171,94 +311,7 @@ export function TerminalPanelBody({ token, connectorId, root, onClose, onPopOut 
           <SquareTerminal className="size-3.5" />
           {t("title")}
         </CardTitle>
-        <ScrollArea
-          className="aa-term-tabs-scroll"
-          contentWide
-          viewportProps={{
-            role: "tablist",
-            onWheel: (event) => {
-              const scroll = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX
-              if (!scroll) return
-              event.currentTarget.scrollLeft += scroll
-              event.preventDefault()
-            },
-          }}
-        >
-          <div className="aa-term-tabs">
-            {terms.map((term) =>
-              renamingId === term.terminalId ? (
-                <input
-                  key={term.terminalId}
-                  className="aa-term-tab active"
-                  value={renameText}
-                  autoFocus
-                  onChange={(event) => setRenameText(event.target.value)}
-                  onBlur={() => void renameTerminal(term.terminalId, renameText || term.label)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") void renameTerminal(term.terminalId, renameText || term.label)
-                    if (event.key === "Escape") setRenamingId(null)
-                  }}
-                  style={{ width: 120, padding: "0 8px" }}
-                />
-              ) : (
-                <button
-                  key={term.terminalId}
-                  role="tab"
-                  type="button"
-                  className={cn(
-                    "aa-term-tab",
-                    activeId === term.terminalId && "active",
-                    term.status === "exited" && "exited",
-                  )}
-                  onClick={(event) => {
-                    if (event.detail >= 3) {
-                      cancelScheduledRename()
-                      void closeTerminal(term.terminalId)
-                      return
-                    }
-                    setActiveId(term.terminalId)
-                  }}
-                  onAuxClick={(event) => {
-                    if (event.button !== 1) return
-                    event.preventDefault()
-                    void closeTerminal(term.terminalId)
-                  }}
-                  onMouseDown={(event) => {
-                    if (event.button === 1) event.preventDefault()
-                  }}
-                  onDoubleClick={() => scheduleRename(term)}
-                  title={`${term.label} · ${t("pid")} ${term.pid ?? "?"}${
-                    term.status === "exited" ? ` (${t("exitCode", { code: term.exitCode ?? "?" })})` : ""
-                  }`}
-                >
-                  <span className="dot" />
-                  <span className="label">{term.label}</span>
-                  <span
-                    className="close"
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      void closeTerminal(term.terminalId)
-                    }}
-                    aria-label={t("closeTerminal", { label: term.label })}
-                  >
-                    <X className="size-3" />
-                  </span>
-                </button>
-              ),
-            )}
-            <button
-              className="aa-term-add"
-              type="button"
-              onClick={addTerminal}
-              disabled={!canConnect || busy}
-              title={t("newTerminal")}
-              aria-label={t("newTerminal")}
-            >
-              <Plus className="size-3.5" />
-            </button>
-          </div>
-          <ScrollBar orientation="horizontal" />
-        </ScrollArea>
+        {terminalTabs}
         <Separator orientation="vertical" className="aa-rt-sep" />
         <div className="aa-rt-acts">
           {onPopOut ? (
@@ -290,27 +343,7 @@ export function TerminalPanelBody({ token, connectorId, root, onClose, onPopOut 
         </div>
       </CardHeader>
       <CardContent className="aa-rt-content">
-        <div className="aa-term-host">
-          {error ? <div className="aa-term-status text-destructive">{error}</div> : null}
-          {!canConnect ? <div className="aa-term-status">{t("noConnector")}</div> : null}
-          {terms.map((term) => (
-            <div
-              key={`${connectorId}:${term.terminalId}`}
-              className={cn("aa-term-host-layer", activeId === term.terminalId && "active")}
-            >
-              {token && connectorId ? (
-                <XtermHost
-                  token={token}
-                  connectorId={connectorId}
-                  terminal={term}
-                  active={activeId === term.terminalId}
-                  onError={handleTerminalError}
-                />
-              ) : null}
-            </div>
-          ))}
-          {terms.length === 0 && canConnect && !error ? <div className="aa-term-status">{t("noTerminal")}</div> : null}
-        </div>
+        {terminalHost}
       </CardContent>
     </Card>
   )

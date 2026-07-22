@@ -21,6 +21,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
 import { LoadingState } from "@/components/loading-state"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import {
@@ -68,6 +69,7 @@ import { useAuth } from "@/components/auth/auth-context"
 import { dashboardApi } from "@/features/dashboard/api"
 import { PairDeviceDialog } from "@/components/pair-device-dialog"
 import type { ConnectorRevokeResponse } from "@/features/dashboard/types"
+import { useIsMobile } from "@/hooks/use-mobile"
 import { useTranslations } from "next-intl"
 import { toast } from "sonner"
 import {
@@ -211,7 +213,7 @@ function AgentConfigDialog({
                   <label key={field.key} className="flex items-start gap-3 rounded-lg border border-border p-3">
                     <Checkbox
                       checked={Boolean(value)}
-                      onCheckedChange={(checked) => patch(field.key, checked === true)}
+                      onCheckedChange={(checked: boolean | "indeterminate") => patch(field.key, checked === true)}
                     />
                     <span className="flex min-w-0 flex-col gap-1">
                       <span className="text-sm font-medium">{field.label}</span>
@@ -338,7 +340,7 @@ function AddAgentDialog({
             <ToggleGroup
               type="single"
               value={runtime}
-              onValueChange={(value) => {
+              onValueChange={(value: string) => {
                 if (value) setRuntime(value as (typeof ADD_AGENT_RUNTIME_OPTIONS)[number]["id"])
               }}
               className="grid grid-cols-2"
@@ -454,7 +456,7 @@ function SessionRow({
       {selectMode ? (
         <Checkbox
           checked={selected}
-          onCheckedChange={(checked) => onSelectChange(checked === true)}
+          onCheckedChange={(checked: boolean | "indeterminate") => onSelectChange(checked === true)}
           aria-label={t("selectSession", { title: session.title ?? t("untitled") })}
         />
       ) : null}
@@ -484,7 +486,8 @@ function SessionRow({
 
 // ── DevicePage ─────────────────────────────────────────────────
 
-const WORKSPACE_PAGE_SIZE = 6
+const DESKTOP_WORKSPACE_PAGE_SIZE = 6
+const MOBILE_WORKSPACE_PAGE_SIZE = 4
 
 function timeValue(value: string | null | undefined) {
   return value ? new Date(value).getTime() : 0
@@ -609,6 +612,7 @@ export function DevicePage() {
     refreshData,
   } = useWorkspace()
   const { session: authSession } = useAuth()
+  const isMobile = useIsMobile()
 
   const [connector, setConnector] = React.useState<(typeof connectors)[number] | null>(null)
   const [workspaces, setWorkspaces] = React.useState<ConnectorWorkspace[]>([])
@@ -674,8 +678,9 @@ export function DevicePage() {
     setLoading(false)
   }, [activeConnectorId, connectors, allSessions])
 
-  const visibleWorkspaces = showAllWorkspaces ? workspaces : workspaces.slice(0, WORKSPACE_PAGE_SIZE)
-  const hiddenCount = workspaces.length - WORKSPACE_PAGE_SIZE
+  const workspacePageSize = isMobile ? MOBILE_WORKSPACE_PAGE_SIZE : DESKTOP_WORKSPACE_PAGE_SIZE
+  const visibleWorkspaces = showAllWorkspaces ? workspaces : workspaces.slice(0, workspacePageSize)
+  const hiddenCount = workspaces.length - workspacePageSize
 
   const filteredSessions = sessions.filter((s) => {
     if (sessionTab === "active") return !s.archived
@@ -903,6 +908,7 @@ export function DevicePage() {
 
         {/* Header */}
         <div className="flex items-center gap-3">
+          <DashboardSidebarToggle className="-ml-2" />
           {editingName ? (
             <Input
               value={nameDraft}
@@ -941,6 +947,7 @@ export function DevicePage() {
             <span
               className={cn(
                 "font-medium",
+                "max-sm:sr-only",
                 connector.status === "online" ? "text-emerald-500" : "text-muted-foreground",
               )}
             >
@@ -951,6 +958,7 @@ export function DevicePage() {
             <Button
               variant="outline"
               size="sm"
+              className="max-sm:size-8 max-sm:px-0"
               onClick={() => {
                 if (connector.status === "offline") {
                   void handleRevoke()
@@ -959,9 +967,12 @@ export function DevicePage() {
                 }
               }}
               disabled={tokenActionBusy}
+              aria-label={tokenActionBusy ? t("preparing") : connector.status === "offline" ? t("setup") : t("revoke")}
             >
               <KeyRound />
-              {tokenActionBusy ? t("preparing") : connector.status === "offline" ? t("setup") : t("revoke")}
+              <span className="max-sm:sr-only">
+                {tokenActionBusy ? t("preparing") : connector.status === "offline" ? t("setup") : t("revoke")}
+              </span>
             </Button>
             <Button
               variant="ghost"
@@ -1078,7 +1089,7 @@ export function DevicePage() {
             <p className="text-sm text-muted-foreground">{t("noWorkspaces")}</p>
           ) : (
             <>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {visibleWorkspaces.map((ws) => (
                   <WorkspaceCard
                     key={ws.path}
@@ -1090,7 +1101,7 @@ export function DevicePage() {
               </div>
 
               {(() => {
-                const nextWorkspace = workspaces[WORKSPACE_PAGE_SIZE]
+                const nextWorkspace = workspaces[workspacePageSize]
                 if (showAllWorkspaces || hiddenCount <= 0 || !nextWorkspace) return null
                 return (
                   <button
@@ -1147,7 +1158,7 @@ export function DevicePage() {
           <ToggleGroup
             type="single"
             value={sessionTab}
-            onValueChange={(value) => {
+            onValueChange={(value: string) => {
               if (value) setSessionTab(value as SessionTabId)
             }}
             size="sm"
@@ -1167,7 +1178,7 @@ export function DevicePage() {
             <div className="mb-3 flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2 text-sm">
               <Checkbox
                 checked={allVisibleSelected}
-                onCheckedChange={(checked) => toggleAllVisible(checked === true)}
+                onCheckedChange={(checked: boolean | "indeterminate") => toggleAllVisible(checked === true)}
                 aria-label={t("selectAllVisible")}
               />
               <span className="flex-1 text-muted-foreground">
@@ -1286,7 +1297,7 @@ export function DevicePage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      <AlertDialog open={removeAgentRuntime !== null} onOpenChange={(open) => {
+      <AlertDialog open={removeAgentRuntime !== null} onOpenChange={(open: boolean) => {
         if (!open) setRemoveAgentRuntime(null)
       }}>
         <AlertDialogContent>

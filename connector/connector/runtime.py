@@ -563,6 +563,38 @@ class BackendRpcClient:
             "protocol.capabilitiesUpdated",
             protocol_capabilities.model_dump(mode="json"),
         )
+        await self._publish_runtime_catalogs(discovery.report, revision=protocol_capabilities.revision)
+
+    async def _publish_runtime_catalogs(self, discovery_report: dict[str, Any], *, revision: int) -> None:
+        runtimes = discovery_report.get("runtimes")
+        if not isinstance(runtimes, dict):
+            return
+        for runtime, report in runtimes.items():
+            if runtime not in {"codex", "claude"} or not isinstance(report, dict):
+                continue
+            if report.get("execution") != "ok":
+                continue
+            adapter = self.adapters.get(runtime)
+            if adapter is None:
+                continue
+            model_catalog_method = getattr(adapter, "model_catalog", None)
+            if callable(model_catalog_method):
+                try:
+                    model_catalog = await model_catalog_method(revision=revision)
+                except Exception:
+                    logger.exception("runtime model catalog read failed runtime={}", runtime)
+                    model_catalog = None
+                if isinstance(model_catalog, dict):
+                    await self.send_notification("protocol.modelCatalogUpdated", model_catalog)
+            permission_catalog_method = getattr(adapter, "permission_catalog", None)
+            if callable(permission_catalog_method):
+                try:
+                    permission_catalog = await permission_catalog_method(revision=revision)
+                except Exception:
+                    logger.exception("runtime permission catalog read failed runtime={}", runtime)
+                    permission_catalog = None
+                if isinstance(permission_catalog, dict):
+                    await self.send_notification("protocol.permissionCatalogUpdated", permission_catalog)
 
     async def _rewire_codex(self, codex_target: LaunchTarget | str | None) -> None:
         if not codex_target:

@@ -14,6 +14,7 @@ import {
   YAxis,
 } from "recharts"
 import {
+  ChevronDown,
   ChevronLeft,
   Gauge,
   Laptop,
@@ -27,9 +28,17 @@ import { useTranslations } from "next-intl"
 import { toast } from "sonner"
 
 import { useAuth } from "@/components/auth/auth-context"
+import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
 import { LoadingState } from "@/components/loading-state"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Drawer,
+  DrawerContent,
+  DrawerHeader,
+  DrawerTitle,
+  DrawerTrigger,
+} from "@/components/ui/drawer"
 import {
   ChartContainer,
   ChartTooltip,
@@ -151,19 +160,25 @@ export function DashboardPage() {
     }
   }
 
+  const activeNavItem = navItems.find((item) => item.id === tab) ?? navItems[0]!
+  const ActiveNavIcon = activeNavItem.icon
+
   return (
     <div className="flex h-full flex-col bg-background">
-      <div className="px-8 pb-0 pt-8">
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={() => navigate("home")}
-          className="mb-6 -ml-2 gap-1.5 text-muted-foreground"
-        >
-          <ChevronLeft className="size-4" />
-          {tCommon("back")}
-        </Button>
+      <div className="px-5 pb-0 pt-5 sm:px-8 sm:pt-8">
+        <div className="mb-6 -ml-2 flex items-center gap-1">
+          <DashboardSidebarToggle />
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => navigate("home")}
+            className="gap-1.5 text-muted-foreground"
+          >
+            <ChevronLeft className="size-4" />
+            {tCommon("back")}
+          </Button>
+        </div>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h1 className="text-2xl font-semibold">{t("title")}</h1>
@@ -182,10 +197,16 @@ export function DashboardPage() {
             </Button>
           </div>
         </div>
+        <DashboardCategoryDrawer
+          tab={tab}
+          activeIcon={ActiveNavIcon}
+          activeLabel={t(`tabs.${activeNavItem.labelKey}`)}
+          onTabChange={setTab}
+        />
       </div>
 
-      <div className="flex min-h-0 flex-1 gap-8 overflow-hidden px-8 py-8">
-        <nav className="flex w-52 shrink-0 flex-col gap-0.5">
+      <div className="flex min-h-0 flex-1 gap-8 overflow-hidden px-5 py-5 sm:px-8 sm:py-8">
+        <nav className="hidden w-52 shrink-0 flex-col gap-0.5 lg:flex">
           {navItems.map((item) => {
             const Icon = item.icon
             return (
@@ -227,6 +248,62 @@ export function DashboardPage() {
         </main>
       </div>
     </div>
+  )
+}
+
+function DashboardCategoryDrawer({
+  tab,
+  activeIcon: ActiveIcon,
+  activeLabel,
+  onTabChange,
+}: {
+  tab: DashboardTab
+  activeIcon: typeof LineChart
+  activeLabel: string
+  onTabChange: (tab: DashboardTab) => void
+}) {
+  const t = useTranslations("pages.opsDashboard")
+  const [open, setOpen] = React.useState(false)
+
+  return (
+    <Drawer open={open} onOpenChange={setOpen} direction="bottom">
+      <DrawerTrigger asChild>
+        <Button type="button" variant="outline" size="sm" className="mt-4 gap-2 lg:hidden">
+          <ActiveIcon className="size-4" />
+          {activeLabel}
+          <ChevronDown className="size-3.5 text-muted-foreground" />
+        </Button>
+      </DrawerTrigger>
+      <DrawerContent>
+        <DrawerHeader>
+          <DrawerTitle>{t("title")}</DrawerTitle>
+        </DrawerHeader>
+        <div className="flex flex-col gap-1 px-4 pb-4">
+          {navItems.map((item) => {
+            const Icon = item.icon
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => {
+                  onTabChange(item.id)
+                  setOpen(false)
+                }}
+                className={cn(
+                  "flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm transition-colors",
+                  tab === item.id
+                    ? "bg-accent text-foreground"
+                    : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+                )}
+              >
+                <Icon className="size-4 shrink-0" />
+                <span className="font-medium">{t(`tabs.${item.labelKey}`)}</span>
+              </button>
+            )
+          })}
+        </div>
+      </DrawerContent>
+    </Drawer>
   )
 }
 

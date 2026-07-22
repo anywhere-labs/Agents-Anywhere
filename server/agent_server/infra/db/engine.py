@@ -142,6 +142,10 @@ def init_db_sync(async_url: str) -> None:
 async def _ensure_compat_schema_async(conn) -> None:  # noqa: ANN001 - SQLAlchemy connection
     if not await _column_exists_async(conn, "sessions", "origin"):
         await conn.execute(text("ALTER TABLE sessions ADD COLUMN origin TEXT NOT NULL DEFAULT 'connector_import'"))
+    if not await _column_exists_async(conn, "sessions", "model_selection_id"):
+        await conn.execute(text("ALTER TABLE sessions ADD COLUMN model_selection_id TEXT"))
+    if not await _column_exists_async(conn, "sessions", "permission_selection_id"):
+        await conn.execute(text("ALTER TABLE sessions ADD COLUMN permission_selection_id TEXT"))
 
 
 async def _column_exists_async(conn, table: str, column: str) -> bool:  # noqa: ANN001 - SQLAlchemy connection
@@ -163,6 +167,10 @@ async def _column_exists_async(conn, table: str, column: str) -> bool:  # noqa: 
 def _ensure_compat_schema_sync(conn) -> None:  # noqa: ANN001 - SQLAlchemy connection
     if not _column_exists_sync(conn, "sessions", "origin"):
         conn.execute(text("ALTER TABLE sessions ADD COLUMN origin TEXT NOT NULL DEFAULT 'connector_import'"))
+    if not _column_exists_sync(conn, "sessions", "model_selection_id"):
+        conn.execute(text("ALTER TABLE sessions ADD COLUMN model_selection_id TEXT"))
+    if not _column_exists_sync(conn, "sessions", "permission_selection_id"):
+        conn.execute(text("ALTER TABLE sessions ADD COLUMN permission_selection_id TEXT"))
 
 
 def _column_exists_sync(conn, table: str, column: str) -> bool:  # noqa: ANN001 - SQLAlchemy connection

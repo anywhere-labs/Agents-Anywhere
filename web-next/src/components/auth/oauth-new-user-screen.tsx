@@ -70,7 +70,7 @@ export function OAuthNewUserScreen() {
           <Checkbox
             id="set-password"
             checked={setLocalPassword}
-            onCheckedChange={(value) => setSetLocalPassword(Boolean(value))}
+            onCheckedChange={(value: boolean | "indeterminate") => setSetLocalPassword(Boolean(value))}
           />
           <Label htmlFor="set-password" className="cursor-pointer text-sm font-normal">
             {t("oauth.setLocalPassword")}

@@ -4,6 +4,7 @@ import * as React from "react"
 import type { PanelImperativeHandle } from "react-resizable-panels"
 
 import { SidebarProvider, SidebarInset, useSidebar } from "@/components/ui/sidebar"
+import { DashboardSidebarControlsContext } from "@/components/dashboard-sidebar-controls"
 import { AppSidebar } from "@/components/app-sidebar"
 import { TaskComposer } from "@/components/task-composer"
 import { SessionView } from "@/components/session-view"
@@ -39,18 +40,6 @@ const SIDEBAR_LAYOUT_STORAGE_KEY = "agents-anywhere-dashboard-sidebar-layout"
 const DEFAULT_DESKTOP_LAYOUT = {
   "dashboard-sidebar": 256,
   "dashboard-main": 1024,
-}
-
-type DashboardSidebarControls = {
-  open: boolean
-  collapseSidebar: () => void
-  toggleSidebar: () => void
-}
-
-const DashboardSidebarControlsContext = React.createContext<DashboardSidebarControls | null>(null)
-
-export function useDashboardSidebarControls() {
-  return React.useContext(DashboardSidebarControlsContext)
 }
 
 export function Demo() {
@@ -216,7 +205,7 @@ function WorkspaceMain() {
   return (
     <>
       {content}
-      <AlertDialog open={firstDevicePromptOpen} onOpenChange={(open) => {
+      <AlertDialog open={firstDevicePromptOpen} onOpenChange={(open: boolean) => {
         if (!open) closeFirstDevicePrompt()
       }}>
         <AlertDialogContent>

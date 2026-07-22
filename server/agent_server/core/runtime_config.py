@@ -209,23 +209,7 @@ def default_runtime_settings(runtime: str) -> dict[str, Any]:
 
 
 def normalize_runtime_settings(runtime: str, settings: dict[str, Any]) -> dict[str, Any]:
-    if runtime != "codex":
-        return settings
-    result = deepcopy(settings)
-    if result.get("permissionMode") is None:
-        approval_policy = result.get("approvalPolicy")
-        approvals_reviewer = result.get("approvalsReviewer")
-        sandbox_policy = result.get("sandboxPolicy")
-        sandbox_type = sandbox_policy.get("type") if isinstance(sandbox_policy, dict) else None
-        if approval_policy == "never" and sandbox_type == "dangerFullAccess":
-            result["permissionMode"] = "fullAccess"
-        elif approval_policy == "on-request" and approvals_reviewer == "auto_review":
-            result["permissionMode"] = "auto"
-        elif approval_policy is not None or sandbox_type is not None:
-            result["permissionMode"] = "ask"
-    for key in ("approvalPolicy", "approvalsReviewer", "sandboxPolicy"):
-        result.pop(key, None)
-    return result
+    return settings
 
 
 def filter_runtime_settings(
@@ -259,6 +243,9 @@ def validate_runtime_settings(
     allowed_paths = _field_paths(schema.fields, session_override=session_override)
     normalized: dict[str, Any] = {}
     for key, value in settings.items():
+        if key in {"model", "effort", "permissionMode"}:
+            normalized[key] = deepcopy(value)
+            continue
         if key not in allowed_paths:
             raise ValueError(f"{key} is not configurable here")
         field = allowed_paths[key]
@@ -312,30 +299,6 @@ def normalize_setting_constraints(
     if runtime != "claude":
         return settings
     return _normalize_claude_model_effort(settings, explicit_keys=explicit_keys)
-
-
-def schema_with_user_agent_defaults(
-    schema: RuntimeConfigSchema,
-    defaults: dict[str, Any] | None,
-) -> RuntimeConfigSchema:
-    result = deepcopy(schema)
-    if not defaults:
-        _attach_default_model_efforts(result)
-        return result
-
-    models = defaults.get("models") or []
-    if models:
-        model_options = [_catalog_entry_to_option(entry, include_efforts=True) for entry in models]
-        effort_options = _aggregate_effort_options(model_options)
-        for field in result.fields:
-            if field.key == "model":
-                field.options = model_options
-            elif field.key == "effort" and effort_options:
-                field.options = effort_options
-        return result
-
-    _attach_default_model_efforts(result)
-    return result
 
 
 def claude_efforts_for_model(model: Any) -> frozenset[str]:
@@ -436,41 +399,6 @@ def _default_effort_options_for_model(
     return [deepcopy(option) for option in effort_options if str(option.value) in allowed]
 
 
-def _catalog_entry_to_option(entry: Any, *, include_efforts: bool) -> RuntimeConfigOption:
-    key = _entry_value(entry, "key")
-    label = _entry_value(entry, "displayLabel") or key
-    description = _entry_value(entry, "description")
-    efforts = _entry_value(entry, "efforts")
-    return RuntimeConfigOption(
-        value=key,
-        label=label,
-        description=description if isinstance(description, str) else None,
-        efforts=[
-            _catalog_entry_to_option(effort, include_efforts=False)
-            for effort in (efforts if include_efforts and isinstance(efforts, list) else [])
-        ] if include_efforts else None,
-    )
-
-
-def _aggregate_effort_options(model_options: list[RuntimeConfigOption]) -> list[RuntimeConfigOption]:
-    result: list[RuntimeConfigOption] = []
-    seen: set[str] = set()
-    for model in model_options:
-        for effort in model.efforts or []:
-            key = str(effort.value)
-            if key in seen:
-                continue
-            seen.add(key)
-            result.append(effort.model_copy(update={"efforts": None}))
-    return result
-
-
-def _entry_value(entry: Any, key: str) -> Any:
-    if isinstance(entry, dict):
-        return entry.get(key)
-    return getattr(entry, key, None)
-
-
 def _normalize_claude_model_effort(
     settings: dict[str, Any],
     *,
@@ -512,7 +440,8 @@ def serialize_runtime_params(
 
     if runtime == "codex":
         result = {}
-        result.update(serialize_codex_permission_mode(settings.get("permissionMode"), cwd=cwd))
+        if settings.get("permissionMode") is not None:
+            result["permissionMode"] = settings.get("permissionMode")
         if settings.get("model") is not None:
             result["model"] = settings.get("model")
         if settings.get("effort") is not None:
@@ -520,49 +449,6 @@ def serialize_runtime_params(
         return result
 
     return {}
-
-
-def serialize_codex_permission_mode(mode: Any, *, cwd: str | None) -> dict[str, Any]:
-    if mode == "fullAccess":
-        return {
-            "approvalPolicy": "never",
-            "sandboxPolicy": {"type": "dangerFullAccess"},
-        }
-    if mode == "auto":
-        return {
-            "approvalPolicy": "on-request",
-            "approvalsReviewer": "auto_review",
-            "sandboxPolicy": serialize_codex_sandbox_policy(
-                {"type": "workspaceWrite", "networkAccess": False},
-                cwd=cwd,
-            ),
-        }
-    return {
-        "approvalPolicy": "on-request",
-        "sandboxPolicy": serialize_codex_sandbox_policy(
-            {"type": "workspaceWrite", "networkAccess": False},
-            cwd=cwd,
-        ),
-    }
-
-
-def serialize_codex_sandbox_policy(policy: dict[str, Any], *, cwd: str | None) -> dict[str, Any]:
-    policy_type = policy.get("type") or "workspaceWrite"
-    if policy_type == "dangerFullAccess":
-        return {"type": "dangerFullAccess"}
-    network_access = bool(policy.get("networkAccess", False))
-    if policy_type == "readOnly":
-        return {"type": "readOnly", "networkAccess": network_access}
-    if policy_type == "workspaceWrite":
-        serialized: dict[str, Any] = {
-            "type": "workspaceWrite",
-            "writableRoots": [cwd] if cwd else [],
-            "networkAccess": network_access,
-            "excludeTmpdirEnvVar": True,
-            "excludeSlashTmp": True,
-        }
-        return serialized
-    raise ValueError(f"unsupported Codex sandboxPolicy.type: {policy_type}")
 
 
 def _deep_merge(

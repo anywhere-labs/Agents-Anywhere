@@ -6,6 +6,7 @@ import type { Layout } from "react-resizable-panels"
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
+import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
 import { useWorkspace } from "@/components/workspace-context"
 import { FilesPanelBody } from "@/components/panels/files-panel"
 import { TerminalPanelBody } from "@/components/panels/terminal-panel"
@@ -178,6 +179,7 @@ export function DeviceWorkspacePage() {
         <div className="flex h-full flex-col border-r border-border bg-sidebar">
           {/* Header */}
           <div className="flex items-center gap-2 border-b border-border px-3 py-3">
+            <DashboardSidebarToggle className="-ml-1" />
             <button
               type="button"
               onClick={() => navigateToDevice(activeConnectorId)}

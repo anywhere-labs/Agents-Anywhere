@@ -19,6 +19,8 @@ from connector.claude.normalized import NormalizedClaudeEvent
 from connector.claude.normalizers import ClaudeLiveNormalizer
 from connector.claude.timeline_reducer import ClaudeTimelineReducer, is_task_event_tool_name
 from connector.launch import LaunchTarget, launch_target
+from connector.protocol import protocol_selection_id
+from connector.protocol_catalogs import empty_model_catalog, permission_catalog_from_items
 from connector.time import utc_now
 
 
@@ -103,11 +105,18 @@ class ClaudeSdkAdapter:
             or f"sess_claude_chat_{secrets.token_urlsafe(10)}"
         )
         runtime = self._runtime_for(session_id, params)
-        return {
+        response: dict[str, Any] = {
             "sessionId": session_id,
             "externalSessionId": runtime.external_session_id,
             "backendNotifications": [],
         }
+        model_selection_id = _optional_string(params.get("modelSelectionId"))
+        permission_selection_id = _optional_string(params.get("permissionSelectionId"))
+        if model_selection_id is not None:
+            response["modelSelectionId"] = model_selection_id
+        if permission_selection_id is not None:
+            response["permissionSelectionId"] = permission_selection_id
+        return response
 
     async def sync_session(self, params: dict[str, Any]) -> dict[str, Any]:
         self._prepare_history_adapter()
@@ -196,6 +205,53 @@ class ClaudeSdkAdapter:
         if not pending.future.done():
             pending.future.set_result(status)
         return {"resolved": True}
+
+    async def model_catalog(self, *, revision: int) -> dict[str, Any] | None:
+        return empty_model_catalog("claude", revision=revision).model_dump(mode="json")
+
+    async def permission_catalog(self, *, revision: int) -> dict[str, Any] | None:
+        return permission_catalog_from_items(
+            "claude",
+            revision=revision,
+            items=[
+                {
+                    "id": "default",
+                    "label": "Ask permissions",
+                    "description": "Prompt before destructive actions. Read-only commands run automatically.",
+                    "default": True,
+                    "identity": {"permission_mode": "default"},
+                    "runtimeSettings": {"permissionMode": "default"},
+                },
+                {
+                    "id": "acceptEdits",
+                    "label": "Accept edits",
+                    "description": "Auto-approve file edits; still ask for shell commands.",
+                    "identity": {"permission_mode": "acceptEdits"},
+                    "runtimeSettings": {"permissionMode": "acceptEdits"},
+                },
+                {
+                    "id": "plan",
+                    "label": "Plan mode",
+                    "description": "Read-only planning. No writes, no commands.",
+                    "identity": {"permission_mode": "plan"},
+                    "runtimeSettings": {"permissionMode": "plan"},
+                },
+                {
+                    "id": "auto",
+                    "label": "Auto mode",
+                    "description": "Run everything; background classifier flags risky actions.",
+                    "identity": {"permission_mode": "auto"},
+                    "runtimeSettings": {"permissionMode": "auto"},
+                },
+                {
+                    "id": "bypassPermissions",
+                    "label": "Bypass permissions ⚠️",
+                    "description": "Skip every prompt. Only the rm -rf / hard-fuse remains.",
+                    "identity": {"permission_mode": "bypassPermissions"},
+                    "runtimeSettings": {"permissionMode": "bypassPermissions"},
+                },
+            ],
+        ).model_dump(mode="json")
 
     def _runtime_for(self, session_id: str, params: dict[str, Any]) -> _SdkSessionRuntime:
         runtime = self._sessions.get(session_id)
@@ -579,6 +635,11 @@ class ClaudeSdkAdapter:
             value = _optional_string(params.get(param_key))
             if value:
                 kwargs[option_key] = value
+        permission_mode = _claude_permission_mode_from_selection_id(
+            _optional_string(params.get("permissionSelectionId"))
+        )
+        if permission_mode:
+            kwargs["permission_mode"] = permission_mode
         hook_matcher = _optional_attr(sdk, "HookMatcher", "types.HookMatcher")
         if hook_matcher is not None:
             async def _keep_permission_stream_open(_input_data: Any, _tool_use_id: Any = None, _context: Any = None) -> dict[str, bool]:
@@ -1328,6 +1389,15 @@ def _approval_id(session_id: str, turn_id: str | None, tool_name: str, input_dat
 
 def _turn_id(session_id: str, content: str) -> str:
     return "turn_claude_" + _short_hash([session_id, content, secrets.token_urlsafe(8)])
+
+
+def _claude_permission_mode_from_selection_id(selection_id: str | None) -> str | None:
+    if not selection_id:
+        return None
+    for permission_id in ("default", "acceptEdits", "plan", "auto", "bypassPermissions"):
+        if selection_id == protocol_selection_id("claude", "permission", {"permission_id": permission_id}):
+            return permission_id
+    return None
 
 
 def _stable_message_id(value: Any) -> str:

@@ -5,12 +5,10 @@ from typing import Any
 from agent_server.infra.connector_rpc import ConnectorOfflineError, ConnectorRpcError, ConnectorRpcManager
 from agent_server.core.api_namespace import api_v2_path
 from agent_server.core.models import MessageCreateRequest, RpcResponsePayload, RuntimeName, SessionCreateRequest
-from agent_server.infra.runtimes.serializers import serializer_for_runtime
 from agent_server.infra.repositories.facade import Store
 from agent_server.core.utc import utc_now
-from agent_server.services.model_catalog import build_model_catalog, resolve_model_selection
-from agent_server.services.notices import upsert_execution_error_interaction
-from agent_server.services.permission_catalog import build_permission_catalog, resolve_permission_selection
+from agent_server.core.protocol import ProtocolModelCatalog, ProtocolPermissionCatalog
+from agent_server.services.notices import cancel_session_blocking_interactions, upsert_execution_error_interaction
 
 
 class SessionRunError(RuntimeError):
@@ -56,13 +54,13 @@ class SessionRunService:
             raise SessionRunNotFoundError("connector not found") from None
 
         connector_result = None
-        runtime_settings_patch = await self._runtime_settings_patch_with_model_selection(
+        await self._validate_selections(
+            connector_id=payload.connectorId,
             runtime=payload.runtime,
-            user_id=user_id,
-            patch=payload.runtimeSettings,
             model_selection_id=payload.modelSelectionId,
             permission_selection_id=payload.permissionSelectionId,
         )
+        runtime_settings_patch = self._validate_runtime_settings_patch(payload.runtimeSettings)
         if payload.externalSessionId is not None:
             try:
                 runtime_settings_override = await self._store.get_initial_runtime_settings_for_connector_agent(
@@ -81,6 +79,8 @@ class SessionRunService:
                 title=payload.title,
                 cwd=payload.cwd,
                 runtime_settings_override=runtime_settings_override,
+                model_selection_id=payload.modelSelectionId,
+                permission_selection_id=payload.permissionSelectionId,
             )
             return {"session": session, "connectorResult": connector_result}
 
@@ -93,13 +93,6 @@ class SessionRunService:
                 user_id=user_id,
                 patch=runtime_settings_patch,
             )
-            connector_settings = await self._store.serialize_initial_settings_for_connector_agent(
-                payload.connectorId,
-                payload.runtime,
-                user_id=user_id,
-                cwd=payload.cwd,
-                patch=runtime_settings_patch,
-            )
         except ValueError as exc:
             raise SessionRunInvalidConfigError(str(exc)) from exc
 
@@ -107,15 +100,11 @@ class SessionRunService:
             "runtime": payload.runtime,
             "title": payload.title,
             "cwd": payload.cwd,
-            **connector_settings,
         }
-        if payload.runtime == "codex" and "sandboxPolicy" in connector_params:
-            connector_params["sandbox"] = connector_params.pop("sandboxPolicy")
-        if payload.approvalPolicy is not None:
-            connector_params["approvalPolicy"] = payload.approvalPolicy
-        if payload.sandbox is not None:
-            connector_params["sandbox"] = payload.sandbox
-
+        if payload.modelSelectionId is not None:
+            connector_params["modelSelectionId"] = payload.modelSelectionId
+        if payload.permissionSelectionId is not None:
+            connector_params["permissionSelectionId"] = payload.permissionSelectionId
         try:
             connector_result = await self._manager.request(
                 payload.connectorId,
@@ -145,6 +134,20 @@ class SessionRunService:
                 )
             except KeyError:
                 pass
+        connector_runtime_settings = (
+            connector_result.get("runtimeSettings") if isinstance(connector_result, dict) else None
+        )
+        if isinstance(connector_runtime_settings, dict) and connector_runtime_settings:
+            runtime_settings_override = {
+                **runtime_settings_override,
+                **connector_runtime_settings,
+            }
+        connector_model_selection_id = (
+            connector_result.get("modelSelectionId") if isinstance(connector_result, dict) else None
+        )
+        connector_permission_selection_id = (
+            connector_result.get("permissionSelectionId") if isinstance(connector_result, dict) else None
+        )
         session = await self._store.upsert_connector_session(
             connector_id=payload.connectorId,
             session_id=session_id,
@@ -155,6 +158,12 @@ class SessionRunService:
             status="idle",
             last_synced_at=utc_now(),
             runtime_settings_override=runtime_settings_override,
+            model_selection_id=connector_model_selection_id
+            if isinstance(connector_model_selection_id, str)
+            else payload.modelSelectionId,
+            permission_selection_id=connector_permission_selection_id
+            if isinstance(connector_permission_selection_id, str)
+            else payload.permissionSelectionId,
             origin="platform",
         )
         if session.runtimeSettings != runtime_settings_override:
@@ -185,51 +194,42 @@ class SessionRunService:
         if session.status != "idle":
             raise SessionRunConflictError(f"session is {session.status}")
         try:
-            effective_settings = await self._store.get_effective_runtime_settings(
-                session_id,
-                user_id=user_id,
-            )
             if payload.permissionSelectionId is not None:
-                effective_settings = {
-                    **effective_settings,
-                    "permissionMode": await self._resolve_permission_selection(
-                        runtime=session.runtime,
-                        permission_selection_id=payload.permissionSelectionId,
-                    ),
-                }
-            runtime_params = serializer_for_runtime(session.runtime).serialize(
-                settings=effective_settings,
-                cwd=session.cwd,
-            )
+                await self._validate_permission_selection(
+                    connector_id=session.connectorId,
+                    runtime=session.runtime,
+                    permission_selection_id=payload.permissionSelectionId,
+                )
+            if payload.modelSelectionId is not None:
+                await self._validate_model_selection(
+                    connector_id=session.connectorId,
+                    runtime=session.runtime,
+                    model_selection_id=payload.modelSelectionId,
+                )
+            if payload.modelSelectionId is not None or payload.permissionSelectionId is not None:
+                await self._store.update_session_snapshot(
+                    session_id=session_id,
+                    model_selection_id=payload.modelSelectionId,
+                    permission_selection_id=payload.permissionSelectionId,
+                )
         except ValueError as exc:
             raise SessionRunInvalidConfigError(str(exc)) from exc
-        selected_model: tuple[str, str | None] | None = None
-        if payload.modelSelectionId is not None:
-            selected_model = await self._resolve_model_selection(
-                runtime=session.runtime,
-                user_id=user_id,
-                model_selection_id=payload.modelSelectionId,
-            )
 
         params: dict[str, Any] = {
             "sessionId": session_id,
             "runtime": session.runtime,
             "content": payload.content,
-            **runtime_params,
         }
         if session.cwd:
             params["cwd"] = session.cwd
         if session.externalSessionId:
             params["externalSessionId"] = session.externalSessionId
-        if selected_model is not None:
-            model, effort = selected_model
-            params["model"] = model
-            if effort is None:
-                params.pop("effort", None)
-            else:
-                params["effort"] = effort
         if payload.clientMessageId:
             params["clientMessageId"] = payload.clientMessageId
+        if payload.modelSelectionId is not None:
+            params["modelSelectionId"] = payload.modelSelectionId
+        if payload.permissionSelectionId is not None:
+            params["permissionSelectionId"] = payload.permissionSelectionId
         if payload.attachments:
             attachment_payloads = await self._attachment_payloads(
                 session_id=session_id,
@@ -278,68 +278,72 @@ class SessionRunService:
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
         return RpcResponsePayload(ok=True, result=result)
 
-    async def _runtime_settings_patch_with_model_selection(
-        self,
-        *,
-        runtime: RuntimeName,
-        user_id: str,
-        patch: dict[str, Any] | None,
-        model_selection_id: str | None,
-        permission_selection_id: str | None,
-    ) -> dict[str, Any] | None:
+    def _validate_runtime_settings_patch(self, patch: dict[str, Any] | None) -> dict[str, Any] | None:
         if patch is not None and ("model" in patch or "effort" in patch or "permissionMode" in patch):
             raise SessionRunInvalidConfigError(
                 "runtimeSettings.model, runtimeSettings.effort, and runtimeSettings.permissionMode are not accepted; use selection IDs"
             )
-        if model_selection_id is None and permission_selection_id is None:
-            return patch
-        result = dict(patch or {})
+        return patch
+
+    async def _validate_selections(
+        self,
+        *,
+        connector_id: str,
+        runtime: RuntimeName,
+        model_selection_id: str | None,
+        permission_selection_id: str | None,
+    ) -> None:
         if model_selection_id is not None:
-            model, effort = await self._resolve_model_selection(
+            await self._validate_model_selection(
+                connector_id=connector_id,
                 runtime=runtime,
-                user_id=user_id,
                 model_selection_id=model_selection_id,
             )
-            result["model"] = model
-            result["effort"] = effort
         if permission_selection_id is not None:
-            result["permissionMode"] = await self._resolve_permission_selection(
+            await self._validate_permission_selection(
+                connector_id=connector_id,
                 runtime=runtime,
                 permission_selection_id=permission_selection_id,
             )
-        return result
 
-    async def _resolve_model_selection(
+    async def _validate_model_selection(
         self,
         *,
+        connector_id: str,
         runtime: RuntimeName,
-        user_id: str,
         model_selection_id: str,
     ) -> tuple[str, str | None]:
-        defaults = await self._store.get_user_agent_defaults(user_id)
-        runtime_defaults = defaults.get(runtime)
-        models = (
-            runtime_defaults["models"]
-            if runtime_defaults and runtime_defaults.get("models")
-            else await self._store.list_agent_models(runtime)
+        raw = await self._store.get_protocol_catalog(
+            connector_id,
+            runtime=runtime,
+            catalog_type="model",
         )
-        catalog = build_model_catalog(runtime=runtime, models=models)
-        try:
-            return resolve_model_selection(catalog, model_selection_id)
-        except KeyError:
+        if raw is None:
+            raise SessionRunInvalidConfigError("model catalog is unavailable")
+        catalog = ProtocolModelCatalog.model_validate(raw)
+        if not any(
+            model.selectionId == model_selection_id
+            or any(reasoning.selectionId == model_selection_id for reasoning in model.reasoningItems)
+            for model in catalog.models
+        ):
             raise SessionRunInvalidConfigError("invalid modelSelectionId") from None
 
-    async def _resolve_permission_selection(
+    async def _validate_permission_selection(
         self,
         *,
+        connector_id: str,
         runtime: RuntimeName,
         permission_selection_id: str,
-    ) -> str:
-        permissions = await self._store.list_agent_modes(runtime)
-        catalog = build_permission_catalog(runtime=runtime, permissions=permissions)
-        try:
-            return resolve_permission_selection(catalog, permission_selection_id)
-        except KeyError:
+    ) -> dict[str, object]:
+        raw = await self._store.get_protocol_catalog(
+            connector_id,
+            runtime=runtime,
+            catalog_type="permission",
+        )
+        if raw is None:
+            raise SessionRunInvalidConfigError("permission catalog is unavailable")
+        catalog = ProtocolPermissionCatalog.model_validate(raw)
+        if not any(permission.selectionId == permission_selection_id for permission in catalog.permissions):
             raise SessionRunInvalidConfigError("invalid permissionSelectionId") from None
 
     async def _attachment_payloads(
@@ -431,9 +435,18 @@ class SessionRunService:
         except ConnectorRpcError as exc:
             await self._store.set_session_status(session_id, previous_status)
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
+        await cancel_session_blocking_interactions(
+            self._store,
+            session_id=session_id,
+            reason="interrupt_requested",
+        )
+        for approval in await self._store.list_pending_approvals(session_id):
+            await self._store.resolve_approval(approval.id, "cancelled")
         if _interrupt_target_not_found(result):
             await self._store.clear_active_run(session_id)
             await self._store.refresh_session_status_from_timeline(session_id)
+        else:
+            await self._store.set_session_status(session_id, "stopping")
         return RpcResponsePayload(ok=True, result=result)
 
 

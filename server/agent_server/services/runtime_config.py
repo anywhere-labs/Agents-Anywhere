@@ -20,7 +20,6 @@ from agent_server.core.runtime_config import (
     normalize_runtime_settings,
     normalize_setting_constraints,
     runtime_schema_key,
-    schema_with_user_agent_defaults,
     validate_runtime_schema,
     validate_runtime_settings,
 )
@@ -43,11 +42,9 @@ class RuntimeConfigService:
         self,
         instance_settings: InstanceSettingsRepository,
         runtime_settings: RuntimeSettingsRepository,
-        user_defaults_provider: Any | None = None,
     ) -> None:
         self._instance_settings = instance_settings
         self._runtime_settings = runtime_settings
-        self._user_defaults_provider = user_defaults_provider
 
     async def seed_runtime_config_schemas(self) -> None:
         for runtime, schema in DEFAULT_RUNTIME_CONFIG_SCHEMAS.items():
@@ -81,9 +78,7 @@ class RuntimeConfigService:
         *,
         user_id: str | None,
     ) -> RuntimeConfigSchema:
-        schema = await self.get_runtime_config_schema(runtime)
-        defaults = await self._get_user_agent_defaults(user_id)
-        return schema_with_user_agent_defaults(schema, defaults.get(runtime))
+        return await self.get_runtime_config_schema(runtime)
 
     async def set_runtime_config_schema(
         self,
@@ -312,12 +307,6 @@ class RuntimeConfigService:
             patch=patch,
         )
         return serializer_for_runtime(runtime).serialize(settings=effective, cwd=cwd)
-
-    async def _get_user_agent_defaults(self, user_id: str | None) -> dict[str, Any]:
-        if user_id is None or self._user_defaults_provider is None:
-            return {}
-        return await self._user_defaults_provider.get_user_agent_defaults(user_id)
-
 
 def seed_runtime_config_schemas_sync(async_url: str) -> None:
     if async_url.startswith("sqlite+aiosqlite:"):

@@ -475,7 +475,7 @@ function SessionSidebarItem({
         </ContextMenuContent>
       </ContextMenu>
 
-      <Dialog open={renameOpen} onOpenChange={(open) => {
+      <Dialog open={renameOpen} onOpenChange={(open: boolean) => {
         if (open) {
           setTitleDraft(item.title ?? "")
           setRenameOpen(true)

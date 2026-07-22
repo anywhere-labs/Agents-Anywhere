@@ -14,6 +14,12 @@ from connector.logging import logger
 from connector.attachments import attachment_target
 from connector.codex.reducer import CODEX_APPROVAL_METHODS, ReductionResult, TimelineReducer
 from connector.codex.rpc import JsonRpcStdioClient
+from connector.protocol_catalogs import (
+    empty_model_catalog,
+    model_catalog_from_runtime_items,
+    permission_catalog_from_items,
+)
+from connector.protocol import protocol_selection_id
 from connector.sync_state import SyncStateStore
 from connector.time import utc_now
 
@@ -73,6 +79,78 @@ def _turn_id_from_result(value: dict[str, Any]) -> str | None:
     return None
 
 
+def _model_list_items(result: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(result, dict):
+        return []
+    for key in ("models", "items", "data"):
+        value = result.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+    nested = result.get("modelCatalog") or result.get("catalog")
+    if isinstance(nested, dict):
+        return _model_list_items(nested)
+    return []
+
+
+def _codex_model_item_with_reasoning(item: dict[str, Any]) -> dict[str, Any]:
+    if any(
+        isinstance(item.get(key), list)
+        for key in (
+            "reasoningItems",
+            "reasoning_items",
+            "reasoningEfforts",
+            "reasoning_efforts",
+            "supportedReasoningEfforts",
+            "supported_reasoning_efforts",
+            "efforts",
+        )
+    ):
+        return item
+    return item
+
+
+def _codex_model_selection_from_runtime_settings(
+    settings: dict[str, Any],
+    model_list_result: dict[str, Any] | None,
+) -> str | None:
+    model_id = _optional_string(settings.get("model"))
+    if model_id is None:
+        return None
+    reasoning_id = _optional_string(settings.get("effort"))
+    catalog = model_catalog_from_runtime_items(
+        "codex",
+        revision=0,
+        items=[_codex_model_item_with_reasoning(item) for item in _model_list_items(model_list_result)],
+    )
+    model = next((item for item in catalog.models if item.id == model_id), None)
+    if model is None:
+        return None
+    if reasoning_id is not None:
+        reasoning = next((item for item in model.reasoningItems if item.id == reasoning_id), None)
+        return reasoning.selectionId if reasoning is not None else None
+    return model.selectionId
+
+
+def _codex_model_settings_from_selection_id(
+    selection_id: str | None,
+    model_list_result: dict[str, Any] | None,
+) -> dict[str, str]:
+    if not selection_id:
+        return {}
+    catalog = model_catalog_from_runtime_items(
+        "codex",
+        revision=0,
+        items=[_codex_model_item_with_reasoning(item) for item in _model_list_items(model_list_result)],
+    )
+    for model in catalog.models:
+        if model.selectionId == selection_id:
+            return {"model": model.id}
+        for reasoning in model.reasoningItems:
+            if reasoning.selectionId == selection_id:
+                return {"model": model.id, "effort": reasoning.id}
+    return {}
+
+
 @dataclass(slots=True)
 class CodexAdapter:
     """Adapter around Codex app-server.
@@ -92,6 +170,7 @@ class CodexAdapter:
     _history_sync_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict)
     _existing_thread_sync_markers: dict[str, str] = field(default_factory=dict)
     _existing_thread_names: dict[str, str | None] = field(default_factory=dict)
+    _model_list_result: dict[str, Any] | None = None
     _start_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -130,13 +209,20 @@ class CodexAdapter:
         await self.start()
         assert self.rpc is not None
         assert self.reducer is not None
+        selected_model_settings = _codex_model_settings_from_selection_id(
+            _optional_string(params.get("modelSelectionId")),
+            self._model_list_result,
+        )
+        native_permission = _codex_native_permission_settings(
+            _optional_string(params.get("permissionSelectionId"))
+        )
         result = await self.rpc.request(
             "thread/start",
             {
                 "cwd": params.get("cwd"),
-                "model": params.get("model"),
-                "approvalPolicy": params.get("approvalPolicy"),
-                "sandbox": _sandbox_mode(params.get("sandbox")),
+                "model": selected_model_settings.get("model") or params.get("model"),
+                "approvalPolicy": native_permission.get("approvalPolicy"),
+                "sandbox": native_permission.get("sandbox"),
                 "ephemeral": params.get("ephemeral", False),
             },
         )
@@ -150,25 +236,48 @@ class CodexAdapter:
             session_id = stable_session_id(connector_id, thread_id)
         if isinstance(session_id, str):
             self.reducer.bind_session(session_id, thread_id)
-        return {
+        runtime_settings, observed_permission_selection_id = _runtime_settings_and_permission_selection_from_codex_result(result)
+        runtime_settings = {
+            **selected_model_settings,
+            **runtime_settings,
+        }
+        model_selection_id = (
+            _codex_model_selection_from_runtime_settings(runtime_settings, self._model_list_result)
+            or _optional_string(params.get("modelSelectionId"))
+        )
+        permission_selection_id = observed_permission_selection_id or _optional_string(params.get("permissionSelectionId"))
+        if permission_selection_id is not None and "permissionMode" not in runtime_settings:
+            permission_mode = _codex_permission_id_from_selection_id(permission_selection_id)
+            if permission_mode is not None:
+                runtime_settings["permissionMode"] = permission_mode
+        response: dict[str, Any] = {
             "sessionId": session_id,
             "externalSessionId": thread_id,
             "thread": result.get("thread") or result,
-            "backendNotifications": [
-                {
-                    "method": "session.updated",
-                    "params": {
-                        "sessionId": session_id,
-                        "runtime": "codex",
-                        "externalSessionId": thread_id,
-                        "status": "idle",
-                        "cwd": params.get("cwd"),
-                    },
-                }
-            ]
-            if isinstance(session_id, str)
-            else [],
+            "backendNotifications": [],
         }
+        if runtime_settings:
+            response["runtimeSettings"] = runtime_settings
+        if model_selection_id is not None:
+            response["modelSelectionId"] = model_selection_id
+        if permission_selection_id is not None:
+            response["permissionSelectionId"] = permission_selection_id
+        if isinstance(session_id, str):
+            session_update: dict[str, Any] = {
+                "sessionId": session_id,
+                "runtime": "codex",
+                "externalSessionId": thread_id,
+                "status": "idle",
+                "cwd": params.get("cwd"),
+            }
+            if runtime_settings:
+                session_update["runtimeSettings"] = runtime_settings
+            if model_selection_id is not None:
+                session_update["modelSelectionId"] = model_selection_id
+            if permission_selection_id is not None:
+                session_update["permissionSelectionId"] = permission_selection_id
+            response["backendNotifications"] = [{"method": "session.updated", "params": session_update}]
+        return response
 
     async def sync_session(self, params: dict[str, Any]) -> dict[str, Any]:
         await self.start()
@@ -179,8 +288,48 @@ class CodexAdapter:
         self.reducer.bind_session(session_id, thread_id)
         started = time.perf_counter()
         logger.info("codex session sync started session_id={} thread_id={}", session_id, thread_id)
-        await self._ensure_thread_loaded(thread_id, force=True)
+        try:
+            await self._ensure_thread_loaded(thread_id, force=True)
+        except RuntimeError as exc:
+            reason = _unresumable_thread_failure_reason(str(exc))
+            if reason is None:
+                raise
+            logger.info(
+                "codex session sync skipped unavailable thread session_id={} thread_id={} reason={} error={}",
+                session_id,
+                thread_id,
+                reason,
+                exc,
+            )
+            return {
+                "thread": {},
+                "unavailableReason": reason,
+                "backendNotifications": [
+                    {
+                        "method": "session.updated",
+                        "params": {
+                            "sessionId": session_id,
+                            "runtime": "codex",
+                            "externalSessionId": thread_id,
+                            "status": "idle",
+                            "localState": reason,
+                            "sourceObservedAt": utc_now(),
+                        },
+                    }
+                ],
+            }
         reduced, thread = await self._reduce_current_timeline(session_id, thread_id)
+        runtime_settings, permission_selection_id = _runtime_settings_and_permission_selection_from_codex_result(thread)
+        model_selection_id = _codex_model_selection_from_runtime_settings(
+            runtime_settings,
+            self._model_list_result,
+        )
+        if runtime_settings and reduced.session_update is not None:
+            reduced.session_update["runtimeSettings"] = runtime_settings
+        if model_selection_id and reduced.session_update is not None:
+            reduced.session_update["modelSelectionId"] = model_selection_id
+        if permission_selection_id and reduced.session_update is not None:
+            reduced.session_update["permissionSelectionId"] = permission_selection_id
         elapsed_ms = (time.perf_counter() - started) * 1000
         logger.info(
             "codex session sync completed session_id={} thread_id={} timeline_items={} approvals={} elapsed_ms={:.1f}",
@@ -423,15 +572,31 @@ class CodexAdapter:
                 text=text_content,
                 attachments=timeline_attachments,
             )
+        native_permission = _codex_native_permission_settings(
+            _optional_string(params.get("permissionSelectionId"))
+        )
+        selected_model_settings = _codex_model_settings_from_selection_id(
+            _optional_string(params.get("modelSelectionId")),
+            self._model_list_result,
+        )
         turn_params = {
             "threadId": thread_id,
             "input": input_items,
-            "approvalPolicy": params.get("approvalPolicy"),
-            "sandboxPolicy": params.get("sandboxPolicy"),
-            "model": params.get("model"),
-            "effort": params.get("effort"),
-            "approvalsReviewer": params.get("approvalsReviewer"),
+            "approvalPolicy": native_permission.get("approvalPolicy"),
+            "sandboxPolicy": native_permission.get("sandboxPolicy"),
+            "model": selected_model_settings.get("model") or params.get("model"),
+            "effort": selected_model_settings.get("effort") or params.get("effort"),
+            "approvalsReviewer": native_permission.get("approvalsReviewer"),
         }
+        logger.info(
+            "starting codex turn with runtime selection session_id={} thread_id={} model={} effort={} model_selection_id={} permission_selection_id={}",
+            session_id,
+            thread_id,
+            turn_params.get("model"),
+            turn_params.get("effort"),
+            params.get("modelSelectionId"),
+            params.get("permissionSelectionId"),
+        )
         try:
             result = await self.rpc.request("turn/start", turn_params)
         except RuntimeError as exc:
@@ -630,8 +795,8 @@ class CodexAdapter:
                 "sessionId": _required_string(params, "sessionId"),
                 "cwd": params.get("cwd"),
                 "model": params.get("model"),
-                "approvalPolicy": params.get("approvalPolicy"),
-                "sandbox": params.get("sandboxPolicy"),
+                "modelSelectionId": params.get("modelSelectionId"),
+                "permissionSelectionId": params.get("permissionSelectionId"),
                 "ephemeral": params.get("ephemeral", False),
             }
         )
@@ -700,9 +865,27 @@ class CodexAdapter:
             ("thread/loaded/list", None),
         ):
             try:
-                await self.rpc.request(method, params)
+                result = await self.rpc.request(method, params)
+                if method == "model/list":
+                    self._model_list_result = result
             except Exception as exc:  # pragma: no cover - defensive against version drift
                 logger.debug("codex bootstrap read failed method={} error={}", method, exc)
+
+    async def model_catalog(self, *, revision: int) -> dict[str, Any] | None:
+        await self.start()
+        items = [_codex_model_item_with_reasoning(item) for item in _model_list_items(self._model_list_result)]
+        return model_catalog_from_runtime_items(
+            "codex",
+            revision=revision,
+            items=items,
+        ).model_dump(mode="json")
+
+    async def permission_catalog(self, *, revision: int) -> dict[str, Any] | None:
+        return permission_catalog_from_items(
+            "codex",
+            revision=revision,
+            items=_codex_permission_catalog_items(),
+        ).model_dump(mode="json")
 
     async def _reduce_current_timeline(
         self,
@@ -933,6 +1116,147 @@ def _sandbox_mode(value: Any) -> str | None:
                 "danger-full-access": "danger-full-access",
             }.get(sandbox_type)
     return None
+
+
+def _codex_permission_catalog_items() -> list[dict[str, Any]]:
+    return [
+        {
+            "id": "untrusted_workspace_write",
+            "label": "Ask for untrusted commands",
+            "description": "Run trusted commands automatically in workspace-write sandbox; ask before untrusted commands.",
+            "default": True,
+            "identity": {
+                "approval_policy": "untrusted",
+                "sandbox": "workspace-write",
+            },
+            "runtimeSettings": {"permissionMode": "untrusted_workspace_write"},
+            "nativeSettings": {
+                "approvalPolicy": "untrusted",
+                "sandbox": "workspace-write",
+                "sandboxPolicy": {"type": "workspaceWrite", "networkAccess": False},
+            },
+        },
+        {
+            "id": "on_request_workspace_write",
+            "label": "Ask when requested",
+            "description": "Use workspace-write sandbox and let the model decide when to ask for approval.",
+            "identity": {
+                "approval_policy": "on-request",
+                "sandbox": "workspace-write",
+            },
+            "runtimeSettings": {"permissionMode": "on_request_workspace_write"},
+            "nativeSettings": {
+                "approvalPolicy": "on-request",
+                "sandbox": "workspace-write",
+                "sandboxPolicy": {"type": "workspaceWrite", "networkAccess": False},
+            },
+        },
+        {
+            "id": "on_request_read_only",
+            "label": "Read only",
+            "description": "Run commands in read-only sandbox; ask before work that needs writes.",
+            "identity": {
+                "approval_policy": "on-request",
+                "sandbox": "read-only",
+            },
+            "runtimeSettings": {"permissionMode": "on_request_read_only"},
+            "nativeSettings": {
+                "approvalPolicy": "on-request",
+                "sandbox": "read-only",
+                "sandboxPolicy": {"type": "readOnly", "networkAccess": False},
+            },
+        },
+        {
+            "id": "never_workspace_write",
+            "label": "Never ask, workspace write",
+            "description": "Do not prompt for approvals; failures are returned to the model. Commands stay sandboxed to workspace writes.",
+            "identity": {
+                "approval_policy": "never",
+                "sandbox": "workspace-write",
+            },
+            "runtimeSettings": {"permissionMode": "never_workspace_write"},
+            "nativeSettings": {
+                "approvalPolicy": "never",
+                "sandbox": "workspace-write",
+                "sandboxPolicy": {"type": "workspaceWrite", "networkAccess": False},
+            },
+        },
+        {
+            "id": "never_danger_full_access",
+            "label": "Full access ⚠️",
+            "description": "Never ask and run without sandboxing. Use only in externally sandboxed environments.",
+            "identity": {
+                "approval_policy": "never",
+                "sandbox": "danger-full-access",
+            },
+            "runtimeSettings": {"permissionMode": "never_danger_full_access"},
+            "nativeSettings": {
+                "approvalPolicy": "never",
+                "sandbox": "danger-full-access",
+                "sandboxPolicy": {"type": "dangerFullAccess"},
+            },
+        },
+    ]
+
+
+def _codex_permission_selection_id(item: dict[str, Any]) -> str:
+    identity = item.get("identity") if isinstance(item.get("identity"), dict) else {"permission_id": item["id"]}
+    return protocol_selection_id("codex", "permission", identity)
+
+
+def _codex_native_permission_settings(selection_id: str | None) -> dict[str, Any]:
+    if selection_id is None:
+        return {}
+    for item in _codex_permission_catalog_items():
+        if _codex_permission_selection_id(item) == selection_id:
+            native_settings = item.get("nativeSettings")
+            return dict(native_settings) if isinstance(native_settings, dict) else {}
+    return {}
+
+
+def _codex_permission_id_from_selection_id(selection_id: str) -> str | None:
+    for item in _codex_permission_catalog_items():
+        if _codex_permission_selection_id(item) == selection_id:
+            return str(item["id"])
+    return None
+
+
+def _codex_permission_state_from_native_result(value: dict[str, Any]) -> tuple[str | None, str | None]:
+    approval_policy = _optional_string(value.get("approvalPolicy"))
+    sandbox = _sandbox_mode(value.get("sandbox") or value.get("sandboxPolicy"))
+    if approval_policy is None and sandbox is None:
+        return None, None
+    for item in _codex_permission_catalog_items():
+        native = item.get("nativeSettings")
+        if not isinstance(native, dict):
+            continue
+        if approval_policy is not None and native.get("approvalPolicy") != approval_policy:
+            continue
+        if sandbox is not None and native.get("sandbox") != sandbox:
+            continue
+        return str(item["id"]), _codex_permission_selection_id(item)
+    return None, None
+
+
+def _runtime_settings_and_permission_selection_from_codex_result(value: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
+    settings = _runtime_settings_from_codex_result(value)
+    permission_mode, permission_selection_id = _codex_permission_state_from_native_result(value)
+    if permission_mode is not None:
+        settings["permissionMode"] = permission_mode
+    return settings, permission_selection_id
+
+
+def _runtime_settings_from_codex_result(value: dict[str, Any]) -> dict[str, Any]:
+    settings: dict[str, Any] = {}
+    if not isinstance(value, dict):
+        return settings
+    model = _optional_string(value.get("model"))
+    if model is not None:
+        settings["model"] = model
+    effort = _optional_string(value.get("reasoningEffort")) or _optional_string(value.get("effort"))
+    if effort is not None:
+        settings["effort"] = effort
+    return settings
 
 
 def _codex_time(value: Any) -> str | None:

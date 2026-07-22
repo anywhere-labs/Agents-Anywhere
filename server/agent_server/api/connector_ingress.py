@@ -23,7 +23,11 @@ from agent_server.core.auth import (
     create_connector_access_token,
     verify_connector_access_token,
 )
-from agent_server.core.protocol import ProtocolCapabilitySet
+from agent_server.core.protocol import (
+    ProtocolCapabilitySet,
+    ProtocolModelCatalog,
+    ProtocolPermissionCatalog,
+)
 from agent_server.infra.connector_rpc import DuplicateConnectorConnectionError, ConnectorRpcManager
 from agent_server.deps import (
     get_attachment_service,
@@ -66,9 +70,10 @@ router = APIRouter(tags=["connector-ingress"])
 class IngestEffect:
     """What one applied notification wants pushed to SSE subscribers.
 
-    Event-Carried State Transfer: timeline.itemUpsert and non-destructive
-    timeline.sync carry committed item payloads so the browser applies them
-    directly. Only destructive snapshot replacement asks clients to refetch.
+    Event-Carried State Transfer: timeline.itemUpsert carries committed item
+    payloads so the browser applies realtime increments directly. Bulk
+    timeline.sync asks clients to refetch their bounded HTTP snapshot window
+    instead of pushing an entire large timeline over WebSocket.
     """
 
     session_id: str | None = None
@@ -523,6 +528,50 @@ async def apply_connector_notification(
         except KeyError:
             logger.warning("protocol capabilities update for unknown connector connector_id={}", connector_id)
         return IngestEffect()
+    elif method == "protocol.modelCatalogUpdated":
+        try:
+            catalog = ProtocolModelCatalog.model_validate(params)
+        except ValidationError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "invalid_protocol_model_catalog",
+                    "message": str(exc),
+                },
+            ) from exc
+        try:
+            await db.update_protocol_catalog(
+                connector_id,
+                runtime=catalog.runtime,
+                catalog_type="model",
+                revision=catalog.revision,
+                catalog=catalog.model_dump(mode="json"),
+            )
+        except KeyError:
+            logger.warning("model catalog update for unknown connector connector_id={}", connector_id)
+        return IngestEffect()
+    elif method == "protocol.permissionCatalogUpdated":
+        try:
+            catalog = ProtocolPermissionCatalog.model_validate(params)
+        except ValidationError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "invalid_protocol_permission_catalog",
+                    "message": str(exc),
+                },
+            ) from exc
+        try:
+            await db.update_protocol_catalog(
+                connector_id,
+                runtime=catalog.runtime,
+                catalog_type="permission",
+                revision=catalog.revision,
+                catalog=catalog.model_dump(mode="json"),
+            )
+        except KeyError:
+            logger.warning("permission catalog update for unknown connector connector_id={}", connector_id)
+        return IngestEffect()
     elif method == "session.updated":
         if await filter_.runtime_disabled(params.get("runtime")):
             return IngestEffect()
@@ -545,7 +594,14 @@ async def apply_connector_notification(
                 last_synced_at=params.get("lastSyncedAt"),
                 source_observed_at=params.get("sourceObservedAt"),
                 last_activity_at=params.get("lastActivityAt"),
+                model_selection_id=params.get("modelSelectionId")
+                if isinstance(params.get("modelSelectionId"), str)
+                else None,
+                permission_selection_id=params.get("permissionSelectionId")
+                if isinstance(params.get("permissionSelectionId"), str)
+                else None,
             )
+            await _apply_runtime_settings_from_session_update(db, session_id, params)
             await db.refresh_session_status_from_timeline(session_id)
             return IngestEffect(session_id=session_id, session_changed=True)
         except KeyError:
@@ -569,7 +625,14 @@ async def apply_connector_notification(
                 last_synced_at=params.get("lastSyncedAt"),
                 source_observed_at=params.get("sourceObservedAt"),
                 last_activity_at=params.get("lastActivityAt"),
+                model_selection_id=params.get("modelSelectionId")
+                if isinstance(params.get("modelSelectionId"), str)
+                else None,
+                permission_selection_id=params.get("permissionSelectionId")
+                if isinstance(params.get("permissionSelectionId"), str)
+                else None,
             )
+            await _apply_runtime_settings_from_session_update(db, session.id, params)
             await db.refresh_session_status_from_timeline(session.id)
             return IngestEffect(session_id=session.id, session_changed=True)
     elif method == "timeline.sync":
@@ -609,15 +672,14 @@ async def apply_connector_notification(
                         turn_id=item.turnId,
                         reason="turn_finished",
                     )
-        # Snapshot replacement can remove items or assign one revision to many
-        # items, so clients should reconcile from the HTTP snapshot. Normal
-        # timeline.sync merges with existing items and can be projected over WS.
+        # timeline.sync can contain the full runtime thread. Do not push every
+        # item over WebSocket; clients should reconcile via the paginated HTTP
+        # snapshot and keep their bounded timeline window.
         return IngestEffect(
             session_id=session_id,
             session_changed=True,
             notices_changed=any(item.type == "turn.end" for item in items),
-            needs_refetch=should_replace_snapshot,
-            items=[item.model_dump(mode="json") for item in stored_items] if not should_replace_snapshot else None,
+            needs_refetch=True,
         )
     elif method == "timeline.itemUpsert":
         item = TimelineItemIn.model_validate(params["item"])
@@ -802,6 +864,24 @@ async def _resolve_approval_session_id(
         )
     except KeyError:
         return approval.sessionId
+
+
+async def _apply_runtime_settings_from_session_update(
+    db: Store,
+    session_id: str,
+    params: dict[str, Any],
+) -> None:
+    runtime_settings = params.get("runtimeSettings")
+    if not isinstance(runtime_settings, dict) or not runtime_settings:
+        return
+    try:
+        await db.patch_session_runtime_settings(session_id, runtime_settings)
+    except Exception as exc:
+        logger.warning(
+            "ignored invalid session runtime settings update session_id={} error={}",
+            session_id,
+            exc,
+        )
 
 
 def _local_session_state(params: dict[str, Any]) -> str:

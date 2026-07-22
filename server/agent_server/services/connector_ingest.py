@@ -41,11 +41,17 @@ class ConnectorIngestService:
         effects = []
         saw_discovery_capabilities = False
         saw_protocol_capabilities = False
+        saw_protocol_catalog = False
         for notification in payload.notifications:
             if notification.method == "connector.capabilitiesUpdated":
                 saw_discovery_capabilities = True
             elif notification.method == "protocol.capabilitiesUpdated":
                 saw_protocol_capabilities = True
+            elif notification.method in {
+                "protocol.modelCatalogUpdated",
+                "protocol.permissionCatalogUpdated",
+            }:
+                saw_protocol_catalog = True
             effects.append(
                 await apply_connector_notification(
                     connector_id,
@@ -58,12 +64,16 @@ class ConnectorIngestService:
                 )
             )
         await _publish_effects(self._store, self._timeline_broker, effects)
-        if saw_discovery_capabilities or saw_protocol_capabilities:
+        if saw_discovery_capabilities or saw_protocol_capabilities or saw_protocol_catalog:
             await publish_dashboard_changed(
                 self._store,
                 self._timeline_broker,
                 connector_id=connector_id,
-                reason="protocol.capabilities" if saw_protocol_capabilities else "connector.capabilities",
+                reason="protocol.catalog"
+                if saw_protocol_catalog
+                else "protocol.capabilities"
+                if saw_protocol_capabilities
+                else "connector.capabilities",
             )
         if saw_discovery_capabilities:
             await send_active_runtimes(self._manager, self._store, connector_id)
@@ -88,14 +98,21 @@ class ConnectorIngestService:
             self._terminal_stream_hub,
         )
         await _publish_effects(self._store, self._timeline_broker, [effect])
-        if method in {"connector.capabilitiesUpdated", "protocol.capabilitiesUpdated"}:
+        if method in {
+            "connector.capabilitiesUpdated",
+            "protocol.capabilitiesUpdated",
+            "protocol.modelCatalogUpdated",
+            "protocol.permissionCatalogUpdated",
+        }:
             import asyncio
 
             await publish_dashboard_changed(
                 self._store,
                 self._timeline_broker,
                 connector_id=connector_id,
-                reason="protocol.capabilities"
+                reason="protocol.catalog"
+                if method in {"protocol.modelCatalogUpdated", "protocol.permissionCatalogUpdated"}
+                else "protocol.capabilities"
                 if method == "protocol.capabilitiesUpdated"
                 else "connector.capabilities",
             )

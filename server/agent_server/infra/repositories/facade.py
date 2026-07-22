@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from agent_server.infra.repositories.active_runs_facade import ActiveRunRepositoryMixin
-from agent_server.infra.repositories.agent_catalog import AgentCatalogRepositoryMixin
 from agent_server.infra.repositories.approvals import ApprovalRepositoryMixin
 from agent_server.infra.repositories.attachments import AttachmentRepositoryMixin
 from agent_server.infra.repositories.connectors import ConnectorRepositoryMixin
@@ -9,6 +8,7 @@ from agent_server.infra.repositories.device_agents import DeviceAgentsRepository
 from agent_server.infra.repositories.instance_settings_facade import InstanceSettingsRepositoryMixin
 from agent_server.infra.repositories.notices import NoticeRepositoryMixin
 from agent_server.infra.repositories.oauth import OAuthRepositoryMixin
+from agent_server.infra.repositories.protocol_catalogs import ProtocolCatalogRepositoryMixin
 from agent_server.infra.repositories.runtime_config_facade import RuntimeConfigRepositoryMixin
 from agent_server.infra.repositories.sessions import SessionRepositoryMixin
 from agent_server.infra.repositories.timeline import TimelineRepositoryMixin
@@ -17,7 +17,7 @@ from agent_server.infra.repositories.store_support import *
 
 
 class Store(
-    AgentCatalogRepositoryMixin,
+    ProtocolCatalogRepositoryMixin,
     RuntimeConfigRepositoryMixin,
     DeviceAgentsRepositoryMixin,
     UserRepositoryMixin,
@@ -48,9 +48,6 @@ class Store(
         # the URL password intact — str(engine.url) would mask it.
         url_str = engine.url.render_as_string(hide_password=False)
         init_db_sync(url_str)
-        # Seed read-only catalog rows in the same sync pass so endpoints that
-        # depend on them don't require lifespan startup. Idempotent by PK.
-        _seed_agent_catalog_sync(url_str)
         seed_runtime_config_schemas_sync(url_str)
 
         self.timeline: SqlTimelineStore = SqlTimelineStore(engine, backend=resolved_backend)
@@ -64,7 +61,6 @@ class Store(
         self.runtime_config = RuntimeConfigService(
             self.instance_settings,
             self.runtime_settings,
-            self,
         )
 
         self._timeline_locks: dict[str, asyncio.Lock] = {}
@@ -78,10 +74,7 @@ class Store(
 
     async def init_schema(self) -> None:
         await init_db(self._engine)
-        await self.seed_agent_catalog()
         await self.seed_runtime_config_schemas()
-
-    # --- agent catalog (modes / models / efforts) -----------------------------
 
 
     async def close(self) -> None:

@@ -134,6 +134,20 @@ async def cancel_turn_blocking_interactions(
     return closed
 
 
+async def cancel_session_blocking_interactions(
+    db: Store,
+    *,
+    session_id: str,
+    reason: str,
+) -> list[Notice]:
+    return await db.close_open_blocking_notices(
+        session_id,
+        status="cancelled",
+        reason=reason,
+        turn_id=None,
+    )
+
+
 def _approval_actions(approval: Approval) -> list[NoticeAction]:
     mapping = {
         "approve": NoticeAction(actionId="approve", label="Approve", style="primary"),

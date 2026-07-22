@@ -19,6 +19,7 @@ from agent_server.infra.connector_rpc import (
     DuplicateConnectorConnectionError,
 )
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
+from agent_server.core.protocol import protocol_selection_id
 from agent_server.services.notices import upsert_execution_error_interaction
 
 
@@ -68,6 +69,64 @@ def auth_headers(client: TestClient, user_id: str = ADMIN_USER, password: str = 
     login = client.post("/auth/login", json={"userId": user_id, "password": password})
     assert login.status_code == 200, login.text
     return {"Authorization": f"Bearer {login.json()['accessToken']}"}
+
+
+def seed_codex_model_catalog(app: Any, connector_id: str) -> str:
+    selection_id = protocol_selection_id("codex", "model", {"model_id": "gpt-5.5", "reasoning_id": "xhigh"})
+    asyncio.run(
+        app.state.store.update_protocol_catalog(
+            connector_id,
+            runtime="codex",
+            catalog_type="model",
+            revision=1,
+            catalog={
+                "runtime": "codex",
+                "revision": 1,
+                "models": [
+                    {
+                        "id": "gpt-5.5",
+                        "displayName": "GPT 5.5",
+                        "selectionId": None,
+                        "reasoningItems": [
+                            {
+                                "id": "xhigh",
+                                "displayName": "Extra high",
+                                "fullModelId": "gpt-5.5",
+                                "selectionId": selection_id,
+                                "default": False,
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+    )
+    return selection_id
+
+
+def seed_codex_permission_catalog(app: Any, connector_id: str) -> str:
+    selection_id = protocol_selection_id("codex", "permission", {"permission_id": "fullAccess"})
+    asyncio.run(
+        app.state.store.update_protocol_catalog(
+            connector_id,
+            runtime="codex",
+            catalog_type="permission",
+            revision=1,
+            catalog={
+                "runtime": "codex",
+                "revision": 1,
+                "permissions": [
+                    {
+                        "id": "fullAccess",
+                        "displayName": "Full access",
+                        "selectionId": selection_id,
+                        "default": False,
+                    }
+                ],
+            },
+        )
+    )
+    return selection_id
 
 
 def create_connector_and_session(client: TestClient, user_id: str = ADMIN_USER):
@@ -243,14 +302,6 @@ def test_platform_session_create_uses_connector_returned_session_id(tmp_path):
                 "runtime": "codex",
                 "title": "New Codex session",
                 "cwd": "/repo",
-                "approvalPolicy": "on-request",
-                "sandbox": {
-                    "type": "workspaceWrite",
-                    "writableRoots": ["/repo"],
-                    "networkAccess": False,
-                    "excludeTmpdirEnvVar": True,
-                    "excludeSlashTmp": True,
-                },
             },
         )
     ]
@@ -260,17 +311,13 @@ def test_platform_session_create_uses_connector_returned_session_id(tmp_path):
     assert [session["id"] for session in listed if session["externalSessionId"] == "thr_created"] == ["sess_codex_created"]
 
 
-def test_session_create_resolves_model_selection_id(tmp_path):
+def test_session_create_passes_model_selection_id(tmp_path):
     app = create_app(tmp_path / "test.sqlite3")
     client = TestClient(app)
     headers = auth_headers(client)
     connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
     connector_id = connector_response.json()["connector"]["id"]
-    catalog = client.get("/agents/codex/model-catalog", headers=headers).json()["catalog"]
-    model = next(item for item in catalog["models"] if item["id"] == "gpt-5.5")
-    model_selection_id = next(item for item in model["reasoningItems"] if item["id"] == "xhigh")[
-        "selectionId"
-    ]
+    model_selection_id = seed_codex_model_catalog(app, connector_id)
 
     class FakeCreateRpc:
         def __init__(self) -> None:
@@ -310,20 +357,18 @@ def test_session_create_resolves_model_selection_id(tmp_path):
 
     assert response.status_code == 200, response.text
     params = fake_rpc.requests[-1][1]
-    assert params["model"] == "gpt-5.5"
-    assert params["effort"] == "xhigh"
+    assert params["modelSelectionId"] == model_selection_id
+    assert "model" not in params
+    assert "effort" not in params
 
 
-def test_session_create_resolves_permission_selection_id(tmp_path):
+def test_session_create_passes_permission_selection_id(tmp_path):
     app = create_app(tmp_path / "test.sqlite3")
     client = TestClient(app)
     headers = auth_headers(client)
     connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
     connector_id = connector_response.json()["connector"]["id"]
-    catalog = client.get("/agents/codex/permission-catalog", headers=headers).json()["catalog"]
-    permission_selection_id = next(
-        item for item in catalog["permissions"] if item["id"] == "fullAccess"
-    )["selectionId"]
+    permission_selection_id = seed_codex_permission_catalog(app, connector_id)
 
     class FakeCreateRpc:
         def __init__(self) -> None:
@@ -363,8 +408,9 @@ def test_session_create_resolves_permission_selection_id(tmp_path):
 
     assert response.status_code == 200, response.text
     params = fake_rpc.requests[-1][1]
-    assert params["approvalPolicy"] == "never"
-    assert params["sandbox"] == {"type": "dangerFullAccess"}
+    assert params["permissionSelectionId"] == permission_selection_id
+    assert "approvalPolicy" not in params
+    assert "sandbox" not in params
 
 
 def test_session_create_rejects_legacy_runtime_settings_model_fields(tmp_path):
@@ -2748,19 +2794,14 @@ def test_legacy_v1_capabilities_blob_migrates_to_v3_view_on_read(tmp_path):
     assert state["disabled"] == []
 
 
-def test_send_message_resolves_model_selection_id(tmp_path):
+def test_send_message_passes_model_selection_id(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, session_id, headers = create_connector_and_session(client)
+    model_selection_id = seed_codex_model_catalog(client.app, connector_id)
     fake_rpc = FakeLocalRpc()
     client.app.state.rpc = fake_rpc
     asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
     client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
-
-    catalog = client.get("/agents/codex/model-catalog", headers=headers).json()["catalog"]
-    model = next(item for item in catalog["models"] if item["id"] == "gpt-5.5")
-    model_selection_id = next(item for item in model["reasoningItems"] if item["id"] == "xhigh")[
-        "selectionId"
-    ]
 
     response = client.post(
         f"/sessions/{session_id}/messages",
@@ -2775,17 +2816,12 @@ def test_send_message_resolves_model_selection_id(tmp_path):
     assert fake_rpc.requests[-1][1] == "turn.start"
     params = fake_rpc.requests[-1][2]
     assert params["content"] == "hi"
+    assert params["modelSelectionId"] == model_selection_id
     assert "permissionMode" not in params
-    assert params["approvalPolicy"] == "on-request"
-    assert params["sandboxPolicy"] == {
-        "type": "workspaceWrite",
-        "writableRoots": ["/repo"],
-        "networkAccess": False,
-        "excludeTmpdirEnvVar": True,
-        "excludeSlashTmp": True,
-    }
-    assert params["model"] == "gpt-5.5"
-    assert params["effort"] == "xhigh"
+    assert "approvalPolicy" not in params
+    assert "sandboxPolicy" not in params
+    assert "model" not in params
+    assert "effort" not in params
 
 
 def test_send_message_rejects_legacy_model_fields(tmp_path):
@@ -3015,10 +3051,8 @@ def test_send_message_omits_unspecified_overrides(tmp_path):
 
     assert response.status_code == 200
     params = fake_rpc.requests[-1][2]
-    for key in ("permissionMode", "model", "effort"):
+    for key in ("permissionMode", "model", "effort", "approvalPolicy", "sandboxPolicy"):
         assert key not in params
-    assert params["approvalPolicy"] == "on-request"
-    assert params["sandboxPolicy"]["type"] == "workspaceWrite"
 
 
 def test_send_message_records_active_run(tmp_path):
@@ -3187,6 +3221,36 @@ def test_interrupt_not_found_result_clears_stale_active_run(tmp_path):
     assert response.status_code == 200, response.text
     assert response.json()["result"] == {"interrupted": False, "reason": "thread_not_found"}
     assert asyncio.run(client.app.state.store.get_active_run(session_id)) is None
+
+
+def test_interrupt_cancels_blocking_interactions(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+    ingest_pending_command_approval(client, access_token, session_id)
+    notice_id = interaction_notice_id(client, session_id, headers, "approval")
+    before_seq = asyncio.run(client.app.state.store.get_session_seq(session_id))
+
+    response = client.post(f"/sessions/{session_id}/interrupt", headers=headers)
+
+    assert response.status_code == 200, response.text
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers).json()
+    assert snapshot["notices"] == []
+    assert snapshot["approvals"] == []
+    assert snapshot["session"]["status"] == "stopping"
+    notice = asyncio.run(client.app.state.store.get_notice(notice_id))
+    assert notice.status == "cancelled"
+    assert notice.context["closedReason"] == "interrupt_requested"
+    recovered = client.get(
+        f"/sessions/{session_id}/events",
+        headers=headers,
+        params={"after": f"seq:{before_seq}"},
+    ).json()
+    notice_events = [event for event in recovered["events"] if event["type"] == "notice.updated"]
+    assert notice_events[-1]["payload"]["notice"]["status"] == "cancelled"
 
 
 def test_turn_start_updates_and_turn_end_clears_active_run(tmp_path):
@@ -5509,6 +5573,36 @@ def test_approval_resolve_waits_for_connector_success_and_updates_target_item(tm
     snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers).json()
     approval_notices = [notice for notice in snapshot["notices"] if notice["interactionType"] == "approval"]
     assert approval_notices == []
+
+
+def test_interaction_response_recovery_includes_resolved_notice(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    ingest_pending_command_approval(client, access_token, session_id)
+    client.app.state.rpc = FakeApprovalRpc()
+    notice_id = interaction_notice_id(client, session_id, headers, "approval")
+    before_seq = asyncio.run(client.app.state.store.get_session_seq(session_id))
+
+    response = client.post(
+        f"/sessions/{session_id}/interactions/{notice_id}/respond",
+        headers=headers,
+        json={"actionId": "approve"},
+    )
+
+    assert response.status_code == 200, response.text
+    recovered = client.get(
+        f"/sessions/{session_id}/events",
+        headers=headers,
+        params={"after": f"seq:{before_seq}"},
+    )
+    assert recovered.status_code == 200, recovered.text
+    notice_events = [
+        event
+        for event in recovered.json()["events"]
+        if event["type"] == "notice.updated" and event["payload"]["notice"]["noticeId"] == notice_id
+    ]
+    assert notice_events
+    assert notice_events[-1]["payload"]["notice"]["status"] == "resolved"
 
 
 def test_approval_resolve_keeps_pending_when_connector_fails(tmp_path):

@@ -10,7 +10,6 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
         <span className="aa-wordmark text-xl">Agents Anywhere</span>
         <nav className="flex items-center gap-4 text-sm text-muted-foreground">
           <a href="#" className="transition-colors hover:text-foreground">GitHub</a>
-          <a href="#" className="transition-colors hover:text-foreground">Docs</a>
           <LocaleSwitcher size="sm" variant="ghost" className="text-foreground" />
         </nav>
       </header>

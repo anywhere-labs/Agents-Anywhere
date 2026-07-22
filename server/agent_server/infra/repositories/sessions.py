@@ -18,6 +18,8 @@ class SessionRepositoryMixin:
         title: str | None,
         cwd: str | None,
         runtime_settings_override: dict[str, Any] | None = None,
+        model_selection_id: str | None = None,
+        permission_selection_id: str | None = None,
     ) -> SessionView:
         session_id = f"sess_{secrets.token_urlsafe(10)}"
         now = utc_now()
@@ -47,6 +49,8 @@ class SessionRepositoryMixin:
                         if runtime_settings_override is not None
                         else None
                     ),
+                    model_selection_id=model_selection_id,
+                    permission_selection_id=permission_selection_id,
                     external_session_id=external_session_id,
                     title=title,
                     cwd=cwd,
@@ -75,9 +79,13 @@ class SessionRepositoryMixin:
         source_observed_at: str | None = None,
         last_activity_at: str | None = None,
         runtime_settings_override: dict[str, Any] | None = None,
+        model_selection_id: str | None = None,
+        permission_selection_id: str | None = None,
         origin: str = "connector_import",
     ) -> SessionView:
         has_runtime_settings_override = runtime_settings_override is not None
+        has_model_selection_id = model_selection_id is not None
+        has_permission_selection_id = permission_selection_id is not None
         now = utc_now()
         normalized_origin = _normalize_session_origin(origin)
         async with self._engine.begin() as conn:
@@ -124,6 +132,8 @@ class SessionRepositoryMixin:
                             if runtime_settings_override is not None
                             else None
                         ),
+                        model_selection_id=model_selection_id,
+                        permission_selection_id=permission_selection_id,
                         external_session_id=external_session_id,
                         title=title,
                         cwd=cwd,
@@ -148,6 +158,8 @@ class SessionRepositoryMixin:
                             sessions_t.c.title,
                             sessions_t.c.cwd,
                             sessions_t.c.status,
+                            sessions_t.c.model_selection_id,
+                            sessions_t.c.permission_selection_id,
                         ).where(sessions_t.c.id == session_id)
                     )
                 ).first()
@@ -177,6 +189,10 @@ class SessionRepositoryMixin:
                         if runtime_settings_override is not None
                         else None
                     )
+                if has_model_selection_id:
+                    values["model_selection_id"] = model_selection_id
+                if has_permission_selection_id:
+                    values["permission_selection_id"] = permission_selection_id
                 semantic_changed = any(
                     field in values and values[field] != getattr(current, field)
                     for field in (
@@ -186,6 +202,8 @@ class SessionRepositoryMixin:
                         "title",
                         "cwd",
                         "status",
+                        "model_selection_id",
+                        "permission_selection_id",
                     )
                 )
                 if semantic_changed:
@@ -630,6 +648,8 @@ class SessionRepositoryMixin:
         last_synced_at: str | None = None,
         source_observed_at: str | None = None,
         last_activity_at: str | None = None,
+        model_selection_id: str | None = None,
+        permission_selection_id: str | None = None,
     ) -> SessionView:
         values: dict[str, Any] = {}
         if status is not None:
@@ -646,6 +666,10 @@ class SessionRepositoryMixin:
             values["source_observed_at"] = source_observed_at
         if last_activity_at is not None:
             values["last_activity_at"] = last_activity_at
+        if model_selection_id is not None:
+            values["model_selection_id"] = model_selection_id
+        if permission_selection_id is not None:
+            values["permission_selection_id"] = permission_selection_id
         async with self._engine.begin() as conn:
             row = (
                 await conn.execute(
@@ -654,6 +678,8 @@ class SessionRepositoryMixin:
                         sessions_t.c.title,
                         sessions_t.c.cwd,
                         sessions_t.c.external_session_id,
+                        sessions_t.c.model_selection_id,
+                        sessions_t.c.permission_selection_id,
                         sessions_t.c.last_activity_at,
                     ).where(sessions_t.c.id == session_id)
                 )
@@ -665,6 +691,8 @@ class SessionRepositoryMixin:
                 "title",
                 "cwd",
                 "external_session_id",
+                "model_selection_id",
+                "permission_selection_id",
             }
             if any(field in values and values[field] != getattr(row, field) for field in semantic_fields):
                 await self._bump_session(conn, session_id)
@@ -756,4 +784,6 @@ class SessionRepositoryMixin:
             updatedSeq=updated_seq,
             runtimeSettings=runtime_settings,
             runtimeSettingsOverride=runtime_override or None,
+            modelSelectionId=row["model_selection_id"],
+            permissionSelectionId=row["permission_selection_id"],
         )

@@ -35,18 +35,77 @@ export function mergeTimelineItems(
   if (incomingItems.length === 0) return currentItems
   const byId = new Map(currentItems.map((item) => [item.id, item]))
   for (const item of incomingItems) {
+    let nextItem = item
     const clientMessageId = timelineClientMessageId(item)
-    if (clientMessageId && !isOptimisticTimelineItem(item)) {
+    if (!isOptimisticTimelineItem(item)) {
       for (const [id, existing] of byId) {
-        if (isOptimisticTimelineItem(existing) && timelineClientMessageId(existing) === clientMessageId) {
+        if (optimisticUserMessageMatchesServerItem(existing, item, clientMessageId)) {
+          nextItem = mergeOptimisticAttachmentMetadata(item, existing)
           byId.delete(id)
         }
       }
     }
-    const existing = byId.get(item.id)
-    if (!existing || existing.updatedSeq <= item.updatedSeq) byId.set(item.id, item)
+    const existing = byId.get(nextItem.id)
+    if (!existing || existing.updatedSeq <= nextItem.updatedSeq) byId.set(nextItem.id, nextItem)
   }
   return sortTimelineItems(Array.from(byId.values()))
+}
+
+function optimisticUserMessageMatchesServerItem(
+  optimisticItem: TimelineItem,
+  serverItem: TimelineItem,
+  serverClientMessageId: string | null,
+): boolean {
+  if (!isOptimisticTimelineItem(optimisticItem)) return false
+  if (optimisticItem.type !== "message" || optimisticItem.role !== "user") return false
+  if (serverItem.type !== "message" || serverItem.role !== "user") return false
+  if (optimisticItem.status !== "pending") return false
+  const optimisticClientMessageId = timelineClientMessageId(optimisticItem)
+  if (serverClientMessageId && optimisticClientMessageId === serverClientMessageId) return true
+  return clientMessageTextMatches(messageText(serverItem), messageText(optimisticItem))
+}
+
+function messageText(item: TimelineItem): string {
+  const text = item.content.text
+  return typeof text === "string" ? text : ""
+}
+
+function clientMessageTextMatches(actual: string, expected: string): boolean {
+  if (!actual || !expected) return false
+  if (actual === expected) return true
+  return actual.startsWith(expected) && actual.slice(expected.length).startsWith("\n\n[")
+}
+
+function mergeOptimisticAttachmentMetadata(serverItem: TimelineItem, optimisticItem: TimelineItem): TimelineItem {
+  const serverAttachments = attachmentsFromContent(serverItem.content)
+  const optimisticAttachments = attachmentsFromContent(optimisticItem.content)
+  if (serverAttachments.length === 0 && optimisticAttachments.length === 0) return serverItem
+
+  const nextAttachments = (serverAttachments.length > 0 ? serverAttachments : optimisticAttachments).map((attachment, index) => {
+    const optimistic = optimisticAttachments[index]
+    if (!optimistic || typeof optimistic !== "object") return attachment
+    return {
+      ...optimistic,
+      ...attachment,
+      name: attachment.name ?? optimistic.name,
+      size: attachment.size ?? optimistic.size,
+      mediaType: attachment.mediaType ?? optimistic.mediaType,
+    }
+  })
+
+  return {
+    ...serverItem,
+    content: {
+      ...serverItem.content,
+      attachments: nextAttachments,
+    },
+  }
+}
+
+function attachmentsFromContent(content: TimelineItem["content"]): Array<Record<string, unknown>> {
+  const raw = content.attachments
+  if (!Array.isArray(raw)) return []
+  return raw.filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object")
 }
 
 export function buildOptimisticUserMessage({

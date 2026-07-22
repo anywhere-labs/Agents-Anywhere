@@ -38,6 +38,8 @@ from agent_server.core.protocol import (
     ProtocolCapabilitySet,
     ProtocolEventEnvelope,
     ProtocolEventRecoveryResponse,
+    ProtocolModelCatalog,
+    ProtocolPermissionCatalog,
     ProtocolSessionSnapshotResponse,
     ProtocolTimelineSnapshot,
 )
@@ -48,8 +50,6 @@ from agent_server.services.approvals import ApprovalService, ApprovalServiceErro
 from agent_server.services.connector_presence import with_effective_session_connector_status
 from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.effective_capabilities import derive_session_effective_capabilities
-from agent_server.services.model_catalog import build_model_catalog
-from agent_server.services.permission_catalog import build_permission_catalog
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.ws_tickets import ClientWsTicketManager
 from agent_server.core.utc import utc_now
@@ -177,13 +177,27 @@ def _events_from_broker_message(message: str) -> list[ProtocolEventEnvelope]:
     return events
 
 
-async def _publish_session_protocol_update(db: Store, broker: TimelineBroker, session_id: str) -> None:
+async def _publish_session_protocol_update(
+    db: Store,
+    broker: TimelineBroker,
+    session_id: str,
+    *,
+    extra_notices: list[Any] | None = None,
+) -> None:
     next_seq = await db.get_session_seq(session_id)
+    notices_by_id = {
+        notice.noticeId: notice.model_dump(mode="json")
+        for notice in await db.list_open_notices(session_id)
+    }
+    for notice in extra_notices or []:
+        notice_id = getattr(notice, "noticeId", None)
+        if isinstance(notice_id, str):
+            notices_by_id[notice_id] = notice.model_dump(mode="json")
     envelope: dict[str, Any] = {
         "sessionId": session_id,
         "nextSeq": next_seq,
         "session": (await db.get_session(session_id)).model_dump(mode="json"),
-        "notices": [notice.model_dump(mode="json") for notice in await db.list_open_notices(session_id)],
+        "notices": list(notices_by_id.values()),
     }
     await broker.publish(session_id, envelope)
 
@@ -200,6 +214,20 @@ async def _best_effort_publish_session_protocol_update(
         await _publish_session_protocol_update(db, broker, session_id)
     except Exception:
         return
+
+
+async def _publish_session_protocol_changes_since(
+    db: Store,
+    broker: TimelineBroker,
+    session_id: str,
+    before_seq: int,
+) -> None:
+    await _publish_session_protocol_update(
+        db,
+        broker,
+        session_id,
+        extra_notices=await db.list_notices_since(session_id, before_seq),
+    )
 
 
 @router.post("")
@@ -420,14 +448,18 @@ async def session_snapshot(
         runtime_capabilities = ProtocolCapabilitySet.model_validate(
             await db.get_protocol_capabilities(session.connectorId, user_id=user_id)
         )
-        defaults = await db.get_user_agent_defaults(user_id)
-        runtime_defaults = defaults.get(session.runtime)
-        models = (
-            runtime_defaults["models"]
-            if runtime_defaults and runtime_defaults.get("models")
-            else await db.list_agent_models(session.runtime)
+        model_catalog = await db.get_protocol_catalog(
+            session.connectorId,
+            runtime=session.runtime,
+            catalog_type="model",
+            user_id=user_id,
         )
-        permissions = await db.list_agent_modes(session.runtime)
+        permission_catalog = await db.get_protocol_catalog(
+            session.connectorId,
+            runtime=session.runtime,
+            catalog_type="permission",
+            user_id=user_id,
+        )
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
     effective_capabilities = derive_session_effective_capabilities(
@@ -442,8 +474,12 @@ async def session_snapshot(
         effectiveCapabilities=effective_capabilities,
         runtimeCapabilities=runtime_capabilities,
         catalogs={
-            "model": build_model_catalog(runtime=session.runtime, models=models),
-            "permission": build_permission_catalog(runtime=session.runtime, permissions=permissions),
+            "model": ProtocolModelCatalog.model_validate(model_catalog)
+            if model_catalog is not None
+            else ProtocolModelCatalog(runtime=session.runtime, revision=0, models=[]),
+            "permission": ProtocolPermissionCatalog.model_validate(permission_catalog)
+            if permission_catalog is not None
+            else ProtocolPermissionCatalog(runtime=session.runtime, revision=0, permissions=[]),
         },
         eventCursor=f"seq:{next_seq}",
         serverTime=utc_now(),
@@ -570,7 +606,7 @@ async def session_events(
             after_seq=after_seq,
             limit=500,
         )
-        notices = await db.list_open_notices(session_id)
+        notices = await db.list_notices_since(session_id, after_seq)
         next_seq = await db.get_session_seq(session_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
@@ -708,8 +744,9 @@ async def interrupt_session(
     broker: TimelineBroker = Depends(get_timeline_broker),
 ) -> RpcResponsePayload:
     try:
+        before_seq = await db.get_session_seq(session_id)
         result = await run_service.interrupt_session(session_id, user_id=user_id)
-        await _publish_session_protocol_update(db, broker, session_id)
+        await _publish_session_protocol_changes_since(db, broker, session_id, before_seq)
         return result
     except SessionRunError as exc:
         await _best_effort_publish_session_protocol_update(db, broker, session_id, user_id=user_id)
@@ -738,6 +775,7 @@ async def respond_interaction(
     allowed_actions = {action.actionId for action in notice.actions}
     if payload.actionId not in allowed_actions:
         raise HTTPException(status_code=422, detail="invalid interaction action")
+    before_seq = await db.get_session_seq(session.id)
     await db.update_notice_status(
         notice.noticeId,
         "response_accepted",
@@ -747,14 +785,16 @@ async def respond_interaction(
         approval_id = notice.context.get("approvalId")
         if not isinstance(approval_id, str):
             await db.update_notice_status(notice.noticeId, "failed", context_patch={"error": "missing approval id"})
+            await _publish_session_protocol_changes_since(db, broker, session.id, before_seq)
             raise HTTPException(status_code=422, detail="interaction is missing approval id")
         status = _approval_status_for_action(payload.actionId)
         if status is None:
             await db.update_notice_status(notice.noticeId, "failed", context_patch={"error": "invalid approval action"})
+            await _publish_session_protocol_changes_since(db, broker, session.id, before_seq)
             raise HTTPException(status_code=422, detail="invalid approval action")
         try:
             result = await approval_service.resolve(approval_id, status, user_id=user_id)
-            await _publish_session_protocol_update(db, broker, session.id)
+            await _publish_session_protocol_changes_since(db, broker, session.id, before_seq)
             return result
         except ApprovalServiceError as exc:
             current_notice = await db.get_notice(notice.noticeId)
@@ -764,16 +804,16 @@ async def respond_interaction(
                     "failed",
                     context_patch={"error": exc.detail},
                 )
-            await _publish_session_protocol_update(db, broker, session.id)
+            await _publish_session_protocol_changes_since(db, broker, session.id, before_seq)
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     if notice.interactionType == "execution_error":
         await db.update_notice_status(notice.noticeId, "resolved")
         await db.refresh_session_status_from_timeline(session.id)
-        await _publish_session_protocol_update(db, broker, session.id)
+        await _publish_session_protocol_changes_since(db, broker, session.id, before_seq)
         return RpcResponsePayload(ok=True, result={"resolved": True})
     await db.update_notice_status(notice.noticeId, "resolved")
     await db.refresh_session_status_from_timeline(session.id)
-    await _publish_session_protocol_update(db, broker, session.id)
+    await _publish_session_protocol_changes_since(db, broker, session.id, before_seq)
     return RpcResponsePayload(ok=True, result={"resolved": True})
 
 

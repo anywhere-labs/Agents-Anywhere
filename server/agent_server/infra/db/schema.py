@@ -51,38 +51,16 @@ device_agent_settings = Table(
 )
 
 
-def _agent_catalog_table(name: str) -> Table:
-    return Table(
-        name,
-        metadata,
-        Column("runtime", Text, nullable=False),
-        Column("key", Text, nullable=False),
-        Column("display_label", Text, nullable=False),
-        Column("description", Text),
-        Column("is_default", Integer, nullable=False, server_default="0"),
-        Column("sort_order", Integer, nullable=False),
-        PrimaryKeyConstraint("runtime", "key"),
-    )
-
-
-# Per-runtime catalogs that drive the mode / model / effort dropdowns in the
-# session composer. Rows are seeded on startup and treated as read-only by the
-# rest of the backend.
-agent_modes = _agent_catalog_table("agent_modes")
-agent_models = _agent_catalog_table("agent_models")
-agent_efforts = _agent_catalog_table("agent_efforts")
-
-
-user_agent_defaults = Table(
-    "user_agent_defaults",
+connector_runtime_catalogs = Table(
+    "connector_runtime_catalogs",
     metadata,
-    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("connector_id", Text, ForeignKey("connectors.id", ondelete="CASCADE"), nullable=False),
     Column("runtime", Text, nullable=False),
-    Column("enabled", Integer, nullable=False),
-    Column("settings_json", Text, nullable=False),
-    Column("models_json", Text, nullable=False),
+    Column("catalog_type", Text, nullable=False),
+    Column("revision", Integer, nullable=False),
+    Column("catalog_json", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
-    PrimaryKeyConstraint("user_id", "runtime"),
+    PrimaryKeyConstraint("connector_id", "runtime", "catalog_type"),
 )
 
 
@@ -217,6 +195,8 @@ sessions = Table(
     Column("runtime", Text, nullable=False),
     Column("origin", Text, nullable=False, server_default="connector_import"),
     Column("runtime_settings_override", Text),
+    Column("model_selection_id", Text),
+    Column("permission_selection_id", Text),
     Column("external_session_id", Text),
     Column("title", Text),
     Column("cwd", Text),

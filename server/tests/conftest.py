@@ -33,8 +33,8 @@ _TRUNCATE_SQL = (
     "TRUNCATE TABLE dashboard_daily_metrics, dashboard_user_daily_facts, dashboard_settings, "
     "timeline_items, approvals, notices, session_active_runs, "
     "sessions, "
-    "device_agent_settings, pairing_codes, connectors, users, instance_settings, "
-    "agent_modes, agent_models, agent_efforts RESTART IDENTITY CASCADE"
+    "connector_runtime_catalogs, device_agent_settings, pairing_codes, connectors, users, instance_settings "
+    "RESTART IDENTITY CASCADE"
 )
 
 

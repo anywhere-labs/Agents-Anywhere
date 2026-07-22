@@ -1,16 +1,16 @@
 "use client"
 
 import * as React from "react"
-import { Download, FolderOpen, Loader2, PanelLeft, SquareTerminal } from "lucide-react"
+import { Download, FolderOpen, Loader2, SquareTerminal } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
 import { Input } from "@/components/ui/input"
-import { useSidebar } from "@/components/ui/sidebar"
-import { useDashboardSidebarControls } from "@/components/demo"
+import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
 import { useWorkspace, type PanelId } from "@/components/workspace-context"
+import { useIsMobile } from "@/hooks/use-mobile"
 import type { SessionMemorySnapshot } from "@/components/session-detail"
 import { cn } from "@/lib/utils"
 import { useTranslations } from "next-intl"
@@ -54,11 +54,9 @@ export function SessionViewHeader({
   onExportRemoteTimeline,
   exporting,
 }: SessionViewHeaderProps) {
-  const { isMobile, toggleSidebar } = useSidebar()
   const { renameSession } = useWorkspace()
-  const sidebarControls = useDashboardSidebarControls()
   const tSession = useTranslations("dashboard.session")
-  const tActions = useTranslations("dashboard.actions")
+  const isMobile = useIsMobile()
   const [editingTitle, setEditingTitle] = React.useState(false)
   const [titleDraft, setTitleDraft] = React.useState(session.title ?? "")
   const [renaming, setRenaming] = React.useState(false)
@@ -66,14 +64,6 @@ export function SessionViewHeader({
   React.useEffect(() => {
     if (!editingTitle) setTitleDraft(session.title ?? "")
   }, [editingTitle, session.title])
-
-  const toggleDashboardSidebar = React.useCallback(() => {
-    if (isMobile) {
-      toggleSidebar()
-      return
-    }
-    sidebarControls?.toggleSidebar()
-  }, [isMobile, sidebarControls, toggleSidebar])
 
   const cancelRename = React.useCallback(() => {
     setTitleDraft(session.title ?? "")
@@ -108,16 +98,7 @@ export function SessionViewHeader({
         <div key={layer.key} className={layer.className} style={layer.style} />
       ))}
       <div className="pointer-events-auto relative flex h-14 items-center gap-2 px-2">
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          type="button"
-          aria-label={sidebarControls?.open === false ? tActions("expand") : tActions("collapse")}
-          onClick={toggleDashboardSidebar}
-          className="shrink-0 text-muted-foreground hover:text-foreground"
-        >
-          <PanelLeft className="size-4" />
-        </Button>
+        <DashboardSidebarToggle />
         {editingTitle ? (
           <Input
             autoFocus
@@ -162,7 +143,7 @@ export function SessionViewHeader({
         />
         <div className="ml-auto flex items-center gap-1">
           <TogglePanelButton id="files" icon={PANEL_META.files.icon} />
-          <TogglePanelButton id="terminal" icon={PANEL_META.terminal.icon} />
+          {isMobile ? null : <TogglePanelButton id="terminal" icon={PANEL_META.terminal.icon} />}
         </div>
       </div>
     </header>
@@ -300,13 +281,14 @@ function SessionMetaBadge({
 
 function TogglePanelButton({ id, icon: Icon }: { id: PanelId; icon: PanelIcon }) {
   const { panels, setPanelMode } = useWorkspace()
+  const isMobile = useIsMobile()
   const t = useTranslations("dashboard.session")
-  const active = panels[id] !== "closed"
+  const active = isMobile ? panels[id] === "floating" : panels[id] !== "closed"
   return (
     <button
       type="button"
       aria-label={t(PANEL_META[id].titleKey)}
-      onClick={() => setPanelMode(id, active ? "closed" : "docked")}
+      onClick={() => setPanelMode(id, active ? "closed" : isMobile ? "floating" : "docked")}
       className={cn(
         "rounded-md p-2 transition-colors hover:bg-accent hover:text-foreground",
         active ? "text-foreground" : "text-muted-foreground",

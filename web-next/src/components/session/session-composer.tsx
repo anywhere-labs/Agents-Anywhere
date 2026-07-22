@@ -1,5 +1,6 @@
 "use client"
 
+import * as React from "react"
 import { ArrowUp, Check, ChevronDown, Loader2, Square } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -7,7 +8,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
@@ -22,32 +22,32 @@ import {
   useAttachments,
   type AttachedFile,
 } from "@/components/attachment-input"
-import {
-  composerMenuOptions,
-  effortFieldForModel,
-  effectiveFieldValue,
-  optionLabel,
-  runtimeConfigFields,
-  validEffortValue,
-} from "@/features/dashboard/runtime-config"
 import { cn } from "@/lib/utils"
-import type { RuntimeConfigSchema, SessionView } from "@/features/dashboard/types"
+import type { ProtocolModelCatalog, ProtocolPermissionCatalog, SessionView } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
-import { stringSetting } from "@/components/session/session-utils"
+import {
+  modelIdsForSelectionId,
+  modelSelectionIdForCatalog,
+  permissionIdForRuntimeSettings,
+  permissionIdForSelectionId,
+  permissionSelectionIdForCatalog,
+} from "@/components/session/catalog-selection"
+import { SelectionSettingsDrawer } from "@/components/session/selection-settings-drawer"
+import { useElementWidth } from "@/hooks/use-element-width"
 
 export type { AttachedFile }
 
 export function SessionComposer({
   session,
   pendingInteractionCount,
+  creatingSession = false,
   sending,
   interrupting,
   takeoverBusy,
   value,
-  runtimeSchema,
   runtimeSettings,
-  runtimeSettingsBusy,
-  onPatchRuntimeSettings,
+  modelCatalog,
+  permissionCatalog,
   onValueChange,
   onSend,
   onInterrupt,
@@ -55,16 +55,20 @@ export function SessionComposer({
 }: {
   session: SessionView
   pendingInteractionCount: number
+  creatingSession?: boolean
   sending: boolean
   interrupting: boolean
   takeoverBusy: boolean
   value: string
-  runtimeSchema: RuntimeConfigSchema | null
   runtimeSettings: Record<string, unknown> | null
-  runtimeSettingsBusy: boolean
-  onPatchRuntimeSettings: (settings: Record<string, unknown>) => void
+  modelCatalog: ProtocolModelCatalog | null
+  permissionCatalog: ProtocolPermissionCatalog | null
   onValueChange: (value: string) => void
-  onSend: (content: string, attachments: AttachedFile[]) => Promise<boolean>
+  onSend: (
+    content: string,
+    attachments: AttachedFile[],
+    selections: { modelSelectionId?: string; permissionSelectionId?: string },
+  ) => Promise<boolean>
   onInterrupt: () => void
   onToggleTakeover: () => void
 }) {
@@ -72,6 +76,8 @@ export function SessionComposer({
   const tNew = useTranslations("dashboard.new")
   const { attachments, isDragging, add, remove, clear, onDragEnter, onDragLeave, onDragOver, onDrop } =
     useAttachments()
+  const composerRef = React.useRef<HTMLDivElement | null>(null)
+  const composerWidth = useElementWidth(composerRef)
   const isBusy = session.status === "running" || session.status === "blocked"
   const isStopping = session.status === "stopping"
   const isPending = session.status === "pending"
@@ -79,51 +85,84 @@ export function SessionComposer({
   const canSend =
     connectorOnline &&
     session.takeover &&
+    !creatingSession &&
     !sending &&
     !interrupting &&
     session.status === "idle"
   const hasInput = value.trim().length > 0 || attachments.length > 0
-  const showInterrupt = (session.status === "running" || session.status === "blocked" || session.status === "pending") && !isStopping
-  const settingsFields = runtimeConfigFields(runtimeSchema, runtimeSettings, "session")
-  const permissionField = settingsFields.find((field) => field.key === "permissionMode")
-  const modelField = settingsFields.find((field) => field.key === "model")
-  const rawEffortField = settingsFields.find((field) => field.key === "effort")
-  const effortField = effortFieldForModel(
-    modelField,
-    rawEffortField,
-    runtimeSettings?.model,
-  )
-  const effortFieldFor = (model: string) => effortFieldForModel(
-    modelField,
-    rawEffortField,
-    model,
-  )
-  const patchModel = (model: string) => {
-    const nextEffort = validEffortValue(effortFieldFor(model), runtimeSettings?.effort)
-    onPatchRuntimeSettings(nextEffort ? { model, effort: nextEffort } : { model, effort: null })
-  }
-  const patchModelEffort = (model: string, effort: string) => {
-    onPatchRuntimeSettings({ model, effort })
-  }
-  const permissionItems = composerMenuOptions(permissionField)
-  const modelItems = composerMenuOptions(modelField)
-  const effortItems = composerMenuOptions(effortField)
-  const permissionValue = stringSetting(runtimeSettings?.permissionMode)
-  const modelValue = effectiveFieldValue(modelField, runtimeSettings?.model)
-  const effortValue = effectiveFieldValue(effortField, runtimeSettings?.effort)
-  const permissionLabel = optionLabel(permissionField, runtimeSettings?.permissionMode, tNew("permissionMode"))
-  const modelLabel = optionLabel(modelField, runtimeSettings?.model, tNew("model"))
-  const effortLabel = optionLabel(effortField, runtimeSettings?.effort, tNew("reasoning"))
-  const hasSelectors = Boolean(permissionField || modelField || effortField)
-  const placeholder = !session.takeover
+  const showInterrupt = !creatingSession && (session.status === "running" || session.status === "blocked" || session.status === "pending") && !isStopping
+  const [selectedPermissionMode, setSelectedPermissionMode] = React.useState("")
+  const [selectedModel, setSelectedModel] = React.useState("")
+  const [selectedReasoning, setSelectedReasoning] = React.useState("")
+  const permissionItems = permissionCatalog?.permissions.map((item) => ({
+    id: item.id,
+    label: item.displayName,
+    default: item.default,
+    selectionId: item.selectionId,
+  })) ?? []
+  const modelItems = modelCatalog?.models.map((item) => ({
+    id: item.id,
+    label: item.displayName,
+    default: item.default,
+    selectionId: item.selectionId,
+    reasoningItems: item.reasoningItems.map((reasoning) => ({
+      id: reasoning.id,
+      label: reasoning.displayName,
+      default: reasoning.default,
+      selectionId: reasoning.selectionId,
+    })),
+  })) ?? []
+  const selectedModelItem = modelItems.find((item) => item.id === selectedModel)
+  const effortItems = selectedModelItem?.reasoningItems ?? []
+  const modelSelectionValue = modelIdsForSelectionId(modelCatalog, session.modelSelectionId)
+  const permissionSelectionValue = permissionIdForSelectionId(permissionCatalog, session.permissionSelectionId)
+  const permissionValue = permissionSelectionValue || permissionIdForRuntimeSettings(permissionCatalog, runtimeSettings)
+  const modelValue = modelSelectionValue?.modelId || (typeof runtimeSettings?.model === "string" ? runtimeSettings.model : "")
+  const effortValue = modelSelectionValue?.reasoningId || (typeof runtimeSettings?.effort === "string" ? runtimeSettings.effort : "")
+  const permissionLabel =
+    permissionItems.find((item) => item.id === selectedPermissionMode)?.label ?? tNew("permissionMode")
+  const modelLabel = selectedModelItem?.label ?? tNew("model")
+  const effortLabel = effortItems.find((item) => item.id === selectedReasoning)?.label ?? tNew("reasoning")
+  const hasSelectors = Boolean(permissionItems.length > 0 || modelItems.length > 0)
+  const compactSelectors = hasSelectors && composerWidth > 0 && composerWidth < 560
+
+  React.useEffect(() => {
+    const nextPermission = permissionItems.some((item) => item.id === permissionValue)
+      ? permissionValue
+      : permissionItems.find((item) => item.default)?.id ?? permissionItems[0]?.id ?? ""
+    setSelectedPermissionMode((current) =>
+      current && permissionItems.some((item) => item.id === current) ? current : nextPermission,
+    )
+  }, [permissionItems, permissionValue])
+
+  React.useEffect(() => {
+    const nextModel = modelItems.some((item) => item.id === modelValue)
+      ? modelValue
+      : modelItems.find((item) => item.default)?.id ?? modelItems[0]?.id ?? ""
+    setSelectedModel((current) => current && modelItems.some((item) => item.id === current) ? current : nextModel)
+  }, [modelItems, modelValue])
+
+  React.useEffect(() => {
+    const nextEffort = effortItems.some((item) => item.id === effortValue)
+      ? effortValue
+      : effortItems.find((item) => item.default)?.id ?? effortItems[0]?.id ?? ""
+    setSelectedReasoning((current) => current && effortItems.some((item) => item.id === current) ? current : nextEffort)
+  }, [effortItems, effortValue])
+  const modelSelectionId = modelSelectionIdForCatalog(modelCatalog, selectedModel, selectedReasoning)
+  const permissionSelectionId = permissionSelectionIdForCatalog(permissionCatalog, selectedPermissionMode)
+  const placeholder = creatingSession
+    ? tSession("creatingPlaceholder")
+    : !session.takeover
     ? tSession("readOnlyPlaceholder")
     : !connectorOnline
       ? tSession("deviceOfflinePlaceholder")
       : pendingInteractionCount > 0
         ? tSession("waitingApprovalPlaceholder")
-        : isStopping || isPending || isBusy
-          ? tSession("busyPlaceholder")
-          : tSession("replyPlaceholder")
+        : isPending
+          ? tSession("pendingPlaceholder")
+          : isStopping || isBusy
+            ? tSession("busyPlaceholder")
+            : tSession("replyPlaceholder")
 
   const submit = async () => {
     if (!canSend || !hasInput) return
@@ -131,7 +170,10 @@ export function SessionComposer({
     const files = attachments
     onValueChange("")
     clear()
-    await onSend(text, files)
+    await onSend(text, files, {
+      ...(modelSelectionId ? { modelSelectionId } : {}),
+      ...(permissionSelectionId ? { permissionSelectionId } : {}),
+    })
   }
 
   const primaryAction = () => {
@@ -153,6 +195,7 @@ export function SessionComposer({
       <DragOverlay isDragging={isDragging} />
       <div className="mx-auto w-full max-w-3xl space-y-2">
         <div
+          ref={composerRef}
           className={cn(
             "relative rounded-2xl border border-border bg-card/85 shadow-sm backdrop-blur-xl transition-colors supports-backdrop-filter:bg-card/70 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20",
             isDragging && "border-primary bg-primary/5",
@@ -188,8 +231,29 @@ export function SessionComposer({
               className="size-8"
             />
             {hasSelectors ? (
-              <>
-                {permissionField ? (
+              compactSelectors ? (
+                <SelectionSettingsDrawer
+                  disabled={!runtimeSettings}
+                  buttonLabel={tNew("selectionSettings")}
+                  title={tNew("selectionSettings")}
+                  description={tNew("selectionSettingsDescription")}
+                  permissionLabel={tNew("permissionMode")}
+                  modelLabel={tNew("modelAndReasoning")}
+                  reasoningLabel={tNew("reasoning")}
+                  permissionItems={permissionItems}
+                  selectedPermission={selectedPermissionMode}
+                  onPermissionChange={setSelectedPermissionMode}
+                  modelItems={modelItems}
+                  selectedModel={selectedModel}
+                  selectedReasoning={selectedReasoning}
+                  onModelChange={(modelId, reasoningId) => {
+                    setSelectedModel(modelId)
+                    setSelectedReasoning(reasoningId)
+                  }}
+                />
+              ) : (
+                <>
+                {permissionItems.length > 0 ? (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button
@@ -197,7 +261,7 @@ export function SessionComposer({
                         variant="ghost"
                         size="sm"
                         className="h-8 gap-1.5 rounded-xl px-2.5 text-muted-foreground"
-                        disabled={!runtimeSettings || runtimeSettingsBusy}
+                        disabled={!runtimeSettings}
                       >
                         <span className="size-1.5 rounded-full bg-primary" />
                         <span className="text-foreground">{permissionLabel}</span>
@@ -209,16 +273,16 @@ export function SessionComposer({
                         <DropdownMenuItem
                           key={item.id}
                           className="gap-2"
-                          onSelect={() => onPatchRuntimeSettings({ permissionMode: item.id })}
+                          onSelect={() => setSelectedPermissionMode(item.id)}
                         >
-                          <Check className={cn("size-3.5", permissionValue === item.id ? "opacity-100" : "opacity-0")} />
+                          <Check className={cn("size-3.5", selectedPermissionMode === item.id ? "opacity-100" : "opacity-0")} />
                           <span>{item.label}</span>
                         </DropdownMenuItem>
                       ))}
                     </DropdownMenuContent>
                   </DropdownMenu>
                 ) : null}
-                {modelField || effortField ? (
+                {modelItems.length > 0 ? (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button
@@ -226,40 +290,29 @@ export function SessionComposer({
                         variant="ghost"
                         size="sm"
                         className="h-8 gap-1.5 rounded-xl px-2.5 text-muted-foreground"
-                        disabled={!runtimeSettings || runtimeSettingsBusy}
+                        disabled={!runtimeSettings}
                       >
-                        {effortField ? <span className="text-foreground">{effortLabel}</span> : null}
-                        {effortField && modelField ? <span className="text-muted-foreground/50">·</span> : null}
-                        {modelField ? <span className="max-w-40 truncate text-foreground">{modelLabel}</span> : null}
+                        {effortItems.length > 0 ? <span className="text-foreground">{effortLabel}</span> : null}
+                        {effortItems.length > 0 ? <span className="text-muted-foreground/50">·</span> : null}
+                        <span className="max-w-40 truncate text-foreground">{modelLabel}</span>
                         <ChevronDown className="size-3.5 opacity-60" />
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="start" className="w-56">
-                      {!modelField && effortItems.length > 0 ? (
-                        effortItems.map((item) => (
-                          <DropdownMenuItem
-                            key={item.id}
-                            className="gap-2"
-                            onSelect={() => onPatchRuntimeSettings({ effort: item.id })}
-                          >
-                            <Check className={cn("size-3.5", effortValue === item.id ? "opacity-100" : "opacity-0")} />
-                            <span>{item.label}</span>
-                          </DropdownMenuItem>
-                        ))
-                      ) : null}
-                      {!modelField && effortItems.length > 0 && modelItems.length > 0 ? <DropdownMenuSeparator /> : null}
                       {modelItems.length > 0 ? (
                         modelItems.map((modelItem) => {
-                          const modelEffortField = effortFieldFor(modelItem.id)
-                          const modelEfforts = composerMenuOptions(modelEffortField)
+                          const modelEfforts = modelItem.reasoningItems
                           if (modelEfforts.length === 0) {
                             return (
                               <DropdownMenuItem
                                 key={modelItem.id}
                                 className="gap-2"
-                                onSelect={() => patchModel(modelItem.id)}
+                                onSelect={() => {
+                                  setSelectedModel(modelItem.id)
+                                  setSelectedReasoning("")
+                                }}
                               >
-                                <Check className={cn("size-3.5", modelValue === modelItem.id ? "opacity-100" : "opacity-0")} />
+                                <Check className={cn("size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
                                 <span className="truncate">{modelItem.label}</span>
                               </DropdownMenuItem>
                             )
@@ -267,7 +320,7 @@ export function SessionComposer({
                           return (
                             <DropdownMenuSub key={modelItem.id}>
                               <DropdownMenuSubTrigger className="gap-2">
-                                <Check className={cn("size-3.5", modelValue === modelItem.id ? "opacity-100" : "opacity-0")} />
+                                <Check className={cn("size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
                                 <span className="max-w-40 truncate">{modelItem.label}</span>
                               </DropdownMenuSubTrigger>
                               <DropdownMenuSubContent className="w-56">
@@ -275,11 +328,14 @@ export function SessionComposer({
                                   <DropdownMenuItem
                                     key={item.id}
                                     className="gap-2"
-                                    onSelect={() => patchModelEffort(modelItem.id, item.id)}
+                                    onSelect={() => {
+                                      setSelectedModel(modelItem.id)
+                                      setSelectedReasoning(item.id)
+                                    }}
                                   >
                                     <Check className={cn(
                                       "size-3.5",
-                                      modelValue === modelItem.id && effortValue === item.id ? "opacity-100" : "opacity-0",
+                                      selectedModel === modelItem.id && selectedReasoning === item.id ? "opacity-100" : "opacity-0",
                                     )} />
                                     <span className="truncate">{item.label}</span>
                                   </DropdownMenuItem>
@@ -292,25 +348,26 @@ export function SessionComposer({
                     </DropdownMenuContent>
                   </DropdownMenu>
                 ) : null}
-              </>
+                </>
+              )
             ) : null}
             <div
               role="switch"
               aria-checked={session.takeover}
-              aria-disabled={!connectorOnline || takeoverBusy}
-              tabIndex={connectorOnline && !takeoverBusy ? 0 : -1}
+              aria-disabled={!connectorOnline || takeoverBusy || creatingSession}
+              tabIndex={connectorOnline && !takeoverBusy && !creatingSession ? 0 : -1}
               className={cn(
                 "ml-auto flex h-8 items-center gap-2 rounded-xl px-2.5 text-sm text-muted-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-                connectorOnline && !takeoverBusy && "cursor-pointer hover:bg-accent hover:text-accent-foreground",
-                (!connectorOnline || takeoverBusy) && "opacity-50",
+                connectorOnline && !takeoverBusy && !creatingSession && "cursor-pointer hover:bg-accent hover:text-accent-foreground",
+                (!connectorOnline || takeoverBusy || creatingSession) && "opacity-50",
                 session.takeover && "text-foreground",
               )}
               onClick={() => {
-                if (!connectorOnline || takeoverBusy) return
+                if (!connectorOnline || takeoverBusy || creatingSession) return
                 onToggleTakeover()
               }}
               onKeyDown={(event) => {
-                if (!connectorOnline || takeoverBusy) return
+                if (!connectorOnline || takeoverBusy || creatingSession) return
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault()
                   onToggleTakeover()

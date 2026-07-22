@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { ArrowDown, ChevronDown, CircleAlert, Loader2 } from "lucide-react"
+import { ArrowDown, ChevronDown, CircleAlert, Loader2, WifiOff } from "lucide-react"
 import { toast } from "sonner"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -14,7 +14,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { ScrollArea } from "@/components/ui/scroll-area"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker"
+import {
+  MessageScroller,
+  MessageScrollerButton,
+  MessageScrollerContent,
+  MessageScrollerItem,
+  MessageScrollerProvider,
+  MessageScrollerViewport,
+  useMessageScroller,
+} from "@/components/ui/message-scroller"
 import { createClientId } from "@/lib/id"
 import { cn } from "@/lib/utils"
 import { dashboardApi } from "@/features/dashboard/api"
@@ -22,17 +32,18 @@ import type {
   Notice,
   ProtocolCapabilitySet,
   ProtocolEventEnvelope,
-  RuntimeConfigSchema,
+  ProtocolModelCatalog,
+  ProtocolPermissionCatalog,
   SessionSnapshotResponse,
   SessionStateResponse,
   SessionView,
   TimelineItem,
 } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
-import { InteractionCard, InteractionHeaderNotice, NotificationCard } from "@/components/session/session-approval-card"
+import { InteractionCard, NotificationCard } from "@/components/session/session-approval-card"
 import { SessionSkeleton, SessionSkeletonInline } from "@/components/session/session-skeleton"
 import { TimelineEntry } from "@/components/session/session-timeline-entry"
-import { isCreatedFileChange } from "@/components/session/session-tool-cards"
+import { isCreatedFileChange, JsonBlock } from "@/components/session/session-tool-cards"
 import { SessionComposer, type AttachedFile } from "@/components/session/session-composer"
 import {
   buildOptimisticUserMessage,
@@ -67,11 +78,13 @@ type SessionRemoteState = SessionStateResponse & {
   notices: Notice[]
   eventCursor: string
   effectiveCapabilities: ProtocolCapabilitySet | null
+  catalogs: {
+    model?: ProtocolModelCatalog
+    permission?: ProtocolPermissionCatalog
+    [key: string]: unknown
+  }
 }
 
-const AUTO_SCROLL_BOTTOM_DISTANCE = 180
-const SCROLL_TO_BOTTOM_INTERVAL_MS = 1000
-const SCROLL_TO_BOTTOM_PRUNE_CHECK_MS = 120
 const INITIAL_TIMELINE_LIMIT = 100
 const TIMELINE_PAGE_LIMIT = 100
 const LOAD_OLDER_SCROLL_THRESHOLD = 96
@@ -140,7 +153,20 @@ function buildComposerBlurLayers({
   })
 }
 
-async function loadInitialSessionState(token: string, sessionId: string): Promise<SessionRemoteState> {
+async function loadInitialSessionState(
+  token: string,
+  sessionId: string,
+  options: { syncRuntime?: boolean } = {},
+): Promise<SessionRemoteState> {
+  if (options.syncRuntime) {
+    try {
+      await dashboardApi.syncSession(token, sessionId)
+    } catch {
+      // Opening a session should still work when the connector is offline or
+      // the runtime cannot provide a fresh snapshot. The HTTP snapshot remains
+      // the fallback source of truth.
+    }
+  }
   return sessionStateFromSnapshot(await dashboardApi.getSessionSnapshot(token, sessionId, INITIAL_TIMELINE_LIMIT))
 }
 
@@ -155,6 +181,7 @@ function sessionStateFromSnapshot(snapshot: SessionSnapshotResponse): SessionRem
     serverTime: snapshot.serverTime,
     eventCursor: snapshot.eventCursor,
     effectiveCapabilities: snapshot.effectiveCapabilities,
+    catalogs: snapshot.catalogs,
   }
 }
 
@@ -214,28 +241,18 @@ export function SessionDetail({
   const [takeoverBusy, setTakeoverBusy] = React.useState(false)
   const [resolvingNoticeId, setResolvingNoticeId] = React.useState<string | null>(null)
   const [resolvingActionId, setResolvingActionId] = React.useState<string | null>(null)
-  const [runtimeSchema, setRuntimeSchema] = React.useState<RuntimeConfigSchema | null>(null)
-  const [runtimeSettings, setRuntimeSettings] = React.useState<Record<string, unknown> | null>(null)
-  const [runtimeSettingsBusy, setRuntimeSettingsBusy] = React.useState(false)
-  const [showScrollBottom, setShowScrollBottom] = React.useState(false)
   const [loadingOlder, setLoadingOlder] = React.useState(false)
+  const [scrollToEndRequest, setScrollToEndRequest] = React.useState(0)
   const [pendingTakeover, setPendingTakeover] = React.useState<boolean | null>(null)
   const [composerDraftState, setComposerDraftState] = React.useState<ComposerDraftState>(() => ({
     sessionId,
     value: readComposerDraft(sessionId),
   }))
-  const timelineRef = React.useRef<HTMLDivElement | null>(null)
   const nextSeqRef = React.useRef(0)
-  const autoScrollOnNextUpdateRef = React.useRef(false)
-  const forceScrollOnNextUpdateRef = React.useRef(false)
-  const initialScrollDoneRef = React.useRef(false)
   const loadingOlderRef = React.useRef(false)
-  const pendingPrependScrollRestoreRef = React.useRef<{ scrollHeight: number; scrollTop: number } | null>(null)
-  const lastScrollToBottomAtRef = React.useRef(0)
-  const scrollToBottomTimerRef = React.useRef<number | null>(null)
-  const pruneAfterScrollTimerRef = React.useRef<number | null>(null)
 
   const session = state?.session ?? fallbackSession
+  const runtimeSettings = session?.runtimeSettings ?? null
   const composerDraft = composerDraftState.sessionId === sessionId ? composerDraftState.value : ""
   const isLocalOptimisticSession = isOptimisticSession(sessionId)
 
@@ -264,6 +281,7 @@ export function SessionDetail({
           notices: [],
           eventCursor: `seq:${optimisticState.nextSeq}`,
           effectiveCapabilities: null,
+          catalogs: {},
         })
       }
       return
@@ -313,66 +331,8 @@ export function SessionDetail({
     })
   }, [onMemorySnapshotUpdated, state])
 
-  const distanceFromBottom = React.useCallback(() => {
-    const viewport = timelineRef.current
-    if (!viewport) return 0
-    return viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight
-  }, [])
-
-  const updateScrollBottomState = React.useCallback(() => {
-    setShowScrollBottom(distanceFromBottom() > 96)
-  }, [distanceFromBottom])
-
-  const markAutoScrollIfNearBottom = React.useCallback(() => {
-    if (distanceFromBottom() <= AUTO_SCROLL_BOTTOM_DISTANCE) {
-      autoScrollOnNextUpdateRef.current = true
-    }
-  }, [distanceFromBottom])
-
-  const scrollToBottomThrottled = React.useCallback((behavior: ScrollBehavior = "smooth") => {
-    const run = () => {
-      window.requestAnimationFrame(() => {
-        const viewport = timelineRef.current
-        if (!viewport) return
-        viewport.scrollTo({ top: viewport.scrollHeight, behavior })
-        setShowScrollBottom(false)
-      })
-    }
-
-    const now = Date.now()
-    const remaining = SCROLL_TO_BOTTOM_INTERVAL_MS - (now - lastScrollToBottomAtRef.current)
-    if (remaining <= 0) {
-      if (scrollToBottomTimerRef.current !== null) {
-        window.clearTimeout(scrollToBottomTimerRef.current)
-        scrollToBottomTimerRef.current = null
-      }
-      lastScrollToBottomAtRef.current = now
-      run()
-      return
-    }
-
-    if (scrollToBottomTimerRef.current !== null) return
-    scrollToBottomTimerRef.current = window.setTimeout(() => {
-      scrollToBottomTimerRef.current = null
-      lastScrollToBottomAtRef.current = Date.now()
-      run()
-    }, remaining)
-  }, [])
-
-  React.useEffect(() => {
-    return () => {
-      if (scrollToBottomTimerRef.current !== null) {
-        window.clearTimeout(scrollToBottomTimerRef.current)
-      }
-      if (pruneAfterScrollTimerRef.current !== null) {
-        window.clearTimeout(pruneAfterScrollTimerRef.current)
-      }
-    }
-  }, [])
-
   const refresh = React.useCallback(async (options: { scrollToBottom?: boolean; preserveBottom?: boolean } = {}) => {
-    if (options.preserveBottom ?? true) markAutoScrollIfNearBottom()
-    if (options.scrollToBottom) forceScrollOnNextUpdateRef.current = true
+    if (options.scrollToBottom) setScrollToEndRequest((current) => current + 1)
     setError(null)
     const next = applyOptimisticItemsRef.current(await loadInitialSessionState(token, sessionId))
     clearResolvedOptimisticMessagesRef.current(sessionId, next.items)
@@ -380,7 +340,7 @@ export function SessionDetail({
     nextSeqRef.current = Math.max(nextSeqRef.current, next.nextSeq)
     onSessionUpdated?.(next.session)
     return next
-  }, [markAutoScrollIfNearBottom, onSessionUpdated, sessionId, token])
+  }, [onSessionUpdated, sessionId, token])
 
   React.useEffect(() => {
     if (!sessionRefreshRequest || sessionRefreshRequest.sessionId !== sessionId || isLocalOptimisticSession) return
@@ -420,10 +380,6 @@ export function SessionDetail({
     const oldestItem = state.items[0]
     if (!oldestItem) return
 
-    const viewport = timelineRef.current
-    const previousScrollHeight = viewport?.scrollHeight ?? 0
-    const previousScrollTop = viewport?.scrollTop ?? 0
-
     loadingOlderRef.current = true
     setLoadingOlder(true)
     try {
@@ -437,10 +393,6 @@ export function SessionDetail({
         if (!current) return current
         if (older.items.length === 0) return { ...current, hasMore: older.hasMore, serverTime: older.serverTime }
         const items = mergeTimelineItems(older.items, current.items)
-        pendingPrependScrollRestoreRef.current = {
-          scrollHeight: previousScrollHeight,
-          scrollTop: previousScrollTop,
-        }
         return {
           ...current,
           items,
@@ -457,28 +409,42 @@ export function SessionDetail({
     }
   }, [loadingOlder, sessionId, state?.hasMore, state?.items, tSession, token])
 
-  const handleTimelineScroll = React.useCallback(() => {
-    const viewport = timelineRef.current
-    updateScrollBottomState()
+  const handleTimelineScroll = React.useCallback((event: React.UIEvent<HTMLDivElement>) => {
+    const viewport = event.currentTarget
     if (!viewport || viewport.scrollTop > LOAD_OLDER_SCROLL_THRESHOLD) return
     void loadOlderTimeline()
-  }, [loadOlderTimeline, updateScrollBottomState])
+  }, [loadOlderTimeline])
+
+  const requestScrollToEnd = React.useCallback(() => {
+    setScrollToEndRequest((current) => current + 1)
+  }, [])
+
+  const pruneTimelineToInitialLimit = React.useCallback(() => {
+    setState((current) =>
+      current && current.items.length > INITIAL_TIMELINE_LIMIT
+        ? { ...current, items: current.items.slice(-INITIAL_TIMELINE_LIMIT) }
+        : current,
+    )
+  }, [])
 
   React.useEffect(() => {
-    initialScrollDoneRef.current = false
     setSending(false)
     setInterrupting(false)
-    setLoading(true)
-    setState(null)
     setError(null)
-    if (isLocalOptimisticSession) {
-      const optimisticState = getOptimisticSessionStateRef.current(sessionId)
-      if (optimisticState) {
-        setState({ ...optimisticState, notices: [], eventCursor: `seq:${optimisticState.nextSeq}`, effectiveCapabilities: null })
-        nextSeqRef.current = optimisticState.nextSeq
-      }
+    const optimisticState = getOptimisticSessionStateRef.current(sessionId)
+    if (optimisticState) {
+      setState({
+        ...optimisticState,
+        notices: [],
+        eventCursor: `seq:${optimisticState.nextSeq}`,
+        effectiveCapabilities: null,
+        catalogs: {},
+      })
+      nextSeqRef.current = optimisticState.nextSeq
       setLoading(false)
-      return
+    } else {
+      setLoading(true)
+      setState(null)
     }
   }, [
     isLocalOptimisticSession,
@@ -486,31 +452,6 @@ export function SessionDetail({
     sessionId,
     token,
   ])
-
-  React.useEffect(() => {
-    if (isLocalOptimisticSession || !session?.runtime) return
-    let cancelled = false
-    setRuntimeSchema(null)
-    setRuntimeSettings(null)
-    Promise.all([
-      dashboardApi.getRuntimeConfigSchema(token, session.runtime),
-      dashboardApi.getSessionRuntimeSettings(token, session.id),
-    ])
-      .then(([schemaResponse, settingsResponse]) => {
-        if (cancelled) return
-        setRuntimeSchema(schemaResponse.schema)
-        setRuntimeSettings(settingsResponse.runtimeSettings ?? settingsResponse.settings ?? {})
-      })
-      .catch((err) => {
-        if (cancelled) return
-        setRuntimeSchema(null)
-        setRuntimeSettings(null)
-        toast.error(err instanceof Error ? err.message : tSession("loadRuntimeSettingsFailed"))
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [isLocalOptimisticSession, session?.id, session?.runtime, token])
 
   React.useEffect(() => {
     if (isLocalOptimisticSession) return
@@ -524,7 +465,6 @@ export function SessionDetail({
     let bufferedEvents: ProtocolEventEnvelope[] = []
     const refetch = () => {
       if (refetchPromise) return refetchPromise
-      markAutoScrollIfNearBottom()
       refetchPromise = loadInitialSessionState(token, sessionId)
         .then((next) => {
           if (cancelled) return
@@ -556,7 +496,6 @@ export function SessionDetail({
         void recoverEvents(nextSeqRef.current)
         return
       }
-      markAutoScrollIfNearBottom()
       setState((current) => mergeSessionEvent(current, event))
       const item = readPayloadValue<TimelineItem>(event.payload.item)
       if (item) clearResolvedOptimisticMessagesRef.current(sessionId, [item])
@@ -621,7 +560,9 @@ export function SessionDetail({
 
     void connect()
 
-    loadInitialSessionState(token, sessionId)
+    loadInitialSessionState(token, sessionId, {
+      syncRuntime: getOptimisticSessionStateRef.current(sessionId) === null,
+    })
       .then((next) => {
         if (cancelled) return
         setError(null)
@@ -653,17 +594,20 @@ export function SessionDetail({
     }
   }, [
     isLocalOptimisticSession,
-    markAutoScrollIfNearBottom,
     onSessionUpdated,
     sessionId,
     token,
   ])
 
-  const handleSend = async (content: string, attachments: AttachedFile[]): Promise<boolean> => {
+  const handleSend = async (
+    content: string,
+    attachments: AttachedFile[],
+    selections: { modelSelectionId?: string; permissionSelectionId?: string },
+  ): Promise<boolean> => {
     if (!session || (!content.trim() && attachments.length === 0)) return false
     const clientMessageId = createClientId("msg")
     const messageText = content.trim() || tNew("attachmentOnlyPrompt")
-    forceScrollOnNextUpdateRef.current = true
+    requestScrollToEnd()
     const optimisticMessage = buildOptimisticUserMessage({
       sessionId: session.id,
       clientMessageId,
@@ -684,6 +628,7 @@ export function SessionDetail({
         items: mergeTimelineItems(current.items, [optimisticMessage]),
       }
     })
+    requestScrollToEnd()
     setSending(true)
     try {
       const files = attachments.map((attachment) => attachment.file)
@@ -693,9 +638,10 @@ export function SessionDetail({
       await dashboardApi.sendSessionMessage(token, session.id, messageText, {
         attachments: upload?.attachments.map((attachment) => ({ fileId: attachment.fileId })) ?? [],
         clientMessageId,
+        ...selections,
       })
       await refresh({ scrollToBottom: true })
-      scrollToBottomThrottled()
+      requestScrollToEnd()
       return true
     } catch (err) {
       const message = err instanceof Error ? err.message : tSession("sendFailed")
@@ -765,144 +711,31 @@ export function SessionDetail({
     }
   }
 
-  const handlePatchRuntimeSettings = async (patch: Record<string, unknown>) => {
-    if (!session) return
-    const nextSettings = { ...(runtimeSettings ?? {}), ...patch }
-    setRuntimeSettings(nextSettings)
-    setRuntimeSettingsBusy(true)
-    try {
-      const response = await dashboardApi.patchSessionRuntimeSettings(token, session.id, nextSettings)
-      setRuntimeSettings(response.runtimeSettings ?? response.settings ?? nextSettings)
-      await refresh()
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : tSession("updateRuntimeSettingsFailed"))
-    } finally {
-      setRuntimeSettingsBusy(false)
-    }
-  }
-
-  React.useLayoutEffect(() => {
-    const pendingPrependScrollRestore = pendingPrependScrollRestoreRef.current
-    if (pendingPrependScrollRestore) {
-      pendingPrependScrollRestoreRef.current = null
-      const viewport = timelineRef.current
-      if (viewport) {
-        viewport.scrollTop =
-          viewport.scrollHeight - pendingPrependScrollRestore.scrollHeight + pendingPrependScrollRestore.scrollTop
-      }
-      updateScrollBottomState()
-      return
-    }
-    if (!initialScrollDoneRef.current && state) {
-      initialScrollDoneRef.current = true
-      const viewport = timelineRef.current
-      if (viewport) {
-        viewport.scrollTop = viewport.scrollHeight
-        setShowScrollBottom(false)
-      }
-      return
-    }
-    if (forceScrollOnNextUpdateRef.current || autoScrollOnNextUpdateRef.current) {
-      forceScrollOnNextUpdateRef.current = false
-      autoScrollOnNextUpdateRef.current = false
-      scrollToBottomThrottled()
-      return
-    }
-    updateScrollBottomState()
-  }, [scrollToBottomThrottled, session?.status, state?.items.length, state?.notices.length, updateScrollBottomState])
-
-  const scrollToBottomWithoutPruning = React.useCallback(() => {
-    scrollToBottomThrottled()
-  }, [scrollToBottomThrottled])
-
-  const scrollToBottom = React.useCallback(() => {
-    const viewport = timelineRef.current
-    const shouldPrune = (state?.items.length ?? 0) > INITIAL_TIMELINE_LIMIT
-    if (!viewport) {
-      if (shouldPrune) {
-        setState((current) =>
-          current && current.items.length > INITIAL_TIMELINE_LIMIT
-            ? { ...current, items: current.items.slice(-INITIAL_TIMELINE_LIMIT) }
-            : current,
-        )
-      }
-      return
-    }
-
-    if (pruneAfterScrollTimerRef.current !== null) {
-      window.clearTimeout(pruneAfterScrollTimerRef.current)
-      pruneAfterScrollTimerRef.current = null
-    }
-
-    let settled = false
-    const pruneIfAtBottom = () => {
-      if (distanceFromBottom() > AUTO_SCROLL_BOTTOM_DISTANCE) return false
-      forceScrollOnNextUpdateRef.current = true
-      setState((current) =>
-        current && current.items.length > INITIAL_TIMELINE_LIMIT
-          ? { ...current, items: current.items.slice(-INITIAL_TIMELINE_LIMIT) }
-          : current,
-      )
-      return true
-    }
-    const cleanup = () => {
-      viewport.removeEventListener("scrollend", handleScrollEnd)
-      if (pruneAfterScrollTimerRef.current !== null) {
-        window.clearTimeout(pruneAfterScrollTimerRef.current)
-        pruneAfterScrollTimerRef.current = null
-      }
-    }
-    const finish = () => {
-      if (settled) return
-      if (shouldPrune && !pruneIfAtBottom()) return
-      settled = true
-      cleanup()
-      if (!shouldPrune) updateScrollBottomState()
-    }
-    const handleScrollEnd = () => {
-      if (settled) return
-      settled = true
-      cleanup()
-      if (shouldPrune && !pruneIfAtBottom()) {
-        updateScrollBottomState()
-      }
-    }
-    const scheduleCheck = () => {
-      if (settled) return
-      pruneAfterScrollTimerRef.current = window.setTimeout(() => {
-        pruneAfterScrollTimerRef.current = null
-        finish()
-        if (!settled) scheduleCheck()
-      }, SCROLL_TO_BOTTOM_PRUNE_CHECK_MS)
-    }
-
-    if (shouldPrune) {
-      viewport.addEventListener("scrollend", handleScrollEnd, { once: true })
-      scheduleCheck()
-    }
-    viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" })
-    setShowScrollBottom(false)
-  }, [distanceFromBottom, state?.items.length, updateScrollBottomState])
   const interactions = React.useMemo(
     () => openInteractions(state?.notices ?? [], session?.id ?? sessionId),
     [session?.id, sessionId, state?.notices],
   )
-  const interactionByTarget = React.useMemo(
-    () => new Map(interactions.map((notice) => [noticeTimelineTargetId(notice), notice])),
-    [interactions],
+  const blockingInteractionList = React.useMemo(
+    () => blockingInteractions(state?.notices ?? [], session?.id ?? sessionId),
+    [session?.id, sessionId, state?.notices],
   )
-  const detachedInteractions = interactions.filter((notice) => !noticeTimelineTargetId(notice))
+  const timelineInteractions = React.useMemo(
+    () => interactions.filter((notice) => !isSessionBlockingInteraction(notice, session?.id ?? sessionId)),
+    [interactions, session?.id, sessionId],
+  )
+  const interactionByTarget = React.useMemo(
+    () => new Map(timelineInteractions.map((notice) => [noticeTimelineTargetId(notice), notice])),
+    [timelineInteractions],
+  )
+  const detachedInteractions = timelineInteractions.filter((notice) => !noticeTimelineTargetId(notice))
   const detachedNotifications = React.useMemo(
     () => openNotifications(state?.notices ?? []),
     [state?.notices],
   )
-  const blockingInteractionCount = React.useMemo(
-    () => blockingInteractions(state?.notices ?? [], session?.id ?? sessionId).length,
-    [session?.id, sessionId, state?.notices],
-  )
+  const blockingInteractionCount = blockingInteractionList.length
   const interactionTargetIds = React.useMemo(
-    () => new Set(interactions.map(noticeTimelineTargetId).filter((id): id is string => Boolean(id))),
-    [interactions],
+    () => new Set(timelineInteractions.map(noticeTimelineTargetId).filter((id): id is string => Boolean(id))),
+    [timelineInteractions],
   )
   const timelineGroups = React.useMemo(
     () => groupTimelineItems(state?.items ?? [], interactionTargetIds),
@@ -942,113 +775,158 @@ export function SessionDetail({
       ) : null}
 
       <div className="relative min-h-0 flex-1 overflow-hidden">
-        <ScrollArea
-          viewportRef={timelineRef}
-          className="h-full"
-          viewportProps={{ onScroll: handleTimelineScroll }}
+        <MessageScrollerProvider
+          autoScroll
+          defaultScrollPosition="last-anchor"
+          scrollEdgeThreshold={96}
+          scrollPreviousItemPeek={72}
         >
-          <div
-            className={cn(
-              "mx-auto flex w-full min-w-0 max-w-4xl flex-col gap-3 overflow-hidden px-5 pb-44 pt-20",
-              blockingInteractionCount > 0 && "pt-32",
-            )}
-          >
-            {loadingOlder ? (
-              <div className="flex justify-center py-2 text-muted-foreground">
-                <Loader2 className="size-4 animate-spin" />
-              </div>
-            ) : null}
-            {loading && !state ? <SessionSkeletonInline /> : null}
-            {state && state.items.length === 0 && detachedInteractions.length === 0 && detachedNotifications.length === 0 ? (
-              <p className="py-12 text-center text-sm text-muted-foreground">{tSession("noActivity")}</p>
-            ) : null}
-            {timelineGroups.map((group) =>
-              group.kind === "tool-run" ? (
-                <ToolRunGroup
-                  key={group.key}
-                  group={group}
-                  token={token}
-                  session={session}
-                  interactionByTarget={interactionByTarget}
-                  resolvingNoticeId={resolvingNoticeId}
-                  resolvingActionId={resolvingActionId}
-                  onRespondInteraction={handleRespondInteraction}
-                />
-              ) : (
-                <TimelineEntry
-                  key={group.item.id}
-                  token={token}
-                  session={session}
-                  item={group.item}
-                  interaction={interactionByTarget.get(group.item.id)}
-                  resolvingNoticeId={resolvingNoticeId}
-                  resolvingActionId={resolvingActionId}
-                  onRespondInteraction={handleRespondInteraction}
-                />
-              ),
-            )}
-            {detachedInteractions.map((notice) => (
-              <InteractionCard
-                key={notice.noticeId}
-                notice={notice}
-                resolvingNoticeId={resolvingNoticeId}
-                resolvingActionId={resolvingActionId}
-                onRespondInteraction={handleRespondInteraction}
-              />
-            ))}
-            {detachedNotifications.map((notice) => (
-              <NotificationCard key={notice.noticeId} notice={notice} />
-            ))}
-            {session.status === "pending" || session.status === "running" ? (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="size-4 animate-spin" />
-                <span>
-                  {session.status === "pending"
-                    ? tSession("runtimePending", { runtime: runtimeLabel(session.runtime) })
-                    : tSession("runtimeWorking", { runtime: runtimeLabel(session.runtime) })}
-                </span>
-              </div>
-            ) : null}
-          </div>
-        </ScrollArea>
-        {showScrollBottom ? (
-          <Button
-            type="button"
-            size="sm"
-            variant="secondary"
-            className="absolute bottom-36 left-1/2 z-10 h-8 -translate-x-1/2 gap-1.5 rounded-full border bg-background/95 px-3 shadow-lg backdrop-blur"
-            onClick={scrollToBottom}
-          >
-            <ArrowDown className="size-3.5" />
-            {tSession("bottom")}
-          </Button>
-        ) : null}
+          <SessionScrollerCommands
+            scrollToEndRequest={scrollToEndRequest}
+            onAfterScrollToEnd={pruneTimelineToInitialLimit}
+          />
+          <MessageScroller>
+            <MessageScrollerViewport onScroll={handleTimelineScroll}>
+              <MessageScrollerContent
+                aria-busy={session.status === "pending" || session.status === "running"}
+                className={cn(
+                  "mx-auto flex w-full min-w-0 max-w-4xl flex-col gap-3 overflow-hidden px-5 pb-44 pt-20",
+                  blockingInteractionCount > 0 && "pb-[30rem]",
+                )}
+              >
+                {state?.hasMore || loadingOlder ? (
+                  <MessageScrollerItem messageId={`${session.id}:load-older`}>
+                    <div className="flex justify-center py-2 text-muted-foreground">
+                      {loadingOlder ? (
+                        <Loader2 className="size-4 animate-spin" />
+                      ) : (
+                        <Button type="button" variant="ghost" size="sm" onClick={() => void loadOlderTimeline()}>
+                          {tSession("loadOlder")}
+                        </Button>
+                      )}
+                    </div>
+                  </MessageScrollerItem>
+                ) : null}
+                {loading && !state ? (
+                  <MessageScrollerItem messageId={`${session.id}:loading`}>
+                    <SessionSkeletonInline />
+                  </MessageScrollerItem>
+                ) : null}
+                {state &&
+                state.items.length === 0 &&
+                detachedInteractions.length === 0 &&
+                detachedNotifications.length === 0 &&
+                blockingInteractionList.length === 0 ? (
+                  <MessageScrollerItem messageId={`${session.id}:empty`}>
+                    <p className="py-12 text-center text-sm text-muted-foreground">{tSession("noActivity")}</p>
+                  </MessageScrollerItem>
+                ) : null}
+                {timelineGroups.map((group) =>
+                  group.kind === "reconnect" ? (
+                    <MessageScrollerItem key={group.key} messageId={group.key}>
+                      <ReconnectGroup group={group} />
+                    </MessageScrollerItem>
+                  ) : group.kind === "tool-run" ? (
+                    <MessageScrollerItem key={group.key} messageId={group.key}>
+                      <ToolRunGroup
+                        group={group}
+                        token={token}
+                        session={session}
+                        interactionByTarget={interactionByTarget}
+                        resolvingNoticeId={resolvingNoticeId}
+                        resolvingActionId={resolvingActionId}
+                        onRespondInteraction={handleRespondInteraction}
+                      />
+                    </MessageScrollerItem>
+                  ) : (
+                    <MessageScrollerItem
+                      key={group.item.id}
+                      messageId={group.item.id}
+                      scrollAnchor={isUserTimelineMessage(group.item)}
+                    >
+                      <TimelineEntry
+                        token={token}
+                        session={session}
+                        item={group.item}
+                        interaction={interactionByTarget.get(group.item.id)}
+                        resolvingNoticeId={resolvingNoticeId}
+                        resolvingActionId={resolvingActionId}
+                        onRespondInteraction={handleRespondInteraction}
+                      />
+                    </MessageScrollerItem>
+                  ),
+                )}
+                {detachedInteractions.map((notice) => (
+                  <MessageScrollerItem key={notice.noticeId} messageId={notice.noticeId}>
+                    <InteractionCard
+                      notice={notice}
+                      resolvingNoticeId={resolvingNoticeId}
+                      resolvingActionId={resolvingActionId}
+                      onRespondInteraction={handleRespondInteraction}
+                    />
+                  </MessageScrollerItem>
+                ))}
+                {detachedNotifications.map((notice) => (
+                  <MessageScrollerItem key={notice.noticeId} messageId={notice.noticeId}>
+                    <NotificationCard notice={notice} />
+                  </MessageScrollerItem>
+                ))}
+                {session.status === "pending" || session.status === "running" ? (
+                  <MessageScrollerItem messageId={`${session.id}:status:${session.status}`}>
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="size-4 animate-spin" />
+                      <span>
+                        {session.status === "pending"
+                          ? tSession("runtimePending", { runtime: runtimeLabel(session.runtime) })
+                          : tSession("runtimeWorking", { runtime: runtimeLabel(session.runtime) })}
+                      </span>
+                    </div>
+                  </MessageScrollerItem>
+                ) : null}
+              </MessageScrollerContent>
+            </MessageScrollerViewport>
+            <MessageScrollerButton
+              size="sm"
+              className={cn(
+                "z-30 h-8 gap-1.5 rounded-full border bg-background/95 px-3 shadow-lg backdrop-blur",
+                blockingInteractionCount > 0
+                  ? "data-[direction=end]:bottom-[26rem]"
+                  : "data-[direction=end]:bottom-36",
+              )}
+              onClick={() => {
+                window.setTimeout(pruneTimelineToInitialLimit, 300)
+              }}
+            >
+              <ArrowDown data-icon="inline-start" />
+              {tSession("bottom")}
+            </MessageScrollerButton>
+          </MessageScroller>
+        </MessageScrollerProvider>
       </div>
-
-      {blockingInteractionCount > 0 ? (
-        <InteractionHeaderNotice
-          blockingInteractionCount={blockingInteractionCount}
-          onResolveClick={scrollToBottomWithoutPruning}
-        />
-      ) : null}
 
       <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 overflow-hidden">
         <div className="absolute inset-x-0 bottom-0 h-36 bg-linear-to-t from-background/80 to-background/0" />
         {COMPOSER_BLUR_LAYERS.map((layer) => (
           <div key={layer.key} className={layer.className} style={layer.style} />
         ))}
+        <BlockingInteractionStack
+          notices={blockingInteractionList}
+          resolvingNoticeId={resolvingNoticeId}
+          resolvingActionId={resolvingActionId}
+          onRespondInteraction={handleRespondInteraction}
+        />
         <div className="pointer-events-auto relative">
           <SessionComposer
             session={session}
             pendingInteractionCount={blockingInteractionCount}
+            creatingSession={isLocalOptimisticSession}
             sending={sending}
             interrupting={interrupting}
             takeoverBusy={takeoverBusy}
             value={composerDraft}
-            runtimeSchema={runtimeSchema}
             runtimeSettings={runtimeSettings}
-            runtimeSettingsBusy={runtimeSettingsBusy}
-            onPatchRuntimeSettings={handlePatchRuntimeSettings}
+            modelCatalog={state?.catalogs.model ?? null}
+            permissionCatalog={state?.catalogs.permission ?? null}
             onValueChange={setComposerDraft}
             onSend={handleSend}
             onInterrupt={handleInterrupt}
@@ -1090,6 +968,77 @@ export function SessionDetail({
   )
 }
 
+function BlockingInteractionStack({
+  notices,
+  resolvingNoticeId,
+  resolvingActionId,
+  onRespondInteraction,
+}: {
+  notices: Notice[]
+  resolvingNoticeId: string | null
+  resolvingActionId: string | null
+  onRespondInteraction: (noticeId: string, actionId: string) => void
+}) {
+  if (notices.length === 0) return null
+
+  const activeNotice = notices[0]!
+  const backingNotices = notices.slice(1, 4).reverse()
+
+  return (
+    <div className="pointer-events-auto mx-auto w-full max-w-3xl px-4 pb-1">
+      <div className={cn("relative", backingNotices.length > 0 && "pt-4")}>
+        {backingNotices.map((notice, index) => {
+          const depth = backingNotices.length - index
+          return (
+            <div
+              key={notice.noticeId}
+              aria-hidden="true"
+              className={cn(
+                "pointer-events-none absolute inset-x-0 top-4 h-16 origin-top rounded-xl border bg-card shadow-sm",
+                notice.severity === "error" ? "border-destructive/25" : "border-border/80",
+              )}
+              style={{
+                transform: `translateY(-${depth * 8}px) scale(${1 - depth * 0.014})`,
+                opacity: 1 - depth * 0.16,
+              }}
+            />
+          )
+        })}
+        <div className="relative max-h-[38vh] overflow-y-auto rounded-xl shadow-lg shadow-background/20">
+          <InteractionCard
+            notice={activeNotice}
+            resolvingNoticeId={resolvingNoticeId}
+            resolvingActionId={resolvingActionId}
+            onRespondInteraction={onRespondInteraction}
+          />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function SessionScrollerCommands({
+  scrollToEndRequest,
+  onAfterScrollToEnd,
+}: {
+  scrollToEndRequest: number
+  onAfterScrollToEnd: () => void
+}) {
+  const { scrollToEnd } = useMessageScroller()
+  const lastHandledRequestRef = React.useRef(scrollToEndRequest)
+
+  React.useEffect(() => {
+    if (scrollToEndRequest === lastHandledRequestRef.current) return
+    lastHandledRequestRef.current = scrollToEndRequest
+    const didScroll = scrollToEnd({ behavior: "smooth" })
+    if (!didScroll) return
+    const timer = window.setTimeout(onAfterScrollToEnd, 300)
+    return () => window.clearTimeout(timer)
+  }, [onAfterScrollToEnd, scrollToEnd, scrollToEndRequest])
+
+  return null
+}
+
 type TimelineSingleGroup = {
   kind: "single"
   item: TimelineItem
@@ -1101,11 +1050,18 @@ type TimelineToolRunGroup = {
   items: TimelineItem[]
 }
 
-type TimelineGroup = TimelineSingleGroup | TimelineToolRunGroup
+type TimelineReconnectGroup = {
+  kind: "reconnect"
+  key: string
+  items: TimelineItem[]
+}
+
+type TimelineGroup = TimelineSingleGroup | TimelineToolRunGroup | TimelineReconnectGroup
 
 function groupTimelineItems(items: TimelineItem[], interactionTargetIds: Set<string>): TimelineGroup[] {
   const groups: TimelineGroup[] = []
   let pendingTools: TimelineItem[] = []
+  let pendingReconnects: TimelineItem[] = []
 
   const flushTools = () => {
     if (pendingTools.length >= 2) {
@@ -1120,7 +1076,26 @@ function groupTimelineItems(items: TimelineItem[], interactionTargetIds: Set<str
     pendingTools = []
   }
 
+  const flushReconnects = () => {
+    if (pendingReconnects.length >= 2) {
+      groups.push({
+        kind: "reconnect",
+        key: pendingReconnects.map((item) => item.id).join(":"),
+        items: pendingReconnects,
+      })
+    } else {
+      for (const item of pendingReconnects) groups.push({ kind: "single", item })
+    }
+    pendingReconnects = []
+  }
+
   for (const item of items) {
+    if (isReconnectErrorItem(item) && !interactionTargetIds.has(item.id)) {
+      flushTools()
+      pendingReconnects.push(item)
+      continue
+    }
+    flushReconnects()
     if (isToolRunBarItem(item) && !interactionTargetIds.has(item.id)) {
       pendingTools.push(item)
       continue
@@ -1128,14 +1103,85 @@ function groupTimelineItems(items: TimelineItem[], interactionTargetIds: Set<str
     flushTools()
     groups.push({ kind: "single", item })
   }
+  flushReconnects()
   flushTools()
   return groups
 }
 
+function isReconnectErrorItem(item: TimelineItem): boolean {
+  return item.type === "system" && item.status === "failed" && reconnectMessage(item) !== null
+}
+
+function isUserTimelineMessage(item: TimelineItem): boolean {
+  return item.type === "message" && item.role === "user"
+}
+
+function reconnectMessage(item: TimelineItem): string | null {
+  const details = recordOf(item.content.details)
+  const error = recordOf(details?.error)
+  const message =
+    textOf(error?.message) ||
+    textOf(details?.message) ||
+    textOf(item.content.message) ||
+    textOf(item.content.text)
+  if (!message || !/^Reconnecting\.\.\./.test(message)) return null
+  return message
+}
+
+function reconnectAttempt(message: string): string | null {
+  return message.match(/(\d+\s*\/\s*\d+)/)?.[1]?.replace(/\s+/g, "") ?? null
+}
+
+function recordOf(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null
+}
+
 function isToolRunBarItem(item: TimelineItem): boolean {
+  if (item.type === "system" && textOf(item.content.kind) === "reasoning") return true
   if (item.type === "tool") return true
   if (item.type !== "artifact") return false
   return (item.content.kind ?? "artifact") !== "diff"
+}
+
+function ReconnectGroup({ group }: { group: TimelineReconnectGroup }) {
+  const tSession = useTranslations("dashboard.session")
+  const [open, setOpen] = React.useState(false)
+  const attempts = group.items
+    .map((item) => reconnectMessage(item))
+    .filter((message): message is string => Boolean(message))
+    .map(reconnectAttempt)
+    .filter((attempt): attempt is string => Boolean(attempt))
+  const firstAttempt = attempts[0]
+  const lastAttempt = attempts[attempts.length - 1]
+  const attemptRange = firstAttempt && lastAttempt && firstAttempt !== lastAttempt
+    ? `${firstAttempt}–${lastAttempt}`
+    : lastAttempt ?? String(group.items.length)
+  const title = tSession("reconnectSummary", { count: group.items.length, attempts: attemptRange })
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen} className="min-w-0 max-w-full overflow-hidden">
+      <div className="min-w-0 max-w-full space-y-2 overflow-hidden">
+        <CollapsibleTrigger asChild>
+          <Marker asChild className="w-full">
+            <button type="button" className="text-left">
+              <ChevronDown className="shrink-0 -rotate-90 transition-transform group-data-[state=open]/marker:rotate-0" />
+              <MarkerIcon>
+                <WifiOff />
+              </MarkerIcon>
+              <MarkerContent className="code-mono text-sm">{title}</MarkerContent>
+            </button>
+          </Marker>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="min-w-0 max-w-full overflow-hidden">
+          <div className="flex flex-col gap-2">
+            {group.items.map((item) => (
+              <JsonBlock key={item.id} value={item} />
+            ))}
+          </div>
+        </CollapsibleContent>
+      </div>
+    </Collapsible>
+  )
 }
 
 function ToolRunGroup({
@@ -1159,18 +1205,16 @@ function ToolRunGroup({
   const [open, setOpen] = React.useState(false)
   const summary = toolRunSummary(group.items, tSession)
 
-  if (open) {
-    return (
-      <div className="min-w-0 max-w-full space-y-2 overflow-hidden">
-        <button
-          type="button"
-          className="group flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-1 text-left text-muted-foreground transition-colors hover:bg-muted/35 hover:text-foreground"
-          onClick={() => setOpen(false)}
-        >
-          <ChevronDown className="size-3.5 shrink-0 transition-transform" />
-          <span className="code-mono min-w-0 flex-1 truncate text-sm">{summary}</span>
-        </button>
-        {group.items.map((item) => (
+	  if (open) {
+	    return (
+	      <div className="min-w-0 max-w-full space-y-2 overflow-hidden">
+	        <Marker asChild className="w-full">
+	          <button type="button" className="text-left" onClick={() => setOpen(false)}>
+	            <ChevronDown className="shrink-0 transition-transform" />
+	            <MarkerContent className="code-mono text-sm">{summary}</MarkerContent>
+	          </button>
+	        </Marker>
+	        {group.items.map((item) => (
           <TimelineEntry
             key={item.id}
             token={token}
@@ -1186,17 +1230,15 @@ function ToolRunGroup({
     )
   }
 
-  return (
-    <button
-      type="button"
-      className="group flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-1 text-left text-muted-foreground transition-colors hover:bg-muted/35 hover:text-foreground"
-      onClick={() => setOpen(true)}
-    >
-      <ChevronDown className="size-3.5 shrink-0 -rotate-90 transition-transform" />
-      <span className="code-mono min-w-0 flex-1 truncate text-sm">{summary}</span>
-    </button>
-  )
-}
+	  return (
+	    <Marker asChild className="w-full">
+	      <button type="button" className="text-left" onClick={() => setOpen(true)}>
+	        <ChevronDown className="shrink-0 -rotate-90 transition-transform" />
+	        <MarkerContent className="code-mono text-sm">{summary}</MarkerContent>
+	      </button>
+	    </Marker>
+	  )
+	}
 
 function toolRunSummary(
   items: TimelineItem[],
@@ -1205,7 +1247,12 @@ function toolRunSummary(
   let commands = 0
   let createdFiles = 0
   let changedFiles = 0
+  let reasoning = 0
   for (const item of items) {
+    if (item.type === "system" && textOf(item.content.kind) === "reasoning") {
+      reasoning += 1
+      continue
+    }
     const kind = textOf(item.content.kind)
     if (kind === "command") {
       commands += 1
@@ -1220,6 +1267,7 @@ function toolRunSummary(
   }
 
   const parts: string[] = []
+  if (reasoning > 0) parts.push(tSession("toolSummaryReasoning", { count: reasoning }))
   if (commands > 0) parts.push(tSession("toolSummaryCommands", { count: commands }))
   if (changedFiles > 0) parts.push(tSession("toolSummaryChangedFiles", { count: changedFiles }))
   if (createdFiles > 0) parts.push(tSession("toolSummaryCreatedFiles", { count: createdFiles }))
@@ -1314,9 +1362,11 @@ function openNotifications(notices: Notice[]): Notice[] {
 }
 
 function blockingInteractions(notices: Notice[], sessionId: string): Notice[] {
-  return openInteractions(notices).filter((notice) =>
-    notice.blocking?.scope === "session" && notice.blocking.targetId === sessionId,
-  )
+  return openInteractions(notices).filter((notice) => isSessionBlockingInteraction(notice, sessionId))
+}
+
+function isSessionBlockingInteraction(notice: Notice, sessionId: string): boolean {
+  return notice.blocking?.scope === "session" && notice.blocking.targetId === sessionId
 }
 
 function noticeTimelineTargetId(notice: Notice): string | null {

@@ -36,6 +36,7 @@ type FilesPanelBodyProps = {
   connectorId?: string | null
   root?: string | null
   connectorDeviceOs?: string | null
+  variant?: "desktop" | "mobile"
   onClose?: () => void
   onPopOut?: () => void
   onPopupBlocked?: () => void
@@ -46,6 +47,7 @@ export function FilesPanelBody({
   connectorId,
   root,
   connectorDeviceOs,
+  variant = "desktop",
   onClose,
   onPopOut,
   onPopupBlocked,
@@ -172,6 +174,129 @@ export function FilesPanelBody({
     setContextEntry(entryPath ? entriesByPath.get(entryPath) ?? null : null)
   }
 
+  const fileBrowser = (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div className="flex min-h-0 flex-1 flex-col" onContextMenu={updateContextTarget}>
+          <ScrollArea className="aa-fs-browser">
+            <div className="aa-fs-browser-inner">
+              {!canLoad ? <div className="aa-rt-empty">{t("noConnector")}</div> : null}
+              {error ? <div className="aa-rt-error">{error}</div> : null}
+              {loading && entries.length === 0 ? <div className="aa-rt-empty">{t("loading")}</div> : null}
+              {!loading && !error && canLoad && entries.length === 0 ? <div className="aa-rt-empty">{t("empty")}</div> : null}
+              {canLoad && canGoParent ? (
+                <button className="aa-fs-row" type="button" onClick={() => void loadDir(parentPath)}>
+                  <FolderOpen className="size-3.5" />
+                  <span>..</span>
+                  <em>{t("parent")}</em>
+                </button>
+              ) : null}
+              {sortedEntries.map((entry) => (
+                <button
+                  key={entry.path}
+                  className="aa-fs-row"
+                  type="button"
+                  data-fs-entry-path={entry.path}
+                  onClick={() => openEntry(entry)}
+                  disabled={entry.type !== "directory" && entry.type !== "file" && entry.type !== "symlink"}
+                >
+                  {entry.type === "directory" ? <Folder className="size-3.5" /> : <File className="size-3.5" />}
+                  <span>{entry.name}</span>
+                  <em>{entry.type === "file" && typeof entry.size === "number" ? formatBytes(entry.size) : entry.type}</em>
+                </button>
+              ))}
+            </div>
+          </ScrollArea>
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent className="w-52">
+        <ContextMenuItem onSelect={() => void copyPath()}>
+          <Copy className="size-4" />
+          {t("copyPath")}
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={addToComposer}>
+          <MessageSquarePlus className="size-4" />
+          {t("addToComposer")}
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem onSelect={() => void downloadEntry()} disabled={!contextIsFile || !canLoad}>
+          <Download className="size-4" />
+          {t("download")}
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  )
+
+  if (variant === "mobile") {
+    return (
+      <div className="aa-mobile-panel aa-mobile-files">
+        <div className="aa-mobile-pathbar">
+          <div className="aa-fs-path-field">
+            <input
+              value={path}
+              onChange={(event) => setPath(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") void loadDir(path)
+              }}
+              aria-label={t("directoryPath")}
+              disabled={!canLoad}
+            />
+          </div>
+          <Button
+            className="aa-rt-iconbtn"
+            variant="ghost"
+            size="icon-sm"
+            type="button"
+            title={t("openPath")}
+            aria-label={t("openPath")}
+            onClick={() => void loadDir(path)}
+            disabled={loading || (!isWindowsConnector && !path.trim()) || !canLoad}
+          >
+            <ChevronRight className="size-4" />
+          </Button>
+          <Button
+            className="aa-rt-iconbtn"
+            variant="ghost"
+            size="icon-sm"
+            type="button"
+            title={t("goParent")}
+            aria-label={t("goParent")}
+            onClick={() => void loadDir(parentPath)}
+            disabled={loading || !canGoParent || !canLoad}
+          >
+            <ChevronUp className="size-4" />
+          </Button>
+          <Button
+            className="aa-rt-iconbtn"
+            variant="ghost"
+            size="icon-sm"
+            type="button"
+            title={t("refresh")}
+            aria-label={t("refresh")}
+            onClick={() => void loadDir(path)}
+            disabled={loading || !canLoad}
+          >
+            <RefreshCw className={cn("size-4", loading && "animate-spin")} />
+          </Button>
+          {onClose ? (
+            <Button
+              className="aa-rt-iconbtn"
+              variant="ghost"
+              size="icon-sm"
+              type="button"
+              title={t("close")}
+              aria-label={t("close")}
+              onClick={onClose}
+            >
+              <X className="size-4" />
+            </Button>
+          ) : null}
+        </div>
+        {fileBrowser}
+      </div>
+    )
+  }
+
   return (
     <Card size="sm" className="aa-rt-pane">
       <CardHeader className="aa-rt-hd">
@@ -261,56 +386,7 @@ export function FilesPanelBody({
           </Button>
         </div>
 
-        <ContextMenu>
-          <ContextMenuTrigger asChild>
-            <div className="flex min-h-0 flex-1 flex-col" onContextMenu={updateContextTarget}>
-              <ScrollArea className="aa-fs-browser">
-                <div className="aa-fs-browser-inner">
-                  {!canLoad ? <div className="aa-rt-empty">{t("noConnector")}</div> : null}
-                  {error ? <div className="aa-rt-error">{error}</div> : null}
-                  {loading && entries.length === 0 ? <div className="aa-rt-empty">{t("loading")}</div> : null}
-                  {!loading && !error && canLoad && entries.length === 0 ? <div className="aa-rt-empty">{t("empty")}</div> : null}
-                  {canLoad && canGoParent ? (
-                    <button className="aa-fs-row" type="button" onClick={() => void loadDir(parentPath)}>
-                      <FolderOpen className="size-3.5" />
-                      <span>..</span>
-                      <em>{t("parent")}</em>
-                    </button>
-                  ) : null}
-                  {sortedEntries.map((entry) => (
-                    <button
-                      key={entry.path}
-                      className="aa-fs-row"
-                      type="button"
-                      data-fs-entry-path={entry.path}
-                      onClick={() => openEntry(entry)}
-                      disabled={entry.type !== "directory" && entry.type !== "file" && entry.type !== "symlink"}
-                    >
-                      {entry.type === "directory" ? <Folder className="size-3.5" /> : <File className="size-3.5" />}
-                      <span>{entry.name}</span>
-                      <em>{entry.type === "file" && typeof entry.size === "number" ? formatBytes(entry.size) : entry.type}</em>
-                    </button>
-                  ))}
-                </div>
-              </ScrollArea>
-            </div>
-          </ContextMenuTrigger>
-          <ContextMenuContent className="w-52">
-            <ContextMenuItem onSelect={() => void copyPath()}>
-              <Copy className="size-4" />
-              {t("copyPath")}
-            </ContextMenuItem>
-            <ContextMenuItem onSelect={addToComposer}>
-              <MessageSquarePlus className="size-4" />
-              {t("addToComposer")}
-            </ContextMenuItem>
-            <ContextMenuSeparator />
-            <ContextMenuItem onSelect={() => void downloadEntry()} disabled={!contextIsFile || !canLoad}>
-              <Download className="size-4" />
-              {t("download")}
-            </ContextMenuItem>
-          </ContextMenuContent>
-        </ContextMenu>
+        {fileBrowser}
       </CardContent>
     </Card>
   )

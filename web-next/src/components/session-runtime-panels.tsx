@@ -14,6 +14,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  Drawer,
+  DrawerContent,
+  DrawerHeader,
+  DrawerTitle,
+} from "@/components/ui/drawer"
 import { NativeWindow } from "@/components/native-window"
 import { FilesPanelBody } from "@/components/panels/files-panel"
 import { TerminalPanelBody } from "@/components/panels/terminal-panel"
@@ -118,13 +124,51 @@ export function FloatingRuntimePanels({
   )
 }
 
+export function MobileRuntimePanelDrawers({
+  token,
+  connectorId,
+  connectorDeviceOs,
+  root,
+  floatingPanels,
+}: {
+  token: string | null
+  connectorId: string | null
+  connectorDeviceOs?: string | null
+  root: string
+  floatingPanels: PanelId[]
+}) {
+  const { setPanelMode } = useWorkspace()
+  const t = useTranslations("dashboard.session")
+  const renderRuntimePanel = useRuntimePanelRenderer({ token, connectorId, connectorDeviceOs, root })
+  const activePanel = floatingPanels[0] ?? null
+
+  return (
+    <Drawer
+      open={activePanel !== null}
+      onOpenChange={(open: boolean) => {
+        if (!open && activePanel) setPanelMode(activePanel, "closed")
+      }}
+      direction="bottom"
+    >
+      <DrawerContent className="h-[86vh]">
+        <DrawerHeader>
+          <DrawerTitle>{activePanel ? t(PANEL_META[activePanel].titleKey) : t("workspace")}</DrawerTitle>
+        </DrawerHeader>
+        <div className="min-h-0 flex-1 px-4 pb-4">
+          {activePanel ? renderRuntimePanel(activePanel, { mobileDrawer: true }) : null}
+        </div>
+      </DrawerContent>
+    </Drawer>
+  )
+}
+
 export function PopupBlockedDialog() {
   const { popupBlocked, dismissPopupBlocked } = useWorkspace()
   const t = useTranslations("dashboard.session")
   const tCommon = useTranslations("common")
 
   return (
-    <Dialog open={popupBlocked} onOpenChange={(open) => !open && dismissPopupBlocked()}>
+    <Dialog open={popupBlocked} onOpenChange={(open: boolean) => !open && dismissPopupBlocked()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -159,7 +203,7 @@ function useRuntimePanelRenderer({
 }) {
   const { setPanelMode } = useWorkspace()
 
-  return React.useCallback((id: PanelId, options?: { nativeWindow?: boolean }) => {
+  return React.useCallback((id: PanelId, options?: { nativeWindow?: boolean; mobileDrawer?: boolean }) => {
     if (id === "files") {
       return (
         <FilesPanelBody
@@ -167,19 +211,22 @@ function useRuntimePanelRenderer({
           connectorId={connectorId}
           connectorDeviceOs={connectorDeviceOs}
           root={root}
-          onPopOut={options?.nativeWindow ? undefined : () => setPanelMode("files", "floating")}
+          variant={options?.mobileDrawer ? "mobile" : "desktop"}
+          onPopOut={options?.nativeWindow || options?.mobileDrawer ? undefined : () => setPanelMode("files", "floating")}
           onClose={() => setPanelMode("files", "closed")}
           onPopupBlocked={() => {}}
         />
       )
     }
     if (id === "terminal") {
+      if (options?.mobileDrawer) return null
       return (
         <TerminalPanelBody
           token={token}
           connectorId={connectorId}
           root={root}
-          onPopOut={options?.nativeWindow ? undefined : () => setPanelMode("terminal", "floating")}
+          variant={options?.mobileDrawer ? "mobile" : "desktop"}
+          onPopOut={options?.nativeWindow || options?.mobileDrawer ? undefined : () => setPanelMode("terminal", "floating")}
           onClose={() => setPanelMode("terminal", "closed")}
         />
       )

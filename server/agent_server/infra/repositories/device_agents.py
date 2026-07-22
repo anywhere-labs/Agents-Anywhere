@@ -108,11 +108,6 @@ class DeviceAgentsRepositoryMixin:
             state["lastDiscoveredAt"] = now
             if apply_defaults:
                 state["defaultsAppliedAt"] = now
-            user_defaults = (
-                await self._get_user_agent_defaults_on_conn(conn, row["user_id"])
-                if apply_defaults
-                else {}
-            )
 
             discovered_runtimes = raw_report.get("runtimes")
             if not isinstance(discovered_runtimes, dict):
@@ -124,15 +119,9 @@ class DeviceAgentsRepositoryMixin:
                 if not isinstance(report, dict):
                     continue
                 observed[runtime] = {"report": report, "observedAt": now}
-                should_enable = (
-                    user_defaults.get(runtime, {}).get("enabled", True)
-                    if apply_defaults
-                    else True
-                )
                 if (
                     apply_defaults
                     and runtime not in desired
-                    and should_enable
                     and report_is_attachable(report)
                 ):
                     desired[runtime] = {"enabled": True, "updatedAt": now}

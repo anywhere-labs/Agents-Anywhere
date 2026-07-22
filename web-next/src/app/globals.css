@@ -145,6 +145,7 @@ html {
 }
 body {
   @apply size-full overflow-hidden overscroll-none bg-background text-foreground;
+  touch-action: manipulation;
 }
 }
 

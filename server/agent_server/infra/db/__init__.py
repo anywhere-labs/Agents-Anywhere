@@ -1,9 +1,7 @@
 from agent_server.infra.db.engine import build_engine, init_db
 from agent_server.infra.db.schema import (
-    agent_efforts,
-    agent_modes,
-    agent_models,
     approvals,
+    connector_runtime_catalogs,
     connector_terminal_roots,
     connectors,
     dashboard_daily_metrics,
@@ -23,16 +21,13 @@ from agent_server.infra.db.schema import (
     sessions,
     session_active_runs,
     timeline_items,
-    user_agent_defaults,
     users,
 )
 
 __all__ = [
-    "agent_efforts",
-    "agent_modes",
-    "agent_models",
     "approvals",
     "build_engine",
+    "connector_runtime_catalogs",
     "connector_terminal_roots",
     "connectors",
     "dashboard_daily_metrics",
@@ -53,6 +48,5 @@ __all__ = [
     "sessions",
     "session_active_runs",
     "timeline_items",
-    "user_agent_defaults",
     "users",
 ]

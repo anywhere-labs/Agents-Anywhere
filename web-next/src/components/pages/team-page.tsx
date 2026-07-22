@@ -73,6 +73,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
 import { useAuth } from "@/components/auth/auth-context"
 import { LoadingState } from "@/components/loading-state"
 import { useWorkspace } from "@/components/workspace-context"
@@ -214,16 +215,19 @@ export function TeamPage() {
     <ScrollArea className="h-full bg-background">
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-8 pb-16 pt-8">
         <div>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={() => navigate("home")}
-            className="mb-6 -ml-2 gap-1.5 text-muted-foreground"
-          >
-            <ChevronLeft className="size-4" />
-            {tCommon("back")}
-          </Button>
+          <div className="mb-6 -ml-2 flex items-center gap-1">
+            <DashboardSidebarToggle />
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => navigate("home")}
+              className="gap-1.5 text-muted-foreground"
+            >
+              <ChevronLeft className="size-4" />
+              {tCommon("back")}
+            </Button>
+          </div>
 
           <div className="flex flex-wrap items-end justify-between gap-4">
             <div>
@@ -257,7 +261,7 @@ export function TeamPage() {
           <ToggleGroup
             type="single"
             value={filterTab}
-            onValueChange={(value) => {
+            onValueChange={(value: string) => {
               if (value) setFilterTab(value as FilterTab)
             }}
             variant="outline"
@@ -637,7 +641,7 @@ function EditUserDialog({
               <ToggleGroup
                 type="single"
                 value={role}
-                onValueChange={(value) => {
+                onValueChange={(value: string) => {
                   if (value && !isSelf) setRole(value as UserRole)
                 }}
                 variant="outline"
@@ -782,7 +786,7 @@ function DeleteUserDialog({
         </FieldGroup>
         <AlertDialogFooter>
           <AlertDialogCancel disabled={saving}>{t("cancel")}</AlertDialogCancel>
-          <AlertDialogAction variant="destructive" disabled={!confirmed || saving} onClick={(event) => {
+          <AlertDialogAction variant="destructive" disabled={!confirmed || saving} onClick={(event: React.MouseEvent<HTMLButtonElement>) => {
             event.preventDefault()
             void deleteUser()
           }}>
@@ -832,7 +836,7 @@ function UserFormFields({
         <ToggleGroup
           type="single"
           value={draft.role}
-          onValueChange={(value) => {
+          onValueChange={(value: string) => {
             if (value) onDraftChange({ ...draft, role: value as UserRole })
           }}
           variant="outline"

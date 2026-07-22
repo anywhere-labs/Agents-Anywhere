@@ -14,6 +14,7 @@ from connector.codex.adapter import (
 from connector.codex.history import read_timeline_history, read_tool_history
 from connector.codex.reducer import TimelineReducer
 from connector.codex.rpc import APP_SERVER_STREAM_LIMIT, JsonRpcStdioClient
+from connector.protocol import protocol_selection_id
 from connector.sync_state import SqliteSyncStateStore
 
 
@@ -1078,11 +1079,11 @@ def test_adapter_maps_thread_start_sandbox_policy_to_mode() -> None:
             {
                 "sessionId": "sess_1",
                 "cwd": "/repo",
-                "sandbox": {
-                    "type": "workspaceWrite",
-                    "writableRoots": ["/repo"],
-                    "networkAccess": False,
-                },
+                "permissionSelectionId": protocol_selection_id(
+                    "codex",
+                    "permission",
+                    {"approval_policy": "on-request", "sandbox": "workspace-write"},
+                ),
             }
         )
 

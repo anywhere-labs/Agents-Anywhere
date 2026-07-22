@@ -16,6 +16,7 @@ import { useTranslations } from "next-intl"
 import { toast } from "sonner"
 
 import { useAuth } from "@/components/auth/auth-context"
+import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
 import { LoadingState } from "@/components/loading-state"
 import { Button } from "@/components/ui/button"
 import {
@@ -331,16 +332,19 @@ export function ServicePage() {
     <ScrollArea className="h-full bg-background">
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-8 pb-16 pt-8">
         <div>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={() => navigate("home")}
-            className="mb-6 -ml-2 gap-1.5 text-muted-foreground"
-          >
-            <ChevronLeft />
-            {tCommon("back")}
-          </Button>
+          <div className="mb-6 -ml-2 flex items-center gap-1">
+            <DashboardSidebarToggle />
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => navigate("home")}
+              className="gap-1.5 text-muted-foreground"
+            >
+              <ChevronLeft />
+              {tCommon("back")}
+            </Button>
+          </div>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <h1 className="text-2xl font-semibold">{t("title")}</h1>
@@ -509,8 +513,14 @@ function InfoRow({
   return (
     <div className={cn("flex items-center gap-4 px-5 py-3", !last && "border-b border-border")}>
       <div className="w-32 shrink-0 text-sm text-muted-foreground">{label}</div>
-      <div className="min-w-0 flex-1 text-sm">{value}</div>
-      {action}
+      <div className={cn("relative min-w-0 flex-1 text-sm", action && "pr-10")}>
+        <div className="no-scrollbar min-w-0 overflow-x-auto overflow-y-hidden whitespace-nowrap">{value}</div>
+        {action ? (
+          <div className="absolute inset-y-0 right-0 flex items-center bg-card pl-2 before:pointer-events-none before:absolute before:inset-y-0 before:right-full before:w-10 before:bg-gradient-to-r before:from-transparent before:to-card">
+            {action}
+          </div>
+        ) : null}
+      </div>
     </div>
   )
 }
@@ -592,7 +602,7 @@ function OAuthProviderCard({
             <Switch
               checked={draft.enabled}
               disabled={disabled}
-              onCheckedChange={(value) => onDraftChange({ enabled: value })}
+              onCheckedChange={(value: boolean) => onDraftChange({ enabled: value })}
             />
           </Field>
 
@@ -606,7 +616,7 @@ function OAuthProviderCard({
                 variant="outline"
                 spacing={0}
                 value={template}
-                onValueChange={(value) => {
+                onValueChange={(value: string) => {
                   if (value) onTemplateChange(value as OAuthTemplateKey)
                 }}
                 className="flex-wrap"

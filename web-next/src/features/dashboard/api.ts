@@ -1,6 +1,5 @@
 import { ApiClient, apiClient, apiPath } from "@/lib/api";
 import type {
-  AgentCatalogResponse,
   AdminDashboardOverviewResponse,
   AdminDashboardSettings,
   AdminDashboardSettingsUpdate,
@@ -44,7 +43,6 @@ import type {
   TerminalListResponse,
   TerminalResponse,
   TerminalSnapshotResult,
-  UserAgentDefaultsResponse,
   WsTicketResponse,
 } from "@/features/dashboard/types";
 
@@ -261,6 +259,14 @@ export class DashboardApi {
     return this.client.get<SessionSnapshotResponse>(
       `/sessions/${encodeURIComponent(sessionId)}/snapshot`,
       { token, query: { limit } },
+    );
+  }
+
+  syncSession(token: string, sessionId: string): Promise<RpcResponse<Record<string, unknown>>> {
+    return this.client.post<RpcResponse<Record<string, unknown>>>(
+      `/sessions/${encodeURIComponent(sessionId)}/sync`,
+      {},
+      { token },
     );
   }
 
@@ -620,49 +626,24 @@ export class DashboardApi {
     );
   }
 
-  listAgentModes(token: string, runtime: string): Promise<AgentCatalogResponse> {
-    return this.client.get<AgentCatalogResponse>(
-      `/agents/${encodeURIComponent(runtime)}/modes`,
-      { token },
-    );
-  }
-
-  getAgentModelCatalog(token: string, runtime: string): Promise<ProtocolModelCatalogResponse> {
-    return this.client.get<ProtocolModelCatalogResponse>(
-      `/agents/${encodeURIComponent(runtime)}/model-catalog`,
-      { token },
-    );
-  }
-
-  getAgentPermissionCatalog(token: string, runtime: string): Promise<ProtocolPermissionCatalogResponse> {
-    return this.client.get<ProtocolPermissionCatalogResponse>(
-      `/agents/${encodeURIComponent(runtime)}/permission-catalog`,
-      { token },
-    );
-  }
-
-  getAgentDefaults(token: string): Promise<UserAgentDefaultsResponse> {
-    return this.client.get<UserAgentDefaultsResponse>("/agents/defaults", { token });
-  }
-
-  updateAgentDefaults(
+  getAgentModelCatalog(
     token: string,
-    runtimes: Record<string, { models?: Array<{
-      key: string;
-      displayLabel: string;
-      description?: string | null;
-      sortOrder?: number;
-      efforts?: Array<{
-        key: string;
-        displayLabel: string;
-        description?: string | null;
-        sortOrder?: number;
-      }>;
-    }> }>,
-  ): Promise<UserAgentDefaultsResponse> {
-    return this.client.patch<UserAgentDefaultsResponse>(
-      "/agents/defaults",
-      { runtimes },
+    runtime: string,
+    connectorId: string,
+  ): Promise<ProtocolModelCatalogResponse> {
+    return this.client.get<ProtocolModelCatalogResponse>(
+      `/agents/${encodeURIComponent(runtime)}/model-catalog?connectorId=${encodeURIComponent(connectorId)}`,
+      { token },
+    );
+  }
+
+  getAgentPermissionCatalog(
+    token: string,
+    runtime: string,
+    connectorId: string,
+  ): Promise<ProtocolPermissionCatalogResponse> {
+    return this.client.get<ProtocolPermissionCatalogResponse>(
+      `/agents/${encodeURIComponent(runtime)}/permission-catalog?connectorId=${encodeURIComponent(connectorId)}`,
       { token },
     );
   }

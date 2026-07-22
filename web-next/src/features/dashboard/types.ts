@@ -78,6 +78,8 @@ export type SessionView = {
   effectiveRunMode?: "chat" | "terminal" | null;
   runtimeSettings?: Record<string, unknown> | null;
   runtimeSettingsOverride?: Record<string, unknown> | null;
+  modelSelectionId?: string | null;
+  permissionSelectionId?: string | null;
 };
 
 export type ConnectorListResponse = {
@@ -167,8 +169,6 @@ export type SessionCreateRequest = {
   runtimeSettings?: Record<string, unknown> | null;
   modelSelectionId?: string | null;
   permissionSelectionId?: string | null;
-  approvalPolicy?: string;
-  sandbox?: string;
 };
 
 export type SessionCreateResponse = {
@@ -623,34 +623,6 @@ export type RuntimeSettingsResponse = {
   effectiveRunMode?: "chat" | "terminal" | null;
   defaultRunModeConfigured?: boolean;
   schemaVersion?: number;
-  serverTime: string;
-};
-
-export type AgentCatalogEntry = {
-  runtime: string;
-  key: string;
-  displayLabel: string;
-  description?: string | null;
-  isDefault: boolean;
-  sortOrder: number;
-  efforts: AgentCatalogEntry[];
-};
-
-export type AgentCatalogResponse = {
-  runtime: string;
-  entries: AgentCatalogEntry[];
-  serverTime: string;
-};
-
-export type UserAgentDefaultRuntime = {
-  runtime: string;
-  enabled: boolean;
-  settings: Record<string, unknown>;
-  models: AgentCatalogEntry[];
-};
-
-export type UserAgentDefaultsResponse = {
-  runtimes: Record<string, UserAgentDefaultRuntime>;
   serverTime: string;
 };
 

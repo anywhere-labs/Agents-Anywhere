@@ -6,6 +6,7 @@ import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
+import { useSidebar } from "@/components/ui/sidebar"
 import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
 import {
@@ -18,6 +19,9 @@ import {
   DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu"
 import { CascadingSelector } from "@/components/cascading-selector"
+import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
+import { AgentSelectionDrawer } from "@/components/session/agent-selection-drawer"
+import { SelectionSettingsDrawer } from "@/components/session/selection-settings-drawer"
 import {
   AttachmentButton,
   AttachmentPreviewList,
@@ -31,21 +35,23 @@ import { useAuth } from "@/components/auth/auth-context"
 import { dashboardApi } from "@/features/dashboard/api"
 import { createClientId } from "@/lib/id"
 import { cn } from "@/lib/utils"
-import {
-  composerMenuOptions,
-  effortFieldForModel,
-  effectiveFieldValue,
-  optionLabel,
-  type ComposerPermissionLabelKey,
-  runtimeConfigFields,
-} from "@/features/dashboard/runtime-config"
+import { useElementWidth } from "@/hooks/use-element-width"
+import type { ComposerPermissionLabelKey } from "@/features/dashboard/runtime-config"
 import type {
   ProtocolModelCatalog,
   ProtocolPermissionCatalog,
-  RuntimeConfigSchema,
   SessionView as RealSessionView,
 } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
+import {
+  modelIdsForSelectionId,
+  modelRuntimeSettingsForCatalog,
+  modelSelectionIdForCatalog,
+  permissionIdForSelectionId,
+  permissionIdForRuntimeSettings,
+  permissionRuntimeSettingsForCatalog,
+  permissionSelectionIdForCatalog,
+} from "@/components/session/catalog-selection"
 
 type ComposerPermissionMode = {
   id: "ask" | "full" | "readonly"
@@ -95,16 +101,24 @@ const NEW_SESSION_TITLE_KEYS = [
 type NewSessionPreference = {
   connectorId: string
   agent: string
+  selections?: Record<string, NewSessionSelectionPreference>
+}
+
+type NewSessionSelectionPreference = {
+  modelSelectionId?: string | null
+  permissionSelectionId?: string | null
 }
 
 type NewSessionTitleKey = (typeof NEW_SESSION_TITLE_KEYS)[number]
 
 export function TaskComposer() {
   const { session: authSession } = useAuth()
+  const { isMobile, state: sidebarState } = useSidebar()
   const {
     addOptimisticMessage,
     bindOptimisticSession,
     connectors,
+    goHome,
     markOptimisticMessageFailed,
     openSession,
     requestSessionRefresh,
@@ -151,7 +165,6 @@ export function TaskComposer() {
   const [selectedPermissionMode, setSelectedPermissionMode] = React.useState("")
   const [workspace, setWorkspace] = React.useState<WorkspaceSelection | null>(null)
   const [prompt, setPrompt] = React.useState("")
-  const [runtimeSchema, setRuntimeSchema] = React.useState<RuntimeConfigSchema | null>(null)
   const [runtimeSettings, setRuntimeSettings] = React.useState<Record<string, unknown>>({})
   const [modelCatalog, setModelCatalog] = React.useState<ProtocolModelCatalog | null>(null)
   const [permissionCatalog, setPermissionCatalog] = React.useState<ProtocolPermissionCatalog | null>(null)
@@ -160,8 +173,11 @@ export function TaskComposer() {
   const [createTick, setCreateTick] = React.useState(0)
   const [preferenceLoaded, setPreferenceLoaded] = React.useState(false)
   const [preference, setPreference] = React.useState<NewSessionPreference | null>(null)
+  const composerRef = React.useRef<HTMLDivElement | null>(null)
   const devicePreferenceAppliedRef = React.useRef(false)
   const agentPreferenceAppliedForDeviceRef = React.useRef<string | null>(null)
+  const selectionPreferenceAppliedForScopeRef = React.useRef<string | null>(null)
+  const composerWidth = useElementWidth(composerRef)
 
   const { attachments, isDragging, add, remove, clear, onDragEnter, onDragLeave, onDragOver, onDrop } =
     useAttachments()
@@ -241,7 +257,6 @@ export function TaskComposer() {
 
   React.useEffect(() => {
     if (!authSession?.accessToken || !selectedConnectorId || !selectedAgent) {
-      setRuntimeSchema(null)
       setRuntimeSettings({})
       setModelCatalog(null)
       setPermissionCatalog(null)
@@ -250,31 +265,22 @@ export function TaskComposer() {
     }
     let cancelled = false
     setRuntimeConfigLoading(true)
-    setRuntimeSchema(null)
     setRuntimeSettings({})
     setModelCatalog(null)
     setPermissionCatalog(null)
     Promise.all([
-      dashboardApi.getRuntimeConfigSchema(authSession.accessToken, selectedAgent),
       dashboardApi.getConnectorAgentSettings(authSession.accessToken, selectedConnectorId, selectedAgent),
-      dashboardApi.getAgentDefaults(authSession.accessToken),
-      dashboardApi.getAgentModelCatalog(authSession.accessToken, selectedAgent),
-      dashboardApi.getAgentPermissionCatalog(authSession.accessToken, selectedAgent),
+      dashboardApi.getAgentModelCatalog(authSession.accessToken, selectedAgent, selectedConnectorId),
+      dashboardApi.getAgentPermissionCatalog(authSession.accessToken, selectedAgent, selectedConnectorId),
     ])
-      .then(([schemaResponse, settingsResponse, defaultsResponse, modelCatalogResponse, permissionCatalogResponse]) => {
+      .then(([settingsResponse, modelCatalogResponse, permissionCatalogResponse]) => {
         if (cancelled) return
-        const userDefaultSettings = defaultsResponse.runtimes[selectedAgent]?.settings ?? {}
-        setRuntimeSchema(schemaResponse.schema)
-        setRuntimeSettings({
-          ...userDefaultSettings,
-          ...(settingsResponse.runtimeSettings ?? settingsResponse.settings ?? {}),
-        })
+        setRuntimeSettings(settingsResponse.runtimeSettings ?? settingsResponse.settings ?? {})
         setModelCatalog(modelCatalogResponse.catalog)
         setPermissionCatalog(permissionCatalogResponse.catalog)
       })
       .catch(() => {
         if (cancelled) return
-        setRuntimeSchema(null)
         setRuntimeSettings({})
         setModelCatalog(null)
         setPermissionCatalog(null)
@@ -287,45 +293,60 @@ export function TaskComposer() {
     }
   }, [authSession?.accessToken, selectedAgent, selectedConnectorId])
 
-  const runtimeFields = React.useMemo(
-    () => runtimeConfigFields(runtimeSchema, runtimeSettings, "session"),
-    [runtimeSchema, runtimeSettings],
+  const models = React.useMemo(
+    () => modelCatalog?.models.map((item) => ({
+      id: item.id,
+      label: item.displayName,
+      default: item.default,
+      selectionId: item.selectionId,
+      reasoningItems: item.reasoningItems.map((reasoning) => ({
+        id: reasoning.id,
+        label: reasoning.displayName,
+        default: reasoning.default,
+        selectionId: reasoning.selectionId,
+      })),
+    })) ?? [],
+    [modelCatalog],
   )
-  const modelField = runtimeFields.find((field) => field.key === "model")
-  const permissionField = runtimeFields.find((field) => field.key === "permissionMode")
-  const rawEffortField = runtimeFields.find((field) => field.key === "effort")
-  const effortField = effortFieldForModel(
-    modelField,
-    rawEffortField,
-    selectedModel || runtimeSettings.model,
+  const selectedModelItem = models.find((item) => item.id === selectedModel)
+  const reasoningOptions = selectedModelItem?.reasoningItems ?? []
+  const permissionOptions = React.useMemo(
+    () => permissionCatalog?.permissions.map((item) => ({
+      id: item.id,
+      label: item.displayName,
+      default: item.default,
+      selectionId: item.selectionId,
+    })) ?? [],
+    [permissionCatalog],
   )
-  const effortFieldFor = (model: string) => effortFieldForModel(
-    modelField,
-    rawEffortField,
-    model,
-  )
-  const models = composerMenuOptions(modelField)
-  const permissionOptions = composerMenuOptions(permissionField)
-  const reasoningOptions = composerMenuOptions(effortField)
 
   React.useEffect(() => {
-    const nextModel = effectiveFieldValue(modelField, runtimeSettings.model)
+    const settingsModel = typeof runtimeSettings.model === "string" ? runtimeSettings.model : ""
+    const nextModel = models.some((option) => option.id === settingsModel)
+      ? settingsModel
+      : models.find((option) => option.default)?.id ?? models[0]?.id ?? ""
     setSelectedModel((current) => current && models.some((option) => option.id === current) ? current : nextModel)
-  }, [modelField, models, runtimeSettings.model])
+  }, [models, runtimeSettings.model])
 
   React.useEffect(() => {
-    const nextPermissionMode = effectiveFieldValue(permissionField, runtimeSettings.permissionMode)
+    const settingsPermission = permissionIdForRuntimeSettings(permissionCatalog, runtimeSettings)
+    const nextPermissionMode = permissionOptions.some((option) => option.id === settingsPermission)
+      ? settingsPermission
+      : permissionOptions.find((option) => option.default)?.id ?? permissionOptions[0]?.id ?? ""
     setSelectedPermissionMode((current) =>
       current && permissionOptions.some((option) => option.id === current) ? current : nextPermissionMode,
     )
-  }, [permissionField, permissionOptions, runtimeSettings.permissionMode])
+  }, [permissionCatalog, permissionOptions, runtimeSettings])
 
   React.useEffect(() => {
-    const nextEffort = effectiveFieldValue(effortField, runtimeSettings.effort)
+    const settingsEffort = typeof runtimeSettings.effort === "string" ? runtimeSettings.effort : ""
+    const nextEffort = reasoningOptions.some((option) => option.id === settingsEffort)
+      ? settingsEffort
+      : reasoningOptions.find((option) => option.default)?.id ?? reasoningOptions[0]?.id ?? ""
     setSelectedReasoning((current) =>
       current && reasoningOptions.some((option) => option.id === current) ? current : nextEffort,
     )
-  }, [effortField, reasoningOptions, runtimeSettings.effort])
+  }, [reasoningOptions, runtimeSettings.effort])
 
   React.useEffect(() => {
     setSelectedReasoning((current) => {
@@ -334,25 +355,77 @@ export function TaskComposer() {
     })
   }, [reasoningOptions])
 
+  React.useEffect(() => {
+    if (!preferenceLoaded || !selectedConnectorId || !selectedAgent) return
+    if (runtimeConfigLoading || (!modelCatalog && !permissionCatalog)) return
+    const scope = newSessionSelectionScope(selectedConnectorId, selectedAgent)
+    if (selectionPreferenceAppliedForScopeRef.current === scope) return
+    const selectionPreference = preference?.selections?.[scope]
+    selectionPreferenceAppliedForScopeRef.current = scope
+    if (!selectionPreference) return
+
+    const modelSelection = modelIdsForSelectionId(modelCatalog, selectionPreference.modelSelectionId)
+    if (modelSelection && models.some((option) => option.id === modelSelection.modelId)) {
+      setSelectedModel(modelSelection.modelId)
+      setSelectedReasoning(modelSelection.reasoningId)
+    }
+
+    const permissionSelection = permissionIdForSelectionId(
+      permissionCatalog,
+      selectionPreference.permissionSelectionId,
+    )
+    if (permissionSelection && permissionOptions.some((option) => option.id === permissionSelection)) {
+      setSelectedPermissionMode(permissionSelection)
+    }
+  }, [
+    modelCatalog,
+    models,
+    permissionCatalog,
+    permissionOptions,
+    preference,
+    preferenceLoaded,
+    runtimeConfigLoading,
+    selectedAgent,
+    selectedConnectorId,
+  ])
+
   const approvalMode = PERMISSION_MODES.find((o) => o.id === approval) ?? PERMISSION_MODES[0]
   const selectedPermissionOption = permissionOptions.find((option) => option.id === selectedPermissionMode)
-  const modelLabel = optionLabel(modelField, selectedModel || runtimeSettings.model, t("defaultModel"))
-  const effortLabel = optionLabel(effortField, selectedReasoning || runtimeSettings.effort, t("defaultReasoning"))
+  const modelLabel = selectedModelItem?.label ?? t("defaultModel")
+  const selectedReasoningOption = reasoningOptions.find((option) => option.id === selectedReasoning)
+  const effortLabel = selectedReasoningOption?.label ?? t("defaultReasoning")
   const permissionLabel = selectedPermissionOption?.label ?? t(approvalMode.labelKey)
+  const permissionDrawerItems = permissionOptions.length > 0
+    ? permissionOptions
+    : PERMISSION_MODES.map((option) => ({ id: option.id, label: t(option.labelKey) }))
   const modelSelectionId = modelSelectionIdForCatalog(modelCatalog, selectedModel, selectedReasoning)
   const permissionSelectionId = permissionSelectionIdForCatalog(permissionCatalog, selectedPermissionMode)
+  const requiresModelSelection = Boolean(modelCatalog && models.length > 0)
+  const requiresPermissionSelection = Boolean(permissionCatalog && permissionOptions.length > 0)
+  const optimisticRuntimeSettings = {
+    ...runtimeSettings,
+    ...modelRuntimeSettingsForCatalog(modelCatalog, selectedModel, selectedReasoning),
+    ...permissionRuntimeSettingsForCatalog(permissionCatalog, selectedPermissionMode),
+  }
   const canCreate =
     Boolean(authSession?.accessToken && selectedConnector && selectedAgent) &&
     !creating &&
     !runtimeConfigLoading &&
+    (!requiresModelSelection || Boolean(modelSelectionId)) &&
+    (!requiresPermissionSelection || Boolean(permissionSelectionId)) &&
     (prompt.trim().length > 0 || attachments.length > 0)
   const selectorsLoading =
     Boolean(authSession?.accessToken && hasOnlineDevice && selectedConnector && selectedAgent) &&
-    (runtimeConfigLoading || !runtimeSchema)
+    runtimeConfigLoading
+  const compactSelectors = composerWidth > 0 && composerWidth < 640
+  const showCollapsedBrand = isMobile || sidebarState === "collapsed"
 
   const handleCreate = async () => {
     if (!authSession?.accessToken || !selectedConnector || !selectedAgent || creating) return
     if (!prompt.trim() && attachments.length === 0) return
+    if (runtimeConfigLoading) return
+    if (requiresModelSelection && !modelSelectionId) return
+    if (requiresPermissionSelection && !permissionSelectionId) return
     const localSessionId = createClientId("session")
     const clientMessageId = createClientId("msg")
     const messageText = prompt.trim() || t("attachmentOnlyPrompt")
@@ -366,8 +439,8 @@ export function TaskComposer() {
       externalSessionId: null,
       title: prompt.trim() || null,
       cwd: workspace?.path || null,
-      status: "idle",
-      takeover: false,
+      status: "pending",
+      takeover: true,
       pinned: false,
       pinnedAt: null,
       archived: false,
@@ -382,8 +455,10 @@ export function TaskComposer() {
       sortAt: now,
       updatedSeq: 1,
       effectiveRunMode: "chat",
-      runtimeSettings: null,
-      runtimeSettingsOverride: null,
+      runtimeSettings: optimisticRuntimeSettings,
+      runtimeSettingsOverride: optimisticRuntimeSettings,
+      modelSelectionId,
+      permissionSelectionId,
     }
     addOptimisticMessage({
       clientMessageId,
@@ -412,7 +487,15 @@ export function TaskComposer() {
         modelSelectionId,
         permissionSelectionId,
       })
-      const nextPreference = { connectorId: selectedConnector.id, agent: selectedAgent }
+      const nextPreference = withNewSessionSelectionPreference(
+        preference,
+        selectedConnector.id,
+        selectedAgent,
+        {
+          modelSelectionId,
+          permissionSelectionId,
+        },
+      )
       writeNewSessionPreference(nextPreference)
       setPreference(nextPreference)
       bindOptimisticSession(localSessionId, created.session)
@@ -449,22 +532,37 @@ export function TaskComposer() {
 
   return (
     <div
-      className="flex flex-1 flex-col items-center justify-center px-6"
+      className="relative flex flex-1 flex-col items-center justify-center px-6"
       onDragEnter={onDragEnter}
       onDragLeave={onDragLeave}
       onDragOver={onDragOver}
       onDrop={onDrop}
     >
       <DragOverlay isDragging={isDragging} />
+      <div className="absolute left-3 top-3 flex items-center gap-2">
+        <DashboardSidebarToggle />
+        {showCollapsedBrand ? (
+          <button
+            type="button"
+            onClick={goHome}
+            className="aa-wordmark text-xl leading-none text-foreground transition-colors hover:text-primary"
+          >
+            Agents Anywhere
+          </button>
+        ) : null}
+      </div>
 
       <div className="w-full max-w-3xl">
-        <h1 className="mb-8 min-h-[3.5rem] text-balance text-center text-5xl font-semibold leading-tight tracking-tight" aria-live="polite">
+        <h1 className="mb-6 min-h-[3rem] text-balance text-center text-4xl font-semibold leading-tight tracking-tight" aria-live="polite">
           <span>{creating ? `${t("creatingBase")}${".".repeat((createTick % 3) + 1)}` : typedTitle}</span>
           <span className="ml-1 inline-block h-[0.9em] w-0.5 translate-y-[0.1em] rounded-full bg-muted-foreground motion-safe:animate-[composer-caret_1s_steps(1,end)_infinite]" aria-hidden="true" />
         </h1>
 
-        <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20">
-          <div className="space-y-3 px-6 pt-6">
+        <div
+          ref={composerRef}
+          className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20"
+        >
+          <div className="flex flex-col gap-3 px-5 pt-4">
             <AttachmentPreviewList attachments={attachments} onRemove={remove} />
             <Textarea
               value={prompt}
@@ -478,15 +576,15 @@ export function TaskComposer() {
               }}
               placeholder={t("placeholder")}
               disabled={creating || !authSession?.accessToken || !selectedConnector}
-              className="min-h-24 max-h-64 resize-none overflow-y-auto rounded-none border-0 bg-transparent p-0 text-base leading-relaxed shadow-none focus-visible:ring-0 dark:bg-transparent"
+              className="min-h-20 max-h-64 resize-none overflow-y-auto rounded-none border-0 bg-transparent p-0 text-base leading-relaxed shadow-none focus-visible:ring-0 dark:bg-transparent"
             />
           </div>
 
-          <div className="px-6 pt-3">
+          <div className="px-5 pt-2">
             <Separator />
           </div>
 
-          <div className="flex flex-wrap items-center gap-1 px-3 pb-3 pt-2">
+          <div className="flex flex-wrap items-center gap-1 px-3 pb-2 pt-1.5">
             <AttachmentButton
               attachments={attachments}
               onAttach={add}
@@ -495,43 +593,26 @@ export function TaskComposer() {
 
             {selectorsLoading ? (
               <>
-                <ComposerSelectorLoading className="w-36" />
                 <ComposerSelectorLoading className="w-44" />
                 <ComposerSelectorLoading className="w-36" />
+                <ComposerSelectorLoading className="w-44" />
               </>
             ) : (
               <>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground">
-                      {permissionField ? <span className="size-1.5 rounded-full bg-primary" /> : null}
-                      <span className="text-foreground">{permissionLabel}</span>
-                      <ChevronDown className="size-3.5 opacity-50" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="w-64">
-                    {permissionField ? (
-                      permissionOptions.map((item) => (
-                        <DropdownMenuItem
-                          key={item.id}
-                          className="gap-2"
-                          onSelect={() => setSelectedPermissionMode(item.id)}
-                        >
-                          <Check className={cn("size-3.5", selectedPermissionMode === item.id ? "opacity-100" : "opacity-0")} />
-                          <span>{item.label}</span>
-                        </DropdownMenuItem>
-                      ))
-                    ) : (
-                      PERMISSION_MODES.map((opt) => (
-                        <DropdownMenuItem key={opt.id} onSelect={() => setApproval(opt.id)}>
-                          {t(opt.labelKey)}
-                        </DropdownMenuItem>
-                      ))
-                    )}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-
-                {hasOnlineDevice ? (
+                {hasOnlineDevice && compactSelectors ? (
+                  <AgentSelectionDrawer
+                    buttonLabel={t("agent")}
+                    title={t("deviceAndAgent")}
+                    deviceLabel={t("device")}
+                    agentLabel={t("agent")}
+                    deviceItems={deviceOptions}
+                    selectedDevice={selectedDevice}
+                    onDeviceChange={setSelectedDevice}
+                    agentItems={agentOptions}
+                    selectedAgent={selectedAgent}
+                    onAgentChange={setSelectedAgent}
+                  />
+                ) : hasOnlineDevice ? (
                   <CascadingSelector
                     icon={<Monitor className="size-4" />}
                     primaryOptions={deviceOptions}
@@ -544,77 +625,121 @@ export function TaskComposer() {
                   />
                 ) : null}
 
-                {hasOnlineDevice && (models.length > 0 || reasoningOptions.length > 0) ? (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="sm" className="max-w-72 gap-1.5 text-muted-foreground">
-                        {effortField ? <span className="text-foreground">{effortLabel}</span> : null}
-                        {effortField && modelField ? <span className="text-muted-foreground/50">·</span> : null}
-                        {modelField ? <span className="truncate text-foreground">{modelLabel}</span> : null}
-                        <ChevronDown className="size-3.5 shrink-0 opacity-50" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start" className="w-56">
-                      {!modelField && reasoningOptions.length > 0 ? (
-                        reasoningOptions.map((item) => (
-                          <DropdownMenuItem
-                            key={item.id}
-                            className="gap-2"
-                            onSelect={() => setSelectedReasoning(item.id)}
-                          >
-                            <Check className={cn("size-3.5", selectedReasoning === item.id ? "opacity-100" : "opacity-0")} />
-                            <span className="truncate">{item.label}</span>
-                          </DropdownMenuItem>
-                        ))
-                      ) : null}
-                      {models.map((modelItem) => {
-                        const modelEffortField = effortFieldFor(modelItem.id)
-                        const modelEfforts = composerMenuOptions(modelEffortField)
-                        if (modelEfforts.length === 0) {
-                          return (
+                {compactSelectors ? (
+                  <SelectionSettingsDrawer
+                    disabled={selectorsLoading}
+                    buttonLabel={t("selectionSettings")}
+                    title={t("selectionSettings")}
+                    description={t("selectionSettingsDescription")}
+                    permissionLabel={t("permissionMode")}
+                    modelLabel={t("modelAndReasoning")}
+                    reasoningLabel={t("reasoning")}
+                    permissionItems={permissionDrawerItems}
+                    selectedPermission={permissionOptions.length > 0 ? selectedPermissionMode : approval}
+                    onPermissionChange={(id) => {
+                      if (permissionOptions.length > 0) setSelectedPermissionMode(id)
+                      else setApproval(id as (typeof PERMISSION_MODES)[number]["id"])
+                    }}
+                    modelItems={hasOnlineDevice ? models : []}
+                    selectedModel={selectedModel}
+                    selectedReasoning={selectedReasoning}
+                    onModelChange={(modelId, reasoningId) => {
+                      setSelectedModel(modelId)
+                      setSelectedReasoning(reasoningId)
+                    }}
+                  />
+                ) : (
+                  <>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground">
+                          {permissionOptions.length > 0 ? <span className="size-1.5 rounded-full bg-primary" /> : null}
+                          <span className="text-foreground">{permissionLabel}</span>
+                          <ChevronDown className="size-3.5 opacity-50" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="start" className="w-64">
+                        {permissionOptions.length > 0 ? (
+                          permissionOptions.map((item) => (
                             <DropdownMenuItem
-                              key={modelItem.id}
+                              key={item.id}
                               className="gap-2"
-                              onSelect={() => {
-                                setSelectedModel(modelItem.id)
-                                setSelectedReasoning("")
-                              }}
+                              onSelect={() => setSelectedPermissionMode(item.id)}
                             >
-                              <Check className={cn("size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
-                              <span className="truncate">{modelItem.label}</span>
+                              <Check className={cn("size-3.5", selectedPermissionMode === item.id ? "opacity-100" : "opacity-0")} />
+                              <span>{item.label}</span>
                             </DropdownMenuItem>
-                          )
-                        }
-                        return (
-                          <DropdownMenuSub key={modelItem.id}>
-                            <DropdownMenuSubTrigger className="gap-2">
-                              <Check className={cn("size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
-                              <span className="max-w-40 truncate">{modelItem.label}</span>
-                            </DropdownMenuSubTrigger>
-                            <DropdownMenuSubContent className="w-56">
-                              {modelEfforts.map((item) => (
+                          ))
+                        ) : (
+                          PERMISSION_MODES.map((opt) => (
+                            <DropdownMenuItem key={opt.id} onSelect={() => setApproval(opt.id)}>
+                              {t(opt.labelKey)}
+                            </DropdownMenuItem>
+                          ))
+                        )}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+
+                    {hasOnlineDevice && models.length > 0 ? (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="sm" className="max-w-72 gap-1.5 text-muted-foreground">
+                            {reasoningOptions.length > 0 ? <span className="text-foreground">{effortLabel}</span> : null}
+                            {reasoningOptions.length > 0 ? <span className="text-muted-foreground/50">·</span> : null}
+                            <span className="truncate text-foreground">{modelLabel}</span>
+                            <ChevronDown className="size-3.5 shrink-0 opacity-50" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start" className="w-56">
+                          {models.map((modelItem) => {
+                            const modelEfforts = modelItem.reasoningItems
+                            if (modelEfforts.length === 0) {
+                              return (
                                 <DropdownMenuItem
-                                  key={item.id}
+                                  key={modelItem.id}
                                   className="gap-2"
                                   onSelect={() => {
                                     setSelectedModel(modelItem.id)
-                                    setSelectedReasoning(item.id)
+                                    setSelectedReasoning("")
                                   }}
                                 >
-                                  <Check className={cn(
-                                    "size-3.5",
-                                    selectedModel === modelItem.id && selectedReasoning === item.id ? "opacity-100" : "opacity-0",
-                                  )} />
-                                  <span className="truncate">{item.label}</span>
+                                  <Check className={cn("size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
+                                  <span className="truncate">{modelItem.label}</span>
                                 </DropdownMenuItem>
-                              ))}
-                            </DropdownMenuSubContent>
-                          </DropdownMenuSub>
-                        )
-                      })}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                ) : null}
+                              )
+                            }
+                            return (
+                              <DropdownMenuSub key={modelItem.id}>
+                                <DropdownMenuSubTrigger className="gap-2">
+                                  <Check className={cn("size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
+                                  <span className="max-w-40 truncate">{modelItem.label}</span>
+                                </DropdownMenuSubTrigger>
+                                <DropdownMenuSubContent className="w-56">
+                                  {modelEfforts.map((item) => (
+                                    <DropdownMenuItem
+                                      key={item.id}
+                                      className="gap-2"
+                                      onSelect={() => {
+                                        setSelectedModel(modelItem.id)
+                                        setSelectedReasoning(item.id)
+                                      }}
+                                    >
+                                      <Check className={cn(
+                                        "size-3.5",
+                                        selectedModel === modelItem.id && selectedReasoning === item.id ? "opacity-100" : "opacity-0",
+                                      )} />
+                                      <span className="truncate">{item.label}</span>
+                                    </DropdownMenuItem>
+                                  ))}
+                                </DropdownMenuSubContent>
+                              </DropdownMenuSub>
+                            )
+                          })}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    ) : null}
+                  </>
+                )}
               </>
             )}
 
@@ -717,28 +842,6 @@ function runtimeLabel(runtime: string): string {
   return runtime.slice(0, 1).toUpperCase() + runtime.slice(1)
 }
 
-function modelSelectionIdForCatalog(
-  catalog: ProtocolModelCatalog | null,
-  modelId: string,
-  reasoningId: string,
-): string | null {
-  if (!catalog || !modelId) return null
-  const model = catalog.models.find((item) => item.id === modelId)
-  if (!model) return null
-  if (reasoningId) {
-    return model.reasoningItems.find((item) => item.id === reasoningId)?.selectionId ?? null
-  }
-  return model.selectionId ?? model.reasoningItems.find((item) => item.default)?.selectionId ?? null
-}
-
-function permissionSelectionIdForCatalog(
-  catalog: ProtocolPermissionCatalog | null,
-  permissionId: string,
-): string | null {
-  if (!catalog || !permissionId) return null
-  return catalog.permissions.find((item) => item.id === permissionId)?.selectionId ?? null
-}
-
 function readNewSessionPreference(): NewSessionPreference | null {
   if (typeof window === "undefined") return null
   try {
@@ -752,10 +855,56 @@ function readNewSessionPreference(): NewSessionPreference | null {
     return {
       connectorId: parsed.connectorId,
       agent: parsed.agent,
+      selections: readNewSessionSelectionPreferences(parsed.selections),
     }
   } catch {
     return null
   }
+}
+
+function readNewSessionSelectionPreferences(value: unknown): Record<string, NewSessionSelectionPreference> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
+  const result: Record<string, NewSessionSelectionPreference> = {}
+  for (const [scope, rawSelection] of Object.entries(value)) {
+    if (!scope || !rawSelection || typeof rawSelection !== "object" || Array.isArray(rawSelection)) continue
+    const selection = rawSelection as Partial<NewSessionSelectionPreference>
+    const modelSelectionId = typeof selection.modelSelectionId === "string" && selection.modelSelectionId
+      ? selection.modelSelectionId
+      : null
+    const permissionSelectionId = typeof selection.permissionSelectionId === "string" && selection.permissionSelectionId
+      ? selection.permissionSelectionId
+      : null
+    if (!modelSelectionId && !permissionSelectionId) continue
+    result[scope] = {
+      modelSelectionId,
+      permissionSelectionId,
+    }
+  }
+  return Object.keys(result).length > 0 ? result : undefined
+}
+
+function withNewSessionSelectionPreference(
+  current: NewSessionPreference | null,
+  connectorId: string,
+  agent: string,
+  selection: NewSessionSelectionPreference,
+): NewSessionPreference {
+  const scope = newSessionSelectionScope(connectorId, agent)
+  return {
+    connectorId,
+    agent,
+    selections: {
+      ...(current?.selections ?? {}),
+      [scope]: {
+        modelSelectionId: selection.modelSelectionId ?? null,
+        permissionSelectionId: selection.permissionSelectionId ?? null,
+      },
+    },
+  }
+}
+
+function newSessionSelectionScope(connectorId: string, agent: string): string {
+  return `${connectorId}:${agent}`
 }
 
 function writeNewSessionPreference(preference: NewSessionPreference) {
