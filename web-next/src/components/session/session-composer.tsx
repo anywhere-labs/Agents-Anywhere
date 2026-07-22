@@ -125,6 +125,7 @@ export function SessionComposer({
   const effortLabel = effortItems.find((item) => item.id === selectedReasoning)?.label ?? tNew("reasoning")
   const hasSelectors = Boolean(permissionItems.length > 0 || modelItems.length > 0)
   const compactSelectors = hasSelectors && composerWidth > 0 && composerWidth < 560
+  const selectorsDisabled = !session.takeover || !connectorOnline || creatingSession
 
   React.useEffect(() => {
     const nextPermission = permissionItems.some((item) => item.id === permissionValue)
@@ -233,7 +234,7 @@ export function SessionComposer({
             {hasSelectors ? (
               compactSelectors ? (
                 <SelectionSettingsDrawer
-                  disabled={!runtimeSettings}
+                  disabled={selectorsDisabled}
                   buttonLabel={tNew("selectionSettings")}
                   title={tNew("selectionSettings")}
                   description={tNew("selectionSettingsDescription")}
@@ -261,7 +262,7 @@ export function SessionComposer({
                         variant="ghost"
                         size="sm"
                         className="h-8 gap-1.5 rounded-xl px-2.5 text-muted-foreground"
-                        disabled={!runtimeSettings}
+                        disabled={selectorsDisabled}
                       >
                         <span className="size-1.5 rounded-full bg-primary" />
                         <span className="text-foreground">{permissionLabel}</span>
@@ -290,7 +291,7 @@ export function SessionComposer({
                         variant="ghost"
                         size="sm"
                         className="h-8 gap-1.5 rounded-xl px-2.5 text-muted-foreground"
-                        disabled={!runtimeSettings}
+                        disabled={selectorsDisabled}
                       >
                         {effortItems.length > 0 ? <span className="text-foreground">{effortLabel}</span> : null}
                         {effortItems.length > 0 ? <span className="text-muted-foreground/50">·</span> : null}
