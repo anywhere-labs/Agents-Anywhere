@@ -64,16 +64,16 @@ from agent_server.infra.timeline_broker import TimelineBroker
 
 
 router = APIRouter(tags=["connector-ingress"])
+TIMELINE_SYNC_PUSH_LIMIT = 100
 
 
 @dataclass
 class IngestEffect:
     """What one applied notification wants pushed to SSE subscribers.
 
-    Event-Carried State Transfer: timeline.itemUpsert carries committed item
-    payloads so the browser applies realtime increments directly. Bulk
-    timeline.sync asks clients to refetch their bounded HTTP snapshot window
-    instead of pushing an entire large timeline over WebSocket.
+    Event-Carried State Transfer: timeline.itemUpsert and small timeline.sync
+    batches carry committed items directly. Large syncs ask clients to refetch
+    their bounded HTTP snapshot window.
     """
 
     session_id: str | None = None
@@ -266,7 +266,6 @@ async def connector_ws(
         await websocket.close(code=1008, reason="invalid connector access token")
         return
 
-    await websocket.accept()
     try:
         connection = manager.register(connector_id, websocket)
     except DuplicateConnectorConnectionError:
@@ -285,13 +284,17 @@ async def connector_ws(
         connector_id=connector_id,
         reason="connector.online",
     )
+    # Complete server-side connection setup before the browser-side test or
+    # connector can observe an accepted socket and immediately query stale
+    # device metadata.
+    await websocket.accept()
     ingest_service = ConnectorIngestService(
         db,
-        manager,
         tasks,
         broker,
         websocket.app.state.terminal_stream_hub,
         timeline_broker,
+        websocket.app.state.device_runtime_service,
     )
     logger.info("connector connected: {}", connector_id)
     try:
@@ -420,34 +423,10 @@ async def _handle_connector_message(
 
 
 class _IngestFilter:
-    """Decides whether an incoming daemon notification should be applied.
+    """Reject orphan child notifications without reviving deleted sessions."""
 
-    Disabled user intent (= user clicked Delete, agent should stay out)
-    ripples through three different notification shapes (capabilities,
-    session, timeline/approval). Centralizing the check here keeps each
-    ingest handler runtime-agnostic and gives us one place to tweak the rule.
-
-    The cache is per-call: a single ingest pass might process a burst of
-    notifications and we don't want to re-hit SQL for each. The filter
-    lifetime is intentionally short (one `apply_connector_notification`
-    invocation), so we don't have to worry about it going stale.
-    """
-
-    def __init__(self, db: Store, connector_id: str) -> None:
+    def __init__(self, db: Store) -> None:
         self._db = db
-        self._connector_id = connector_id
-        self._disabled: set[str] | None = None
-
-    async def _ensure_loaded(self) -> set[str]:
-        if self._disabled is None:
-            state = await self._db.get_device_agents(self._connector_id)
-            self._disabled = set(state.get("disabled") or [])
-        return self._disabled
-
-    async def runtime_disabled(self, runtime: str | None) -> bool:
-        if not isinstance(runtime, str) or not runtime:
-            return False
-        return runtime in await self._ensure_loaded()
 
     async def session_disabled(self, session_id: str) -> bool:
         """Treat a missing session row as 'disabled' for filter purposes.
@@ -460,10 +439,7 @@ class _IngestFilter:
         outcome they'd see if we explicitly filtered by runtime, so we
         coalesce both cases here.
         """
-        runtime = await self._db.get_session_runtime(session_id)
-        if runtime is None:
-            return True
-        return await self.runtime_disabled(runtime)
+        return await self._db.get_session_runtime(session_id) is None
 
 
 async def apply_connector_notification(
@@ -481,13 +457,10 @@ async def apply_connector_notification(
     so SSE subscribers apply it directly — no GET /state refetch. Errors
     propagate.
 
-    A `_IngestFilter` runs first on the runtime-scoped handlers so any
-    notification for a Deleted runtime (or a session that belongs to one)
-    gets dropped silently. That guarantees the daemon can never resurrect
-    something the user told us to forget, regardless of how its local
-    discovery state drifts.
+    A `_IngestFilter` prevents late child notifications from resurrecting a
+    session that no longer exists.
     """
-    filter_ = _IngestFilter(db, connector_id)
+    filter_ = _IngestFilter(db)
 
     if method == "connector.heartbeat":
         await db.record_connector_activity(connector_id)
@@ -500,14 +473,6 @@ async def apply_connector_notification(
             await db.update_connector_preferences(connector_id, dict(params))
         except KeyError:
             logger.warning("preferences update for unknown connector connector_id={}", connector_id)
-        return IngestEffect()
-    elif method == "connector.capabilitiesUpdated":
-        # Daemon-published discovery report. `apply_discovery` stores observed
-        # facts and only default-enables runtimes on the first discovery.
-        try:
-            await db.apply_discovery(connector_id, dict(params))
-        except KeyError:
-            logger.warning("capabilities update for unknown connector connector_id={}", connector_id)
         return IngestEffect()
     elif method == "protocol.capabilitiesUpdated":
         try:
@@ -573,8 +538,6 @@ async def apply_connector_notification(
             logger.warning("permission catalog update for unknown connector connector_id={}", connector_id)
         return IngestEffect()
     elif method == "session.updated":
-        if await filter_.runtime_disabled(params.get("runtime")):
-            return IngestEffect()
         local_state = _local_session_state(params)
         session_id = params["sessionId"]
         external_session_id = params.get("externalSessionId")
@@ -601,7 +564,6 @@ async def apply_connector_notification(
                 if isinstance(params.get("permissionSelectionId"), str)
                 else None,
             )
-            await _apply_runtime_settings_from_session_update(db, session_id, params)
             await db.refresh_session_status_from_timeline(session_id)
             return IngestEffect(session_id=session_id, session_changed=True)
         except KeyError:
@@ -632,7 +594,6 @@ async def apply_connector_notification(
                 if isinstance(params.get("permissionSelectionId"), str)
                 else None,
             )
-            await _apply_runtime_settings_from_session_update(db, session.id, params)
             await db.refresh_session_status_from_timeline(session.id)
             return IngestEffect(session_id=session.id, session_changed=True)
     elif method == "timeline.sync":
@@ -672,14 +633,15 @@ async def apply_connector_notification(
                         turn_id=item.turnId,
                         reason="turn_finished",
                     )
-        # timeline.sync can contain the full runtime thread. Do not push every
-        # item over WebSocket; clients should reconcile via the paginated HTTP
-        # snapshot and keep their bounded timeline window.
+        push_items = len(stored_items) <= TIMELINE_SYNC_PUSH_LIMIT
         return IngestEffect(
             session_id=session_id,
+            items=[item.model_dump(mode="json") for item in stored_items]
+            if push_items
+            else None,
             session_changed=True,
             notices_changed=any(item.type == "turn.end" for item in items),
-            needs_refetch=True,
+            needs_refetch=not push_items,
         )
     elif method == "timeline.itemUpsert":
         item = TimelineItemIn.model_validate(params["item"])
@@ -864,24 +826,6 @@ async def _resolve_approval_session_id(
         )
     except KeyError:
         return approval.sessionId
-
-
-async def _apply_runtime_settings_from_session_update(
-    db: Store,
-    session_id: str,
-    params: dict[str, Any],
-) -> None:
-    runtime_settings = params.get("runtimeSettings")
-    if not isinstance(runtime_settings, dict) or not runtime_settings:
-        return
-    try:
-        await db.patch_session_runtime_settings(session_id, runtime_settings)
-    except Exception as exc:
-        logger.warning(
-            "ignored invalid session runtime settings update session_id={} error={}",
-            session_id,
-            exc,
-        )
 
 
 def _local_session_state(params: dict[str, Any]) -> str:

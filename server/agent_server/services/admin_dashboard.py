@@ -29,6 +29,7 @@ from agent_server.infra.db import (
     dashboard_daily_metrics as dashboard_daily_metrics_t,
     dashboard_settings as dashboard_settings_t,
     dashboard_user_daily_facts as dashboard_user_daily_facts_t,
+    device_runtimes as device_runtimes_t,
     platform_user_activity as platform_user_activity_t,
     sessions as sessions_t,
     timeline_items as timeline_items_t,
@@ -492,6 +493,18 @@ class AdminDashboardService:
 
     async def _load_device_snapshot(self) -> DeviceSnapshot:
         connectors = await self._store.list_connectors()
+        async with self._store.engine.connect() as conn:
+            runtime_rows = (
+                await conn.execute(
+                    select(
+                        device_runtimes_t.c.connector_id,
+                        device_runtimes_t.c.runtime_type,
+                    ).where(device_runtimes_t.c.config_json.is_not(None))
+                )
+            ).all()
+        runtimes_by_connector: dict[str, set[str]] = defaultdict(set)
+        for connector_id, runtime_type in runtime_rows:
+            runtimes_by_connector[str(connector_id)].add(str(runtime_type))
         by_os: Counter[str] = Counter()
         by_user: dict[str, dict[str, int]] = defaultdict(
             lambda: {
@@ -511,9 +524,8 @@ class AdminDashboardService:
             item = by_user[connector.userId]
             item["devices"] += 1
             item[f"{os_key}_devices"] += 1
-            attached = connector.runtimeCapabilities.attached
             for agent in ("codex", "claude"):
-                if agent in attached:
+                if agent in runtimes_by_connector.get(connector.id, set()):
                     item[f"{agent}_agents"] += 1
                     agent_counts[agent] += 1
         return DeviceSnapshot(

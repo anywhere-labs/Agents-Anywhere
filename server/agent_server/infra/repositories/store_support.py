@@ -26,13 +26,14 @@ from agent_server.core.auth import (
 from agent_server.infra.db import (
     approvals as approvals_t,
     build_engine,
+    connector_protocol_capabilities as connector_protocol_capabilities_t,
     connector_runtime_catalogs as connector_runtime_catalogs_t,
     connector_terminal_roots as connector_terminal_roots_t,
     connectors as connectors_t,
     dashboard_daily_metrics as dashboard_daily_metrics_t,
     dashboard_settings as dashboard_settings_t,
     dashboard_user_daily_facts as dashboard_user_daily_facts_t,
-    device_agent_settings as device_agent_settings_t,
+    device_runtimes as device_runtimes_t,
     fs_preview_tokens as fs_preview_tokens_t,
     init_db,
     mobile_login_tokens as mobile_login_tokens_t,
@@ -68,11 +69,8 @@ from agent_server.core.models import (
 from agent_server.infra.repositories import (
     ActiveRunRepository,
     InstanceSettingsRepository,
-    RuntimeSettingsRepository,
 )
-from agent_server.core.runtime_config import RuntimeConfigSchema
 from agent_server.services.attachments import AttachmentService
-from agent_server.services.runtime_config import RuntimeConfigService, seed_runtime_config_schemas_sync
 from agent_server.core.utc import utc_now
 from agent_server.infra.timeline_store import SqlTimelineStore
 
@@ -102,149 +100,6 @@ def _json_loads(value: str | None) -> Any:
     return json.loads(value)
 
 
-def _default_agents_state_v3() -> dict[str, Any]:
-    return {
-        "version": 3,
-        "lastDiscoveredAt": None,
-        "defaultsAppliedAt": None,
-        "observed": {},
-        "desired": {},
-    }
-
-
-def _desired_is_enabled(intent: Any) -> bool:
-    return isinstance(intent, dict) and intent.get("enabled") is True
-
-
-def _normalize_agents_blob(raw: Any) -> dict[str, Any]:
-    """Coerce whatever was on disk into the internal DeviceAgentsState v3.
-
-    v3 separates two durable facts:
-      - observed: what the connector discovered on the machine
-      - desired: what the user wants enabled on this device
-
-    Older v1/v2 blobs are translated on read. Callers that serve the current
-    frontend should pass the v3 state through `_agents_view_from_state`.
-    """
-    if not isinstance(raw, dict):
-        return _default_agents_state_v3()
-    if raw.get("version") == 3:
-        normalized = {
-            "version": 3,
-            "lastDiscoveredAt": raw.get("lastDiscoveredAt"),
-            "defaultsAppliedAt": raw.get("defaultsAppliedAt"),
-            "observed": dict(raw.get("observed") or {}),
-            "desired": dict(raw.get("desired") or {}),
-        }
-        if isinstance(raw.get("protocol"), dict):
-            normalized["protocol"] = dict(raw["protocol"])
-        return normalized
-
-    if raw.get("version") == 2:
-        observed: dict[str, Any] = {}
-        desired: dict[str, Any] = {}
-        for runtime, attached in dict(raw.get("attached") or {}).items():
-            if not isinstance(attached, dict):
-                continue
-            report = attached.get("report")
-            attached_at = attached.get("attachedAt") or raw.get("lastDiscoveredAt") or utc_now()
-            if isinstance(report, dict):
-                observed[runtime] = {"report": report, "observedAt": raw.get("lastDiscoveredAt")}
-            desired[runtime] = {"enabled": True, "updatedAt": attached_at}
-        for runtime in list(raw.get("disabled") or []):
-            desired[str(runtime)] = {"enabled": False, "updatedAt": raw.get("lastDiscoveredAt")}
-        return {
-            "version": 3,
-            "lastDiscoveredAt": raw.get("lastDiscoveredAt"),
-            "defaultsAppliedAt": raw.get("lastDiscoveredAt"),
-            "observed": observed,
-            "desired": desired,
-        }
-
-    legacy_runtimes = raw.get("runtimes")
-    observed: dict[str, Any] = {}
-    desired: dict[str, Any] = {}
-    observed_at = raw.get("checkedAt")
-    if isinstance(legacy_runtimes, dict):
-        for runtime, report in legacy_runtimes.items():
-            if not isinstance(report, dict):
-                continue
-            observed[runtime] = {"report": report, "observedAt": observed_at}
-            if report_is_attachable(report):
-                desired[runtime] = {"enabled": True, "updatedAt": observed_at or utc_now()}
-    return {
-        "version": 3,
-        "lastDiscoveredAt": observed_at,
-        "defaultsAppliedAt": observed_at,
-        "observed": observed,
-        "desired": desired,
-    }
-
-
-def _agents_view_from_state(state: dict[str, Any]) -> dict[str, Any]:
-    """Return the frontend-compatible attached/disabled view for a v3 state."""
-    normalized = _normalize_agents_blob(state)
-    observed = normalized.get("observed") or {}
-    desired = normalized.get("desired") or {}
-    attached: dict[str, Any] = {}
-    disabled: list[str] = []
-    for runtime, intent in desired.items():
-        if _desired_is_enabled(intent):
-            observation = observed.get(runtime)
-            report = observation.get("report") if isinstance(observation, dict) else None
-            if isinstance(report, dict):
-                attached[runtime] = {
-                    "report": report,
-                    "attachedAt": intent.get("updatedAt") or observation.get("observedAt") or utc_now(),
-                }
-        elif isinstance(intent, dict) and intent.get("enabled") is False:
-            disabled.append(runtime)
-    return {
-        "version": 3,
-        "lastDiscoveredAt": normalized.get("lastDiscoveredAt"),
-        "attached": attached,
-        "disabled": sorted(disabled),
-    }
-
-
-def _active_runtimes_from_state(state: dict[str, Any]) -> list[str]:
-    """Compute the connector execution set from observed facts + desired intent."""
-    normalized = _normalize_agents_blob(state)
-    observed = normalized.get("observed") or {}
-    desired = normalized.get("desired") or {}
-    active: list[str] = []
-    for runtime, intent in desired.items():
-        if not _desired_is_enabled(intent):
-            continue
-        observation = observed.get(runtime)
-        report = observation.get("report") if isinstance(observation, dict) else None
-        if isinstance(report, dict) and report.get("execution") in {"ok", "ok_empty"}:
-            active.append(runtime)
-    return sorted(active)
-
-
-def report_is_attachable(report: Any) -> bool:
-    """Pure-function domain rule: should a runtime with this report be
-    surfaced as an attached agent? (Public so routers can consult it.)
-
-    Mirror of the frontend's pre-refactor `isRuntimeAttached`: a runtime
-    is worth surfacing if the daemon either found a usable binary
-    (`selected` present) or at least found one candidate that failed a
-    check (we want to show a warning row for "I have codex but it's
-    broken"). All-missing reports get hidden — the user doesn't have it.
-
-    Used on first-pair auto-enable + legacy migration.
-    """
-    if not isinstance(report, dict):
-        return False
-    if report.get("selected"):
-        return True
-    checked = report.get("checked")
-    if isinstance(checked, list):
-        return any(
-            isinstance(c, dict) and c.get("status") == "failed" for c in checked
-        )
-    return False
 
 
 def _hash_token(token: str) -> str:

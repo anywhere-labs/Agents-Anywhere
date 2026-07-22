@@ -33,21 +33,29 @@ connectors = Table(
     # preferences (e.g. ~/.claude/settings.json fields). Read-only from the
     # backend's perspective; the daemon owns the write loop.
     Column("user_preferences", Text),
-    # JSON blob written by the daemon after local runtime discovery. Includes
-    # per-runtime history/execution capability checks and selected binary paths.
-    Column("runtime_capabilities", Text),
 )
 
 
-device_agent_settings = Table(
-    "device_agent_settings",
+device_runtimes = Table(
+    "device_runtimes",
     metadata,
     Column("connector_id", Text, ForeignKey("connectors.id", ondelete="CASCADE"), nullable=False),
-    Column("runtime", Text, nullable=False),
-    Column("settings_json", Text, nullable=False),
-    Column("schema_version", Integer, nullable=False),
+    Column("runtime_id", Text, nullable=False),
+    Column("runtime_type", Text, nullable=False),
+    Column("display_name", Text, nullable=False),
+    Column("present", Integer, nullable=False, server_default="1"),
+    Column("discovery_json", Text, nullable=False),
+    Column("config_schema_json", Text),
+    Column("ui_schema_json", Text),
+    # NULL means the runtime has not been configured. An empty JSON object is
+    # a valid configured value and means "use every provider default".
+    Column("config_json", Text),
+    Column("active", Integer, nullable=False, server_default="0"),
+    Column("status", Text, nullable=False, server_default="stopped"),
+    Column("error_json", Text),
+    Column("last_discovered_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
-    PrimaryKeyConstraint("connector_id", "runtime"),
+    PrimaryKeyConstraint("connector_id", "runtime_id"),
 )
 
 
@@ -61,6 +69,16 @@ connector_runtime_catalogs = Table(
     Column("catalog_json", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
     PrimaryKeyConstraint("connector_id", "runtime", "catalog_type"),
+)
+
+
+connector_protocol_capabilities = Table(
+    "connector_protocol_capabilities",
+    metadata,
+    Column("connector_id", Text, ForeignKey("connectors.id", ondelete="CASCADE"), primary_key=True),
+    Column("revision", Integer, nullable=False),
+    Column("capabilities_json", Text, nullable=False),
+    Column("updated_at", Text, nullable=False),
 )
 
 
@@ -194,7 +212,6 @@ sessions = Table(
     Column("connector_id", Text, ForeignKey("connectors.id"), nullable=False),
     Column("runtime", Text, nullable=False),
     Column("origin", Text, nullable=False, server_default="connector_import"),
-    Column("runtime_settings_override", Text),
     Column("model_selection_id", Text),
     Column("permission_selection_id", Text),
     Column("external_session_id", Text),

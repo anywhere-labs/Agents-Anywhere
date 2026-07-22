@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 
 from agent_server.core.auth import hash_password_verifier
-from agent_server.deps import get_runtime_config_service, get_store, require_admin
+from agent_server.deps import get_store, require_admin
 from agent_server.core.models import (
     AdminUserCreateRequest,
     AdminUserListResponse,
@@ -12,9 +12,6 @@ from agent_server.core.models import (
     InstanceSettingsView,
     UserView,
 )
-from agent_server.core.models import RuntimeName
-from agent_server.core.runtime_config import RuntimeConfigSchema, RuntimeConfigSchemaResponse
-from agent_server.services.runtime_config import RuntimeConfigService
 from agent_server.infra.repositories.facade import Store
 from agent_server.core.utc import utc_now
 
@@ -49,47 +46,6 @@ async def update_settings(
         registrationOpen=await db.is_registration_open(),
         oauthRegistrationOpen=await db.is_oauth_registration_open(),
         oauth=await db.get_oauth_provider_public_config(),
-    )
-
-
-# --- runtime config schema ---------------------------------------------------
-
-
-@router.get("/agents/{runtime}/config-schema", response_model=RuntimeConfigSchemaResponse)
-async def get_runtime_config_schema(
-    runtime: RuntimeName,
-    runtime_config: RuntimeConfigService = Depends(get_runtime_config_service),
-) -> RuntimeConfigSchemaResponse:
-    try:
-        schema = await runtime_config.get_runtime_config_schema(runtime)
-    except KeyError:
-        raise HTTPException(status_code=500, detail=f"runtime config schema missing: {runtime}") from None
-    except ValueError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    return RuntimeConfigSchemaResponse(
-        runtime=runtime,
-        configSchema=schema,
-        serverTime=utc_now(),
-    )
-
-
-@router.put("/agents/{runtime}/config-schema", response_model=RuntimeConfigSchemaResponse)
-async def put_runtime_config_schema(
-    runtime: RuntimeName,
-    payload: RuntimeConfigSchema,
-    runtime_config: RuntimeConfigService = Depends(get_runtime_config_service),
-) -> RuntimeConfigSchemaResponse:
-    try:
-        schema = await runtime_config.set_runtime_config_schema(
-            runtime,
-            payload.model_dump(exclude_none=True),
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return RuntimeConfigSchemaResponse(
-        runtime=runtime,
-        configSchema=schema,
-        serverTime=utc_now(),
     )
 
 

@@ -8,6 +8,15 @@ def _normalize_session_origin(value: str | None) -> str:
 
 
 class SessionRepositoryMixin:
+    async def get_session_runtime(self, session_id: str) -> str | None:
+        async with self._engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    select(sessions_t.c.runtime).where(sessions_t.c.id == session_id)
+                )
+            ).first()
+        return None if row is None else str(row.runtime)
+
     async def create_session(
         self,
         *,
@@ -17,7 +26,6 @@ class SessionRepositoryMixin:
         external_session_id: str | None,
         title: str | None,
         cwd: str | None,
-        runtime_settings_override: dict[str, Any] | None = None,
         model_selection_id: str | None = None,
         permission_selection_id: str | None = None,
     ) -> SessionView:
@@ -32,23 +40,12 @@ class SessionRepositoryMixin:
             connector = (await conn.execute(connector_q)).first()
             if connector is None:
                 raise KeyError(connector_id)
-            if runtime_settings_override is None and runtime in {"codex", "claude"}:
-                runtime_settings_override = await self.get_initial_runtime_settings_for_connector_agent(
-                    connector_id,
-                    runtime,
-                    user_id=user_id,
-                )
             await conn.execute(
                 insert(sessions_t).values(
                     id=session_id,
                     connector_id=connector_id,
                     runtime=runtime,
                     origin="platform",
-                    runtime_settings_override=(
-                        _json_dumps(runtime_settings_override)
-                        if runtime_settings_override is not None
-                        else None
-                    ),
                     model_selection_id=model_selection_id,
                     permission_selection_id=permission_selection_id,
                     external_session_id=external_session_id,
@@ -78,12 +75,10 @@ class SessionRepositoryMixin:
         last_synced_at: str | None = None,
         source_observed_at: str | None = None,
         last_activity_at: str | None = None,
-        runtime_settings_override: dict[str, Any] | None = None,
         model_selection_id: str | None = None,
         permission_selection_id: str | None = None,
         origin: str = "connector_import",
     ) -> SessionView:
-        has_runtime_settings_override = runtime_settings_override is not None
         has_model_selection_id = model_selection_id is not None
         has_permission_selection_id = permission_selection_id is not None
         now = utc_now()
@@ -116,22 +111,12 @@ class SessionRepositoryMixin:
                 if existing is not None:
                     session_id = existing.id
             if existing is None:
-                if runtime_settings_override is None and runtime in {"codex", "claude"}:
-                    runtime_settings_override = await self.get_initial_runtime_settings_for_connector_agent(
-                        connector_id,
-                        runtime,
-                    )
                 await conn.execute(
                     insert(sessions_t).values(
                         id=session_id,
                         connector_id=connector_id,
                         runtime=runtime,
                         origin=normalized_origin,
-                        runtime_settings_override=(
-                            _json_dumps(runtime_settings_override)
-                            if runtime_settings_override is not None
-                            else None
-                        ),
                         model_selection_id=model_selection_id,
                         permission_selection_id=permission_selection_id,
                         external_session_id=external_session_id,
@@ -183,12 +168,6 @@ class SessionRepositoryMixin:
                     values["source_observed_at"] = source_observed_at
                 if last_activity_at is not None:
                     values["last_activity_at"] = last_activity_at
-                if has_runtime_settings_override:
-                    values["runtime_settings_override"] = (
-                        _json_dumps(runtime_settings_override)
-                        if runtime_settings_override is not None
-                        else None
-                    )
                 if has_model_selection_id:
                     values["model_selection_id"] = model_selection_id
                 if has_permission_selection_id:
@@ -742,13 +721,6 @@ class SessionRepositoryMixin:
         session_id = row["id"]
         latest = await self.timeline.latest_item(session_id)
         runtime = row["runtime"]
-        override = _json_loads(row["runtime_settings_override"])
-        runtime_override = override if isinstance(override, dict) else {}
-        runtime_settings: dict[str, Any] | None = None
-        try:
-            runtime_settings = await self.get_effective_runtime_settings(session_id)
-        except (KeyError, ValueError):
-            runtime_settings = None
         title = row["title"]
         if not (isinstance(title, str) and title.strip()):
             derived = await self._derive_title_from_first_user_message(session_id)
@@ -782,8 +754,6 @@ class SessionRepositoryMixin:
             lastItemOrderSeq=latest.orderSeq if latest else None,
             sortAt=sort_at,
             updatedSeq=updated_seq,
-            runtimeSettings=runtime_settings,
-            runtimeSettingsOverride=runtime_override or None,
             modelSelectionId=row["model_selection_id"],
             permissionSelectionId=row["permission_selection_id"],
         )

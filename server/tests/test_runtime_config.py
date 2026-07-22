@@ -6,429 +6,286 @@ from typing import Any
 from conftest import ApiV2TestClient as TestClient
 
 from agent_server.app import create_app
-
-
-def make_client(tmp_path):
-    return TestClient(create_app(tmp_path / "test.sqlite3"))
+from agent_server.infra.connector_rpc import ConnectorRpcError
+from agent_server.services.device_runtimes import DeviceRuntimeService
 
 
 ADMIN_USER = "user1"
 ADMIN_PASSWORD = "secret"
 
 
-def auth_headers(
-    client: TestClient,
-    user_id: str = ADMIN_USER,
-    password: str = ADMIN_PASSWORD,
-) -> dict[str, str]:
-    login = client.post("/auth/login", json={"userId": user_id, "password": password})
-    if login.status_code == 200:
-        return {"Authorization": f"Bearer {login.json()['accessToken']}"}
-    cfg = client.get("/auth/config").json()
-    body: dict[str, Any] = {"userId": user_id, "password": password}
-    if cfg["needsBootstrap"]:
-        body["setupToken"] = client.app.state.setup_token.peek()
-    register = client.post("/auth/register", json=body)
-    assert register.status_code == 200, register.text
-    return {"Authorization": f"Bearer {register.json()['accessToken']}"}
-
-
-def create_connector_and_session(client: TestClient):
-    headers = auth_headers(client)
-    connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
-    assert connector_response.status_code == 200, connector_response.text
-    connector_body = connector_response.json()
-    connector_id = connector_body["connector"]["id"]
-    connector_token = connector_body["connectorToken"]
-    auth_response = client.post(
-        "/connector/auth",
-        headers={"Authorization": f"Connector {connector_id}:{connector_token}"},
-    )
-    assert auth_response.status_code == 200, auth_response.text
-    access_token = auth_response.json()["accessToken"]
-    session_response = client.post(
-        "/sessions",
-        headers=headers,
-        json={
-            "connectorId": connector_id,
-            "runtime": "codex",
-            "externalSessionId": f"thr_{connector_id}_demo",
-            "title": "Demo",
-            "cwd": "/repo",
-        },
-    )
-    assert session_response.status_code == 200, session_response.text
-    session_id = session_response.json()["session"]["id"]
-    return connector_id, access_token, session_id, headers
-
-
 class FakeRpc:
-    def __init__(self) -> None:
+    def __init__(self, inventory: dict[str, Any]) -> None:
+        self.inventory = inventory
+        self.online = True
         self.requests: list[tuple[str, str, dict[str, Any]]] = []
+        self.errors: dict[str, ConnectorRpcError] = {}
 
-    def is_online(self, connector_id: str) -> bool:
-        return True
+    def is_online(self, _connector_id: str) -> bool:
+        return self.online
 
-    async def request(self, connector_id: str, method: str, params: dict[str, Any], **_: Any) -> dict[str, Any]:
+    async def request(
+        self,
+        connector_id: str,
+        method: str,
+        params: dict[str, Any],
+        **_: Any,
+    ) -> dict[str, Any]:
         self.requests.append((connector_id, method, params))
+        error = self.errors.get(method)
+        if error is not None:
+            raise error
+        if method == "runtime.discover":
+            return self.inventory
         return {"ok": True}
 
 
-def test_runtime_config_schema_is_seeded_and_readable(tmp_path):
-    client = make_client(tmp_path)
-    headers = auth_headers(client)
-
-    response = client.get("/agents/claude/config-schema", headers=headers)
-
+def _auth_headers(client: TestClient) -> dict[str, str]:
+    config = client.get("/auth/config").json()
+    payload: dict[str, Any] = {
+        "userId": ADMIN_USER,
+        "password": ADMIN_PASSWORD,
+    }
+    if config["needsBootstrap"]:
+        payload["setupToken"] = client.app.state.setup_token.peek()
+    response = client.post("/auth/register", json=payload)
     assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["runtime"] == "claude"
-    assert body["schema"]["runtime"] == "claude"
-    fields = {field["key"]: field for field in body["schema"]["fields"]}
-    assert "runMode" not in fields
-    assert fields["permissionMode"]["allowSessionOverride"] is True
+    return {"Authorization": f"Bearer {response.json()['accessToken']}"}
 
 
-def test_first_discovery_attaches_available_runtimes(tmp_path):
-    client = make_client(tmp_path)
-    headers = auth_headers(client)
-    connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
-    connector_id = connector_response.json()["connector"]["id"]
-
-    state = asyncio.run(
-        client.app.state.store.apply_discovery(
-            connector_id,
-                {
-                    "runtimes": {
-                        "codex": {
-                            "history": "ok",
-                            "execution": "ok",
-                            "selected": {"source": "cli", "path": "/usr/bin/codex"},
-                        },
-                        "claude": {
-                            "history": "ok",
-                            "execution": "ok",
-                            "selected": {"source": "cli", "path": "/usr/bin/claude"},
-                        },
-                    }
+def _inventory(*, status: str = "stopped") -> dict[str, Any]:
+    return {
+        "runtimes": [
+            {
+                "runtimeId": "codex",
+                "runtimeType": "codex",
+                "displayName": "Codex",
+                "discovery": {
+                    "executablePath": "/opt/homebrew/bin/codex",
+                    "version": "1.2.3",
                 },
-            )
-    )
-
-    assert "claude" in state["attached"]
-    assert "codex" in state["attached"]
-    assert "codex" not in state["disabled"]
-
-
-def test_device_agent_settings_patch_and_read(tmp_path):
-    client = make_client(tmp_path)
-    connector_id, _, _, headers = create_connector_and_session(client)
-
-    initial = client.get(
-        f"/connectors/{connector_id}/agents/claude/settings",
-        headers=headers,
-    )
-    assert initial.status_code == 200, initial.text
-    assert "runMode" not in initial.json()["settings"]
-    assert "defaultRunModeConfigured" not in initial.json()
-
-    model_only = client.patch(
-        f"/connectors/{connector_id}/agents/claude/settings",
-        headers=headers,
-        json={"settings": {"model": "claude-sonnet-4-6"}},
-    )
-    assert model_only.status_code == 200, model_only.text
-    assert "defaultRunModeConfigured" not in model_only.json()
-
-    invalid = client.patch(
-        f"/connectors/{connector_id}/agents/claude/settings",
-        headers=headers,
-        json={"settings": {"runMode": "terminal"}},
-    )
-    assert invalid.status_code == 422
-
-    response = client.patch(
-        f"/connectors/{connector_id}/agents/claude/settings",
-        headers=headers,
-        json={
-            "settings": {
-                "permissionMode": "plan",
-                "model": "claude-sonnet-4-6",
-                "effort": "high",
+                "schema": {
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "type": "object",
+                    "properties": {
+                        "executablePath": {
+                            "type": "string",
+                            "minLength": 1,
+                            "default": "/opt/homebrew/bin/codex",
+                        },
+                        "environment": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "anyOf": [{"type": "string"}, {"type": "null"}]
+                            },
+                            "default": {},
+                        },
+                    },
+                    "additionalProperties": False,
+                },
+                "uiSchema": {
+                    "executablePath": {"component": "path"},
+                    "environment": {"component": "keyValue"},
+                },
+                "status": status,
             }
-        },
-    )
-
-    assert response.status_code == 200, response.text
-    settings = response.json()["settings"]
-    assert "runMode" not in settings
-    assert settings["permissionMode"] == "plan"
-    assert settings["model"] == "claude-sonnet-4-6"
-    assert settings["effort"] == "high"
-    assert "defaultRunModeConfigured" not in response.json()
-
-    read_back = client.get(
-        f"/connectors/{connector_id}/agents/claude/settings",
-        headers=headers,
-    )
-    assert read_back.status_code == 200
-    assert read_back.json()["settings"] == settings
-    assert "defaultRunModeConfigured" not in read_back.json()
-
-
-def test_session_runtime_settings_rejects_claude_run_mode(tmp_path):
-    client = make_client(tmp_path)
-    headers = auth_headers(client)
-    connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
-    connector_id = connector_response.json()["connector"]["id"]
-    session = asyncio.run(
-        client.app.state.store.upsert_connector_session(
-            connector_id=connector_id,
-            session_id="sess_claude_run_mode_flag",
-            runtime="claude",
-            external_session_id="uuid-claude-run-mode-flag",
-            title="Claude",
-            cwd="/repo",
-            status="idle",
-        )
-    )
-
-    initial = client.get(f"/sessions/{session.id}/runtime-settings", headers=headers)
-    assert initial.status_code == 200, initial.text
-    assert "runMode" not in initial.json()["runtimeSettings"]
-    assert "defaultRunModeConfigured" not in initial.json()
-
-    rejected = client.patch(
-        f"/connectors/{connector_id}/agents/claude/settings",
-        headers=headers,
-        json={"settings": {"runMode": "terminal"}},
-    )
-    assert rejected.status_code == 422
-
-    after = client.get(f"/sessions/{session.id}/runtime-settings", headers=headers)
-    assert after.status_code == 200, after.text
-    assert "runMode" not in after.json()["runtimeSettings"]
-    assert "defaultRunModeConfigured" not in after.json()
-
-
-def test_claude_effort_options_are_constrained_by_model(tmp_path):
-    client = make_client(tmp_path)
-    connector_id, _, _, headers = create_connector_and_session(client)
-
-    opus = client.patch(
-        f"/connectors/{connector_id}/agents/claude/settings",
-        headers=headers,
-        json={"settings": {"model": "claude-opus-4-7[1m]", "effort": "xhigh"}},
-    )
-    assert opus.status_code == 200, opus.text
-    assert opus.json()["settings"]["effort"] == "xhigh"
-
-    sonnet_bad = client.patch(
-        f"/connectors/{connector_id}/agents/claude/settings",
-        headers=headers,
-        json={"settings": {"model": "claude-sonnet-4-6", "effort": "xhigh"}},
-    )
-    assert sonnet_bad.status_code == 422
-
-    haiku = client.patch(
-        f"/connectors/{connector_id}/agents/claude/settings",
-        headers=headers,
-        json={"settings": {"model": "claude-haiku-4-5"}},
-    )
-    assert haiku.status_code == 200, haiku.text
-    assert haiku.json()["settings"]["model"] == "claude-haiku-4-5"
-    assert haiku.json()["settings"]["effort"] is None
-
-    haiku_bad = client.patch(
-        f"/connectors/{connector_id}/agents/claude/settings",
-        headers=headers,
-        json={"settings": {"effort": "low"}},
-    )
-    assert haiku_bad.status_code == 422
-
-
-def test_session_runtime_settings_override_respects_schema(tmp_path):
-    client = make_client(tmp_path)
-    connector_id, _, session_id, headers = create_connector_and_session(client)
-
-    response = client.patch(
-        f"/sessions/{session_id}/runtime-settings",
-        headers=headers,
-        json={"settings": {"permissionMode": "fullAccess"}},
-    )
-
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["runtimeSettingsOverride"] == {"permissionMode": "fullAccess"}
-    assert body["runtimeSettings"]["permissionMode"] == "fullAccess"
-
-    bad = client.patch(
-        f"/sessions/{session_id}/runtime-settings",
-        headers=headers,
-        json={"settings": {"runMode": "terminal"}},
-    )
-    assert bad.status_code == 422
-
-    raw_codex_config = client.patch(
-        f"/sessions/{session_id}/runtime-settings",
-        headers=headers,
-        json={"settings": {"approvalPolicy": "never"}},
-    )
-    assert raw_codex_config.status_code == 422
-
-
-def test_session_claude_effort_patch_uses_effective_model(tmp_path):
-    client = make_client(tmp_path)
-    headers = auth_headers(client)
-    connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
-    connector_id = connector_response.json()["connector"]["id"]
-
-    asyncio.run(
-        client.app.state.store.patch_device_agent_settings(
-            connector_id,
-            "claude",
-            {"model": "claude-opus-4-7[1m]"},
-        )
-    )
-    session = asyncio.run(
-        client.app.state.store.upsert_connector_session(
-            connector_id=connector_id,
-            session_id="sess_claude_effort",
-            runtime="claude",
-            external_session_id="uuid-claude-effort",
-            title="Claude",
-            cwd="/repo",
-            status="idle",
-        )
-    )
-
-    effort = client.patch(
-        f"/sessions/{session.id}/runtime-settings",
-        headers=headers,
-        json={"settings": {"effort": "xhigh"}},
-    )
-    assert effort.status_code == 200, effort.text
-    assert effort.json()["runtimeSettingsOverride"] == {
-        "permissionMode": "acceptEdits",
-        "model": "claude-opus-4-7[1m]",
-        "effort": "xhigh",
+        ]
     }
-    assert effort.json()["runtimeSettings"]["model"] == "claude-opus-4-7[1m]"
-    assert effort.json()["runtimeSettings"]["effort"] == "xhigh"
 
-    sonnet = client.patch(
-        f"/sessions/{session.id}/runtime-settings",
+
+def _make_client(tmp_path) -> tuple[TestClient, FakeRpc, str, dict[str, str]]:
+    app = create_app(tmp_path / "test.sqlite3")
+    client = TestClient(app)
+    headers = _auth_headers(client)
+    created = client.post("/connectors", headers=headers, json={"name": "dev"})
+    assert created.status_code == 200, created.text
+    connector_id = created.json()["connector"]["id"]
+    rpc = FakeRpc(_inventory())
+    app.state.rpc = rpc
+    app.state.device_runtime_service = DeviceRuntimeService(app.state.store, rpc)
+    asyncio.run(app.state.device_runtime_service.ingest_inventory(connector_id, rpc.inventory))
+    return client, rpc, connector_id, headers
+
+
+def _runtime_url(connector_id: str) -> str:
+    return f"/connectors/{connector_id}/runtimes/codex"
+
+
+def test_inventory_exposes_runtime_owned_dynamic_schema(tmp_path):
+    client, _, connector_id, headers = _make_client(tmp_path)
+
+    response = client.get(f"/connectors/{connector_id}/runtimes", headers=headers)
+
+    assert response.status_code == 200, response.text
+    runtime = response.json()["runtimes"][0]
+    assert runtime["configured"] is False
+    assert runtime["active"] is False
+    assert runtime["schema"]["properties"]["executablePath"]["default"] == (
+        "/opt/homebrew/bin/codex"
+    )
+    assert runtime["uiSchema"]["environment"]["component"] == "keyValue"
+
+
+def test_empty_config_is_configured_and_validated_by_connector(tmp_path):
+    client, rpc, connector_id, headers = _make_client(tmp_path)
+
+    response = client.put(
+        f"{_runtime_url(connector_id)}/config",
         headers=headers,
-        json={"settings": {"model": "claude-sonnet-4-6"}},
-    )
-    assert sonnet.status_code == 200, sonnet.text
-    assert sonnet.json()["runtimeSettingsOverride"] == {
-        "permissionMode": "acceptEdits",
-        "model": "claude-sonnet-4-6"
-    }
-    assert sonnet.json()["runtimeSettings"]["model"] == "claude-sonnet-4-6"
-    assert sonnet.json()["runtimeSettings"]["effort"] is None
-
-    asyncio.run(
-        client.app.state.store.patch_device_agent_settings(
-            connector_id,
-            "claude",
-            {"model": "claude-haiku-4-5"},
-        )
-    )
-    haiku_session = asyncio.run(
-        client.app.state.store.upsert_connector_session(
-            connector_id=connector_id,
-            session_id="sess_claude_haiku_effort",
-            runtime="claude",
-            external_session_id="uuid-claude-haiku-effort",
-            title="Claude Haiku",
-            cwd="/repo",
-            status="idle",
-        )
-    )
-    haiku_bad = client.patch(
-        f"/sessions/{haiku_session.id}/runtime-settings",
-        headers=headers,
-        json={"settings": {"effort": "low"}},
-    )
-    assert haiku_bad.status_code == 422
-
-
-def test_effective_runtime_settings_priority_and_effort_constraints(tmp_path):
-    client = make_client(tmp_path)
-    headers = auth_headers(client)
-    connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
-    connector_id = connector_response.json()["connector"]["id"]
-
-    session = asyncio.run(
-        client.app.state.store.upsert_connector_session(
-            connector_id=connector_id,
-            session_id="sess_claude_cfg",
-            runtime="claude",
-            external_session_id="uuid-claude-cfg",
-            title="Claude",
-            cwd="/repo",
-            status="idle",
-        )
-    )
-
-    override = client.patch(
-        f"/sessions/{session.id}/runtime-settings",
-        headers=headers,
-        json={
-            "settings": {
-                "permissionMode": "default",
-                "model": "claude-sonnet-4-6",
-            }
-        },
-    )
-    assert override.status_code == 200, override.text
-
-    state = client.get(f"/sessions/{session.id}/runtime-settings", headers=headers)
-    assert state.status_code == 200
-    body = state.json()
-    assert "effectiveRunMode" not in body
-    assert "runMode" not in body["runtimeSettings"]
-    assert body["runtimeSettings"]["permissionMode"] == "default"
-    assert body["runtimeSettings"]["model"] == "claude-sonnet-4-6"
-    assert body["runtimeSettings"]["effort"] is None
-
-
-def test_changing_claude_settings_does_not_interrupt_running_sessions(tmp_path):
-    client = make_client(tmp_path)
-    connector_id, access_token, _, headers = create_connector_and_session(client)
-    fake_rpc = FakeRpc()
-    client.app.state.rpc = fake_rpc
-
-    async def seed() -> str:
-        session = await client.app.state.store.upsert_connector_session(
-            connector_id=connector_id,
-            session_id="sess_claude_running",
-            runtime="claude",
-            external_session_id="uuid-claude-running",
-            title="Claude",
-            cwd="/repo",
-            status="running",
-        )
-        await client.app.state.store.set_connector_status(connector_id, "online")
-        await client.app.state.store.start_active_run(
-            session_id=session.id,
-            runtime="claude",
-            external_session_id="uuid-claude-running",
-            turn_id="turn_running_1",
-        )
-        return session.id
-
-    asyncio.run(seed())
-
-    response = client.patch(
-        f"/connectors/{connector_id}/agents/claude/settings",
-        headers=headers,
-        json={"settings": {"model": "claude-opus-4-7[1m]", "effort": "xhigh"}},
+        json={"config": {}},
     )
 
     assert response.status_code == 200, response.text
-    assert response.json()["settings"]["model"] == "claude-opus-4-7[1m]"
-    assert response.json()["settings"]["effort"] == "xhigh"
-    assert fake_rpc.requests == []
+    assert response.json()["configured"] is True
+    assert response.json()["config"] == {}
+    assert [request[1] for request in rpc.requests] == ["runtime.validateConfig"]
+
+
+def test_custom_executable_path_is_not_constrained_to_discovered_default(tmp_path):
+    client, rpc, connector_id, headers = _make_client(tmp_path)
+    config = {
+        "executablePath": "/custom/bin/codex",
+        "environment": {"HTTP_PROXY": "http://127.0.0.1:7890", "OLD_VAR": None},
+    }
+
+    response = client.put(
+        f"{_runtime_url(connector_id)}/config",
+        headers=headers,
+        json={"config": config},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["config"] == config
+    assert rpc.requests[-1][2] == {"runtimeId": "codex", "config": config}
+
+
+def test_server_rejects_invalid_config_before_connector_rpc(tmp_path):
+    client, rpc, connector_id, headers = _make_client(tmp_path)
+
+    response = client.put(
+        f"{_runtime_url(connector_id)}/config",
+        headers=headers,
+        json={"config": {"unknown": True}},
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["code"] == "invalid_runtime_config"
+    assert rpc.requests == []
+
+
+def test_connector_validation_failure_does_not_persist_config(tmp_path):
+    client, rpc, connector_id, headers = _make_client(tmp_path)
+    rpc.errors["runtime.validateConfig"] = ConnectorRpcError(
+        "invalid_config",
+        "executable is not runnable",
+    )
+
+    response = client.put(
+        f"{_runtime_url(connector_id)}/config",
+        headers=headers,
+        json={"config": {}},
+    )
+
+    assert response.status_code == 422, response.text
+    listed = client.get(f"/connectors/{connector_id}/runtimes", headers=headers)
+    assert listed.json()["runtimes"][0]["configured"] is False
+
+
+def test_activation_and_deactivation_drive_connector_lifecycle(tmp_path):
+    client, rpc, connector_id, headers = _make_client(tmp_path)
+    config_url = f"{_runtime_url(connector_id)}/config"
+    active_url = f"{_runtime_url(connector_id)}/active"
+    assert client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
+    rpc.requests.clear()
+
+    activated = client.put(active_url, headers=headers, json={"active": True})
+    deactivated = client.put(active_url, headers=headers, json={"active": False})
+
+    assert activated.status_code == 200, activated.text
+    assert activated.json()["active"] is True
+    assert activated.json()["status"] == "running"
+    assert deactivated.status_code == 200, deactivated.text
+    assert deactivated.json()["active"] is False
+    assert deactivated.json()["status"] == "stopped"
+    assert [request[1] for request in rpc.requests] == ["runtime.start", "runtime.stop"]
+
+
+def test_editing_active_config_restarts_runtime(tmp_path):
+    client, rpc, connector_id, headers = _make_client(tmp_path)
+    config_url = f"{_runtime_url(connector_id)}/config"
+    active_url = f"{_runtime_url(connector_id)}/active"
+    assert client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
+    assert client.put(active_url, headers=headers, json={"active": True}).status_code == 200
+    rpc.requests.clear()
+
+    response = client.put(
+        config_url,
+        headers=headers,
+        json={"config": {"executablePath": "/new/codex"}},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "running"
+    assert [request[1] for request in rpc.requests] == [
+        "runtime.validateConfig",
+        "runtime.stop",
+        "runtime.start",
+    ]
+
+
+def test_start_failure_remains_configured_active_and_visible_as_error(tmp_path):
+    client, rpc, connector_id, headers = _make_client(tmp_path)
+    config_url = f"{_runtime_url(connector_id)}/config"
+    assert client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
+    rpc.errors["runtime.start"] = ConnectorRpcError("start_failed", "runtime exited")
+
+    response = client.put(
+        f"{_runtime_url(connector_id)}/active",
+        headers=headers,
+        json={"active": True},
+    )
+
+    assert response.status_code == 502, response.text
+    listed = client.get(f"/connectors/{connector_id}/runtimes", headers=headers)
+    runtime = listed.json()["runtimes"][0]
+    assert runtime["configured"] is True
+    assert runtime["active"] is True
+    assert runtime["status"] == "error"
+    assert runtime["error"]["code"] == "start_failed"
+
+
+def test_delete_running_config_stops_then_returns_to_unconfigured(tmp_path):
+    client, rpc, connector_id, headers = _make_client(tmp_path)
+    config_url = f"{_runtime_url(connector_id)}/config"
+    assert client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
+    assert (
+        client.put(
+            f"{_runtime_url(connector_id)}/active",
+            headers=headers,
+            json={"active": True},
+        ).status_code
+        == 200
+    )
+    rpc.requests.clear()
+
+    response = client.delete(config_url, headers=headers)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["configured"] is False
+    assert response.json()["active"] is False
+    assert response.json()["status"] == "stopped"
+    assert [request[1] for request in rpc.requests] == ["runtime.stop"]
+
+
+def test_explicit_discovery_refreshes_inventory(tmp_path):
+    client, rpc, connector_id, headers = _make_client(tmp_path)
+    rpc.inventory = _inventory(status="running")
+
+    response = client.post(
+        f"/connectors/{connector_id}/runtimes/discover",
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["runtimes"][0]["status"] == "running"
+    assert rpc.requests[0][1] == "runtime.discover"

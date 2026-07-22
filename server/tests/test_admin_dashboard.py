@@ -9,6 +9,7 @@ from conftest import ApiV2TestClient as TestClient
 from sqlalchemy import insert
 
 from agent_server.app import create_app
+from agent_server.core.device_runtime import RuntimeInventoryItem
 from agent_server.core.models import TimelineItemIn
 from agent_server.infra.db import dashboard_daily_metrics as dashboard_daily_metrics_t
 
@@ -49,6 +50,28 @@ def create_connector(client: TestClient, headers: dict[str, str], name: str) -> 
     return response.json()["connector"]["id"]
 
 
+async def configure_runtime(store: Any, connector_id: str, runtime: str) -> None:
+    await store.replace_device_runtime_inventory(
+        connector_id,
+        [
+            RuntimeInventoryItem.model_validate(
+                {
+                    "runtimeId": runtime,
+                    "runtimeType": runtime,
+                    "displayName": runtime.title(),
+                    "discovery": {"executablePath": f"/bin/{runtime}"},
+                    "schema": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": False,
+                    },
+                }
+            )
+        ],
+    )
+    await store.set_device_runtime_config(connector_id, runtime, {})
+
+
 async def seed_dashboard_activity(client: TestClient) -> dict[str, str]:
     store = client.app.state.store
     admin_headers = register_admin(client)
@@ -57,8 +80,8 @@ async def seed_dashboard_activity(client: TestClient) -> dict[str, str]:
     bob_connector = create_connector(client, bob_headers, "bob-win")
     await store.set_connector_status(admin_connector, "offline", device_os="macos")
     await store.set_connector_status(bob_connector, "offline", device_os="windows")
-    await store.attach_runtime(admin_connector, "codex", {"selected": {"source": "path", "path": "/bin/codex"}})
-    await store.attach_runtime(bob_connector, "claude", {"selected": {"source": "path", "path": "/bin/claude"}})
+    await configure_runtime(store, admin_connector, "codex")
+    await configure_runtime(store, bob_connector, "claude")
     admin_session = await store.upsert_connector_session(
         connector_id=admin_connector,
         session_id="sess_admin_codex",
@@ -238,7 +261,7 @@ def test_admin_dashboard_ignores_connector_history_for_usage_metrics(tmp_path):
 
     async def seed_history_import() -> None:
         await store.set_connector_status(connector_id, "offline", device_os="macos")
-        await store.attach_runtime(connector_id, "codex", {"selected": {"source": "path", "path": "/bin/codex"}})
+        await configure_runtime(store, connector_id, "codex")
         imported = await store.upsert_connector_session(
             connector_id=connector_id,
             session_id="sess_imported_codex",

@@ -60,17 +60,7 @@ class SessionRunService:
             model_selection_id=payload.modelSelectionId,
             permission_selection_id=payload.permissionSelectionId,
         )
-        runtime_settings_patch = self._validate_runtime_settings_patch(payload.runtimeSettings)
         if payload.externalSessionId is not None:
-            try:
-                runtime_settings_override = await self._store.get_initial_runtime_settings_for_connector_agent(
-                    payload.connectorId,
-                    payload.runtime,
-                    user_id=user_id,
-                    patch=runtime_settings_patch,
-                )
-            except ValueError as exc:
-                raise SessionRunInvalidConfigError(str(exc)) from exc
             session = await self._store.create_session(
                 connector_id=payload.connectorId,
                 user_id=user_id,
@@ -78,7 +68,6 @@ class SessionRunService:
                 external_session_id=payload.externalSessionId,
                 title=payload.title,
                 cwd=payload.cwd,
-                runtime_settings_override=runtime_settings_override,
                 model_selection_id=payload.modelSelectionId,
                 permission_selection_id=payload.permissionSelectionId,
             )
@@ -86,16 +75,6 @@ class SessionRunService:
 
         if not self._manager.is_online(payload.connectorId):
             raise SessionRunConflictError("connector is offline")
-        try:
-            runtime_settings_override = await self._store.get_initial_runtime_settings_for_connector_agent(
-                payload.connectorId,
-                payload.runtime,
-                user_id=user_id,
-                patch=runtime_settings_patch,
-            )
-        except ValueError as exc:
-            raise SessionRunInvalidConfigError(str(exc)) from exc
-
         connector_params = {
             "runtime": payload.runtime,
             "title": payload.title,
@@ -134,14 +113,6 @@ class SessionRunService:
                 )
             except KeyError:
                 pass
-        connector_runtime_settings = (
-            connector_result.get("runtimeSettings") if isinstance(connector_result, dict) else None
-        )
-        if isinstance(connector_runtime_settings, dict) and connector_runtime_settings:
-            runtime_settings_override = {
-                **runtime_settings_override,
-                **connector_runtime_settings,
-            }
         connector_model_selection_id = (
             connector_result.get("modelSelectionId") if isinstance(connector_result, dict) else None
         )
@@ -157,7 +128,6 @@ class SessionRunService:
             cwd=payload.cwd,
             status="idle",
             last_synced_at=utc_now(),
-            runtime_settings_override=runtime_settings_override,
             model_selection_id=connector_model_selection_id
             if isinstance(connector_model_selection_id, str)
             else payload.modelSelectionId,
@@ -166,13 +136,6 @@ class SessionRunService:
             else payload.permissionSelectionId,
             origin="platform",
         )
-        if session.runtimeSettings != runtime_settings_override:
-            session = session.model_copy(
-                update={
-                    "runtimeSettings": runtime_settings_override,
-                    "runtimeSettingsOverride": runtime_settings_override,
-                }
-            )
         return {"session": session, "connectorResult": connector_result}
 
     async def send_message(
@@ -277,13 +240,6 @@ class SessionRunService:
             )
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
         return RpcResponsePayload(ok=True, result=result)
-
-    def _validate_runtime_settings_patch(self, patch: dict[str, Any] | None) -> dict[str, Any] | None:
-        if patch is not None and ("model" in patch or "effort" in patch or "permissionMode" in patch):
-            raise SessionRunInvalidConfigError(
-                "runtimeSettings.model, runtimeSettings.effort, and runtimeSettings.permissionMode are not accepted; use selection IDs"
-            )
-        return patch
 
     async def _validate_selections(
         self,

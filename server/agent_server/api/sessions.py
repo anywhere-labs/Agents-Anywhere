@@ -15,7 +15,6 @@ from agent_server.deps import (
     current_user_id,
     get_approval_service,
     get_rpc,
-    get_runtime_config_service,
     get_session_run_service,
     get_store,
     get_timeline_broker,
@@ -43,8 +42,6 @@ from agent_server.core.protocol import (
     ProtocolSessionSnapshotResponse,
     ProtocolTimelineSnapshot,
 )
-from agent_server.core.runtime_config import RuntimeSettingsPatchRequest, RuntimeSettingsResponse
-from agent_server.services.runtime_config import RuntimeConfigService
 from agent_server.services.session_run import SessionRunError, SessionRunService
 from agent_server.services.approvals import ApprovalService, ApprovalServiceError
 from agent_server.services.connector_presence import with_effective_session_connector_status
@@ -482,74 +479,6 @@ async def session_snapshot(
             else ProtocolPermissionCatalog(runtime=session.runtime, revision=0, permissions=[]),
         },
         eventCursor=f"seq:{next_seq}",
-        serverTime=utc_now(),
-    )
-
-
-@router.get("/{session_id}/runtime-settings", response_model=RuntimeSettingsResponse)
-async def get_session_runtime_settings(
-    session_id: str,
-    user_id: str = Depends(current_user_id),
-    db: Store = Depends(get_store),
-    runtime_config: RuntimeConfigService = Depends(get_runtime_config_service),
-) -> RuntimeSettingsResponse:
-    try:
-        session = await db.get_session(session_id, user_id=user_id)
-        effective = await runtime_config.get_effective_runtime_settings(
-            session_id,
-            user_id=user_id,
-        )
-        override = await runtime_config.get_session_runtime_settings_override(
-            session_id,
-            user_id=user_id,
-        )
-        schema = await runtime_config.get_runtime_config_schema(session.runtime)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="session not found") from None
-    except ValueError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    return RuntimeSettingsResponse(
-        sessionId=session_id,
-        runtime=session.runtime,
-        settings=effective,
-        runtimeSettings=effective,
-        runtimeSettingsOverride=override,
-        schemaVersion=schema.schemaVersion,
-        serverTime=utc_now(),
-    )
-
-
-@router.patch("/{session_id}/runtime-settings", response_model=RuntimeSettingsResponse)
-async def patch_session_runtime_settings(
-    session_id: str,
-    payload: RuntimeSettingsPatchRequest,
-    user_id: str = Depends(current_user_id),
-    db: Store = Depends(get_store),
-    runtime_config: RuntimeConfigService = Depends(get_runtime_config_service),
-) -> RuntimeSettingsResponse:
-    try:
-        override = await runtime_config.patch_session_runtime_settings(
-            session_id,
-            payload.settings,
-            user_id=user_id,
-        )
-        session = await db.get_session(session_id, user_id=user_id)
-        effective = await runtime_config.get_effective_runtime_settings(
-            session_id,
-            user_id=user_id,
-        )
-        schema = await runtime_config.get_runtime_config_schema(session.runtime)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="session not found") from None
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return RuntimeSettingsResponse(
-        sessionId=session_id,
-        runtime=session.runtime,
-        settings=effective,
-        runtimeSettings=effective,
-        runtimeSettingsOverride=override,
-        schemaVersion=schema.schemaVersion,
         serverTime=utc_now(),
     )
 

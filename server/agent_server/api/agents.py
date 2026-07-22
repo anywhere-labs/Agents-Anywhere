@@ -2,16 +2,14 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from agent_server.deps import current_user_id, get_runtime_config_service, get_store
+from agent_server.deps import current_user_id, get_store
 from agent_server.core.models import RuntimeName
-from agent_server.core.runtime_config import RuntimeConfigSchemaResponse
 from agent_server.core.protocol import (
     ProtocolModelCatalog,
     ProtocolModelCatalogResponse,
     ProtocolPermissionCatalog,
     ProtocolPermissionCatalogResponse,
 )
-from agent_server.services.runtime_config import RuntimeConfigService
 from agent_server.infra.repositories.facade import Store
 from agent_server.core.utc import utc_now
 
@@ -63,25 +61,5 @@ async def get_agent_permission_catalog(
         catalog=ProtocolPermissionCatalog.model_validate(raw)
         if raw is not None
         else ProtocolPermissionCatalog(runtime=runtime, revision=0, permissions=[]),
-        serverTime=utc_now(),
-    )
-
-
-@router.get("/{runtime}/config-schema", response_model=RuntimeConfigSchemaResponse)
-async def get_runtime_config_schema(
-    runtime: RuntimeName,
-    user_id: str = Depends(current_user_id),
-    db: Store = Depends(get_store),
-    runtime_config: RuntimeConfigService = Depends(get_runtime_config_service),
-) -> RuntimeConfigSchemaResponse:
-    try:
-        schema = await runtime_config.get_runtime_config_schema(runtime)
-    except KeyError:
-        raise HTTPException(status_code=500, detail=f"runtime config schema missing: {runtime}") from None
-    except ValueError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    return RuntimeConfigSchemaResponse(
-        runtime=runtime,
-        configSchema=schema,
         serverTime=utc_now(),
     )

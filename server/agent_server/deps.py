@@ -9,8 +9,7 @@ from agent_server.core.models import UserView
 from agent_server.services.approvals import ApprovalService
 from agent_server.services.attachments import AttachmentService
 from agent_server.services.connector_ingest import ConnectorIngestService
-from agent_server.services.device_agent_settings import DeviceAgentSettingsService
-from agent_server.services.runtime_config import RuntimeConfigService
+from agent_server.services.device_runtimes import DeviceRuntimeService
 from agent_server.services.session_run import SessionRunService
 from agent_server.services.terminal import TerminalService
 from agent_server.services.shell_tasks import ShellTaskManager
@@ -21,10 +20,6 @@ from agent_server.infra.timeline_broker import TimelineBroker
 
 def get_store(conn: HTTPConnection) -> Store:
     return conn.app.state.store
-
-
-def get_runtime_config_service(conn: HTTPConnection) -> RuntimeConfigService:
-    return conn.app.state.store.runtime_config
 
 
 def get_attachment_service(conn: HTTPConnection) -> AttachmentService:
@@ -38,11 +33,11 @@ def get_approval_service(conn: HTTPConnection) -> ApprovalService:
 def get_connector_ingest_service(conn: HTTPConnection) -> ConnectorIngestService:
     return ConnectorIngestService(
         conn.app.state.store,
-        conn.app.state.rpc,
         conn.app.state.shell_tasks,
         conn.app.state.terminal_broker,
         conn.app.state.terminal_stream_hub,
         conn.app.state.timeline_broker,
+        conn.app.state.device_runtime_service,
     )
 
 
@@ -50,10 +45,8 @@ def get_session_run_service(conn: HTTPConnection) -> SessionRunService:
     return SessionRunService(conn.app.state.store, conn.app.state.rpc)
 
 
-def get_device_agent_settings_service(conn: HTTPConnection) -> DeviceAgentSettingsService:
-    return DeviceAgentSettingsService(
-        conn.app.state.store.runtime_config,
-    )
+def get_device_runtime_service(conn: HTTPConnection) -> DeviceRuntimeService:
+    return conn.app.state.device_runtime_service
 
 
 def get_terminal_service(conn: HTTPConnection) -> TerminalService:

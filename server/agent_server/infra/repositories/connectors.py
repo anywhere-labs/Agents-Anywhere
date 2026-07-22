@@ -4,6 +4,37 @@ from agent_server.infra.repositories.store_support import *
 
 
 class ConnectorRepositoryMixin:
+    async def get_connector_preferences(self, connector_id: str) -> dict[str, Any]:
+        async with self._engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    select(connectors_t.c.user_preferences).where(
+                        connectors_t.c.id == connector_id,
+                        connectors_t.c.revoked == 0,
+                    )
+                )
+            ).first()
+        if row is None:
+            raise KeyError(connector_id)
+        value = _json_loads(row.user_preferences)
+        return value if isinstance(value, dict) else {}
+
+    async def update_connector_preferences(
+        self,
+        connector_id: str,
+        preferences: dict[str, Any],
+    ) -> dict[str, Any]:
+        now = utc_now()
+        async with self._engine.begin() as conn:
+            result = await conn.execute(
+                update(connectors_t)
+                .where(connectors_t.c.id == connector_id, connectors_t.c.revoked == 0)
+                .values(user_preferences=_json_dumps(preferences), updated_at=now)
+            )
+            if result.rowcount == 0:
+                raise KeyError(connector_id)
+        return preferences
+
     async def record_fs_preview_token(
         self,
         *,
@@ -494,32 +525,43 @@ class ConnectorRepositoryMixin:
             raise ValueError("capability_set.revision must be a non-negative integer")
         now = utc_now()
         async with self._engine.begin() as conn:
-            row = (
+            connector = (
                 await conn.execute(
-                    select(connectors_t.c.runtime_capabilities).where(
+                    select(connectors_t.c.id).where(
                         connectors_t.c.id == connector_id,
                         connectors_t.c.revoked == 0,
                     )
                 )
-            ).mappings().first()
-            if row is None:
+            ).first()
+            if connector is None:
                 raise KeyError(connector_id)
-            state = _normalize_agents_blob(_json_loads(row["runtime_capabilities"]))
-            protocol_state = state.get("protocol")
-            if not isinstance(protocol_state, dict):
-                protocol_state = {}
-            current = protocol_state.get("capabilities")
-            current_revision = current.get("revision") if isinstance(current, dict) else None
-            if isinstance(current_revision, int) and current_revision > revision:
+            current = (
+                await conn.execute(
+                    select(connector_protocol_capabilities_t.c.revision).where(
+                        connector_protocol_capabilities_t.c.connector_id == connector_id
+                    )
+                )
+            ).first()
+            if current is not None and int(current.revision) > revision:
                 return False
-            protocol_state["capabilities"] = capability_set
-            protocol_state["capabilitiesUpdatedAt"] = now
-            state["protocol"] = protocol_state
-            await conn.execute(
-                update(connectors_t)
-                .where(connectors_t.c.id == connector_id, connectors_t.c.revoked == 0)
-                .values(runtime_capabilities=_json_dumps(state), updated_at=now)
-            )
+            values = {
+                "revision": revision,
+                "capabilities_json": _json_dumps(capability_set),
+                "updated_at": now,
+            }
+            if current is None:
+                await conn.execute(
+                    insert(connector_protocol_capabilities_t).values(
+                        connector_id=connector_id,
+                        **values,
+                    )
+                )
+            else:
+                await conn.execute(
+                    update(connector_protocol_capabilities_t)
+                    .where(connector_protocol_capabilities_t.c.connector_id == connector_id)
+                    .values(**values)
+                )
         return True
 
     async def get_protocol_capabilities(
@@ -528,23 +570,24 @@ class ConnectorRepositoryMixin:
         *,
         user_id: str | None = None,
     ) -> dict[str, Any]:
-        query = select(
-            connectors_t.c.runtime_capabilities,
-            connectors_t.c.user_id,
-        ).where(
+        connector_query = select(connectors_t.c.id).where(
             connectors_t.c.id == connector_id,
             connectors_t.c.revoked == 0,
         )
         if user_id is not None:
-            query = query.where(connectors_t.c.user_id == user_id)
+            connector_query = connector_query.where(connectors_t.c.user_id == user_id)
         async with self._engine.connect() as conn:
-            row = (await conn.execute(query)).mappings().first()
-        if row is None:
-            raise KeyError(connector_id)
-        state = _normalize_agents_blob(_json_loads(row["runtime_capabilities"]))
-        protocol_state = state.get("protocol")
-        if isinstance(protocol_state, dict):
-            capabilities = protocol_state.get("capabilities")
+            if (await conn.execute(connector_query)).first() is None:
+                raise KeyError(connector_id)
+            row = (
+                await conn.execute(
+                    select(connector_protocol_capabilities_t.c.capabilities_json).where(
+                        connector_protocol_capabilities_t.c.connector_id == connector_id
+                    )
+                )
+            ).first()
+        if row is not None:
+            capabilities = _json_loads(row.capabilities_json)
             if isinstance(capabilities, dict):
                 return capabilities
         return {"revision": 0, "capabilities": []}
@@ -558,9 +601,6 @@ class ConnectorRepositoryMixin:
             deviceOs=row["device_os"],
             status=row["status"],
             lastSeenAt=row["last_seen_at"],
-            runtimeCapabilities=_agents_view_from_state(
-                _normalize_agents_blob(_json_loads(row["runtime_capabilities"]))
-            ),
             createdAt=row["created_at"],
             updatedAt=row["updated_at"],
         )

@@ -34,6 +34,7 @@ from agent_server.core.setup_token import SetupToken
 from agent_server.core.api_namespace import API_V2_PREFIX
 from agent_server.services.shell_tasks import ShellTaskManager
 from agent_server.services.dashboard_events import publish_dashboard_changed
+from agent_server.services.device_runtimes import DeviceRuntimeService
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.terminal_broker import TerminalBroker
@@ -101,6 +102,11 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     app.state.terminal_broker = TerminalBroker()
     app.state.terminal_stream_hub = TerminalStreamHub()
     app.state.timeline_broker = TimelineBroker()
+    app.state.device_runtime_service = DeviceRuntimeService(
+        app.state.store,
+        app.state.rpc,
+        app.state.timeline_broker,
+    )
     app.state.ws_tickets = ClientWsTicketManager()
     app.state.setup_token = SetupToken()
     app.state.started_at_iso = utc_now()

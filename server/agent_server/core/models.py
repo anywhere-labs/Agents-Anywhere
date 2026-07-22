@@ -38,35 +38,6 @@ ApprovalKind = Literal[
 ]
 
 
-class AttachedAgentView(BaseModel):
-    """One agent the user has chosen to attach to a device.
-
-    `report` is the daemon's most recent discovery output for this runtime
-    (path / version / check status). It gets refreshed whenever the daemon
-    rediscovers, but the agent stays attached even if the report turns
-    unhealthy — only an explicit Delete moves it out.
-    """
-    report: dict[str, Any]
-    attachedAt: str
-
-
-class DeviceAgentsState(BaseModel):
-    """Frontend-facing per-device agent view.
-
-    The database stores v3 agent state as observed machine facts plus desired
-    user intent. This response keeps the older `attached` / `disabled` shape
-    so the current frontend can stay unchanged:
-
-    - `attached`: runtimes enabled by the user and visible on Device → Agents.
-    - `disabled`: runtimes the user explicitly deleted.
-    - `lastDiscoveredAt`: timestamp of the connector's last full discovery.
-    """
-    version: int = 3
-    lastDiscoveredAt: str | None = None
-    attached: dict[str, AttachedAgentView] = Field(default_factory=dict)
-    disabled: list[str] = Field(default_factory=list)
-
-
 class ConnectorView(BaseModel):
     id: str
     userId: str
@@ -74,10 +45,6 @@ class ConnectorView(BaseModel):
     deviceOs: ConnectorDeviceOs | None = None
     status: ConnectorStatus
     lastSeenAt: str | None = None
-    # Per-device agent view. Field name kept for API/db compat with the
-    # original "runtime capabilities" payload; backend storage is v3 observed
-    # facts + desired intent, exposed here as attached/disabled.
-    runtimeCapabilities: DeviceAgentsState = Field(default_factory=DeviceAgentsState)
     createdAt: str
     updatedAt: str
 
@@ -542,7 +509,6 @@ class SessionCreateRequest(BaseModel):
     externalSessionId: str | None = None
     title: str | None = None
     cwd: str | None = None
-    runtimeSettings: dict[str, Any] | None = None
     modelSelectionId: str | None = None
     permissionSelectionId: str | None = None
 
@@ -570,8 +536,6 @@ class SessionView(BaseModel):
     lastItemOrderSeq: int | None = None
     sortAt: str | None = None
     updatedSeq: int
-    runtimeSettings: dict[str, Any] | None = None
-    runtimeSettingsOverride: dict[str, Any] | None = None
     modelSelectionId: str | None = None
     permissionSelectionId: str | None = None
 
@@ -787,27 +751,9 @@ class ConnectorPreferencesResponse(BaseModel):
     serverTime: str
 
 
-class ConnectorRuntimeCapabilitiesResponse(BaseModel):
-    connectorId: str
-    runtimeCapabilities: DeviceAgentsState
-    serverTime: str
-
-
-class ConnectorRuntimeScanRequest(BaseModel):
-    runtime: RuntimeName
-    path: str | None = None
-
-
 class ConnectorFsListRequest(BaseModel):
     root: str = Field(min_length=1)
     path: str | None = Field(default=None, min_length=1)
-
-
-class ConnectorRuntimeScanResponse(BaseModel):
-    connectorId: str
-    runtimeCapabilities: DeviceAgentsState
-    scanned: dict[str, Any]
-    serverTime: str
 
 
 class UploadedAttachment(BaseModel):
