@@ -16,7 +16,6 @@ from connector.runtime import (
     ConnectorConfig,
     _coalesce_timeline_item_upserts,
 )
-from connector.codex.adapter import CodexAdapter
 from connector.local.terminal import TerminalBackend
 
 
@@ -77,13 +76,6 @@ class FakeAdapter:
         return {"resolved": True}
 
 
-class FakeCodexRpc:
-    def __init__(self, command: list[str]) -> None:
-        self.command = command
-        self.closed = False
-
-    async def close(self) -> None:
-        self.closed = True
 
 
 class FakeWebSocket:
@@ -211,9 +203,6 @@ def test_connector_runtime_routes_by_runtime_param() -> None:
     asyncio.run(_exercise_multi_adapter_routing())
 
 
-def test_connector_runtime_falls_back_to_codex_when_runtime_missing() -> None:
-    asyncio.run(_exercise_default_runtime_fallback())
-
 
 def test_connector_runtime_disables_http_proxy_for_loopback_backend() -> None:
     from connector.runtime import _is_loopback_url
@@ -243,61 +232,6 @@ def test_preferences_push_sends_only_on_change() -> None:
     asyncio.run(_exercise_preferences_push())
 
 
-def test_runtime_discovers_capabilities_and_reuses_selected_bins(monkeypatch) -> None:
-    asyncio.run(_exercise_capability_discovery(monkeypatch))
-
-
-def test_runtime_keeps_running_codex_rpc_when_discovered_command_is_unchanged() -> None:
-    asyncio.run(_exercise_codex_rewire_keeps_unchanged_running_rpc())
-
-
-def test_existing_sync_skips_unavailable_runtime() -> None:
-    asyncio.run(_exercise_existing_sync_skips_unavailable_runtime())
-
-
-def test_existing_sync_waits_for_server_active_runtime_set() -> None:
-    """The connector does not infer sync eligibility from local discovery."""
-    asyncio.run(_exercise_existing_sync_requires_working_binary())
-
-
-async def _exercise_existing_sync_requires_working_binary() -> None:
-    codex = FakeAdapter()
-    claude = FakeAdapter()
-    client = BackendRpcClient(
-        ConnectorConfig(
-            server_url="http://127.0.0.1:8000",
-            connector_id="conn_1",
-            connector_token="token",
-            sync_existing_on_connect=True,
-            sync_interval_seconds=999,
-        ),
-        adapters={"codex": codex, "claude": claude},
-    )
-    # Server owns the availability decision now. With no active runtimes
-    # pushed yet, the connector does not sync anything on its own.
-
-    async def ingest(notifications: list[dict[str, Any]]) -> None:
-        pass
-
-    client.ingest_notifications = ingest  # type: ignore[method-assign]
-    client._preferences_reader = lambda: {}  # type: ignore[assignment]
-
-    async def fake_sleep(_seconds: float) -> None:
-        raise asyncio.CancelledError
-
-    original_sleep = asyncio.sleep
-    asyncio.sleep = fake_sleep  # type: ignore[assignment]
-    try:
-        try:
-            await client._sync_existing_loop()
-        except asyncio.CancelledError:
-            pass
-    finally:
-        asyncio.sleep = original_sleep  # type: ignore[assignment]
-
-    assert codex.calls == []
-    assert claude.calls == []
-
 
 def test_connector_runtime_reconnects_quietly_on_websocket_close(monkeypatch) -> None:
     asyncio.run(_exercise_websocket_close_reconnect(monkeypatch))
@@ -320,7 +254,7 @@ async def _exercise_runtime() -> None:
             connector_token="token",
             sync_existing_on_connect=False,
         ),
-        adapter=adapter,  # type: ignore[arg-type]
+        adapters={"codex": adapter},
     )
     ws = FakeWebSocket()
     client._ws = ws  # type: ignore[assignment]
@@ -336,11 +270,21 @@ async def _exercise_runtime() -> None:
             "id": "rpc_1",
             "type": "request",
             "method": "session.create",
-            "params": {"sessionId": "sess_1", "cwd": "/repo"},
+            "params": {"runtime": "codex", "sessionId": "sess_1", "cwd": "/repo"},
         }
     )
 
-    assert adapter.calls == [("session.create", {"sessionId": "sess_1", "cwd": "/repo", "connectorId": "conn_1"})]
+    assert adapter.calls == [
+        (
+            "session.create",
+            {
+                "runtime": "codex",
+                "sessionId": "sess_1",
+                "cwd": "/repo",
+                "connectorId": "conn_1",
+            },
+        )
+    ]
     assert ingested[0] == [
         {
             "method": "session.updated",
@@ -363,7 +307,7 @@ async def _exercise_runtime() -> None:
             "id": "rpc_2",
             "type": "request",
             "method": "turn.start",
-            "params": {"sessionId": "sess_1", "externalSessionId": "thr_1", "content": "hi"},
+            "params": {"runtime": "codex", "sessionId": "sess_1", "externalSessionId": "thr_1", "content": "hi"},
         }
     )
     assert ws.messages[-1]["result"] == {"turnId": "turn_1"}
@@ -373,7 +317,7 @@ async def _exercise_runtime() -> None:
             "id": "rpc_3",
             "type": "request",
             "method": "session.discover",
-            "params": {"limit": 5},
+            "params": {"runtime": "codex", "limit": 5},
         }
     )
     assert adapter.calls[-1] == ("session.discover", {"connectorId": "conn_1", "limit": 5, "force": True})
@@ -390,7 +334,7 @@ async def _exercise_websocket_close_reconnect(monkeypatch) -> None:
             reconnect_seconds=0,
             sync_existing_on_connect=False,
         ),
-        adapter=FakeAdapter(),  # type: ignore[arg-type]
+        adapters={"codex": FakeAdapter()},
     )
     calls = 0
     sleeps: list[float] = []
@@ -427,7 +371,7 @@ async def _exercise_websocket_auth_close_stops(monkeypatch) -> None:
             reconnect_seconds=0,
             sync_existing_on_connect=False,
         ),
-        adapter=FakeAdapter(),  # type: ignore[arg-type]
+        adapters={"codex": FakeAdapter()},
     )
     calls = 0
 
@@ -457,7 +401,7 @@ async def _exercise_auth_401_is_terminal(monkeypatch) -> None:
             connector_token="token",
             sync_existing_on_connect=False,
         ),
-        adapter=FakeAdapter(),  # type: ignore[arg-type]
+        adapters={"codex": FakeAdapter()},
     )
 
     class FakeResponse:
@@ -491,7 +435,7 @@ async def _exercise_access_token_refresh() -> None:
             connector_token="token",
             sync_existing_on_connect=False,
         ),
-        adapter=FakeAdapter(),  # type: ignore[arg-type]
+        adapters={"codex": FakeAdapter()},
     )
     tokens = ["old", "new"]
     used_tokens: list[str] = []
@@ -547,7 +491,7 @@ async def _exercise_ingest_reauth_on_401() -> None:
             connector_token="token",
             sync_existing_on_connect=False,
         ),
-        adapter=FakeAdapter(),  # type: ignore[arg-type]
+        adapters={"codex": FakeAdapter()},
     )
     tokens = ["expired", "fresh"]
     used_tokens: list[str] = []
@@ -598,7 +542,7 @@ async def _exercise_local_ops(tmp_path) -> None:
             connector_token="token",
             sync_existing_on_connect=False,
         ),
-        adapter=FakeAdapter(),  # type: ignore[arg-type]
+        adapters={"codex": FakeAdapter()},
     )
     prepared = await client.dispatch(
         "fs.prepareDownload",
@@ -770,24 +714,6 @@ async def _exercise_multi_adapter_routing() -> None:
     assert claude.calls[0][1]["connectorId"] == "conn_1"
 
 
-async def _exercise_default_runtime_fallback() -> None:
-    codex = FakeAdapter()
-    claude = FakeAdapter()
-    client = BackendRpcClient(
-        ConnectorConfig(
-            server_url="http://127.0.0.1:8000",
-            connector_id="conn_1",
-            connector_token="token",
-            sync_existing_on_connect=False,
-        ),
-        adapters={"codex": codex, "claude": claude},
-    )
-    # No runtime field — must land on codex (back-compat with pre-Task-2 callers).
-    await client.dispatch("turn.start", {"sessionId": "s1", "content": "hi"})
-    assert [c[0] for c in codex.calls] == ["turn.start"]
-    assert codex.calls[0][1]["connectorId"] == "conn_1"
-    assert claude.calls == []
-
 
 async def _exercise_unknown_runtime() -> None:
     client = BackendRpcClient(
@@ -800,11 +726,11 @@ async def _exercise_unknown_runtime() -> None:
         adapters={"codex": FakeAdapter()},
     )
     try:
-        await client.dispatch("turn.start", {"runtime": "claude", "sessionId": "s1", "content": "hi"})
-    except ValueError as exc:
-        assert "claude" in str(exc)
+        await client.dispatch("turn.start", {"runtime": "opencode", "sessionId": "s1", "content": "hi"})
+    except RuntimeError as exc:
+        assert "opencode" in str(exc)
     else:
-        raise AssertionError("expected ValueError for unknown runtime")
+        raise AssertionError("expected RuntimeError for unknown runtime")
 
 
 async def _exercise_preferences_push() -> None:
@@ -847,445 +773,6 @@ async def _exercise_preferences_push() -> None:
     assert pushed[1][1]["permissionMode"] == "bypassPermissions"
 
 
-async def _exercise_capability_discovery(monkeypatch) -> None:
-    import connector.runtime as runtime_module
-
-    report = {
-        "version": 1,
-        "runtimes": {
-            "codex": {"history": "ok", "execution": "ok"},
-            "claude": {"history": "ok_empty", "execution": "ok"},
-        },
-    }
-
-    class FakeDiscovery:
-        codex_bin = "/tmp/codex-good"
-        claude_bin = "/tmp/claude-good"
-        pass
-
-    FakeDiscovery.report = report
-
-    async def fake_discover():
-        return FakeDiscovery()
-
-    monkeypatch.setattr(runtime_module, "discover_runtime_capabilities", fake_discover)
-
-    codex = FakeAdapter()
-    claude = FakeAdapter()
-    client = BackendRpcClient(
-        ConnectorConfig(
-            server_url="http://127.0.0.1:8000",
-            connector_id="conn_1",
-            connector_token="token",
-            sync_existing_on_connect=False,
-        ),
-        adapters={"codex": codex, "claude": claude},
-    )
-    pushed: list[tuple[str, dict[str, Any]]] = []
-
-    async def fake_notify(method: str, params: dict[str, Any]) -> None:
-        pushed.append((method, params))
-
-    client.send_notification = fake_notify  # type: ignore[method-assign]
-
-    await client._discover_and_publish_capabilities()
-
-    assert [method for method, _params in pushed] == [
-        "connector.capabilitiesUpdated",
-        "protocol.capabilitiesUpdated",
-    ]
-    assert pushed[0][1] == report
-    protocol_capabilities = pushed[1][1]
-    assert isinstance(protocol_capabilities["revision"], int)
-    capability_ids = {item["capabilityId"] for item in protocol_capabilities["capabilities"]}
-    assert "session.interrupt" in capability_ids
-    assert "session.steer" in capability_ids
-    assert "catalog.model" in capability_ids
-
-
-async def _exercise_codex_rewire_keeps_unchanged_running_rpc() -> None:
-    command = ["/tmp/codex", "app-server", "--listen", "stdio://"]
-    rpc = FakeCodexRpc(command)
-    codex = CodexAdapter(rpc=rpc)  # type: ignore[arg-type]
-    codex._started = True
-    client = BackendRpcClient(
-        ConnectorConfig(
-            server_url="http://127.0.0.1:8000",
-            connector_id="conn_1",
-            connector_token="token",
-            sync_existing_on_connect=False,
-        ),
-        adapters={"codex": codex, "claude": FakeAdapter()},
-    )
-
-    await client._rewire_codex("/tmp/codex")
-
-    assert codex.rpc is rpc
-    assert not rpc.closed
-    assert codex._started is True
-
-
-async def _exercise_existing_sync_skips_unavailable_runtime() -> None:
-    codex = FakeAdapter()
-    claude = FakeAdapter()
-    client = BackendRpcClient(
-        ConnectorConfig(
-            server_url="http://127.0.0.1:8000",
-            connector_id="conn_1",
-            connector_token="token",
-            sync_existing_on_connect=True,
-            sync_interval_seconds=999,
-        ),
-        adapters={"codex": codex, "claude": claude},
-    )
-    client._active_runtimes = {"claude"}
-    queued: list[tuple[str, dict[str, Any]]] = []
-
-    async def enqueue(method: str, params: dict[str, Any]) -> None:
-        queued.append((method, params))
-
-    client.send_backend_notification = enqueue  # type: ignore[method-assign]
-    client._preferences_reader = lambda: {}  # type: ignore[assignment]
-
-    async def fake_sleep(_seconds: float) -> None:
-        raise asyncio.CancelledError
-
-    original_sleep = asyncio.sleep
-    asyncio.sleep = fake_sleep  # type: ignore[assignment]
-    try:
-        try:
-            await client._sync_existing_loop()
-        except asyncio.CancelledError:
-            pass
-    finally:
-        asyncio.sleep = original_sleep  # type: ignore[assignment]
-
-    assert codex.calls == []
-    assert claude.calls == [("session.discover", {"connectorId": "conn_1", "limit": 100, "force": False})]
-    assert queued and queued[0][0] == "session.updated"
-
-
-def test_connector_runtime_dispatches_capabilities_scan_runtime(monkeypatch) -> None:
-    """Add Agent modal triggers a single-runtime scan with an optional custom
-    path. We verify the dispatcher passes the path along and returns the
-    per-runtime report (which the backend merges into the connector's caps)."""
-    asyncio.run(_exercise_capabilities_scan_runtime_dispatch(monkeypatch))
-
-
-def test_connector_runtime_dispatches_force_resync_runtime(monkeypatch) -> None:
-    """The backend fires `capabilities.forceResyncRuntime` after Add succeeds,
-    so the dispatch must invoke `_force_resync_runtime` on the named runtime."""
-    asyncio.run(_exercise_force_resync_runtime_dispatch(monkeypatch))
-
-
-def test_connector_runtime_dispatches_active_runtimes_update() -> None:
-    asyncio.run(_exercise_active_runtimes_update_dispatch())
-
-
-async def _exercise_active_runtimes_update_dispatch() -> None:
-    client = BackendRpcClient(
-        ConnectorConfig(
-            server_url="http://127.0.0.1:8000",
-            connector_id="conn_1",
-            connector_token="token",
-            sync_existing_on_connect=False,
-        ),
-        adapters={"codex": FakeAdapter(), "claude": FakeAdapter()},
-    )
-
-    result = await client.dispatch(
-        "capabilities.setActiveRuntimes",
-        {"runtimes": ["claude", "codex", "", 123], "revision": "rev_1"},
-    )
-
-    assert result == {"runtimes": ["claude", "codex"], "revision": "rev_1"}
-    assert client._active_runtimes == {"codex", "claude"}
-
-
-async def _exercise_force_resync_runtime_dispatch(monkeypatch) -> None:
-    import connector.runtime as runtime_module
-
-    codex = FakeAdapter()
-    claude = FakeAdapter()
-    client = BackendRpcClient(
-        ConnectorConfig(
-            server_url="http://127.0.0.1:8000",
-            connector_id="conn_1",
-            connector_token="token",
-            sync_existing_on_connect=False,
-        ),
-        adapters={"codex": codex, "claude": claude},
-    )
-
-    forced: list[str] = []
-
-    async def fake_force_one(self, runtime):  # type: ignore[no-untyped-def]
-        forced.append(runtime)
-
-    monkeypatch.setattr(
-        runtime_module.BackendRpcClient, "_force_resync_runtime", fake_force_one
-    )
-
-    result = await client.dispatch(
-        "capabilities.forceResyncRuntime", {"runtime": "codex"}
-    )
-    assert result == {"runtime": "codex", "resynced": True}
-    assert forced == ["codex"]
-
-
-def test_connector_runtime_rejects_unknown_scan_runtime() -> None:
-    asyncio.run(_exercise_capabilities_scan_runtime_unknown())
-
-
-async def _exercise_capabilities_scan_runtime_dispatch(monkeypatch) -> None:
-    import connector.runtime as runtime_module
-
-    captured_paths: list[str | None] = []
-    codex_report = {"history": "ok", "execution": "ok"}
-
-    async def fake_codex(*, extra_candidate=None):
-        captured_paths.append(extra_candidate)
-        return codex_report, "/tmp/codex-typed-by-user"
-
-    claude_report = {"history": "ok_empty", "execution": "ok"}
-
-    async def fake_claude(*, extra_candidate=None):
-        captured_paths.append(extra_candidate)
-        return claude_report, "/tmp/claude-typed-by-user"
-
-    monkeypatch.setattr(runtime_module, "discover_codex_capability", fake_codex)
-    monkeypatch.setattr(runtime_module, "discover_claude_capability", fake_claude)
-
-    codex = FakeAdapter()
-    claude = FakeAdapter()
-    client = BackendRpcClient(
-        ConnectorConfig(
-            server_url="http://127.0.0.1:8000",
-            connector_id="conn_1",
-            connector_token="token",
-            sync_existing_on_connect=False,
-        ),
-        adapters={"codex": codex, "claude": claude},
-    )
-
-    rewired_codex_bins: list[str | None] = []
-    rewired_claude_bins: list[str | None] = []
-
-    async def fake_rewire_codex(self, codex_bin):  # type: ignore[no-untyped-def]
-        rewired_codex_bins.append(codex_bin)
-
-    def fake_rewire_claude(self, claude_bin):  # type: ignore[no-untyped-def]
-        rewired_claude_bins.append(claude_bin)
-
-    monkeypatch.setattr(
-        runtime_module.BackendRpcClient, "_rewire_codex", fake_rewire_codex
-    )
-    monkeypatch.setattr(
-        runtime_module.BackendRpcClient, "_rewire_claude", fake_rewire_claude
-    )
-
-    force_resynced: list[str] = []
-
-    async def fake_force_one(self, runtime):  # type: ignore[no-untyped-def]
-        force_resynced.append(runtime)
-
-    monkeypatch.setattr(
-        runtime_module.BackendRpcClient, "_force_resync_runtime", fake_force_one
-    )
-
-    codex_out = await client.dispatch(
-        "capabilities.scanRuntime",
-        {"runtime": "codex", "path": "/Users/me/codex"},
-    )
-    claude_out = await client.dispatch(
-        "capabilities.scanRuntime",
-        {"runtime": "claude", "path": ""},  # empty path → discovery sees None
-    )
-
-    assert codex_out == {"runtime": "codex", "report": codex_report}
-    assert claude_out == {"runtime": "claude", "report": claude_report}
-    assert captured_paths == ["/Users/me/codex", None]
-    assert rewired_codex_bins == ["/tmp/codex-typed-by-user"]
-    assert rewired_claude_bins == ["/tmp/claude-typed-by-user"]
-    # Scan is discovery-only now — force-resync is a SEPARATE
-    # `capabilities.forceResyncRuntime` RPC the backend fires after the
-    # attach commits. Otherwise the daemon's session pushes would arrive
-    # while the runtime is still in `disabled` and the IngestFilter would
-    # drop them.
-    assert force_resynced == []
-
-
-def test_existing_sync_skips_after_invalidate_even_if_caps_dict_exists() -> None:
-    """The periodic sync loop follows the server-owned active runtime set."""
-    asyncio.run(_exercise_existing_sync_skips_after_invalidate())
-
-
-def test_existing_sync_resumes_after_server_reactivates_runtime() -> None:
-    asyncio.run(_exercise_existing_sync_resumes_after_reactivation())
-
-
-async def _run_one_existing_sync_cycle(client: BackendRpcClient) -> None:
-    async def fake_sleep(_seconds: float) -> None:
-        raise asyncio.CancelledError
-
-    original_sleep = asyncio.sleep
-    asyncio.sleep = fake_sleep  # type: ignore[assignment]
-    try:
-        try:
-            await client._sync_existing_loop()
-        except asyncio.CancelledError:
-            pass
-    finally:
-        asyncio.sleep = original_sleep  # type: ignore[assignment]
-
-
-async def _exercise_existing_sync_resumes_after_reactivation() -> None:
-    codex = FakeAdapter()
-    claude = FakeAdapter()
-    client = BackendRpcClient(
-        ConnectorConfig(
-            server_url="http://127.0.0.1:8000",
-            connector_id="conn_1",
-            connector_token="token",
-            sync_existing_on_connect=True,
-            sync_interval_seconds=999,
-        ),
-        adapters={"codex": codex, "claude": claude},
-    )
-
-    async def ingest(notifications: list[dict[str, Any]]) -> None:
-        pass
-
-    client.ingest_notifications = ingest  # type: ignore[method-assign]
-    client._preferences_reader = lambda: {}  # type: ignore[assignment]
-
-    await client.dispatch("capabilities.setActiveRuntimes", {"runtimes": ["claude"], "revision": "after-delete"})
-    await _run_one_existing_sync_cycle(client)
-    assert codex.calls == []
-    assert [c[0] for c in claude.calls] == ["session.discover"]
-
-    await client.dispatch("capabilities.setActiveRuntimes", {"runtimes": ["claude", "codex"], "revision": "after-add"})
-    await _run_one_existing_sync_cycle(client)
-    assert [c[0] for c in codex.calls] == ["session.discover"]
-    assert [c[0] for c in claude.calls] == ["session.discover", "session.discover"]
-
-
-async def _exercise_existing_sync_skips_after_invalidate() -> None:
-    codex = FakeAdapter()
-    claude = FakeAdapter()
-    client = BackendRpcClient(
-        ConnectorConfig(
-            server_url="http://127.0.0.1:8000",
-            connector_id="conn_1",
-            connector_token="token",
-            sync_existing_on_connect=True,
-            sync_interval_seconds=999,
-        ),
-        adapters={"codex": codex, "claude": claude},
-    )
-    # Server sent an active set with only claude after codex was deleted.
-    client._active_runtimes = {"claude"}
-
-    async def ingest(notifications: list[dict[str, Any]]) -> None:
-        pass
-
-    client.ingest_notifications = ingest  # type: ignore[method-assign]
-    client._preferences_reader = lambda: {}  # type: ignore[assignment]
-
-    async def fake_sleep(_seconds: float) -> None:
-        raise asyncio.CancelledError
-
-    original_sleep = asyncio.sleep
-    asyncio.sleep = fake_sleep  # type: ignore[assignment]
-    try:
-        try:
-            await client._sync_existing_loop()
-        except asyncio.CancelledError:
-            pass
-    finally:
-        asyncio.sleep = original_sleep  # type: ignore[assignment]
-
-    # codex was deliberately invalidated → must NOT be synced
-    assert codex.calls == []
-    # claude is still attached → still syncs as normal
-    assert [c[0] for c in claude.calls] == ["session.discover"]
-
-
-def test_capabilities_invalidate_runtime_clears_caps_and_adapter_state() -> None:
-    """Invalidate removes the runtime from active work and clears adapter state."""
-    asyncio.run(_exercise_invalidate_runtime_dispatch())
-
-
-async def _exercise_invalidate_runtime_dispatch() -> None:
-    codex = FakeAdapter()
-    claude = FakeAdapter()
-    # Plant in-memory markers on each so we can assert they get cleared.
-    codex.forgot = 0  # type: ignore[attr-defined]
-    claude.forgot = 0  # type: ignore[attr-defined]
-
-    def codex_forget() -> None:
-        codex.forgot += 1  # type: ignore[attr-defined]
-
-    def claude_forget() -> None:
-        claude.forgot += 1  # type: ignore[attr-defined]
-
-    codex.forget_sync_state = codex_forget  # type: ignore[attr-defined]
-    claude.forget_sync_state = claude_forget  # type: ignore[attr-defined]
-
-    client = BackendRpcClient(
-        ConnectorConfig(
-            server_url="http://127.0.0.1:8000",
-            connector_id="conn_1",
-            connector_token="token",
-            sync_existing_on_connect=False,
-        ),
-        adapters={"codex": codex, "claude": claude},
-    )
-    client._active_runtimes = {"codex", "claude"}
-    client._runtime_capabilities = {
-        "runtimes": {
-            "codex": {"history": "ok", "execution": "ok"},
-            "claude": {"history": "ok_empty", "execution": "ok"},
-        },
-    }
-
-    result = await client.dispatch(
-        "capabilities.invalidateRuntime", {"runtime": "codex"}
-    )
-    assert result == {"runtime": "codex", "invalidated": True}
-    assert "codex" not in client._active_runtimes
-    assert "claude" in client._active_runtimes
-    # Only codex's adapter cache was cleared
-    assert codex.forgot == 1  # type: ignore[attr-defined]
-    assert claude.forgot == 0  # type: ignore[attr-defined]
-
-    # Invalidating an unknown runtime is a no-op on caps, doesn't raise
-    result = await client.dispatch(
-        "capabilities.invalidateRuntime", {"runtime": "nonsense"}
-    )
-    assert result == {"runtime": "nonsense", "invalidated": True}
-    assert codex.forgot == 1  # type: ignore[attr-defined]
-
-
-async def _exercise_capabilities_scan_runtime_unknown() -> None:
-    client = BackendRpcClient(
-        ConnectorConfig(
-            server_url="http://127.0.0.1:8000",
-            connector_id="conn_1",
-            connector_token="token",
-            sync_existing_on_connect=False,
-        ),
-        adapters={"codex": FakeAdapter(), "claude": FakeAdapter()},
-    )
-    try:
-        await client.dispatch(
-            "capabilities.scanRuntime", {"runtime": "opencode"}
-        )
-    except ValueError as exc:
-        assert "opencode" in str(exc)
-    else:
-        raise AssertionError("expected ValueError for unsupported runtime")
-
 
 async def _exercise_async_shell_tasks(tmp_path) -> None:
     workspace = tmp_path / "workspace"
@@ -1297,7 +784,7 @@ async def _exercise_async_shell_tasks(tmp_path) -> None:
             connector_token="token",
             sync_existing_on_connect=False,
         ),
-        adapter=FakeAdapter(),  # type: ignore[arg-type]
+        adapters={"codex": FakeAdapter()},
     )
     notifications: list[tuple[str, dict[str, Any]]] = []
 

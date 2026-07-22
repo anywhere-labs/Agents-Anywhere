@@ -648,8 +648,6 @@ class FakeApprovalRpc:
             raise ConnectorRpcError("codex_error", "request gone")
         if self.gone:
             raise ConnectorRpcError("approval_not_found", "approval not found")
-        if method == "capabilities.setActiveRuntimes":
-            return {"runtimes": params.get("runtimes") or []}
         return {"resolved": True}
 
 
@@ -676,8 +674,6 @@ class FakeLocalRpc:
         timeout: float = 30,
     ) -> Any:
         self.requests.append((connector_id, method, params, timeout))
-        if method == "capabilities.setActiveRuntimes":
-            return {"runtimes": params.get("runtimes") or []}
         if method == "terminal.create":
             terminal_id = params["terminalId"]
             self.terminals[terminal_id] = {

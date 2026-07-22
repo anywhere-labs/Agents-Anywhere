@@ -18,23 +18,15 @@ from websockets.exceptions import ConnectionClosed
 from websockets.asyncio.client import ClientConnection
 
 from connector.adapter import Adapter
-from connector.capabilities import (
-    discover_claude_capability,
-    discover_codex_capability,
-    discover_runtime_capabilities,
-    protocol_capability_set_from_discovery,
-)
-from connector.claude.history_adapter import ClaudeHistoryAdapter
-from connector.claude.sdk_adapter import ClaudeSdkAdapter
 from connector.claude.preferences import read_local_preferences
-from connector.codex.adapter import CodexAdapter
-from connector.codex.rpc import JsonRpcStdioClient
-from connector.launch import LaunchTarget, launch_target
 from connector.local_ops import create_local_ops
+from connector.runtime_lifecycle import (
+    RuntimeBindings,
+    RuntimeProvider,
+    RuntimeSupervisor,
+    default_runtime_providers,
+)
 from connector.sync_state import SqliteSyncStateStore, SyncStateStore
-
-
-DEFAULT_RUNTIME = "codex"
 
 
 ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 60.0
@@ -137,9 +129,9 @@ class BackendRpcClient:
     def __init__(
         self,
         config: ConnectorConfig,
-        adapter: CodexAdapter | None = None,
         *,
         adapters: dict[str, Adapter] | None = None,
+        runtime_providers: list[RuntimeProvider] | None = None,
         preferences_reader: Callable[[], dict[str, Any]] | None = None,
         sync_state_store: SyncStateStore | None = None,
     ) -> None:
@@ -147,41 +139,23 @@ class BackendRpcClient:
         self.sync_state_store = sync_state_store
         if adapters is None and self.sync_state_store is None:
             self.sync_state_store = SqliteSyncStateStore(config.state_db_path or SqliteSyncStateStore.default_path())
-        if adapters is not None:
-            self.adapters: dict[str, Adapter] = dict(adapters)
-        else:
-            # Default: Codex + Claude (the latter still stubbed in Task 2; real
-            # implementation arrives in Task 3+). `adapter=` kwarg stays as a
-            # single-adapter override for existing tests.
-            self.adapters = {
-                "codex": adapter
-                or CodexAdapter(
-                    notification_sink=self.send_backend_notification,
-                    sync_state_store=self.sync_state_store,
-                ),
-                "claude": ClaudeSdkAdapter(
-                    notification_sink=self.send_backend_notification,
-                    history_adapter=ClaudeHistoryAdapter(sync_state_store=self.sync_state_store),
-                ),
-            }
-        for ad in self.adapters.values():
-            if getattr(ad, "notification_sink", None) is None:
-                ad.notification_sink = self.send_backend_notification
-            # Wire the user-uploaded-attachment downloader for adapters that
-            # support it (codex). Defensive getattr/try keeps adapters without
-            # the field (claude, older test fakes) working untouched.
-            if getattr(ad, "attachment_downloader", None) is None:
-                try:
-                    ad.attachment_downloader = self.download_attachment
-                except AttributeError:
-                    pass
-        # Back-compat alias so callers / tests that still reach for
-        # `client.adapter` get the default-routed adapter.
-        self.adapter = self.adapters[DEFAULT_RUNTIME]
+        bindings = RuntimeBindings(
+            notification_sink=self.send_backend_notification,
+            attachment_downloader=self.download_attachment,
+            sync_state_store=self.sync_state_store,
+        )
+        providers = runtime_providers or default_runtime_providers(bindings)
+        self.runtime_supervisor = RuntimeSupervisor(
+            providers,
+            status_sink=self._publish_runtime_status,
+            changed_sink=self._runtime_changed,
+            running_adapters=adapters,
+        )
+        self.adapters = self.runtime_supervisor.adapters
+        for runtime_adapter in self.adapters.values():
+            self._wire_adapter(runtime_adapter)
         self._preferences_reader = preferences_reader or read_local_preferences
         self._last_preferences: dict[str, Any] | None = None
-        self._runtime_capabilities: dict[str, Any] | None = None
-        self._active_runtimes: set[str] = set()
         self.local_ops = create_local_ops(notify=self.send_backend_notification)
         self._ws: ClientConnection | None = None
         self._access_token: str | None = None
@@ -252,7 +226,9 @@ class BackendRpcClient:
             proxy=None if _is_loopback_url(self.config.server_url) else True,
         ) as ws:
             self._ws = ws
-            await self._discover_and_publish_capabilities()
+            inventory = await self.runtime_supervisor.discover()
+            await self.send_notification("runtime.inventoryUpdated", inventory)
+            await self._publish_protocol_state()
             heartbeat_task = asyncio.create_task(self._heartbeat_loop())
             sync_task = asyncio.create_task(self._sync_existing_loop())
             try:
@@ -325,6 +301,20 @@ class BackendRpcClient:
             )
 
     async def dispatch(self, method: str, params: dict[str, Any]) -> Any:
+        if method == "runtime.discover":
+            return await self.runtime_supervisor.discover()
+        if method == "runtime.validateConfig":
+            runtime_id = _required_runtime_id(params)
+            config = _runtime_config(params)
+            await self.runtime_supervisor.validate_config(runtime_id, config)
+            return {"runtimeId": runtime_id, "valid": True}
+        if method == "runtime.start":
+            return await self.runtime_supervisor.start(
+                _required_runtime_id(params),
+                _runtime_config(params),
+            )
+        if method == "runtime.stop":
+            return await self.runtime_supervisor.stop(_required_runtime_id(params))
         if method == "session.discover":
             adapter = self._resolve_adapter(params)
             result = await adapter.sync_existing_sessions(
@@ -389,36 +379,6 @@ class BackendRpcClient:
             return await self.local_ops.terminal_snapshot(params)
         if method == "terminal.relay.connect":
             return await self.start_terminal_relay(params)
-        if method == "capabilities.scanRuntime":
-            runtime = params.get("runtime")
-            if not isinstance(runtime, str) or not runtime:
-                raise ValueError("missing runtime")
-            path_value = params.get("path")
-            path = path_value if isinstance(path_value, str) and path_value else None
-            return await self._scan_runtime(runtime, path)
-        if method == "capabilities.invalidateRuntime":
-            runtime = params.get("runtime")
-            if not isinstance(runtime, str) or not runtime:
-                raise ValueError("missing runtime")
-            self._invalidate_runtime(runtime)
-            return {"runtime": runtime, "invalidated": True}
-        if method == "capabilities.setActiveRuntimes":
-            runtimes = params.get("runtimes")
-            if not isinstance(runtimes, list):
-                raise ValueError("missing runtimes")
-            active = {runtime for runtime in runtimes if isinstance(runtime, str) and runtime}
-            self._active_runtimes = active
-            revision = params.get("revision")
-            logger.info("active runtimes updated runtimes={} revision={}", sorted(active), revision)
-            return {"runtimes": [runtime for runtime in runtimes if isinstance(runtime, str) and runtime], "revision": revision}
-        if method == "capabilities.forceResyncRuntime":
-            # Backend fires this after it has committed user intent and sent
-            # the active runtime set. Fail-soft if the adapter isn't registered.
-            runtime = params.get("runtime")
-            if not isinstance(runtime, str) or not runtime:
-                raise ValueError("missing runtime")
-            await self._force_resync_runtime(runtime)
-            return {"runtime": runtime, "resynced": True}
         raise ValueError(f"unsupported connector method: {method}")
 
     async def send_notification(self, method: str, params: dict[str, Any]) -> None:
@@ -502,10 +462,7 @@ class BackendRpcClient:
         if not self.config.sync_existing_on_connect:
             return
         while True:
-            for runtime, adapter in self.adapters.items():
-                if runtime not in self._active_runtimes:
-                    logger.info("skipping {} existing session sync; runtime inactive", runtime)
-                    continue
+            for runtime, adapter in list(self.adapters.items()):
                 try:
                     sync_timeout = (
                         RUNTIME_CHANGED_SYNC_TIMEOUT_SECONDS
@@ -545,200 +502,71 @@ class BackendRpcClient:
         self._last_preferences = current
         await self.send_notification("connector.preferencesUpdated", current)
 
-    async def _discover_and_publish_capabilities(self) -> None:
-        try:
-            discovery = await discover_runtime_capabilities()
-        except Exception:
-            logger.exception("runtime capability discovery failed")
-            return
-        self._runtime_capabilities = discovery.report
-        await self._rewire_codex(getattr(discovery, "codex_target", None) or discovery.codex_bin)
-        self._rewire_claude(getattr(discovery, "claude_target", None) or discovery.claude_bin)
-        await self.send_notification("connector.capabilitiesUpdated", discovery.report)
-        protocol_capabilities = protocol_capability_set_from_discovery(
-            discovery,
-            revision=int(time.time() * 1000),
-        )
+    async def _publish_runtime_status(
+        self,
+        runtime_id: str,
+        status: str,
+        error: dict[str, Any] | None,
+    ) -> None:
+        payload: dict[str, Any] = {"runtimeId": runtime_id, "status": status}
+        if error is not None:
+            payload["error"] = error
+        await self.send_notification("runtime.statusChanged", payload)
+
+    async def _runtime_changed(self, runtime_id: str, adapter: Adapter | None) -> None:
+        if adapter is not None:
+            self._wire_adapter(adapter)
+        await self._publish_protocol_capabilities()
+        if adapter is not None:
+            await self._publish_runtime_catalogs(runtime_id, adapter)
+
+    async def _publish_protocol_state(self) -> None:
+        await self._publish_protocol_capabilities()
+        for runtime_id, adapter in list(self.adapters.items()):
+            await self._publish_runtime_catalogs(runtime_id, adapter)
+
+    async def _publish_protocol_capabilities(self) -> None:
+        revision = int(time.time() * 1000)
         await self.send_notification(
             "protocol.capabilitiesUpdated",
-            protocol_capabilities.model_dump(mode="json"),
+            self.runtime_supervisor.active_capabilities(revision=revision),
         )
-        await self._publish_runtime_catalogs(discovery.report, revision=protocol_capabilities.revision)
 
-    async def _publish_runtime_catalogs(self, discovery_report: dict[str, Any], *, revision: int) -> None:
-        runtimes = discovery_report.get("runtimes")
-        if not isinstance(runtimes, dict):
-            return
-        for runtime, report in runtimes.items():
-            if runtime not in {"codex", "claude"} or not isinstance(report, dict):
-                continue
-            if report.get("execution") != "ok":
-                continue
-            adapter = self.adapters.get(runtime)
-            if adapter is None:
-                continue
-            model_catalog_method = getattr(adapter, "model_catalog", None)
-            if callable(model_catalog_method):
-                try:
-                    model_catalog = await model_catalog_method(revision=revision)
-                except Exception:
-                    logger.exception("runtime model catalog read failed runtime={}", runtime)
-                    model_catalog = None
-                if isinstance(model_catalog, dict):
-                    await self.send_notification("protocol.modelCatalogUpdated", model_catalog)
-            permission_catalog_method = getattr(adapter, "permission_catalog", None)
-            if callable(permission_catalog_method):
-                try:
-                    permission_catalog = await permission_catalog_method(revision=revision)
-                except Exception:
-                    logger.exception("runtime permission catalog read failed runtime={}", runtime)
-                    permission_catalog = None
-                if isinstance(permission_catalog, dict):
-                    await self.send_notification("protocol.permissionCatalogUpdated", permission_catalog)
-
-    async def _rewire_codex(self, codex_target: LaunchTarget | str | None) -> None:
-        if not codex_target:
-            return
-        target = codex_target if isinstance(codex_target, LaunchTarget) else launch_target("cli", codex_target)
-        codex = self.adapters.get("codex")
-        if not isinstance(codex, CodexAdapter):
-            return
-        command = target.command(["app-server", "--listen", "stdio://"])
-        if (
-            codex.rpc is not None
-            and codex.rpc.command == command
-            and getattr(codex, "_started", False)
-        ):
-            return
-        if codex.rpc is not None:
+    async def _publish_runtime_catalogs(self, runtime: str, adapter: Adapter) -> None:
+        revision = int(time.time() * 1000)
+        model_catalog_method = getattr(adapter, "model_catalog", None)
+        if callable(model_catalog_method):
             try:
-                await codex.rpc.close()
+                model_catalog = await model_catalog_method(revision=revision)
             except Exception:
-                logger.exception("closing previous codex app-server failed")
-        codex.rpc = JsonRpcStdioClient(command=command)
-        codex._started = False
-
-    def _rewire_claude(self, claude_target: LaunchTarget | str | None) -> None:
-        if not claude_target:
-            return
-        claude = self.adapters.get("claude")
-        target = claude_target if isinstance(claude_target, LaunchTarget) else launch_target("cli", claude_target)
-        if isinstance(claude, ClaudeSdkAdapter):
-            claude.claude_target = target
-
-    async def _scan_runtime(
-        self, runtime: str, path: str | None
-    ) -> dict[str, Any]:
-        """Scan a single runtime (with optional custom path) and rewire its
-        adapter. Discovery only — does NOT push sessions.
-
-        Session sync is a separate `capabilities.forceResyncRuntime` RPC
-        that the backend fires AFTER it has committed user intent to DB.
-        Order matters: if we pushed sessions inside this dispatch, they'd
-        arrive at /connector/ingest while the runtime is still in
-        disabled user intent on the server (the user is re-adding after a Delete),
-        and the IngestFilter would drop them all.
-        """
-        if runtime == "codex":
-            report, codex_target = await discover_codex_capability(extra_candidate=path)
-            await self._rewire_codex(codex_target)
-            self._record_runtime_report("codex", report)
-            return {"runtime": "codex", "report": report}
-        if runtime == "claude":
-            report, claude_target = await discover_claude_capability(extra_candidate=path)
-            self._rewire_claude(claude_target)
-            self._record_runtime_report("claude", report)
-            return {"runtime": "claude", "report": report}
-        raise ValueError(f"unsupported runtime {runtime!r}")
-
-    async def _force_resync_runtime(self, runtime: str) -> None:
-        adapter = self.adapters.get(runtime)
-        if adapter is None:
-            return
-        try:
-            await asyncio.wait_for(
-                adapter.sync_existing_sessions(
-                    self.config.connector_id,
-                    force=True,
-                    notification_sink=self.enqueue_backend_notifications,
-                ),
-                timeout=RUNTIME_SYNC_TIMEOUT_SECONDS * 4,
-            )
-        except NotImplementedError:
-            # stub adapters (older tests) opt out — fine
-            pass
-        except TimeoutError:
-            logger.warning(
-                "forced {} session sync timed out during refresh/scan", runtime
-            )
-        except Exception:
-            logger.exception(
-                "forced {} session sync failed during refresh/scan", runtime
-            )
-
-    def _invalidate_runtime(self, runtime: str) -> None:
-        """Clear adapter sync cursors after the server deleted this runtime."""
-        self._active_runtimes.discard(runtime)
-        adapter = self.adapters.get(runtime)
-        if adapter is None:
-            return
-        forget_persisted = getattr(adapter, "forget_persisted_sync_state", None)
-        if callable(forget_persisted):
+                logger.exception("runtime model catalog read failed runtime={}", runtime)
+                model_catalog = None
+            if isinstance(model_catalog, dict):
+                await self.send_notification("protocol.modelCatalogUpdated", model_catalog)
+        permission_catalog_method = getattr(adapter, "permission_catalog", None)
+        if callable(permission_catalog_method):
             try:
-                forget_persisted(self.config.connector_id)
-                return
+                permission_catalog = await permission_catalog_method(revision=revision)
             except Exception:
-                logger.exception("forget_persisted_sync_state failed runtime={}", runtime)
-        forget = getattr(adapter, "forget_sync_state", None)
-        if callable(forget):
-            try:
-                forget()
-            except Exception:
-                logger.exception("forget_sync_state failed runtime={}", runtime)
-
-    async def _get_json(self, path: str) -> dict[str, Any]:
-        access_token = await self.ensure_access_token()
-        client = self._http_client
-        owned = client is None
-        if client is None:
-            client = self._new_http_client(timeout=30)
-        try:
-            response = await client.get(
-                _api_v2_url(self.config.server_url, path),
-                headers={"Authorization": f"Bearer {access_token}"},
-            )
-            if getattr(response, "status_code", None) == 401:
-                access_token = await self.ensure_access_token(force=True)
-                response = await client.get(
-                    _api_v2_url(self.config.server_url, path),
-                    headers={"Authorization": f"Bearer {access_token}"},
-                )
-                if getattr(response, "status_code", None) == 401:
-                    raise ConnectorAuthenticationError("connector credential no longer valid")
-            response.raise_for_status()
-            payload = response.json()
-            return payload if isinstance(payload, dict) else {}
-        finally:
-            if owned:
-                await client.aclose()
-
-    def _record_runtime_report(self, runtime: str, report: dict[str, Any]) -> None:
-        if self._runtime_capabilities is None:
-            self._runtime_capabilities = {"version": 1, "runtimes": {}}
-        runtimes = self._runtime_capabilities.get("runtimes")
-        if not isinstance(runtimes, dict):
-            runtimes = {}
-            self._runtime_capabilities["runtimes"] = runtimes
-        runtimes[runtime] = report
+                logger.exception("runtime permission catalog read failed runtime={}", runtime)
+                permission_catalog = None
+            if isinstance(permission_catalog, dict):
+                await self.send_notification("protocol.permissionCatalogUpdated", permission_catalog)
 
     def _resolve_adapter(self, params: dict[str, Any]) -> Adapter:
         runtime = params.get("runtime") if isinstance(params, dict) else None
         if not isinstance(runtime, str) or not runtime:
-            runtime = DEFAULT_RUNTIME
-        adapter = self.adapters.get(runtime)
-        if adapter is None:
-            raise ValueError(f"no adapter registered for runtime {runtime!r}")
-        return adapter
+            raise ValueError("runtime is required")
+        return self.runtime_supervisor.resolve_adapter(runtime)
+
+    def _wire_adapter(self, adapter: Adapter) -> None:
+        if getattr(adapter, "notification_sink", None) is None:
+            adapter.notification_sink = self.send_backend_notification
+        if getattr(adapter, "attachment_downloader", None) is None:
+            try:
+                adapter.attachment_downloader = self.download_attachment
+            except AttributeError:
+                pass
 
     async def _send_backend_notifications(self, result: dict[str, Any]) -> None:
         for notification in result.get("backendNotifications", []):
@@ -975,6 +803,20 @@ class BackendRpcClient:
 
 def _strip_backend_notifications(result: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in result.items() if key != "backendNotifications"}
+
+
+def _required_runtime_id(params: dict[str, Any]) -> str:
+    runtime_id = params.get("runtimeId")
+    if not isinstance(runtime_id, str) or not runtime_id:
+        raise ValueError("runtimeId is required")
+    return runtime_id
+
+
+def _runtime_config(params: dict[str, Any]) -> dict[str, Any]:
+    config = params.get("config")
+    if not isinstance(config, dict):
+        raise ValueError("config must be an object")
+    return config
 
 
 async def _file_chunks(path: Path, chunk_size: int = 1024 * 1024):

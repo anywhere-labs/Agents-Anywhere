@@ -22,8 +22,14 @@ APP_SERVER_STREAM_LIMIT = 64 * 1024 * 1024
 class JsonRpcStdioClient:
     """Line-delimited JSON-RPC client for `codex app-server --listen stdio://`."""
 
-    def __init__(self, command: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        command: list[str] | None = None,
+        *,
+        environment: dict[str, str] | None = None,
+    ) -> None:
         self.command = command or _resolve_codex_command()
+        self.environment = environment
         self.process: asyncio.subprocess.Process | None = None
         self._start_lock = asyncio.Lock()
         self._next_id = 1
@@ -47,6 +53,7 @@ class JsonRpcStdioClient:
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     limit=APP_SERVER_STREAM_LIMIT,
+                    env=self.environment,
                 )
                 self._track_reader(asyncio.create_task(self._read_stdout(self.process)), "stdout")
                 self._track_reader(asyncio.create_task(self._read_stderr(self.process)), "stderr")
@@ -122,6 +129,11 @@ class JsonRpcStdioClient:
         finally:
             self.process = None
             self._initialized = False
+            for future in self._pending.values():
+                if not future.done():
+                    future.set_exception(RuntimeError("Codex app-server stopped"))
+            self._pending.clear()
+            self._server_request_ids.clear()
 
     async def _read_stdout(self, process: asyncio.subprocess.Process) -> None:
         assert process.stdout

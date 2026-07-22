@@ -80,6 +80,7 @@ class ClaudeSdkAdapter:
     history_adapter: ClaudeHistoryAdapter = field(default_factory=ClaudeHistoryAdapter)
     attachment_downloader: AttachmentDownloader | None = None
     claude_target: LaunchTarget | None = None
+    environment: dict[str, str] | None = None
     _sessions: dict[str, _SdkSessionRuntime] = field(default_factory=dict, init=False)
 
     @property
@@ -117,6 +118,34 @@ class ClaudeSdkAdapter:
         if permission_selection_id is not None:
             response["permissionSelectionId"] = permission_selection_id
         return response
+
+    async def stop(self) -> None:
+        active_tasks: list[asyncio.Task[None]] = []
+        for runtime in self._sessions.values():
+            runtime.interrupted = True
+            for pending in runtime.pending_approvals.values():
+                if not pending.future.done():
+                    pending.future.set_result("cancelled")
+            client = runtime.client
+            if client is not None:
+                interrupt = getattr(client, "interrupt", None)
+                if callable(interrupt):
+                    try:
+                        await interrupt()
+                    except Exception:
+                        logger.exception("interrupting Claude client during runtime stop failed")
+                disconnect = getattr(client, "disconnect", None)
+                if callable(disconnect):
+                    try:
+                        await disconnect()
+                    except Exception:
+                        logger.exception("disconnecting Claude client during runtime stop failed")
+            if runtime.active_task is not None and not runtime.active_task.done():
+                runtime.active_task.cancel()
+                active_tasks.append(runtime.active_task)
+        if active_tasks:
+            await asyncio.gather(*active_tasks, return_exceptions=True)
+        self._sessions.clear()
 
     async def sync_session(self, params: dict[str, Any]) -> dict[str, Any]:
         self._prepare_history_adapter()
@@ -332,6 +361,18 @@ class ClaudeSdkAdapter:
                     },
                 )
         finally:
+            client = runtime.client
+            if client is not None:
+                disconnect = getattr(client, "disconnect", None)
+                if callable(disconnect):
+                    try:
+                        await disconnect()
+                    except Exception:
+                        logger.exception(
+                            "disconnecting Claude SDK client failed session_id={}",
+                            runtime.session_id,
+                        )
+                runtime.client = None
             if stream_finished:
                 await self._mark_history_consumed(runtime)
             if runtime.active_turn_id == turn_id:
@@ -627,6 +668,8 @@ class ClaudeSdkAdapter:
             kwargs["resume"] = runtime.external_session_id
         if self.claude_target is not None:
             kwargs["cli_path"] = self.claude_target.path
+        if self.environment is not None:
+            kwargs["env"] = dict(self.environment)
         for param_key, option_key in (
             ("permissionMode", "permission_mode"),
             ("model", "model"),

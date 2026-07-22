@@ -15,7 +15,6 @@ from connector.attachments import attachment_target
 from connector.codex.reducer import CODEX_APPROVAL_METHODS, ReductionResult, TimelineReducer
 from connector.codex.rpc import JsonRpcStdioClient
 from connector.protocol_catalogs import (
-    empty_model_catalog,
     model_catalog_from_runtime_items,
     permission_catalog_from_items,
 )
@@ -183,10 +182,7 @@ class CodexAdapter:
         """Drop the in-memory "I already told the backend about thread X"
         markers so the next `sync_existing_sessions` re-ingests everything.
 
-        Called when the server-side runtime entry has been removed
-        (DELETE /runtime-capabilities/{runtime}). Without this, the
-        adapter would keep skipping threads it had already pushed in a
-        previous lifetime, even though the backend SQL no longer has them.
+        This is only used when an explicit full resync is requested.
         """
         self._existing_thread_sync_markers.clear()
         self._existing_thread_names.clear()
@@ -204,6 +200,18 @@ class CodexAdapter:
                 return
             await self._best_effort_bootstrap_reads()
             self._started = True
+
+    async def stop(self) -> None:
+        tasks = list(self._history_sync_tasks.values())
+        self._history_sync_tasks.clear()
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        if self.rpc is not None:
+            await self.rpc.close()
+        self._started = False
+        self._model_list_result = None
 
     async def create_session(self, params: dict[str, Any]) -> dict[str, Any]:
         await self.start()

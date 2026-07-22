@@ -18,6 +18,7 @@ from agent_server.infra.connector_rpc import (
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.services.dashboard_events import publish_dashboard_changed
+from agent_server.services.notices import cancel_session_blocking_interactions
 
 
 class DeviceRuntimeError(RuntimeError):
@@ -102,9 +103,9 @@ class DeviceRuntimeService:
             ) from exc
         if not isinstance(result, dict):
             raise DeviceRuntimeUpstreamError("connector returned an invalid runtime inventory")
-        runtimes = await self.ingest_inventory(connector_id, result)
+        await self.ingest_inventory(connector_id, result)
         await self.reconcile_active(connector_id)
-        return runtimes
+        return await self.list_runtimes(connector_id, user_id=user_id)
 
     async def put_config(
         self,
@@ -209,14 +210,23 @@ class DeviceRuntimeService:
             return
         for row in rows:
             runtime = DeviceRuntimeView.model_validate(row)
-            if not runtime.active or not runtime.present or runtime.config is None:
+            if not runtime.present:
                 continue
             lock = await self._lock(connector_id, runtime.runtimeId)
             async with lock:
                 current = DeviceRuntimeView.model_validate(
                     await self._store.get_device_runtime(connector_id, runtime.runtimeId)
                 )
-                if not current.active or current.config is None:
+                if not current.present:
+                    continue
+                if not current.active:
+                    if current.status in {"starting", "running", "stopping", "unknown"}:
+                        try:
+                            await self._stop_locked(current, allow_offline=True)
+                        except DeviceRuntimeError:
+                            pass
+                    continue
+                if current.config is None:
                     continue
                 try:
                     self._validate(current.config, self._schema(current))
@@ -266,6 +276,7 @@ class DeviceRuntimeService:
         allow_offline: bool,
     ) -> DeviceRuntimeView:
         if runtime.status == "stopped":
+            await self._settle_runtime_sessions(runtime)
             return DeviceRuntimeView.model_validate(
                 await self._store.set_device_runtime_status(
                     runtime.connectorId,
@@ -305,6 +316,7 @@ class DeviceRuntimeService:
                 exc.message,
                 detail={"code": exc.code, "message": exc.message},
             ) from exc
+        await self._settle_runtime_sessions(runtime)
         return DeviceRuntimeView.model_validate(
             await self._store.set_device_runtime_status(
                 runtime.connectorId,
@@ -317,6 +329,31 @@ class DeviceRuntimeService:
         if runtime.status in {"starting", "running", "stopping", "unknown"}:
             runtime = await self._stop_locked(runtime, allow_offline=False)
         return await self._start_locked(runtime)
+
+    async def _settle_runtime_sessions(self, runtime: DeviceRuntimeView) -> None:
+        sessions = await self._store.list_running_sessions_for_connector_agent(
+            connector_id=runtime.connectorId,
+            runtime=runtime.runtimeId,
+        )
+        for session in sessions:
+            await cancel_session_blocking_interactions(
+                self._store,
+                session_id=session.id,
+                reason="runtime_stopped",
+            )
+            for approval in await self._store.list_pending_approvals(session.id):
+                await self._store.resolve_approval(approval.id, "cancelled")
+            await self._store.clear_active_run(session.id)
+            await self._store.set_session_status(session.id, "idle")
+            if self._timeline_broker is not None:
+                await self._timeline_broker.publish(
+                    session.id,
+                    {
+                        "sessionId": session.id,
+                        "nextSeq": await self._store.get_session_seq(session.id),
+                        "refetch": True,
+                    },
+                )
 
     async def _request_validate(
         self,

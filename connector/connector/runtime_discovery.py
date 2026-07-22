@@ -5,123 +5,15 @@ import importlib
 import os
 import shutil
 import sys
-import time
 from collections.abc import Iterable
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from connector.launch import LaunchTarget, launch_target, path_exists_for_launch
-from connector.codex.rpc import JsonRpcStdioClient, codex_candidate_paths
-from connector.protocol import ProtocolCapability, ProtocolCapabilitySet
+from connector.codex.rpc import codex_candidate_paths
 
 
-_CODEX_CHECK_TIMEOUT_S = 8.0
 _COMMAND_CHECK_TIMEOUT_S = 8.0
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeDiscovery:
-    report: dict[str, Any]
-    codex_bin: str | None = None
-    claude_bin: str | None = None
-    codex_target: LaunchTarget | None = None
-    claude_target: LaunchTarget | None = None
-
-
-def protocol_capability_set_from_discovery(
-    discovery: RuntimeDiscovery,
-    *,
-    revision: int,
-) -> ProtocolCapabilitySet:
-    runtimes = discovery.report.get("runtimes")
-    if not isinstance(runtimes, dict):
-        runtimes = {}
-    capabilities: list[ProtocolCapability] = []
-    for runtime, report in runtimes.items():
-        if runtime not in {"codex", "claude"} or not isinstance(report, dict):
-            continue
-        available = _runtime_report_available(report)
-        unavailable_reason = None if available else _runtime_report_unavailable_reason(report)
-        for capability_id, parameters in _runtime_protocol_capabilities(runtime):
-            capabilities.append(
-                ProtocolCapability(
-                    capabilityId=capability_id,
-                    scope="runtime",
-                    runtime=runtime,
-                    supported=True,
-                    available=available,
-                    allowed=True,
-                    unavailableReason=unavailable_reason,
-                    parameters=parameters,
-                )
-            )
-    return ProtocolCapabilitySet(revision=revision, capabilities=capabilities)
-
-
-def _runtime_protocol_capabilities(runtime: str) -> list[tuple[str, dict[str, Any]]]:
-    if runtime == "codex":
-        return [
-            ("session.interrupt", {}),
-            ("session.steer", {}),
-            (
-                "session.interaction.approval",
-                {
-                    "supports_allow_once": True,
-                    "supports_allow_session": True,
-                    "supports_persistent_rules": False,
-                    "supports_input_schema": True,
-                },
-            ),
-            ("runtime.config", {}),
-            ("catalog.model", {}),
-            ("catalog.permission", {}),
-            ("catalog.effort", {}),
-        ]
-    if runtime == "claude":
-        return [
-            ("session.interrupt", {}),
-            ("runtime.config", {}),
-            ("catalog.model", {}),
-            ("catalog.permission", {}),
-        ]
-    return []
-
-
-def _runtime_report_available(report: dict[str, Any]) -> bool:
-    return report.get("execution") == "ok" and report.get("history") in {"ok", "ok_empty", None}
-
-
-def _runtime_report_unavailable_reason(report: dict[str, Any]) -> str:
-    error = report.get("error")
-    if isinstance(error, dict) and isinstance(error.get("code"), str):
-        return error["code"]
-    if report.get("execution") != "ok":
-        return "runtime_execution_unavailable"
-    if report.get("history") not in {"ok", "ok_empty", None}:
-        return "runtime_history_unavailable"
-    return "runtime_unavailable"
-
-
-async def discover_runtime_capabilities() -> RuntimeDiscovery:
-    started = time.perf_counter()
-    codex_report, codex_target = await discover_codex_capability()
-    claude_report, claude_target = await discover_claude_capability()
-    return RuntimeDiscovery(
-        report={
-            "version": 1,
-            "checkedAt": _now_iso(),
-            "elapsedMs": round((time.perf_counter() - started) * 1000, 1),
-            "runtimes": {
-                "codex": codex_report,
-                "claude": claude_report,
-            },
-        },
-        codex_bin=codex_target.path if codex_target else None,
-        claude_bin=claude_target.path if claude_target else None,
-        codex_target=codex_target,
-        claude_target=claude_target,
-    )
 
 
 async def discover_codex_capability(
@@ -141,7 +33,7 @@ async def discover_codex_capability(
     checked: list[dict[str, Any]] = []
     for candidate in candidates:
         target = _target_from_candidate(candidate)
-        result = await _check_codex_candidate(candidate)
+        result = await check_codex_target(candidate)
         checked.append(result)
         if result["status"] == "ok":
             return (
@@ -184,7 +76,7 @@ async def discover_claude_capability(
     execution = "unavailable"
     for candidate in candidates:
         target = _target_from_candidate(candidate)
-        result = await _check_claude_candidate(candidate)
+        result = await check_claude_target(candidate)
         checked.append(result)
         if result["status"] == "ok":
             selected_target = target
@@ -207,7 +99,11 @@ async def discover_claude_capability(
     return report, selected_target
 
 
-async def _check_codex_candidate(candidate: dict[str, str] | LaunchTarget) -> dict[str, Any]:
+async def check_codex_target(
+    candidate: dict[str, str] | LaunchTarget,
+    *,
+    environment: dict[str, str] | None = None,
+) -> dict[str, Any]:
     target = _target_from_candidate(candidate)
     path = target.path
     source = target.source
@@ -217,40 +113,21 @@ async def _check_codex_candidate(candidate: dict[str, str] | LaunchTarget) -> di
     if not path_exists_for_launch(path):
         return {**base, "status": "failed", "reason": "not executable"}
 
-    version = await _run_version(target.command(["--version"]))
+    version = await _run_command(target.command(["--version"]), environment=environment)
     if version["status"] != "ok":
         return {**base, "status": "failed", "stage": "version", **version}
-
-    client = JsonRpcStdioClient(command=target.command(["app-server", "--listen", "stdio://"]))
-    try:
-        await asyncio.wait_for(client.start(lambda _payload: _noop()), timeout=_CODEX_CHECK_TIMEOUT_S)
-        list_result = await asyncio.wait_for(
-            client.request("thread/list", {"limit": 1, "sortKey": "updated_at"}),
-            timeout=_CODEX_CHECK_TIMEOUT_S,
-        )
-    except Exception as exc:
-        return {
-            **base,
-            "status": "failed",
-            "stage": "app-server",
-            "version": version.get("stdout"),
-            "reason": _exception_reason(exc),
-        }
-    finally:
-        try:
-            await client.close()
-        except Exception:
-            pass
-
     return {
         **base,
         "status": "ok",
         "version": version.get("stdout"),
-        "threadListKeys": sorted(list_result.keys()),
     }
 
 
-async def _check_claude_candidate(candidate: dict[str, str] | LaunchTarget) -> dict[str, Any]:
+async def check_claude_target(
+    candidate: dict[str, str] | LaunchTarget,
+    *,
+    environment: dict[str, str] | None = None,
+) -> dict[str, Any]:
     target = _target_from_candidate(candidate)
     path = target.path
     source = target.source
@@ -260,10 +137,10 @@ async def _check_claude_candidate(candidate: dict[str, str] | LaunchTarget) -> d
     if not path_exists_for_launch(path):
         return {**base, "status": "failed", "reason": "not executable"}
 
-    version = await _run_version(target.command(["--version"]))
+    version = await _run_command(target.command(["--version"]), environment=environment)
     if version["status"] != "ok":
         return {**base, "status": "failed", "stage": "version", **version}
-    help_result = await _run_version(target.command(["--help"]))
+    help_result = await _run_command(target.command(["--help"]), environment=environment)
     if help_result["status"] != "ok":
         return {
             **base,
@@ -301,12 +178,17 @@ def _list_claude_sdk_sessions() -> list[Any]:
     return list(list_sessions())
 
 
-async def _run_version(command: list[str]) -> dict[str, Any]:
+async def _run_command(
+    command: list[str],
+    *,
+    environment: dict[str, str] | None = None,
+) -> dict[str, Any]:
     try:
         proc = await asyncio.create_subprocess_exec(
             *command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=environment,
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=_COMMAND_CHECK_TIMEOUT_S)
     except Exception as exc:
@@ -398,12 +280,3 @@ def _exception_reason(exc: BaseException) -> str:
         return "timeout"
     return str(exc) or exc.__class__.__name__
 
-
-def _now_iso() -> str:
-    from datetime import UTC, datetime
-
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
-
-
-async def _noop() -> None:
-    return None

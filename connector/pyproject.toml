@@ -7,6 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "claude-agent-sdk",
     "httpx[socks]>=0.28.1",
+    "jsonschema>=4.26.0",
     "loguru>=0.7.3",
     "pexpect>=4.9.0; sys_platform != 'win32'",
     "ptyprocess>=0.7.0; sys_platform != 'win32'",

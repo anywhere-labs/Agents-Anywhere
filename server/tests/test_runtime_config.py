@@ -8,6 +8,7 @@ from conftest import ApiV2TestClient as TestClient
 from agent_server.app import create_app
 from agent_server.infra.connector_rpc import ConnectorRpcError
 from agent_server.services.device_runtimes import DeviceRuntimeService
+from agent_server.services.notices import upsert_execution_error_interaction
 
 
 ADMIN_USER = "user1"
@@ -277,7 +278,40 @@ def test_delete_running_config_stops_then_returns_to_unconfigured(tmp_path):
     assert [request[1] for request in rpc.requests] == ["runtime.stop"]
 
 
-def test_explicit_discovery_refreshes_inventory(tmp_path):
+def test_deactivation_settles_sessions_and_cancels_blocking_interactions(tmp_path):
+    client, _, connector_id, headers = _make_client(tmp_path)
+    config_url = f"{_runtime_url(connector_id)}/config"
+    active_url = f"{_runtime_url(connector_id)}/active"
+    assert client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
+    assert client.put(active_url, headers=headers, json={"active": True}).status_code == 200
+
+    store = client.app.state.store
+    session = asyncio.run(
+        store.create_session(
+            connector_id=connector_id,
+            runtime="codex",
+            external_session_id="thread_1",
+            title="blocked",
+            cwd="/repo",
+        )
+    )
+    asyncio.run(store.set_session_status(session.id, "blocked"))
+    notice = asyncio.run(
+        upsert_execution_error_interaction(
+            store,
+            session_id=session.id,
+            message="runtime failed",
+        )
+    )
+
+    response = client.put(active_url, headers=headers, json={"active": False})
+
+    assert response.status_code == 200, response.text
+    assert asyncio.run(store.get_session(session.id)).status == "idle"
+    assert asyncio.run(store.get_notice(notice.noticeId)).status == "cancelled"
+
+
+def test_explicit_discovery_stops_runtime_that_server_has_not_activated(tmp_path):
     client, rpc, connector_id, headers = _make_client(tmp_path)
     rpc.inventory = _inventory(status="running")
 
@@ -287,5 +321,5 @@ def test_explicit_discovery_refreshes_inventory(tmp_path):
     )
 
     assert response.status_code == 200, response.text
-    assert response.json()["runtimes"][0]["status"] == "running"
-    assert rpc.requests[0][1] == "runtime.discover"
+    assert response.json()["runtimes"][0]["status"] == "stopped"
+    assert [request[1] for request in rpc.requests] == ["runtime.discover", "runtime.stop"]

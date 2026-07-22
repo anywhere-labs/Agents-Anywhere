@@ -4,7 +4,7 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-from connector import capabilities
+from connector import runtime_discovery
 from connector import launch
 from connector.codex import rpc as codex_rpc
 
@@ -31,9 +31,9 @@ exit 9
 """,
     )
     monkeypatch.setenv("CLAUDE_BIN", str(claude_bin))
-    monkeypatch.setattr(capabilities, "_list_claude_sdk_sessions", lambda: [object()])
+    monkeypatch.setattr(runtime_discovery, "_list_claude_sdk_sessions", lambda: [object()])
 
-    report, selected = asyncio.run(capabilities.discover_claude_capability())
+    report, selected = asyncio.run(runtime_discovery.discover_claude_capability())
 
     assert selected is not None
     assert selected.path == str(claude_bin)
@@ -71,16 +71,16 @@ def test_codex_capability_tries_app_before_cli(monkeypatch, tmp_path: Path) -> N
         }
 
     monkeypatch.setattr(
-        capabilities,
+        runtime_discovery,
         "codex_candidate_paths",
         lambda: [
             {"source": "app", "path": str(app)},
             {"source": "cli", "path": str(old_cli)},
         ],
     )
-    monkeypatch.setattr(capabilities, "_check_codex_candidate", fake_check)
+    monkeypatch.setattr(runtime_discovery, "check_codex_target", fake_check)
 
-    report, selected = asyncio.run(capabilities.discover_codex_capability())
+    report, selected = asyncio.run(runtime_discovery.discover_codex_capability())
 
     assert selected is not None
     assert selected.path == str(app)
@@ -94,14 +94,14 @@ def test_codex_capability_reports_checked_paths_when_unavailable(monkeypatch, tm
     missing = tmp_path / "missing-codex"
 
     monkeypatch.setattr(
-        capabilities,
+        runtime_discovery,
         "codex_candidate_paths",
         lambda: [
             {"source": "app", "path": str(missing)},
         ],
     )
 
-    report, selected = asyncio.run(capabilities.discover_codex_capability())
+    report, selected = asyncio.run(runtime_discovery.discover_codex_capability())
 
     assert selected is None
     assert report["history"] == "unavailable"
@@ -109,6 +109,33 @@ def test_codex_capability_reports_checked_paths_when_unavailable(monkeypatch, tm
     assert report["error"]["code"] == "codex_unavailable"
     assert "Plugin-based Codex installations are not supported yet" in report["error"]["message"]
     assert report["checked"][0]["status"] == "missing"
+
+
+def test_codex_discovery_does_not_start_app_server(monkeypatch, tmp_path: Path) -> None:
+    codex_bin = tmp_path / "codex"
+    calls = tmp_path / "calls.txt"
+    _write_executable(
+        codex_bin,
+        f'''#!/usr/bin/env sh
+echo "$@" >> "{calls}"
+if [ "$1" = "--version" ]; then
+  echo "codex-cli 1.0"
+  exit 0
+fi
+exit 9
+''',
+    )
+    monkeypatch.setattr(
+        runtime_discovery,
+        "codex_candidate_paths",
+        lambda: [{"source": "cli", "path": str(codex_bin)}],
+    )
+
+    report, selected = asyncio.run(runtime_discovery.discover_codex_capability())
+
+    assert selected is not None
+    assert report["execution"] == "ok"
+    assert calls.read_text(encoding="utf-8").splitlines() == ["--version"]
 
 
 def test_codex_capability_extra_candidate_is_tried_first(monkeypatch, tmp_path: Path) -> None:
@@ -132,14 +159,14 @@ def test_codex_capability_extra_candidate_is_tried_first(monkeypatch, tmp_path: 
         }
 
     monkeypatch.setattr(
-        capabilities,
+        runtime_discovery,
         "codex_candidate_paths",
         lambda: [{"source": "cli", "path": str(cli_codex)}],
     )
-    monkeypatch.setattr(capabilities, "_check_codex_candidate", fake_check)
+    monkeypatch.setattr(runtime_discovery, "check_codex_target", fake_check)
 
     report, selected = asyncio.run(
-        capabilities.discover_codex_capability(extra_candidate=str(custom_codex))
+        runtime_discovery.discover_codex_capability(extra_candidate=str(custom_codex))
     )
 
     assert seen_paths == [str(custom_codex)]
@@ -173,14 +200,14 @@ def test_codex_capability_extra_candidate_falls_through_when_missing(
         }
 
     monkeypatch.setattr(
-        capabilities,
+        runtime_discovery,
         "codex_candidate_paths",
         lambda: [{"source": "cli", "path": str(fallback_codex)}],
     )
-    monkeypatch.setattr(capabilities, "_check_codex_candidate", fake_check)
+    monkeypatch.setattr(runtime_discovery, "check_codex_target", fake_check)
 
     report, selected = asyncio.run(
-        capabilities.discover_codex_capability(extra_candidate=str(nonexistent))
+        runtime_discovery.discover_codex_capability(extra_candidate=str(nonexistent))
     )
 
     assert selected is not None
@@ -204,11 +231,11 @@ if [ "$1" = "--help" ]; then echo "Usage: claude"; exit 0; fi
 exit 9
 """,
     )
-    monkeypatch.setattr(capabilities, "_list_claude_sdk_sessions", lambda: [])
-    monkeypatch.setattr(capabilities, "_claude_candidate_paths", lambda: [])
+    monkeypatch.setattr(runtime_discovery, "_list_claude_sdk_sessions", lambda: [])
+    monkeypatch.setattr(runtime_discovery, "_claude_candidate_paths", lambda: [])
 
     report, selected = asyncio.run(
-        capabilities.discover_claude_capability(extra_candidate=str(custom_claude))
+        runtime_discovery.discover_claude_capability(extra_candidate=str(custom_claude))
     )
 
     assert selected is not None
@@ -230,15 +257,15 @@ if [ "$1" = "--help" ]; then echo "Usage: claude"; exit 0; fi
 exit 9
 """,
     )
-    monkeypatch.setattr(capabilities, "_list_claude_sdk_sessions", lambda: [])
+    monkeypatch.setattr(runtime_discovery, "_list_claude_sdk_sessions", lambda: [])
     monkeypatch.setattr(
-        capabilities,
+        runtime_discovery,
         "_claude_candidate_paths",
         lambda: [{"source": "cli", "path": str(other_claude)}],
     )
 
     report, selected = asyncio.run(
-        capabilities.discover_claude_capability(extra_candidate=str(custom))
+        runtime_discovery.discover_claude_capability(extra_candidate=str(custom))
     )
 
     assert selected is not None
@@ -297,13 +324,13 @@ def test_windows_codex_candidates_include_common_cli_shims(monkeypatch) -> None:
 
 
 def test_windows_claude_candidates_include_local_bin_and_shims(monkeypatch) -> None:
-    monkeypatch.setattr(capabilities.sys, "platform", "win32")
+    monkeypatch.setattr(runtime_discovery.sys, "platform", "win32")
     monkeypatch.setenv("APPDATA", r"C:\Users\admin\AppData\Roaming")
     monkeypatch.setenv("USERPROFILE", r"C:\Users\admin")
-    monkeypatch.setattr(capabilities.Path, "home", lambda: Path(r"C:\Users\admin"))
-    monkeypatch.setattr(capabilities.shutil, "which", lambda name: r"C:\Users\admin\.local\bin\claude.exe" if name == "claude" else None)
+    monkeypatch.setattr(runtime_discovery.Path, "home", lambda: Path(r"C:\Users\admin"))
+    monkeypatch.setattr(runtime_discovery.shutil, "which", lambda name: r"C:\Users\admin\.local\bin\claude.exe" if name == "claude" else None)
 
-    paths = [_win_norm(candidate["path"]) for candidate in capabilities._claude_candidate_paths()]
+    paths = [_win_norm(candidate["path"]) for candidate in runtime_discovery._claude_candidate_paths()]
 
     assert paths[0] == r"C:\Users\admin\.local\bin\claude.exe"
     assert r"C:\Users\admin\.local\bin\claude.cmd" in paths
@@ -314,3 +341,4 @@ def test_windows_claude_candidates_include_local_bin_and_shims(monkeypatch) -> N
 
 def _win_norm(path: str) -> str:
     return path.replace("/", "\\")
+
