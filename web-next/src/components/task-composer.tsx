@@ -4,6 +4,7 @@ import * as React from "react"
 import { Monitor, ChevronDown, ArrowUp, Loader2, Check } from "lucide-react"
 import { toast } from "sonner"
 
+import { AgentAuthBanner } from "@/components/agent-auth-banner"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { Spinner } from "@/components/ui/spinner"
@@ -103,12 +104,29 @@ type NewSessionPreference = {
 
 type NewSessionTitleKey = (typeof NEW_SESSION_TITLE_KEYS)[number]
 
+type PrecreateEntry = {
+  key: string
+  session: RealSessionView | null
+  promise: Promise<RealSessionView>
+  consumed: boolean
+}
+
+function precreateKey(
+  connectorId: string,
+  agent: string,
+  cwd: string,
+  approvalId: string,
+): string {
+  return `${connectorId}\0${agent}\0${cwd}\0${approvalId}`
+}
+
 export function TaskComposer() {
   const { session: authSession } = useAuth()
   const {
     addOptimisticMessage,
     bindOptimisticSession,
     connectors,
+    discardOptimisticSession,
     markOptimisticMessageFailed,
     openSession,
     requestSessionRefresh,
@@ -157,6 +175,13 @@ export function TaskComposer() {
   const [prompt, setPrompt] = React.useState("")
   const [runtimeSchema, setRuntimeSchema] = React.useState<RuntimeConfigSchema | null>(null)
   const [runtimeSettings, setRuntimeSettings] = React.useState<Record<string, unknown>>({})
+  const [signingIn, setSigningIn] = React.useState(false)
+
+  const selectedAgentReport = selectedConnector?.runtimeCapabilities?.attached?.[selectedAgent]?.report
+  const agentNeedsAuth =
+    selectedAgentReport?.authStatus === "required" ||
+    selectedAgentReport?.authStatus === "unknown"
+  const agentAuthMethods = selectedAgentReport?.authMethods ?? []
   const [runtimeConfigLoading, setRuntimeConfigLoading] = React.useState(false)
   const [creating, setCreating] = React.useState(false)
   const [createTick, setCreateTick] = React.useState(0)
@@ -164,10 +189,26 @@ export function TaskComposer() {
   const [preference, setPreference] = React.useState<NewSessionPreference | null>(null)
   const devicePreferenceAppliedRef = React.useRef(false)
   const agentPreferenceAppliedForDeviceRef = React.useRef<string | null>(null)
+  const precreateRef = React.useRef<PrecreateEntry | null>(null)
 
   const { attachments, isDragging, add, remove, clear, onDragEnter, onDragLeave, onDragOver, onDrop } =
     useAttachments()
   const typedTitle = useTypewriterTitle(typewriterTitles, creating)
+
+  const discardPrecreate = React.useCallback(
+    async (entry: PrecreateEntry | null) => {
+      if (!entry || entry.consumed) return
+      entry.consumed = true
+      try {
+        const session = entry.session ?? (await entry.promise.catch(() => null))
+        if (!session || !authSession?.accessToken) return
+        await dashboardApi.bulkArchiveSessions(authSession.accessToken, [session.id], true)
+      } catch {
+        /* best-effort cleanup of unused precreated sessions */
+      }
+    },
+    [authSession?.accessToken],
+  )
 
   React.useEffect(() => {
     if (!creating) {
@@ -260,7 +301,8 @@ export function TaskComposer() {
       .then(([schemaResponse, settingsResponse, defaultsResponse]) => {
         if (cancelled) return
         const userDefaultSettings = defaultsResponse.runtimes[selectedAgent]?.settings ?? {}
-        setRuntimeSchema(schemaResponse.schema)
+        // Prefer device-merged schema (live ACP modelOptions from the connector report).
+        setRuntimeSchema(settingsResponse.schema ?? schemaResponse.schema)
         setRuntimeSettings({
           ...userDefaultSettings,
           ...(settingsResponse.runtimeSettings ?? settingsResponse.settings ?? {}),
@@ -326,6 +368,88 @@ export function TaskComposer() {
     })
   }, [reasoningOptions])
 
+  // Precreate connector/platform session once device+runtime+cwd are chosen so
+  // Send only pays for takeover + turn.start (not cold session.create).
+  React.useEffect(() => {
+    const token = authSession?.accessToken
+    const connector = selectedConnector
+    const agent = selectedAgent
+    const cwd = workspace?.path
+    if (!token || !connector || !agent || !cwd || connector.status !== "online") {
+      return
+    }
+    if (selectedAgentReport?.authStatus === "required") {
+      return
+    }
+
+    const key = precreateKey(connector.id, agent, cwd, approval)
+    if (precreateRef.current?.key === key && !precreateRef.current.consumed) {
+      return
+    }
+
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      if (cancelled) return
+      const previous = precreateRef.current
+      if (previous && previous.key !== key) {
+        void discardPrecreate(previous)
+      }
+      if (precreateRef.current?.key === key && !precreateRef.current.consumed) {
+        return
+      }
+      const approvalModeForCreate = PERMISSION_MODES.find((o) => o.id === approval) ?? PERMISSION_MODES[0]
+      const promise = dashboardApi
+        .createSession(token, {
+          connectorId: connector.id,
+          runtime: agent,
+          cwd,
+          approvalPolicy: approvalModeForCreate.approvalPolicy,
+          sandbox: approvalModeForCreate.sandbox,
+        })
+        .then((created) => created.session)
+      const entry: PrecreateEntry = {
+        key,
+        session: null,
+        promise,
+        consumed: false,
+      }
+      precreateRef.current = entry
+      void promise
+        .then((session) => {
+          if (cancelled || precreateRef.current !== entry) {
+            void discardPrecreate({ ...entry, session, consumed: false })
+            return
+          }
+          entry.session = session
+        })
+        .catch(() => {
+          if (precreateRef.current === entry) {
+            precreateRef.current = null
+          }
+        })
+    }, 450)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [
+    approval,
+    authSession?.accessToken,
+    discardPrecreate,
+    selectedAgent,
+    selectedAgentReport?.authStatus,
+    selectedConnector,
+    workspace?.path,
+  ])
+
+  React.useEffect(() => {
+    return () => {
+      void discardPrecreate(precreateRef.current)
+      precreateRef.current = null
+    }
+  }, [discardPrecreate])
+
   const approvalMode = PERMISSION_MODES.find((o) => o.id === approval) ?? PERMISSION_MODES[0]
   const selectedPermissionOption = permissionOptions.find((option) => option.id === selectedPermissionMode)
   const modelLabel = optionLabel(modelField, selectedModel || runtimeSettings.model, t("defaultModel"))
@@ -343,11 +467,14 @@ export function TaskComposer() {
   const handleCreate = async () => {
     if (!authSession?.accessToken || !selectedConnector || !selectedAgent || creating) return
     if (!prompt.trim() && attachments.length === 0) return
+    // Set creating immediately to prevent double-submit → duplicate sessions.
+    setCreating(true)
     const localSessionId = createClientId("session")
     const clientMessageId = createClientId("msg")
     const messageText = prompt.trim() || t("attachmentOnlyPrompt")
     const selectedAttachments = attachments
     const now = new Date().toISOString()
+    let boundRealSessionId: string | null = null
     const optimisticSession: RealSessionView = {
       id: localSessionId,
       connectorId: selectedConnector.id,
@@ -392,22 +519,58 @@ export function TaskComposer() {
     clear()
     setPrompt("")
     openSession(localSessionId)
-    setCreating(true)
     try {
-      const created = await dashboardApi.createSession(authSession.accessToken, {
-        connectorId: selectedConnector.id,
-        runtime: selectedAgent,
-        title: prompt.trim() || undefined,
-        cwd: workspace?.path || undefined,
-        approvalPolicy: approvalMode.approvalPolicy,
-        sandbox: approvalMode.sandbox,
-      })
+      const cwd = workspace?.path || undefined
+      const key =
+        cwd
+          ? precreateKey(selectedConnector.id, selectedAgent, cwd, approval)
+          : null
+      const precreate =
+        key && precreateRef.current?.key === key && !precreateRef.current.consumed
+          ? precreateRef.current
+          : null
+      let createdSession: RealSessionView | null = null
+      if (precreate) {
+        precreate.consumed = true
+        precreateRef.current = null
+        try {
+          createdSession = precreate.session ?? (await precreate.promise)
+          const title = prompt.trim() || undefined
+          if (title) {
+            try {
+              const patched = await dashboardApi.patchSession(
+                authSession.accessToken,
+                createdSession.id,
+                { title },
+              )
+              createdSession = patched.session
+            } catch {
+              /* title is best-effort; turn can still start */
+            }
+          }
+        } catch {
+          createdSession = null
+        }
+      }
+      if (!createdSession) {
+        const created = await dashboardApi.createSession(authSession.accessToken, {
+          connectorId: selectedConnector.id,
+          runtime: selectedAgent,
+          title: prompt.trim() || undefined,
+          cwd,
+          approvalPolicy: approvalMode.approvalPolicy,
+          sandbox: approvalMode.sandbox,
+        })
+        createdSession = created.session
+      }
       const nextPreference = { connectorId: selectedConnector.id, agent: selectedAgent }
       writeNewSessionPreference(nextPreference)
       setPreference(nextPreference)
-      bindOptimisticSession(localSessionId, created.session)
-      const takeover = await dashboardApi.enableTakeover(authSession.accessToken, created.session.id)
+      bindOptimisticSession(localSessionId, createdSession)
+      boundRealSessionId = createdSession.id
+      const takeover = await dashboardApi.enableTakeover(authSession.accessToken, createdSession.id)
       const sessionId = takeover.session.id
+      boundRealSessionId = sessionId
       bindOptimisticSession(localSessionId, takeover.session)
       const settings: Record<string, unknown> = {}
       const validSelectedReasoning = validEffortValue(effortField, selectedReasoning)
@@ -439,9 +602,76 @@ export function TaskComposer() {
     } catch (err) {
       const message = err instanceof Error ? err.message : t("createFailed")
       markOptimisticMessageFailed(clientMessageId, message)
-      toast.error(message)
+      // Drop orphan local-only session so sidebar does not keep a ghost entry.
+      if (!boundRealSessionId) {
+        discardOptimisticSession(localSessionId)
+      } else {
+        // Ensure we leave a single real session in a terminal error state.
+        try {
+          await dashboardApi.interruptSession(authSession.accessToken, boundRealSessionId)
+        } catch {
+          /* best-effort */
+        }
+        refreshData()
+        requestSessionRefresh(boundRealSessionId, clientMessageId)
+      }
+      const isAuthError = /auth|login|unauthor/i.test(message)
+      if (isAuthError && authSession?.accessToken && selectedConnector) {
+        toast.error(message, {
+          action: {
+            label: t("signInAgent"),
+            onClick: () => {
+              void signInSelectedAgent()
+            },
+          },
+          duration: 12_000,
+        })
+      } else {
+        toast.error(message)
+      }
     } finally {
       setCreating(false)
+    }
+  }
+
+  const signInSelectedAgent = async (methodId?: string) => {
+    if (!authSession?.accessToken || !selectedConnector || !selectedAgent || signingIn) return
+    setSigningIn(true)
+    try {
+      toast.message(t("agentSignInStarted", { name: selectedAgent }), {
+        description: t("agentSignInStartedHint"),
+      })
+      const response = await dashboardApi.authenticateConnectorAgent(
+        authSession.accessToken,
+        selectedConnector.id,
+        selectedAgent,
+        methodId,
+      )
+      refreshData()
+      // Reload schema so live model list appears after auth.
+      try {
+        const settings = await dashboardApi.getConnectorAgentSettings(
+          authSession.accessToken,
+          selectedConnector.id,
+          selectedAgent,
+        )
+        if (settings.schema) setRuntimeSchema(settings.schema)
+        setRuntimeSettings((prev) => ({
+          ...prev,
+          ...(settings.runtimeSettings ?? settings.settings ?? {}),
+        }))
+      } catch {
+        /* best-effort */
+      }
+      if (response.authStatus === "ok") {
+        toast.success(response.message || t("agentSignInSuccess", { name: selectedAgent }))
+      } else {
+        toast.error(response.message || response.authHint || t("agentSignInFailed", { name: selectedAgent }))
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t("agentSignInFailed", { name: selectedAgent }))
+    } finally {
+      setSigningIn(false)
     }
   }
 
@@ -460,6 +690,18 @@ export function TaskComposer() {
           <span>{creating ? `${t("creatingBase")}${".".repeat((createTick % 3) + 1)}` : typedTitle}</span>
           <span className="ml-1 inline-block h-[0.9em] w-0.5 translate-y-[0.1em] rounded-full bg-muted-foreground motion-safe:animate-[composer-caret_1s_steps(1,end)_infinite]" aria-hidden="true" />
         </h1>
+
+        {agentNeedsAuth && selectedConnector && selectedAgent ? (
+          <AgentAuthBanner
+            className="mb-4"
+            agentName={selectedAgent}
+            methods={agentAuthMethods}
+            hint={selectedAgentReport?.authHint}
+            signingIn={signingIn}
+            disabled={selectedConnector.status !== "online"}
+            onSignIn={(methodId) => void signInSelectedAgent(methodId)}
+          />
+        ) : null}
 
         <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20">
           <div className="space-y-3 px-6 pt-6">
@@ -712,6 +954,10 @@ function runtimeLabel(runtime: string): string {
   if (runtime === "codex") return "Codex"
   if (runtime === "claude") return "Claude Code"
   if (runtime === "opencode") return "OpenCode"
+  if (runtime === "gemini") return "Gemini CLI"
+  if (runtime === "grok_build") return "Grok Build"
+  if (runtime === "cursor") return "Cursor"
+  if (runtime === "codebuddy") return "CodeBuddy"
   return runtime.slice(0, 1).toUpperCase() + runtime.slice(1)
 }
 

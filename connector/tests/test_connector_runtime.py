@@ -14,6 +14,7 @@ from connector.runtime import (
     BackendRpcClient,
     ConnectorAuthenticationError,
     ConnectorConfig,
+    _assistant_ttfb_turn_key,
     _coalesce_timeline_item_upserts,
 )
 from connector.codex.adapter import CodexAdapter
@@ -24,6 +25,10 @@ class FakeAdapter:
     def __init__(self) -> None:
         self.notification_sink = None
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.warm_calls = 0
+
+    async def warm_start(self) -> None:
+        self.warm_calls += 1
 
     async def create_session(self, params: dict[str, Any]) -> dict[str, Any]:
         self.calls.append(("session.create", params))
@@ -146,7 +151,9 @@ def test_connector_config_saves_and_loads_local_json(tmp_path) -> None:
 
     assert saved_path == path
     assert loaded == config
-    assert oct(path.stat().st_mode & 0o777) == "0o600"
+    # POSIX mode bits are not meaningfully enforced on Windows NTFS.
+    if sys.platform != "win32":
+        assert oct(path.stat().st_mode & 0o777) == "0o600"
 
 
 def test_connector_coalesces_duplicate_timeline_upserts_within_batch() -> None:
@@ -587,9 +594,10 @@ async def _exercise_ingest_reauth_on_401() -> None:
 async def _exercise_local_ops(tmp_path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    (workspace / "hello.txt").write_text("hello\n", encoding="utf-8")
+    # Use write_bytes so Windows does not translate "\n" to "\r\n".
+    (workspace / "hello.txt").write_bytes(b"hello\n")
     outside = tmp_path / "outside.txt"
-    outside.write_text("outside\n", encoding="utf-8")
+    outside.write_bytes(b"outside\n")
 
     client = BackendRpcClient(
         ConnectorConfig(
@@ -629,12 +637,14 @@ async def _exercise_local_ops(tmp_path) -> None:
     assert fallback_list_result["path"] == str(workspace)
     assert [entry["name"] for entry in fallback_list_result["entries"]] == ["created.txt", "hello.txt"]
 
+    # cmd.exe has no `pwd`; bare `cd` prints the working directory on Windows.
+    print_cwd = "cd" if sys.platform == "win32" else "pwd"
     shell_result = await client.dispatch(
         "shell.exec",
         {
             "root": str(workspace),
             "cwd": str(workspace),
-            "command": "pwd",
+            "command": print_cwd,
             "timeoutMs": 5000,
         },
     )
@@ -655,7 +665,7 @@ async def _exercise_local_ops(tmp_path) -> None:
             "sessionId": "sess_1",
             "root": str(workspace),
             "cwd": str(workspace),
-            "command": "pwd",
+            "command": print_cwd,
             "timeoutMs": 5000,
         },
     )
@@ -970,6 +980,135 @@ def test_connector_runtime_dispatches_force_resync_runtime(monkeypatch) -> None:
 
 def test_connector_runtime_dispatches_active_runtimes_update() -> None:
     asyncio.run(_exercise_active_runtimes_update_dispatch())
+
+
+def test_assistant_ttfb_turn_key_requires_assistant_text() -> None:
+    assert (
+        _assistant_ttfb_turn_key(
+            "timeline.itemUpsert",
+            {
+                "item": {
+                    "type": "message",
+                    "role": "assistant",
+                    "sessionId": "sess_1",
+                    "turnId": "turn_1",
+                    "content": {"text": "Hi"},
+                }
+            },
+        )
+        == "sess_1:turn_1"
+    )
+    assert (
+        _assistant_ttfb_turn_key(
+            "timeline.itemUpsert",
+            {
+                "item": {
+                    "type": "message",
+                    "role": "user",
+                    "sessionId": "sess_1",
+                    "turnId": "turn_1",
+                    "content": {"text": "Hi"},
+                }
+            },
+        )
+        is None
+    )
+    assert (
+        _assistant_ttfb_turn_key(
+            "timeline.itemUpsert",
+            {
+                "item": {
+                    "type": "message",
+                    "role": "assistant",
+                    "sessionId": "sess_1",
+                    "turnId": "turn_1",
+                    "content": {"text": "   "},
+                }
+            },
+        )
+        is None
+    )
+
+
+def test_priority_ttfb_flush_bypasses_notify_queue() -> None:
+    asyncio.run(_exercise_priority_ttfb_flush())
+
+
+def test_set_active_runtimes_warms_on_first_assignment() -> None:
+    asyncio.run(_exercise_set_active_runtimes_warm())
+
+
+async def _exercise_priority_ttfb_flush() -> None:
+    client = BackendRpcClient(
+        ConnectorConfig(
+            server_url="http://127.0.0.1:8000",
+            connector_id="conn_1",
+            connector_token="token",
+            sync_existing_on_connect=False,
+        ),
+        adapter=FakeAdapter(),  # type: ignore[arg-type]
+    )
+    posted: list[list[dict[str, Any]]] = []
+
+    async def post_batch(notifications: list[dict[str, Any]]) -> None:
+        posted.append(list(notifications))
+
+    client._post_batch = post_batch  # type: ignore[method-assign]
+
+    first = {
+        "item": {
+            "type": "message",
+            "role": "assistant",
+            "sessionId": "sess_1",
+            "turnId": "turn_1",
+            "content": {"text": "H"},
+        }
+    }
+    second = {
+        "item": {
+            "type": "message",
+            "role": "assistant",
+            "sessionId": "sess_1",
+            "turnId": "turn_1",
+            "content": {"text": "Hi"},
+        }
+    }
+    await client.send_backend_notification("timeline.itemUpsert", first)
+    await client.send_backend_notification("timeline.itemUpsert", second)
+
+    assert len(posted) == 1
+    assert posted[0][0]["params"]["item"]["content"]["text"] == "H"
+    assert client._notify_queue.qsize() == 1
+
+
+async def _exercise_set_active_runtimes_warm() -> None:
+    cursor = FakeAdapter()
+    gemini = FakeAdapter()
+    client = BackendRpcClient(
+        ConnectorConfig(
+            server_url="http://127.0.0.1:8000",
+            connector_id="conn_1",
+            connector_token="token",
+            sync_existing_on_connect=False,
+        ),
+        adapters={"codex": FakeAdapter(), "cursor": cursor, "gemini": gemini},
+    )
+
+    await client.dispatch(
+        "capabilities.setActiveRuntimes",
+        {"runtimes": ["cursor"], "revision": "rev_1"},
+    )
+    await asyncio.sleep(0)
+    assert cursor.warm_calls == 1
+    assert gemini.warm_calls == 0
+
+    await client.dispatch(
+        "capabilities.setActiveRuntimes",
+        {"runtimes": ["cursor", "gemini"], "revision": "rev_2"},
+    )
+    await asyncio.sleep(0)
+    assert cursor.warm_calls == 1
+    assert gemini.warm_calls == 1
 
 
 async def _exercise_active_runtimes_update_dispatch() -> None:

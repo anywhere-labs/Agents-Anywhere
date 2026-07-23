@@ -8,6 +8,8 @@ from typing import Any, Callable
 
 from fastapi import WebSocket
 
+from agent_server.infra.perf import elapsed_ms, log_stage
+
 
 class ConnectorOfflineError(RuntimeError):
     pass
@@ -55,9 +57,10 @@ class ConnectorRpcManager:
         now = self._clock()
         old = self._connections.get(connector_id)
         if old is not None:
-            if now - old.last_seen_monotonic <= self._heartbeat_timeout_seconds:
-                raise DuplicateConnectorConnectionError("connector is already connected")
-            self._fail_pending(old, "connector heartbeat timed out")
+            # Always allow reconnect to replace the previous socket. Duplicate
+            # process races used to raise 4409 and leave the UI stuck offline
+            # until the old entry expired (~60s).
+            self._fail_pending(old, "connector reconnected")
         connection = ConnectorConnection(
             connector_id=connector_id,
             websocket=websocket,
@@ -122,6 +125,8 @@ class ConnectorRpcManager:
         loop = asyncio.get_running_loop()
         future: asyncio.Future[dict[str, Any]] = loop.create_future()
         connection.pending[request_id] = future
+        started = time.perf_counter()
+        outcome = "error"
         try:
             async with connection.send_lock:
                 if self._connections.get(connector_id) is not connection or not self.is_online(connector_id):
@@ -141,14 +146,22 @@ class ConnectorRpcManager:
                         future.exception()
                     raise ConnectorOfflineError("connector disconnected") from exc
             response = await asyncio.wait_for(future, timeout=timeout)
+            if response.get("ok") is True:
+                outcome = "ok"
+                return response.get("result")
+            error = response.get("error") or {}
+            raise ConnectorRpcError(error.get("code", "connector_error"), error.get("message", "connector error"))
         finally:
             connection.pending.pop(request_id, None)
-
-        if response.get("ok") is True:
-            return response.get("result")
-
-        error = response.get("error") or {}
-        raise ConnectorRpcError(error.get("code", "connector_error"), error.get("message", "connector error"))
+            log_stage(
+                "server.rpc",
+                elapsed_ms(started),
+                method=method,
+                connector_id=connector_id,
+                runtime=_optional_string(params.get("runtime")),
+                session_id=_optional_string(params.get("sessionId")),
+                outcome=outcome,
+            )
 
     def resolve_response(self, connector_id: str, message: dict[str, Any]) -> None:
         connection = self._connections.get(connector_id)
@@ -165,3 +178,7 @@ class ConnectorRpcManager:
         for future in connection.pending.values():
             if not future.done():
                 future.set_exception(ConnectorOfflineError(message))
+
+
+def _optional_string(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None

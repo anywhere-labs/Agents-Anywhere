@@ -19,6 +19,14 @@ export type RuntimeReport = {
   error?: { code: string; message: string };
   projectsDir?: string;
   historyCheck?: Record<string, unknown>;
+  transport?: string;
+  displayName?: string;
+  authStatus?: "ok" | "required" | "unknown";
+  authMethods?: Array<{ id: string; name: string }>;
+  authHint?: string;
+  modelOptions?: Array<{ value: string; label: string }>;
+  modeOptions?: Array<{ value: string; label: string }>;
+  configOptions?: unknown[];
 };
 
 export type AttachedAgent = {
@@ -456,7 +464,23 @@ export type RuntimeSettingsResponse = {
   runtimeSettingsOverride?: Record<string, unknown> | null;
   effectiveRunMode?: "chat" | "terminal" | null;
   defaultRunModeConfigured?: boolean;
+  /** Effective schema, may include ACP-discovered model options. */
+  schema?: RuntimeConfigSchema | null;
   schemaVersion?: number;
+  serverTime: string;
+};
+
+export type ConnectorAgentAuthenticateResponse = {
+  connectorId: string;
+  runtime: string;
+  authStatus: "ok" | "required" | "unknown" | string;
+  methodId?: string | null;
+  authMethods?: Array<{ id: string; name: string }> | null;
+  authHint?: string | null;
+  modelOptions?: Array<{ value: string; label: string }> | null;
+  modeOptions?: Array<{ value: string; label: string }> | null;
+  runtimeCapabilities: DeviceAgentsState;
+  message?: string | null;
   serverTime: string;
 };
 

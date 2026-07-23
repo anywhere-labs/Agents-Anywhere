@@ -95,6 +95,10 @@ type AgentRow = {
 const ADD_AGENT_RUNTIME_OPTIONS = [
   { id: "codex", label: "Codex" },
   { id: "claude", label: "Claude Code" },
+  { id: "gemini", label: "Gemini CLI" },
+  { id: "grok_build", label: "Grok Build" },
+  { id: "cursor", label: "Cursor" },
+  { id: "codebuddy", label: "CodeBuddy" },
 ] as const
 
 type ConnectorWorkspace = {
@@ -341,7 +345,7 @@ function AddAgentDialog({
               onValueChange={(value) => {
                 if (value) setRuntime(value as (typeof ADD_AGENT_RUNTIME_OPTIONS)[number]["id"])
               }}
-              className="grid grid-cols-2"
+              className="grid grid-cols-2 sm:grid-cols-3"
             >
               {ADD_AGENT_RUNTIME_OPTIONS.map((option) => (
                 <ToggleGroupItem key={option.id} value={option.id}>
@@ -563,18 +567,21 @@ function workspacesFromSessions(sessions: DeviceSession[]): ConnectorWorkspace[]
 function agentsFromConnector(connector: DeviceConnector | null): AgentRow[] {
   if (!connector) return []
   return Object.entries(connector.runtimeCapabilities.attached)
-    .map(([runtime, agent]) => ({
-      runtime,
-      agent,
-      healthy: reportIsHealthy(agent),
-      reason: runtimeIssueReason(agent.report),
-    }))
+    .map(([runtime, agent]) => {
+      const attached = agent as AttachedAgent
+      return {
+        runtime,
+        agent: attached,
+        healthy: reportIsHealthy(attached),
+        reason: runtimeIssueReason(attached.report),
+      }
+    })
     .sort((a, b) => a.runtime.localeCompare(b.runtime))
 }
 
 function allSupportedAgentsHealthy(connector: DeviceConnector) {
   return ADD_AGENT_RUNTIME_OPTIONS.every(({ id }) => {
-    const agent = connector.runtimeCapabilities.attached[id]
+    const agent = connector.runtimeCapabilities.attached[id] as AttachedAgent | undefined
     return agent ? reportIsHealthy(agent) : false
   })
 }
@@ -588,12 +595,22 @@ function reportIsHealthy(agent: AttachedAgent) {
 
 function runtimeIssueReason(report: RuntimeReport) {
   if (report.error?.message) return report.error.message
+  if (report.authStatus === "required") {
+    return (
+      report.authHint ??
+      "ACP authentication required. Interactive TUI login may not satisfy headless ACP mode."
+    )
+  }
   if (report.selected && report.execution === "ok") return null
   return (
     report.checked?.find((entry) => entry.status === "failed")?.reason ??
     report.checked?.find((entry) => entry.status !== "ok")?.reason ??
     null
   )
+}
+
+function runtimeAuthRequired(report: RuntimeReport) {
+  return report.authStatus === "required"
 }
 
 export function DevicePage() {
@@ -626,6 +643,7 @@ export function DevicePage() {
   const [agentSchemas, setAgentSchemas] = React.useState<Record<string, RuntimeConfigSchema | null>>({})
   const [agentSettingsError, setAgentSettingsError] = React.useState<Record<string, string | null>>({})
   const [savingAgentRuntime, setSavingAgentRuntime] = React.useState<string | null>(null)
+  const [authenticatingRuntime, setAuthenticatingRuntime] = React.useState<string | null>(null)
   const [removeAgentRuntime, setRemoveAgentRuntime] = React.useState<string | null>(null)
   const [revokeOpen, setRevokeOpen] = React.useState(false)
   const [deleteOpen, setDeleteOpen] = React.useState(false)
@@ -700,7 +718,11 @@ export function DevicePage() {
         .then(([settings, schema]) => {
           if (cancelled) return
           setAgentSettings((prev) => ({ ...prev, [runtime]: settings }))
-          setAgentSchemas((prev) => ({ ...prev, [runtime]: schema.schema }))
+          // Prefer device-merged schema (live ACP modelOptions) when present.
+          setAgentSchemas((prev) => ({
+            ...prev,
+            [runtime]: settings.schema ?? schema.schema,
+          }))
           setAgentSettingsError((prev) => ({ ...prev, [runtime]: null }))
         })
         .catch((err) => {
@@ -778,6 +800,9 @@ export function DevicePage() {
     try {
       const response = await dashboardApi.patchConnectorAgentSettings(authSession.accessToken, connector.id, runtime, settings)
       setAgentSettings((prev) => ({ ...prev, [runtime]: response }))
+      if (response.schema) {
+        setAgentSchemas((prev) => ({ ...prev, [runtime]: response.schema ?? null }))
+      }
       refreshData()
     } catch (err) {
       const message = err instanceof Error ? err.message : t("saveAgentSettingsFailed")
@@ -785,6 +810,49 @@ export function DevicePage() {
       throw err
     } finally {
       setSavingAgentRuntime(null)
+    }
+  }
+
+  const signInAgent = async (runtime: string, methodId?: string) => {
+    if (!authSession?.accessToken || !connector) return
+    setAuthenticatingRuntime(runtime)
+    try {
+      toast.message(t("agentSignInStarted", { name: runtime }), {
+        description: t("agentSignInStartedHint"),
+      })
+      const response = await dashboardApi.authenticateConnectorAgent(
+        authSession.accessToken,
+        connector.id,
+        runtime,
+        methodId,
+      )
+      const nextConnector = { ...connector, runtimeCapabilities: response.runtimeCapabilities }
+      setConnector(nextConnector)
+      setAgents(agentsFromConnector(nextConnector))
+      // Refresh settings/schema so live modelOptions appear after auth.
+      try {
+        const settings = await dashboardApi.getConnectorAgentSettings(
+          authSession.accessToken,
+          connector.id,
+          runtime,
+        )
+        setAgentSettings((prev) => ({ ...prev, [runtime]: settings }))
+        if (settings.schema) {
+          setAgentSchemas((prev) => ({ ...prev, [runtime]: settings.schema ?? null }))
+        }
+      } catch {
+        /* best-effort */
+      }
+      refreshData()
+      if (response.authStatus === "ok") {
+        toast.success(response.message || t("agentSignInSuccess", { name: runtime }))
+      } else {
+        toast.error(response.message || response.authHint || t("agentSignInFailed", { name: runtime }))
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t("agentSignInFailed", { name: runtime }))
+    } finally {
+      setAuthenticatingRuntime(null)
     }
   }
 
@@ -1012,8 +1080,27 @@ export function DevicePage() {
                       )}
                     />
                     <span className="flex min-w-0 flex-1 items-center gap-2">
-                      <span className="truncate text-sm font-medium">{agent.runtime}</span>
-                      {agent.reason ? (
+                      <span className="truncate text-sm font-medium">
+                        {agent.agent.report.displayName || agent.runtime}
+                      </span>
+                      {runtimeAuthRequired(agent.agent.report) ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Badge variant="outline" className="shrink-0 gap-1 border-amber-500/50 text-amber-600 dark:text-amber-400">
+                              <AlertCircle className="size-3" />
+                              {t("authRequired")}
+                            </Badge>
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="max-w-sm">
+                            {agent.reason || agent.agent.report.authHint || t("authRequiredHint")}
+                            {agent.agent.report.authMethods?.length ? (
+                              <div className="mt-1 text-xs opacity-80">
+                                {t("authMethods")}: {agent.agent.report.authMethods.map((m) => m.name).join(", ")}
+                              </div>
+                            ) : null}
+                          </TooltipContent>
+                        </Tooltip>
+                      ) : agent.reason ? (
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <Badge variant="destructive" className="shrink-0 gap-1">
@@ -1028,6 +1115,61 @@ export function DevicePage() {
                       ) : null}
                     </span>
                     <div className="flex items-center gap-0.5">
+                      {runtimeAuthRequired(agent.agent.report) || agent.agent.report.authStatus === "unknown" ? (
+                        agent.agent.report.authMethods && agent.agent.report.authMethods.length > 1 ? (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-8 gap-1"
+                                disabled={
+                                  connector.status !== "online" ||
+                                  authenticatingRuntime === agent.runtime
+                                }
+                              >
+                                <KeyRound className="size-3.5" />
+                                {authenticatingRuntime === agent.runtime
+                                  ? t("signingIn")
+                                  : t("signInAgent")}
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              {agent.agent.report.authMethods.map((method) => (
+                                <DropdownMenuItem
+                                  key={method.id}
+                                  onClick={() => void signInAgent(agent.runtime, method.id)}
+                                >
+                                  {method.name || method.id}
+                                </DropdownMenuItem>
+                              ))}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        ) : (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8 gap-1"
+                            disabled={
+                              connector.status !== "online" ||
+                              authenticatingRuntime === agent.runtime
+                            }
+                            onClick={() =>
+                              void signInAgent(
+                                agent.runtime,
+                                agent.agent.report.authMethods?.[0]?.id,
+                              )
+                            }
+                          >
+                            <KeyRound className="size-3.5" />
+                            {authenticatingRuntime === agent.runtime
+                              ? t("signingIn")
+                              : t("signInAgent")}
+                          </Button>
+                        )
+                      ) : null}
                       <Button
                         type="button"
                         onClick={() => setConfigAgent(agent)}

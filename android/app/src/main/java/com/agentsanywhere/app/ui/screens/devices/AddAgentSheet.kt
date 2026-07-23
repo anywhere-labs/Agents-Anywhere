@@ -431,6 +431,10 @@ private enum class AddableAgentRuntime(
 ) {
     Codex("codex", "Codex", "/usr/local/bin/codex", Color(0xFF4DBA72)),
     Claude("claude", "Claude Code", "/usr/local/bin/claude", Color(0xFFB77742)),
+    Gemini("gemini", "Gemini CLI", "/usr/local/bin/gemini", Color(0xFF4285F4)),
+    GrokBuild("grok_build", "Grok Build", "/usr/local/bin/grok", Color(0xFF111111)),
+    Cursor("cursor", "Cursor", "/usr/local/bin/agent", Color(0xFF7C3AED)),
+    CodeBuddy("codebuddy", "CodeBuddy", "/usr/local/bin/codebuddy", Color(0xFF0052D9)),
 }
 
 private enum class AddAgentOutcome {

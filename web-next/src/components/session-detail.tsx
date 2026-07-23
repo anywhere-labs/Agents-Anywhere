@@ -4,6 +4,7 @@ import * as React from "react"
 import { ArrowDown, ChevronDown, CircleAlert, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 
+import { AgentAuthBanner } from "@/components/agent-auth-banner"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
@@ -34,13 +35,20 @@ import { isCreatedFileChange } from "@/components/session/session-tool-cards"
 import { SessionComposer, type AttachedFile } from "@/components/session/session-composer"
 import {
   buildOptimisticUserMessage,
+  dedupeAdjacentUserMessages,
   isOptimisticTimelineItem,
   markOptimisticItemFailed,
   mergeTimelineItems,
   preserveOptimisticItems,
   timelineClientMessageId,
 } from "@/components/session/optimistic-timeline"
-import { recordsOf, runtimeLabel, sortTimelineItems, textOf } from "@/components/session/session-utils"
+import {
+  hasAssistantTextAfterLatestUser,
+  recordsOf,
+  runtimeLabel,
+  sortTimelineItems,
+  textOf,
+} from "@/components/session/session-utils"
 import { useWorkspace } from "@/components/workspace-context"
 
 type SessionDetailProps = {
@@ -173,6 +181,11 @@ function hasRealTimelineItemForClientMessage(items: TimelineItem[], clientMessag
   )
 }
 
+function isAuthenticationErrorMessage(message: string | null | undefined): boolean {
+  if (!message) return false
+  return /auth|login|unauthor/i.test(message)
+}
+
 export function SessionDetail({
   token,
   sessionId,
@@ -183,14 +196,17 @@ export function SessionDetail({
   const tSession = useTranslations("dashboard.session")
   const tNew = useTranslations("dashboard.new")
   const tCommon = useTranslations("common")
+  const tDevice = useTranslations("dashboard.device")
   const {
     addOptimisticMessage,
     clearResolvedOptimisticMessages,
     composerInsertion,
+    connectors,
     getOptimisticItems,
     getOptimisticSessionState,
     isOptimisticSession,
     markOptimisticMessageFailed,
+    refreshData,
     sessionRefreshRequest,
   } = useWorkspace()
   const [state, setState] = React.useState<SessionStateResponse | null>(null)
@@ -199,6 +215,7 @@ export function SessionDetail({
   const [sending, setSending] = React.useState(false)
   const [interrupting, setInterrupting] = React.useState(false)
   const [takeoverBusy, setTakeoverBusy] = React.useState(false)
+  const [signingIn, setSigningIn] = React.useState(false)
   const [resolvingApprovalId, setResolvingApprovalId] = React.useState<string | null>(null)
   const [resolvingStatus, setResolvingStatus] = React.useState<ApprovalResolveStatus | null>(null)
   const [runtimeSchema, setRuntimeSchema] = React.useState<RuntimeConfigSchema | null>(null)
@@ -228,7 +245,9 @@ export function SessionDetail({
 
   const applyOptimisticItems = React.useCallback((next: SessionStateResponse): SessionStateResponse => ({
     ...next,
-    items: mergeTimelineItems(next.items, getOptimisticItems(sessionId)),
+    items: dedupeAdjacentUserMessages(
+      mergeTimelineItems(next.items, getOptimisticItems(sessionId)),
+    ),
   }), [getOptimisticItems, sessionId])
   const applyOptimisticItemsRef = React.useRef(applyOptimisticItems)
   const clearResolvedOptimisticMessagesRef = React.useRef(clearResolvedOptimisticMessages)
@@ -499,19 +518,24 @@ export function SessionDetail({
     ])
       .then(([schemaResponse, settingsResponse]) => {
         if (cancelled) return
-        setRuntimeSchema(schemaResponse.schema)
+        // Prefer session settings schema when it includes ACP-discovered model options.
+        setRuntimeSchema(settingsResponse.schema ?? schemaResponse.schema)
         setRuntimeSettings(settingsResponse.runtimeSettings ?? settingsResponse.settings ?? {})
       })
       .catch((err) => {
         if (cancelled) return
         setRuntimeSchema(null)
         setRuntimeSettings(null)
-        toast.error(err instanceof Error ? err.message : tSession("loadRuntimeSettingsFailed"))
+        // Avoid noisy toasts for transient / validation issues when switching sessions.
+        const message = err instanceof Error ? err.message : String(err)
+        if (!/string_pattern_mismatch|String should match pattern/i.test(message)) {
+          toast.error(err instanceof Error ? err.message : tSession("loadRuntimeSettingsFailed"))
+        }
       })
     return () => {
       cancelled = true
     }
-  }, [isLocalOptimisticSession, session?.id, session?.runtime, token])
+  }, [isLocalOptimisticSession, session?.id, session?.runtime, token, tSession])
 
   React.useEffect(() => {
     if (isLocalOptimisticSession) return
@@ -656,9 +680,30 @@ export function SessionDetail({
     setInterrupting(true)
     try {
       await dashboardApi.interruptSession(token, session.id)
+      // Optimistically clear busy state so the stop button never looks dead.
+      setState((current) =>
+        current
+          ? {
+              ...current,
+              session: { ...current.session, status: "idle" },
+              items: current.items.map((item) =>
+                item.status === "pending" && isOptimisticTimelineItem(item)
+                  ? markOptimisticItemFailed(item, tSession("interruptedLocally"))
+                  : item,
+              ),
+            }
+          : current,
+      )
+      onSessionUpdated?.({ ...session, status: "idle" })
       await refresh()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : tSession("interruptFailed"))
+      // Still try to resync — agent may have ended the turn while interrupt failed.
+      try {
+        await refresh()
+      } catch {
+        /* ignore */
+      }
     } finally {
       setInterrupting(false)
     }
@@ -808,14 +853,33 @@ export function SessionDetail({
     () => new Set(approvals.map((approval) => approval.targetItemId).filter((id): id is string => Boolean(id))),
     [approvals],
   )
-  const timelineGroups = React.useMemo(
-    () => groupTimelineItems(state?.items ?? [], approvalTargetIds),
-    [approvalTargetIds, state?.items],
+  const timelineItems = React.useMemo(
+    () => dedupeAdjacentUserMessages(state?.items ?? []),
+    [state?.items],
   )
+  const timelineGroups = React.useMemo(
+    () => groupTimelineItems(timelineItems, approvalTargetIds),
+    [approvalTargetIds, timelineItems],
+  )
+  const hasPendingUser = timelineItems.some(
+    (item) => item.role === "user" && item.status === "pending",
+  )
+  // Hide spinner once the first assistant token for this turn is visible (TTFB).
+  const hasFirstAssistantToken = hasAssistantTextAfterLatestUser(timelineItems)
+  const showWorking = Boolean(
+    session &&
+      (session.status === "running" || session.status === "waiting_approval" || hasPendingUser) &&
+      !hasFirstAssistantToken,
+  )
+  const workingLabel =
+    showWorking && session
+      ? tSession("awaitingFirstReply", { runtime: runtimeLabel(session.runtime) })
+      : ""
 
-  if (loading && !session) return <SessionSkeleton />
+  // Prefer shell with fallback session over full-page skeleton to avoid layout jump.
+  if (loading && !session && !fallbackSession) return <SessionSkeleton />
 
-  if (error && !session) {
+  if (error && !session && !fallbackSession) {
     return (
       <div className="mx-auto flex h-full max-w-3xl items-center justify-center px-6">
         <Alert variant="destructive">
@@ -835,16 +899,64 @@ export function SessionDetail({
     takeoverTarget ? "takeoverEnableDescription" : "takeoverDisableDescription",
   ) as string[]).map((line) => line.replaceAll("{agent}", takeoverAgent))
 
+  const connector = connectors.find((item) => item.id === session.connectorId) ?? null
+  const agentReport = connector?.runtimeCapabilities?.attached?.[session.runtime]?.report
+  const failedAuthFromTimeline = (state?.items ?? []).some((item) => {
+    if (item.status !== "failed") return false
+    const content = item.content ?? {}
+    const text = [
+      content.text,
+      content.message,
+      content.error,
+      content.detail,
+    ]
+      .filter((value) => typeof value === "string" && value)
+      .join(" ")
+    return isAuthenticationErrorMessage(text)
+  })
+  const needsAuth =
+    agentReport?.authStatus === "required" ||
+    isAuthenticationErrorMessage(error) ||
+    failedAuthFromTimeline
+  const authMethods = agentReport?.authMethods ?? []
+
+  const signInAgent = async (methodId?: string) => {
+    if (!token || !session.connectorId || signingIn) return
+    setSigningIn(true)
+    try {
+      toast.message(tDevice("agentSignInStarted", { name: session.runtime }), {
+        description: tDevice("agentSignInStartedHint"),
+      })
+      const response = await dashboardApi.authenticateConnectorAgent(
+        token,
+        session.connectorId,
+        session.runtime,
+        methodId,
+      )
+      refreshData()
+      try {
+        const settings = await dashboardApi.getSessionRuntimeSettings(token, session.id)
+        if (settings.schema) setRuntimeSchema(settings.schema)
+        setRuntimeSettings(settings.runtimeSettings ?? settings.settings ?? {})
+      } catch {
+        /* best-effort */
+      }
+      if (response.authStatus === "ok") {
+        toast.success(response.message || tDevice("agentSignInSuccess", { name: session.runtime }))
+      } else {
+        toast.error(
+          response.message || response.authHint || tDevice("agentSignInFailed", { name: session.runtime }),
+        )
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : tDevice("agentSignInFailed", { name: session.runtime }))
+    } finally {
+      setSigningIn(false)
+    }
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden overscroll-none">
-      {error ? (
-        <Alert variant="destructive" className="mx-auto mt-4 w-[calc(100%-2rem)] max-w-3xl">
-          <CircleAlert />
-          <AlertTitle>{tSession("refreshFailed")}</AlertTitle>
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      ) : null}
-
       <div className="relative min-h-0 flex-1 overflow-hidden">
         <ScrollArea
           viewportRef={timelineRef}
@@ -857,12 +969,34 @@ export function SessionDetail({
               pendingApprovals.length > 0 && "pt-32",
             )}
           >
+            {needsAuth ? (
+              <AgentAuthBanner
+                className="sticky top-0 z-[1] max-w-full"
+                compact
+                agentName={runtimeLabel(session.runtime)}
+                methods={authMethods}
+                hint={agentReport?.authHint || error}
+                signingIn={signingIn}
+                disabled={connector?.status !== "online"}
+                onSignIn={(methodId) => void signInAgent(methodId)}
+              />
+            ) : error ? (
+              <Alert variant="destructive" className="max-w-full min-w-0">
+                <CircleAlert />
+                <AlertTitle>{tSession("refreshFailed")}</AlertTitle>
+                <AlertDescription className="break-words">{error}</AlertDescription>
+              </Alert>
+            ) : null}
             {loadingOlder ? (
-              <div className="flex justify-center py-2 text-muted-foreground">
+              <div className="flex h-6 items-center justify-center text-muted-foreground">
                 <Loader2 className="size-4 animate-spin" />
               </div>
             ) : null}
-            {loading && !state ? <SessionSkeletonInline /> : null}
+            {loading && !state ? (
+              <div className="min-h-[8rem]" aria-hidden="true">
+                <SessionSkeletonInline />
+              </div>
+            ) : null}
             {state && state.items.length === 0 && detachedApprovals.length === 0 ? (
               <p className="py-12 text-center text-sm text-muted-foreground">{tSession("noActivity")}</p>
             ) : null}
@@ -900,12 +1034,17 @@ export function SessionDetail({
                 onResolveApproval={handleResolveApproval}
               />
             ))}
-            {session.status === "running" ? (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="size-4 animate-spin" />
-                <span>{tSession("runtimeWorking", { runtime: runtimeLabel(session.runtime) })}</span>
-              </div>
-            ) : null}
+            {/* Fixed-height working row avoids layout jump when status flips. */}
+            <div
+              className={cn(
+                "flex h-7 items-center gap-2 text-sm text-muted-foreground transition-opacity",
+                showWorking ? "opacity-100" : "pointer-events-none opacity-0",
+              )}
+              aria-hidden={!showWorking}
+            >
+              <Loader2 className={cn("size-4", showWorking && "animate-spin")} />
+              <span>{workingLabel}</span>
+            </div>
           </div>
         </ScrollArea>
         {showScrollBottom ? (

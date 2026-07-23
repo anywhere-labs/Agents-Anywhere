@@ -47,6 +47,11 @@ export type ConnectorView = {
         selected?: { source: string; path: string; version?: string }
         checked?: Array<{ source: string; path: string; status: "ok" | "failed" | "missing"; reason?: string }>
         error?: { code: string; message: string }
+        authStatus?: "ok" | "required" | "unknown" | string
+        authMethods?: Array<{ id: string; name: string }>
+        authHint?: string
+        modelOptions?: Array<{ value: string; label: string }>
+        modeOptions?: Array<{ value: string; label: string }>
       }
     }>
     disabled: string[]
@@ -60,17 +65,27 @@ export type SessionView = {
   connectorId: string
   connectorStatus: ConnectorStatus
   runtime: string
+  externalSessionId?: string | null
   title?: string | null
   cwd?: string | null
   status: SessionStatus
   takeover: boolean
   pinned: boolean
+  pinnedAt?: string | null
   archived: boolean
+  archivedAt?: string | null
   unread: boolean
   lastReadSeq: number
+  lastSyncedAt?: string | null
+  sourceObservedAt?: string | null
+  lastActivityAt?: string | null
+  lastItemAt?: string | null
+  lastItemOrderSeq?: number | null
+  sortAt?: string | null
   updatedSeq: number
   effectiveRunMode?: "chat" | "terminal" | null
   runtimeSettings?: Record<string, unknown> | null
+  runtimeSettingsOverride?: Record<string, unknown> | null
   updatedAt: string // UI convenience field (not in backend)
 }
 

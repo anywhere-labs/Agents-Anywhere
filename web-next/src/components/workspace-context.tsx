@@ -139,28 +139,33 @@ function mapSession(session: RealSessionView): SessionView {
     id: session.id,
     connectorId: session.connectorId,
     connectorStatus: session.connectorStatus,
-    runtime: runtimeLabel(session.runtime),
+    // Keep the wire runtime id (claude / gemini / …). Display labels are applied
+    // in the UI via runtimeLabel() — never store "Claude" / "Gemini CLI" here or
+    // /agents/{runtime}/config-schema validation fails with string_pattern_mismatch.
+    runtime: session.runtime,
+    externalSessionId: session.externalSessionId,
     title: session.title || "Untitled session",
     cwd: session.cwd,
     status: session.status,
     takeover: session.takeover,
     pinned: session.pinned,
+    pinnedAt: session.pinnedAt,
     archived: session.archived,
+    archivedAt: session.archivedAt,
     unread: session.unread,
     lastReadSeq: session.lastReadSeq,
+    lastSyncedAt: session.lastSyncedAt,
+    sourceObservedAt: session.sourceObservedAt,
+    lastActivityAt: session.lastActivityAt,
+    lastItemAt: session.lastItemAt,
+    lastItemOrderSeq: session.lastItemOrderSeq,
+    sortAt: session.sortAt,
     updatedSeq: session.updatedSeq,
     effectiveRunMode: session.effectiveRunMode,
     runtimeSettings: session.runtimeSettings ?? null,
+    runtimeSettingsOverride: session.runtimeSettingsOverride ?? null,
     updatedAt: relativeSessionTime(session),
   }
-}
-
-function runtimeLabel(runtime: string): string {
-  if (runtime === "codex") return "Codex"
-  if (runtime === "claude") return "Claude"
-  if (runtime === "opencode") return "OpenCode"
-  if (runtime === "cursor") return "Cursor"
-  return runtime.slice(0, 1).toUpperCase() + runtime.slice(1)
 }
 
 function relativeSessionTime(session: RealSessionView): string {
@@ -231,6 +236,8 @@ type WorkspaceState = {
   upsertSession: (session: RealSessionView) => void
   addOptimisticMessage: (message: OptimisticSessionMessage) => void
   bindOptimisticSession: (localSessionId: string, session: RealSessionView) => void
+  /** Remove a failed local-only optimistic session (and its sidebar row). */
+  discardOptimisticSession: (localSessionId: string) => void
   clearResolvedOptimisticMessages: (sessionId: string, items: TimelineItem[]) => void
   getOptimisticItems: (sessionId: string) => TimelineItem[]
   getOptimisticSessionState: (sessionId: string) => SessionStateResponse | null
@@ -634,7 +641,9 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const bindOptimisticSession = React.useCallback((localSessionId: string, session: RealSessionView) => {
     setOptimisticMessages((prev) =>
       prev.map((message) =>
-        message.sessionId === localSessionId || message.sessionId === session.id
+        message.sessionId === localSessionId ||
+        message.localSessionId === localSessionId ||
+        message.sessionId === session.id
           ? {
               ...message,
               sessionId: session.id,
@@ -656,6 +665,20 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     const currentRoute = routeRef.current
     if (currentRoute.page === "session" && currentRoute.sessionId === localSessionId) {
       pushRoute({ page: "session", sessionId: session.id })
+    }
+  }, [pushRoute])
+
+  const discardOptimisticSession = React.useCallback((localSessionId: string) => {
+    setOptimisticMessages((prev) =>
+      prev.filter(
+        (message) =>
+          message.localSessionId !== localSessionId && message.sessionId !== localSessionId,
+      ),
+    )
+    setSessions((prev) => prev.filter((item) => item.id !== localSessionId))
+    const currentRoute = routeRef.current
+    if (currentRoute.page === "session" && currentRoute.sessionId === localSessionId) {
+      pushRoute({ page: "home" })
     }
   }, [pushRoute])
 
@@ -782,6 +805,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     upsertSession,
     addOptimisticMessage,
     bindOptimisticSession,
+    discardOptimisticSession,
     clearResolvedOptimisticMessages,
     getOptimisticItems,
     getOptimisticSessionState,
