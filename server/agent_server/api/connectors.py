@@ -29,6 +29,8 @@ from agent_server.deps import (
 from agent_server.core.models import (
     ArchiveAllRequest,
     ArchiveAllResponse,
+    ConnectorAgentAuthenticateRequest,
+    ConnectorAgentAuthenticateResponse,
     ConnectorCreateRequest,
     ConnectorCreateResponse,
     ConnectorListResponse,
@@ -1438,6 +1440,7 @@ async def get_connector_agent_settings(
         connectorId=connector_id,
         runtime=runtime,
         settings=result.settings,
+        configSchema=result.schema,
         schemaVersion=result.schema.schemaVersion,
         serverTime=utc_now(),
     )
@@ -1469,7 +1472,126 @@ async def patch_connector_agent_settings(
         connectorId=connector_id,
         runtime=runtime,
         settings=result.settings,
+        configSchema=result.schema,
         schemaVersion=result.schema.schemaVersion,
+        serverTime=utc_now(),
+    )
+
+
+@router.post(
+    "/{connector_id}/agents/{runtime}/authenticate",
+    response_model=ConnectorAgentAuthenticateResponse,
+)
+async def authenticate_connector_agent(
+    connector_id: str,
+    runtime: RuntimeName,
+    payload: ConnectorAgentAuthenticateRequest | None = None,
+    db: Store = Depends(get_store),
+    manager: ConnectorRpcManager = Depends(get_rpc),
+    timeline_broker: TimelineBroker = Depends(get_timeline_broker),
+    user_id: str = Depends(current_user_id),
+) -> ConnectorAgentAuthenticateResponse:
+    """User-triggered interactive ACP login on the device (opens browser once).
+
+    Completing OAuth is handled by the agent CLI on the connector host. Tokens
+    are typically persisted by that CLI under the device user profile — AA does
+    not store agent credentials. After success we merge authStatus + live
+    modelOptions into the device runtime report.
+    """
+    await _require_owned_connector(connector_id, user_id, db)
+    if not manager.is_online(connector_id):
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "connector_offline",
+                "message": "connector is offline; bring it online to sign in on the device",
+            },
+        )
+    body = payload or ConnectorAgentAuthenticateRequest()
+    params: dict[str, Any] = {"runtime": runtime}
+    if body.methodId:
+        params["methodId"] = body.methodId
+    # Browser OAuth can take several minutes; keep HTTP request open.
+    try:
+        result = await manager.request(
+            connector_id,
+            "runtime.authenticate",
+            params,
+            timeout=320,
+        )
+    except ConnectorOfflineError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "connector_offline", "message": str(exc)},
+        ) from exc
+    except ConnectorRpcError as exc:
+        if exc.code in {"ValueError", "unsupported"}:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "unsupported_runtime", "message": exc.message},
+            ) from exc
+        raise HTTPException(
+            status_code=502,
+            detail={"code": exc.code, "message": exc.message},
+        ) from exc
+    if not isinstance(result, dict):
+        raise HTTPException(
+            status_code=502,
+            detail={"code": "invalid_response", "message": "connector returned malformed auth result"},
+        )
+
+    fields = {
+        key: result.get(key)
+        for key in (
+            "authStatus",
+            "authMethods",
+            "authHint",
+            "modelOptions",
+            "modeOptions",
+            "configOptions",
+        )
+        if result.get(key) is not None
+    }
+    try:
+        if fields:
+            state = await db.merge_runtime_report_fields(connector_id, runtime, fields)
+        else:
+            state = await db.get_device_agents(connector_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="connector not found") from None
+
+    auth_status = str(result.get("authStatus") or "unknown")
+    message = None
+    if auth_status == "ok":
+        message = (
+            f"{runtime} signed in on the device. Credentials are kept by the agent CLI "
+            "when it supports disk-backed login — you usually will not need to sign in again."
+        )
+    elif auth_status == "required":
+        message = str(
+            result.get("authHint")
+            or "Sign-in did not complete. Finish the browser flow on the device and retry."
+        )
+
+    await publish_dashboard_changed(
+        db,
+        timeline_broker,
+        user_id=user_id,
+        connector_id=connector_id,
+        reason="runtime.authenticated",
+    )
+
+    return ConnectorAgentAuthenticateResponse(
+        connectorId=connector_id,
+        runtime=runtime,
+        authStatus=auth_status,
+        methodId=result.get("methodId") if isinstance(result.get("methodId"), str) else None,
+        authMethods=result.get("authMethods") if isinstance(result.get("authMethods"), list) else None,
+        authHint=result.get("authHint") if isinstance(result.get("authHint"), str) else None,
+        modelOptions=result.get("modelOptions") if isinstance(result.get("modelOptions"), list) else None,
+        modeOptions=result.get("modeOptions") if isinstance(result.get("modeOptions"), list) else None,
+        runtimeCapabilities=DeviceAgentsState.model_validate(state),
+        message=message,
         serverTime=utc_now(),
     )
 

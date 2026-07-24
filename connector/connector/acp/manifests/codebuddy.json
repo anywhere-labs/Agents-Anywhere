@@ -1,0 +1,37 @@
+{
+  "id": "codebuddy",
+  "displayName": "CodeBuddy",
+  "transport": "acp",
+  "command": ["codebuddy"],
+  "args": ["--acp"],
+  "env": {},
+  "discovery": {
+    "envPaths": ["CODEBUDDY_BIN"],
+    "which": ["codebuddy", "codebuddy-code", "cbc"],
+    "versionArgs": ["--version"]
+  },
+  "processModel": "shared",
+  "auth": {
+    "preferredMethodIds": [],
+    "preAuthHint": "Install CodeBuddy CLI (`npm i -g @tencent-ai/codebuddy-code`) and complete login on the device."
+  },
+  "capabilitiesExpected": {
+    "prompt": "required",
+    "cancel": "required",
+    "requestPermission": "optional",
+    "sessionList": "optional",
+    "sessionLoad": "optional",
+    "sessionResume": "optional"
+  },
+  "clientCapabilities": {
+    "fs": { "readTextFile": true, "writeTextFile": false },
+    "terminal": false
+  },
+  "quirks": {
+    "modelConfigId": "model",
+    "altCommands": [
+      { "command": ["codebuddy-code"], "args": ["--acp"] },
+      { "command": ["cbc"], "args": ["--acp"] }
+    ]
+  }
+}

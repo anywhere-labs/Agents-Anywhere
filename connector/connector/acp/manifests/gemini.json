@@ -1,0 +1,33 @@
+{
+  "id": "gemini",
+  "displayName": "Gemini CLI",
+  "transport": "acp",
+  "command": ["gemini"],
+  "args": ["--acp"],
+  "env": {},
+  "discovery": {
+    "envPaths": ["GEMINI_BIN"],
+    "which": ["gemini"],
+    "versionArgs": ["--version"]
+  },
+  "processModel": "shared",
+  "auth": {
+    "preferredMethodIds": [],
+    "preAuthHint": "Run `gemini` once on the device and complete login."
+  },
+  "capabilitiesExpected": {
+    "prompt": "required",
+    "cancel": "required",
+    "requestPermission": "optional",
+    "sessionList": "optional",
+    "sessionLoad": "optional",
+    "sessionResume": "optional"
+  },
+  "clientCapabilities": {
+    "fs": { "readTextFile": true, "writeTextFile": false },
+    "terminal": false
+  },
+  "quirks": {
+    "legacyAcpFlag": "--experimental-acp"
+  }
+}

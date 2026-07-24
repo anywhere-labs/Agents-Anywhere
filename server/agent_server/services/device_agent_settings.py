@@ -32,7 +32,12 @@ class DeviceAgentSettingsService:
             runtime,
             user_id=user_id,
         )
-        schema = await self._runtime_config.get_runtime_config_schema(runtime)
+        # Overlay live ACP model/mode options from the device report when present.
+        schema = await self._runtime_config.get_device_runtime_config_schema(
+            connector_id,
+            runtime,
+            user_id=user_id,
+        )
         return DeviceAgentSettingsResult(
             settings=settings,
             schema=schema,
@@ -52,7 +57,11 @@ class DeviceAgentSettingsService:
             patch,
             user_id=user_id,
         )
-        schema = await self._runtime_config.get_runtime_config_schema(runtime)
+        schema = await self._runtime_config.get_device_runtime_config_schema(
+            connector_id,
+            runtime,
+            user_id=user_id,
+        )
         return DeviceAgentSettingsResult(
             settings=settings,
             schema=schema,

@@ -14,6 +14,7 @@ import type {
   ConnectorListResponse,
   ConnectorResponse,
   ConnectorRevokeResponse,
+  ConnectorAgentAuthenticateResponse,
   ConnectorRuntimeCapabilitiesResponse,
   ConnectorRuntimeScanResponse,
   FsListResult,
@@ -668,6 +669,19 @@ export class DashboardApi {
     return this.client.post<ConnectorRuntimeScanResponse>(
       `/connectors/${encodeURIComponent(connectorId)}/runtime-capabilities/scan`,
       { runtime, ...(path && path.trim() ? { path: path.trim() } : {}) },
+      { token },
+    );
+  }
+
+  authenticateConnectorAgent(
+    token: string,
+    connectorId: string,
+    runtime: string,
+    methodId?: string | null,
+  ): Promise<ConnectorAgentAuthenticateResponse> {
+    return this.client.post<ConnectorAgentAuthenticateResponse>(
+      `/connectors/${encodeURIComponent(connectorId)}/agents/${encodeURIComponent(runtime)}/authenticate`,
+      methodId ? { methodId } : {},
       { token },
     );
   }

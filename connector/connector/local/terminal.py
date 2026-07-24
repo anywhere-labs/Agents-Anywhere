@@ -529,7 +529,7 @@ class UnixPtyTerminalBackend(TerminalBackend):
             if exc.errno in (errno.EIO,):
                 return b""
             raise
-        return chunk
+        return _sanitize_pty_output(chunk)
 
     def _write_all(self, pty: Any, data: bytes) -> None:
         written = 0
@@ -604,8 +604,8 @@ class WinPtyTerminalBackend(TerminalBackend):
         except EOFError:
             return b""
         if isinstance(data, str):
-            return data.encode("utf-8", errors="replace")
-        return data or b""
+            return _sanitize_pty_output(data.encode("utf-8", errors="replace"))
+        return _sanitize_pty_output(data or b"")
 
     def _write_all(self, pty: Any, data: bytes) -> None:
         pty.write(data.decode("utf-8", errors="replace"))
@@ -634,6 +634,22 @@ class WinPtyTerminalBackend(TerminalBackend):
             return pty.exitstatus
         except Exception:
             return None
+
+
+def _sanitize_pty_output(data: bytes) -> bytes:
+    """Drop Device Attributes responses that Windows shells often echo as junk.
+
+    Example visible garbage: ``[?1;2c`` after the PowerShell prompt.
+    """
+    if not data or (b"[" not in data and b"\x1b" not in data):
+        return data
+    import re
+
+    text = data.decode("utf-8", errors="replace")
+    cleaned = re.sub(r"\x1b\[\?[0-9;]*c|\[\?[0-9;]*c", "", text)
+    if cleaned == text:
+        return data
+    return cleaned.encode("utf-8", errors="replace")
 
 
 def default_terminal_backend(notify: Notify | None = None) -> TerminalBackend:

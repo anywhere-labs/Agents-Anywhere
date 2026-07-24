@@ -41,8 +41,11 @@ RUN if [ -n "$APT_MIRROR" ]; then \
     && if [ -n "$PIP_INDEX_URL" ]; then pip config set global.index-url "$PIP_INDEX_URL"; fi \
     && pip install --no-cache-dir uv
 
+# Use vendored httpx-s3-client to avoid flaky GitHub TLS during image build.
+COPY _reference/httpx-s3-client /vendor/httpx-s3-client
 COPY server/pyproject.toml ./server/
-RUN if [ -n "$PIP_INDEX_URL" ]; then export UV_INDEX_URL="$PIP_INDEX_URL"; fi \
+RUN sed -i 's|httpx-s3-client = { git = "https://github.com/t4wefan/httpx-s3-client.git" }|httpx-s3-client = { path = "/vendor/httpx-s3-client" }|' server/pyproject.toml \
+    && if [ -n "$PIP_INDEX_URL" ]; then export UV_INDEX_URL="$PIP_INDEX_URL"; fi \
     && cd server && uv sync --no-dev --no-install-project
 
 COPY server ./server

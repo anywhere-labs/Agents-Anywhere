@@ -263,16 +263,37 @@ async def get_session_runtime_settings(
             user_id=user_id,
         )
         schema = await runtime_config.get_runtime_config_schema(session.runtime)
+        defaults = await db.get_user_agent_defaults(user_id)
+        from agent_server.core.runtime_config import (
+            merge_schema_with_agent_options,
+            schema_with_user_agent_defaults,
+        )
+
+        schema = schema_with_user_agent_defaults(schema, defaults.get(session.runtime))
+        # Prefer live options discovered via ACP (device report).
+        try:
+            report = await db.get_runtime_report(session.connectorId, session.runtime)
+        except KeyError:
+            report = None
+        if isinstance(report, dict):
+            schema = merge_schema_with_agent_options(
+                schema,
+                model_options=report.get("modelOptions") if isinstance(report.get("modelOptions"), list) else None,
+                mode_options=report.get("modeOptions") if isinstance(report.get("modeOptions"), list) else None,
+                config_options=report.get("configOptions") if isinstance(report.get("configOptions"), list) else None,
+            )
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
     except ValueError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return RuntimeSettingsResponse(
         sessionId=session_id,
+        connectorId=session.connectorId,
         runtime=session.runtime,
         settings=effective,
         runtimeSettings=effective,
         runtimeSettingsOverride=override,
+        configSchema=schema,
         schemaVersion=schema.schemaVersion,
         serverTime=utc_now(),
     )
@@ -297,20 +318,24 @@ async def patch_session_runtime_settings(
             session_id,
             user_id=user_id,
         )
-        schema = await runtime_config.get_runtime_config_schema(session.runtime)
+        # Reuse GET path enrichment via a small internal call pattern.
+        get_response = await get_session_runtime_settings(
+            session_id=session_id,
+            user_id=user_id,
+            db=db,
+            runtime_config=runtime_config,
+        )
+        return get_response.model_copy(
+            update={
+                "settings": effective,
+                "runtimeSettings": effective,
+                "runtimeSettingsOverride": override,
+            }
+        )
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return RuntimeSettingsResponse(
-        sessionId=session_id,
-        runtime=session.runtime,
-        settings=effective,
-        runtimeSettings=effective,
-        runtimeSettingsOverride=override,
-        schemaVersion=schema.schemaVersion,
-        serverTime=utc_now(),
-    )
 
 
 @router.get("/events/dashboard")

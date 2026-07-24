@@ -14,22 +14,24 @@ from urllib.parse import urljoin, urlparse, urlunparse
 import httpx
 import websockets
 from connector.logging import logger
+from connector.perf import elapsed_ms, log_stage
 from websockets.exceptions import ConnectionClosed
 from websockets.asyncio.client import ClientConnection
 
 from connector.adapter import Adapter
+from connector.acp.adapter import AcpAdapter
 from connector.capabilities import (
+    discover_acp_capability,
     discover_claude_capability,
     discover_codex_capability,
     discover_runtime_capabilities,
 )
-from connector.claude.history_adapter import ClaudeHistoryAdapter
-from connector.claude.sdk_adapter import ClaudeSdkAdapter
 from connector.claude.preferences import read_local_preferences
 from connector.codex.adapter import CodexAdapter
 from connector.codex.rpc import JsonRpcStdioClient
 from connector.launch import LaunchTarget, launch_target
 from connector.local_ops import create_local_ops
+from connector.registry import build_default_adapters
 from connector.sync_state import SqliteSyncStateStore, SyncStateStore
 
 
@@ -45,6 +47,16 @@ RUNTIME_CHANGED_SYNC_TIMEOUT_SECONDS = 60.0
 # whichever comes first. This collapses N back-to-back Codex deltas (one
 # token per delta) into 1 HTTP POST, while bounding the worst-case latency
 # added at ~20ms.
+_PERF_DISPATCH_METHODS = frozenset(
+    {
+        "session.create",
+        "session.sync",
+        "session.discover",
+        "turn.start",
+        "turn.interrupt",
+        "approval.resolve",
+    }
+)
 FLUSH_WINDOW_SECONDS = 0.02
 FLUSH_MAX = 64
 
@@ -149,20 +161,14 @@ class BackendRpcClient:
         if adapters is not None:
             self.adapters: dict[str, Adapter] = dict(adapters)
         else:
-            # Default: Codex + Claude (the latter still stubbed in Task 2; real
-            # implementation arrives in Task 3+). `adapter=` kwarg stays as a
-            # single-adapter override for existing tests.
-            self.adapters = {
-                "codex": adapter
-                or CodexAdapter(
-                    notification_sink=self.send_backend_notification,
-                    sync_state_store=self.sync_state_store,
-                ),
-                "claude": ClaudeSdkAdapter(
-                    notification_sink=self.send_backend_notification,
-                    history_adapter=ClaudeHistoryAdapter(sync_state_store=self.sync_state_store),
-                ),
-            }
+            # Default: native Codex/Claude + built-in ACP agent manifests.
+            # `adapter=` remains a single-adapter override for existing tests.
+            self.adapters = build_default_adapters(
+                notification_sink=self.send_backend_notification,
+                sync_state_store=self.sync_state_store,
+            )
+            if adapter is not None:
+                self.adapters["codex"] = adapter
         for ad in self.adapters.values():
             if getattr(ad, "notification_sink", None) is None:
                 ad.notification_sink = self.send_backend_notification
@@ -195,6 +201,8 @@ class BackendRpcClient:
         # Notifications are funneled here and drained by `_flush_loop`. See
         # FLUSH_WINDOW_SECONDS comment.
         self._notify_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        # turn keys that already got a priority first-assistant ingest flush.
+        self._ttfb_flushed_turns: set[str] = set()
 
     async def run_forever(self) -> None:
         self._http_client = self._new_http_client(timeout=60)
@@ -249,19 +257,39 @@ class BackendRpcClient:
                 "X-Device-OS": _device_os(),
             },
             proxy=None if _is_loopback_url(self.config.server_url) else True,
+            # Keepalive so long ACP discovery does not look like a dead socket.
+            ping_interval=20,
+            ping_timeout=20,
         ) as ws:
             self._ws = ws
-            await self._discover_and_publish_capabilities()
+            # Heartbeat MUST start before discovery. Discovery of multiple ACP
+            # agents can exceed the server's 60s heartbeat timeout; previously
+            # we blocked here first, so the UI flapped "connector offline".
             heartbeat_task = asyncio.create_task(self._heartbeat_loop())
-            sync_task = asyncio.create_task(self._sync_existing_loop())
+            startup_task = asyncio.create_task(self._post_connect_startup())
             try:
                 async for raw_message in ws:
                     message = json.loads(raw_message)
                     await self.handle_message(message)
             finally:
                 heartbeat_task.cancel()
-                sync_task.cancel()
+                startup_task.cancel()
                 self._ws = None
+
+    async def _post_connect_startup(self) -> None:
+        """Discover agents then start periodic session sync (non-blocking for WS)."""
+        try:
+            await self._discover_and_publish_capabilities()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("runtime capability discovery failed after connect")
+        try:
+            await self._sync_existing_loop()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("existing session sync loop exited")
 
     async def authenticate(self) -> str:
         client = self._http_client
@@ -309,8 +337,11 @@ class BackendRpcClient:
         params = message.get("params") if isinstance(message.get("params"), dict) else {}
         if not isinstance(request_id, str) or not isinstance(method, str):
             return
+        started = time.perf_counter()
+        outcome = "error"
         try:
             result = await self.dispatch(method, params)
+            outcome = "ok"
             await self.send_response(request_id, ok=True, result=result)
         except Exception as exc:
             logger.exception("connector request failed method={} id={}", method, request_id)
@@ -322,6 +353,17 @@ class BackendRpcClient:
                 ok=False,
                 error={"code": code, "message": str(exc)},
             )
+        finally:
+            if method in _PERF_DISPATCH_METHODS:
+                log_stage(
+                    "connector.dispatch",
+                    elapsed_ms(started),
+                    method=method,
+                    runtime=params.get("runtime") if isinstance(params.get("runtime"), str) else None,
+                    session_id=params.get("sessionId") if isinstance(params.get("sessionId"), str) else None,
+                    connector_id=self.config.connector_id,
+                    outcome=outcome,
+                )
 
     async def dispatch(self, method: str, params: dict[str, Any]) -> Any:
         if method == "session.discover":
@@ -406,9 +448,21 @@ class BackendRpcClient:
             if not isinstance(runtimes, list):
                 raise ValueError("missing runtimes")
             active = {runtime for runtime in runtimes if isinstance(runtime, str) and runtime}
+            previous = self._active_runtimes or set()
+            newly_active = active - previous
             self._active_runtimes = active
             revision = params.get("revision")
             logger.info("active runtimes updated runtimes={} revision={}", sorted(active), revision)
+            # Warm adapters that expose warm_start (e.g. ACP) so first turn is not cold.
+            # First assignment (or after clear): warm the full active set; later only newly activated.
+            to_warm = active if not previous else newly_active
+            for runtime_id in to_warm:
+                adapter = self.adapters.get(runtime_id)
+                if adapter is None:
+                    continue
+                warm_start = getattr(adapter, "warm_start", None)
+                if callable(warm_start):
+                    asyncio.create_task(warm_start())
             return {"runtimes": [runtime for runtime in runtimes if isinstance(runtime, str) and runtime], "revision": revision}
         if method == "capabilities.forceResyncRuntime":
             # Backend fires this after it has committed user intent and sent
@@ -418,6 +472,42 @@ class BackendRpcClient:
                 raise ValueError("missing runtime")
             await self._force_resync_runtime(runtime)
             return {"runtime": runtime, "resynced": True}
+        if method == "runtime.authenticate":
+            # User-triggered interactive ACP login (browser OAuth). Never auto-run.
+            runtime = params.get("runtime")
+            if not isinstance(runtime, str) or not runtime:
+                raise ValueError("missing runtime")
+            adapter = self.adapters.get(runtime)
+            if not isinstance(adapter, AcpAdapter):
+                raise ValueError(
+                    f"runtime.authenticate is only supported for ACP agents; got {runtime!r}"
+                )
+            result = await adapter.authenticate_interactive(params)
+            if isinstance(result, dict):
+                # Keep in-memory discovery report in sync for subsequent scans.
+                report_fields = {
+                    key: result[key]
+                    for key in (
+                        "authStatus",
+                        "authMethods",
+                        "authHint",
+                        "modelOptions",
+                        "modeOptions",
+                        "configOptions",
+                    )
+                    if result.get(key) is not None
+                }
+                if report_fields:
+                    existing = {}
+                    if self._runtime_capabilities and isinstance(
+                        self._runtime_capabilities.get("runtimes"), dict
+                    ):
+                        prev = self._runtime_capabilities["runtimes"].get(runtime)
+                        if isinstance(prev, dict):
+                            existing = dict(prev)
+                    existing.update(report_fields)
+                    self._record_runtime_report(runtime, existing)
+            return result
         raise ValueError(f"unsupported connector method: {method}")
 
     async def send_notification(self, method: str, params: dict[str, Any]) -> None:
@@ -431,8 +521,23 @@ class BackendRpcClient:
         chunk's POST waited for the prior round-trip. Now we hand the
         notification to `_flush_loop`, which batches and sends one POST per
         ~20ms window.
+
+        Exception: the first assistant text delta for a turn bypasses the
+        window so TTFB is not inflated by FLUSH_WINDOW_SECONDS.
         """
-        await self._notify_queue.put({"method": method, "params": params})
+        notification = {"method": method, "params": params}
+        turn_key = _assistant_ttfb_turn_key(method, params)
+        if turn_key is not None and turn_key not in self._ttfb_flushed_turns:
+            self._ttfb_flushed_turns.add(turn_key)
+            if len(self._ttfb_flushed_turns) > 256:
+                # Bound memory; oldest keys are irrelevant once turns finish.
+                self._ttfb_flushed_turns = set(list(self._ttfb_flushed_turns)[-128:])
+            try:
+                await self._post_batch([notification])
+                return
+            except Exception:
+                logger.exception("priority TTFB ingest failed; falling back to flush queue")
+        await self._notify_queue.put(notification)
 
     async def send_response(
         self,
@@ -456,8 +561,13 @@ class BackendRpcClient:
             await self._ws.send(json.dumps(payload, ensure_ascii=False))
 
     async def _heartbeat_loop(self) -> None:
+        # Immediate first beat so the server never waits a full interval after connect.
         while True:
-            await self.send_notification("connector.heartbeat", {})
+            try:
+                await self.send_notification("connector.heartbeat", {})
+            except Exception:
+                logger.exception("connector heartbeat failed")
+                return
             await asyncio.sleep(self.config.heartbeat_seconds)
 
     async def _flush_loop(self) -> None:
@@ -553,6 +663,9 @@ class BackendRpcClient:
         self._runtime_capabilities = discovery.report
         await self._rewire_codex(getattr(discovery, "codex_target", None) or discovery.codex_bin)
         self._rewire_claude(getattr(discovery, "claude_target", None) or discovery.claude_bin)
+        acp_targets = getattr(discovery, "acp_targets", None) or {}
+        for runtime_id, target in acp_targets.items():
+            self._rewire_acp(runtime_id, target)
         await self.send_notification("connector.capabilitiesUpdated", discovery.report)
 
     async def _rewire_codex(self, codex_target: LaunchTarget | str | None) -> None:
@@ -582,8 +695,17 @@ class BackendRpcClient:
             return
         claude = self.adapters.get("claude")
         target = claude_target if isinstance(claude_target, LaunchTarget) else launch_target("cli", claude_target)
-        if isinstance(claude, ClaudeSdkAdapter):
-            claude.claude_target = target
+        if claude is not None and hasattr(claude, "claude_target"):
+            claude.claude_target = target  # type: ignore[attr-defined]
+
+    def _rewire_acp(self, runtime: str, target: LaunchTarget | str | None) -> None:
+        adapter = self.adapters.get(runtime)
+        if not isinstance(adapter, AcpAdapter):
+            return
+        if not target:
+            return
+        launch = target if isinstance(target, LaunchTarget) else launch_target("cli", target)
+        adapter.rewire(launch)
 
     async def _scan_runtime(
         self, runtime: str, path: str | None
@@ -608,7 +730,14 @@ class BackendRpcClient:
             self._rewire_claude(claude_target)
             self._record_runtime_report("claude", report)
             return {"runtime": "claude", "report": report}
-        raise ValueError(f"unsupported runtime {runtime!r}")
+        # ACP / manifest-driven agents
+        report, acp_target = await discover_acp_capability(runtime, extra_candidate=path)
+        error = report.get("error") if isinstance(report.get("error"), dict) else {}
+        if error.get("code") == "unknown_acp_runtime":
+            raise ValueError(f"unsupported runtime {runtime!r}")
+        self._rewire_acp(runtime, acp_target)
+        self._record_runtime_report(runtime, report)
+        return {"runtime": runtime, "report": report}
 
     async def _force_resync_runtime(self, runtime: str) -> None:
         adapter = self.adapters.get(runtime)
@@ -930,6 +1059,30 @@ class BackendRpcClient:
 
     def _new_http_client(self, *, timeout: httpx.Timeout | float) -> httpx.AsyncClient:
         return httpx.AsyncClient(timeout=timeout, trust_env=not _is_loopback_url(self.config.server_url))
+
+
+def _assistant_ttfb_turn_key(method: str, params: dict[str, Any]) -> str | None:
+    """Return a turn key for the first assistant text upsert, else None."""
+    if method != "timeline.itemUpsert" or not isinstance(params, dict):
+        return None
+    item = params.get("item")
+    if not isinstance(item, dict):
+        return None
+    if item.get("type") != "message" or item.get("role") != "assistant":
+        return None
+    content = item.get("content")
+    if not isinstance(content, dict):
+        return None
+    text = content.get("text") or content.get("rawText")
+    if not isinstance(text, str) or not text.strip():
+        return None
+    session_id = item.get("sessionId") or params.get("sessionId")
+    turn_id = item.get("turnId")
+    if not isinstance(session_id, str) or not session_id:
+        return None
+    if not isinstance(turn_id, str) or not turn_id:
+        turn_id = "unknown"
+    return f"{session_id}:{turn_id}"
 
 
 def _strip_backend_notifications(result: dict[str, Any]) -> dict[str, Any]:

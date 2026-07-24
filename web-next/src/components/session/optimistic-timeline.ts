@@ -28,6 +28,12 @@ export function preserveOptimisticItems(baseItems: TimelineItem[], previousItems
   return preserved.length > 0 ? mergeTimelineItems(baseItems, preserved) : baseItems
 }
 
+function timelineUserText(item: TimelineItem): string | null {
+  if (item.role !== "user" || item.type !== "message") return null
+  const text = item.content?.text
+  return typeof text === "string" ? text.trim() : null
+}
+
 export function mergeTimelineItems(
   currentItems: TimelineItem[],
   incomingItems: TimelineItem[],
@@ -43,10 +49,52 @@ export function mergeTimelineItems(
         }
       }
     }
+    // Fallback: drop optimistic user bubble when a real user message with the
+    // same text lands (some agents omit clientMessageId on early failure paths).
+    if (!isOptimisticTimelineItem(item) && item.role === "user") {
+      const text = timelineUserText(item)
+      if (text) {
+        for (const [id, existing] of byId) {
+          if (
+            isOptimisticTimelineItem(existing) &&
+            existing.role === "user" &&
+            timelineUserText(existing) === text
+          ) {
+            byId.delete(id)
+          }
+        }
+      }
+    }
     const existing = byId.get(item.id)
     if (!existing || existing.updatedSeq <= item.updatedSeq) byId.set(item.id, item)
   }
   return sortTimelineItems(Array.from(byId.values()))
+}
+
+/** Collapse consecutive duplicate user messages (optimistic leftover + server). */
+export function dedupeAdjacentUserMessages(items: TimelineItem[]): TimelineItem[] {
+  const sorted = sortTimelineItems(items)
+  const out: TimelineItem[] = []
+  for (const item of sorted) {
+    const prev = out[out.length - 1]
+    if (
+      prev &&
+      item.role === "user" &&
+      prev.role === "user" &&
+      timelineUserText(prev) &&
+      timelineUserText(prev) === timelineUserText(item)
+    ) {
+      // Prefer non-optimistic / completed over pending optimistic.
+      const preferIncoming =
+        (isOptimisticTimelineItem(prev) && !isOptimisticTimelineItem(item)) ||
+        (prev.status === "pending" && item.status !== "pending") ||
+        prev.updatedSeq < item.updatedSeq
+      if (preferIncoming) out[out.length - 1] = item
+      continue
+    }
+    out.push(item)
+  }
+  return out
 }
 
 export function buildOptimisticUserMessage({

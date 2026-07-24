@@ -1,0 +1,31 @@
+{
+  "id": "grok_build",
+  "displayName": "Grok Build",
+  "transport": "acp",
+  "command": ["grok"],
+  "args": ["agent", "stdio"],
+  "env": {},
+  "discovery": {
+    "envPaths": ["GROK_BIN", "XAI_GROK_BIN"],
+    "which": ["grok"],
+    "versionArgs": ["--version"]
+  },
+  "processModel": "shared",
+  "auth": {
+    "preferredMethodIds": ["xai.api_key", "cached_token"],
+    "preAuthHint": "Set XAI_API_KEY or run `grok login` on the device."
+  },
+  "capabilitiesExpected": {
+    "prompt": "required",
+    "cancel": "required",
+    "requestPermission": "optional",
+    "sessionList": "optional",
+    "sessionLoad": "optional",
+    "sessionResume": "optional"
+  },
+  "clientCapabilities": {
+    "fs": { "readTextFile": true, "writeTextFile": false },
+    "terminal": false
+  },
+  "quirks": {}
+}

@@ -250,7 +250,12 @@ exit 9
 
 def test_launch_target_wraps_windows_script_types(monkeypatch) -> None:
     monkeypatch.setattr(launch.sys, "platform", "win32")
-    monkeypatch.setattr(launch.shutil, "which", lambda _name: "powershell.exe")
+    monkeypatch.setattr(launch.shutil, "which", lambda name: {
+        "powershell.exe": "powershell.exe",
+        "powershell": "powershell.exe",
+        "cmd.exe": "cmd.exe",
+        "cmd": "cmd.exe",
+    }.get(name))
 
     ps1 = launch.launch_target("cli", r"C:\nvm4w\nodejs\codex.ps1")
     assert ps1.launcher == "powershell"
@@ -267,17 +272,35 @@ def test_launch_target_wraps_windows_script_types(monkeypatch) -> None:
     cmd = launch.launch_target("cli", r"C:\Users\admin\AppData\Roaming\npm\codex.cmd")
     assert cmd.launcher == "cmd"
     assert cmd.command(["--version"]) == [
-        "powershell.exe",
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-Command",
-        "& 'C:\\Users\\admin\\AppData\\Roaming\\npm\\codex.cmd' '--version'",
+        "cmd.exe",
+        "/d",
+        "/c",
+        r"C:\Users\admin\AppData\Roaming\npm\codex.cmd",
+        "--version",
     ]
 
     exe = launch.launch_target("cli", r"C:\Users\admin\.local\bin\claude.exe")
     assert exe.launcher == "direct"
     assert exe.command(["--help"]) == [r"C:\Users\admin\.local\bin\claude.exe", "--help"]
+
+
+def test_launch_target_resolves_cursor_agent_to_node(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(launch.sys, "platform", "win32")
+    root = tmp_path / "cursor-agent"
+    ver = root / "versions" / "2026.06.16-abc"
+    ver.mkdir(parents=True)
+    node = ver / "node.exe"
+    index = ver / "index.js"
+    node.write_bytes(b"MZ")
+    index.write_text("console.log(1)")
+    shim = root / "agent.cmd"
+    shim.write_text("@echo off\n")
+
+    target = launch.launch_target("env", str(shim))
+    assert target.launcher == "direct"
+    assert target.exec_argv == (str(node), str(index))
+    assert target.command(["acp"]) == [str(node), str(index), "acp"]
+    assert target.report_path() == str(shim)
 
 
 def test_windows_codex_candidates_include_common_cli_shims(monkeypatch) -> None:

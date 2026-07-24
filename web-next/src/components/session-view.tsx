@@ -173,7 +173,8 @@ export function SessionView() {
                   <SessionDetail
                     token={token}
                     sessionId={session.id}
-                    fallbackSession={null}
+                    // Workspace sessions are compatible with dashboard SessionView for shell fallback.
+                    fallbackSession={session as unknown as SessionViewData}
                     onSessionUpdated={upsertSession}
                     onMemorySnapshotUpdated={setMemorySnapshot}
                   />

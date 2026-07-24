@@ -22,7 +22,7 @@ from agent_server.core.auth import (
     create_connector_access_token,
     verify_connector_access_token,
 )
-from agent_server.infra.connector_rpc import DuplicateConnectorConnectionError, ConnectorRpcManager
+from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.deps import (
     get_attachment_service,
     get_connector_ingest_service,
@@ -246,12 +246,8 @@ async def connector_ws(
         return
 
     await websocket.accept()
-    try:
-        connection = manager.register(connector_id, websocket)
-    except DuplicateConnectorConnectionError:
-        await websocket.close(code=4409, reason="connector id already connected")
-        logger.warning("rejected duplicate connector websocket: {}", connector_id)
-        return
+    # register() replaces any previous connection for this connector id.
+    connection = manager.register(connector_id, websocket)
     await db.set_connector_status(
         connector_id,
         "online",
@@ -488,6 +484,34 @@ async def apply_connector_notification(
         except KeyError:
             logger.warning("capabilities update for unknown connector connector_id={}", connector_id)
         return IngestEffect()
+    elif method == "runtime.optionsUpdated":
+        # Live ACP configOptions / model list / auth status refresh.
+        runtime = params.get("runtime")
+        if not isinstance(runtime, str) or not runtime:
+            return IngestEffect()
+        fields = {
+            key: params.get(key)
+            for key in (
+                "configOptions",
+                "modelOptions",
+                "modeOptions",
+                "authStatus",
+                "authMethods",
+                "authHint",
+            )
+            if params.get(key) is not None
+        }
+        if not fields:
+            return IngestEffect()
+        try:
+            await db.merge_runtime_report_fields(connector_id, runtime, fields)
+        except KeyError:
+            logger.warning(
+                "runtime.optionsUpdated for unknown connector connector_id={} runtime={}",
+                connector_id,
+                runtime,
+            )
+        return IngestEffect()
     elif method == "session.updated":
         if await filter_.runtime_disabled(params.get("runtime")):
             return IngestEffect()
@@ -511,6 +535,21 @@ async def apply_connector_notification(
                 source_observed_at=params.get("sourceObservedAt"),
                 last_activity_at=params.get("lastActivityAt"),
             )
+            # Persist ACP-discovered model/mode options onto the device runtime report.
+            runtime_name = params.get("runtime")
+            if isinstance(runtime_name, str) and runtime_name:
+                option_fields = {
+                    key: params.get(key)
+                    for key in ("configOptions", "modelOptions", "modeOptions")
+                    if params.get(key) is not None
+                }
+                if option_fields:
+                    try:
+                        await db.merge_runtime_report_fields(
+                            connector_id, runtime_name, option_fields
+                        )
+                    except KeyError:
+                        pass
             await db.refresh_session_status_from_timeline(session_id)
             return IngestEffect(session_id=session_id, session_changed=True)
         except KeyError:

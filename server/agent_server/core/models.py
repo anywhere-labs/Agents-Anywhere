@@ -1,11 +1,22 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 
-RuntimeName = Literal["codex", "claude", "opencode", "acp"]
+# Open string so ACP agents (cursor, gemini, codebuddy, grok_build, …) can be
+# first-class runtimes without a server release per agent. Constrained to
+# lowercase snake_case ids (1–64 chars). "platform" is reserved for TimelineSource.
+RuntimeName = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z][a-z0-9_]*$",
+    ),
+]
 ConnectorStatus = Literal["offline", "online"]
 ConnectorDeviceOs = Literal["macos", "windows", "linux"]
 SessionStatus = Literal["idle", "running", "waiting_approval", "error"]
@@ -777,6 +788,26 @@ class ConnectorRuntimeScanResponse(BaseModel):
     connectorId: str
     runtimeCapabilities: DeviceAgentsState
     scanned: dict[str, Any]
+    serverTime: str
+
+
+class ConnectorAgentAuthenticateRequest(BaseModel):
+    """User-triggered ACP interactive login (device opens browser once)."""
+
+    methodId: str | None = None
+
+
+class ConnectorAgentAuthenticateResponse(BaseModel):
+    connectorId: str
+    runtime: str
+    authStatus: str
+    methodId: str | None = None
+    authMethods: list[dict[str, Any]] | None = None
+    authHint: str | None = None
+    modelOptions: list[dict[str, Any]] | None = None
+    modeOptions: list[dict[str, Any]] | None = None
+    runtimeCapabilities: DeviceAgentsState
+    message: str | None = None
     serverTime: str
 
 

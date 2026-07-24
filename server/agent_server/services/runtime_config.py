@@ -68,6 +68,9 @@ class RuntimeConfigService:
     async def get_runtime_config_schema(self, runtime: str) -> RuntimeConfigSchema:
         value = await self._instance_settings.get(runtime_schema_key(runtime))
         if value is None:
+            # ACP / unknown agents: empty schema (no configurable fields yet).
+            if runtime not in DEFAULT_RUNTIME_CONFIG_SCHEMAS:
+                return RuntimeConfigSchema(runtime=runtime, schemaVersion=1, fields=[])
             raise KeyError(runtime)
         try:
             raw = _json_loads(value)
@@ -84,6 +87,21 @@ class RuntimeConfigService:
         schema = await self.get_runtime_config_schema(runtime)
         defaults = await self._get_user_agent_defaults(user_id)
         return schema_with_user_agent_defaults(schema, defaults.get(runtime))
+
+    async def get_device_runtime_config_schema(
+        self,
+        connector_id: str,
+        runtime: str,
+        *,
+        user_id: str | None = None,
+    ) -> RuntimeConfigSchema:
+        """Seed schema + user defaults + live ACP modelOptions from device report."""
+        schema = await self.get_runtime_config_schema_for_user(runtime, user_id=user_id)
+        return await self._merge_schema_with_device_options(
+            schema,
+            connector_id=connector_id,
+            runtime=runtime,
+        )
 
     async def set_runtime_config_schema(
         self,
@@ -105,7 +123,9 @@ class RuntimeConfigService:
         user_id: str | None = None,
     ) -> dict[str, Any]:
         await self._runtime_settings.require_connector(connector_id, user_id=user_id)
-        schema = await self.get_runtime_config_schema_for_user(runtime, user_id=user_id)
+        schema = await self.get_device_runtime_config_schema(
+            connector_id, runtime, user_id=user_id
+        )
         value = _json_loads(
             await self._runtime_settings.get_device_settings_json(connector_id, runtime)
         )
@@ -131,7 +151,8 @@ class RuntimeConfigService:
         user_id: str | None = None,
     ) -> dict[str, Any]:
         connector_user_id = await self._runtime_settings.require_connector(connector_id, user_id=user_id)
-        schema = await self.get_runtime_config_schema_for_user(
+        schema = await self.get_device_runtime_config_schema(
+            connector_id,
             runtime,
             user_id=user_id or connector_user_id,
         )
@@ -197,6 +218,12 @@ class RuntimeConfigService:
         schema = await self.get_runtime_config_schema_for_user(
             runtime,
             user_id=user_id or str(row["connector_user_id"]),
+        )
+        # Allow values from ACP-discovered option lists (not only seed enums).
+        schema = await self._merge_schema_with_device_options(
+            schema,
+            connector_id=str(row.get("connector_id") or ""),
+            runtime=runtime,
         )
         normalized_patch = validate_runtime_settings(
             runtime,
@@ -317,6 +344,33 @@ class RuntimeConfigService:
         if user_id is None or self._user_defaults_provider is None:
             return {}
         return await self._user_defaults_provider.get_user_agent_defaults(user_id)
+
+    async def _merge_schema_with_device_options(
+        self,
+        schema: RuntimeConfigSchema,
+        *,
+        connector_id: str,
+        runtime: str,
+    ) -> RuntimeConfigSchema:
+        if not connector_id or self._user_defaults_provider is None:
+            return schema
+        getter = getattr(self._user_defaults_provider, "get_runtime_report", None)
+        if not callable(getter):
+            return schema
+        try:
+            report = await getter(connector_id, runtime)
+        except Exception:
+            return schema
+        if not isinstance(report, dict):
+            return schema
+        from agent_server.core.runtime_config import merge_schema_with_agent_options
+
+        return merge_schema_with_agent_options(
+            schema,
+            model_options=report.get("modelOptions") if isinstance(report.get("modelOptions"), list) else None,
+            mode_options=report.get("modeOptions") if isinstance(report.get("modeOptions"), list) else None,
+            config_options=report.get("configOptions") if isinstance(report.get("configOptions"), list) else None,
+        )
 
 
 def seed_runtime_config_schemas_sync(async_url: str) -> None:

@@ -1,0 +1,39 @@
+{
+  "id": "cursor",
+  "displayName": "Cursor",
+  "transport": "acp",
+  "command": ["agent"],
+  "args": ["acp"],
+  "env": {},
+  "discovery": {
+    "envPaths": ["CURSOR_AGENT_BIN", "AGENT_BIN"],
+    "which": ["agent"],
+    "versionArgs": ["--version"]
+  },
+  "processModel": "shared",
+  "auth": {
+    "preferredMethodIds": ["cursor_login"],
+    "preAuthHint": "Run `agent login` or set CURSOR_API_KEY on the device."
+  },
+  "capabilitiesExpected": {
+    "prompt": "required",
+    "cancel": "required",
+    "requestPermission": "optional",
+    "sessionList": "optional",
+    "sessionLoad": "optional",
+    "sessionResume": "optional"
+  },
+  "clientCapabilities": {
+    "fs": { "readTextFile": true, "writeTextFile": false },
+    "terminal": false
+  },
+  "quirks": {
+    "extensionMethods": {
+      "cursor/ask_question": "skip",
+      "cursor/create_plan": "accept",
+      "cursor/update_todos": "ignore",
+      "cursor/task": "ignore",
+      "cursor/generate_image": "ignore"
+    }
+  }
+}

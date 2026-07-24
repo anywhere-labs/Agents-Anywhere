@@ -185,6 +185,65 @@ class DeviceAgentsRepositoryMixin:
             )
         return _agents_view_from_state(state)
 
+    async def merge_runtime_report_fields(
+        self,
+        connector_id: str,
+        runtime: str,
+        fields: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Merge keys into observed[runtime].report without replacing the whole report."""
+        now = utc_now()
+        async with self._engine.begin() as conn:
+            row = (
+                await conn.execute(
+                    select(connectors_t.c.runtime_capabilities).where(
+                        connectors_t.c.id == connector_id,
+                        connectors_t.c.revoked == 0,
+                    )
+                )
+            ).first()
+            if row is None:
+                raise KeyError(connector_id)
+            state = _normalize_agents_blob(_json_loads(row.runtime_capabilities))
+            observed: dict[str, Any] = state.get("observed") or {}
+            entry = observed.get(runtime) if isinstance(observed.get(runtime), dict) else {}
+            report = dict(entry.get("report") or {}) if isinstance(entry, dict) else {}
+            for key, value in fields.items():
+                if value is not None:
+                    report[key] = value
+            observed[runtime] = {"report": report, "observedAt": now}
+            state["observed"] = observed
+            await conn.execute(
+                update(connectors_t)
+                .where(connectors_t.c.id == connector_id, connectors_t.c.revoked == 0)
+                .values(runtime_capabilities=_json_dumps(state), updated_at=now)
+            )
+        return _agents_view_from_state(state)
+
+    async def get_runtime_report(
+        self,
+        connector_id: str,
+        runtime: str,
+    ) -> dict[str, Any] | None:
+        async with self._engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    select(connectors_t.c.runtime_capabilities).where(
+                        connectors_t.c.id == connector_id,
+                        connectors_t.c.revoked == 0,
+                    )
+                )
+            ).first()
+            if row is None:
+                raise KeyError(connector_id)
+            state = _normalize_agents_blob(_json_loads(row.runtime_capabilities))
+            observed = state.get("observed") or {}
+            entry = observed.get(runtime)
+            if not isinstance(entry, dict):
+                return None
+            report = entry.get("report")
+            return report if isinstance(report, dict) else None
+
 
     async def attach_runtime(
         self,

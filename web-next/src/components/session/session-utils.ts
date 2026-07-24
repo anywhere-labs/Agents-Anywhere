@@ -10,8 +10,45 @@ export function messageText(item: TimelineItem): string {
   )
 }
 
+/** True when the latest user turn already has non-empty assistant text (TTFB landed). */
+export function hasAssistantTextAfterLatestUser(items: TimelineItem[]): boolean {
+  let lastUserIdx = -1
+  for (let i = items.length - 1; i >= 0; i -= 1) {
+    const item = items[i]
+    if (item?.type === "message" && item.role === "user") {
+      lastUserIdx = i
+      break
+    }
+  }
+  const start = lastUserIdx < 0 ? 0 : lastUserIdx + 1
+  for (let i = start; i < items.length; i += 1) {
+    const item = items[i]
+    if (item?.type === "message" && item.role === "assistant" && messageText(item).trim()) {
+      return true
+    }
+  }
+  return false
+}
+
 export function runtimeLabel(runtime: string): string {
-  return runtime.slice(0, 1).toUpperCase() + runtime.slice(1)
+  switch (runtime) {
+    case "codex":
+      return "Codex"
+    case "claude":
+      return "Claude"
+    case "gemini":
+      return "Gemini CLI"
+    case "grok_build":
+      return "Grok Build"
+    case "cursor":
+      return "Cursor"
+    case "codebuddy":
+      return "CodeBuddy"
+    case "opencode":
+      return "OpenCode"
+    default:
+      return runtime.slice(0, 1).toUpperCase() + runtime.slice(1)
+  }
 }
 
 export function sortTimelineItems(items: TimelineItem[]): TimelineItem[] {
