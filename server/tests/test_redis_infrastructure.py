@@ -6,6 +6,7 @@ import json
 from fakeredis import FakeServer
 from fakeredis.aioredis import FakeRedis
 
+from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.infra.redis_coordinator import RedisCoordinator
 from agent_server.infra.terminal_stream_hub import TerminalStreamHub
 from agent_server.infra.timeline_broker import TimelineBroker
@@ -189,5 +190,47 @@ def test_terminal_stream_events_cross_instances() -> None:
         finally:
             await publisher.close()
             await subscriber.close()
+
+    asyncio.run(exercise())
+
+
+def test_fs_download_relay_streams_between_instances() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        creator = FsDownloadRelayManager(_coordinator(fake_server))
+        uploader = FsDownloadRelayManager(_coordinator(fake_server))
+        consumer = FsDownloadRelayManager(_coordinator(fake_server))
+        transfer = await creator.create(
+            connector_id="connector-1",
+            root="/repo",
+            path="/repo/payload.bin",
+            name="payload.bin",
+            size=6,
+            sha256="abc",
+            media_type="application/octet-stream",
+        )
+
+        async def chunks():
+            yield b"abc"
+            yield b"def"
+
+        upload_task = asyncio.create_task(
+            uploader.upload(
+                transfer_id=transfer.transfer_id,
+                token=transfer.token,
+                chunks=chunks(),
+            )
+        )
+        streamed = [
+            chunk
+            async for chunk in consumer.stream(
+                transfer_id=transfer.transfer_id,
+                token=transfer.token,
+            )
+        ]
+
+        assert await upload_task
+        assert b"".join(streamed) == b"abcdef"
+        assert await creator.get(transfer.transfer_id, transfer.token) is None
 
     asyncio.run(exercise())

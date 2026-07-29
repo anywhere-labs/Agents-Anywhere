@@ -157,7 +157,7 @@ def create_app(
         app.state.redis,
         instance_id=os.environ.get("AGENT_SERVER_INSTANCE_ID"),
     )
-    app.state.fs_downloads = FsDownloadRelayManager()
+    app.state.fs_downloads = FsDownloadRelayManager(app.state.redis)
     app.state.shell_tasks = ShellTaskManager(app.state.redis)
     app.state.terminal_broker = TerminalBroker()
     app.state.terminal_stream_hub = TerminalStreamHub(app.state.redis)

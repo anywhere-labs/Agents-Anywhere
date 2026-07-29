@@ -5125,7 +5125,7 @@ def test_fs_download_relay_streams_uploaded_chunks():
 
 async def _exercise_fs_download_relay_streams_uploaded_chunks() -> None:
     manager = FsDownloadRelayManager()
-    transfer = manager.create(
+    transfer = await manager.create(
         connector_id="conn_1",
         root="/repo",
         path="/repo/payload.bin",

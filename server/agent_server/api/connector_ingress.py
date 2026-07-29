@@ -221,7 +221,7 @@ async def connector_fs_transfer_upload(
     connector_id = _connector_id_from_bearer(authorization)
     await _require_active_connector(connector_id, db)
     await db.record_connector_activity(connector_id)
-    transfer = downloads.get(transfer_id, token)
+    transfer = await downloads.get(transfer_id, token)
     if transfer is None or transfer.connector_id != connector_id:
         raise HTTPException(status_code=404, detail="transfer not found")
     accepted = await downloads.upload(

@@ -360,7 +360,7 @@ async def connector_fs_read(
     )
     if not isinstance(result, dict):
         raise HTTPException(status_code=502, detail="invalid fs.prepareDownload response")
-    transfer = downloads.create(
+    transfer = await downloads.create(
         connector_id=connector_id,
         root=root,
         path=str(result.get("path") or path),
@@ -507,7 +507,7 @@ async def connector_fs_preview_read(
     )
     if not isinstance(result, dict):
         raise HTTPException(status_code=502, detail="invalid fs.prepareDownload response")
-    transfer = downloads.create(
+    transfer = await downloads.create(
         connector_id=connector_id,
         root=root,
         path=str(result.get("path") or path),
@@ -541,7 +541,7 @@ async def connector_fs_transfer_download(
     manager: ConnectorRpcManager = Depends(get_rpc),
     downloads: FsDownloadRelayManager = Depends(get_fs_downloads),
 ) -> StreamingResponse:
-    transfer = downloads.get(transfer_id, token)
+    transfer = await downloads.get(transfer_id, token)
     if previewAccessToken:
         preview = _fs_preview_access_payload(previewAccessToken)
         if (
