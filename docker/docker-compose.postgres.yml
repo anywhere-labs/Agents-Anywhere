@@ -16,6 +16,16 @@ services:
       timeout: 5s
       retries: 5
 
+  redis-next:
+    image: redis:8-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   migrate-next:
     build:
       context: ..
@@ -36,9 +46,12 @@ services:
     depends_on:
       migrate-next:
         condition: service_completed_successfully
+      redis-next:
+        condition: service_healthy
     environment:
       AGENT_SERVER_DB_BACKEND: postgres
       AGENT_SERVER_DB_URL: postgresql+asyncpg://agents_anywhere:${POSTGRES_PASSWORD:-agents_anywhere_dev_password}@postgres-next:5432/agents_anywhere
+      AGENT_SERVER_REDIS_URL: redis://redis-next:6379/0
       AGENT_SERVER_FILES_BACKEND: local
       AGENT_SERVER_FILES_LOCAL_ROOT: /data/agent-server.files
       AGENT_SERVER_SECRET: ${AGENT_SERVER_SECRET:-change-me-before-production}

@@ -61,6 +61,8 @@ curl http://127.0.0.1:8000/api/v2/health
 | `AGENT_SERVER_DB` | SQLite database path. Defaults to `agent-server.sqlite3`. |
 | `AGENT_SERVER_DB_URL` | Explicit SQLAlchemy URL. Takes precedence over `AGENT_SERVER_DB`. |
 | `AGENT_SERVER_DB_BACKEND` | Database backend selector. Use `postgres` with `AGENT_SERVER_DB_URL`. |
+| `AGENT_SERVER_REDIS_URL` | Optional Redis URL for cross-instance invalidations, single-use WebSocket tickets, and distributed runtime locks. |
+| `AGENT_SERVER_REDIS_PREFIX` | Redis key/channel prefix. Defaults to `agents-anywhere`. |
 | `AGENT_SERVER_FILES_BACKEND` | File storage backend. Use `local` or `s3`. Defaults to `local`. |
 | `AGENT_SERVER_FILES_LOCAL_ROOT` | Local attachment/file root. Defaults next to the database. |
 | `AGENT_SERVER_FILES_S3_BUCKET` | S3 bucket name when `AGENT_SERVER_FILES_BACKEND=s3`. |
@@ -76,6 +78,10 @@ curl http://127.0.0.1:8000/api/v2/health
 | `AGENT_SERVER_CORS_ORIGINS` | Comma-separated explicit CORS origins. |
 | `AGENT_SERVER_CORS_ORIGIN_REGEX` | CORS origin regex. Defaults to local `localhost` / `127.0.0.1` ports. |
 | `AGENT_SERVER_STATIC_DIR` | Built frontend directory. When set, `/` serves `index.html` and `/assets` serves static assets. |
+
+Redis is an ephemeral coordination layer, not a source of truth. Session events
+remain in the database; Redis Pub/Sub only tells instances to re-fetch them.
+The Compose Redis service disables both RDB snapshots and AOF persistence.
 
 ## Main API Areas
 

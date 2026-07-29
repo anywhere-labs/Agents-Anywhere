@@ -105,6 +105,8 @@ docker compose -f docker/docker-compose.postgres.yml up --build
 The compose file uses:
 
 - `postgres-next` service for PostgreSQL 17
+- `redis-next` service for non-persistent cross-instance coordination and Pub/Sub
+- `migrate-next` one-shot service that upgrades the database before server startup
 - `server-next` service for the FastAPI backend and statically exported Web UI
 - `agents-anywhere-pg-next` volume for PostgreSQL data
 - `agents-anywhere-files-next` volume mounted at `/data` for uploads / attachments
@@ -123,6 +125,10 @@ docker compose -f docker/docker-compose.postgres.yml up --build
 
 Use a non-default `AGENT_SERVER_SECRET` and database password outside local
 development. Put HTTPS in front of the Web service for production.
+
+Redis persistence is intentionally disabled in this deployment. Durable
+session state and events live in PostgreSQL; Redis only carries invalidations,
+short-lived WebSocket tickets, and distributed locks.
 
 The first startup on an empty database logs a bootstrap token in the
 `server-next` logs. Use it in the Web UI to create the first admin user.

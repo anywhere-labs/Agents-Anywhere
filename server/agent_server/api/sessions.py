@@ -580,7 +580,7 @@ async def session_ws(
     if not isinstance(ticket_value, str) or not ticket_value:
         await websocket.close(code=1008, reason="missing ticket")
         return
-    ticket = tickets.consume(ticket_value, session_id=session_id)
+    ticket = await tickets.consume(ticket_value, session_id=session_id)
     if ticket is None:
         await websocket.close(code=1008, reason="invalid ticket")
         return

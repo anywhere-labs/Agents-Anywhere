@@ -15,6 +15,7 @@ dependencies = [
     "jsonschema>=4.26.0",
     "loguru>=0.7.3",
     "python-multipart>=0.0.20",
+    "redis>=6.0.0",
     "sqlalchemy[asyncio]>=2.0.36",
     "uvicorn>=0.47.0",
     "websockets>=16.0",
@@ -23,6 +24,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "fakeredis>=2.30.0",
     "httpx>=0.28.1",
     "pytest>=9.0.3",
     "ruff>=0.15.13",

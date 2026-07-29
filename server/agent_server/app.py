@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import time
-import asyncio
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncIterator
 
 import uvicorn
 from fastapi import FastAPI
@@ -14,7 +14,6 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
-from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.api import (
     admin,
     admin_dashboard,
@@ -25,29 +24,30 @@ from agent_server.api import (
     connectors,
     oauth,
     pairing,
+    service,
     sessions,
     sessions_fs,
     sessions_terminal,
-    service,
 )
-from agent_server.core.setup_token import SetupToken
 from agent_server.core.api_namespace import API_V2_PREFIX
-from agent_server.services.shell_tasks import ShellTaskManager
-from agent_server.services.dashboard_events import publish_dashboard_changed
-from agent_server.services.device_runtimes import DeviceRuntimeService
-from agent_server.infra.fs_downloads import FsDownloadRelayManager
-from agent_server.infra.repositories.facade import Store
-from agent_server.infra.terminal_broker import TerminalBroker
-from agent_server.infra.terminal_stream_hub import TerminalStreamHub
+from agent_server.core.setup_token import SetupToken
 from agent_server.core.utc import utc_now
-from agent_server.infra.timeline_broker import TimelineBroker
-from agent_server.infra.ws_tickets import ClientWsTicketManager
+from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.infra.db.migrations import (
     database_schema_version,
     require_current_database,
     upgrade_database,
 )
-
+from agent_server.infra.fs_downloads import FsDownloadRelayManager
+from agent_server.infra.redis_coordinator import RedisCoordinator
+from agent_server.infra.repositories.facade import Store
+from agent_server.infra.terminal_broker import TerminalBroker
+from agent_server.infra.terminal_stream_hub import TerminalStreamHub
+from agent_server.infra.timeline_broker import TimelineBroker
+from agent_server.infra.ws_tickets import ClientWsTicketManager
+from agent_server.services.dashboard_events import publish_dashboard_changed
+from agent_server.services.device_runtimes import DeviceRuntimeService
+from agent_server.services.shell_tasks import ShellTaskManager
 
 CONNECTOR_PRESENCE_SWEEP_SECONDS = 5
 
@@ -57,7 +57,9 @@ async def _connector_presence_watchdog(app: FastAPI) -> None:
         await asyncio.sleep(CONNECTOR_PRESENCE_SWEEP_SECONDS)
         stale_connections = app.state.rpc.expire_stale()
         for connection in stale_connections:
-            await app.state.store.set_connector_status(connection.connector_id, "offline")
+            await app.state.store.set_connector_status(
+                connection.connector_id, "offline"
+            )
             await publish_dashboard_changed(
                 app.state.store,
                 app.state.timeline_broker,
@@ -70,11 +72,16 @@ def create_app(
     db_path: str | Path | None = None,
     *,
     migrate_database: bool | None = None,
+    redis_url: str | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await require_current_database(app.state.store.engine)
-        app.state.database_schema_version = await database_schema_version(app.state.store.engine)
+        app.state.database_schema_version = await database_schema_version(
+            app.state.store.engine
+        )
+        await app.state.redis.start()
+        await app.state.timeline_broker.start()
         await app.state.store.set_all_connectors_offline()
         presence_task = asyncio.create_task(_connector_presence_watchdog(app))
         # If the user table is empty, eagerly generate + log the bootstrap
@@ -90,6 +97,8 @@ def create_app(
                 await presence_task
             except asyncio.CancelledError:
                 pass
+            await app.state.timeline_broker.close()
+            await app.state.redis.close()
             await app.state.store.set_all_connectors_offline()
             await app.state.store.close()
 
@@ -106,23 +115,33 @@ def create_app(
         allow_headers=["*"],
     )
     resolved_db_path = db_path or os.environ.get("AGENT_SERVER_DB")
-    should_migrate = db_path is not None if migrate_database is None else migrate_database
+    should_migrate = (
+        db_path is not None if migrate_database is None else migrate_database
+    )
     if should_migrate:
         upgrade_database(sqlite_path=resolved_db_path)
     app.state.store = Store(resolved_db_path)
     app.state.database_schema_version = "unknown"
     app.state.rpc = ConnectorRpcManager()
+    resolved_redis_url = redis_url
+    if resolved_redis_url is None and db_path is None:
+        resolved_redis_url = os.environ.get("AGENT_SERVER_REDIS_URL")
+    app.state.redis = RedisCoordinator(
+        resolved_redis_url,
+        prefix=os.environ.get("AGENT_SERVER_REDIS_PREFIX", "agents-anywhere"),
+    )
     app.state.fs_downloads = FsDownloadRelayManager()
     app.state.shell_tasks = ShellTaskManager()
     app.state.terminal_broker = TerminalBroker()
     app.state.terminal_stream_hub = TerminalStreamHub()
-    app.state.timeline_broker = TimelineBroker()
+    app.state.timeline_broker = TimelineBroker(app.state.redis)
     app.state.device_runtime_service = DeviceRuntimeService(
         app.state.store,
         app.state.rpc,
         app.state.timeline_broker,
+        app.state.redis,
     )
-    app.state.ws_tickets = ClientWsTicketManager()
+    app.state.ws_tickets = ClientWsTicketManager(app.state.redis)
     app.state.setup_token = SetupToken()
     app.state.started_at_iso = utc_now()
     app.state.started_at_monotonic = time.monotonic()
@@ -154,7 +173,11 @@ def create_app(
         for mount_name in ("_next", "assets", "brand"):
             mount_path = static_path / mount_name
             if mount_path.is_dir():
-                app.mount(f"/{mount_name}", StaticFiles(directory=mount_path), name=f"web-{mount_name}")
+                app.mount(
+                    f"/{mount_name}",
+                    StaticFiles(directory=mount_path),
+                    name=f"web-{mount_name}",
+                )
 
         def _static_index(path: str = "") -> FileResponse:
             relative = path.strip("/")
@@ -169,7 +192,10 @@ def create_app(
                 if html_candidate.is_file():
                     return FileResponse(html_candidate)
                 default_locale_candidate = static_path / default_locale / relative
-                if default_locale_candidate.is_dir() and (default_locale_candidate / "index.html").is_file():
+                if (
+                    default_locale_candidate.is_dir()
+                    and (default_locale_candidate / "index.html").is_file()
+                ):
                     return FileResponse(default_locale_candidate / "index.html")
 
             default_index = static_path / default_locale / "index.html"
@@ -186,6 +212,7 @@ def create_app(
             return _static_index(path)
 
     return app
+
 
 def main() -> None:
     uvicorn.run(
