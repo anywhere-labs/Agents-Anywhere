@@ -1,4 +1,4 @@
-from agent_server.infra.db.engine import build_engine, init_db
+from agent_server.infra.db.engine import build_engine
 from agent_server.infra.db.schema import (
     approvals,
     connector_protocol_capabilities,
@@ -37,7 +37,6 @@ __all__ = [
     "dashboard_user_daily_facts",
     "device_runtimes",
     "fs_preview_tokens",
-    "init_db",
     "instance_settings",
     "metadata",
     "mobile_login_tokens",

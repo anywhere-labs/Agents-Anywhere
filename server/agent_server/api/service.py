@@ -39,6 +39,7 @@ async def service_info(
         version=version,
         database=database_label,
         databasePath=database_path,
+        databaseSchemaVersion=app.state.database_schema_version,
         startedAt=started_at_iso,
         uptimeSeconds=uptime,
         serverTime=utc_now(),

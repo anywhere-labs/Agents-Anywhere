@@ -40,13 +40,6 @@ class Store(
         resolved_backend, engine = build_engine(backend=backend, url=db_url, sqlite_path=path)
         self.backend: str = resolved_backend
         self._engine: AsyncEngine = engine
-        # Create tables synchronously up front so callers can start using the
-        # store immediately (tests construct Store outside of an event loop and
-        # do not always trigger the FastAPI lifespan). render_as_string keeps
-        # the URL password intact — str(engine.url) would mask it.
-        url_str = engine.url.render_as_string(hide_password=False)
-        init_db_sync(url_str)
-
         self.timeline: SqlTimelineStore = SqlTimelineStore(engine, backend=resolved_backend)
         self.files: FileStorage = file_storage or build_file_storage(
             default_local_root=_default_files_root(engine, path)
@@ -62,11 +55,6 @@ class Store(
     @property
     def engine(self) -> AsyncEngine:
         return self._engine
-
-
-    async def init_schema(self) -> None:
-        await init_db(self._engine)
-
 
     async def close(self) -> None:
         await self._engine.dispose()

@@ -35,7 +35,6 @@ from agent_server.infra.db import (
     dashboard_user_daily_facts as dashboard_user_daily_facts_t,
     device_runtimes as device_runtimes_t,
     fs_preview_tokens as fs_preview_tokens_t,
-    init_db,
     mobile_login_tokens as mobile_login_tokens_t,
     notices as notices_t,
     oauth_accounts as oauth_accounts_t,
@@ -47,10 +46,7 @@ from agent_server.infra.db import (
     timeline_items as timeline_items_t,
     users as users_t,
 )
-from agent_server.infra.db.engine import (
-    SQLITE_BACKEND,
-    init_db_sync,
-)
+from agent_server.infra.db.engine import SQLITE_BACKEND
 from agent_server.infra.files import FileStorage, build_file_storage
 from agent_server.core.models import (
     Approval,

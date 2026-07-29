@@ -157,6 +157,7 @@ class ServiceInfoResponse(BaseModel):
     version: str
     database: str
     databasePath: str | None = None
+    databaseSchemaVersion: str
     startedAt: str
     uptimeSeconds: int
     serverTime: str

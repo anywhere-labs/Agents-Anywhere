@@ -30,7 +30,19 @@ Start the backend from this directory:
 
 ```bash
 AGENT_SERVER_DB=agent-server.sqlite3 \
+  uv run python -m agent_server.infra.db.migrations upgrade
+
+AGENT_SERVER_DB=agent-server.sqlite3 \
   uv run uvicorn agent_server.app:create_app --factory --host 127.0.0.1 --port 8000
+```
+
+The Server requires the database to be at its exact Alembic schema revision and
+does not mutate a production database during startup. `upgrade` fingerprints an
+unversioned v1 database, preserves its legacy tables, and applies every revision
+through the current v2 schema. Inspect the installed revision with:
+
+```bash
+uv run python -m agent_server.infra.db.migrations current --verbose
 ```
 
 The first startup on an empty database logs a bootstrap token. Use that token in

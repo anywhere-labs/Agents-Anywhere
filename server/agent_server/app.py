@@ -42,6 +42,11 @@ from agent_server.infra.terminal_stream_hub import TerminalStreamHub
 from agent_server.core.utc import utc_now
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.infra.ws_tickets import ClientWsTicketManager
+from agent_server.infra.db.migrations import (
+    database_schema_version,
+    require_current_database,
+    upgrade_database,
+)
 
 
 CONNECTOR_PRESENCE_SWEEP_SECONDS = 5
@@ -61,10 +66,15 @@ async def _connector_presence_watchdog(app: FastAPI) -> None:
             )
 
 
-def create_app(db_path: str | Path | None = None) -> FastAPI:
+def create_app(
+    db_path: str | Path | None = None,
+    *,
+    migrate_database: bool | None = None,
+) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        await app.state.store.init_schema()
+        await require_current_database(app.state.store.engine)
+        app.state.database_schema_version = await database_schema_version(app.state.store.engine)
         await app.state.store.set_all_connectors_offline()
         presence_task = asyncio.create_task(_connector_presence_watchdog(app))
         # If the user table is empty, eagerly generate + log the bootstrap
@@ -95,7 +105,12 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    app.state.store = Store(db_path or os.environ.get("AGENT_SERVER_DB"))
+    resolved_db_path = db_path or os.environ.get("AGENT_SERVER_DB")
+    should_migrate = db_path is not None if migrate_database is None else migrate_database
+    if should_migrate:
+        upgrade_database(sqlite_path=resolved_db_path)
+    app.state.store = Store(resolved_db_path)
+    app.state.database_schema_version = "unknown"
     app.state.rpc = ConnectorRpcManager()
     app.state.fs_downloads = FsDownloadRelayManager()
     app.state.shell_tasks = ShellTaskManager()

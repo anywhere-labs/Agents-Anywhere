@@ -3,11 +3,9 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from sqlalchemy import create_engine, event, text
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
-
-from agent_server.infra.db.schema import metadata
 
 SQLITE_BACKEND = "sqlite"
 POSTGRES_BACKEND = "postgres"
@@ -70,118 +68,3 @@ def _enable_sqlite_fk(engine: AsyncEngine) -> None:
         cursor = dbapi_conn.cursor()
         cursor.execute("PRAGMA foreign_keys = ON")
         cursor.close()
-
-
-async def init_db(engine: AsyncEngine) -> None:
-    async with engine.begin() as conn:
-        await conn.run_sync(metadata.create_all)
-        await _ensure_compat_schema_async(conn)
-
-
-def init_db_sync(async_url: str) -> None:
-    """Run metadata.create_all from a sync context.
-
-    Useful at startup when there is no event loop yet (e.g. during app
-    construction). Idempotent — uses CREATE TABLE IF NOT EXISTS semantics.
-
-    For sqlite we use a transient sync engine (no extra driver required).
-    For other backends we spin up a transient async engine on a fresh event
-    loop so users don't need to install a separate sync driver (e.g. psycopg2)
-    just for schema setup.
-    """
-    if async_url.startswith("sqlite+aiosqlite:") or async_url.startswith("sqlite:"):
-        sync_url = (
-            "sqlite:" + async_url[len("sqlite+aiosqlite:"):]
-            if async_url.startswith("sqlite+aiosqlite:")
-            else async_url
-        )
-        sync_engine = create_engine(sync_url, future=True)
-
-        @event.listens_for(sync_engine, "connect")
-        def _on_connect(dbapi_conn, _record):  # noqa: ANN001
-            cursor = dbapi_conn.cursor()
-            cursor.execute("PRAGMA foreign_keys = ON")
-            cursor.close()
-
-        try:
-            metadata.create_all(sync_engine)
-            with sync_engine.begin() as conn:
-                _ensure_compat_schema_sync(conn)
-        finally:
-            sync_engine.dispose()
-        return
-
-    import asyncio
-    import threading
-
-    async def _run() -> None:
-        engine = create_async_engine(async_url, future=True)
-        try:
-            await init_db(engine)
-        finally:
-            await engine.dispose()
-
-    # Run on a worker thread so this works whether the caller is in a running
-    # event loop (e.g. inside an async test) or not. asyncio.run() refuses to
-    # nest into an existing loop, so we spin up a private one in a thread.
-    captured: list[BaseException] = []
-
-    def _runner() -> None:
-        try:
-            asyncio.run(_run())
-        except BaseException as exc:  # noqa: BLE001 — propagate any failure
-            captured.append(exc)
-
-    thread = threading.Thread(target=_runner, name="init-db-sync")
-    thread.start()
-    thread.join()
-    if captured:
-        raise captured[0]
-
-
-async def _ensure_compat_schema_async(conn) -> None:  # noqa: ANN001 - SQLAlchemy connection
-    if not await _column_exists_async(conn, "sessions", "origin"):
-        await conn.execute(text("ALTER TABLE sessions ADD COLUMN origin TEXT NOT NULL DEFAULT 'connector_import'"))
-    if not await _column_exists_async(conn, "sessions", "model_selection_id"):
-        await conn.execute(text("ALTER TABLE sessions ADD COLUMN model_selection_id TEXT"))
-    if not await _column_exists_async(conn, "sessions", "permission_selection_id"):
-        await conn.execute(text("ALTER TABLE sessions ADD COLUMN permission_selection_id TEXT"))
-
-
-async def _column_exists_async(conn, table: str, column: str) -> bool:  # noqa: ANN001 - SQLAlchemy connection
-    if conn.dialect.name == SQLITE_BACKEND:
-        rows = (await conn.execute(text(f"PRAGMA table_info({table})"))).all()
-        return any(row[1] == column for row in rows)
-    rows = (
-        await conn.execute(
-            text(
-                "SELECT column_name FROM information_schema.columns "
-                "WHERE table_name = :table AND column_name = :column"
-            ),
-            {"table": table, "column": column},
-        )
-    ).all()
-    return bool(rows)
-
-
-def _ensure_compat_schema_sync(conn) -> None:  # noqa: ANN001 - SQLAlchemy connection
-    if not _column_exists_sync(conn, "sessions", "origin"):
-        conn.execute(text("ALTER TABLE sessions ADD COLUMN origin TEXT NOT NULL DEFAULT 'connector_import'"))
-    if not _column_exists_sync(conn, "sessions", "model_selection_id"):
-        conn.execute(text("ALTER TABLE sessions ADD COLUMN model_selection_id TEXT"))
-    if not _column_exists_sync(conn, "sessions", "permission_selection_id"):
-        conn.execute(text("ALTER TABLE sessions ADD COLUMN permission_selection_id TEXT"))
-
-
-def _column_exists_sync(conn, table: str, column: str) -> bool:  # noqa: ANN001 - SQLAlchemy connection
-    if conn.dialect.name == SQLITE_BACKEND:
-        rows = conn.execute(text(f"PRAGMA table_info({table})")).all()
-        return any(row[1] == column for row in rows)
-    rows = conn.execute(
-        text(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_name = :table AND column_name = :column"
-        ),
-        {"table": table, "column": column},
-    ).all()
-    return bool(rows)

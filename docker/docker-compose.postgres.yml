@@ -16,16 +16,26 @@ services:
       timeout: 5s
       retries: 5
 
-  server-next:
+  migrate-next:
     build:
       context: ..
       dockerfile: docker/Dockerfile
       target: server
     image: agents-anywhere-server:postgres
-    restart: unless-stopped
     depends_on:
       postgres-next:
         condition: service_healthy
+    environment:
+      AGENT_SERVER_DB_BACKEND: postgres
+      AGENT_SERVER_DB_URL: postgresql+asyncpg://agents_anywhere:${POSTGRES_PASSWORD:-agents_anywhere_dev_password}@postgres-next:5432/agents_anywhere
+    command: ["sh", "-c", "cd /app/server && uv run --no-sync python -m agent_server.infra.db.migrations upgrade"]
+
+  server-next:
+    image: agents-anywhere-server:postgres
+    restart: unless-stopped
+    depends_on:
+      migrate-next:
+        condition: service_completed_successfully
     environment:
       AGENT_SERVER_DB_BACKEND: postgres
       AGENT_SERVER_DB_URL: postgresql+asyncpg://agents_anywhere:${POSTGRES_PASSWORD:-agents_anywhere_dev_password}@postgres-next:5432/agents_anywhere
