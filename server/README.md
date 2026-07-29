@@ -39,7 +39,7 @@ AGENT_SERVER_DB=agent-server.sqlite3 \
 The Server requires the database to be at its exact Alembic schema revision and
 does not mutate a production database during startup. `upgrade` fingerprints an
 unversioned v1 database, preserves its legacy tables, and applies every revision
-through the current v2 schema. Inspect the installed revision with:
+through the current schema (`v2_1`). Inspect the installed revision with:
 
 ```bash
 uv run python -m agent_server.infra.db.migrations current --verbose
@@ -61,8 +61,9 @@ curl http://127.0.0.1:8000/api/v2/health
 | `AGENT_SERVER_DB` | SQLite database path. Defaults to `agent-server.sqlite3`. |
 | `AGENT_SERVER_DB_URL` | Explicit SQLAlchemy URL. Takes precedence over `AGENT_SERVER_DB`. |
 | `AGENT_SERVER_DB_BACKEND` | Database backend selector. Use `postgres` with `AGENT_SERVER_DB_URL`. |
-| `AGENT_SERVER_REDIS_URL` | Optional Redis URL for cross-instance invalidations, single-use WebSocket tickets, and distributed runtime locks. |
+| `AGENT_SERVER_REDIS_URL` | Optional Redis URL for Connector presence/RPC routing, cross-instance invalidations, single-use WebSocket tickets, and distributed runtime locks. |
 | `AGENT_SERVER_REDIS_PREFIX` | Redis key/channel prefix. Defaults to `agents-anywhere`. |
+| `AGENT_SERVER_INSTANCE_ID` | Optional unique Server instance ID used for Connector RPC routing. A random ID is generated when unset. |
 | `AGENT_SERVER_FILES_BACKEND` | File storage backend. Use `local` or `s3`. Defaults to `local`. |
 | `AGENT_SERVER_FILES_LOCAL_ROOT` | Local attachment/file root. Defaults next to the database. |
 | `AGENT_SERVER_FILES_S3_BUCKET` | S3 bucket name when `AGENT_SERVER_FILES_BACKEND=s3`. |

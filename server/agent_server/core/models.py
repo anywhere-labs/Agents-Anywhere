@@ -158,6 +158,8 @@ class ServiceInfoResponse(BaseModel):
     database: str
     databasePath: str | None = None
     databaseSchemaVersion: str
+    coordination: Literal["memory", "redis"]
+    instanceId: str
     startedAt: str
     uptimeSeconds: int
     serverTime: str

@@ -103,7 +103,7 @@ class DeviceRuntimeService:
         self, connector_id: str, *, user_id: str
     ) -> list[DeviceRuntimeView]:
         await self.list_runtimes(connector_id, user_id=user_id)
-        if not self._manager.is_online(connector_id):
+        if not await self._manager.is_online(connector_id):
             raise DeviceRuntimeOfflineError("connector is offline")
         try:
             result = await self._manager.request(
@@ -136,7 +136,7 @@ class DeviceRuntimeService:
             runtime = await self._get_owned(connector_id, runtime_id, user_id=user_id)
             schema = self._schema(runtime)
             self._validate(config, schema)
-            if not self._manager.is_online(connector_id):
+            if not await self._manager.is_online(connector_id):
                 raise DeviceRuntimeOfflineError("connector is offline")
             await self._request_validate(connector_id, runtime_id, config)
             runtime = DeviceRuntimeView.model_validate(
@@ -168,7 +168,7 @@ class DeviceRuntimeService:
                     raise DeviceRuntimeConflictError(
                         "runtime is not currently reported by the connector"
                     )
-                if not self._manager.is_online(connector_id):
+                if not await self._manager.is_online(connector_id):
                     raise DeviceRuntimeOfflineError("connector is offline")
                 self._validate(runtime.config, self._schema(runtime))
                 await self._store.set_device_runtime_active(
@@ -198,7 +198,7 @@ class DeviceRuntimeService:
                 "stopping",
                 "unknown",
             }:
-                if not self._manager.is_online(connector_id):
+                if not await self._manager.is_online(connector_id):
                     raise DeviceRuntimeOfflineError(
                         "connector must be online before deleting a running runtime"
                     )
@@ -327,7 +327,7 @@ class DeviceRuntimeService:
                     "stopped",
                 )
             )
-        if not self._manager.is_online(runtime.connectorId):
+        if not await self._manager.is_online(runtime.connectorId):
             if not allow_offline:
                 raise DeviceRuntimeOfflineError("connector is offline")
             return DeviceRuntimeView.model_validate(

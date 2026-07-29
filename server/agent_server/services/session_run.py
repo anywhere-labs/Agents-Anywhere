@@ -73,7 +73,7 @@ class SessionRunService:
             )
             return {"session": session, "connectorResult": connector_result}
 
-        if not self._manager.is_online(payload.connectorId):
+        if not await self._manager.is_online(payload.connectorId):
             raise SessionRunConflictError("connector is offline")
         connector_params = {
             "runtime": payload.runtime,
@@ -152,7 +152,7 @@ class SessionRunService:
 
         if not session.takeover:
             raise SessionRunConflictError("session is read-only until takeover is enabled")
-        if not self._manager.is_online(session.connectorId):
+        if not await self._manager.is_online(session.connectorId):
             raise SessionRunConflictError("connector is offline")
         if session.status != "idle":
             raise SessionRunConflictError(f"session is {session.status}")

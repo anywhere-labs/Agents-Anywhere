@@ -21,7 +21,7 @@ def _sqlite_url(path) -> str:
     return f"sqlite+aiosqlite:///{path}"
 
 
-def test_empty_database_upgrades_to_v2_0(tmp_path) -> None:
+def test_empty_database_upgrades_to_current_schema(tmp_path) -> None:
     path = tmp_path / "empty.sqlite3"
 
     upgrade_database(db_url=_sqlite_url(path))
@@ -63,6 +63,12 @@ def test_unversioned_v1_database_migrates_data_without_dropping_legacy_tables(
             "model_selection_id",
             "permission_selection_id",
         }.issubset(session_columns)
+        connector_columns = {
+            column["name"] for column in inspector.get_columns("connectors")
+        }
+        assert {"presence_instance_id", "presence_connection_id"}.issubset(
+            connector_columns
+        )
         with engine.connect() as connection:
             session_status = connection.execute(
                 text("SELECT status FROM sessions WHERE id = 'sess_legacy'")
@@ -128,6 +134,32 @@ def test_unversioned_v2_database_is_stamped_without_rebuilding(tmp_path) -> None
         engine.dispose()
 
 
+def test_v2_0_database_upgrades_through_v2_1(tmp_path) -> None:
+    path = tmp_path / "versioned-v2-0.sqlite3"
+    upgrade_database(db_url=_sqlite_url(path), revision="v2_0")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        columns = {column["name"] for column in inspect(engine).get_columns("connectors")}
+        assert "presence_connection_id" not in columns
+    finally:
+        engine.dispose()
+
+    upgrade_database(db_url=_sqlite_url(path))
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        columns = {column["name"] for column in inspect(engine).get_columns("connectors")}
+        assert {"presence_instance_id", "presence_connection_id"}.issubset(columns)
+        with engine.connect() as connection:
+            assert (
+                connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+                == CURRENT_SCHEMA_REVISION
+            )
+    finally:
+        engine.dispose()
+
+
 def test_unknown_unversioned_database_is_rejected(tmp_path) -> None:
     path = tmp_path / "unknown.sqlite3"
     engine = create_engine(f"sqlite:///{path}")
@@ -158,6 +190,12 @@ def _create_legacy_v1_database(path) -> None:
         connection.execute(text("ALTER TABLE sessions DROP COLUMN model_selection_id"))
         connection.execute(
             text("ALTER TABLE sessions DROP COLUMN permission_selection_id")
+        )
+        connection.execute(
+            text("ALTER TABLE connectors DROP COLUMN presence_instance_id")
+        )
+        connection.execute(
+            text("ALTER TABLE connectors DROP COLUMN presence_connection_id")
         )
         connection.execute(
             text(

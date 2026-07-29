@@ -23,6 +23,8 @@ connectors = Table(
     Column("name", Text, nullable=False),
     Column("device_os", Text),
     Column("status", Text, nullable=False),
+    Column("presence_instance_id", Text),
+    Column("presence_connection_id", Text),
     Column("last_seen_at", Text),
     Column("token_hash", Text, nullable=False),
     Column("token_prefix", Text, nullable=False),

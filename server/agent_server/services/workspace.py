@@ -25,7 +25,7 @@ async def local_rpc_session(
         session = await db.get_session(session_id, user_id=user_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
-    if not manager.is_online(session.connectorId):
+    if not await manager.is_online(session.connectorId):
         raise HTTPException(status_code=409, detail="connector is offline")
     if not session.cwd:
         raise HTTPException(status_code=409, detail="session cwd is required")

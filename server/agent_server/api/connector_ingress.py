@@ -267,16 +267,25 @@ async def connector_ws(
         return
 
     try:
-        connection = manager.register(connector_id, websocket)
+        connection = await manager.register(connector_id, websocket)
     except DuplicateConnectorConnectionError:
         await websocket.close(code=4409, reason="connector id already connected")
         logger.warning("rejected duplicate connector websocket: {}", connector_id)
         return
-    await db.set_connector_status(
-        connector_id,
-        "online",
-        device_os=_connector_device_os(websocket.headers.get("x-device-os")),
-    )
+    try:
+        marked_online = await db.set_connector_online(
+            connector_id,
+            instance_id=manager.instance_id,
+            connection_id=connection.connection_id,
+            device_os=_connector_device_os(websocket.headers.get("x-device-os")),
+        )
+    except Exception:  # noqa: BLE001 - release the lease before propagating startup failure
+        await manager.unregister(connector_id, connection)
+        raise
+    if not marked_online:
+        await manager.unregister(connector_id, connection)
+        await websocket.close(code=1008, reason="connector was revoked")
+        return
     await db.record_connector_activity(connector_id)
     await publish_dashboard_changed(
         db,
@@ -300,7 +309,7 @@ async def connector_ws(
     try:
         while True:
             message = await websocket.receive_json()
-            if not manager.touch(connector_id, connection):
+            if not await manager.touch(connector_id, connection):
                 break
             await _handle_connector_message(connector_id, message, manager, ingest_service)
     except WebSocketDisconnect:
@@ -314,8 +323,12 @@ async def connector_ws(
                 connector_id,
                 len(removed_terminals),
             )
-        if manager.unregister(connector_id, connection):
-            await db.set_connector_status(connector_id, "offline")
+        await manager.unregister(connector_id, connection)
+        changed = await db.set_connector_offline_if_connection(
+            connector_id,
+            connection_id=connection.connection_id,
+        )
+        if changed:
             await publish_dashboard_changed(
                 db,
                 timeline_broker,

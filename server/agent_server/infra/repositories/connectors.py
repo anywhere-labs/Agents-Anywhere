@@ -437,7 +437,13 @@ class ConnectorRepositoryMixin:
         )
         if user_id is not None:
             query = query.where(connectors_t.c.user_id == user_id)
-        query = query.values(revoked=1, status="offline", updated_at=now)
+        query = query.values(
+            revoked=1,
+            status="offline",
+            presence_instance_id=None,
+            presence_connection_id=None,
+            updated_at=now,
+        )
         async with self._engine.begin() as conn:
             result = await conn.execute(query)
             if result.rowcount == 0:
@@ -465,6 +471,8 @@ class ConnectorRepositoryMixin:
                     token_hash=_hash_token(token),
                     token_prefix=prefix,
                     status="offline",
+                    presence_instance_id=None,
+                    presence_connection_id=None,
                     updated_at=now,
                 )
             )
@@ -478,6 +486,9 @@ class ConnectorRepositoryMixin:
         values: dict[str, Any] = {"status": status, "updated_at": now}
         if status == "online":
             values["last_seen_at"] = now
+        else:
+            values["presence_instance_id"] = None
+            values["presence_connection_id"] = None
         if device_os is not None:
             values["device_os"] = device_os
         async with self._engine.begin() as conn:
@@ -486,13 +497,69 @@ class ConnectorRepositoryMixin:
             )
 
 
+    async def set_connector_online(
+        self,
+        connector_id: str,
+        *,
+        instance_id: str,
+        connection_id: str,
+        device_os: str | None = None,
+    ) -> bool:
+        now = utc_now()
+        values: dict[str, Any] = {
+            "status": "online",
+            "presence_instance_id": instance_id,
+            "presence_connection_id": connection_id,
+            "last_seen_at": now,
+            "updated_at": now,
+        }
+        if device_os is not None:
+            values["device_os"] = device_os
+        async with self._engine.begin() as conn:
+            result = await conn.execute(
+                update(connectors_t)
+                .where(connectors_t.c.id == connector_id, connectors_t.c.revoked == 0)
+                .values(**values)
+            )
+        return result.rowcount > 0
+
+
+    async def set_connector_offline_if_connection(
+        self,
+        connector_id: str,
+        *,
+        connection_id: str,
+    ) -> bool:
+        now = utc_now()
+        async with self._engine.begin() as conn:
+            result = await conn.execute(
+                update(connectors_t)
+                .where(
+                    connectors_t.c.id == connector_id,
+                    connectors_t.c.presence_connection_id == connection_id,
+                )
+                .values(
+                    status="offline",
+                    presence_instance_id=None,
+                    presence_connection_id=None,
+                    updated_at=now,
+                )
+            )
+        return result.rowcount > 0
+
+
     async def set_all_connectors_offline(self) -> None:
         now = utc_now()
         async with self._engine.begin() as conn:
             await conn.execute(
                 update(connectors_t)
                 .where(connectors_t.c.revoked == 0, connectors_t.c.status != "offline")
-                .values(status="offline", updated_at=now)
+                .values(
+                    status="offline",
+                    presence_instance_id=None,
+                    presence_connection_id=None,
+                    updated_at=now,
+                )
             )
 
 

@@ -44,7 +44,10 @@ from agent_server.core.protocol import (
 )
 from agent_server.services.session_run import SessionRunError, SessionRunService
 from agent_server.services.approvals import ApprovalService, ApprovalServiceError
-from agent_server.services.connector_presence import with_effective_session_connector_status
+from agent_server.services.connector_presence import (
+    with_effective_session_connector_status,
+    with_effective_session_connector_statuses,
+)
 from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.effective_capabilities import derive_session_effective_capabilities
 from agent_server.infra.repositories.facade import Store
@@ -244,7 +247,7 @@ async def create_session(
     if session is not None:
         result = {
             **result,
-            "session": with_effective_session_connector_status(manager, session),
+            "session": await with_effective_session_connector_status(manager, session),
         }
         await publish_dashboard_changed(
             db,
@@ -265,7 +268,7 @@ async def list_sessions(
 ) -> dict[str, Any]:
     sessions = await db.list_sessions(user_id=user_id)
     return {
-        "sessions": [with_effective_session_connector_status(manager, session) for session in sessions],
+        "sessions": await with_effective_session_connector_statuses(manager, sessions),
         "serverTime": utc_now(),
     }
 
@@ -303,7 +306,7 @@ async def patch_session(
         reason="session.updated",
     )
     return SessionResponse(
-        session=with_effective_session_connector_status(manager, session),
+        session=await with_effective_session_connector_status(manager, session),
         serverTime=utc_now(),
     )
 
@@ -329,7 +332,7 @@ async def bulk_archive_sessions(
             reason="sessions.archived",
         )
     return BulkArchiveResponse(
-        sessions=[with_effective_session_connector_status(manager, session) for session in sessions],
+        sessions=await with_effective_session_connector_statuses(manager, sessions),
         notFound=not_found,
         serverTime=utc_now(),
     )
@@ -354,7 +357,7 @@ async def bulk_mark_sessions_read(
             reason="sessions.read",
         )
     return BulkArchiveResponse(
-        sessions=[with_effective_session_connector_status(manager, session) for session in sessions],
+        sessions=await with_effective_session_connector_statuses(manager, sessions),
         notFound=not_found,
         serverTime=utc_now(),
     )
@@ -381,7 +384,7 @@ async def mark_session_read(
         reason="session.read",
     )
     return SessionResponse(
-        session=with_effective_session_connector_status(manager, session),
+        session=await with_effective_session_connector_status(manager, session),
         serverTime=utc_now(),
     )
 
@@ -418,7 +421,7 @@ async def session_state(
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
     return SessionStateResponse(
-        session=with_effective_session_connector_status(manager, session),
+        session=await with_effective_session_connector_status(manager, session),
         items=items,
         approvals=approvals,
         nextSeq=next_seq,
@@ -437,7 +440,7 @@ async def session_snapshot(
 ) -> ProtocolSessionSnapshotResponse:
     try:
         session = await db.get_session(session_id, user_id=user_id)
-        session = with_effective_session_connector_status(manager, session)
+        session = await with_effective_session_connector_status(manager, session)
         items, has_more = await db.list_timeline_latest(session_id=session_id, limit=limit)
         approvals = await db.list_pending_approvals(session_id)
         notices = await db.list_open_notices(session_id)
@@ -626,7 +629,9 @@ async def enable_takeover(
     try:
         await db.get_session(session_id, user_id=user_id)
         session = await db.set_takeover(session_id, True)
-        return TakeoverResponse(session=with_effective_session_connector_status(manager, session))
+        return TakeoverResponse(
+            session=await with_effective_session_connector_status(manager, session)
+        )
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
 
@@ -641,7 +646,9 @@ async def disable_takeover(
     try:
         await db.get_session(session_id, user_id=user_id)
         session = await db.set_takeover(session_id, False)
-        return TakeoverResponse(session=with_effective_session_connector_status(manager, session))
+        return TakeoverResponse(
+            session=await with_effective_session_connector_status(manager, session)
+        )
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
 
@@ -757,7 +764,7 @@ async def sync_session(
         session = await db.get_session(session_id, user_id=user_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
-    if not manager.is_online(session.connectorId):
+    if not await manager.is_online(session.connectorId):
         raise HTTPException(status_code=409, detail="connector is offline")
     if not session.externalSessionId:
         raise HTTPException(status_code=409, detail="session has no external runtime id")

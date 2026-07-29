@@ -40,6 +40,8 @@ async def service_info(
         database=database_label,
         databasePath=database_path,
         databaseSchemaVersion=app.state.database_schema_version,
+        coordination="redis" if app.state.redis.distributed else "memory",
+        instanceId=app.state.rpc.instance_id,
         startedAt=started_at_iso,
         uptimeSeconds=uptime,
         serverTime=utc_now(),

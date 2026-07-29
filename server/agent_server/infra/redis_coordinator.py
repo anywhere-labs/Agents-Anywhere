@@ -55,6 +55,25 @@ class RedisCoordinator:
     def channel(self, *parts: str) -> str:
         return self.key("channel", *parts)
 
+    async def claim(self, key: str, value: str, *, ttl_seconds: float) -> bool:
+        if self._client is None:
+            raise RuntimeError("Redis is not configured")
+        ttl_ms = max(1, math.ceil(ttl_seconds * 1000))
+        return bool(await self._client.set(key, value, nx=True, px=ttl_ms))
+
+    async def refresh_if_value(
+        self,
+        key: str,
+        value: str,
+        *,
+        ttl_seconds: float,
+    ) -> bool:
+        ttl_ms = max(1, math.ceil(ttl_seconds * 1000))
+        return await self._compare_and_apply(key, value, expire_ms=ttl_ms)
+
+    async def delete_if_value(self, key: str, value: str) -> bool:
+        return await self._compare_and_apply(key, value, delete=True)
+
     @asynccontextmanager
     async def lock(
         self,
@@ -82,18 +101,32 @@ class RedisCoordinator:
             await self._release_lock(lock_key, token)
 
     async def _release_lock(self, lock_key: str, token: str) -> None:
+        if not await self.delete_if_value(lock_key, token):
+            raise RuntimeError(f"distributed lock is no longer owned: {lock_key}")
+
+    async def _compare_and_apply(
+        self,
+        key: str,
+        expected_value: str,
+        *,
+        expire_ms: int | None = None,
+        delete: bool = False,
+    ) -> bool:
         while True:
             async with self.client.pipeline(transaction=True) as pipeline:
                 try:
-                    await pipeline.watch(lock_key)
-                    if await pipeline.get(lock_key) != token:
-                        raise RuntimeError(
-                            f"distributed lock is no longer owned: {lock_key}"
-                        )
+                    await pipeline.watch(key)
+                    if await pipeline.get(key) != expected_value:
+                        return False
                     pipeline.multi()
-                    pipeline.delete(lock_key)
+                    if delete:
+                        pipeline.delete(key)
+                    elif expire_ms is not None:
+                        pipeline.pexpire(key, expire_ms)
+                    else:
+                        raise ValueError("compare operation requires an action")
                     await pipeline.execute()
-                    return
+                    return True
                 except WatchError:
                     continue
 

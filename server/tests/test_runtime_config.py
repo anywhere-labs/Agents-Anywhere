@@ -22,7 +22,7 @@ class FakeRpc:
         self.requests: list[tuple[str, str, dict[str, Any]]] = []
         self.errors: dict[str, ConnectorRpcError] = {}
 
-    def is_online(self, _connector_id: str) -> bool:
+    async def is_online(self, _connector_id: str) -> bool:
         return self.online
 
     async def request(

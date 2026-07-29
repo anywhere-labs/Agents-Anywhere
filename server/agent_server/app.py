@@ -55,17 +55,19 @@ CONNECTOR_PRESENCE_SWEEP_SECONDS = 5
 async def _connector_presence_watchdog(app: FastAPI) -> None:
     while True:
         await asyncio.sleep(CONNECTOR_PRESENCE_SWEEP_SECONDS)
-        stale_connections = app.state.rpc.expire_stale()
+        stale_connections = await app.state.rpc.expire_stale()
         for connection in stale_connections:
-            await app.state.store.set_connector_status(
-                connection.connector_id, "offline"
+            changed = await app.state.store.set_connector_offline_if_connection(
+                connection.connector_id,
+                connection_id=connection.connection_id,
             )
-            await publish_dashboard_changed(
-                app.state.store,
-                app.state.timeline_broker,
-                connector_id=connection.connector_id,
-                reason="connector.offline",
-            )
+            if changed:
+                await publish_dashboard_changed(
+                    app.state.store,
+                    app.state.timeline_broker,
+                    connector_id=connection.connector_id,
+                    reason="connector.offline",
+                )
 
 
 def create_app(
@@ -76,31 +78,49 @@ def create_app(
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        await require_current_database(app.state.store.engine)
-        app.state.database_schema_version = await database_schema_version(
-            app.state.store.engine
-        )
-        await app.state.redis.start()
-        await app.state.timeline_broker.start()
-        await app.state.store.set_all_connectors_offline()
-        presence_task = asyncio.create_task(_connector_presence_watchdog(app))
-        # If the user table is empty, eagerly generate + log the bootstrap
-        # token so the operator sees it on startup. Otherwise stay dormant;
-        # the token instance only generates one when /api/v2/auth/* asks for it.
-        if await app.state.store.count_users() == 0:
-            app.state.setup_token.snapshot()
+        presence_task: asyncio.Task[None] | None = None
+        startup_complete = False
         try:
+            await require_current_database(app.state.store.engine)
+            app.state.database_schema_version = await database_schema_version(
+                app.state.store.engine
+            )
+            await app.state.redis.start()
+            await app.state.timeline_broker.start()
+            await app.state.rpc.start()
+            if not app.state.redis.distributed:
+                await app.state.store.set_all_connectors_offline()
+            presence_task = asyncio.create_task(_connector_presence_watchdog(app))
+            # Generate the bootstrap token early so operators see it in logs.
+            if await app.state.store.count_users() == 0:
+                app.state.setup_token.snapshot()
+            startup_complete = True
             yield
         finally:
-            presence_task.cancel()
+            if presence_task is not None:
+                presence_task.cancel()
+                try:
+                    await presence_task
+                except asyncio.CancelledError:
+                    pass
             try:
-                await presence_task
-            except asyncio.CancelledError:
-                pass
-            await app.state.timeline_broker.close()
-            await app.state.redis.close()
-            await app.state.store.set_all_connectors_offline()
-            await app.state.store.close()
+                released_connections = await app.state.rpc.close()
+                if startup_complete:
+                    for connection in released_connections:
+                        await app.state.store.set_connector_offline_if_connection(
+                            connection.connector_id,
+                            connection_id=connection.connection_id,
+                        )
+            finally:
+                try:
+                    await app.state.timeline_broker.close()
+                finally:
+                    try:
+                        await app.state.redis.close()
+                    finally:
+                        if startup_complete and not app.state.redis.distributed:
+                            await app.state.store.set_all_connectors_offline()
+                        await app.state.store.close()
 
     app = FastAPI(title="Agent Server", version="0.1.7.2", lifespan=lifespan)
     cors_origins = os.environ.get("AGENT_SERVER_CORS_ORIGINS")
@@ -122,13 +142,16 @@ def create_app(
         upgrade_database(sqlite_path=resolved_db_path)
     app.state.store = Store(resolved_db_path)
     app.state.database_schema_version = "unknown"
-    app.state.rpc = ConnectorRpcManager()
     resolved_redis_url = redis_url
     if resolved_redis_url is None and db_path is None:
         resolved_redis_url = os.environ.get("AGENT_SERVER_REDIS_URL")
     app.state.redis = RedisCoordinator(
         resolved_redis_url,
         prefix=os.environ.get("AGENT_SERVER_REDIS_PREFIX", "agents-anywhere"),
+    )
+    app.state.rpc = ConnectorRpcManager(
+        app.state.redis,
+        instance_id=os.environ.get("AGENT_SERVER_INSTANCE_ID"),
     )
     app.state.fs_downloads = FsDownloadRelayManager()
     app.state.shell_tasks = ShellTaskManager()

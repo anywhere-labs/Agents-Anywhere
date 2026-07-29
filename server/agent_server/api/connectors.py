@@ -64,7 +64,11 @@ from agent_server.core.device_runtime import (
     RuntimeActivePutRequest,
     RuntimeConfigPutRequest,
 )
-from agent_server.services.connector_presence import with_effective_connector_status, with_effective_session_connector_status
+from agent_server.services.connector_presence import (
+    with_effective_connector_status,
+    with_effective_connector_statuses,
+    with_effective_session_connector_statuses,
+)
 from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.device_runtimes import DeviceRuntimeError, DeviceRuntimeService
 from agent_server.services.workspace import request_connector, resolve_workspace_path
@@ -88,8 +92,10 @@ FS_PREVIEW_OPEN_EXPIRES_IN = 5 * 60
 FS_PREVIEW_ACCESS_EXPIRES_IN = 15 * 60
 
 
-def _connector_for_response(manager: ConnectorRpcManager, connector: ConnectorView) -> ConnectorView:
-    return with_effective_connector_status(manager, connector)
+async def _connector_for_response(
+    manager: ConnectorRpcManager, connector: ConnectorView
+) -> ConnectorView:
+    return await with_effective_connector_status(manager, connector)
 
 
 def _raise_terminal_service_error(exc: TerminalServiceError) -> None:
@@ -144,7 +150,7 @@ async def list_connectors(
 ) -> ConnectorListResponse:
     connectors = await db.list_connectors(user_id=user_id)
     return ConnectorListResponse(
-        connectors=[_connector_for_response(manager, connector) for connector in connectors],
+        connectors=await with_effective_connector_statuses(manager, connectors),
         serverTime=utc_now(),
     )
 
@@ -180,7 +186,10 @@ async def get_connector(
             raise KeyError(connector_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="connector not found") from None
-    return ConnectorResponse(connector=_connector_for_response(manager, connector), serverTime=utc_now())
+    return ConnectorResponse(
+        connector=await _connector_for_response(manager, connector),
+        serverTime=utc_now(),
+    )
 
 
 @router.get("/{connector_id}/protocol/capabilities", response_model=ProtocolCapabilitiesResponse)
@@ -220,7 +229,10 @@ async def update_connector(
         connector_id=connector_id,
         reason="connector.updated",
     )
-    return ConnectorResponse(connector=_connector_for_response(manager, connector), serverTime=utc_now())
+    return ConnectorResponse(
+        connector=await _connector_for_response(manager, connector),
+        serverTime=utc_now(),
+    )
 
 
 @router.delete("/{connector_id}", status_code=204)
@@ -269,7 +281,7 @@ async def revoke_connector_token(
         reason="connector.revoked",
     )
     return ConnectorRevokeResponse(
-        connector=_connector_for_response(manager, connector),
+        connector=await _connector_for_response(manager, connector),
         connectorToken=token,
         tokenPrefix=prefix,
         serverTime=utc_now(),
@@ -1278,7 +1290,7 @@ async def _require_owned_online_connector(
         raise HTTPException(status_code=404, detail="connector not found") from None
     if connector.userId != user_id:
         raise HTTPException(status_code=404, detail="connector not found")
-    if not manager.is_online(connector_id):
+    if not await manager.is_online(connector_id):
         raise HTTPException(status_code=409, detail="connector is offline")
     return connector
 
@@ -1479,7 +1491,7 @@ async def archive_all_device_sessions(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return ArchiveAllResponse(
-        sessions=[with_effective_session_connector_status(manager, session) for session in sessions],
+        sessions=await with_effective_session_connector_statuses(manager, sessions),
         affected=len(sessions),
         serverTime=utc_now(),
     )

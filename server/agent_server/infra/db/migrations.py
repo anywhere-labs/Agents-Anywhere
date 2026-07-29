@@ -16,8 +16,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from agent_server.infra.db.engine import resolve_db_url
 
 LEGACY_V1_REVISION = "v1_legacy"
-CURRENT_SCHEMA_REVISION = "v2_0"
-CURRENT_SCHEMA_VERSION = "2.0"
+BASELINE_V2_REVISION = "v2_0"
+CURRENT_SCHEMA_REVISION = "v2_1"
+CURRENT_SCHEMA_VERSION = "2.1"
 
 
 class DatabaseMigrationError(RuntimeError):
@@ -57,7 +58,7 @@ def _upgrade_database(
     if state.kind == "v1":
         command.stamp(config, LEGACY_V1_REVISION)
     elif state.kind == "v2":
-        command.stamp(config, CURRENT_SCHEMA_REVISION)
+        command.stamp(config, state.revision or BASELINE_V2_REVISION)
     elif state.kind == "unknown":
         raise DatabaseMigrationError(
             "database has no Alembic version and does not match a supported v1 or v2 schema"
@@ -161,7 +162,12 @@ def _classify_sync(connection) -> UnversionedDatabase:
         "device_runtimes",
         "notices",
     }.issubset(tables) and {"model_selection_id", "permission_selection_id"}.issubset(session_columns):
-        return UnversionedDatabase("v2")
+        revision = (
+            CURRENT_SCHEMA_REVISION
+            if {"presence_instance_id", "presence_connection_id"}.issubset(connector_columns)
+            else BASELINE_V2_REVISION
+        )
+        return UnversionedDatabase("v2", revision)
     if {
         "connectors",
         "sessions",
