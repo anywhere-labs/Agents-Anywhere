@@ -146,7 +146,7 @@ async def terminal_stream(
         await websocket.close(code=4404)
         return
 
-    term = broker.get(terminal_id)
+    term = await broker.get(terminal_id)
     if term is None or term.session_id != session.id:
         await websocket.close(code=4404)
         return
@@ -201,9 +201,13 @@ async def terminal_stream(
     except WebSocketDisconnect:
         pass
     finally:
-        broker.detach_client(terminal_id, websocket)
-        term = broker.get(terminal_id)
-        if term is not None and term.purpose == "user" and not term.clients:
+        await broker.detach_client(terminal_id, websocket)
+        term = await broker.get(terminal_id)
+        if (
+            term is not None
+            and term.purpose == "user"
+            and not await broker.has_clients(terminal_id)
+        ):
             try:
                 await terminal_service.close(session_id, terminal_id, user_id=user_id)
             except Exception:

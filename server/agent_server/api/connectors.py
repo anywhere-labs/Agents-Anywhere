@@ -1223,7 +1223,7 @@ async def connector_terminal_stream(
         return
 
     scope_id = terminal_connector_scope_id(connector_id)
-    term = broker.get(terminal_id)
+    term = await broker.get(terminal_id)
     if term is None or term.session_id != scope_id:
         await websocket.close(code=4404)
         return
@@ -1261,9 +1261,13 @@ async def connector_terminal_stream(
     except WebSocketDisconnect:
         pass
     finally:
-        broker.detach_client(terminal_id, websocket)
-        term = broker.get(terminal_id)
-        if term is not None and term.purpose == "user" and not term.clients:
+        await broker.detach_client(terminal_id, websocket)
+        term = await broker.get(terminal_id)
+        if (
+            term is not None
+            and term.purpose == "user"
+            and not await broker.has_clients(terminal_id)
+        ):
             try:
                 await terminal_service.close_for_connector(connector_id, terminal_id)
             except Exception:

@@ -8,6 +8,7 @@ from fakeredis.aioredis import FakeRedis
 
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.infra.redis_coordinator import RedisCoordinator
+from agent_server.infra.terminal_broker import SCROLLBACK_MAX_BYTES, TerminalBroker
 from agent_server.infra.terminal_stream_hub import TerminalStreamHub
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.infra.ws_tickets import ClientWsTicketManager
@@ -232,5 +233,124 @@ def test_fs_download_relay_streams_between_instances() -> None:
         assert await upload_task
         assert b"".join(streamed) == b"abcdef"
         assert await creator.get(transfer.transfer_id, transfer.token) is None
+
+    asyncio.run(exercise())
+
+
+def test_interactive_terminal_routes_relay_and_scrollback_cross_instances() -> None:
+    class Socket:
+        def __init__(self) -> None:
+            self.messages: asyncio.Queue[dict] = asyncio.Queue()
+            self.closed = False
+
+        async def send_json(self, payload: dict) -> None:
+            await self.messages.put(payload)
+
+        async def close(self) -> None:
+            self.closed = True
+
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        relay_broker = TerminalBroker(
+            _coordinator(fake_server), instance_id="server-relay"
+        )
+        browser_broker = TerminalBroker(
+            _coordinator(fake_server), instance_id="server-browser"
+        )
+        await relay_broker.start()
+        await browser_broker.start()
+        relay_socket = Socket()
+        browser_socket = Socket()
+        second_browser = Socket()
+        capped_browser = Socket()
+        try:
+            terminal = await browser_broker.register(
+                session_id="browse-1",
+                connector_id="connector-1",
+                label="zsh",
+                root="/repo",
+                cwd="/repo",
+                shell="zsh",
+                cols=80,
+                rows=24,
+            )
+            attached = await relay_broker.attach_connector(
+                terminal.id,
+                terminal.relay_token,
+                relay_socket,  # type: ignore[arg-type]
+            )
+            assert attached is not None
+            assert await browser_broker.wait_connector(terminal.id, timeout=1)
+
+            await relay_broker.on_output(terminal.id, data=b"ready\n", seq=1)
+            await browser_broker.attach_client(
+                terminal.id,
+                browser_socket,  # type: ignore[arg-type]
+            )
+            assert await asyncio.wait_for(browser_socket.messages.get(), timeout=1) == {
+                "type": "replay",
+                "data": "cmVhZHkK",
+                "seq": 1,
+            }
+
+            assert await browser_broker.send_to_connector(
+                terminal.id, {"type": "input", "data": "bHMK"}
+            )
+            assert await asyncio.wait_for(relay_socket.messages.get(), timeout=1) == {
+                "type": "input",
+                "data": "bHMK",
+            }
+
+            await relay_broker.on_output(terminal.id, data=b"live\n", seq=2)
+            assert await asyncio.wait_for(browser_socket.messages.get(), timeout=1) == {
+                "type": "output",
+                "data": "bGl2ZQo=",
+                "seq": 2,
+            }
+
+            await relay_broker.attach_client(
+                terminal.id,
+                second_browser,  # type: ignore[arg-type]
+                from_seq=1,
+            )
+            assert await asyncio.wait_for(second_browser.messages.get(), timeout=1) == {
+                "type": "replay",
+                "data": "bGl2ZQo=",
+                "seq": 2,
+            }
+            await browser_broker.detach_client(
+                terminal.id,
+                browser_socket,  # type: ignore[arg-type]
+            )
+            assert await browser_broker.has_clients(terminal.id)
+            await relay_broker.detach_client(
+                terminal.id,
+                second_browser,  # type: ignore[arg-type]
+            )
+            assert not await browser_broker.has_clients(terminal.id)
+
+            large_chunk = b"x" * (200 * 1024)
+            await relay_broker.on_output(terminal.id, data=large_chunk, seq=3)
+            await relay_broker.on_output(terminal.id, data=large_chunk, seq=4)
+            bounded = await browser_broker.get(terminal.id)
+            assert bounded is not None
+            assert bounded.scrollback_bytes <= SCROLLBACK_MAX_BYTES
+            await browser_broker.attach_client(
+                terminal.id,
+                capped_browser,  # type: ignore[arg-type]
+            )
+            capped_replay = await asyncio.wait_for(
+                capped_browser.messages.get(), timeout=1
+            )
+            assert capped_replay["type"] == "replay"
+            assert capped_replay["seq"] == 4
+            assert len(capped_replay["data"]) < 300_000
+
+            removed = await browser_broker.remove(terminal.id)
+            assert removed is not None
+            assert await relay_broker.get(terminal.id) is None
+        finally:
+            await relay_broker.close()
+            await browser_broker.close()
 
     asyncio.run(exercise())

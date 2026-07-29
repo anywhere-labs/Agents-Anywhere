@@ -88,6 +88,7 @@ def create_app(
             await app.state.redis.start()
             await app.state.timeline_broker.start()
             await app.state.terminal_stream_hub.start()
+            await app.state.terminal_broker.start()
             await app.state.rpc.start()
             if not app.state.redis.distributed:
                 await app.state.store.set_all_connectors_offline()
@@ -114,17 +115,20 @@ def create_app(
                         )
             finally:
                 try:
-                    await app.state.terminal_stream_hub.close()
+                    await app.state.terminal_broker.close()
                 finally:
                     try:
-                        await app.state.timeline_broker.close()
+                        await app.state.terminal_stream_hub.close()
                     finally:
                         try:
-                            await app.state.redis.close()
+                            await app.state.timeline_broker.close()
                         finally:
-                            if startup_complete and not app.state.redis.distributed:
-                                await app.state.store.set_all_connectors_offline()
-                            await app.state.store.close()
+                            try:
+                                await app.state.redis.close()
+                            finally:
+                                if startup_complete and not app.state.redis.distributed:
+                                    await app.state.store.set_all_connectors_offline()
+                                await app.state.store.close()
 
     app = FastAPI(title="Agent Server", version="0.1.7.2", lifespan=lifespan)
     cors_origins = os.environ.get("AGENT_SERVER_CORS_ORIGINS")
@@ -159,7 +163,10 @@ def create_app(
     )
     app.state.fs_downloads = FsDownloadRelayManager(app.state.redis)
     app.state.shell_tasks = ShellTaskManager(app.state.redis)
-    app.state.terminal_broker = TerminalBroker()
+    app.state.terminal_broker = TerminalBroker(
+        app.state.redis,
+        instance_id=app.state.rpc.instance_id,
+    )
     app.state.terminal_stream_hub = TerminalStreamHub(app.state.redis)
     app.state.timeline_broker = TimelineBroker(app.state.redis)
     app.state.device_runtime_service = DeviceRuntimeService(

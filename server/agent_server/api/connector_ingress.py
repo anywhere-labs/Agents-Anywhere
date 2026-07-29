@@ -352,7 +352,7 @@ async def connector_terminal_relay_ws(
     if not isinstance(token, str) or not token:
         await websocket.close(code=1008)
         return
-    term = broker.get(terminal_id)
+    term = await broker.get(terminal_id)
     if term is None:
         await websocket.close(code=1008, reason="terminal not found")
         return
@@ -409,7 +409,7 @@ async def connector_terminal_relay_ws(
     except WebSocketDisconnect:
         pass
     finally:
-        broker.detach_connector(terminal_id, websocket)
+        await broker.detach_connector(terminal_id, websocket)
 
 
 async def _handle_connector_message(

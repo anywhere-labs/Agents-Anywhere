@@ -2930,7 +2930,9 @@ def test_connector_terminal_lifecycle_uses_workspace_scope(tmp_path):
         {
             "terminalId": terminal_id,
             "sessionId": scope_id,
-            "token": client.app.state.terminal_broker.get(terminal_id).relay_token,
+            "token": asyncio.run(
+                client.app.state.terminal_broker.get(terminal_id)
+            ).relay_token,
         },
         15,
     )
@@ -3139,8 +3141,10 @@ def test_terminal_broker_removes_connector_user_terminals_only(tmp_path):
     )
 
     assert [terminal.id for terminal in removed] == [user_terminal_id]
-    assert client.app.state.terminal_broker.get(user_terminal_id) is None
-    assert client.app.state.terminal_broker.get(other_terminal_id) is not None
+    assert asyncio.run(client.app.state.terminal_broker.get(user_terminal_id)) is None
+    assert (
+        asyncio.run(client.app.state.terminal_broker.get(other_terminal_id)) is not None
+    )
 
 
 def test_terminal_broker_forwards_browser_events_to_connector_relay(tmp_path):
