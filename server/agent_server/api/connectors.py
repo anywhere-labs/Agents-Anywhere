@@ -675,7 +675,7 @@ async def connector_shell_task_start(
     await _require_owned_online_connector(connector_id, user_id, db, manager)
     cwd = resolve_workspace_path(root, payload.cwd or ".")
     scope_id = _connector_scope_id(connector_id)
-    task = tasks.create(
+    task = await tasks.create(
         session_id=scope_id,
         connector_id=connector_id,
         command=payload.command,
@@ -698,9 +698,9 @@ async def connector_shell_task_start(
             timeout=10,
         )
     except HTTPException:
-        tasks.abandon(task.id, session_id=scope_id)
+        await tasks.abandon(task.id, session_id=scope_id)
         raise
-    task.status = "running"
+    task = await tasks.mark_running(task.id, session_id=scope_id, connector_id=connector_id)
     return ShellTaskStartResponse(**task.view(), serverTime=utc_now())
 
 
@@ -717,18 +717,22 @@ async def connector_shell_task_wait(
     await _require_owned_connector(connector_id, user_id, db)
     scope_id = _connector_scope_id(connector_id)
     try:
-        task = tasks.get(task_id, session_id=scope_id)
+        task = await tasks.get(task_id, session_id=scope_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="shell task not found") from None
     try:
-        await asyncio.wait_for(task.event.wait(), timeout=timeoutMs / 1000)
+        task = await tasks.wait(
+            task.id,
+            session_id=scope_id,
+            timeout_seconds=timeoutMs / 1000,
+        )
     except TimeoutError:
         await _abandon_connector_shell_task(scope_id, task.id, task.connector_id, manager, tasks)
         raise HTTPException(status_code=408, detail="shell task wait timed out") from None
     except asyncio.CancelledError:
         await _abandon_connector_shell_task(scope_id, task.id, task.connector_id, manager, tasks)
         raise
-    completed = tasks.pop(task.id, session_id=scope_id)
+    completed = await tasks.pop(task.id, session_id=scope_id)
     return ShellTaskWaitResponse(**completed.view(), serverTime=utc_now())
 
 
@@ -1347,7 +1351,7 @@ async def _abandon_connector_shell_task(
     manager: ConnectorRpcManager,
     tasks: ShellTaskManager,
 ) -> None:
-    task = tasks.abandon(task_id, session_id=scope_id)
+    task = await tasks.abandon(task_id, session_id=scope_id)
     if task is None:
         return
     try:

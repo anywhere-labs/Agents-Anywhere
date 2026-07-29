@@ -7,8 +7,10 @@ from fakeredis import FakeServer
 from fakeredis.aioredis import FakeRedis
 
 from agent_server.infra.redis_coordinator import RedisCoordinator
+from agent_server.infra.terminal_stream_hub import TerminalStreamHub
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.infra.ws_tickets import ClientWsTicketManager
+from agent_server.services.shell_tasks import ShellTaskManager
 
 
 def _coordinator(server: FakeServer) -> RedisCoordinator:
@@ -112,5 +114,80 @@ def test_distributed_lock_serializes_instances() -> None:
             assert not second_acquired.is_set()
         await asyncio.wait_for(task, timeout=1)
         assert second_acquired.is_set()
+
+    asyncio.run(exercise())
+
+
+def test_shell_task_completion_crosses_instances() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        creator = ShellTaskManager(_coordinator(fake_server))
+        receiver = ShellTaskManager(_coordinator(fake_server))
+        task = await creator.create(
+            session_id="browse-1",
+            connector_id="connector-1",
+            command="pwd",
+            cwd="/repo",
+            timeout_ms=30_000,
+        )
+        waiter = asyncio.create_task(
+            creator.wait(task.id, session_id="browse-1", timeout_seconds=1)
+        )
+        await asyncio.sleep(0)
+
+        completed = await receiver.complete(
+            task.id,
+            session_id="browse-1",
+            connector_id="connector-1",
+            status="completed",
+            result={"exitCode": 0, "stdout": "/repo\n"},
+        )
+
+        assert completed is not None
+        result = await waiter
+        assert result.status == "completed"
+        assert result.result == {"exitCode": 0, "stdout": "/repo\n"}
+        popped = await creator.pop(task.id, session_id="browse-1")
+        assert popped.status == "completed"
+        try:
+            await receiver.get(task.id, session_id="browse-1")
+        except KeyError:
+            pass
+        else:
+            raise AssertionError("completed task was not consumed")
+
+    asyncio.run(exercise())
+
+
+def test_terminal_stream_events_cross_instances() -> None:
+    class Socket:
+        def __init__(self) -> None:
+            self.messages: asyncio.Queue[dict] = asyncio.Queue()
+
+        async def send_json(self, payload: dict) -> None:
+            await self.messages.put(payload)
+
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        publisher = TerminalStreamHub(_coordinator(fake_server))
+        subscriber = TerminalStreamHub(_coordinator(fake_server))
+        await publisher.start()
+        await subscriber.start()
+        socket = Socket()
+        try:
+            await subscriber.attach("connector-1", "terminal-1", socket)  # type: ignore[arg-type]
+            await subscriber.mark_ready("connector-1", "terminal-1", socket)  # type: ignore[arg-type]
+            await publisher.publish_output(
+                "connector-1",
+                {"terminalId": "terminal-1", "dataBase64": "b2s=", "seq": 2},
+            )
+            assert await asyncio.wait_for(socket.messages.get(), timeout=1) == {
+                "type": "output",
+                "data": "b2s=",
+                "seq": 2,
+            }
+        finally:
+            await publisher.close()
+            await subscriber.close()
 
     asyncio.run(exercise())

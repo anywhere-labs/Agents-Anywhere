@@ -755,7 +755,7 @@ async def apply_connector_notification(
         session_id = params.get("sessionId")
         if isinstance(task_id, str) and isinstance(session_id, str):
             try:
-                tasks.mark_running(task_id, session_id=session_id, connector_id=connector_id)
+                await tasks.mark_running(task_id, session_id=session_id, connector_id=connector_id)
             except KeyError:
                 logger.warning(
                     "ignored shell task started from mismatched connector task_id={} connector_id={}",
@@ -767,7 +767,7 @@ async def apply_connector_notification(
         session_id = params.get("sessionId")
         status = params.get("status")
         if isinstance(task_id, str) and isinstance(session_id, str):
-            tasks.complete(
+            await tasks.complete(
                 task_id,
                 session_id=session_id,
                 connector_id=connector_id,
