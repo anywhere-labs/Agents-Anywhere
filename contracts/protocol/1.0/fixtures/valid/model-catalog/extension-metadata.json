@@ -1,0 +1,33 @@
+{
+  "models": [
+    {
+      "default": true,
+      "description": "Current model",
+      "displayName": "GPT Example",
+      "id": "gpt-example",
+      "metadata": {
+        "vendor": {
+          "releaseChannel": "preview"
+        }
+      },
+      "reasoningItems": [
+        {
+          "default": true,
+          "description": null,
+          "displayName": "High",
+          "fullModelId": "gpt-example",
+          "id": "high",
+          "metadata": {
+            "futureField": [
+              "preserved"
+            ]
+          },
+          "selectionId": "sel_model_example"
+        }
+      ],
+      "selectionId": null
+    }
+  ],
+  "revision": 3,
+  "runtime": "codex"
+}

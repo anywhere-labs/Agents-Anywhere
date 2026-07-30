@@ -1,0 +1,33 @@
+{
+  "capabilities": [
+    {
+      "allowed": true,
+      "available": true,
+      "capabilityId": "session.interrupt",
+      "parameters": {},
+      "runtime": "codex",
+      "scope": "runtime",
+      "sessionId": null,
+      "supported": true,
+      "unavailableReason": null,
+      "version": "1"
+    },
+    {
+      "allowed": true,
+      "available": true,
+      "capabilityId": "vendor.example.future_action",
+      "parameters": {
+        "nested": {
+          "enabled": true
+        }
+      },
+      "runtime": "codex",
+      "scope": "runtime",
+      "sessionId": null,
+      "supported": true,
+      "unavailableReason": null,
+      "version": "2026-07"
+    }
+  ],
+  "revision": 7
+}

@@ -1,0 +1,155 @@
+{
+  "$defs": {
+    "ProtocolModelItem": {
+      "properties": {
+        "default": {
+          "default": false,
+          "title": "Default",
+          "type": "boolean"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "displayName": {
+          "title": "Displayname",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        },
+        "reasoningItems": {
+          "items": {
+            "$ref": "#/$defs/ProtocolReasoningItem"
+          },
+          "title": "Reasoningitems",
+          "type": "array"
+        },
+        "selectionId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Selectionid"
+        }
+      },
+      "required": [
+        "displayName",
+        "id"
+      ],
+      "title": "ProtocolModelItem",
+      "type": "object"
+    },
+    "ProtocolReasoningItem": {
+      "properties": {
+        "default": {
+          "default": false,
+          "title": "Default",
+          "type": "boolean"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "displayName": {
+          "title": "Displayname",
+          "type": "string"
+        },
+        "fullModelId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fullmodelid"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        },
+        "selectionId": {
+          "title": "Selectionid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "displayName",
+        "id",
+        "selectionId"
+      ],
+      "title": "ProtocolReasoningItem",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:protocol:1.0:model-catalog",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "models": {
+      "items": {
+        "$ref": "#/$defs/ProtocolModelItem"
+      },
+      "title": "Models",
+      "type": "array"
+    },
+    "revision": {
+      "minimum": 0,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "runtime": {
+      "enum": [
+        "codex",
+        "claude",
+        "opencode",
+        "acp"
+      ],
+      "title": "Runtime",
+      "type": "string"
+    }
+  },
+  "required": [
+    "runtime",
+    "revision"
+  ],
+  "title": "ProtocolModelCatalog",
+  "type": "object",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

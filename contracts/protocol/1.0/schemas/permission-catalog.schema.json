@@ -1,0 +1,84 @@
+{
+  "$defs": {
+    "ProtocolPermissionItem": {
+      "properties": {
+        "default": {
+          "default": false,
+          "title": "Default",
+          "type": "boolean"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "displayName": {
+          "title": "Displayname",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        },
+        "selectionId": {
+          "title": "Selectionid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "displayName",
+        "id",
+        "selectionId"
+      ],
+      "title": "ProtocolPermissionItem",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:protocol:1.0:permission-catalog",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "permissions": {
+      "items": {
+        "$ref": "#/$defs/ProtocolPermissionItem"
+      },
+      "title": "Permissions",
+      "type": "array"
+    },
+    "revision": {
+      "minimum": 0,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "runtime": {
+      "enum": [
+        "codex",
+        "claude",
+        "opencode",
+        "acp"
+      ],
+      "title": "Runtime",
+      "type": "string"
+    }
+  },
+  "required": [
+    "runtime",
+    "revision"
+  ],
+  "title": "ProtocolPermissionCatalog",
+  "type": "object",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

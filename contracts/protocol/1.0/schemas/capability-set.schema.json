@@ -1,0 +1,118 @@
+{
+  "$defs": {
+    "ProtocolCapability": {
+      "properties": {
+        "allowed": {
+          "default": true,
+          "title": "Allowed",
+          "type": "boolean"
+        },
+        "available": {
+          "default": true,
+          "title": "Available",
+          "type": "boolean"
+        },
+        "capabilityId": {
+          "title": "Capabilityid",
+          "type": "string"
+        },
+        "parameters": {
+          "additionalProperties": true,
+          "title": "Parameters",
+          "type": "object"
+        },
+        "runtime": {
+          "anyOf": [
+            {
+              "enum": [
+                "codex",
+                "claude",
+                "opencode",
+                "acp"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Runtime"
+        },
+        "scope": {
+          "default": "runtime",
+          "enum": [
+            "adapter",
+            "runtime",
+            "session"
+          ],
+          "title": "Scope",
+          "type": "string"
+        },
+        "sessionId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sessionid"
+        },
+        "supported": {
+          "default": true,
+          "title": "Supported",
+          "type": "boolean"
+        },
+        "unavailableReason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unavailablereason"
+        },
+        "version": {
+          "default": "1",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "capabilityId"
+      ],
+      "title": "ProtocolCapability",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:protocol:1.0:capability-set",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "capabilities": {
+      "items": {
+        "$ref": "#/$defs/ProtocolCapability"
+      },
+      "title": "Capabilities",
+      "type": "array"
+    },
+    "revision": {
+      "minimum": 0,
+      "title": "Revision",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "revision"
+  ],
+  "title": "ProtocolCapabilitySet",
+  "type": "object",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

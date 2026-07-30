@@ -1,0 +1,60 @@
+{
+  "$defs": {
+    "ProtocolAdapterIdentity": {
+      "properties": {
+        "adapterVersion": {
+          "title": "Adapterversion",
+          "type": "string"
+        },
+        "runtime": {
+          "enum": [
+            "codex",
+            "claude",
+            "opencode",
+            "acp"
+          ],
+          "title": "Runtime",
+          "type": "string"
+        }
+      },
+      "required": [
+        "runtime",
+        "adapterVersion"
+      ],
+      "title": "ProtocolAdapterIdentity",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:protocol:1.0:handshake-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "adapters": {
+      "items": {
+        "$ref": "#/$defs/ProtocolAdapterIdentity"
+      },
+      "title": "Adapters",
+      "type": "array"
+    },
+    "connectorVersion": {
+      "title": "Connectorversion",
+      "type": "string"
+    },
+    "protocolVersions": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Protocolversions",
+      "type": "array"
+    }
+  },
+  "required": [
+    "protocolVersions",
+    "connectorVersion"
+  ],
+  "title": "ProtocolHandshakeRequest",
+  "type": "object",
+  "x-direction": "ingress",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

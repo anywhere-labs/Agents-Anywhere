@@ -1,0 +1,1205 @@
+{
+  "$defs": {
+    "Approval": {
+      "properties": {
+        "choices": {
+          "items": {
+            "enum": [
+              "approve",
+              "approve_for_session",
+              "reject",
+              "cancel"
+            ],
+            "type": "string"
+          },
+          "title": "Choices",
+          "type": "array"
+        },
+        "createdAt": {
+          "title": "Createdat",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "default": "unknown",
+          "enum": [
+            "command",
+            "file_change",
+            "permission",
+            "tool_call",
+            "input_request",
+            "unknown"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "payload": {
+          "title": "Payload"
+        },
+        "resolvedAt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resolvedat"
+        },
+        "sessionId": {
+          "title": "Sessionid",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/ApprovalSource"
+        },
+        "status": {
+          "default": "pending",
+          "enum": [
+            "pending",
+            "approved",
+            "approved_for_session",
+            "rejected",
+            "cancelled",
+            "expired"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "targetItemId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Targetitemid"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "turnId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Turnid"
+        },
+        "updatedSeq": {
+          "title": "Updatedseq",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "sessionId",
+        "title",
+        "choices",
+        "source",
+        "createdAt",
+        "updatedSeq"
+      ],
+      "title": "Approval",
+      "type": "object"
+    },
+    "ApprovalSource": {
+      "properties": {
+        "itemId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Itemid"
+        },
+        "method": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Method"
+        },
+        "requestId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "title": "Requestid"
+        },
+        "runtime": {
+          "enum": [
+            "codex",
+            "claude",
+            "opencode",
+            "acp"
+          ],
+          "title": "Runtime",
+          "type": "string"
+        },
+        "sessionId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sessionid"
+        },
+        "turnId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Turnid"
+        }
+      },
+      "required": [
+        "runtime",
+        "requestId"
+      ],
+      "title": "ApprovalSource",
+      "type": "object"
+    },
+    "Notice": {
+      "properties": {
+        "actions": {
+          "items": {
+            "$ref": "#/$defs/NoticeAction"
+          },
+          "title": "Actions",
+          "type": "array"
+        },
+        "blocking": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NoticeBlocking"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "context": {
+          "additionalProperties": true,
+          "title": "Context",
+          "type": "object"
+        },
+        "createdAt": {
+          "title": "Createdat",
+          "type": "string"
+        },
+        "expiresAt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expiresat"
+        },
+        "interactionType": {
+          "anyOf": [
+            {
+              "enum": [
+                "approval",
+                "execution_error",
+                "confirmation",
+                "input_request",
+                "unknown"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Interactiontype"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        },
+        "noticeId": {
+          "title": "Noticeid",
+          "type": "string"
+        },
+        "resolvedAt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resolvedat"
+        },
+        "responseRequired": {
+          "default": false,
+          "title": "Responserequired",
+          "type": "boolean"
+        },
+        "revision": {
+          "default": 1,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "sessionId": {
+          "title": "Sessionid",
+          "type": "string"
+        },
+        "severity": {
+          "default": "info",
+          "enum": [
+            "info",
+            "success",
+            "warning",
+            "error"
+          ],
+          "title": "Severity",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/NoticeSource"
+        },
+        "status": {
+          "default": "open",
+          "enum": [
+            "open",
+            "response_accepted",
+            "resolving",
+            "resolved",
+            "expired",
+            "cancelled",
+            "failed"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "notification",
+            "interaction"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "updatedAt": {
+          "title": "Updatedat",
+          "type": "string"
+        },
+        "updatedSeq": {
+          "title": "Updatedseq",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "noticeId",
+        "type",
+        "sessionId",
+        "title",
+        "createdAt",
+        "updatedSeq",
+        "updatedAt"
+      ],
+      "title": "Notice",
+      "type": "object"
+    },
+    "NoticeAction": {
+      "properties": {
+        "actionId": {
+          "title": "Actionid",
+          "type": "string"
+        },
+        "input": {
+          "$ref": "#/$defs/NoticeActionInput"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "style": {
+          "default": "secondary",
+          "enum": [
+            "primary",
+            "secondary",
+            "danger"
+          ],
+          "title": "Style",
+          "type": "string"
+        }
+      },
+      "required": [
+        "actionId",
+        "label"
+      ],
+      "title": "NoticeAction",
+      "type": "object"
+    },
+    "NoticeActionInput": {
+      "properties": {
+        "required": {
+          "default": false,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "schema": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Schema"
+        },
+        "uiSchema": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Uischema"
+        }
+      },
+      "title": "NoticeActionInput",
+      "type": "object"
+    },
+    "NoticeBlocking": {
+      "properties": {
+        "scope": {
+          "const": "session",
+          "title": "Scope",
+          "type": "string"
+        },
+        "targetId": {
+          "title": "Targetid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "scope",
+        "targetId"
+      ],
+      "title": "NoticeBlocking",
+      "type": "object"
+    },
+    "NoticeSource": {
+      "properties": {
+        "adapter": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Adapter"
+        },
+        "approvalId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approvalid"
+        },
+        "operationId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Operationid"
+        },
+        "runtime": {
+          "anyOf": [
+            {
+              "enum": [
+                "codex",
+                "claude",
+                "opencode",
+                "acp"
+              ],
+              "type": "string"
+            },
+            {
+              "const": "platform",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Runtime"
+        },
+        "timelineItemId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timelineitemid"
+        }
+      },
+      "title": "NoticeSource",
+      "type": "object"
+    },
+    "ProtocolCapability": {
+      "properties": {
+        "allowed": {
+          "default": true,
+          "title": "Allowed",
+          "type": "boolean"
+        },
+        "available": {
+          "default": true,
+          "title": "Available",
+          "type": "boolean"
+        },
+        "capabilityId": {
+          "title": "Capabilityid",
+          "type": "string"
+        },
+        "parameters": {
+          "additionalProperties": true,
+          "title": "Parameters",
+          "type": "object"
+        },
+        "runtime": {
+          "anyOf": [
+            {
+              "enum": [
+                "codex",
+                "claude",
+                "opencode",
+                "acp"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Runtime"
+        },
+        "scope": {
+          "default": "runtime",
+          "enum": [
+            "adapter",
+            "runtime",
+            "session"
+          ],
+          "title": "Scope",
+          "type": "string"
+        },
+        "sessionId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sessionid"
+        },
+        "supported": {
+          "default": true,
+          "title": "Supported",
+          "type": "boolean"
+        },
+        "unavailableReason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unavailablereason"
+        },
+        "version": {
+          "default": "1",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "capabilityId"
+      ],
+      "title": "ProtocolCapability",
+      "type": "object"
+    },
+    "ProtocolCapabilitySet": {
+      "properties": {
+        "capabilities": {
+          "items": {
+            "$ref": "#/$defs/ProtocolCapability"
+          },
+          "title": "Capabilities",
+          "type": "array"
+        },
+        "revision": {
+          "minimum": 0,
+          "title": "Revision",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "revision"
+      ],
+      "title": "ProtocolCapabilitySet",
+      "type": "object"
+    },
+    "ProtocolTimelineSnapshot": {
+      "properties": {
+        "hasMore": {
+          "default": false,
+          "title": "Hasmore",
+          "type": "boolean"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/TimelineItem"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "nextSeq": {
+          "title": "Nextseq",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "nextSeq"
+      ],
+      "title": "ProtocolTimelineSnapshot",
+      "type": "object"
+    },
+    "SessionView": {
+      "properties": {
+        "archived": {
+          "default": false,
+          "title": "Archived",
+          "type": "boolean"
+        },
+        "archivedAt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Archivedat"
+        },
+        "connectorId": {
+          "title": "Connectorid",
+          "type": "string"
+        },
+        "connectorStatus": {
+          "enum": [
+            "offline",
+            "online"
+          ],
+          "title": "Connectorstatus",
+          "type": "string"
+        },
+        "cwd": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cwd"
+        },
+        "externalSessionId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Externalsessionid"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "lastActivityAt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lastactivityat"
+        },
+        "lastItemAt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lastitemat"
+        },
+        "lastItemOrderSeq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lastitemorderseq"
+        },
+        "lastReadSeq": {
+          "default": 0,
+          "title": "Lastreadseq",
+          "type": "integer"
+        },
+        "lastSyncedAt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lastsyncedat"
+        },
+        "modelSelectionId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Modelselectionid"
+        },
+        "permissionSelectionId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Permissionselectionid"
+        },
+        "pinned": {
+          "default": false,
+          "title": "Pinned",
+          "type": "boolean"
+        },
+        "pinnedAt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pinnedat"
+        },
+        "runtime": {
+          "enum": [
+            "codex",
+            "claude",
+            "opencode",
+            "acp"
+          ],
+          "title": "Runtime",
+          "type": "string"
+        },
+        "sortAt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sortat"
+        },
+        "sourceObservedAt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sourceobservedat"
+        },
+        "status": {
+          "enum": [
+            "idle",
+            "pending",
+            "running",
+            "stopping",
+            "blocked"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "takeover": {
+          "title": "Takeover",
+          "type": "boolean"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        },
+        "unread": {
+          "default": false,
+          "title": "Unread",
+          "type": "boolean"
+        },
+        "updatedSeq": {
+          "title": "Updatedseq",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "connectorId",
+        "connectorStatus",
+        "runtime",
+        "status",
+        "takeover",
+        "updatedSeq"
+      ],
+      "title": "SessionView",
+      "type": "object"
+    },
+    "TimelineItem": {
+      "properties": {
+        "completedAt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Completedat"
+        },
+        "content": {
+          "title": "Content"
+        },
+        "contentHash": {
+          "title": "Contenthash",
+          "type": "string"
+        },
+        "createdAt": {
+          "title": "Createdat",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "orderSeq": {
+          "title": "Orderseq",
+          "type": "integer"
+        },
+        "revision": {
+          "default": 1,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "role": {
+          "anyOf": [
+            {
+              "enum": [
+                "user",
+                "assistant",
+                "system",
+                "tool"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Role"
+        },
+        "sessionId": {
+          "title": "Sessionid",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/TimelineSource"
+        },
+        "status": {
+          "enum": [
+            "pending",
+            "running",
+            "waiting_approval",
+            "done",
+            "failed",
+            "cancelled",
+            "interrupted"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "turnId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Turnid"
+        },
+        "type": {
+          "enum": [
+            "turn.start",
+            "turn.end",
+            "message",
+            "tool",
+            "artifact",
+            "system"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "updatedAt": {
+          "title": "Updatedat",
+          "type": "string"
+        },
+        "updatedSeq": {
+          "title": "Updatedseq",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "sessionId",
+        "type",
+        "status",
+        "source",
+        "orderSeq",
+        "contentHash",
+        "createdAt",
+        "updatedAt",
+        "updatedSeq"
+      ],
+      "title": "TimelineItem",
+      "type": "object"
+    },
+    "TimelineSource": {
+      "properties": {
+        "clientMessageId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Clientmessageid"
+        },
+        "derivedKey": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Derivedkey"
+        },
+        "event": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Event"
+        },
+        "itemId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Itemid"
+        },
+        "itemType": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Itemtype"
+        },
+        "runtime": {
+          "anyOf": [
+            {
+              "enum": [
+                "codex",
+                "claude",
+                "opencode",
+                "acp"
+              ],
+              "type": "string"
+            },
+            {
+              "const": "platform",
+              "type": "string"
+            }
+          ],
+          "title": "Runtime"
+        },
+        "sessionId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sessionid"
+        },
+        "turnId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Turnid"
+        }
+      },
+      "required": [
+        "runtime"
+      ],
+      "title": "TimelineSource",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:protocol:1.0:session-snapshot-response",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "approvals": {
+      "items": {
+        "$ref": "#/$defs/Approval"
+      },
+      "title": "Approvals",
+      "type": "array"
+    },
+    "catalogs": {
+      "additionalProperties": true,
+      "title": "Catalogs",
+      "type": "object"
+    },
+    "effectiveCapabilities": {
+      "$ref": "#/$defs/ProtocolCapabilitySet"
+    },
+    "eventCursor": {
+      "title": "Eventcursor",
+      "type": "string"
+    },
+    "notices": {
+      "items": {
+        "$ref": "#/$defs/Notice"
+      },
+      "title": "Notices",
+      "type": "array"
+    },
+    "runtimeCapabilities": {
+      "$ref": "#/$defs/ProtocolCapabilitySet"
+    },
+    "serverTime": {
+      "title": "Servertime",
+      "type": "string"
+    },
+    "session": {
+      "$ref": "#/$defs/SessionView"
+    },
+    "timeline": {
+      "$ref": "#/$defs/ProtocolTimelineSnapshot"
+    }
+  },
+  "required": [
+    "session",
+    "timeline",
+    "effectiveCapabilities",
+    "runtimeCapabilities",
+    "eventCursor",
+    "serverTime"
+  ],
+  "title": "ProtocolSessionSnapshotResponse",
+  "type": "object",
+  "x-direction": "egress",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "serialization"
+}

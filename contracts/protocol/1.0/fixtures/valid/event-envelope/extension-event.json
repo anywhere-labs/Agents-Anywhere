@@ -1,0 +1,14 @@
+{
+  "cursor": "seq:11",
+  "emittedAt": "2026-07-30T10:00:00Z",
+  "eventId": "evt_extension_11",
+  "payload": {
+    "extension": {
+      "value": 42
+    }
+  },
+  "protocolVersion": "1.0",
+  "sequence": 11,
+  "sessionId": "session-1",
+  "type": "vendor.example.future_event"
+}
