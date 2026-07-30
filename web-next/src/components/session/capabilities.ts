@@ -11,6 +11,8 @@ export const CAPABILITY = {
   effortCatalog: "catalog.effort",
 } as const
 
+export type KnownCapabilityId = (typeof CAPABILITY)[keyof typeof CAPABILITY]
+
 export function findCapability(
   capabilitySet: ProtocolCapabilitySet | null | undefined,
   capabilityId: string,
@@ -20,7 +22,7 @@ export function findCapability(
 
 export function capabilityIsUsable(
   capabilitySet: ProtocolCapabilitySet | null | undefined,
-  capabilityId: string,
+  capabilityId: KnownCapabilityId,
 ): boolean {
   const capability = findCapability(capabilitySet, capabilityId)
   return Boolean(capability?.supported && capability.available && capability.allowed)

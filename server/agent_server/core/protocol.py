@@ -5,10 +5,15 @@ import hashlib
 import json
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-from agent_server.core.models import Approval, Notice, RuntimeName, SessionView, TimelineItem
-
+from agent_server.core.models import (
+    Approval,
+    Notice,
+    RuntimeName,
+    SessionView,
+    TimelineItem,
+)
 
 PROTOCOL_VERSION_1 = "1.0"
 SUPPORTED_PROTOCOL_VERSIONS = [PROTOCOL_VERSION_1]
@@ -17,23 +22,27 @@ ProtocolVersion = Literal["1.0"]
 ProtocolCapabilityScope = Literal["adapter", "runtime", "session"]
 
 
-class ProtocolAdapterIdentity(BaseModel):
+class ProtocolWireModel(BaseModel):
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
+
+class ProtocolAdapterIdentity(ProtocolWireModel):
     runtime: RuntimeName
     adapterVersion: str
 
 
-class ProtocolHandshakeRequest(BaseModel):
+class ProtocolHandshakeRequest(ProtocolWireModel):
     protocolVersions: list[str] = Field(min_length=1)
     connectorVersion: str
     adapters: list[ProtocolAdapterIdentity] = Field(default_factory=list)
 
 
-class ProtocolHandshakeResponse(BaseModel):
+class ProtocolHandshakeResponse(ProtocolWireModel):
     selectedProtocolVersion: ProtocolVersion
     serverVersion: str
 
 
-class ProtocolCapability(BaseModel):
+class ProtocolCapability(ProtocolWireModel):
     capabilityId: str
     version: str = "1"
     scope: ProtocolCapabilityScope = "runtime"
@@ -46,18 +55,18 @@ class ProtocolCapability(BaseModel):
     parameters: dict[str, Any] = Field(default_factory=dict)
 
 
-class ProtocolCapabilitySet(BaseModel):
+class ProtocolCapabilitySet(ProtocolWireModel):
     revision: int = Field(ge=0)
     capabilities: list[ProtocolCapability] = Field(default_factory=list)
 
 
-class ProtocolCapabilitiesResponse(BaseModel):
+class ProtocolCapabilitiesResponse(ProtocolWireModel):
     connectorId: str
     capabilitySet: ProtocolCapabilitySet
     serverTime: str
 
 
-class ProtocolReasoningItem(BaseModel):
+class ProtocolReasoningItem(ProtocolWireModel):
     displayName: str
     id: str
     fullModelId: str | None = None
@@ -67,7 +76,7 @@ class ProtocolReasoningItem(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class ProtocolModelItem(BaseModel):
+class ProtocolModelItem(ProtocolWireModel):
     displayName: str
     id: str
     selectionId: str | None = None
@@ -77,18 +86,18 @@ class ProtocolModelItem(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class ProtocolModelCatalog(BaseModel):
+class ProtocolModelCatalog(ProtocolWireModel):
     runtime: RuntimeName
     revision: int = Field(ge=0)
     models: list[ProtocolModelItem] = Field(default_factory=list)
 
 
-class ProtocolModelCatalogResponse(BaseModel):
+class ProtocolModelCatalogResponse(ProtocolWireModel):
     catalog: ProtocolModelCatalog
     serverTime: str
 
 
-class ProtocolPermissionItem(BaseModel):
+class ProtocolPermissionItem(ProtocolWireModel):
     displayName: str
     id: str
     selectionId: str
@@ -97,24 +106,24 @@ class ProtocolPermissionItem(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class ProtocolPermissionCatalog(BaseModel):
+class ProtocolPermissionCatalog(ProtocolWireModel):
     runtime: RuntimeName
     revision: int = Field(ge=0)
     permissions: list[ProtocolPermissionItem] = Field(default_factory=list)
 
 
-class ProtocolPermissionCatalogResponse(BaseModel):
+class ProtocolPermissionCatalogResponse(ProtocolWireModel):
     catalog: ProtocolPermissionCatalog
     serverTime: str
 
 
-class ProtocolTimelineSnapshot(BaseModel):
+class ProtocolTimelineSnapshot(ProtocolWireModel):
     items: list[TimelineItem] = Field(default_factory=list)
     nextSeq: int
     hasMore: bool = False
 
 
-class ProtocolSessionSnapshotResponse(BaseModel):
+class ProtocolSessionSnapshotResponse(ProtocolWireModel):
     session: SessionView
     timeline: ProtocolTimelineSnapshot
     approvals: list[Approval] = Field(default_factory=list)
@@ -126,22 +135,22 @@ class ProtocolSessionSnapshotResponse(BaseModel):
     serverTime: str
 
 
-class ProtocolWsTicketScope(BaseModel):
+class ProtocolWsTicketScope(ProtocolWireModel):
     sessionId: str
 
 
-class ProtocolWsTicketRequest(BaseModel):
+class ProtocolWsTicketRequest(ProtocolWireModel):
     clientId: str
     scope: ProtocolWsTicketScope
 
 
-class ProtocolWsTicketResponse(BaseModel):
+class ProtocolWsTicketResponse(ProtocolWireModel):
     ticket: str
     expiresAt: str
     serverTime: str
 
 
-class ProtocolEventEnvelope(BaseModel):
+class ProtocolEventEnvelope(ProtocolWireModel):
     protocolVersion: ProtocolVersion = PROTOCOL_VERSION_1
     eventId: str
     sequence: int
@@ -152,7 +161,7 @@ class ProtocolEventEnvelope(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
-class ProtocolEventRecoveryResponse(BaseModel):
+class ProtocolEventRecoveryResponse(ProtocolWireModel):
     events: list[ProtocolEventEnvelope] = Field(default_factory=list)
     nextCursor: str
     snapshotRequired: bool = False

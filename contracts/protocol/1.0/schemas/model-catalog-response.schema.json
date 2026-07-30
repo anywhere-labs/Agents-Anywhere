@@ -27,7 +27,8 @@
       },
       "required": [
         "runtime",
-        "revision"
+        "revision",
+        "models"
       ],
       "title": "ProtocolModelCatalog",
       "type": "object"
@@ -86,7 +87,12 @@
       },
       "required": [
         "displayName",
-        "id"
+        "id",
+        "selectionId",
+        "description",
+        "default",
+        "reasoningItems",
+        "metadata"
       ],
       "title": "ProtocolModelItem",
       "type": "object"
@@ -143,7 +149,11 @@
       "required": [
         "displayName",
         "id",
-        "selectionId"
+        "fullModelId",
+        "selectionId",
+        "description",
+        "default",
+        "metadata"
       ],
       "title": "ProtocolReasoningItem",
       "type": "object"

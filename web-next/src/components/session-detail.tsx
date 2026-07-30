@@ -1416,7 +1416,14 @@ function parseProtocolEvent(data: string): ProtocolEventEnvelope | null {
     const event = JSON.parse(data) as Partial<ProtocolEventEnvelope>
     if (!event || typeof event.type !== "string") return null
     if (event.type === "keepalive") return null
-    if (typeof event.sessionId !== "string" || typeof event.sequence !== "number" || typeof event.cursor !== "string") {
+    if (
+      event.protocolVersion !== "1.0" ||
+      typeof event.eventId !== "string" ||
+      typeof event.emittedAt !== "string" ||
+      typeof event.sessionId !== "string" ||
+      typeof event.sequence !== "number" ||
+      typeof event.cursor !== "string"
+    ) {
       return null
     }
     return {

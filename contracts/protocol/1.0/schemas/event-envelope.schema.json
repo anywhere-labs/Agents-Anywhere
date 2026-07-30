@@ -39,12 +39,14 @@
     }
   },
   "required": [
+    "protocolVersion",
     "eventId",
     "sequence",
     "cursor",
     "type",
     "sessionId",
-    "emittedAt"
+    "emittedAt",
+    "payload"
   ],
   "title": "ProtocolEventEnvelope",
   "type": "object",

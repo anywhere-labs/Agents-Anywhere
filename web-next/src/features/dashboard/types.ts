@@ -1,4 +1,30 @@
 import type { AuthMe } from "@/features/auth";
+import type {
+  ProtocolCapability,
+  ProtocolCapabilitySet,
+} from "@/generated/protocol/v1/capabilities-response";
+import type { ProtocolModelCatalog } from "@/generated/protocol/v1/model-catalog-response";
+import type { ProtocolPermissionCatalog } from "@/generated/protocol/v1/permission-catalog-response";
+import type { ProtocolSessionSnapshotResponse } from "@/generated/protocol/v1/session-snapshot-response";
+import type { ProtocolWsTicketResponse } from "@/generated/protocol/v1/ws-ticket-response";
+
+export type {
+  ProtocolEventEnvelope,
+  ProtocolEventRecoveryResponse,
+} from "@/generated/protocol/v1/event-recovery-response";
+export type {
+  ProtocolModelCatalog,
+  ProtocolModelCatalogResponse,
+  ProtocolModelItem,
+  ProtocolReasoningItem,
+} from "@/generated/protocol/v1/model-catalog-response";
+export type {
+  ProtocolPermissionCatalog,
+  ProtocolPermissionCatalogResponse,
+  ProtocolPermissionItem,
+} from "@/generated/protocol/v1/permission-catalog-response";
+
+export type { ProtocolCapability, ProtocolCapabilitySet };
 
 export type ConnectorStatus = "offline" | "online";
 
@@ -239,76 +265,7 @@ export type ApprovalResolveStatus =
   | "approved_for_session"
   | "rejected";
 
-export type ProtocolCapabilityScope = "adapter" | "runtime" | "session";
-
-export type ProtocolCapability = {
-  capabilityId: string;
-  version: string;
-  scope: ProtocolCapabilityScope;
-  runtime?: string | null;
-  sessionId?: string | null;
-  supported: boolean;
-  available: boolean;
-  allowed: boolean;
-  unavailableReason?: string | null;
-  parameters: Record<string, unknown>;
-};
-
-export type ProtocolCapabilitySet = {
-  revision: number;
-  capabilities: ProtocolCapability[];
-};
-
-export type ProtocolReasoningItem = {
-  displayName: string;
-  id: string;
-  fullModelId?: string | null;
-  selectionId: string;
-  description?: string | null;
-  default: boolean;
-  metadata: Record<string, unknown>;
-};
-
-export type ProtocolModelItem = {
-  displayName: string;
-  id: string;
-  selectionId?: string | null;
-  description?: string | null;
-  default: boolean;
-  reasoningItems: ProtocolReasoningItem[];
-  metadata: Record<string, unknown>;
-};
-
-export type ProtocolModelCatalog = {
-  runtime: string;
-  revision: number;
-  models: ProtocolModelItem[];
-};
-
-export type ProtocolModelCatalogResponse = {
-  catalog: ProtocolModelCatalog;
-  serverTime: string;
-};
-
-export type ProtocolPermissionItem = {
-  displayName: string;
-  id: string;
-  selectionId: string;
-  description?: string | null;
-  default: boolean;
-  metadata: Record<string, unknown>;
-};
-
-export type ProtocolPermissionCatalog = {
-  runtime: string;
-  revision: number;
-  permissions: ProtocolPermissionItem[];
-};
-
-export type ProtocolPermissionCatalogResponse = {
-  catalog: ProtocolPermissionCatalog;
-  serverTime: string;
-};
+export type ProtocolCapabilityScope = ProtocolCapability["scope"];
 
 export type NoticeStatus =
   | "open"
@@ -361,10 +318,13 @@ export type SessionTimelineSnapshot = {
   hasMore: boolean;
 };
 
-export type SessionSnapshotResponse = {
+export type SessionSnapshotResponse = Pick<
+  ProtocolSessionSnapshotResponse,
+  "eventCursor" | "serverTime"
+> & {
   session: SessionView;
   timeline: SessionTimelineSnapshot;
-  approvals?: Approval[];
+  approvals: Approval[];
   notices: Notice[];
   effectiveCapabilities: ProtocolCapabilitySet;
   runtimeCapabilities: ProtocolCapabilitySet;
@@ -373,33 +333,9 @@ export type SessionSnapshotResponse = {
     permission?: ProtocolPermissionCatalog;
     [key: string]: unknown;
   };
-  eventCursor: string;
-  serverTime: string;
 };
 
-export type ProtocolEventEnvelope = {
-  protocolVersion?: string;
-  eventId?: string;
-  sequence: number;
-  cursor: string;
-  type: string;
-  sessionId: string;
-  emittedAt?: string;
-  payload: Record<string, unknown>;
-};
-
-export type ProtocolEventRecoveryResponse = {
-  events: ProtocolEventEnvelope[];
-  nextCursor: string;
-  snapshotRequired: boolean;
-  serverTime: string;
-};
-
-export type WsTicketResponse = {
-  ticket: string;
-  expiresAt: string;
-  serverTime: string;
-};
+export type WsTicketResponse = ProtocolWsTicketResponse;
 
 export type SessionStateResponse = {
   session: SessionView;

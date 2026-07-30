@@ -9,7 +9,9 @@
     "build": "next build",
     "start": "next start --hostname 127.0.0.1 --port 5174",
     "typecheck": "tsc --noEmit",
-    "lint": "next lint"
+    "lint": "next lint",
+    "protocol:generate": "node scripts/generate-protocol-types.mjs",
+    "protocol:check": "node scripts/generate-protocol-types.mjs --check"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
@@ -85,6 +87,7 @@
     "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3",
     "@types/react-is": "^19",
+    "json-schema-to-typescript": "^15.0.4",
     "typescript": "^6.0.3"
   }
 }

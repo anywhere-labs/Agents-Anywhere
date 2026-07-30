@@ -85,7 +85,16 @@
         }
       },
       "required": [
-        "capabilityId"
+        "capabilityId",
+        "version",
+        "scope",
+        "runtime",
+        "sessionId",
+        "supported",
+        "available",
+        "allowed",
+        "unavailableReason",
+        "parameters"
       ],
       "title": "ProtocolCapability",
       "type": "object"
@@ -106,7 +115,8 @@
         }
       },
       "required": [
-        "revision"
+        "revision",
+        "capabilities"
       ],
       "title": "ProtocolCapabilitySet",
       "type": "object"

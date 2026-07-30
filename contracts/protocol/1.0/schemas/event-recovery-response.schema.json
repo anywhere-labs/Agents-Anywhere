@@ -39,12 +39,14 @@
         }
       },
       "required": [
+        "protocolVersion",
         "eventId",
         "sequence",
         "cursor",
         "type",
         "sessionId",
-        "emittedAt"
+        "emittedAt",
+        "payload"
       ],
       "title": "ProtocolEventEnvelope",
       "type": "object"
@@ -75,7 +77,9 @@
     }
   },
   "required": [
+    "events",
     "nextCursor",
+    "snapshotRequired",
     "serverTime"
   ],
   "title": "ProtocolEventRecoveryResponse",

@@ -29,7 +29,7 @@
       "model": "ProtocolCapabilitiesResponse",
       "path": "schemas/capabilities-response.schema.json",
       "pydanticMode": "serialization",
-      "sha256": "86fa7b084307c4fd0dce2ba6c458e993ad82510472f685e6b28cd22d36abe00c",
+      "sha256": "b220ac6c9169330298c13edf214e9ed39c062279d9990092acaddd9806a0a78b",
       "slug": "capabilities-response"
     },
     {
@@ -45,7 +45,7 @@
       "model": "ProtocolModelCatalogResponse",
       "path": "schemas/model-catalog-response.schema.json",
       "pydanticMode": "serialization",
-      "sha256": "cfe57a0acaefba67c9ce00a2fce31478a436911720ec83df97bf20de74c00a48",
+      "sha256": "79f0b6a6145eae6e663fa4c7ec46c5f0dd777314f1787ccea5aaa367b1d6de39",
       "slug": "model-catalog-response"
     },
     {
@@ -61,7 +61,7 @@
       "model": "ProtocolPermissionCatalogResponse",
       "path": "schemas/permission-catalog-response.schema.json",
       "pydanticMode": "serialization",
-      "sha256": "db1640f02c4f3e726b823e226dd22275411e4af834d58b266e2ef6206288a7c7",
+      "sha256": "c819671ba2d53638a4a5688bc2a8c5b4738079c60e519b8d8d12c7664eb40e62",
       "slug": "permission-catalog-response"
     },
     {
@@ -69,7 +69,7 @@
       "model": "ProtocolSessionSnapshotResponse",
       "path": "schemas/session-snapshot-response.schema.json",
       "pydanticMode": "serialization",
-      "sha256": "c7704e5d80f3fbdb603d88a3c71688834a56455e7e30bf255ca9c69f9972370d",
+      "sha256": "cd4cd222fd06643c19c257944af023578e86ee5ad23b6dfd226cb55ad4a15ce5",
       "slug": "session-snapshot-response"
     },
     {
@@ -93,7 +93,7 @@
       "model": "ProtocolEventEnvelope",
       "path": "schemas/event-envelope.schema.json",
       "pydanticMode": "serialization",
-      "sha256": "5d33fcb582ea11939c265cef5455aaf68272309a8d3431d333022c2ea404693b",
+      "sha256": "e70194b2a5f4f3c1ad20845b43f09c91a2129bad2a32e5ff2cb7193ef100016e",
       "slug": "event-envelope"
     },
     {
@@ -101,7 +101,7 @@
       "model": "ProtocolEventRecoveryResponse",
       "path": "schemas/event-recovery-response.schema.json",
       "pydanticMode": "serialization",
-      "sha256": "f8ef3b064ca1fc0b4c2ffbaa81b71a19b7088ba8a07c2194841786fcc16d30ae",
+      "sha256": "425d068d442e61d91d6437bb9ac6f22d5b29c49d99c216e95cb07b36da2cd62a",
       "slug": "event-recovery-response"
     }
   ],

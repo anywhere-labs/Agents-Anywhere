@@ -11,6 +11,14 @@ cd server
 uv run python -m scripts.export_protocol_schemas
 ```
 
+Regenerate or verify the Web TypeScript modules:
+
+```bash
+cd web-next
+yarn protocol:generate
+yarn protocol:check
+```
+
 The `fixtures/valid` and `fixtures/invalid` directories are reviewed compatibility
 examples shared by the Server, Connector, and Web test suites. Extensible
 capability identifiers and catalog metadata remain strings and JSON objects;
