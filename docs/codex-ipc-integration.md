@@ -37,6 +37,13 @@ that cannot connect to a live endpoint creates the Unix server and becomes the
 router. Later IDE/App processes connect as ordinary clients. This is why it is
 incorrect to model the topology as two processes both binding the same path.
 
+Agents Anywhere deliberately does not participate in that election. It never
+listens on, unlinks, or replaces the Codex IPC endpoint. At the beginning of
+each normal session-sync cycle it discovers the endpoint again and connects
+when a router is available. No router is a normal condition: app-server sync
+continues, and a later cycle retries discovery without treating the missing
+socket as a Connector failure.
+
 The router has no conversation logic. It only:
 
 1. registers clients through the `initialize` request;
@@ -59,12 +66,15 @@ and must restore all conversation subscriptions.
 ## Owner and follower flow
 
 IPC synchronizes a Codex UI conversation, not raw app-server JSON-RPC events.
-For each conversation, a surface can be:
+For each conversation, the Connector can independently be:
 
 - `owner`: it owns the app-server stream and the authoritative in-memory UI
   conversation state;
 - `follower`: it ignores app-server mutations for that conversation and uses
   the owner's IPC state instead.
+
+Router and owner are unrelated roles. The Codex App may be the router while the
+Connector is the owner of one conversation and a follower of another.
 
 The follower announces:
 
@@ -134,40 +144,81 @@ snapshot. Silently skipping a patch would corrupt all later path operations.
 
 ## Integration with CodexAdapter
 
-The integration should preserve the existing app-server adapter boundary:
+The integration should preserve the existing app-server adapter boundary while
+also publishing locally owned app-server state to IPC:
 
 ```text
 Codex app-server JSON-RPC ----> TimelineReducer ----> backend notifications
-                                  ^
-Codex IPC state mirror ----------|
+            |                     ^
+            v                     |
+     local IPC publisher     remote IPC mirror
+            |                     ^
+            +------ IPC router ---+
 ```
 
 The IPC layer should not post to Server directly and should not introduce a
-second timeline model. It should validate and mirror Codex conversation state,
-then feed normalized turn/item snapshots into the existing `TimelineReducer`.
+second timeline model. Remote IPC state is normalized into the existing
+`TimelineReducer`. Local app-server state is projected into the Codex canonical
+conversation shape and published to IPC for IDE/App followers.
 
 Recommended implementation sequence:
 
-1. Add a reconnecting `CodexIpcClient` that handles endpoint security,
-   length-prefixed framing, initialization, broadcasts, and shutdown.
-2. Add a state mirror keyed by Codex `conversationId` with owner id, revision,
-   canonical state, and followed/unfollowed status.
-3. During `sync_existing_sessions`, bind every discovered Codex thread to its
+1. Add a reconnecting `CodexIpcClient` that handles endpoint discovery,
+   length-prefixed framing, initialization, broadcasts, and shutdown. It must
+   never create or remove the endpoint.
+2. At the beginning of every `sync_existing_sessions` cycle, verify the IPC
+   connection. Connect and initialize if a router has appeared; reconnect and
+   restore subscriptions if the prior router disappeared.
+3. Add a state registry keyed by Codex `conversationId` with role, owner id,
+   revision, canonical state, followers, and followed/unfollowed status.
+4. During `sync_existing_sessions`, bind every discovered Codex thread to its
    stable Agents Anywhere session id, including threads skipped by the normal
    fingerprint optimization, then follow that thread over IPC.
-4. On an IPC snapshot, flatten canonical history in island order and call
+5. On a remote IPC snapshot, flatten canonical history in island order and call
    `TimelineReducer.reduce_thread_snapshot`. Emit `session.updated` plus one
    authoritative `timeline.sync`.
-5. On a valid patch batch, identify affected turn entities and item indexes.
-   Feed only changed items into a new reducer entry point and emit
+6. On a valid remote patch batch, identify affected turn entities and item
+   indexes. Feed only changed items into a new reducer entry point and emit
    `timeline.itemUpsert`; do not resend a complete turn for every token.
-6. When a turn status changes, reuse the reducer's existing turn start/end and
-   session status mapping. When title/cwd changes, emit `session.updated`.
-7. Deduplicate IPC updates against notifications received from the Connector's
-   own app-server by the existing stable timeline id and content hash.
-8. On disconnect, owner change, schema/version mismatch, or revision gap, stop
+7. When a remote turn status changes, reuse the reducer's existing turn
+   start/end and session status mapping. When title/cwd changes, emit
+   `session.updated`.
+8. Project local app-server snapshots and events into the same canonical state.
+   When another IPC client follows a locally owned conversation, send it a
+   targeted snapshot and then targeted patches in revision order.
+9. Tag every update with its source. Never republish a remote IPC update back to
+   IPC. Deduplicate backend notifications by the existing stable timeline id
+   and content hash.
+10. On disconnect, owner change, schema/version mismatch, or revision gap, stop
    incremental emission and request a new snapshot. The existing periodic
    app-server sync remains the fallback source of final state.
+
+## Publishing local app-server state
+
+The Connector's app-server is authoritative for threads it starts or resumes
+locally. Those threads must be visible to Codex IDE/App clients through the IPC
+router even though the Connector is not the router.
+
+The outbound flow is:
+
+1. Build canonical conversation state from `thread/read` during the normal
+   sync and retain it as the local owner state.
+2. Observe `thread-stream-following-changed` broadcasts. For `following=true`,
+   register the follower's `sourceClientId` and immediately send that client a
+   targeted version-11 snapshot at the current revision. For `following=false`,
+   remove it.
+3. Reduce each local app-server notification into both the existing backend
+   timeline event and the retained canonical IPC state.
+4. Generate `add`, `replace`, or `remove` patches from the previous canonical
+   state, increment the revision by exactly one, and target the current follower
+   client ids.
+5. If an app-server event cannot be represented safely as a patch, advance by
+   sending a fresh targeted snapshot instead of emitting a guessed patch.
+
+This is state replication, not raw event forwarding. App-server notification
+names and payloads are not valid IPC methods, so they must first update the
+canonical state. This also gives late followers a complete snapshot and keeps
+token text replacement semantics consistent with Codex App and IDE.
 
 ## Control requests
 
