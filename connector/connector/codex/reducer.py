@@ -144,7 +144,91 @@ class TimelineReducer:
             if turn_id and is_complete:
                 items.append(self._upsert_turn_end(session_id, thread_id, turn_id, turn))
 
-        session_update = {
+        return ReductionResult(
+            session_update=self._thread_session_update(session_id, thread_id, thread),
+            timeline_items=items,
+        )
+
+    def reduce_thread_metadata(
+        self,
+        session_id: str,
+        thread: dict[str, Any],
+        *,
+        fallback_thread_id: str | None = None,
+    ) -> ReductionResult:
+        thread_id = fallback_thread_id or _thread_id(thread)
+        if thread_id:
+            self.bind_session(session_id, thread_id)
+        return ReductionResult(
+            session_update=self._thread_session_update(session_id, thread_id, thread)
+        )
+
+    def reduce_turn_item_snapshots(
+        self,
+        session_id: str,
+        thread_id: str,
+        turn: dict[str, Any],
+        item_indexes: set[int] | frozenset[int],
+        *,
+        event: str = "ipc/thread-stream-state-changed",
+    ) -> ReductionResult:
+        self.bind_session(session_id, thread_id)
+        turn_id = _string_value(turn.get("id")) or _string_value(turn.get("turnId"))
+        raw_turn_items = _list_value(turn.get("items"))
+        turn_items = [
+            item
+            for item in raw_turn_items
+            if not _is_bootstrap_user_message(item)
+            and not _is_external_import_marker(item)
+        ]
+        message_counts = _message_type_counts(turn_items)
+        message_indices: dict[str, int] = {}
+        reasoning_index = 0
+        visible_index = 0
+        items: list[dict[str, Any]] = []
+        for raw_index, raw_item in enumerate(raw_turn_items):
+            if _is_bootstrap_user_message(raw_item) or _is_external_import_marker(
+                raw_item
+            ):
+                continue
+            item = dict(raw_item)
+            codex_type = _string_value(item.get("type"))
+            message_index = message_indices.get(codex_type or "", 0)
+            if codex_type in {"userMessage", "agentMessage"}:
+                message_indices[codex_type] = message_index + 1
+            current_reasoning_index = reasoning_index
+            if codex_type == "reasoning":
+                reasoning_index += 1
+            if raw_index not in item_indexes:
+                visible_index += 1
+                continue
+            item.setdefault("_snapshotIndex", visible_index)
+            if codex_type == "reasoning":
+                item["_reasoningTurnIndex"] = current_reasoning_index
+            if (
+                codex_type in {"userMessage", "agentMessage"}
+                and message_counts.get(codex_type, 0) > 1
+            ):
+                item["_messageKey"] = f"message-{codex_type}-{message_index}"
+            reduced = self._upsert_completed_item(
+                session_id,
+                thread_id,
+                turn_id,
+                item,
+                event=event,
+            )
+            if reduced is not None:
+                items.append(reduced)
+            visible_index += 1
+        return ReductionResult(timeline_items=items)
+
+    def _thread_session_update(
+        self,
+        session_id: str,
+        thread_id: str | None,
+        thread: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
             "sessionId": session_id,
             "runtime": "codex",
             "status": _session_status_from_thread(thread),
@@ -154,7 +238,6 @@ class TimelineReducer:
             "lastSyncedAt": utc_now(),
             "sourceObservedAt": utc_now(),
         }
-        return ReductionResult(session_update=session_update, timeline_items=items)
 
     def reduce_history_items(
         self,

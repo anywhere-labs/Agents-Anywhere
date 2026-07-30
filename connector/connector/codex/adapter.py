@@ -9,8 +9,24 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from pydantic import ValidationError
+
 from connector.attachments import attachment_target
 from connector.codex.ipc_client import CodexIpcClient
+from connector.codex.ipc_protocol import (
+    CodexIpcBroadcast,
+    CodexIpcClientStatusChangedBroadcast,
+    CodexIpcConnectionResetBroadcast,
+    CodexIpcFollowingStatusRequestedBroadcast,
+    CodexIpcRouterMessage,
+    CodexIpcStreamStateChangedBroadcast,
+)
+from connector.codex.ipc_state import (
+    CodexIpcAppliedState,
+    CodexIpcStateError,
+    CodexIpcStateRegistry,
+    codex_ipc_thread_snapshot,
+)
 from connector.codex.reducer import (
     CODEX_APPROVAL_METHODS,
     ReductionResult,
@@ -175,6 +191,13 @@ class CodexAdapter:
     _existing_thread_sync_markers: dict[str, str] = field(default_factory=dict)
     _existing_thread_names: dict[str, str | None] = field(default_factory=dict)
     _model_list_result: dict[str, Any] | None = None
+    _ipc_state_registry: CodexIpcStateRegistry = field(
+        default_factory=CodexIpcStateRegistry,
+        init=False,
+        repr=False,
+    )
+    _ipc_followed_by_client: dict[str, str] = field(default_factory=dict)
+    _ipc_connection_client_id: str | None = None
     _start_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -182,6 +205,8 @@ class CodexAdapter:
             self.rpc = JsonRpcStdioClient()
         if self.reducer is None:
             self.reducer = TimelineReducer()
+        if self.ipc_client is not None:
+            self.ipc_client.set_message_handler(self.handle_ipc_message)
 
     def forget_sync_state(self) -> None:
         """Drop the in-memory "I already told the backend about thread X"
@@ -217,6 +242,9 @@ class CodexAdapter:
             await self.rpc.close()
         if self.ipc_client is not None:
             await self.ipc_client.close()
+        self._ipc_state_registry.reset()
+        self._ipc_followed_by_client.clear()
+        self._ipc_connection_client_id = None
         self._started = False
         self._model_list_result = None
 
@@ -302,6 +330,7 @@ class CodexAdapter:
         session_id = _required_string(params, "sessionId")
         thread_id = _required_string(params, "externalSessionId")
         self.reducer.bind_session(session_id, thread_id)
+        await self._follow_ipc_thread(thread_id)
         started = time.perf_counter()
         logger.info("codex session sync started session_id={} thread_id={}", session_id, thread_id)
         try:
@@ -404,6 +433,7 @@ class CodexAdapter:
                 continue
             session_id = stable_session_id(connector_id, thread_id)
             self.reducer.bind_session(session_id, thread_id)
+            await self._follow_ipc_thread(thread_id)
             sync_marker = _thread_sync_marker(thread_ref)
             current_name = _optional_string(thread_ref.get("name"))
             persisted_state = (
@@ -517,7 +547,169 @@ class CodexAdapter:
     async def _discover_ipc_router(self) -> bool:
         if self.ipc_client is None:
             return False
-        return await self.ipc_client.ensure_connected()
+        connected = await self.ipc_client.ensure_connected()
+        client_id = self.ipc_client.client_id if connected else None
+        if client_id != self._ipc_connection_client_id:
+            self._ipc_state_registry.reset()
+            self._ipc_followed_by_client.clear()
+            self._ipc_connection_client_id = client_id
+        return connected
+
+    async def _follow_ipc_thread(self, thread_id: str, *, force: bool = False) -> bool:
+        if self.ipc_client is None or not self.ipc_client.is_connected:
+            return False
+        client_id = self.ipc_client.client_id
+        if client_id is None:
+            return False
+        if not force and self._ipc_followed_by_client.get(thread_id) == client_id:
+            return True
+        self._ipc_followed_by_client[thread_id] = client_id
+        sent = await self.ipc_client.send_broadcast(
+            "thread-stream-following-changed",
+            {
+                "conversationId": thread_id,
+                "hostId": "local",
+                "following": True,
+            },
+        )
+        if not sent and self._ipc_followed_by_client.get(thread_id) == client_id:
+            self._ipc_followed_by_client.pop(thread_id, None)
+        return sent
+
+    async def handle_ipc_message(self, message: CodexIpcRouterMessage) -> None:
+        if not isinstance(message, CodexIpcBroadcast):
+            return
+        if message.sourceClientId == self._ipc_connection_client_id:
+            return
+
+        if message.method == "ipc-connection-reset":
+            try:
+                CodexIpcConnectionResetBroadcast.model_validate(message.model_dump())
+            except ValidationError as exc:
+                logger.warning(
+                    "ignoring invalid codex IPC reset validation_errors={}",
+                    exc.error_count(),
+                )
+                return
+            followed_threads = list(self._ipc_followed_by_client)
+            self._ipc_state_registry.reset()
+            self._ipc_followed_by_client.clear()
+            for thread_id in followed_threads:
+                await self._follow_ipc_thread(thread_id, force=True)
+            return
+
+        if message.method == "thread-stream-following-status-requested":
+            try:
+                requested = CodexIpcFollowingStatusRequestedBroadcast.model_validate(
+                    message.model_dump()
+                )
+            except ValidationError as exc:
+                logger.warning(
+                    "ignoring invalid codex IPC following status request validation_errors={}",
+                    exc.error_count(),
+                )
+                return
+            thread_id = requested.params.conversationId
+            if thread_id in self._ipc_followed_by_client:
+                await self._follow_ipc_thread(thread_id, force=True)
+            return
+
+        if message.method == "client-status-changed":
+            try:
+                status = CodexIpcClientStatusChangedBroadcast.model_validate(
+                    message.model_dump()
+                )
+            except ValidationError:
+                return
+            if status.params.status == "disconnected":
+                self._ipc_state_registry.remove_owner(status.params.clientId)
+            return
+
+        if message.method != "thread-stream-state-changed":
+            return
+        try:
+            state_message = CodexIpcStreamStateChangedBroadcast.model_validate(
+                message.model_dump()
+            )
+        except ValidationError as exc:
+            logger.warning(
+                "ignoring invalid codex IPC stream state validation_errors={}",
+                exc.error_count(),
+            )
+            return
+
+        thread_id = state_message.params.conversationId
+        if self._ipc_followed_by_client.get(thread_id) != self._ipc_connection_client_id:
+            return
+        try:
+            applied = await self._ipc_state_registry.apply(state_message)
+        except CodexIpcStateError as exc:
+            logger.warning(
+                "codex IPC state desynchronized thread_id={} error_type={}",
+                thread_id,
+                type(exc).__name__,
+            )
+            await self._follow_ipc_thread(thread_id, force=True)
+            return
+        await self._emit_ipc_state(applied)
+
+    async def _emit_ipc_state(self, applied: CodexIpcAppliedState) -> None:
+        assert self.reducer is not None
+        thread_id = applied.thread_state.conversation_id
+        session_id = self.reducer.session_for_thread(thread_id)
+        if session_id is None:
+            return
+        thread = codex_ipc_thread_snapshot(applied.thread_state.conversation_state)
+        scope = applied.patch_scope
+        if applied.kind == "snapshot" or scope.requires_timeline_sync:
+            reduced = self.reducer.reduce_thread_snapshot(
+                session_id,
+                thread,
+                fallback_thread_id=thread_id,
+            )
+            await self._emit_reduction(reduced, timeline_method="timeline.sync")
+            return
+
+        if scope.metadata_changed:
+            reduced = self.reducer.reduce_thread_metadata(
+                session_id,
+                thread,
+                fallback_thread_id=thread_id,
+            )
+            await self._emit_reduction(reduced, timeline_method="timeline.itemUpsert")
+
+        history = applied.thread_state.conversation_state.turnHistory
+        if history is None:
+            return
+        for entity_key, item_indexes in scope.item_indexes_by_entity.items():
+            turn = history.history.entitiesByKey.get(entity_key)
+            if turn is None or any(index >= len(turn.items) for index in item_indexes):
+                await self._follow_ipc_thread(thread_id, force=True)
+                return
+            reduced = self.reducer.reduce_turn_item_snapshots(
+                session_id,
+                thread_id,
+                turn.model_dump(mode="python"),
+                item_indexes,
+            )
+            await self._emit_reduction(
+                reduced,
+                timeline_method="timeline.itemUpsert",
+            )
+
+    async def _emit_reduction(
+        self,
+        reduced: ReductionResult,
+        *,
+        timeline_method: str,
+    ) -> None:
+        if self.notification_sink is None:
+            return
+        for notification in _backend_notifications_from_reduction(
+            reduced,
+            timeline_method=timeline_method,
+        ):
+            await self.notification_sink(notification["method"], notification["params"])
 
     def _persist_sync_state(
         self,

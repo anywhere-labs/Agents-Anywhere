@@ -13,6 +13,7 @@ from connector.codex.adapter import (
     stable_session_id,
 )
 from connector.codex.history import read_timeline_history, read_tool_history
+from connector.codex.ipc_protocol import CodexIpcStreamStateChangedBroadcast
 from connector.codex.reducer import TimelineReducer
 from connector.codex.rpc import APP_SERVER_STREAM_LIMIT, JsonRpcStdioClient
 from connector.protocol import protocol_selection_id
@@ -88,13 +89,31 @@ class FakeCodexIpcClient:
         self.connected = connected
         self.ensure_connected_calls = 0
         self.closed = False
+        self.client_id: str | None = None
+        self.broadcasts: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+        self.message_handler = None
+
+    @property
+    def is_connected(self) -> bool:
+        return self.connected and self.client_id is not None
+
+    def set_message_handler(self, handler) -> None:
+        self.message_handler = handler
 
     async def ensure_connected(self) -> bool:
         self.ensure_connected_calls += 1
+        self.client_id = "ipc_client_1" if self.connected else None
         return self.connected
+
+    async def send_broadcast(self, method: str, params: dict[str, Any], **kwargs) -> bool:
+        if not self.is_connected:
+            return False
+        self.broadcasts.append((method, params, kwargs))
+        return True
 
     async def close(self) -> None:
         self.closed = True
+        self.client_id = None
 
 
 class InterruptThreadNotFoundRpc(FakeCodexRpc):
@@ -1228,6 +1247,38 @@ def test_adapter_discovers_ipc_router_during_sync_and_closes_client() -> None:
     asyncio.run(_exercise_ipc_client_lifecycle())
 
 
+def test_adapter_reduces_ipc_snapshot_and_token_patch() -> None:
+    asyncio.run(_exercise_ipc_snapshot_and_patch())
+
+
+def test_reducer_ipc_item_indexes_use_unfiltered_turn_positions() -> None:
+    reducer = TimelineReducer()
+    reducer.bind_session("sess_1", "thr_1")
+    reduced = reducer.reduce_turn_item_snapshots(
+        "sess_1",
+        "thr_1",
+        {
+            "turnId": "turn_1",
+            "items": [
+                {
+                    "id": "bootstrap",
+                    "type": "userMessage",
+                    "content": [{"type": "text", "text": "# AGENTS.md instructions"}],
+                },
+                {
+                    "id": "msg_1",
+                    "type": "agentMessage",
+                    "text": "hello",
+                    "status": "inProgress",
+                },
+            ],
+        },
+        {1},
+    )
+    assert len(reduced.timeline_items) == 1
+    assert reduced.timeline_items[0]["content"]["text"] == "hello"
+
+
 def test_adapter_uses_persisted_sync_marker_after_restart(tmp_path) -> None:
     asyncio.run(_exercise_persisted_existing_thread_sync(tmp_path))
 
@@ -1297,6 +1348,129 @@ async def _exercise_ipc_client_lifecycle() -> None:
     await adapter.stop()
     assert ipc_client.closed is True
     assert rpc.closed is True
+
+
+async def _exercise_ipc_snapshot_and_patch() -> None:
+    rpc = FakeCodexRpc()
+    ipc_client = FakeCodexIpcClient()
+    notifications: list[tuple[str, dict[str, Any]]] = []
+
+    async def sink(method: str, params: dict[str, Any]) -> None:
+        notifications.append((method, params))
+
+    adapter = CodexAdapter(  # type: ignore[arg-type]
+        rpc=rpc,
+        ipc_client=ipc_client,
+        notification_sink=sink,
+    )
+    await adapter.sync_session({"sessionId": "sess_1", "externalSessionId": "thr_1"})
+    assert ipc_client.broadcasts[-1][0] == "thread-stream-following-changed"
+
+    snapshot = CodexIpcStreamStateChangedBroadcast.model_validate(
+        {
+            "sourceClientId": "owner_1",
+            "params": {
+                "conversationId": "thr_1",
+                "change": {
+                    "type": "snapshot",
+                    "revision": 1,
+                    "conversationState": {
+                        "id": "thr_1",
+                        "title": "IPC thread",
+                        "cwd": "/repo",
+                        "turnHistory": {
+                            "kind": "canonical",
+                            "history": {
+                                "generation": 1,
+                                "isComplete": True,
+                                "entitiesByKey": {
+                                    "turn_key": {
+                                        "turnId": "turn_ipc",
+                                        "status": "inProgress",
+                                        "items": [
+                                            {
+                                                "id": "msg_ipc",
+                                                "type": "agentMessage",
+                                                "status": "inProgress",
+                                                "text": "hel",
+                                            }
+                                        ],
+                                    }
+                                },
+                                "islands": [
+                                    {
+                                        "id": "tail:1",
+                                        "entries": [
+                                            {"key": "turn_key", "value": "turn_key"}
+                                        ],
+                                    }
+                                ],
+                            },
+                        },
+                    },
+                },
+            },
+        }
+    )
+    assert ipc_client.message_handler is not None
+    await ipc_client.message_handler(snapshot)
+    assert [method for method, _params in notifications] == [
+        "session.updated",
+        "timeline.sync",
+    ]
+    notifications.clear()
+
+    patch = CodexIpcStreamStateChangedBroadcast.model_validate(
+        {
+            "sourceClientId": "owner_1",
+            "params": {
+                "conversationId": "thr_1",
+                "change": {
+                    "type": "patches",
+                    "baseRevision": 1,
+                    "revision": 2,
+                    "patches": [
+                        {
+                            "op": "replace",
+                            "path": [
+                                "turnHistory",
+                                "history",
+                                "entitiesByKey",
+                                "turn_key",
+                                "items",
+                                0,
+                                "text",
+                            ],
+                            "value": "hello",
+                        }
+                    ],
+                },
+            },
+        }
+    )
+    await ipc_client.message_handler(patch)
+    assert [method for method, _params in notifications] == ["timeline.itemUpsert"]
+    assert notifications[0][1]["item"]["content"]["text"] == "hello"
+    notifications.clear()
+
+    gap = CodexIpcStreamStateChangedBroadcast.model_validate(
+        {
+            "sourceClientId": "owner_1",
+            "params": {
+                "conversationId": "thr_1",
+                "change": {
+                    "type": "patches",
+                    "baseRevision": 3,
+                    "revision": 4,
+                    "patches": [],
+                },
+            },
+        }
+    )
+    following_before = len(ipc_client.broadcasts)
+    await ipc_client.message_handler(gap)
+    assert notifications == []
+    assert len(ipc_client.broadcasts) == following_before + 1
 
 
 async def _exercise_persisted_existing_thread_sync(tmp_path) -> None:

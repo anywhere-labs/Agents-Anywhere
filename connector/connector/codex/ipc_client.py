@@ -89,6 +89,12 @@ class CodexIpcClient:
             and not self._reader_task.done()
         )
 
+    def set_message_handler(
+        self,
+        handler: CodexIpcMessageHandler | None,
+    ) -> None:
+        self.message_handler = handler
+
     async def ensure_connected(self) -> bool:
         async with self._connect_lock:
             if self.is_connected:
