@@ -251,3 +251,125 @@ async def _exercise_oversized_frame(tmp_path: Path) -> None:
         server.close()
         await server.wait_closed()
         socket_path.unlink(missing_ok=True)
+
+
+def test_request_discovery_and_direct_request_handling() -> None:
+    with tempfile.TemporaryDirectory(prefix="aa-ipc-", dir="/tmp") as directory:
+        asyncio.run(
+            asyncio.wait_for(
+                _exercise_request_round_trip(Path(directory)), timeout=3
+            )
+        )
+
+
+async def _exercise_request_round_trip(tmp_path: Path) -> None:
+    socket_path = tmp_path / "ipc.sock"
+    received: list[dict[str, Any]] = []
+    completed = asyncio.Event()
+
+    async def handle(
+        reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        initialize = await _read_frame(reader)
+        writer.write(
+            _frame(
+                {
+                    "type": "response",
+                    "requestId": initialize["requestId"],
+                    "resultType": "success",
+                    "result": {"clientId": "connector_owner"},
+                }
+            )
+        )
+        await writer.drain()
+
+        outbound = await _read_frame(reader)
+        received.append(outbound)
+        writer.write(
+            _frame(
+                {
+                    "type": "response",
+                    "requestId": outbound["requestId"],
+                    "resultType": "success",
+                    "method": outbound["method"],
+                    "handledByClientId": "app_owner",
+                    "result": {"result": {"turnId": "turn_1"}},
+                }
+            )
+        )
+        writer.write(
+            _frame(
+                {
+                    "type": "client-discovery-request",
+                    "requestId": "discover_1",
+                    "request": {
+                        "type": "request",
+                        "requestId": "incoming_1",
+                        "sourceClientId": "ide_follower",
+                        "method": "thread-follower-steer-turn",
+                        "params": {"conversationId": "thr_1"},
+                        "version": 1,
+                    },
+                }
+            )
+        )
+        await writer.drain()
+        received.append(await _read_frame(reader))
+
+        writer.write(
+            _frame(
+                {
+                    "type": "request",
+                    "requestId": "incoming_1",
+                    "sourceClientId": "ide_follower",
+                    "method": "thread-follower-steer-turn",
+                    "params": {"conversationId": "thr_1"},
+                    "version": 1,
+                    "targetClientId": "connector_owner",
+                }
+            )
+        )
+        await writer.drain()
+        received.append(await _read_frame(reader))
+        completed.set()
+        await reader.read()
+        writer.close()
+        await writer.wait_closed()
+
+    async def on_request(request) -> dict[str, Any]:
+        return {"result": {"conversationId": request.params["conversationId"]}}
+
+    server = await asyncio.start_unix_server(handle, path=socket_path)
+    client = CodexIpcClient(socket_path=socket_path)
+    client.set_request_handler(
+        on_request,
+        can_handle=lambda request: (
+            request.method == "thread-follower-steer-turn"
+            and request.params.get("conversationId") == "thr_1"
+        ),
+    )
+    try:
+        assert await client.ensure_connected() is True
+        response = await client.send_request(
+            "thread-follower-steer-turn",
+            {"conversationId": "thr_1"},
+            target_client_id="app_owner",
+        )
+        assert response == {"result": {"turnId": "turn_1"}}
+        await asyncio.wait_for(completed.wait(), timeout=1)
+    finally:
+        await asyncio.wait_for(client.close(), timeout=1)
+        server.close()
+        await server.wait_closed()
+        socket_path.unlink(missing_ok=True)
+
+    assert received[0]["targetClientId"] == "app_owner"
+    assert received[0]["timeoutMs"] == 5000
+    assert received[1] == {
+        "type": "client-discovery-response",
+        "requestId": "discover_1",
+        "response": {"canHandle": True},
+    }
+    assert received[2]["resultType"] == "success"
+    assert received[2]["handledByClientId"] == "connector_owner"
+    assert received[2]["result"] == {"result": {"conversationId": "thr_1"}}

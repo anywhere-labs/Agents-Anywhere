@@ -2639,6 +2639,66 @@ def test_interrupt_and_sync_carry_runtime(tmp_path):
     assert sync_params["runtime"] == "claude"
 
 
+def test_steer_routes_to_active_codex_turn_without_changing_run_state(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, session_id, headers = create_connector_and_session(
+        client
+    )
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+    _ingest_open_turn(client, access_token, session_id, turn_id="turn_codex_live")
+
+    response = client.post(
+        f"/sessions/{session_id}/steer",
+        headers=headers,
+        json={"content": "focus on IPC", "clientMessageId": "msg_steer_1"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert fake_rpc.requests[-1][1] == "turn.steer"
+    params = fake_rpc.requests[-1][2]
+    external_session_id = asyncio.run(
+        client.app.state.store.get_session(session_id)
+    ).externalSessionId
+    assert params == {
+        "sessionId": session_id,
+        "runtime": "codex",
+        "content": "focus on IPC",
+        "turnId": "turn_codex_live",
+        "externalSessionId": external_session_id,
+        "cwd": "/repo",
+        "clientMessageId": "msg_steer_1",
+    }
+    assert asyncio.run(client.app.state.store.get_active_run(session_id)) is None
+
+
+def test_steer_rejects_idle_session_and_turn_overrides(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+
+    idle_response = client.post(
+        f"/sessions/{session_id}/steer",
+        headers=headers,
+        json={"content": "too late"},
+    )
+    override_response = client.post(
+        f"/sessions/{session_id}/steer",
+        headers=headers,
+        json={"content": "change model", "modelSelectionId": "codex:gpt-5"},
+    )
+
+    assert idle_response.status_code == 409
+    assert idle_response.json()["detail"] == "no active turn to steer"
+    assert override_response.status_code == 422
+    assert not any(method == "turn.steer" for _, method, _, _ in fake_rpc.requests)
+
+
 def test_interrupt_not_found_result_clears_stale_active_run(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, session_id, headers = create_connector_and_session(client)

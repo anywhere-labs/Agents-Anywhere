@@ -65,3 +65,11 @@ def can_interrupt_turn(
     has_active_work: bool,
 ) -> bool:
     return has_active_work or status in {"pending", "running", "blocked"}
+
+
+def can_steer_turn(
+    status: SessionStatus,
+    *,
+    has_active_turn: bool,
+) -> bool:
+    return has_active_turn and status == "running"

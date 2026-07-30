@@ -30,6 +30,7 @@ GET /api/v2/sessions/{sessionId}/snapshot
 GET /api/v2/sessions/{sessionId}/timeline?...
 GET /api/v2/sessions/{sessionId}/events?after={eventCursor}
 POST /api/v2/sessions/{sessionId}/messages
+POST /api/v2/sessions/{sessionId}/steer
 POST /api/v2/sessions/{sessionId}/interrupt
 POST /api/v2/sessions/{sessionId}/interactions/{noticeId}/respond
 POST /api/v2/ws-ticket

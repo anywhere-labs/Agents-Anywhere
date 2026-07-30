@@ -15,6 +15,7 @@ from connector.codex.adapter import (
 from connector.codex.history import read_timeline_history, read_tool_history
 from connector.codex.ipc_protocol import (
     CodexIpcFollowingChangedBroadcast,
+    CodexIpcRequest,
     CodexIpcStreamStateChangedBroadcast,
 )
 from connector.codex.reducer import TimelineReducer
@@ -94,7 +95,10 @@ class FakeCodexIpcClient:
         self.closed = False
         self.client_id: str | None = None
         self.broadcasts: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+        self.requests: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
         self.message_handler = None
+        self.request_handler = None
+        self.request_predicate = None
 
     @property
     def is_connected(self) -> bool:
@@ -102,6 +106,10 @@ class FakeCodexIpcClient:
 
     def set_message_handler(self, handler) -> None:
         self.message_handler = handler
+
+    def set_request_handler(self, handler, *, can_handle=None) -> None:
+        self.request_handler = handler
+        self.request_predicate = can_handle
 
     async def ensure_connected(self) -> bool:
         self.ensure_connected_calls += 1
@@ -113,6 +121,10 @@ class FakeCodexIpcClient:
             return False
         self.broadcasts.append((method, params, kwargs))
         return True
+
+    async def send_request(self, method: str, params: dict[str, Any], **kwargs):
+        self.requests.append((method, params, kwargs))
+        return {"result": {"turnId": "turn_ipc"}}
 
     async def close(self) -> None:
         self.closed = True
@@ -1258,6 +1270,14 @@ def test_adapter_publishes_local_app_server_state_to_ipc_followers() -> None:
     asyncio.run(_exercise_ipc_local_owner_projection())
 
 
+def test_adapter_steers_local_owner_and_handles_ipc_follower_request() -> None:
+    asyncio.run(_exercise_local_and_incoming_ipc_steer())
+
+
+def test_adapter_routes_steer_to_remote_ipc_owner() -> None:
+    asyncio.run(_exercise_remote_ipc_steer())
+
+
 def test_reducer_ipc_item_indexes_use_unfiltered_turn_positions() -> None:
     reducer = TimelineReducer()
     reducer.bind_session("sess_1", "thr_1")
@@ -1564,6 +1584,119 @@ async def _exercise_ipc_local_owner_projection() -> None:
     )
     await ipc_client.message_handler(remote_snapshot)
     assert notifications == []
+
+
+async def _exercise_local_and_incoming_ipc_steer() -> None:
+    rpc = FakeCodexRpc()
+    ipc_client = FakeCodexIpcClient()
+    adapter = CodexAdapter(rpc=rpc, ipc_client=ipc_client)  # type: ignore[arg-type]
+    await adapter.sync_session({"sessionId": "sess_1", "externalSessionId": "thr_1"})
+    await adapter.handle_notification(
+        {
+            "method": "turn/started",
+            "params": {
+                "threadId": "thr_1",
+                "turn": {"id": "turn_live", "status": "inProgress", "items": []},
+            },
+        }
+    )
+
+    result = await adapter.steer_turn(
+        {
+            "sessionId": "sess_1",
+            "externalSessionId": "thr_1",
+            "turnId": "turn_live",
+            "content": "focus on tests",
+            "clientMessageId": "msg_local",
+        }
+    )
+
+    assert result["steered"] is True
+    assert rpc.requests[-1] == (
+        "turn/steer",
+        {
+            "threadId": "thr_1",
+            "input": [
+                {
+                    "type": "text",
+                    "text": "focus on tests",
+                    "text_elements": [],
+                }
+            ],
+            "expectedTurnId": "turn_live",
+            "clientUserMessageId": "msg_local",
+        },
+    )
+    assert ipc_client.requests == []
+
+    request = CodexIpcRequest(
+        requestId="ipc_steer_1",
+        sourceClientId="ide_follower",
+        method="thread-follower-steer-turn",
+        version=1,
+        params={
+            "conversationId": "thr_1",
+            "clientUserMessageId": "msg_ide",
+            "input": [{"type": "text", "text": "be concise", "text_elements": []}],
+        },
+    )
+    assert ipc_client.request_predicate is not None
+    assert ipc_client.request_predicate(request) is True
+    assert ipc_client.request_handler is not None
+    response = await ipc_client.request_handler(request)
+    assert response == {"result": {}}
+    assert rpc.requests[-1][0] == "turn/steer"
+    assert rpc.requests[-1][1]["expectedTurnId"] == "turn_live"
+
+
+async def _exercise_remote_ipc_steer() -> None:
+    rpc = FakeCodexRpc()
+    ipc_client = FakeCodexIpcClient()
+    adapter = CodexAdapter(rpc=rpc, ipc_client=ipc_client)  # type: ignore[arg-type]
+    await adapter.sync_session({"sessionId": "sess_1", "externalSessionId": "thr_1"})
+    assert ipc_client.message_handler is not None
+    await ipc_client.message_handler(
+        CodexIpcStreamStateChangedBroadcast.model_validate(
+            {
+                "sourceClientId": "app_owner",
+                "params": {
+                    "conversationId": "thr_1",
+                    "change": {
+                        "type": "snapshot",
+                        "revision": 1,
+                        "conversationState": {
+                            "id": "thr_1",
+                            "turns": [
+                                {
+                                    "turnId": "turn_ipc",
+                                    "status": "inProgress",
+                                    "items": [],
+                                }
+                            ],
+                        },
+                    },
+                },
+            }
+        )
+    )
+
+    result = await adapter.steer_turn(
+        {
+            "sessionId": "sess_1",
+            "externalSessionId": "thr_1",
+            "turnId": "turn_ipc",
+            "content": "use the IPC owner",
+            "clientMessageId": "msg_remote",
+        }
+    )
+
+    assert result == {"steered": True, "turnId": "turn_ipc"}
+    method, request_params, options = ipc_client.requests[-1]
+    assert method == "thread-follower-steer-turn"
+    assert request_params["conversationId"] == "thr_1"
+    assert request_params["input"][0]["text"] == "use the IPC owner"
+    assert options["target_client_id"] == "app_owner"
+    assert not any(method == "turn/steer" for method, _params in rpc.requests)
 
 
 async def _exercise_persisted_existing_thread_sync(tmp_path) -> None:

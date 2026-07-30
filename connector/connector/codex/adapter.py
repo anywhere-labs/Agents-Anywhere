@@ -8,25 +8,29 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
+from uuid import uuid4
 
 from pydantic import ValidationError
 
 from connector.attachments import attachment_target
 from connector.codex.ipc_client import CodexIpcClient
-from connector.codex.ipc_publisher import CodexIpcPublisher
 from connector.codex.ipc_protocol import (
     CodexIpcBroadcast,
     CodexIpcClientStatusChangedBroadcast,
     CodexIpcConnectionResetBroadcast,
+    CodexIpcFollowerSteerTurnParams,
     CodexIpcFollowingChangedBroadcast,
     CodexIpcFollowingStatusRequestedBroadcast,
+    CodexIpcRequest,
     CodexIpcRouterMessage,
     CodexIpcStreamStateChangedBroadcast,
 )
+from connector.codex.ipc_publisher import CodexIpcPublisher
 from connector.codex.ipc_state import (
     CodexIpcAppliedState,
     CodexIpcStateError,
     CodexIpcStateRegistry,
+    codex_ipc_active_turn_id,
     codex_ipc_thread_snapshot,
 )
 from connector.codex.reducer import (
@@ -212,6 +216,10 @@ class CodexAdapter:
         self._ipc_publisher = CodexIpcPublisher(self.ipc_client)
         if self.ipc_client is not None:
             self.ipc_client.set_message_handler(self.handle_ipc_message)
+            self.ipc_client.set_request_handler(
+                self.handle_ipc_request,
+                can_handle=self.can_handle_ipc_request,
+            )
 
     def forget_sync_state(self) -> None:
         """Drop the in-memory "I already told the backend about thread X"
@@ -715,6 +723,31 @@ class CodexAdapter:
             return
         await self._emit_ipc_state(applied)
 
+    def can_handle_ipc_request(self, request: CodexIpcRequest) -> bool:
+        if request.method != "thread-follower-steer-turn":
+            return False
+        try:
+            params = CodexIpcFollowerSteerTurnParams.model_validate(request.params)
+        except ValidationError:
+            return False
+        return self._ipc_publisher.active_turn_id(params.conversationId) is not None
+
+    async def handle_ipc_request(self, request: CodexIpcRequest) -> dict[str, Any]:
+        if request.method != "thread-follower-steer-turn":
+            raise ValueError(f"unsupported Codex IPC request: {request.method}")
+        params = CodexIpcFollowerSteerTurnParams.model_validate(request.params)
+        turn_id = self._ipc_publisher.active_turn_id(params.conversationId)
+        if turn_id is None:
+            raise RuntimeError("Codex thread has no active turn to steer")
+        result = await self._steer_local(
+            thread_id=params.conversationId,
+            turn_id=turn_id,
+            input_items=params.input,
+            client_message_id=params.clientUserMessageId,
+            additional_context=params.additionalContext,
+        )
+        return {"result": result}
+
     async def _emit_ipc_state(self, applied: CodexIpcAppliedState) -> None:
         assert self.reducer is not None
         thread_id = applied.thread_state.conversation_id
@@ -978,6 +1011,113 @@ class CodexAdapter:
                     f" {len(data)} bytes) at {target}]"
                 )
         return text, items
+
+    async def steer_turn(self, params: dict[str, Any]) -> dict[str, Any]:
+        await self.start()
+        assert self.reducer is not None
+        session_id = _required_string(params, "sessionId")
+        thread_id = _optional_string(params.get("externalSessionId"))
+        if thread_id is None:
+            thread_id = self.reducer.thread_for_session(session_id)
+        if thread_id is None:
+            raise ValueError("externalSessionId is required before steering a Codex turn")
+        turn_id = _required_string(params, "turnId")
+        content = _required_string(params, "content")
+        text_content, extra_inputs = await self._materialize_attachments(
+            content,
+            params.get("attachments") or [],
+            _optional_string(params.get("cwd")),
+            session_id,
+        )
+        input_items: list[dict[str, Any]] = [
+            {"type": "text", "text": text_content, "text_elements": []},
+            *extra_inputs,
+        ]
+        client_message_id = (
+            _optional_string(params.get("clientMessageId")) or str(uuid4())
+        )
+        self.reducer.register_client_message(
+            session_id=session_id,
+            thread_id=thread_id,
+            turn_id=turn_id,
+            client_message_id=client_message_id,
+            text=text_content,
+            attachments=_timeline_attachments(params),
+        )
+
+        await self._discover_ipc_router()
+        if self._ipc_publisher.is_active(thread_id):
+            result = await self._steer_local(
+                thread_id=thread_id,
+                turn_id=turn_id,
+                input_items=input_items,
+                client_message_id=client_message_id,
+                additional_context=params.get("additionalContext"),
+            )
+            return {"steered": True, "turnId": turn_id, **result}
+
+        remote_state = self._ipc_state_registry.get(thread_id)
+        if (
+            remote_state is not None
+            and codex_ipc_active_turn_id(remote_state.conversation_state) is not None
+            and self.ipc_client is not None
+            and self.ipc_client.is_connected
+        ):
+            ipc_params = CodexIpcFollowerSteerTurnParams(
+                conversationId=thread_id,
+                clientUserMessageId=client_message_id,
+                input=input_items,
+                serviceTier=_optional_string(params.get("serviceTier")),
+                attachments=params.get("timelineAttachments") or [],
+                additionalContext=params.get("additionalContext"),
+                restoreMessage=params.get("restoreMessage"),
+            )
+            response = await self.ipc_client.send_request(
+                "thread-follower-steer-turn",
+                ipc_params.model_dump(mode="json", exclude_none=True),
+                target_client_id=remote_state.owner_client_id,
+            )
+            result = response.get("result") if isinstance(response, dict) else response
+            if not isinstance(result, dict):
+                result = {"result": result}
+            logger.info(
+                "steered codex turn through IPC session_id={} thread_id={} turn_id={} owner_client_id={}",
+                session_id,
+                thread_id,
+                turn_id,
+                remote_state.owner_client_id,
+            )
+            return {"steered": True, "turnId": turn_id, **result}
+
+        result = await self._steer_local(
+            thread_id=thread_id,
+            turn_id=turn_id,
+            input_items=input_items,
+            client_message_id=client_message_id,
+            additional_context=params.get("additionalContext"),
+        )
+        return {"steered": True, "turnId": turn_id, **result}
+
+    async def _steer_local(
+        self,
+        *,
+        thread_id: str,
+        turn_id: str,
+        input_items: list[dict[str, Any]],
+        client_message_id: str | None = None,
+        additional_context: Any = None,
+    ) -> dict[str, Any]:
+        assert self.rpc is not None
+        request: dict[str, Any] = {
+            "threadId": thread_id,
+            "input": input_items,
+            "expectedTurnId": turn_id,
+        }
+        if client_message_id is not None:
+            request["clientUserMessageId"] = client_message_id
+        if additional_context is not None:
+            request["additionalContext"] = additional_context
+        return await self.rpc.request("turn/steer", request)
 
     async def interrupt_turn(self, params: dict[str, Any]) -> dict[str, Any]:
         await self.start()

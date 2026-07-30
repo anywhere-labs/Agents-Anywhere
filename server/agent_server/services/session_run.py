@@ -8,6 +8,7 @@ from agent_server.core.models import (
     RpcResponsePayload,
     RuntimeName,
     SessionCreateRequest,
+    SteerTurnRequest,
 )
 from agent_server.core.utc import utc_now
 from agent_server.infra.connector_rpc import (
@@ -250,6 +251,75 @@ class SessionRunService:
                 error={"code": exc.code, "message": exc.message or exc.code},
                 reason="dispatch_failed",
             )
+            raise SessionRunUpstreamError(exc.message or exc.code) from exc
+        return RpcResponsePayload(ok=True, result=result)
+
+    async def steer_session(
+        self,
+        session_id: str,
+        payload: SteerTurnRequest,
+        *,
+        user_id: str,
+    ) -> RpcResponsePayload:
+        try:
+            session = await self._store.get_session(session_id, user_id=user_id)
+        except KeyError:
+            raise SessionRunNotFoundError("session not found") from None
+        session = await self._session_states.reconcile(session_id)
+        if not session.takeover:
+            raise SessionRunConflictError(
+                "session is read-only until takeover is enabled"
+            )
+        if session.runtime != "codex":
+            raise SessionRunConflictError("session runtime does not support steer")
+        if not await self._manager.is_online(session.connectorId):
+            raise SessionRunConflictError("connector is offline")
+
+        active_run = await self._store.get_active_run(session_id)
+        turn_id = active_run.get("turnId") if active_run else None
+        if turn_id is None:
+            turn_id = await self._store.get_open_turn_id(session_id)
+        decision = await self._session_states.inspect(session_id)
+        if turn_id is None or not decision.can_steer_turn:
+            raise SessionRunConflictError("no active turn to steer")
+
+        params: dict[str, Any] = {
+            "sessionId": session_id,
+            "runtime": session.runtime,
+            "content": payload.content,
+            "turnId": turn_id,
+        }
+        external_session_id = (
+            active_run.get("externalSessionId")
+            if active_run
+            else session.externalSessionId
+        )
+        if external_session_id:
+            params["externalSessionId"] = external_session_id
+        if session.cwd:
+            params["cwd"] = session.cwd
+        if payload.clientMessageId:
+            params["clientMessageId"] = payload.clientMessageId
+        if payload.attachments:
+            attachment_payloads = await self._attachment_payloads(
+                session_id=session_id,
+                user_id=user_id,
+                file_ids=[attachment.fileId for attachment in payload.attachments],
+            )
+            params["attachments"] = attachment_payloads
+            params["timelineAttachments"] = [
+                _timeline_attachment_payload(item) for item in attachment_payloads
+            ]
+
+        try:
+            result = await self._manager.request(
+                session.connectorId,
+                "turn.steer",
+                params,
+            )
+        except ConnectorOfflineError as exc:
+            raise SessionRunConflictError(str(exc)) from exc
+        except ConnectorRpcError as exc:
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
         return RpcResponsePayload(ok=True, result=result)
 

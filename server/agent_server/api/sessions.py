@@ -32,6 +32,7 @@ from agent_server.core.models import (
     SessionPatchRequest,
     SessionResponse,
     SessionStateResponse,
+    SteerTurnRequest,
     TakeoverResponse,
 )
 from agent_server.core.protocol import (
@@ -612,6 +613,35 @@ async def interrupt_session(
             session_id,
             before_seq,
         )
+        return result
+    except SessionRunError as exc:
+        await _best_effort_publish_session_protocol_update(
+            db,
+            broker,
+            manager,
+            session_id,
+            user_id=user_id,
+        )
+        _raise_session_run_error(exc)
+
+
+@router.post("/{session_id}/steer", response_model=RpcResponsePayload)
+async def steer_session(
+    session_id: str,
+    payload: SteerTurnRequest,
+    user_id: str = Depends(current_user_id),
+    run_service: SessionRunService = Depends(get_session_run_service),
+    db: Store = Depends(get_store),
+    broker: TimelineBroker = Depends(get_timeline_broker),
+    manager: ConnectorRpcManager = Depends(get_rpc),
+) -> RpcResponsePayload:
+    try:
+        result = await run_service.steer_session(
+            session_id,
+            payload,
+            user_id=user_id,
+        )
+        await _publish_session_protocol_update(db, broker, manager, session_id)
         return result
     except SessionRunError as exc:
         await _best_effort_publish_session_protocol_update(

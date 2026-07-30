@@ -243,11 +243,18 @@ interrupt, settings, approvals, user input, and history loading. Request
 handling is owner-aware: a candidate reports `canHandle=true` only when its
 conversation role is `owner`.
 
-Those requests should be integrated after state replication. At that point
-`CodexAdapter.start_turn`, `interrupt_turn`, and approval resolution can route
-to the IPC owner when one exists and fall back to their current app-server RPC
-when it does not. Mixing this control routing into the first state-mirror
-change would make failures difficult to isolate.
+Steer is the first integrated control request. The Connector accepts
+`thread-follower-steer-turn` only when its locally owned canonical state has an
+active turn. It derives `expectedTurnId` from that state and calls app-server
+`turn/steer`; ownership alone is insufficient because a completed turn cannot
+be steered.
+
+When Agents Anywhere is the follower, it materializes attachments, targets the
+owner recorded by the current IPC snapshot, and sends the same version-1
+request through the discovered router. The owner response is returned through
+the normal `turn.steer` Connector RPC. If no remote owner is known, the adapter
+falls back to its local app-server. Start, interrupt, settings, and approval
+control requests are not yet routed through IPC.
 
 ## Compatibility boundary
 

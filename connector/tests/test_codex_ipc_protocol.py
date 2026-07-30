@@ -7,6 +7,7 @@ from connector.codex.ipc_protocol import (
     CODEX_IPC_COORDINATION_BROADCAST_ADAPTER,
     CODEX_IPC_ROUTER_MESSAGE_ADAPTER,
     CodexIpcClientDiscoveryRequest,
+    CodexIpcFollowerSteerTurnParams,
     CodexIpcInitializeParams,
     CodexIpcInitializeRequest,
     CodexIpcPatchesChange,
@@ -195,3 +196,19 @@ def test_known_method_versions_match_recovered_extension_contract() -> None:
     assert codex_ipc_method_version("thread-stream-state-changed") == 11
     assert codex_ipc_method_version("thread-follower-interrupt-turn") == 3
     assert codex_ipc_method_version("client-status-changed") == 0
+
+
+def test_follower_steer_params_match_recovered_extension_contract() -> None:
+    params = CodexIpcFollowerSteerTurnParams.model_validate(
+        {
+            "conversationId": "thr_1",
+            "clientUserMessageId": "msg_1",
+            "input": [{"type": "text", "text": "focus", "text_elements": []}],
+            "attachments": [],
+            "additionalContext": {"selection": "tests"},
+        }
+    )
+
+    assert params.conversationId == "thr_1"
+    assert params.input[0]["text"] == "focus"
+    assert codex_ipc_method_version("thread-follower-steer-turn") == 1

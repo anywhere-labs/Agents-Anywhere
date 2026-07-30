@@ -339,6 +339,8 @@ class BackendRpcClient:
             return await self._resolve_adapter(params).start_turn(
                 {**params, "connectorId": self.config.connector_id}
             )
+        if method == "turn.steer":
+            return await self._resolve_adapter(params).steer_turn(params)
         if method == "turn.interrupt":
             return await self._resolve_adapter(params).interrupt_turn(params)
         if method == "approval.resolve":

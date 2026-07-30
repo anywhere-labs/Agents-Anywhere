@@ -173,6 +173,26 @@ def codex_ipc_thread_snapshot(state: CodexIpcConversationState) -> dict[str, Any
     }
 
 
+def codex_ipc_active_turn_id(state: CodexIpcConversationState) -> str | None:
+    """Return the newest turn that Codex still reports as active."""
+
+    turns = codex_ipc_thread_snapshot(state)["turns"]
+    for turn in reversed(turns):
+        if not isinstance(turn, dict):
+            continue
+        status = turn.get("status")
+        if isinstance(status, dict):
+            status = status.get("type") or status.get("status")
+        if not isinstance(status, str):
+            continue
+        normalized = status.replace("_", "").replace("-", "").lower()
+        if normalized in {"active", "inprogress", "pending", "running", "started"}:
+            turn_id = turn.get("turnId") or turn.get("id")
+            if isinstance(turn_id, str) and turn_id:
+                return turn_id
+    return None
+
+
 def codex_ipc_patch_scope(change: CodexIpcPatchesChange) -> CodexIpcPatchScope:
     item_indexes: dict[str, set[int]] = {}
     metadata_changed = False

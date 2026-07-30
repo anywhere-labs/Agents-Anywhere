@@ -7,6 +7,7 @@ from agent_server.core.session_states import (
     SessionStateFacts,
     can_interrupt_turn,
     can_start_turn,
+    can_steer_turn,
     derive_session_status,
     require_session_transition,
 )
@@ -34,6 +35,13 @@ class SessionStateDecision:
             or self.facts.has_active_turn,
         )
 
+    @property
+    def can_steer_turn(self) -> bool:
+        return can_steer_turn(
+            self.session.status,
+            has_active_turn=self.facts.has_active_turn,
+        )
+
 
 class SessionStateService:
     def __init__(self, store: SessionStateRepository) -> None:
@@ -54,7 +62,10 @@ class SessionStateService:
             current_status=session.status,
             observed_status=observed_status,
             has_active_run=active_run is not None,
-            has_active_turn=open_turn_id is not None,
+            has_active_turn=(
+                open_turn_id is not None
+                or (active_run is not None and active_run.get("turnId") is not None)
+            ),
             has_blocking_interaction=bool(blocking),
             settle_stopping=settle_stopping,
         )

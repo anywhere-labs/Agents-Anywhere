@@ -748,6 +748,14 @@ class MessageCreateRequest(BaseModel):
     clientMessageId: str | None = None
 
 
+class SteerTurnRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    content: str
+    attachments: list[AttachmentRef] = Field(default_factory=list, max_length=10)
+    clientMessageId: str | None = None
+
+
 class ConnectorPreferencesResponse(BaseModel):
     connectorId: str
     preferences: dict[str, Any]

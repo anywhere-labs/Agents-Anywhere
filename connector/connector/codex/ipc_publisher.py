@@ -13,6 +13,7 @@ from connector.codex.ipc_protocol import (
     CodexIpcSnapshotChange,
     CodexIpcStreamStateParams,
 )
+from connector.codex.ipc_state import codex_ipc_active_turn_id
 
 
 class CodexIpcBroadcastSender(Protocol):
@@ -48,6 +49,12 @@ class CodexIpcPublisher:
     def is_active(self, conversation_id: str) -> bool:
         current = self._threads.get(conversation_id)
         return current is not None and current.active
+
+    def active_turn_id(self, conversation_id: str) -> str | None:
+        current = self._threads.get(conversation_id)
+        if current is None or not current.active:
+            return None
+        return codex_ipc_active_turn_id(current.state)
 
     def reset(self) -> None:
         self._threads.clear()

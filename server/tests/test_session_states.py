@@ -11,6 +11,7 @@ from agent_server.core.session_states import (
     SessionStateFacts,
     can_interrupt_turn,
     can_start_turn,
+    can_steer_turn,
     derive_session_status,
     require_session_transition,
 )
@@ -91,6 +92,10 @@ def test_session_queries_centralize_start_and_interrupt_rules() -> None:
     assert can_interrupt_turn("idle", has_active_work=False) is False
     assert can_interrupt_turn("idle", has_active_work=True) is True
     assert can_interrupt_turn("blocked", has_active_work=False) is True
+    assert can_steer_turn("running", has_active_turn=True) is True
+    assert can_steer_turn("blocked", has_active_turn=True) is False
+    assert can_steer_turn("running", has_active_turn=False) is False
+    assert can_steer_turn("stopping", has_active_turn=True) is False
 
 
 def test_session_state_service_reconciles_with_compare_and_set() -> None:

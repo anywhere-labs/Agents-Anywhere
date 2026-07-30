@@ -200,6 +200,24 @@ class CodexIpcFollowingStatusRequestedBroadcast(CodexIpcBroadcast):
     version: Literal[1] = 1
 
 
+class CodexIpcFollowerSteerTurnParams(CodexIpcModel):
+    """IDE/App follower request for steering the owner's active Codex turn."""
+
+    conversationId: str
+    clientUserMessageId: str
+    input: list[dict[str, Any]] = Field(min_length=1)
+    serviceTier: str | None = None
+    attachments: list[Any] = Field(default_factory=list)
+    additionalContext: Any = None
+    restoreMessage: Any = None
+
+
+class CodexIpcFollowerSteerTurnRequest(CodexIpcRequest):
+    method: Literal["thread-follower-steer-turn"] = "thread-follower-steer-turn"
+    params: CodexIpcFollowerSteerTurnParams
+    version: Literal[1] = 1
+
+
 class CodexIpcItem(CodexIpcModel):
     id: str | None = None
     type: str

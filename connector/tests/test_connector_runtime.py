@@ -67,6 +67,10 @@ class FakeAdapter:
         self.calls.append(("turn.start", params))
         return {"turnId": "turn_1"}
 
+    async def steer_turn(self, params: dict[str, Any]) -> dict[str, Any]:
+        self.calls.append(("turn.steer", params))
+        return {"steered": True, "turnId": params.get("turnId")}
+
     async def interrupt_turn(self, params: dict[str, Any]) -> dict[str, Any]:
         self.calls.append(("turn.interrupt", params))
         return {"interrupted": True}
@@ -704,10 +708,14 @@ async def _exercise_multi_adapter_routing() -> None:
 
     await client.dispatch("turn.start", {"runtime": "codex", "sessionId": "s1", "content": "hi"})
     await client.dispatch("turn.start", {"runtime": "claude", "sessionId": "s2", "content": "hi"})
+    await client.dispatch(
+        "turn.steer",
+        {"runtime": "claude", "sessionId": "s2", "turnId": "t1", "content": "focus"},
+    )
     await client.dispatch("turn.interrupt", {"runtime": "claude", "sessionId": "s2", "turnId": "t1"})
 
     assert [c[0] for c in codex.calls] == ["turn.start"]
-    assert [c[0] for c in claude.calls] == ["turn.start", "turn.interrupt"]
+    assert [c[0] for c in claude.calls] == ["turn.start", "turn.steer", "turn.interrupt"]
     assert codex.calls[0][1]["sessionId"] == "s1"
     assert codex.calls[0][1]["connectorId"] == "conn_1"
     assert claude.calls[0][1]["sessionId"] == "s2"

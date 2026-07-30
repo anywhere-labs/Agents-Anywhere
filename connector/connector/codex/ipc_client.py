@@ -18,6 +18,8 @@ from connector.codex.ipc_protocol import (
     CODEX_IPC_MAX_FRAME_BYTES,
     CODEX_IPC_ROUTER_MESSAGE_ADAPTER,
     CodexIpcBroadcast,
+    CodexIpcClientDiscoveryRequest,
+    CodexIpcClientDiscoveryResponse,
     CodexIpcInitializeParams,
     CodexIpcInitializeRequest,
     CodexIpcInitializeResult,
@@ -29,6 +31,8 @@ from connector.codex.ipc_protocol import (
 from connector.logging import logger
 
 CodexIpcMessageHandler = Callable[[CodexIpcRouterMessage], Awaitable[None]]
+CodexIpcRequestHandler = Callable[[CodexIpcRequest], Awaitable[Any]]
+CodexIpcRequestPredicate = Callable[[CodexIpcRequest], bool]
 
 
 def default_codex_ipc_socket_path(
@@ -61,6 +65,8 @@ class CodexIpcClient:
         environment: Mapping[str, str] | None = None,
         client_type: str = "agents-anywhere-connector",
         message_handler: CodexIpcMessageHandler | None = None,
+        request_handler: CodexIpcRequestHandler | None = None,
+        request_predicate: CodexIpcRequestPredicate | None = None,
         initialize_timeout_seconds: float = 5.0,
     ) -> None:
         self.socket_path = (
@@ -70,12 +76,15 @@ class CodexIpcClient:
         )
         self.client_type = client_type
         self.message_handler = message_handler
+        self.request_handler = request_handler
+        self.request_predicate = request_predicate
         self.initialize_timeout_seconds = initialize_timeout_seconds
         self.client_id: str | None = None
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
         self._reader_task: asyncio.Task[None] | None = None
         self._pending: dict[str, asyncio.Future[CodexIpcResponse]] = {}
+        self._request_tasks: set[asyncio.Task[None]] = set()
         self._connect_lock = asyncio.Lock()
         self._write_lock = asyncio.Lock()
 
@@ -94,6 +103,15 @@ class CodexIpcClient:
         handler: CodexIpcMessageHandler | None,
     ) -> None:
         self.message_handler = handler
+
+    def set_request_handler(
+        self,
+        handler: CodexIpcRequestHandler | None,
+        *,
+        can_handle: CodexIpcRequestPredicate | None = None,
+    ) -> None:
+        self.request_handler = handler
+        self.request_predicate = can_handle
 
     async def ensure_connected(self) -> bool:
         async with self._connect_lock:
@@ -181,6 +199,35 @@ class CodexIpcClient:
             return False
         return True
 
+    async def send_request(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        version: int | None = None,
+        target_client_id: str | None = None,
+        timeout_seconds: float = 5.0,
+    ) -> Any:
+        if not self.is_connected or self.client_id is None:
+            raise ConnectionError("Codex IPC socket is not connected")
+        response = await self._send_request_model(
+            CodexIpcRequest(
+                requestId=str(uuid4()),
+                sourceClientId=self.client_id,
+                method=method,
+                params=params or {},
+                version=(
+                    codex_ipc_method_version(method)
+                    if version is None
+                    else version
+                ),
+                targetClientId=target_client_id,
+                timeoutMs=max(0, round(timeout_seconds * 1000)),
+            ),
+            timeout_seconds=timeout_seconds,
+        )
+        return response.result
+
     async def close(self) -> None:
         async with self._connect_lock:
             await self._disconnect()
@@ -250,6 +297,12 @@ class CodexIpcClient:
                         else:
                             pending.set_result(message)
                         continue
+                if isinstance(message, CodexIpcClientDiscoveryRequest):
+                    await self._handle_discovery_request(message)
+                    continue
+                if isinstance(message, CodexIpcRequest):
+                    self._start_request_task(message)
+                    continue
                 if self.message_handler is not None:
                     try:
                         await self.message_handler(message)
@@ -263,6 +316,77 @@ class CodexIpcClient:
             logger.warning("codex IPC reader stopped error={}", exc)
         finally:
             await self._reader_stopped(writer)
+
+    def _can_handle_request(self, request: CodexIpcRequest) -> bool:
+        if self.request_handler is None:
+            return False
+        if request.version != codex_ipc_method_version(request.method):
+            return False
+        if self.request_predicate is None:
+            return True
+        try:
+            return self.request_predicate(request)
+        except Exception:  # noqa: BLE001 - discovery must not stop the reader
+            logger.exception(
+                "codex IPC request predicate failed method={}", request.method
+            )
+            return False
+
+    async def _handle_discovery_request(
+        self,
+        message: CodexIpcClientDiscoveryRequest,
+    ) -> None:
+        response = CodexIpcClientDiscoveryResponse(
+            requestId=message.requestId,
+            response={"canHandle": self._can_handle_request(message.request)},
+        )
+        await self._write_message(response.model_dump(mode="json"))
+
+    def _start_request_task(self, request: CodexIpcRequest) -> None:
+        task = asyncio.create_task(self._handle_request(request))
+        self._request_tasks.add(task)
+        task.add_done_callback(self._request_tasks.discard)
+
+    async def _handle_request(self, request: CodexIpcRequest) -> None:
+        client_id = self.client_id
+        if client_id is None or not self._can_handle_request(request):
+            response = CodexIpcResponse(
+                requestId=request.requestId,
+                resultType="error",
+                method=request.method,
+                handledByClientId=client_id,
+                error=f"no handler for Codex IPC method {request.method}",
+            )
+        else:
+            assert self.request_handler is not None
+            try:
+                result = await self.request_handler(request)
+                response = CodexIpcResponse(
+                    requestId=request.requestId,
+                    resultType="success",
+                    method=request.method,
+                    handledByClientId=client_id,
+                    result=result,
+                )
+            except Exception as exc:  # noqa: BLE001 - serialize handler failures
+                logger.exception(
+                    "codex IPC request handler failed method={}", request.method
+                )
+                response = CodexIpcResponse(
+                    requestId=request.requestId,
+                    resultType="error",
+                    method=request.method,
+                    handledByClientId=client_id,
+                    error=str(exc) or type(exc).__name__,
+                )
+        try:
+            await self._write_message(
+                response.model_dump(mode="json", exclude_none=True)
+            )
+        except (ConnectionError, OSError, RuntimeError):
+            logger.debug(
+                "codex IPC response could not be sent method={}", request.method
+            )
 
     async def _reader_stopped(self, writer: asyncio.StreamWriter) -> None:
         if self._writer is not writer:
@@ -286,6 +410,10 @@ class CodexIpcClient:
         self._reader_task = None
         self.client_id = None
         self._fail_pending(ConnectionError("Codex IPC client closed"))
+        request_tasks = list(self._request_tasks)
+        self._request_tasks.clear()
+        for task in request_tasks:
+            task.cancel()
         if writer is not None:
             writer.close()
         current_task = asyncio.current_task()
@@ -301,6 +429,8 @@ class CodexIpcClient:
                 await writer.wait_closed()
             except OSError:
                 pass
+        if request_tasks:
+            await asyncio.gather(*request_tasks, return_exceptions=True)
 
     def _fail_pending(self, error: Exception) -> None:
         pending = list(self._pending.values())
@@ -329,4 +459,10 @@ class CodexIpcClient:
         return True
 
 
-__all__ = ["CodexIpcClient", "CodexIpcMessageHandler", "default_codex_ipc_socket_path"]
+__all__ = [
+    "CodexIpcClient",
+    "CodexIpcMessageHandler",
+    "CodexIpcRequestHandler",
+    "CodexIpcRequestPredicate",
+    "default_codex_ipc_socket_path",
+]
