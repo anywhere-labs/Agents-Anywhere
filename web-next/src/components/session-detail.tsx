@@ -1378,11 +1378,25 @@ function mergeSessionEvent(
 
   const session = readPayloadValue<SessionView>(event.payload.session)
   const item = readPayloadValue<TimelineItem>(event.payload.item)
+  const timelineSnapshot = Array.isArray(event.payload.items)
+    ? event.payload.items.filter(isTimelineItem)
+    : null
   const notice = readPayloadValue<Notice>(event.payload.notice)
+  const noticeSnapshot = Array.isArray(event.payload.notices)
+    ? event.payload.notices.filter(isNotice)
+    : null
   const effectiveCapabilities = readPayloadValue<ProtocolCapabilitySet>(event.payload.effectiveCapabilities)
 
-  const nextNotices = notice ? mergeNotices(current.notices, [notice]) : current.notices
-  const nextItems = item ? mergeTimelineItems(current.items, [item]) : current.items
+  const nextNotices = noticeSnapshot
+    ? noticeSnapshot
+    : notice
+      ? mergeNotices(current.notices, [notice])
+      : current.notices
+  const nextItems = timelineSnapshot
+    ? preserveOptimisticItems(timelineSnapshot, current.items)
+    : item
+      ? mergeTimelineItems(current.items, [item])
+      : current.items
   const nextSession = session && session.updatedSeq >= current.session.updatedSeq ? session : current.session
   const nextSeq = Math.max(current.nextSeq, event.sequence)
 
@@ -1447,6 +1461,18 @@ function cursorSequence(cursor: string | null | undefined): number {
 
 function readPayloadValue<T>(value: unknown): T | null {
   return value && typeof value === "object" ? value as T : null
+}
+
+function isTimelineItem(value: unknown): value is TimelineItem {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  const item = value as Partial<TimelineItem>
+  return typeof item.id === "string" && typeof item.updatedSeq === "number"
+}
+
+function isNotice(value: unknown): value is Notice {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  const notice = value as Partial<Notice>
+  return typeof notice.noticeId === "string" && typeof notice.updatedSeq === "number"
 }
 
 function openInteractions(notices: Notice[], _sessionId?: string): Notice[] {

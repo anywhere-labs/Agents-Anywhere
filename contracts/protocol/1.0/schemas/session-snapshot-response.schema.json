@@ -1178,6 +1178,7 @@
       "$ref": "#/$defs/ProtocolCapabilitySet"
     },
     "eventCursor": {
+      "pattern": "^seq:(0|[1-9][0-9]*)$",
       "title": "Eventcursor",
       "type": "string"
     },

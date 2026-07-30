@@ -84,7 +84,10 @@ class TimelineRepositoryMixin:
                         order_seq=order_seq,
                     )
             normalized = list(normalized_by_id.values())
+            removed_items = set(current) - set(normalized_by_id)
             await self.timeline.replace(session_id, normalized)
+            if removed_items:
+                await self._mark_recovery_barrier(session_id)
         return normalized
 
     async def replace_timeline_snapshot(
@@ -95,6 +98,9 @@ class TimelineRepositoryMixin:
         source_observed_at: str | None = None,
     ) -> list[TimelineItem]:
         async with self._timeline_lock(session_id):
+            current_ids = {
+                item.id for item in await self.timeline.read(session_id)
+            }
             now = utc_now()
             async with self._engine.begin() as conn:
                 if source_observed_at is not None:
@@ -109,6 +115,8 @@ class TimelineRepositoryMixin:
                     for item in items
                 ]
             await self.timeline.replace(session_id, normalized)
+            if current_ids - {item.id for item in normalized}:
+                await self._mark_recovery_barrier(session_id)
         return normalized
 
 
@@ -231,6 +239,13 @@ class TimelineRepositoryMixin:
             .values(seq=next_seq, updated_seq=next_seq, updated_at=now)
         )
         return next_seq
+
+    async def _mark_recovery_barrier(self, session_id: str) -> None:
+        # Leave one durable sequence without a projected entity. Recovery can
+        # then prove that a state-derived delta crosses a destructive replace.
+        async with self._engine.begin() as conn:
+            await self._bump_session(conn, session_id)
+            await self._bump_session(conn, session_id)
 
 
     async def _next_live_order_seq(

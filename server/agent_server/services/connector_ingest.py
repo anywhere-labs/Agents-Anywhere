@@ -148,16 +148,21 @@ class ConnectorIngestService:
                 effect.session_id,
                 {
                     "items": [],
+                    "timeline_reset": False,
                     "session": False,
                     "approvals": False,
                     "notices": False,
                     "refetch": False,
                 },
             )
-            if effect.item is not None:
-                bucket["items"].append(effect.item)
-            if effect.items:
-                bucket["items"].extend(effect.items)
+            if effect.timeline_reset:
+                bucket["items"] = list(effect.items or [])
+                bucket["timeline_reset"] = True
+            else:
+                if effect.item is not None:
+                    bucket["items"].append(effect.item)
+                if effect.items:
+                    bucket["items"].extend(effect.items)
             bucket["session"] = bucket["session"] or effect.session_changed
             bucket["approvals"] = bucket["approvals"] or effect.approvals_changed
             bucket["notices"] = bucket["notices"] or effect.notices_changed
@@ -174,6 +179,8 @@ class ConnectorIngestService:
             }
             if bucket["refetch"]:
                 envelope["refetch"] = True
+            if bucket["timeline_reset"]:
+                envelope["timelineReset"] = True
             if bucket["items"]:
                 envelope["items"] = bucket["items"]
             if bucket["session"]:
@@ -197,6 +204,7 @@ class ConnectorIngestService:
                     for approval in await self._store.list_pending_approvals(session_id)
                 ]
             if bucket["notices"]:
+                envelope["noticesReset"] = True
                 envelope["notices"] = [
                     notice.model_dump(mode="json")
                     for notice in await self._store.list_open_notices(session_id)

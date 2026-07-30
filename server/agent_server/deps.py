@@ -19,6 +19,7 @@ from agent_server.services.connector_notifications import ConnectorNotificationS
 from agent_server.services.connector_realtime import ConnectorRealtimeService
 from agent_server.services.connector_shell import ConnectorShellService
 from agent_server.services.device_runtimes import DeviceRuntimeService
+from agent_server.services.event_recovery import EventRecoveryService
 from agent_server.services.interactions import (
     ApprovalInteractionResolver,
     InteractionService,
@@ -37,6 +38,10 @@ def get_attachment_service(conn: HTTPConnection) -> AttachmentService:
 
 def get_catalog_service(conn: HTTPConnection) -> CatalogService:
     return CatalogService(conn.app.state.store)
+
+
+def get_event_recovery_service(conn: HTTPConnection) -> EventRecoveryService:
+    return EventRecoveryService(conn.app.state.store, conn.app.state.rpc)
 
 
 def get_interaction_service(conn: HTTPConnection) -> InteractionService:

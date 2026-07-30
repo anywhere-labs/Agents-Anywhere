@@ -320,6 +320,7 @@ class TimelineNotificationHandler:
         return IngestEffect(
             session_id=session_id,
             items=[item.model_dump(mode="json") for item in stored_items] if push_items else None,
+            timeline_reset=True,
             session_changed=True,
             notices_changed=any(item.type == "turn.end" for item in items),
             needs_refetch=not push_items,

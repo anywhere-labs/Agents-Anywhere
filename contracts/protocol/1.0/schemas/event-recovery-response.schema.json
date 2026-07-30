@@ -3,6 +3,7 @@
     "ProtocolEventEnvelope": {
       "properties": {
         "cursor": {
+          "pattern": "^seq:(0|[1-9][0-9]*)$",
           "title": "Cursor",
           "type": "string"
         },
@@ -11,6 +12,7 @@
           "type": "string"
         },
         "eventId": {
+          "minLength": 1,
           "title": "Eventid",
           "type": "string"
         },
@@ -26,14 +28,18 @@
           "type": "string"
         },
         "sequence": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
           "title": "Sequence",
           "type": "integer"
         },
         "sessionId": {
+          "minLength": 1,
           "title": "Sessionid",
           "type": "string"
         },
         "type": {
+          "minLength": 1,
           "title": "Type",
           "type": "string"
         }
@@ -63,6 +69,7 @@
       "type": "array"
     },
     "nextCursor": {
+      "pattern": "^seq:(0|[1-9][0-9]*)$",
       "title": "Nextcursor",
       "type": "string"
     },

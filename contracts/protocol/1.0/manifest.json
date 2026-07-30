@@ -69,7 +69,7 @@
       "model": "ProtocolSessionSnapshotResponse",
       "path": "schemas/session-snapshot-response.schema.json",
       "pydanticMode": "serialization",
-      "sha256": "b2a2e05292bacca2d421cf055158c35b0ecf5be1b89ae8e404100a2523920e27",
+      "sha256": "b7664a70bf08b63ca609ca60b3cc70985bdd5e856d85360839688e6972e6a5b8",
       "slug": "session-snapshot-response"
     },
     {
@@ -93,7 +93,7 @@
       "model": "ProtocolEventEnvelope",
       "path": "schemas/event-envelope.schema.json",
       "pydanticMode": "serialization",
-      "sha256": "e70194b2a5f4f3c1ad20845b43f09c91a2129bad2a32e5ff2cb7193ef100016e",
+      "sha256": "bb71e5bb898ec7babb44defee28e539e16df316642220953af1fc2943bdb4d53",
       "slug": "event-envelope"
     },
     {
@@ -101,7 +101,7 @@
       "model": "ProtocolEventRecoveryResponse",
       "path": "schemas/event-recovery-response.schema.json",
       "pydanticMode": "serialization",
-      "sha256": "425d068d442e61d91d6437bb9ac6f22d5b29c49d99c216e95cb07b36da2cd62a",
+      "sha256": "7fc07ebe57dfa8e6992cc75b9f8eec96956401179107ad661cc3895813f1e81c",
       "slug": "event-recovery-response"
     }
   ],

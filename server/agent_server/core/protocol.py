@@ -132,7 +132,7 @@ class ProtocolSessionSnapshotResponse(ProtocolWireModel):
     effectiveCapabilities: ProtocolCapabilitySet
     runtimeCapabilities: ProtocolCapabilitySet
     catalogs: dict[str, Any] = Field(default_factory=dict)
-    eventCursor: str
+    eventCursor: str = Field(pattern=r"^seq:(0|[1-9][0-9]*)$")
     serverTime: str
 
 
@@ -153,18 +153,18 @@ class ProtocolWsTicketResponse(ProtocolWireModel):
 
 class ProtocolEventEnvelope(ProtocolWireModel):
     protocolVersion: ProtocolVersion = PROTOCOL_VERSION_1
-    eventId: str
-    sequence: int
-    cursor: str
-    type: str
-    sessionId: str
+    eventId: str = Field(min_length=1)
+    sequence: int = Field(ge=0, le=PROTOCOL_MAX_REVISION)
+    cursor: str = Field(pattern=r"^seq:(0|[1-9][0-9]*)$")
+    type: str = Field(min_length=1)
+    sessionId: str = Field(min_length=1)
     emittedAt: str
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
 class ProtocolEventRecoveryResponse(ProtocolWireModel):
     events: list[ProtocolEventEnvelope] = Field(default_factory=list)
-    nextCursor: str
+    nextCursor: str = Field(pattern=r"^seq:(0|[1-9][0-9]*)$")
     snapshotRequired: bool = False
     serverTime: str
 

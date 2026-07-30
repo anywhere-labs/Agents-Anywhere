@@ -2671,8 +2671,8 @@ def test_interrupt_cancels_blocking_interactions(tmp_path):
         headers=headers,
         params={"after": f"seq:{before_seq}"},
     ).json()
-    notice_events = [event for event in recovered["events"] if event["type"] == "notice.updated"]
-    assert notice_events[-1]["payload"]["notice"]["status"] == "cancelled"
+    assert recovered["snapshotRequired"] is True
+    assert recovered["events"] == []
 
 
 def test_turn_start_updates_and_turn_end_clears_active_run(tmp_path):
@@ -4551,11 +4551,11 @@ def test_session_ws_projects_timeline_and_notice_events(tmp_path):
         )
         assert response.status_code == 200, response.text
 
-        received = [ws.receive_json() for _ in range(4)]
+        received = [ws.receive_json() for _ in range(3)]
         event_types = {event["type"] for event in received}
         assert "timeline.item_created" in event_types
         assert "session.status_changed" in event_types
-        assert "notice.created" in event_types or "notice.updated" in event_types
+        assert "notice.snapshot" in event_types
         session_event = next(
             event for event in received if event["type"] == "session.status_changed"
         )
@@ -4587,7 +4587,7 @@ def test_session_ws_updates_effective_capabilities_after_takeover(tmp_path):
         assert capabilities["session.send_message"]["allowed"] is True
 
 
-def test_session_ws_projects_codex_timeline_sync_items_without_refetch(tmp_path):
+def test_session_ws_projects_codex_timeline_sync_as_snapshot_without_refetch(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
     ticket = ws_ticket(client, session_id, headers)
@@ -4633,9 +4633,9 @@ def test_session_ws_projects_codex_timeline_sync_items_without_refetch(tmp_path)
 
         received = [ws.receive_json() for _ in range(2)]
         assert "session.refetch_required" not in {event["type"] for event in received}
-        timeline_events = [event for event in received if event["type"] == "timeline.item_created"]
+        timeline_events = [event for event in received if event["type"] == "timeline.snapshot"]
         assert timeline_events
-        assert timeline_events[0]["payload"]["item"]["content"]["text"] == "synced over ws"
+        assert timeline_events[0]["payload"]["items"][0]["content"]["text"] == "synced over ws"
 
 
 def test_session_events_recovery_returns_json_events(tmp_path):
@@ -4687,6 +4687,162 @@ def test_session_events_recovery_returns_json_events(tmp_path):
         event for event in body["events"] if event["type"] == "session.status_changed"
     )
     assert "effectiveCapabilities" in session_event["payload"]
+
+
+def test_session_events_recovery_rejects_invalid_cursor(tmp_path):
+    client = make_client(tmp_path)
+    _, _, session_id, headers = create_connector_and_session(client)
+
+    response = client.get(
+        f"/sessions/{session_id}/events",
+        headers=headers,
+        params={"after": "1"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "invalid event cursor"
+
+
+def test_session_events_recovery_requires_snapshot_for_future_cursor(tmp_path):
+    client = make_client(tmp_path)
+    _, _, session_id, headers = create_connector_and_session(client)
+
+    response = client.get(
+        f"/sessions/{session_id}/events",
+        headers=headers,
+        params={"after": "seq:99"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["snapshotRequired"] is True
+    assert response.json()["events"] == []
+
+
+def test_session_events_recovery_refreshes_ephemeral_state_at_current_cursor(tmp_path):
+    client = make_client(tmp_path)
+    _, _, session_id, headers = create_connector_and_session(client)
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers).json()
+
+    response = client.get(
+        f"/sessions/{session_id}/events",
+        headers=headers,
+        params={"after": snapshot["eventCursor"]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["snapshotRequired"] is True
+    assert response.json()["events"] == []
+
+
+def test_session_events_recovery_requires_snapshot_for_collapsed_gap(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+
+    def ingest(revision: int, text: str) -> None:
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "notifications": [
+                    {
+                        "method": "timeline.itemUpsert",
+                        "params": {
+                            "sessionId": session_id,
+                            "item": {
+                                "id": "tl_collapsed_recovery",
+                                "sessionId": session_id,
+                                "type": "message",
+                                "status": "done",
+                                "role": "assistant",
+                                "content": {"text": text},
+                                "source": {
+                                    "runtime": "codex",
+                                    "sessionId": "thr_1",
+                                    "itemId": "msg_1",
+                                    "itemType": "agentMessage",
+                                },
+                                "orderSeq": 1,
+                                "revision": revision,
+                                "contentHash": f"sha256:collapsed-{revision}",
+                            },
+                        },
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 200, response.text
+
+    ingest(1, "first")
+    ingest(2, "second")
+    response = client.get(
+        f"/sessions/{session_id}/events",
+        headers=headers,
+        params={"after": "seq:0"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["snapshotRequired"] is True
+    assert response.json()["events"] == []
+
+
+def test_session_events_recovery_requires_snapshot_for_truncated_delta(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.itemUpsert",
+                    "params": {
+                        "sessionId": session_id,
+                        "item": {
+                            "id": "tl_truncated_recovery",
+                            "sessionId": session_id,
+                            "type": "message",
+                            "status": "done",
+                            "role": "assistant",
+                            "content": {"text": "hello"},
+                            "source": {
+                                "runtime": "codex",
+                                "sessionId": "thr_1",
+                            },
+                            "orderSeq": 1,
+                            "revision": 1,
+                            "contentHash": "sha256:truncated",
+                        },
+                    },
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    store = client.app.state.store
+    original = store.list_timeline_since
+
+    async def truncated(*, session_id: str, after_seq: int, limit: int):
+        items, _has_more = await original(
+            session_id=session_id,
+            after_seq=after_seq,
+            limit=limit,
+        )
+        return items, True
+
+    store.list_timeline_since = truncated
+    try:
+        recovery = client.get(
+            f"/sessions/{session_id}/events",
+            headers=headers,
+            params={"after": "seq:0"},
+        )
+    finally:
+        store.list_timeline_since = original
+
+    assert recovery.status_code == 200
+    assert recovery.json()["snapshotRequired"] is True
+    assert recovery.json()["events"] == []
 
 
 def test_existing_connector_session_metadata_sync_does_not_rearm_unread(tmp_path):
@@ -5034,7 +5190,7 @@ def test_approval_resolve_waits_for_connector_success_and_updates_target_item(tm
     assert approval_notices == []
 
 
-def test_interaction_response_recovery_includes_resolved_notice(tmp_path):
+def test_interaction_response_recovery_falls_back_across_legacy_approval_gap(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
     ingest_pending_command_approval(client, access_token, session_id)
@@ -5055,13 +5211,10 @@ def test_interaction_response_recovery_includes_resolved_notice(tmp_path):
         params={"after": f"seq:{before_seq}"},
     )
     assert recovered.status_code == 200, recovered.text
-    notice_events = [
-        event
-        for event in recovered.json()["events"]
-        if event["type"] == "notice.updated" and event["payload"]["notice"]["noticeId"] == notice_id
-    ]
-    assert notice_events
-    assert notice_events[-1]["payload"]["notice"]["status"] == "resolved"
+    assert recovered.json()["snapshotRequired"] is True
+    assert recovered.json()["events"] == []
+    notice = asyncio.run(client.app.state.store.get_notice(notice_id))
+    assert notice.status == "resolved"
 
 
 def test_approval_resolve_keeps_pending_when_connector_fails(tmp_path):

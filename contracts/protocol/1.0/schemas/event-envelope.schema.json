@@ -3,6 +3,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "cursor": {
+      "pattern": "^seq:(0|[1-9][0-9]*)$",
       "title": "Cursor",
       "type": "string"
     },
@@ -11,6 +12,7 @@
       "type": "string"
     },
     "eventId": {
+      "minLength": 1,
       "title": "Eventid",
       "type": "string"
     },
@@ -26,14 +28,18 @@
       "type": "string"
     },
     "sequence": {
+      "maximum": 9007199254740991,
+      "minimum": 0,
       "title": "Sequence",
       "type": "integer"
     },
     "sessionId": {
+      "minLength": 1,
       "title": "Sessionid",
       "type": "string"
     },
     "type": {
+      "minLength": 1,
       "title": "Type",
       "type": "string"
     }

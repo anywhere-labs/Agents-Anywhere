@@ -6,6 +6,7 @@ import json
 from fakeredis import FakeServer
 from fakeredis.aioredis import FakeRedis
 
+from agent_server.core.events import events_from_invalidation, revisions_are_complete
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.infra.redis_coordinator import RedisCoordinator
 from agent_server.infra.terminal_broker import SCROLLBACK_MAX_BYTES, TerminalBroker
@@ -95,6 +96,52 @@ def test_timeline_and_dashboard_events_cross_instances() -> None:
         finally:
             await broker_1.close()
             await broker_2.close()
+
+    asyncio.run(exercise())
+
+
+def test_cross_instance_invalidation_gap_is_detected() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        publisher = TimelineBroker(_coordinator(fake_server))
+        subscriber = TimelineBroker(_coordinator(fake_server))
+        await publisher.start()
+        await subscriber.start()
+        try:
+            queue = await subscriber.register("session-gap")
+            for sequence in (1, 3):
+                await publisher.publish(
+                    "session-gap",
+                    {
+                        "sessionId": "session-gap",
+                        "nextSeq": sequence,
+                        "items": [
+                            {
+                                "id": f"item-{sequence}",
+                                "updatedSeq": sequence,
+                                "revision": 1,
+                            }
+                        ],
+                    },
+                )
+
+            invalidations = [
+                json.loads(await asyncio.wait_for(queue.get(), timeout=1))
+                for _ in range(2)
+            ]
+            events = [
+                event
+                for invalidation in invalidations
+                for event in events_from_invalidation(invalidation)
+            ]
+            assert not revisions_are_complete(
+                after_sequence=0,
+                current_sequence=3,
+                events=events,
+            )
+        finally:
+            await publisher.close()
+            await subscriber.close()
 
     asyncio.run(exercise())
 

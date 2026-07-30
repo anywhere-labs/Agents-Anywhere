@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 from typing import Any
 
@@ -16,6 +15,12 @@ from fastapi import (
 from starlette.requests import HTTPConnection
 from starlette.responses import StreamingResponse
 
+from agent_server.core.events import (
+    EventCursorError,
+    event_cursor,
+    events_from_invalidation,
+    protocol_event,
+)
 from agent_server.core.models import (
     BulkArchiveRequest,
     BulkArchiveResponse,
@@ -30,7 +35,6 @@ from agent_server.core.models import (
     TakeoverResponse,
 )
 from agent_server.core.protocol import (
-    ProtocolEventEnvelope,
     ProtocolEventRecoveryResponse,
     ProtocolModelCatalog,
     ProtocolPermissionCatalog,
@@ -40,6 +44,7 @@ from agent_server.core.protocol import (
 from agent_server.core.utc import utc_now
 from agent_server.deps import (
     current_user_id,
+    get_event_recovery_service,
     get_interaction_service,
     get_rpc,
     get_session_run_service,
@@ -60,6 +65,7 @@ from agent_server.services.connector_presence import (
 )
 from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.effective_capabilities import project_session_capabilities
+from agent_server.services.event_recovery import EventRecoveryService
 from agent_server.services.interactions import (
     InteractionService,
     InteractionServiceError,
@@ -85,115 +91,6 @@ def _raise_interaction_error(exc: InteractionServiceError) -> None:
         "upstream": 502,
     }[exc.kind]
     raise HTTPException(status_code=status_code, detail=exc.detail) from exc
-
-
-def _parse_event_cursor(cursor: str) -> int:
-    if cursor.startswith("seq:"):
-        cursor = cursor[4:]
-    try:
-        return max(0, int(cursor))
-    except ValueError:
-        raise HTTPException(status_code=422, detail="invalid event cursor") from None
-
-
-def _protocol_event(
-    session_id: str,
-    *,
-    sequence: int,
-    event_type: str,
-    payload: dict[str, Any],
-) -> ProtocolEventEnvelope:
-    event_hash = hashlib.sha256(
-        json.dumps([event_type, payload], sort_keys=True, default=str).encode("utf-8")
-    ).hexdigest()[:12]
-    return ProtocolEventEnvelope(
-        eventId=f"evt_{sequence}_{event_hash}",
-        sequence=sequence,
-        cursor=f"seq:{sequence}",
-        type=event_type,
-        sessionId=session_id,
-        emittedAt=utc_now(),
-        payload=payload,
-    )
-
-
-def _timeline_events_from_items(session_id: str, items: list[dict[str, Any]]) -> list[ProtocolEventEnvelope]:
-    events: list[ProtocolEventEnvelope] = []
-    for item in items:
-        sequence = int(item.get("updatedSeq") or item.get("updated_seq") or 0)
-        if sequence <= 0:
-            continue
-        revision = int(item.get("revision") or 1)
-        events.append(
-            _protocol_event(
-                session_id,
-                sequence=sequence,
-                event_type="timeline.item_updated" if revision > 1 else "timeline.item_created",
-                payload={"item": item},
-            )
-        )
-    return events
-
-
-def _events_from_broker_message(message: str) -> list[ProtocolEventEnvelope]:
-    try:
-        payload = json.loads(message)
-    except json.JSONDecodeError:
-        return []
-    session_id = payload.get("sessionId")
-    if not isinstance(session_id, str):
-        return []
-    events = _timeline_events_from_items(session_id, payload.get("items") if isinstance(payload.get("items"), list) else [])
-    session = payload.get("session")
-    if isinstance(session, dict):
-        sequence = int(session.get("updatedSeq") or payload.get("nextSeq") or 0)
-        if sequence > 0:
-            event_payload: dict[str, Any] = {
-                "session": session,
-                "status": session.get("status"),
-            }
-            effective_capabilities = payload.get("effectiveCapabilities")
-            if isinstance(effective_capabilities, dict):
-                event_payload["effectiveCapabilities"] = effective_capabilities
-            events.append(
-                _protocol_event(
-                    session_id,
-                    sequence=sequence,
-                    event_type="session.status_changed",
-                    payload=event_payload,
-                )
-            )
-    notices = payload.get("notices")
-    if isinstance(notices, list):
-        for notice in notices:
-            if not isinstance(notice, dict):
-                continue
-            sequence = int(notice.get("updatedSeq") or payload.get("nextSeq") or 0)
-            if sequence <= 0:
-                continue
-            status = notice.get("status")
-            event_type = "notice.created" if status == "open" and int(notice.get("revision") or 1) == 1 else "notice.updated"
-            events.append(
-                _protocol_event(
-                    session_id,
-                    sequence=sequence,
-                    event_type=event_type,
-                    payload={"notice": notice},
-                )
-            )
-    if payload.get("refetch"):
-        sequence = int(payload.get("nextSeq") or 0)
-        if sequence > 0:
-            events.append(
-                _protocol_event(
-                    session_id,
-                    sequence=sequence,
-                    event_type="session.refetch_required",
-                    payload={"eventCursor": f"seq:{sequence}"},
-                )
-            )
-    events.sort(key=lambda event: event.sequence)
-    return events
 
 
 async def _publish_session_protocol_update(
@@ -512,7 +409,7 @@ async def session_snapshot(
             if permission_catalog is not None
             else ProtocolPermissionCatalog(runtime=session.runtime, revision=0, permissions=[]),
         },
-        eventCursor=f"seq:{next_seq}",
+        eventCursor=event_cursor(next_seq),
         serverTime=utc_now(),
     )
 
@@ -559,62 +456,18 @@ async def session_events(
     session_id: str,
     after: str = Query("seq:0"),
     user_id: str = Depends(current_user_id),
-    db: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
+    recovery: EventRecoveryService = Depends(get_event_recovery_service),
 ) -> ProtocolEventRecoveryResponse:
     try:
-        session = await db.get_session(session_id, user_id=user_id)
-        session, _runtime_capabilities, effective_capabilities = (
-            await project_session_capabilities(
-                db,
-                manager,
-                session,
-                user_id=user_id,
-            )
+        return await recovery.recover(
+            session_id,
+            after=after,
+            user_id=user_id,
         )
-        after_seq = _parse_event_cursor(after)
-        items, _has_more = await db.list_timeline_since(
-            session_id=session_id,
-            after_seq=after_seq,
-            limit=500,
-        )
-        notices = await db.list_notices_since(session_id, after_seq)
-        next_seq = await db.get_session_seq(session_id)
+    except EventCursorError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
-    events = _timeline_events_from_items(session_id, [item.model_dump(mode="json") for item in items])
-    if session.updatedSeq > after_seq:
-        events.append(
-            _protocol_event(
-                session_id,
-                sequence=session.updatedSeq,
-                event_type="session.status_changed",
-                payload={
-                    "session": session.model_dump(mode="json"),
-                    "status": session.status,
-                    "effectiveCapabilities": effective_capabilities.model_dump(
-                        mode="json"
-                    ),
-                },
-            )
-        )
-    for notice in notices:
-        if notice.updatedSeq > after_seq:
-            events.append(
-                _protocol_event(
-                    session_id,
-                    sequence=notice.updatedSeq,
-                    event_type="notice.updated",
-                    payload={"notice": notice.model_dump(mode="json")},
-                )
-            )
-    events.sort(key=lambda event: event.sequence)
-    return ProtocolEventRecoveryResponse(
-        events=events,
-        nextCursor=f"seq:{next_seq}",
-        snapshotRequired=False,
-        serverTime=utc_now(),
-    )
 
 
 @router.websocket("/{session_id}/ws")
@@ -644,11 +497,14 @@ async def session_ws(
     try:
         next_seq = await db.get_session_seq(session_id)
         await websocket.send_json(
-            _protocol_event(
+            protocol_event(
                 session_id,
                 sequence=next_seq,
                 event_type="session.subscribed",
-                payload={"clientId": ticket.client_id, "eventCursor": f"seq:{next_seq}"},
+                payload={
+                    "clientId": ticket.client_id,
+                    "eventCursor": event_cursor(next_seq),
+                },
             ).model_dump(mode="json")
         )
         while True:
@@ -657,7 +513,13 @@ async def session_ws(
             except asyncio.TimeoutError:
                 await websocket.send_json({"type": "keepalive", "serverTime": utc_now()})
                 continue
-            for event in _events_from_broker_message(message):
+            try:
+                invalidation = json.loads(message)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(invalidation, dict):
+                continue
+            for event in events_from_invalidation(invalidation):
                 await websocket.send_json(event.model_dump(mode="json"))
     except WebSocketDisconnect:
         pass
