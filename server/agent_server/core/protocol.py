@@ -17,6 +17,7 @@ from agent_server.core.models import (
 
 PROTOCOL_VERSION_1 = "1.0"
 SUPPORTED_PROTOCOL_VERSIONS = [PROTOCOL_VERSION_1]
+PROTOCOL_MAX_REVISION = 9_007_199_254_740_991
 
 ProtocolVersion = Literal["1.0"]
 ProtocolCapabilityScope = Literal["adapter", "runtime", "session"]
@@ -56,7 +57,7 @@ class ProtocolCapability(ProtocolWireModel):
 
 
 class ProtocolCapabilitySet(ProtocolWireModel):
-    revision: int = Field(ge=0)
+    revision: int = Field(ge=0, le=PROTOCOL_MAX_REVISION)
     capabilities: list[ProtocolCapability] = Field(default_factory=list)
 
 
@@ -88,7 +89,7 @@ class ProtocolModelItem(ProtocolWireModel):
 
 class ProtocolModelCatalog(ProtocolWireModel):
     runtime: RuntimeName
-    revision: int = Field(ge=0)
+    revision: int = Field(ge=0, le=PROTOCOL_MAX_REVISION)
     models: list[ProtocolModelItem] = Field(default_factory=list)
 
 
@@ -108,7 +109,7 @@ class ProtocolPermissionItem(ProtocolWireModel):
 
 class ProtocolPermissionCatalog(ProtocolWireModel):
     runtime: RuntimeName
-    revision: int = Field(ge=0)
+    revision: int = Field(ge=0, le=PROTOCOL_MAX_REVISION)
     permissions: list[ProtocolPermissionItem] = Field(default_factory=list)
 
 

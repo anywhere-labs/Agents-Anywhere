@@ -7,9 +7,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-
 PROTOCOL_VERSION_1 = "1.0"
 SUPPORTED_PROTOCOL_VERSIONS = [PROTOCOL_VERSION_1]
+PROTOCOL_MAX_REVISION = 9_007_199_254_740_991
 
 ProtocolVersion = Literal["1.0"]
 RuntimeName = Literal["codex", "claude", "opencode", "acp"]
@@ -74,7 +74,7 @@ class ProtocolCapability(BaseModel):
 
 
 class ProtocolCapabilitySet(BaseModel):
-    revision: int = Field(ge=0)
+    revision: int = Field(ge=0, le=PROTOCOL_MAX_REVISION)
     capabilities: list[ProtocolCapability] = Field(default_factory=list)
 
 
@@ -100,7 +100,7 @@ class ProtocolModelItem(BaseModel):
 
 class ProtocolModelCatalog(BaseModel):
     runtime: RuntimeName
-    revision: int = Field(ge=0)
+    revision: int = Field(ge=0, le=PROTOCOL_MAX_REVISION)
     models: list[ProtocolModelItem] = Field(default_factory=list)
 
 
@@ -115,7 +115,7 @@ class ProtocolPermissionItem(BaseModel):
 
 class ProtocolPermissionCatalog(BaseModel):
     runtime: RuntimeName
-    revision: int = Field(ge=0)
+    revision: int = Field(ge=0, le=PROTOCOL_MAX_REVISION)
     permissions: list[ProtocolPermissionItem] = Field(default_factory=list)
 
 

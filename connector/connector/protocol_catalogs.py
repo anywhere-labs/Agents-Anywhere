@@ -28,7 +28,7 @@ def model_catalog_from_runtime_items(
     items: list[dict[str, Any]],
 ) -> ProtocolModelCatalog:
     models: list[ProtocolModelItem] = []
-    for index, item in enumerate(items):
+    for item in items:
         model_id = _first_string(item, "id", "model", "modelId", "model_id", "name")
         if not model_id:
             continue
@@ -55,7 +55,10 @@ def model_catalog_from_runtime_items(
                 id=model_id,
                 displayName=label,
                 description=_first_string(item, "description"),
-                default=_bool_value(item.get("default") if "default" in item else item.get("isDefault"), fallback=index == 0),
+                default=_bool_value(
+                    item.get("default") if "default" in item else item.get("isDefault"),
+                    fallback=False,
+                ),
                 selectionId=None
                 if reasoning_items
                 else protocol_selection_id(
@@ -67,7 +70,11 @@ def model_catalog_from_runtime_items(
                 metadata={"source": "runtime", "raw": item},
             )
         )
-    return ProtocolModelCatalog(runtime=runtime, revision=revision, models=models)
+    return ProtocolModelCatalog(
+        runtime=runtime,
+        revision=revision,
+        models=_normalize_model_defaults(models),
+    )
 
 
 def permission_catalog_from_items(
@@ -76,29 +83,36 @@ def permission_catalog_from_items(
     revision: int,
     items: list[dict[str, Any]],
 ) -> ProtocolPermissionCatalog:
+    permissions = [
+        ProtocolPermissionItem(
+            id=str(item["id"]),
+            displayName=str(item["label"]),
+            description=item.get("description") if isinstance(item.get("description"), str) else None,
+            default=bool(item.get("default")),
+            selectionId=protocol_selection_id(
+                runtime,
+                "permission",
+                item.get("identity") if isinstance(item.get("identity"), dict) else {"permission_id": item["id"]},
+            ),
+            metadata={
+                "source": "adapter",
+                **(
+                    {"runtimeSettings": item["runtimeSettings"]}
+                    if isinstance(item.get("runtimeSettings"), dict)
+                    else {}
+                ),
+            },
+        )
+        for item in items
+        if isinstance(item.get("id"), str)
+        and item.get("id")
+        and isinstance(item.get("label"), str)
+        and item.get("label")
+    ]
     return ProtocolPermissionCatalog(
         runtime=runtime,
         revision=revision,
-        permissions=[
-            ProtocolPermissionItem(
-                id=str(item["id"]),
-                displayName=str(item["label"]),
-                description=item.get("description") if isinstance(item.get("description"), str) else None,
-                default=bool(item.get("default")),
-                selectionId=protocol_selection_id(
-                    runtime,
-                    "permission",
-                    item.get("identity") if isinstance(item.get("identity"), dict) else {"permission_id": item["id"]},
-                ),
-                metadata={
-                    "source": "adapter",
-                    **({"runtimeSettings": item["runtimeSettings"]} if isinstance(item.get("runtimeSettings"), dict) else {}),
-                },
-            )
-            for item in items
-            if isinstance(item.get("id"), str) and item.get("id")
-            and isinstance(item.get("label"), str) and item.get("label")
-        ],
+        permissions=_normalize_permission_defaults(permissions),
     )
 
 
@@ -110,9 +124,18 @@ def _reasoning_items(
     default_reasoning_id: str | None,
 ) -> list[ProtocolReasoningItem]:
     result: list[ProtocolReasoningItem] = []
-    for index, raw in enumerate(raw_items):
+    for raw in raw_items:
         item = raw if isinstance(raw, dict) else {"id": raw}
-        reasoning_id = _first_string(item, "id", "reasoningEffort", "reasoning_effort", "effort", "reasoning", "value", "name")
+        reasoning_id = _first_string(
+            item,
+            "id",
+            "reasoningEffort",
+            "reasoning_effort",
+            "effort",
+            "reasoning",
+            "value",
+            "name",
+        )
         if not reasoning_id:
             continue
         label = _first_string(item, "displayName", "display_name", "label", "name") or _reasoning_label(reasoning_id)
@@ -124,7 +147,7 @@ def _reasoning_items(
                 description=_first_string(item, "description"),
                 default=_bool_value(
                     item.get("default") if "default" in item else item.get("isDefault"),
-                    fallback=reasoning_id == default_reasoning_id if default_reasoning_id else index == 0,
+                    fallback=reasoning_id == default_reasoning_id,
                 ),
                 selectionId=protocol_selection_id(
                     runtime,
@@ -134,7 +157,28 @@ def _reasoning_items(
                 metadata={"source": "runtime", "raw": item},
             )
         )
-    return result
+    return _normalize_reasoning_defaults(result)
+
+
+def _normalize_model_defaults(
+    items: list[ProtocolModelItem],
+) -> list[ProtocolModelItem]:
+    selected = next((index for index, item in enumerate(items) if item.default), 0)
+    return [item.model_copy(update={"default": index == selected}) for index, item in enumerate(items)]
+
+
+def _normalize_reasoning_defaults(
+    items: list[ProtocolReasoningItem],
+) -> list[ProtocolReasoningItem]:
+    selected = next((index for index, item in enumerate(items) if item.default), 0)
+    return [item.model_copy(update={"default": index == selected}) for index, item in enumerate(items)]
+
+
+def _normalize_permission_defaults(
+    items: list[ProtocolPermissionItem],
+) -> list[ProtocolPermissionItem]:
+    selected = next((index for index, item in enumerate(items) if item.default), 0)
+    return [item.model_copy(update={"default": index == selected}) for index, item in enumerate(items)]
 
 
 def _reasoning_label(reasoning_id: str) -> str:

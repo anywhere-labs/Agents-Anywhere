@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+from agent_server.core.catalogs import CatalogType, CatalogUpdateOutcome
 from agent_server.core.models import (
     Approval,
     ApprovalIn,
@@ -26,6 +27,27 @@ class SessionLookupRepository(Protocol):
 
 class DashboardEventRepository(SessionLookupRepository, Protocol):
     async def get_connector(self, connector_id: str) -> ConnectorView: ...
+
+
+class CatalogRepository(Protocol):
+    async def get_protocol_catalog(
+        self,
+        connector_id: str,
+        *,
+        runtime: str,
+        catalog_type: CatalogType,
+        user_id: str | None = None,
+    ) -> dict[str, Any] | None: ...
+
+    async def update_protocol_catalog(
+        self,
+        connector_id: str,
+        *,
+        runtime: str,
+        catalog_type: CatalogType,
+        revision: int,
+        catalog: dict[str, Any],
+    ) -> CatalogUpdateOutcome: ...
 
 
 class NoticeRepository(Protocol):
@@ -118,6 +140,7 @@ class ConnectorIngestRepository(DashboardEventRepository, Protocol):
 
 
 class ConnectorNotificationRepository(
+    CatalogRepository,
     SessionStateRepository,
     TimelineEffectRepository,
     Protocol,
@@ -152,9 +175,7 @@ class ConnectorNotificationRepository(
         external_session_id: str | None = None,
     ) -> str: ...
 
-    async def update_active_run_turn_id(
-        self, session_id: str, turn_id: str
-    ) -> None: ...
+    async def update_active_run_turn_id(self, session_id: str, turn_id: str) -> None: ...
 
     async def update_connector_preferences(
         self,
@@ -167,16 +188,6 @@ class ConnectorNotificationRepository(
         connector_id: str,
         capability_set: dict[str, Any],
     ) -> bool: ...
-
-    async def update_protocol_catalog(
-        self,
-        connector_id: str,
-        *,
-        runtime: str,
-        catalog_type: str,
-        revision: int,
-        catalog: dict[str, Any],
-    ) -> None: ...
 
     async def update_session_snapshot(self, **values: Any) -> SessionView: ...
 
@@ -192,9 +203,7 @@ class DeviceRuntimeRepository(
 ):
     async def clear_active_run(self, session_id: str) -> None: ...
 
-    async def clear_device_runtime_config(
-        self, connector_id: str, runtime_id: str
-    ) -> dict[str, Any]: ...
+    async def clear_device_runtime_config(self, connector_id: str, runtime_id: str) -> dict[str, Any]: ...
 
     async def get_device_runtime(
         self,
@@ -253,7 +262,9 @@ class DeviceRuntimeRepository(
         error: dict[str, Any] | None = None,
     ) -> dict[str, Any]: ...
 
+
 class SessionRunRepository(
+    CatalogRepository,
     DashboardEventRepository,
     SessionStateRepository,
     TimelineEffectRepository,
@@ -262,15 +273,6 @@ class SessionRunRepository(
     async def clear_active_run(self, session_id: str) -> None: ...
 
     async def create_session(self, **values: Any) -> SessionView: ...
-
-    async def get_protocol_catalog(
-        self,
-        connector_id: str,
-        *,
-        runtime: str,
-        catalog_type: str,
-        user_id: str | None = None,
-    ) -> dict[str, Any] | None: ...
 
     async def read_uploaded_file(
         self,
@@ -301,9 +303,7 @@ class OAuthRepository(Protocol):
 class AdminDashboardRepository(Protocol):
     engine: Any
 
-    async def list_connectors(
-        self, *, user_id: str | None = None
-    ) -> list[ConnectorView]: ...
+    async def list_connectors(self, *, user_id: str | None = None) -> list[ConnectorView]: ...
 
 
 TerminalRepository = SessionLookupRepository

@@ -16,14 +16,22 @@ export type KnownCapabilityId = (typeof CAPABILITY)[keyof typeof CAPABILITY]
 export function findCapability(
   capabilitySet: ProtocolCapabilitySet | null | undefined,
   capabilityId: string,
+  runtime?: string,
 ): ProtocolCapability | null {
-  return capabilitySet?.capabilities.find((capability) => capability.capabilityId === capabilityId) ?? null
+  const matches = capabilitySet?.capabilities.filter(
+    (capability) => capability.capabilityId === capabilityId,
+  ) ?? []
+  if (!runtime) return matches[0] ?? null
+  return matches.find((capability) => capability.runtime === runtime)
+    ?? matches.find((capability) => !capability.runtime)
+    ?? null
 }
 
 export function capabilityIsUsable(
   capabilitySet: ProtocolCapabilitySet | null | undefined,
   capabilityId: KnownCapabilityId,
+  runtime?: string,
 ): boolean {
-  const capability = findCapability(capabilitySet, capabilityId)
+  const capability = findCapability(capabilitySet, capabilityId, runtime)
   return Boolean(capability?.supported && capability.available && capability.allowed)
 }

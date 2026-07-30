@@ -2,6 +2,7 @@ import type { AuthMe } from "@/features/auth";
 import type {
   ProtocolCapability,
   ProtocolCapabilitySet,
+  ProtocolCapabilitiesResponse,
 } from "@/generated/protocol/v1/capabilities-response";
 import type { ProtocolModelCatalog } from "@/generated/protocol/v1/model-catalog-response";
 import type { ProtocolPermissionCatalog } from "@/generated/protocol/v1/permission-catalog-response";
@@ -24,7 +25,7 @@ export type {
   ProtocolPermissionItem,
 } from "@/generated/protocol/v1/permission-catalog-response";
 
-export type { ProtocolCapability, ProtocolCapabilitySet };
+export type { ProtocolCapability, ProtocolCapabilitySet, ProtocolCapabilitiesResponse };
 
 export type ConnectorStatus = "offline" | "online";
 

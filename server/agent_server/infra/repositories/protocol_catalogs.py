@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from agent_server.core.catalogs import CatalogType, CatalogUpdateOutcome
 from agent_server.infra.repositories.store_support import *
 
 
@@ -11,25 +12,27 @@ class ProtocolCatalogRepositoryMixin:
         connector_id: str,
         *,
         runtime: str,
-        catalog_type: str,
+        catalog_type: CatalogType,
         revision: int,
         catalog: dict[str, Any],
-    ) -> None:
+    ) -> CatalogUpdateOutcome:
         now = utc_now()
         async with self._engine.begin() as conn:
-            row = (
-                await conn.execute(
-                    select(connectors_t.c.id).where(
-                        connectors_t.c.id == connector_id,
-                        connectors_t.c.revoked == 0,
-                    )
-                )
-            ).first()
+            connector_statement = select(connectors_t.c.id).where(
+                connectors_t.c.id == connector_id,
+                connectors_t.c.revoked == 0,
+            )
+            if self.backend != SQLITE_BACKEND:
+                connector_statement = connector_statement.with_for_update()
+            row = (await conn.execute(connector_statement)).first()
             if row is None:
                 raise KeyError(connector_id)
             existing = (
                 await conn.execute(
-                    select(connector_runtime_catalogs_t.c.revision).where(
+                    select(
+                        connector_runtime_catalogs_t.c.revision,
+                        connector_runtime_catalogs_t.c.catalog_json,
+                    ).where(
                         connector_runtime_catalogs_t.c.connector_id == connector_id,
                         connector_runtime_catalogs_t.c.runtime == runtime,
                         connector_runtime_catalogs_t.c.catalog_type == catalog_type,
@@ -37,7 +40,10 @@ class ProtocolCatalogRepositoryMixin:
                 )
             ).first()
             if existing is not None and int(existing.revision) > revision:
-                return
+                return "stale"
+            if existing is not None and int(existing.revision) == revision:
+                current = _json_loads(existing.catalog_json)
+                return "idempotent" if current == catalog else "conflict"
             values = {
                 "connector_id": connector_id,
                 "runtime": runtime,
@@ -58,13 +64,14 @@ class ProtocolCatalogRepositoryMixin:
                     )
                     .values(**values)
                 )
+        return "accepted"
 
     async def get_protocol_catalog(
         self,
         connector_id: str,
         *,
         runtime: str,
-        catalog_type: str,
+        catalog_type: CatalogType,
         user_id: str | None = None,
     ) -> dict[str, Any] | None:
         if user_id is not None:

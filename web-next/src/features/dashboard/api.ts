@@ -25,6 +25,7 @@ import type {
   PairingPollResponse,
   PairingStartResponse,
   ProtocolEventRecoveryResponse,
+  ProtocolCapabilitiesResponse,
   ProtocolModelCatalogResponse,
   ProtocolPermissionCatalogResponse,
   RpcResponse,
@@ -621,6 +622,16 @@ export class DashboardApi {
   ): Promise<ProtocolModelCatalogResponse> {
     return this.client.get<ProtocolModelCatalogResponse>(
       `/agents/${encodeURIComponent(runtime)}/model-catalog?connectorId=${encodeURIComponent(connectorId)}`,
+      { token },
+    );
+  }
+
+  getConnectorProtocolCapabilities(
+    token: string,
+    connectorId: string,
+  ): Promise<ProtocolCapabilitiesResponse> {
+    return this.client.get<ProtocolCapabilitiesResponse>(
+      `/connectors/${encodeURIComponent(connectorId)}/protocol/capabilities`,
       { token },
     );
   }

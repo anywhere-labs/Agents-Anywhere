@@ -13,13 +13,14 @@ from urllib.parse import urljoin, urlparse, urlunparse
 
 import httpx
 import websockets
-from connector.logging import logger
-from websockets.exceptions import ConnectionClosed
 from websockets.asyncio.client import ClientConnection
+from websockets.exceptions import ConnectionClosed
 
 from connector.adapter import Adapter
 from connector.claude.preferences import read_local_preferences
 from connector.local_ops import create_local_ops
+from connector.logging import logger
+from connector.protocol_revision import ProtocolRevisionClock
 from connector.runtime_lifecycle import (
     RuntimeBindings,
     RuntimeProvider,
@@ -27,7 +28,6 @@ from connector.runtime_lifecycle import (
     default_runtime_providers,
 )
 from connector.sync_state import SqliteSyncStateStore, SyncStateStore
-
 
 ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 60.0
 RUNTIME_SYNC_TIMEOUT_SECONDS = 15.0
@@ -155,6 +155,7 @@ class BackendRpcClient:
         for runtime_adapter in self.adapters.values():
             self._wire_adapter(runtime_adapter)
         self._preferences_reader = preferences_reader or read_local_preferences
+        self._protocol_revisions = ProtocolRevisionClock()
         self._last_preferences: dict[str, Any] | None = None
         self.local_ops = create_local_ops(notify=self.send_backend_notification)
         self._ws: ClientConnection | None = None
@@ -526,14 +527,14 @@ class BackendRpcClient:
             await self._publish_runtime_catalogs(runtime_id, adapter)
 
     async def _publish_protocol_capabilities(self) -> None:
-        revision = int(time.time() * 1000)
+        revision = self._protocol_revisions.next()
         await self.send_notification(
             "protocol.capabilitiesUpdated",
             self.runtime_supervisor.active_capabilities(revision=revision),
         )
 
     async def _publish_runtime_catalogs(self, runtime: str, adapter: Adapter) -> None:
-        revision = int(time.time() * 1000)
+        revision = self._protocol_revisions.next()
         model_catalog_method = getattr(adapter, "model_catalog", None)
         if callable(model_catalog_method):
             try:

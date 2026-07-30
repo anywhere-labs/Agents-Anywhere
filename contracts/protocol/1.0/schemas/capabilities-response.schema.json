@@ -109,6 +109,7 @@
           "type": "array"
         },
         "revision": {
+          "maximum": 9007199254740991,
           "minimum": 0,
           "title": "Revision",
           "type": "integer"

@@ -1,6 +1,6 @@
 "use client"
 
-import type { ProtocolModelCatalog, ProtocolPermissionCatalog, ProtocolPermissionItem } from "@/features/dashboard/types"
+import type { ProtocolModelCatalog, ProtocolPermissionCatalog } from "@/features/dashboard/types"
 
 export function modelSelectionIdForCatalog(
   catalog: ProtocolModelCatalog | null,
@@ -43,41 +43,4 @@ export function permissionIdForSelectionId(
 ): string {
   if (!catalog || !selectionId) return ""
   return catalog.permissions.find((item) => item.selectionId === selectionId)?.id ?? ""
-}
-
-export function permissionIdForRuntimeSettings(
-  catalog: ProtocolPermissionCatalog | null,
-  runtimeSettings: Record<string, unknown> | null | undefined,
-): string {
-  if (!catalog || !runtimeSettings) return ""
-  const match = catalog.permissions.find((item) => runtimeSettingsMatchesPermission(runtimeSettings, item))
-  return match?.id ?? ""
-}
-
-function runtimeSettingsMatchesPermission(
-  runtimeSettings: Record<string, unknown>,
-  permission: ProtocolPermissionItem,
-): boolean {
-  const expected = permissionRuntimeSettings(permission)
-  if (Object.keys(expected).length === 0) {
-    return typeof runtimeSettings.permissionMode === "string" && runtimeSettings.permissionMode === permission.id
-  }
-  return objectContains(runtimeSettings, expected)
-}
-
-function permissionRuntimeSettings(permission: ProtocolPermissionItem): Record<string, unknown> {
-  const value = permission.metadata?.runtimeSettings
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}
-}
-
-function objectContains(actual: Record<string, unknown>, expected: Record<string, unknown>): boolean {
-  return Object.entries(expected).every(([key, expectedValue]) => valueMatches(actual[key], expectedValue))
-}
-
-function valueMatches(actual: unknown, expected: unknown): boolean {
-  if (expected && typeof expected === "object" && !Array.isArray(expected)) {
-    if (!actual || typeof actual !== "object" || Array.isArray(actual)) return false
-    return objectContains(actual as Record<string, unknown>, expected as Record<string, unknown>)
-  }
-  return actual === expected
 }

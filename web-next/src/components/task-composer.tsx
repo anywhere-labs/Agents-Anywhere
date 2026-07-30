@@ -38,6 +38,7 @@ import { cn } from "@/lib/utils"
 import { useElementWidth } from "@/hooks/use-element-width"
 import type {
   DeviceRuntimeView,
+  ProtocolCapabilitySet,
   ProtocolModelCatalog,
   ProtocolPermissionCatalog,
   SessionView as RealSessionView,
@@ -49,6 +50,7 @@ import {
   permissionIdForSelectionId,
   permissionSelectionIdForCatalog,
 } from "@/components/session/catalog-selection"
+import { CAPABILITY, capabilityIsUsable } from "@/components/session/capabilities"
 
 const NEW_SESSION_PREFERENCE_KEY = "aa-new-session-preference-v1"
 const TITLE_WRITE_MS = 58
@@ -186,6 +188,7 @@ export function TaskComposer() {
   const [prompt, setPrompt] = React.useState("")
   const [modelCatalog, setModelCatalog] = React.useState<ProtocolModelCatalog | null>(null)
   const [permissionCatalog, setPermissionCatalog] = React.useState<ProtocolPermissionCatalog | null>(null)
+  const [runtimeCapabilities, setRuntimeCapabilities] = React.useState<ProtocolCapabilitySet | null>(null)
   const [catalogsLoading, setCatalogsLoading] = React.useState(false)
   const [creating, setCreating] = React.useState(false)
   const [createTick, setCreateTick] = React.useState(0)
@@ -277,6 +280,7 @@ export function TaskComposer() {
     if (!authSession?.accessToken || !selectedConnectorId || !selectedAgent) {
       setModelCatalog(null)
       setPermissionCatalog(null)
+      setRuntimeCapabilities(null)
       setCatalogsLoading(false)
       return
     }
@@ -284,17 +288,50 @@ export function TaskComposer() {
     setCatalogsLoading(true)
     setModelCatalog(null)
     setPermissionCatalog(null)
-    Promise.all([
-      dashboardApi.getAgentModelCatalog(authSession.accessToken, selectedAgent, selectedConnectorId),
-      dashboardApi.getAgentPermissionCatalog(authSession.accessToken, selectedAgent, selectedConnectorId),
-    ])
-      .then(([modelCatalogResponse, permissionCatalogResponse]) => {
+    setRuntimeCapabilities(null)
+    dashboardApi.getConnectorProtocolCapabilities(
+      authSession.accessToken,
+      selectedConnectorId,
+    )
+      .then(async (capabilitiesResponse) => {
+        const capabilitySet = capabilitiesResponse.capabilitySet
+        const canUseModelCatalog = capabilityIsUsable(
+          capabilitySet,
+          CAPABILITY.modelCatalog,
+          selectedAgent,
+        )
+        const canUsePermissionCatalog = capabilityIsUsable(
+          capabilitySet,
+          CAPABILITY.permissionCatalog,
+          selectedAgent,
+        )
+        const [modelCatalogResponse, permissionCatalogResponse] = await Promise.all([
+          canUseModelCatalog
+            ? dashboardApi.getAgentModelCatalog(
+                authSession.accessToken,
+                selectedAgent,
+                selectedConnectorId,
+              )
+            : Promise.resolve(null),
+          canUsePermissionCatalog
+            ? dashboardApi.getAgentPermissionCatalog(
+                authSession.accessToken,
+                selectedAgent,
+                selectedConnectorId,
+              )
+            : Promise.resolve(null),
+        ])
+        return { capabilitySet, modelCatalogResponse, permissionCatalogResponse }
+      })
+      .then(({ capabilitySet, modelCatalogResponse, permissionCatalogResponse }) => {
         if (cancelled) return
-        setModelCatalog(modelCatalogResponse.catalog)
-        setPermissionCatalog(permissionCatalogResponse.catalog)
+        setRuntimeCapabilities(capabilitySet)
+        setModelCatalog(modelCatalogResponse?.catalog ?? null)
+        setPermissionCatalog(permissionCatalogResponse?.catalog ?? null)
       })
       .catch(() => {
         if (cancelled) return
+        setRuntimeCapabilities(null)
         setModelCatalog(null)
         setPermissionCatalog(null)
       })
@@ -305,6 +342,17 @@ export function TaskComposer() {
       cancelled = true
     }
   }, [authSession?.accessToken, selectedAgent, selectedConnectorId])
+
+  const canUseModelCatalog = capabilityIsUsable(
+    runtimeCapabilities,
+    CAPABILITY.modelCatalog,
+    selectedAgent,
+  )
+  const canUsePermissionCatalog = capabilityIsUsable(
+    runtimeCapabilities,
+    CAPABILITY.permissionCatalog,
+    selectedAgent,
+  )
 
   const models = React.useMemo(
     () => modelCatalog?.models.map((item) => ({
@@ -401,8 +449,8 @@ export function TaskComposer() {
   const permissionDrawerItems = permissionOptions
   const modelSelectionId = modelSelectionIdForCatalog(modelCatalog, selectedModel, selectedReasoning)
   const permissionSelectionId = permissionSelectionIdForCatalog(permissionCatalog, selectedPermissionMode)
-  const requiresModelSelection = Boolean(modelCatalog && models.length > 0)
-  const requiresPermissionSelection = Boolean(permissionCatalog && permissionOptions.length > 0)
+  const requiresModelSelection = canUseModelCatalog && models.length > 0
+  const requiresPermissionSelection = canUsePermissionCatalog && permissionOptions.length > 0
   const hasSelectionSettings = models.length > 0 || permissionOptions.length > 0
   const canCreate =
     Boolean(authSession?.accessToken && selectedConnector && selectedAgent) &&

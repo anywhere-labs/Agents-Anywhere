@@ -254,7 +254,6 @@ export function SessionDetail({
   const pruneAfterScrollTimerRef = React.useRef<number | null>(null)
 
   const session = state?.session ?? fallbackSession
-  const runtimeSettings = session?.runtimeSettings ?? null
   const composerDraft = composerDraftState.sessionId === sessionId ? composerDraftState.value : ""
   const isLocalOptimisticSession = isOptimisticSession(sessionId)
 
@@ -1047,7 +1046,6 @@ export function SessionDetail({
             interrupting={interrupting}
             takeoverBusy={takeoverBusy}
             value={composerDraft}
-            runtimeSettings={runtimeSettings}
             effectiveCapabilities={state?.effectiveCapabilities ?? null}
             modelCatalog={state?.catalogs.model ?? null}
             permissionCatalog={state?.catalogs.permission ?? null}

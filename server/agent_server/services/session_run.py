@@ -9,13 +9,13 @@ from agent_server.core.models import (
     RuntimeName,
     SessionCreateRequest,
 )
-from agent_server.core.protocol import ProtocolModelCatalog, ProtocolPermissionCatalog
 from agent_server.core.utc import utc_now
 from agent_server.infra.connector_rpc import (
     ConnectorOfflineError,
     ConnectorRpcError,
     ConnectorRpcManager,
 )
+from agent_server.services.catalogs import CatalogService, CatalogServiceError
 from agent_server.services.notices import (
     cancel_session_blocking_interactions,
     upsert_execution_error_interaction,
@@ -52,6 +52,7 @@ class SessionRunService:
     def __init__(self, store: SessionRunRepository, manager: ConnectorRpcManager) -> None:
         self._store = store
         self._manager = manager
+        self._catalogs = CatalogService(store)
         self._session_states = SessionStateService(store)
 
     async def create_session(
@@ -111,9 +112,7 @@ class SessionRunService:
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
 
         session_id = connector_result.get("sessionId") if isinstance(connector_result, dict) else None
-        external_session_id = (
-            connector_result.get("externalSessionId") if isinstance(connector_result, dict) else None
-        )
+        external_session_id = connector_result.get("externalSessionId") if isinstance(connector_result, dict) else None
         if not isinstance(session_id, str):
             raise SessionRunUpstreamError("connector did not return a session id")
         if payload.runtime != "claude" and not isinstance(external_session_id, str):
@@ -215,9 +214,7 @@ class SessionRunService:
                 file_ids=[a.fileId for a in payload.attachments],
             )
             params["attachments"] = attachment_payloads
-            params["timelineAttachments"] = [
-                _timeline_attachment_payload(item) for item in attachment_payloads
-            ]
+            params["timelineAttachments"] = [_timeline_attachment_payload(item) for item in attachment_payloads]
 
         await self._store.start_active_run(
             session_id=session_id,
@@ -284,20 +281,14 @@ class SessionRunService:
         runtime: RuntimeName,
         model_selection_id: str,
     ) -> tuple[str, str | None]:
-        raw = await self._store.get_protocol_catalog(
-            connector_id,
-            runtime=runtime,
-            catalog_type="model",
-        )
-        if raw is None:
-            raise SessionRunInvalidConfigError("model catalog is unavailable")
-        catalog = ProtocolModelCatalog.model_validate(raw)
-        if not any(
-            model.selectionId == model_selection_id
-            or any(reasoning.selectionId == model_selection_id for reasoning in model.reasoningItems)
-            for model in catalog.models
-        ):
-            raise SessionRunInvalidConfigError("invalid modelSelectionId") from None
+        try:
+            return await self._catalogs.resolve_model(
+                connector_id,
+                runtime=runtime,
+                selection_id=model_selection_id,
+            )
+        except CatalogServiceError as exc:
+            raise SessionRunInvalidConfigError(exc.detail) from exc
 
     async def _validate_permission_selection(
         self,
@@ -306,16 +297,14 @@ class SessionRunService:
         runtime: RuntimeName,
         permission_selection_id: str,
     ) -> dict[str, object]:
-        raw = await self._store.get_protocol_catalog(
-            connector_id,
-            runtime=runtime,
-            catalog_type="permission",
-        )
-        if raw is None:
-            raise SessionRunInvalidConfigError("permission catalog is unavailable")
-        catalog = ProtocolPermissionCatalog.model_validate(raw)
-        if not any(permission.selectionId == permission_selection_id for permission in catalog.permissions):
-            raise SessionRunInvalidConfigError("invalid permissionSelectionId") from None
+        try:
+            return await self._catalogs.resolve_permission(
+                connector_id,
+                runtime=runtime,
+                selection_id=permission_selection_id,
+            )
+        except CatalogServiceError as exc:
+            raise SessionRunInvalidConfigError(exc.detail) from exc
 
     async def _attachment_payloads(
         self,
@@ -393,9 +382,7 @@ class SessionRunService:
         }
         if turn_id is not None:
             params["turnId"] = turn_id
-        external_session_id = (
-            active_run.get("externalSessionId") if active_run else session.externalSessionId
-        )
+        external_session_id = active_run.get("externalSessionId") if active_run else session.externalSessionId
         if external_session_id:
             params["externalSessionId"] = external_session_id
         previous_status = session.status

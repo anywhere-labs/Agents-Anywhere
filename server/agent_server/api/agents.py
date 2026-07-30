@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from agent_server.deps import current_user_id, get_store
 from agent_server.core.models import RuntimeName
 from agent_server.core.protocol import (
     ProtocolModelCatalog,
@@ -10,9 +9,9 @@ from agent_server.core.protocol import (
     ProtocolPermissionCatalog,
     ProtocolPermissionCatalogResponse,
 )
-from agent_server.infra.repositories.facade import Store
 from agent_server.core.utc import utc_now
-
+from agent_server.deps import current_user_id, get_catalog_service
+from agent_server.services.catalogs import CatalogService
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 
@@ -22,21 +21,18 @@ async def get_agent_model_catalog(
     runtime: RuntimeName,
     connector_id: str = Query(alias="connectorId", min_length=1),
     user_id: str = Depends(current_user_id),
-    db: Store = Depends(get_store),
+    catalogs: CatalogService = Depends(get_catalog_service),
 ) -> ProtocolModelCatalogResponse:
     try:
-        raw = await db.get_protocol_catalog(
+        catalog = await catalogs.model_catalog(
             connector_id,
             runtime=runtime,
-            catalog_type="model",
             user_id=user_id,
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="connector not found") from None
     return ProtocolModelCatalogResponse(
-        catalog=ProtocolModelCatalog.model_validate(raw)
-        if raw is not None
-        else ProtocolModelCatalog(runtime=runtime, revision=0, models=[]),
+        catalog=catalog or ProtocolModelCatalog(runtime=runtime, revision=0, models=[]),
         serverTime=utc_now(),
     )
 
@@ -46,20 +42,17 @@ async def get_agent_permission_catalog(
     runtime: RuntimeName,
     connector_id: str = Query(alias="connectorId", min_length=1),
     user_id: str = Depends(current_user_id),
-    db: Store = Depends(get_store),
+    catalogs: CatalogService = Depends(get_catalog_service),
 ) -> ProtocolPermissionCatalogResponse:
     try:
-        raw = await db.get_protocol_catalog(
+        catalog = await catalogs.permission_catalog(
             connector_id,
             runtime=runtime,
-            catalog_type="permission",
             user_id=user_id,
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="connector not found") from None
     return ProtocolPermissionCatalogResponse(
-        catalog=ProtocolPermissionCatalog.model_validate(raw)
-        if raw is not None
-        else ProtocolPermissionCatalog(runtime=runtime, revision=0, permissions=[]),
+        catalog=catalog or ProtocolPermissionCatalog(runtime=runtime, revision=0, permissions=[]),
         serverTime=utc_now(),
     )

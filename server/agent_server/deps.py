@@ -12,6 +12,7 @@ from agent_server.infra.repositories.facade import Store
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.services.approvals import ApprovalService
 from agent_server.services.attachments import AttachmentService
+from agent_server.services.catalogs import CatalogService
 from agent_server.services.connector_files import ConnectorFileService
 from agent_server.services.connector_ingest import ConnectorIngestService
 from agent_server.services.connector_notifications import ConnectorNotificationService
@@ -34,12 +35,14 @@ def get_attachment_service(conn: HTTPConnection) -> AttachmentService:
     return conn.app.state.store.attachments
 
 
+def get_catalog_service(conn: HTTPConnection) -> CatalogService:
+    return CatalogService(conn.app.state.store)
+
+
 def get_interaction_service(conn: HTTPConnection) -> InteractionService:
     return InteractionService(
         conn.app.state.store,
-        ApprovalInteractionResolver(
-            ApprovalService(conn.app.state.store, conn.app.state.rpc)
-        ),
+        ApprovalInteractionResolver(ApprovalService(conn.app.state.store, conn.app.state.rpc)),
     )
 
 

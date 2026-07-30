@@ -33,7 +33,6 @@ import { useTranslations } from "next-intl"
 import {
   modelIdsForSelectionId,
   modelSelectionIdForCatalog,
-  permissionIdForRuntimeSettings,
   permissionIdForSelectionId,
   permissionSelectionIdForCatalog,
 } from "@/components/session/catalog-selection"
@@ -51,7 +50,6 @@ export function SessionComposer({
   interrupting,
   takeoverBusy,
   value,
-  runtimeSettings,
   effectiveCapabilities,
   modelCatalog,
   permissionCatalog,
@@ -67,7 +65,6 @@ export function SessionComposer({
   interrupting: boolean
   takeoverBusy: boolean
   value: string
-  runtimeSettings: Record<string, unknown> | null
   effectiveCapabilities: ProtocolCapabilitySet | null
   modelCatalog: ProtocolModelCatalog | null
   permissionCatalog: ProtocolPermissionCatalog | null
@@ -127,9 +124,9 @@ export function SessionComposer({
   const effortItems = selectedModelItem?.reasoningItems ?? []
   const modelSelectionValue = modelIdsForSelectionId(modelCatalog, session.modelSelectionId)
   const permissionSelectionValue = permissionIdForSelectionId(permissionCatalog, session.permissionSelectionId)
-  const permissionValue = permissionSelectionValue || permissionIdForRuntimeSettings(permissionCatalog, runtimeSettings)
-  const modelValue = modelSelectionValue?.modelId || (typeof runtimeSettings?.model === "string" ? runtimeSettings.model : "")
-  const effortValue = modelSelectionValue?.reasoningId || (typeof runtimeSettings?.effort === "string" ? runtimeSettings.effort : "")
+  const permissionValue = permissionSelectionValue
+  const modelValue = modelSelectionValue?.modelId ?? ""
+  const effortValue = modelSelectionValue?.reasoningId ?? ""
   const permissionLabel =
     permissionItems.find((item) => item.id === selectedPermissionMode)?.label ?? tNew("permissionMode")
   const modelLabel = selectedModelItem?.label ?? tNew("model")

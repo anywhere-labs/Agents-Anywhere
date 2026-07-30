@@ -5,13 +5,13 @@ from typing import Any, ClassVar
 from loguru import logger
 from pydantic import ValidationError
 
+from agent_server.core.catalogs import CatalogType
 from agent_server.core.interactions import InteractionDomainError
 from agent_server.core.models import ApprovalIn, NoticeIn, SessionStatus, TimelineItemIn
 from agent_server.core.protocol import (
     ProtocolCapabilitySet,
-    ProtocolModelCatalog,
-    ProtocolPermissionCatalog,
 )
+from agent_server.services.catalogs import CatalogService, CatalogServiceError
 from agent_server.services.connector_realtime import ConnectorRealtimeService
 from agent_server.services.ingest_effects import IngestEffect
 from agent_server.services.interactions import InteractionProjectionService
@@ -87,6 +87,7 @@ class ConnectorProtocolNotificationHandler:
 
     def __init__(self, store: ConnectorNotificationRepository) -> None:
         self._store = store
+        self._catalogs = CatalogService(store)
 
     async def apply(
         self,
@@ -150,28 +151,20 @@ class ConnectorProtocolNotificationHandler:
         connector_id: str,
         params: dict[str, Any],
         *,
-        catalog_type: str,
+        catalog_type: CatalogType,
     ) -> None:
-        model = (
-            ProtocolModelCatalog
-            if catalog_type == "model"
-            else ProtocolPermissionCatalog
-        )
         try:
-            catalog = model.model_validate(params)
-        except ValidationError as exc:
-            raise NotificationValidationError(
-                f"invalid_protocol_{catalog_type}_catalog",
-                str(exc),
-            ) from exc
-        try:
-            await self._store.update_protocol_catalog(
+            await self._catalogs.ingest(
                 connector_id,
-                runtime=catalog.runtime,
                 catalog_type=catalog_type,
-                revision=catalog.revision,
-                catalog=catalog.model_dump(mode="json"),
+                payload=params,
             )
+        except CatalogServiceError as exc:
+            code = f"invalid_protocol_{catalog_type}_catalog" if exc.code == "invalid_catalog" else exc.code
+            raise NotificationValidationError(
+                code,
+                exc.detail,
+            ) from exc
         except KeyError:
             logger.warning(
                 "{} catalog update for unknown connector connector_id={}",
@@ -214,9 +207,7 @@ class SessionNotificationHandler:
                 source_observed_at=params.get("sourceObservedAt"),
                 last_activity_at=params.get("lastActivityAt"),
                 model_selection_id=_string_or_none(params.get("modelSelectionId")),
-                permission_selection_id=_string_or_none(
-                    params.get("permissionSelectionId")
-                ),
+                permission_selection_id=_string_or_none(params.get("permissionSelectionId")),
             )
             await self._session_states.reconcile(
                 session_id,
@@ -245,9 +236,7 @@ class SessionNotificationHandler:
                 source_observed_at=params.get("sourceObservedAt"),
                 last_activity_at=params.get("lastActivityAt"),
                 model_selection_id=_string_or_none(params.get("modelSelectionId")),
-                permission_selection_id=_string_or_none(
-                    params.get("permissionSelectionId")
-                ),
+                permission_selection_id=_string_or_none(params.get("permissionSelectionId")),
             )
             await self._session_states.reconcile(
                 session.id,
@@ -282,9 +271,7 @@ class TimelineNotificationHandler:
         connector_id: str,
         params: dict[str, Any],
     ) -> IngestEffect:
-        items = [
-            TimelineItemIn.model_validate(item) for item in params.get("items", [])
-        ]
+        items = [TimelineItemIn.model_validate(item) for item in params.get("items", [])]
         session_id = await _resolve_timeline_session_id(
             self._store,
             connector_id,
@@ -332,9 +319,7 @@ class TimelineNotificationHandler:
         push_items = len(stored_items) <= TIMELINE_SYNC_PUSH_LIMIT
         return IngestEffect(
             session_id=session_id,
-            items=[item.model_dump(mode="json") for item in stored_items]
-            if push_items
-            else None,
+            items=[item.model_dump(mode="json") for item in stored_items] if push_items else None,
             session_changed=True,
             notices_changed=any(item.type == "turn.end" for item in items),
             needs_refetch=not push_items,
