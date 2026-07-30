@@ -58,11 +58,18 @@ curl http://127.0.0.1:8000/api/v2/health
 
 | Variable | Purpose |
 | --- | --- |
-| `AGENT_SERVER_DB` | SQLite database path. Defaults to `agent-server.sqlite3`. |
+| `AGENT_SERVER_DB` | Deprecated SQLite database path. Retained for v1 migration and local compatibility only. |
 | `AGENT_SERVER_DB_URL` | Explicit SQLAlchemy URL. Takes precedence over `AGENT_SERVER_DB`. |
-| `AGENT_SERVER_DB_BACKEND` | Database backend selector. Use `postgres` with `AGENT_SERVER_DB_URL`. |
+| `AGENT_SERVER_DB_BACKEND` | Database backend selector. PostgreSQL is required for production v2 deployments. |
+| `AGENT_SERVER_DB_POOL_SIZE` | PostgreSQL base connection pool size. Defaults to `10`. |
+| `AGENT_SERVER_DB_MAX_OVERFLOW` | PostgreSQL overflow connections per instance. Defaults to `20`. |
+| `AGENT_SERVER_DB_POOL_TIMEOUT` | Seconds to wait for a PostgreSQL pool checkout. Defaults to `30`. |
+| `AGENT_SERVER_DB_POOL_RECYCLE` | PostgreSQL connection recycle interval in seconds. Defaults to `1800`. |
+| `AGENT_SERVER_MIGRATION_LOCK_TIMEOUT` | Seconds a migrator waits for the PostgreSQL advisory lock. Defaults to `120`. |
 | `AGENT_SERVER_REDIS_URL` | Optional Redis URL for Connector presence/RPC routing, cross-instance invalidations, single-use WebSocket tickets, and distributed runtime locks. |
 | `AGENT_SERVER_REDIS_PREFIX` | Redis key/channel prefix. Defaults to `agents-anywhere`. |
+| `AGENT_SERVER_REDIS_CONNECT_TIMEOUT` | Redis connection timeout in seconds. Defaults to `5`. |
+| `AGENT_SERVER_REDIS_HEALTH_CHECK_INTERVAL` | Redis connection health-check interval in seconds. Defaults to `30`. |
 | `AGENT_SERVER_INSTANCE_ID` | Optional unique Server instance ID used for Connector RPC routing. A random ID is generated when unset. |
 | `AGENT_SERVER_FILES_BACKEND` | File storage backend. Use `local` or `s3`. Defaults to `local`. |
 | `AGENT_SERVER_FILES_LOCAL_ROOT` | Local attachment/file root. Defaults next to the database. |
@@ -83,6 +90,8 @@ curl http://127.0.0.1:8000/api/v2/health
 Redis is an ephemeral coordination layer, not a source of truth. Session events
 remain in the database; Redis Pub/Sub only tells instances to re-fetch them.
 The Compose Redis service disables both RDB snapshots and AOF persistence.
+It also caps memory at `REDIS_MAXMEMORY` (default `256mb`) and uses
+`volatile-lru`; all coordination keys that retain data have finite TTLs.
 
 ## Main API Areas
 

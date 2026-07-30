@@ -113,6 +113,8 @@ The compose file uses:
 - public Web port `${AGENTS_ANYWHERE_WEB_PORT:-5174}`
 - static `web-next` files served by FastAPI from the same origin as the API
 - optional `AGENT_SERVER_PUBLIC_ORIGIN=https://agents.example.com` for OAuth redirect URLs behind a reverse proxy
+- PostgreSQL migration serialization through a session advisory lock
+- Redis memory capped by `REDIS_MAXMEMORY` (default `256mb`) with `volatile-lru`
 
 Publish the Web console on a different host port:
 

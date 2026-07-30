@@ -8,11 +8,12 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
+from redis.exceptions import RedisError
 
 from agent_server.api import (
     admin,
@@ -149,6 +150,11 @@ def create_app(
     if should_migrate:
         upgrade_database(sqlite_path=resolved_db_path)
     app.state.store = Store(resolved_db_path)
+    if app.state.store.backend == "sqlite":
+        logger.warning(
+            "SQLite backend is deprecated for v2; use PostgreSQL for production "
+            "and retain SQLite only for legacy migration or local compatibility"
+        )
     app.state.database_schema_version = "unknown"
     resolved_redis_url = redis_url
     if resolved_redis_url is None and db_path is None:
@@ -156,6 +162,12 @@ def create_app(
     app.state.redis = RedisCoordinator(
         resolved_redis_url,
         prefix=os.environ.get("AGENT_SERVER_REDIS_PREFIX", "agents-anywhere"),
+        connect_timeout_seconds=float(
+            os.environ.get("AGENT_SERVER_REDIS_CONNECT_TIMEOUT", "5")
+        ),
+        health_check_interval_seconds=float(
+            os.environ.get("AGENT_SERVER_REDIS_HEALTH_CHECK_INTERVAL", "30")
+        ),
     )
     app.state.rpc = ConnectorRpcManager(
         app.state.redis,
@@ -180,9 +192,62 @@ def create_app(
     app.state.started_at_iso = utc_now()
     app.state.started_at_monotonic = time.monotonic()
 
+    @app.exception_handler(RedisError)
+    async def coordination_unavailable(
+        _request: Request, exc: RedisError
+    ) -> JSONResponse:
+        logger.error("redis coordination unavailable: {}", exc)
+        return JSONResponse(
+            status_code=503,
+            content={
+                "detail": {
+                    "code": "coordination_unavailable",
+                    "message": "Redis coordination is unavailable",
+                }
+            },
+        )
+
     @app.get(f"{API_V2_PREFIX}/health")
+    @app.get(f"{API_V2_PREFIX}/health/live")
     def health() -> dict[str, str]:
         return {"status": "ok", "serverTime": utc_now()}
+
+    @app.get(f"{API_V2_PREFIX}/health/ready")
+    async def readiness() -> JSONResponse:
+        checks: dict[str, dict[str, str]] = {}
+        ready = True
+        try:
+            await asyncio.wait_for(
+                require_current_database(app.state.store.engine), timeout=3
+            )
+            app.state.database_schema_version = await asyncio.wait_for(
+                database_schema_version(app.state.store.engine), timeout=3
+            )
+            checks["database"] = {
+                "status": "ok",
+                "schemaVersion": app.state.database_schema_version,
+            }
+        except Exception as exc:  # readiness must report dependency failures
+            ready = False
+            checks["database"] = {"status": "error", "message": str(exc)}
+        if app.state.redis.distributed:
+            try:
+                await app.state.redis.ping(timeout_seconds=2)
+                checks["redis"] = {"status": "ok"}
+            except Exception as exc:  # readiness must report dependency failures
+                ready = False
+                checks["redis"] = {"status": "error", "message": str(exc)}
+        else:
+            checks["redis"] = {"status": "not_configured"}
+        return JSONResponse(
+            status_code=200 if ready else 503,
+            content={
+                "status": "ready" if ready else "not_ready",
+                "checks": checks,
+                "instanceId": app.state.rpc.instance_id,
+                "serverTime": utc_now(),
+            },
+        )
 
     app.include_router(auth.router, prefix=API_V2_PREFIX)
     app.include_router(admin.router, prefix=API_V2_PREFIX)

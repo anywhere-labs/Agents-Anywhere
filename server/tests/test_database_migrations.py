@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from agent_server.infra.db.engine import build_engine
 from agent_server.infra.db.migrations import (
     CURRENT_SCHEMA_REVISION,
     DatabaseMigrationError,
@@ -140,7 +141,9 @@ def test_v2_0_database_upgrades_through_v2_1(tmp_path) -> None:
 
     engine = create_engine(f"sqlite:///{path}")
     try:
-        columns = {column["name"] for column in inspect(engine).get_columns("connectors")}
+        columns = {
+            column["name"] for column in inspect(engine).get_columns("connectors")
+        }
         assert "presence_connection_id" not in columns
     finally:
         engine.dispose()
@@ -149,11 +152,15 @@ def test_v2_0_database_upgrades_through_v2_1(tmp_path) -> None:
 
     engine = create_engine(f"sqlite:///{path}")
     try:
-        columns = {column["name"] for column in inspect(engine).get_columns("connectors")}
+        columns = {
+            column["name"] for column in inspect(engine).get_columns("connectors")
+        }
         assert {"presence_instance_id", "presence_connection_id"}.issubset(columns)
         with engine.connect() as connection:
             assert (
-                connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+                connection.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
                 == CURRENT_SCHEMA_REVISION
             )
     finally:
@@ -171,6 +178,40 @@ def test_unknown_unversioned_database_is_rejected(tmp_path) -> None:
 
     with pytest.raises(DatabaseMigrationError, match="does not match"):
         upgrade_database(db_url=_sqlite_url(path))
+
+
+def test_postgres_pool_settings_are_configurable(monkeypatch) -> None:
+    monkeypatch.setenv("AGENT_SERVER_DB_POOL_SIZE", "7")
+    monkeypatch.setenv("AGENT_SERVER_DB_MAX_OVERFLOW", "3")
+    monkeypatch.setenv("AGENT_SERVER_DB_POOL_TIMEOUT", "4.5")
+    monkeypatch.setenv("AGENT_SERVER_DB_POOL_RECYCLE", "600")
+
+    backend, engine = build_engine(
+        url="postgresql+asyncpg://agents:secret@127.0.0.1:5432/agents"
+    )
+    try:
+        assert backend == "postgres"
+        assert engine.pool.size() == 7
+        assert engine.pool._max_overflow == 3
+        assert engine.pool._timeout == 4.5
+        assert engine.pool._recycle == 600
+        assert engine.pool._pre_ping is True
+    finally:
+        asyncio.run(engine.dispose())
+
+
+def test_invalid_postgres_pool_setting_is_rejected(monkeypatch) -> None:
+    monkeypatch.setenv("AGENT_SERVER_DB_POOL_SIZE", "0")
+
+    with pytest.raises(ValueError, match="AGENT_SERVER_DB_POOL_SIZE"):
+        build_engine(url="postgresql+asyncpg://agents:secret@127.0.0.1:5432/agents")
+
+
+def test_invalid_migration_lock_timeout_is_rejected(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AGENT_SERVER_MIGRATION_LOCK_TIMEOUT", "never")
+
+    with pytest.raises(DatabaseMigrationError, match="must be a number"):
+        upgrade_database(db_url=_sqlite_url(tmp_path / "invalid-lock.sqlite3"))
 
 
 def _create_legacy_v1_database(path) -> None:

@@ -19,7 +19,16 @@ services:
   redis-next:
     image: redis:8-alpine
     restart: unless-stopped
-    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    command:
+      - redis-server
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      - --maxmemory
+      - ${REDIS_MAXMEMORY:-256mb}
+      - --maxmemory-policy
+      - volatile-lru
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -38,6 +47,7 @@ services:
     environment:
       AGENT_SERVER_DB_BACKEND: postgres
       AGENT_SERVER_DB_URL: postgresql+asyncpg://agents_anywhere:${POSTGRES_PASSWORD:-agents_anywhere_dev_password}@postgres-next:5432/agents_anywhere
+      AGENT_SERVER_MIGRATION_LOCK_TIMEOUT: ${AGENT_SERVER_MIGRATION_LOCK_TIMEOUT:-120}
     command: ["sh", "-c", "cd /app/server && uv run --no-sync python -m agent_server.infra.db.migrations upgrade"]
 
   server-next:
@@ -51,7 +61,12 @@ services:
     environment:
       AGENT_SERVER_DB_BACKEND: postgres
       AGENT_SERVER_DB_URL: postgresql+asyncpg://agents_anywhere:${POSTGRES_PASSWORD:-agents_anywhere_dev_password}@postgres-next:5432/agents_anywhere
+      AGENT_SERVER_DB_POOL_SIZE: ${AGENT_SERVER_DB_POOL_SIZE:-10}
+      AGENT_SERVER_DB_MAX_OVERFLOW: ${AGENT_SERVER_DB_MAX_OVERFLOW:-20}
+      AGENT_SERVER_DB_POOL_TIMEOUT: ${AGENT_SERVER_DB_POOL_TIMEOUT:-30}
+      AGENT_SERVER_DB_POOL_RECYCLE: ${AGENT_SERVER_DB_POOL_RECYCLE:-1800}
       AGENT_SERVER_REDIS_URL: redis://redis-next:6379/0
+      AGENT_SERVER_REDIS_CONNECT_TIMEOUT: ${AGENT_SERVER_REDIS_CONNECT_TIMEOUT:-5}
       AGENT_SERVER_FILES_BACKEND: local
       AGENT_SERVER_FILES_LOCAL_ROOT: /data/agent-server.files
       AGENT_SERVER_SECRET: ${AGENT_SERVER_SECRET:-change-me-before-production}

@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import threading
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager, nullcontext, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -10,15 +14,18 @@ from typing import Literal
 from alembic import command
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
-from sqlalchemy import inspect
+from sqlalchemy import inspect, text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.pool import NullPool
 
-from agent_server.infra.db.engine import resolve_db_url
+from agent_server.infra.db.engine import POSTGRES_BACKEND, resolve_db_url
 
 LEGACY_V1_REVISION = "v1_legacy"
 BASELINE_V2_REVISION = "v2_0"
 CURRENT_SCHEMA_REVISION = "v2_1"
 CURRENT_SCHEMA_VERSION = "2.1"
+POSTGRES_MIGRATION_LOCK_ID = 0x414147454E545332
+DEFAULT_MIGRATION_LOCK_TIMEOUT_SECONDS = 120.0
 
 
 class DatabaseMigrationError(RuntimeError):
@@ -52,18 +59,122 @@ def _upgrade_database(
     db_url: str | None,
     revision: str,
 ) -> None:
-    _, resolved_url = resolve_db_url(url=db_url, sqlite_path=sqlite_path)
-    state = asyncio.run(_classify_database(resolved_url))
-    config = _alembic_config(resolved_url)
-    if state.kind == "v1":
-        command.stamp(config, LEGACY_V1_REVISION)
-    elif state.kind == "v2":
-        command.stamp(config, state.revision or BASELINE_V2_REVISION)
-    elif state.kind == "unknown":
+    backend, resolved_url = resolve_db_url(url=db_url, sqlite_path=sqlite_path)
+    timeout = _migration_lock_timeout()
+    with _migration_lock(backend, resolved_url, timeout_seconds=timeout):
+        state = asyncio.run(_classify_database(resolved_url))
+        config = _alembic_config(resolved_url)
+        if state.kind == "v1":
+            command.stamp(config, LEGACY_V1_REVISION)
+        elif state.kind == "v2":
+            command.stamp(config, state.revision or BASELINE_V2_REVISION)
+        elif state.kind == "unknown":
+            raise DatabaseMigrationError(
+                "database has no Alembic version and does not match a supported v1 or v2 schema"
+            )
+        command.upgrade(config, revision)
+
+
+@contextmanager
+def _migration_lock(
+    backend: str,
+    db_url: str,
+    *,
+    timeout_seconds: float,
+) -> Iterator[None]:
+    if backend == POSTGRES_BACKEND:
+        with _postgres_migration_lock(db_url, timeout_seconds=timeout_seconds):
+            yield
+        return
+    with nullcontext():
+        yield
+
+
+@contextmanager
+def _postgres_migration_lock(
+    db_url: str,
+    *,
+    timeout_seconds: float,
+) -> Iterator[None]:
+    acquired = threading.Event()
+    release = threading.Event()
+    errors: list[BaseException] = []
+
+    async def hold() -> None:
+        engine = create_async_engine(db_url, poolclass=NullPool)
+        try:
+            async with engine.connect() as connection:
+                deadline = time.monotonic() + timeout_seconds
+                while True:
+                    locked = bool(
+                        (
+                            await connection.execute(
+                                text("SELECT pg_try_advisory_lock(:lock_id)"),
+                                {"lock_id": POSTGRES_MIGRATION_LOCK_ID},
+                            )
+                        ).scalar_one()
+                    )
+                    if locked:
+                        break
+                    if time.monotonic() >= deadline:
+                        raise DatabaseMigrationError(
+                            "timed out waiting for the PostgreSQL migration lock"
+                        )
+                    await asyncio.sleep(0.1)
+                acquired.set()
+                await asyncio.to_thread(release.wait)
+                with suppress(Exception):
+                    await connection.execute(
+                        text("SELECT pg_advisory_unlock(:lock_id)"),
+                        {"lock_id": POSTGRES_MIGRATION_LOCK_ID},
+                    )
+        except BaseException as exc:  # noqa: BLE001 - relayed to the caller
+            errors.append(exc)
+        finally:
+            acquired.set()
+            await engine.dispose()
+
+    thread = threading.Thread(
+        target=lambda: asyncio.run(hold()),
+        name="postgres-migration-lock",
+        daemon=True,
+    )
+    thread.start()
+    if not acquired.wait(timeout_seconds + 5):
+        release.set()
+        thread.join(timeout=5)
         raise DatabaseMigrationError(
-            "database has no Alembic version and does not match a supported v1 or v2 schema"
+            "timed out starting the PostgreSQL migration lock holder"
         )
-    command.upgrade(config, revision)
+    if errors:
+        thread.join(timeout=5)
+        raise errors[0]
+    try:
+        yield
+    finally:
+        release.set()
+        thread.join(timeout=10)
+        if thread.is_alive():
+            raise DatabaseMigrationError(
+                "PostgreSQL migration lock holder did not shut down"
+            )
+        if errors:
+            raise errors[0]
+
+
+def _migration_lock_timeout() -> float:
+    raw = os.environ.get("AGENT_SERVER_MIGRATION_LOCK_TIMEOUT", "120")
+    try:
+        timeout = float(raw)
+    except ValueError as exc:
+        raise DatabaseMigrationError(
+            "AGENT_SERVER_MIGRATION_LOCK_TIMEOUT must be a number"
+        ) from exc
+    if timeout <= 0:
+        raise DatabaseMigrationError(
+            "AGENT_SERVER_MIGRATION_LOCK_TIMEOUT must be greater than zero"
+        )
+    return timeout
 
 
 def _run_outside_event_loop(operation) -> None:
@@ -91,7 +202,9 @@ def _run_outside_event_loop(operation) -> None:
 async def database_revision(engine: AsyncEngine) -> str | None:
     async with engine.connect() as connection:
         return await connection.run_sync(
-            lambda sync_connection: MigrationContext.configure(sync_connection).get_current_revision()
+            lambda sync_connection: MigrationContext.configure(
+                sync_connection
+            ).get_current_revision()
         )
 
 
@@ -161,10 +274,14 @@ def _classify_sync(connection) -> UnversionedDatabase:
         "approvals",
         "device_runtimes",
         "notices",
-    }.issubset(tables) and {"model_selection_id", "permission_selection_id"}.issubset(session_columns):
+    }.issubset(tables) and {"model_selection_id", "permission_selection_id"}.issubset(
+        session_columns
+    ):
         revision = (
             CURRENT_SCHEMA_REVISION
-            if {"presence_instance_id", "presence_connection_id"}.issubset(connector_columns)
+            if {"presence_instance_id", "presence_connection_id"}.issubset(
+                connector_columns
+            )
             else BASELINE_V2_REVISION
         )
         return UnversionedDatabase("v2", revision)
@@ -186,24 +303,34 @@ def _column_names(inspector, table: str) -> set[str]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Manage the Agents Anywhere database schema")
+    parser = argparse.ArgumentParser(
+        description="Manage the Agents Anywhere database schema"
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
-    upgrade_parser = subparsers.add_parser("upgrade", help="upgrade through every revision to the target")
+    upgrade_parser = subparsers.add_parser(
+        "upgrade", help="upgrade through every revision to the target"
+    )
     upgrade_parser.add_argument("revision", nargs="?", default="head")
-    current_parser = subparsers.add_parser("current", help="print the current database schema version")
+    current_parser = subparsers.add_parser(
+        "current", help="print the current database schema version"
+    )
     current_parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
     if args.command == "upgrade":
         upgrade_database(revision=args.revision)
-        print(f"database schema is now {CURRENT_SCHEMA_VERSION} ({CURRENT_SCHEMA_REVISION})")
+        print(
+            f"database schema is now {CURRENT_SCHEMA_VERSION} ({CURRENT_SCHEMA_REVISION})"
+        )
         return
 
     _, db_url = resolve_db_url()
     state = asyncio.run(_classify_database(db_url))
     revision = state.revision if state.kind == "versioned" else None
     if args.verbose:
-        print(f"schemaVersion={schema_version_for_revision(revision)} revision={revision or state.kind}")
+        print(
+            f"schemaVersion={schema_version_for_revision(revision)} revision={revision or state.kind}"
+        )
     else:
         print(schema_version_for_revision(revision))
 

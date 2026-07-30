@@ -19,11 +19,19 @@ class RedisCoordinator:
         *,
         prefix: str = "agents-anywhere",
         client: Any | None = None,
+        connect_timeout_seconds: float = 5.0,
+        health_check_interval_seconds: float = 30.0,
     ) -> None:
         self.url = url
         self.prefix = prefix.strip(":") or "agents-anywhere"
         self._client = client or (
-            Redis.from_url(url, encoding="utf-8", decode_responses=True)
+            Redis.from_url(
+                url,
+                encoding="utf-8",
+                decode_responses=True,
+                socket_connect_timeout=connect_timeout_seconds,
+                health_check_interval=health_check_interval_seconds,
+            )
             if url
             else None
         )
@@ -43,7 +51,12 @@ class RedisCoordinator:
 
     async def start(self) -> None:
         if self._client is not None:
-            await self._client.ping()
+            await self.ping()
+
+    async def ping(self, *, timeout_seconds: float = 2.0) -> None:
+        if self._client is None:
+            return
+        await asyncio.wait_for(self._client.ping(), timeout=timeout_seconds)
 
     async def close(self) -> None:
         if self._owns_client and self._client is not None:
