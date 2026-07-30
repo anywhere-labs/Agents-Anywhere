@@ -24,6 +24,7 @@ class FakeCodexRpc:
         self.requests: list[tuple[str, dict[str, Any] | None]] = []
         self.responses: list[tuple[str | int, dict[str, Any] | None]] = []
         self.started = False
+        self.closed = False
         self.handler: Callable[[dict[str, Any]], Awaitable[None]] | None = None
 
     async def start(self, handler: Callable[[dict[str, Any]], Awaitable[None]]) -> None:
@@ -77,6 +78,23 @@ class FakeCodexRpc:
 
     async def respond(self, request_id: str | int, result: dict[str, Any] | None = None) -> None:
         self.responses.append((request_id, result))
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class FakeCodexIpcClient:
+    def __init__(self, *, connected: bool = True) -> None:
+        self.connected = connected
+        self.ensure_connected_calls = 0
+        self.closed = False
+
+    async def ensure_connected(self) -> bool:
+        self.ensure_connected_calls += 1
+        return self.connected
+
+    async def close(self) -> None:
+        self.closed = True
 
 
 class InterruptThreadNotFoundRpc(FakeCodexRpc):
@@ -1206,6 +1224,10 @@ def test_adapter_discovers_existing_codex_threads() -> None:
     asyncio.run(_exercise_existing_thread_sync())
 
 
+def test_adapter_discovers_ipc_router_during_sync_and_closes_client() -> None:
+    asyncio.run(_exercise_ipc_client_lifecycle())
+
+
 def test_adapter_uses_persisted_sync_marker_after_restart(tmp_path) -> None:
     asyncio.run(_exercise_persisted_existing_thread_sync(tmp_path))
 
@@ -1263,6 +1285,20 @@ async def _exercise_existing_thread_sync() -> None:
     assert [notification["method"] for notification in sent_notifications[0]] == ["session.updated", "timeline.sync"]
 
 
+async def _exercise_ipc_client_lifecycle() -> None:
+    rpc = FakeCodexRpc()
+    ipc_client = FakeCodexIpcClient()
+    adapter = CodexAdapter(rpc=rpc, ipc_client=ipc_client)  # type: ignore[arg-type]
+
+    await adapter.sync_session({"sessionId": "sess_1", "externalSessionId": "thr_1"})
+    await adapter.sync_existing_sessions("conn_1")
+
+    assert ipc_client.ensure_connected_calls == 2
+    await adapter.stop()
+    assert ipc_client.closed is True
+    assert rpc.closed is True
+
+
 async def _exercise_persisted_existing_thread_sync(tmp_path) -> None:
     store = SqliteSyncStateStore(tmp_path / "connector-state.sqlite3")
     first_rpc = FakeCodexRpc()
@@ -1279,6 +1315,8 @@ async def _exercise_persisted_existing_thread_sync(tmp_path) -> None:
     assert second["threads"] == []
     assert second["skippedThreads"] == ["thr_existing"]
     assert ("thread/read", {"threadId": "thr_existing", "includeTurns": True}) not in second_rpc.requests
+    assert second_adapter.reducer is not None
+    assert second_adapter.reducer.session_for_thread("thr_existing") == stable_session_id("conn_1", "thr_existing")
 
 
 async def _exercise_archived_thread_sync() -> None:

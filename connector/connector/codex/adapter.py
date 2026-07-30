@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from connector.attachments import attachment_target
+from connector.codex.ipc_client import CodexIpcClient
 from connector.codex.reducer import (
     CODEX_APPROVAL_METHODS,
     ReductionResult,
@@ -167,6 +168,7 @@ class CodexAdapter:
     notification_sink: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None
     attachment_downloader: AttachmentDownloader | None = None
     sync_state_store: SyncStateStore | None = None
+    ipc_client: CodexIpcClient | None = None
     _started: bool = False
     _loaded_thread_ids: set[str] = field(default_factory=set)
     _history_sync_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict)
@@ -213,6 +215,8 @@ class CodexAdapter:
             await asyncio.gather(*tasks, return_exceptions=True)
         if self.rpc is not None:
             await self.rpc.close()
+        if self.ipc_client is not None:
+            await self.ipc_client.close()
         self._started = False
         self._model_list_result = None
 
@@ -292,6 +296,7 @@ class CodexAdapter:
 
     async def sync_session(self, params: dict[str, Any]) -> dict[str, Any]:
         await self.start()
+        await self._discover_ipc_router()
         assert self.rpc is not None
         assert self.reducer is not None
         session_id = _required_string(params, "sessionId")
@@ -364,6 +369,7 @@ class CodexAdapter:
         notification_sink: Callable[[list[dict[str, Any]]], Awaitable[None]] | None = None,
     ) -> dict[str, Any]:
         await self.start()
+        await self._discover_ipc_router()
         assert self.rpc is not None
         assert self.reducer is not None
 
@@ -396,6 +402,8 @@ class CodexAdapter:
                 )
                 skipped_threads.append(thread_id)
                 continue
+            session_id = stable_session_id(connector_id, thread_id)
+            self.reducer.bind_session(session_id, thread_id)
             sync_marker = _thread_sync_marker(thread_ref)
             current_name = _optional_string(thread_ref.get("name"))
             persisted_state = (
@@ -415,7 +423,6 @@ class CodexAdapter:
                 # Codex may rename a thread without bumping updatedAt — diff
                 # the name independently and push a title-only update.
                 if self._existing_thread_names.get(thread_id) != current_name:
-                    session_id = stable_session_id(connector_id, thread_id)
                     rename_notification = {
                         "method": "session.updated",
                         "params": {
@@ -433,8 +440,6 @@ class CodexAdapter:
                     self._persist_sync_state(connector_id, thread_id, sync_marker, current_name)
                 skipped_threads.append(thread_id)
                 continue
-            session_id = stable_session_id(connector_id, thread_id)
-            self.reducer.bind_session(session_id, thread_id)
             try:
                 reduced, _thread = await asyncio.wait_for(
                     self._sync_changed_existing_thread(
@@ -508,6 +513,11 @@ class CodexAdapter:
             "skippedThreads": skipped_threads,
             "backendNotifications": notifications,
         }
+
+    async def _discover_ipc_router(self) -> bool:
+        if self.ipc_client is None:
+            return False
+        return await self.ipc_client.ensure_connected()
 
     def _persist_sync_state(
         self,

@@ -20,6 +20,7 @@ from connector.runtime_discovery import (
 from connector.claude.history_adapter import ClaudeHistoryAdapter
 from connector.claude.sdk_adapter import ClaudeSdkAdapter
 from connector.codex.adapter import CodexAdapter
+from connector.codex.ipc_client import CodexIpcClient
 from connector.codex.rpc import JsonRpcStdioClient
 from connector.launch import LaunchTarget, launch_target
 from connector.sync_state import SyncStateStore
@@ -247,6 +248,7 @@ class CodexRuntimeProvider(ExecutableRuntimeProvider):
             notification_sink=self.bindings.notification_sink,
             attachment_downloader=self.bindings.attachment_downloader,
             sync_state_store=self.bindings.sync_state_store,
+            ipc_client=CodexIpcClient(environment=effective.environment),
         )
         try:
             await adapter.start()
