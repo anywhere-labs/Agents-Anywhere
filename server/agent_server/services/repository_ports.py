@@ -4,8 +4,6 @@ from typing import Any, Protocol
 
 from agent_server.core.catalogs import CatalogType, CatalogUpdateOutcome
 from agent_server.core.models import (
-    Approval,
-    ApprovalIn,
     ConnectorView,
     Notice,
     NoticeIn,
@@ -96,25 +94,20 @@ class TimelineEffectRepository(Protocol):
         source_observed_at: str | None = None,
     ) -> TimelineItem: ...
 
-    async def list_pending_approvals(self, session_id: str) -> list[Approval]: ...
-
-    async def resolve_approval(self, approval_id: str, status: str) -> Approval: ...
-
-
-class ApprovalRepository(
-    SessionLookupRepository,
-    TimelineEffectRepository,
-    Protocol,
-):
-    async def get_approval(self, approval_id: str) -> Approval: ...
-
-
 class InteractionRepository(SessionStateRepository, Protocol):
     pass
 
 
 class InteractionProjectionRepository(SessionStateRepository, Protocol):
-    async def upsert_approval(self, approval: ApprovalIn) -> Approval: ...
+    pass
+
+
+class InteractionResolutionRepository(
+    SessionLookupRepository,
+    TimelineEffectRepository,
+    Protocol,
+):
+    pass
 
 
 class ConnectorIngestRepository(DashboardEventRepository, Protocol):
@@ -133,8 +126,6 @@ class ConnectorIngestRepository(DashboardEventRepository, Protocol):
         self,
         connector_id: str,
     ) -> list[SessionView]: ...
-
-    async def list_pending_approvals(self, session_id: str) -> list[Approval]: ...
 
     async def list_open_notices(self, session_id: str) -> list[Notice]: ...
 
@@ -191,8 +182,6 @@ class ConnectorNotificationRepository(
 
     async def update_session_snapshot(self, **values: Any) -> SessionView: ...
 
-    async def upsert_approval(self, approval: ApprovalIn) -> Approval: ...
-
     async def upsert_connector_session(self, **values: Any) -> SessionView: ...
 
 
@@ -222,8 +211,6 @@ class DeviceRuntimeRepository(
         user_id: str | None = None,
     ) -> list[dict[str, Any]]: ...
 
-    async def list_pending_approvals(self, session_id: str) -> list[Approval]: ...
-
     async def list_running_sessions_for_connector_agent(
         self,
         *,
@@ -237,8 +224,6 @@ class DeviceRuntimeRepository(
         connector_id: str,
         runtimes: list[Any],
     ) -> list[dict[str, Any]]: ...
-
-    async def resolve_approval(self, approval_id: str, status: str) -> Approval: ...
 
     async def set_device_runtime_active(
         self,

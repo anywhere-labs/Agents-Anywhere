@@ -22,8 +22,8 @@ from agent_server.infra.db.engine import POSTGRES_BACKEND, resolve_db_url
 
 LEGACY_V1_REVISION = "v1_legacy"
 BASELINE_V2_REVISION = "v2_0"
-CURRENT_SCHEMA_REVISION = "v2_2"
-CURRENT_SCHEMA_VERSION = "2.2"
+CURRENT_SCHEMA_REVISION = "v2_3"
+CURRENT_SCHEMA_VERSION = "2.3"
 POSTGRES_MIGRATION_LOCK_ID = 0x414147454E545332
 DEFAULT_MIGRATION_LOCK_TIMEOUT_SECONDS = 120.0
 
@@ -271,20 +271,29 @@ def _classify_sync(connection) -> UnversionedDatabase:
         "connectors",
         "sessions",
         "timeline_items",
-        "approvals",
         "device_runtimes",
         "notices",
     }.issubset(tables) and {"model_selection_id", "permission_selection_id"}.issubset(
         session_columns
     ):
-        revision = (
-            CURRENT_SCHEMA_REVISION
-            if {"presence_instance_id", "presence_connection_id"}.issubset(
+        current_layout = (
+            "approvals" not in tables
+            and {"presence_instance_id", "presence_connection_id"}.issubset(
                 connector_columns
             )
-            else BASELINE_V2_REVISION
+            and "runtime_capabilities" not in connector_columns
+            and "runtime_settings_override" not in session_columns
         )
-        return UnversionedDatabase("v2", revision)
+        if current_layout:
+            return UnversionedDatabase("v2", CURRENT_SCHEMA_REVISION)
+        if "approvals" in tables:
+            if {"presence_instance_id", "presence_connection_id"}.issubset(
+                connector_columns
+            ):
+                revision = "v2_2" if "legacy_import_archive" in tables else "v2_1"
+            else:
+                revision = BASELINE_V2_REVISION
+            return UnversionedDatabase("v2", revision)
     if {
         "connectors",
         "sessions",

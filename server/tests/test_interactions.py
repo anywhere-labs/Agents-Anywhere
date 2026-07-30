@@ -13,8 +13,6 @@ from agent_server.core.interactions import (
     require_new_interaction,
 )
 from agent_server.core.models import (
-    Approval,
-    ApprovalIn,
     InteractionType,
     Notice,
     NoticeAction,
@@ -184,19 +182,25 @@ def test_interaction_service_reports_compare_and_set_conflict() -> None:
     assert repository.statuses == ["response_accepted"]
 
 
-def test_interaction_projection_normalizes_legacy_approval_session() -> None:
+def test_interaction_projection_persists_notice_and_reconciles_session() -> None:
     repository = _ProjectionRepository()
     service = InteractionProjectionService(repository)
-    approval = _approval(session_id="external-session")
-
-    projection = asyncio.run(
-        service.project_approval(approval, session_id="session-1")
+    interaction = NoticeIn(
+        noticeId="approval-1",
+        type="interaction",
+        sessionId="session-1",
+        title="Approval required",
+        status="open",
+        interactionType="approval",
+        blocking={"scope": "session", "targetId": "session-1"},
+        responseRequired=True,
+        actions=[NoticeAction(actionId="approve", label="Approve")],
     )
 
-    assert projection.approval.sessionId == "session-1"
-    assert projection.interaction.sessionId == "session-1"
-    assert projection.interaction.interactionType == "approval"
-    assert projection.interaction.context["approvalId"] == "approval-1"
+    projected = asyncio.run(service.project_interaction(interaction))
+
+    assert projected.sessionId == "session-1"
+    assert projected.interactionType == "approval"
     assert repository.refreshed == ["session-1"]
 
 
@@ -305,7 +309,6 @@ class _ApprovalResolver:
 class _ProjectionRepository:
     def __init__(self) -> None:
         self.refreshed: list[str] = []
-        self.approval: Approval | None = None
         self.notice: Notice | None = None
         self.session = SessionView(
             id="session-1",
@@ -340,16 +343,6 @@ class _ProjectionRepository:
         if self.notice is None or self.notice.status != "open":
             return []
         return [self.notice] if self.notice.blocking is not None else []
-
-    async def upsert_approval(self, approval: ApprovalIn) -> Approval:
-        self.approval = Approval.model_validate(
-            {
-                **approval.model_dump(mode="json"),
-                "updatedSeq": 1,
-                "createdAt": "2026-07-30T10:00:00Z",
-            }
-        )
-        return self.approval
 
     async def upsert_notice(self, notice: NoticeIn) -> Notice:
         self.notice = Notice.model_validate(
@@ -398,22 +391,4 @@ def _interaction(
         updatedSeq=1,
         createdAt="2026-07-30T10:00:00Z",
         updatedAt="2026-07-30T10:00:00Z",
-    )
-
-
-def _approval(*, session_id: str) -> ApprovalIn:
-    return ApprovalIn(
-        id="approval-1",
-        sessionId=session_id,
-        turnId="turn-1",
-        kind="command",
-        targetItemId="tool-1",
-        title="Approve command",
-        payload={"command": "pwd"},
-        choices=["approve", "reject"],
-        source={
-            "runtime": "codex",
-            "requestId": "request-1",
-            "sessionId": session_id,
-        },
     )

@@ -25,32 +25,47 @@ def stable_notice_id(kind: str, *values: Any) -> str:
     return f"notice_{kind}_{digest}"
 
 
-def approval_interaction_notice(approval: Approval) -> NoticeIn:
-    return NoticeIn(
-        noticeId=stable_notice_id("approval", approval.id),
-        type="interaction",
-        sessionId=approval.sessionId,
-        source=NoticeSource(
-            runtime=approval.source.runtime,
-            approvalId=approval.id,
-            timelineItemId=approval.targetItemId,
-        ),
-        title=approval.title,
-        message=approval.description,
-        severity="warning",
-        status="open",
-        interactionType="approval",
-        blocking=NoticeBlocking(scope="session", targetId=approval.sessionId),
-        responseRequired=True,
-        actions=_approval_actions(approval),
-        context={
-            "approvalId": approval.id,
-            "turnId": approval.turnId,
-            "kind": approval.kind,
-            "payload": approval.payload,
-            "choices": approval.choices,
-        },
-    )
+def pending_approvals_from_notices(notices: list[Notice]) -> list[Approval]:
+    approvals = [approval_from_interaction_notice(notice) for notice in notices]
+    return [approval for approval in approvals if approval is not None]
+
+
+def approval_from_interaction_notice(notice: Notice) -> Approval | None:
+    if (
+        notice.type != "interaction"
+        or notice.interactionType != "approval"
+        or notice.status not in {"open", "response_accepted", "resolving", "failed"}
+    ):
+        return None
+    approval_id = notice.context.get("approvalId") or notice.source.approvalId
+    approval_source = notice.context.get("approvalSource")
+    choices = notice.context.get("choices")
+    if (
+        not isinstance(approval_id, str)
+        or not isinstance(approval_source, dict)
+        or not isinstance(choices, list)
+    ):
+        return None
+    try:
+        return Approval(
+            id=approval_id,
+            sessionId=notice.sessionId,
+            turnId=_optional_string(notice.context.get("turnId")),
+            status="pending",
+            kind=str(notice.context.get("kind") or "unknown"),
+            targetItemId=notice.source.timelineItemId
+            or _optional_string(notice.context.get("targetItemId")),
+            title=notice.title,
+            description=notice.message,
+            payload=notice.context.get("payload", {}),
+            choices=choices,
+            source=approval_source,
+            updatedSeq=notice.updatedSeq,
+            createdAt=notice.createdAt,
+            resolvedAt=None,
+        )
+    except ValueError:
+        return None
 
 
 async def upsert_execution_error_interaction(
@@ -142,18 +157,8 @@ async def cancel_session_blocking_interactions(
     return closed
 
 
-def _approval_actions(approval: Approval) -> list[NoticeAction]:
-    mapping = {
-        "approve": NoticeAction(actionId="approve", label="Approve", style="primary"),
-        "approve_for_session": NoticeAction(
-            actionId="approve_for_session",
-            label="Approve for session",
-            style="secondary",
-        ),
-        "reject": NoticeAction(actionId="reject", label="Reject", style="danger"),
-        "cancel": NoticeAction(actionId="cancel", label="Cancel", style="secondary"),
-    }
-    return [mapping[choice] for choice in approval.choices if choice in mapping]
+def _optional_string(value: Any) -> str | None:
+    return value if isinstance(value, str) else None
 
 
 def _error_from_timeline_item(item: TimelineItemIn | None) -> dict[str, Any]:

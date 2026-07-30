@@ -122,6 +122,9 @@ class ProtocolPermissionCatalog(BaseModel):
 class ProtocolNoticeSource(BaseModel):
     runtime: RuntimeName
     adapter: str | None = None
+    approvalId: str | None = None
+    timelineItemId: str | None = None
+    operationId: str | None = None
 
 
 class ProtocolNoticeBlocking(BaseModel):
@@ -148,7 +151,7 @@ class ProtocolNotice(BaseModel):
     sessionId: str | None = None
     source: ProtocolNoticeSource
     title: str
-    message: str
+    message: str | None = None
     severity: ProtocolNoticeSeverity = "info"
     createdAt: str | None = None
     expiresAt: str | None = None

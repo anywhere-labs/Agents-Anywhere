@@ -390,8 +390,6 @@ class DeviceRuntimeService:
                 session_id=session.id,
                 reason="runtime_stopped",
             )
-            for approval in await self._store.list_pending_approvals(session.id):
-                await self._store.resolve_approval(approval.id, "cancelled")
             await self._store.clear_active_run(session.id)
             await self._session_states.reconcile(
                 session.id,

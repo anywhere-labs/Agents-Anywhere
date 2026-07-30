@@ -361,31 +361,6 @@ dashboard_settings = Table(
 )
 
 
-approvals = Table(
-    "approvals",
-    metadata,
-    Column("id", Text, primary_key=True),
-    Column(
-        "session_id",
-        Text,
-        ForeignKey("sessions.id", ondelete="CASCADE"),
-        nullable=False,
-    ),
-    Column("turn_id", Text),
-    Column("status", Text, nullable=False),
-    Column("kind", Text, nullable=False),
-    Column("target_item_id", Text),
-    Column("title", Text, nullable=False),
-    Column("description", Text),
-    Column("payload_json", Text, nullable=False),
-    Column("choices_json", Text, nullable=False),
-    Column("source_json", Text, nullable=False),
-    Column("updated_seq", Integer, nullable=False),
-    Column("created_at", Text, nullable=False),
-    Column("resolved_at", Text),
-)
-
-
 notices = Table(
     "notices",
     metadata,

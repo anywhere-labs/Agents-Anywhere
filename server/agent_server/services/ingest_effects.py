@@ -11,6 +11,5 @@ class IngestEffect:
     items: list[dict[str, Any]] | None = None
     timeline_reset: bool = False
     session_changed: bool = False
-    approvals_changed: bool = False
     notices_changed: bool = False
     needs_refetch: bool = False

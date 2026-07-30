@@ -9,6 +9,7 @@ from connector.codex.adapter import (
     EXISTING_SYNC_CHANGED_THREAD_TIMEOUT_SECONDS,
     EXISTING_SYNC_SCAN_TIMEOUT_SECONDS,
     CodexAdapter,
+    _backend_notifications_from_reduction,
     stable_session_id,
 )
 from connector.codex.history import read_timeline_history, read_tool_history
@@ -623,6 +624,15 @@ def test_reducer_maps_codex_approval_request() -> None:
     approval = reduced.approvals[0]
     assert approval["kind"] == "command"
     assert approval["source"]["requestId"] == 42
+    notifications = _backend_notifications_from_reduction(reduced)
+    approval_notice = next(
+        item["params"]
+        for item in notifications
+        if item["method"] == "notice.upsert"
+        and item["params"].get("interactionType") == "approval"
+    )
+    assert approval_notice["context"]["approvalSource"]["requestId"] == 42
+    assert all(item["method"] != "approval.requested" for item in notifications)
 
 
 def test_reducer_maps_function_call_command_tool() -> None:

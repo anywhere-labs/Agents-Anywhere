@@ -24,7 +24,6 @@ from agent_server.core.auth import (
     verify_password_verifier,
 )
 from agent_server.infra.db import (
-    approvals as approvals_t,
     build_engine,
     connector_protocol_capabilities as connector_protocol_capabilities_t,
     connector_runtime_catalogs as connector_runtime_catalogs_t,
@@ -49,8 +48,6 @@ from agent_server.infra.db import (
 from agent_server.infra.db.engine import SQLITE_BACKEND
 from agent_server.infra.files import FileStorage, build_file_storage
 from agent_server.core.models import (
-    Approval,
-    ApprovalIn,
     ConnectorConfigBundle,
     ConnectorView,
     Notice,

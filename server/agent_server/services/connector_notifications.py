@@ -7,7 +7,7 @@ from pydantic import ValidationError
 
 from agent_server.core.catalogs import CatalogType
 from agent_server.core.interactions import InteractionDomainError
-from agent_server.core.models import ApprovalIn, NoticeIn, SessionStatus, TimelineItemIn
+from agent_server.core.models import NoticeIn, SessionStatus, TimelineItemIn
 from agent_server.core.protocol import (
     ProtocolCapabilitySet,
 )
@@ -59,6 +59,11 @@ class ConnectorNotificationService:
         method: str,
         params: dict[str, Any],
     ) -> IngestEffect:
+        if method == "approval.requested":
+            raise NotificationValidationError(
+                "unsupported_notification",
+                "approval.requested was replaced by notice.upsert interactions",
+            )
         if await self._realtime.apply(
             connector_id=connector_id,
             method=method,
@@ -384,7 +389,6 @@ class TimelineNotificationHandler:
 class InteractionNotificationHandler:
     METHODS: ClassVar[set[str]] = {
         "notice.upsert",
-        "approval.requested",
         "runtime.error",
     }
 
@@ -408,8 +412,6 @@ class InteractionNotificationHandler:
             return None
         if method == "notice.upsert":
             return await self._notice(params)
-        if method == "approval.requested":
-            return await self._approval(connector_id, params)
         return await self._runtime_error(params)
 
     async def _notice(self, params: dict[str, Any]) -> IngestEffect:
@@ -436,27 +438,6 @@ class InteractionNotificationHandler:
             notices_changed=True,
         )
 
-    async def _approval(
-        self,
-        connector_id: str,
-        params: dict[str, Any],
-    ) -> IngestEffect:
-        approval = ApprovalIn.model_validate(params)
-        session_id = await _resolve_approval_session_id(
-            self._store,
-            connector_id,
-            approval,
-        )
-        if await _session_disabled(self._store, session_id):
-            return IngestEffect()
-        await self._projections.project_approval(approval, session_id=session_id)
-        return IngestEffect(
-            session_id=session_id,
-            approvals_changed=True,
-            notices_changed=True,
-            session_changed=True,
-        )
-
     async def _runtime_error(self, params: dict[str, Any]) -> IngestEffect:
         session_id = params.get("sessionId")
         if not isinstance(session_id, str) or await _session_disabled(
@@ -479,7 +460,6 @@ class InteractionNotificationHandler:
         return IngestEffect(
             session_id=session_id,
             session_changed=True,
-            approvals_changed=True,
             notices_changed=True,
         )
 
@@ -506,21 +486,6 @@ async def _resolve_timeline_session_id(
         )
     except KeyError:
         return session_id
-
-
-async def _resolve_approval_session_id(
-    store: ConnectorNotificationRepository,
-    connector_id: str,
-    approval: ApprovalIn,
-) -> str:
-    try:
-        return await store.resolve_connector_session_id(
-            connector_id=connector_id,
-            session_id=approval.sessionId,
-            external_session_id=approval.source.sessionId,
-        )
-    except KeyError:
-        return approval.sessionId
 
 
 def _local_session_state(params: dict[str, Any]) -> str:

@@ -14,6 +14,7 @@ from agent_server.services.effective_capabilities import (
     publish_connector_session_capabilities,
 )
 from agent_server.services.ingest_effects import IngestEffect
+from agent_server.services.notices import pending_approvals_from_notices
 from agent_server.services.repository_ports import ConnectorIngestRepository
 
 
@@ -150,7 +151,6 @@ class ConnectorIngestService:
                     "items": [],
                     "timeline_reset": False,
                     "session": False,
-                    "approvals": False,
                     "notices": False,
                     "refetch": False,
                 },
@@ -164,7 +164,6 @@ class ConnectorIngestService:
                 if effect.items:
                     bucket["items"].extend(effect.items)
             bucket["session"] = bucket["session"] or effect.session_changed
-            bucket["approvals"] = bucket["approvals"] or effect.approvals_changed
             bucket["notices"] = bucket["notices"] or effect.notices_changed
             bucket["refetch"] = bucket["refetch"] or effect.needs_refetch
 
@@ -198,10 +197,12 @@ class ConnectorIngestService:
                     )
                 except KeyError:
                     pass
-            if bucket["approvals"]:
+            if bucket["notices"]:
                 envelope["approvals"] = [
                     approval.model_dump(mode="json")
-                    for approval in await self._store.list_pending_approvals(session_id)
+                    for approval in pending_approvals_from_notices(
+                        await self._store.list_open_notices(session_id)
+                    )
                 ]
             if bucket["notices"]:
                 envelope["noticesReset"] = True

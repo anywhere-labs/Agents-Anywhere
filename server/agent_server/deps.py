@@ -10,7 +10,6 @@ from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.timeline_broker import TimelineBroker
-from agent_server.services.approvals import ApprovalService
 from agent_server.services.attachments import AttachmentService
 from agent_server.services.catalogs import CatalogService
 from agent_server.services.connector_files import ConnectorFileService
@@ -47,7 +46,7 @@ def get_event_recovery_service(conn: HTTPConnection) -> EventRecoveryService:
 def get_interaction_service(conn: HTTPConnection) -> InteractionService:
     return InteractionService(
         conn.app.state.store,
-        ApprovalInteractionResolver(ApprovalService(conn.app.state.store, conn.app.state.rpc)),
+        ApprovalInteractionResolver(conn.app.state.store, conn.app.state.rpc),
     )
 
 

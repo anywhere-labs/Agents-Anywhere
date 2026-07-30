@@ -764,25 +764,46 @@ def ingest_pending_command_approval(client: TestClient, access_token: str, sessi
         json={
             "notifications": [
                 {
-                    "method": "approval.requested",
+                    "method": "notice.upsert",
                     "params": {
-                        "id": "appr_1",
+                        "noticeId": "notice_approval_appr_1",
+                        "type": "interaction",
                         "sessionId": session_id,
-                        "turnId": "turn_1",
-                        "status": "pending",
-                        "kind": "command",
-                        "targetItemId": "tl_tool",
-                        "title": "Codex wants to run a command",
-                        "description": "pwd",
-                        "payload": {"command": "pwd"},
-                        "choices": ["approve", "approve_for_session", "reject", "cancel"],
                         "source": {
                             "runtime": "codex",
-                            "requestId": "42",
-                            "sessionId": "thr_1",
+                            "adapter": "codex",
+                            "approvalId": "appr_1",
+                            "timelineItemId": "tl_tool",
+                        },
+                        "title": "Codex wants to run a command",
+                        "message": "pwd",
+                        "severity": "warning",
+                        "status": "open",
+                        "interactionType": "approval",
+                        "blocking": {"scope": "session", "targetId": session_id},
+                        "responseRequired": True,
+                        "actions": [
+                            {"actionId": "approve", "label": "Approve", "style": "primary"},
+                            {"actionId": "approve_for_session", "label": "Approve for session"},
+                            {"actionId": "reject", "label": "Reject", "style": "danger"},
+                            {"actionId": "cancel", "label": "Cancel"},
+                        ],
+                        "context": {
+                            "approvalId": "appr_1",
+                            "approvalStatus": "pending",
+                            "approvalSource": {
+                                "runtime": "codex",
+                                "requestId": "42",
+                                "sessionId": "thr_1",
+                                "turnId": "turn_1",
+                                "itemId": "call_1",
+                                "method": "item/commandExecution/requestApproval",
+                            },
                             "turnId": "turn_1",
-                            "itemId": "call_1",
-                            "method": "item/commandExecution/requestApproval",
+                            "targetItemId": "tl_tool",
+                            "kind": "command",
+                            "payload": {"command": "pwd"},
+                            "choices": ["approve", "approve_for_session", "reject", "cancel"],
                         },
                     },
                 },
@@ -3424,11 +3445,9 @@ def test_legacy_approval_api_is_removed(tmp_path):
     assert response.status_code == 404
 
 
-def test_approval_request_with_external_session_id_resolves_to_server_session(tmp_path):
+def test_legacy_approval_request_notification_is_rejected(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, session_id, headers = create_connector_and_session(client)
-    external_session_id = f"thr_{connector_id}_demo"
-
     response = client.post(
         "/connector/ingest",
         headers={"Authorization": f"Bearer {access_token}"},
@@ -3436,49 +3455,13 @@ def test_approval_request_with_external_session_id_resolves_to_server_session(tm
             "notifications": [
                 {
                     "method": "approval.requested",
-                    "params": {
-                        "id": "appr_external_session",
-                        "sessionId": external_session_id,
-                        "turnId": "turn_1",
-                        "status": "pending",
-                        "kind": "command",
-                        "targetItemId": "tl_tool_external",
-                        "title": "Codex wants to run a command",
-                        "description": "pwd",
-                        "payload": {"command": "pwd"},
-                        "choices": ["approve", "approve_for_session", "reject", "cancel"],
-                        "source": {
-                            "runtime": "codex",
-                            "requestId": "42",
-                            "sessionId": external_session_id,
-                            "turnId": "turn_1",
-                            "itemId": "call_1",
-                            "method": "item/commandExecution/requestApproval",
-                        },
-                    },
+                    "params": {"id": "appr_legacy", "sessionId": session_id},
                 },
             ],
         },
     )
-    assert response.status_code == 200, response.text
-
-    state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
-    assert [approval["id"] for approval in state["approvals"]] == ["appr_external_session"]
-    assert state["approvals"][0]["sessionId"] == session_id
-
-    fake_rpc = FakeApprovalRpc()
-    client.app.state.rpc = fake_rpc
-    notice_id = interaction_notice_id(client, session_id, headers, "approval")
-    resolved = client.post(
-        f"/sessions/{session_id}/interactions/{notice_id}/respond",
-        headers=headers,
-        json={"actionId": "approve"},
-    )
-
-    assert resolved.status_code == 200, resolved.text
-    params = fake_rpc.requests[-1][2]
-    assert params["sessionId"] == session_id
-    assert params["externalSessionId"] == external_session_id
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "unsupported_notification"
 
 
 def test_pairing_flow_returns_one_time_connector_credentials(tmp_path):
@@ -5259,8 +5242,6 @@ def test_approval_interaction_expires_when_runtime_no_longer_accepts_response(tm
     )
 
     assert response.status_code == 409
-    approval = asyncio.run(client.app.state.store.get_approval("appr_1"))
-    assert approval.status == "expired"
     notice = asyncio.run(client.app.state.store.get_notice(notice_id))
     assert notice.status == "expired"
     assert notice.context["approvalStatus"] == "expired"

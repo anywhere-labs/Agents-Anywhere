@@ -10,19 +10,24 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from connector.logging import logger
-
-from connector.attachments import attachment_target
 from connector.adapter import NotificationSink
+from connector.attachments import attachment_target
 from connector.claude.history_adapter import ClaudeHistoryAdapter
 from connector.claude.normalized import NormalizedClaudeEvent
 from connector.claude.normalizers import ClaudeLiveNormalizer
-from connector.claude.timeline_reducer import ClaudeTimelineReducer, is_task_event_tool_name
+from connector.claude.timeline_reducer import (
+    ClaudeTimelineReducer,
+    is_task_event_tool_name,
+)
+from connector.interactions import approval_notice
 from connector.launch import LaunchTarget, launch_target
+from connector.logging import logger
 from connector.protocol import protocol_selection_id
-from connector.protocol_catalogs import empty_model_catalog, permission_catalog_from_items
+from connector.protocol_catalogs import (
+    empty_model_catalog,
+    permission_catalog_from_items,
+)
 from connector.time import utc_now
-
 
 AttachmentDownloader = Callable[[str, str], Awaitable[tuple[bytes, str, str]]]
 """(session_id, file_id) -> (data, original_name, media_type)"""
@@ -703,12 +708,14 @@ class ClaudeSdkAdapter:
         runtime.pending_approvals[approval_id] = _PendingSdkApproval(approval_id, future, input_data)
         if self.notification_sink is not None:
             await self.notification_sink(
-                "approval.requested",
-                _approval_payload(
-                    approval_id=approval_id,
-                    runtime=runtime,
-                    tool_name=tool_name,
-                    input_data=input_data,
+                "notice.upsert",
+                approval_notice(
+                    _approval_payload(
+                        approval_id=approval_id,
+                        runtime=runtime,
+                        tool_name=tool_name,
+                        input_data=input_data,
+                    )
                 ),
             )
         status = await future

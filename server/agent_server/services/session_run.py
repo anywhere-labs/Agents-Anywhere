@@ -400,8 +400,6 @@ class SessionRunService:
             session_id=session_id,
             reason="interrupt_requested",
         )
-        for approval in await self._store.list_pending_approvals(session_id):
-            await self._store.resolve_approval(approval.id, "cancelled")
         if _interrupt_target_not_found(result):
             await self._store.clear_active_run(session_id)
         await self._session_states.reconcile(

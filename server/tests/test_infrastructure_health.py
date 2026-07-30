@@ -14,7 +14,7 @@ def test_liveness_and_readiness_are_separate(tmp_path) -> None:
     assert response.status_code == 200
     assert response.json()["status"] == "ready"
     assert response.json()["checks"] == {
-        "database": {"status": "ok", "schemaVersion": "2.2"},
+        "database": {"status": "ok", "schemaVersion": "2.3"},
         "redis": {"status": "not_configured"},
     }
 

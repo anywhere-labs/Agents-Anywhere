@@ -22,7 +22,7 @@ modules, or the concrete `Store` facade. These rules are enforced by
 
 | State | Owner | Persistence |
 | --- | --- | --- |
-| Users, connectors, sessions, approvals, notices, timeline, catalogs, runtime config | PostgreSQL | Durable, Alembic-versioned |
+| Users, connectors, sessions, notices/interactions, timeline, catalogs, runtime config | PostgreSQL | Durable, Alembic-versioned |
 | Connector ownership lease, cross-instance RPC routing, invalidation Pub/Sub, distributed locks, short-lived tickets and transfer coordination | Redis | Ephemeral, finite TTL where retained |
 | Local WebSockets, pending RPC futures, send locks, listener tasks | Server process | Process lifetime only |
 | Attachments and uploaded files | Configured file backend | Durable according to backend policy |
@@ -46,12 +46,12 @@ after restart.
 
 ## Database Versions
 
-Alembic revisions use product schema versions (`v2_0`, `v2_1`, `v2_2`, and so
+Alembic revisions use product schema versions (`v2_0`, `v2_1`, `v2_2`, `v2_3`, and so
 on), independent of package SemVer. Every schema change adds one revision.
 Alembic applies all intermediate revisions in order, so a database may upgrade
 across multiple versions in one command.
 
 Runtime startup requires the database to already be at the exact current
-revision. Only the explicit migration command mutates schema. Retained legacy
-columns may be removed only in a later versioned migration; stopping runtime
-writes to an old column does not itself require a schema bump.
+revision. Only the explicit migration command mutates schema. Revision `v2_3`
+removes the archived v1 columns and the transitional Approval table after
+Interaction notices become authoritative.

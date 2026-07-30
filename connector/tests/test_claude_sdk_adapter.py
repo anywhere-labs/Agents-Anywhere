@@ -727,13 +727,17 @@ async def test_claude_sdk_adapter_approval_bridge_resolves_to_sdk_allow():
     )
     await asyncio.sleep(0)
 
-    approvals = [params for method, params in notifications if method == "approval.requested"]
+    approvals = [
+        params
+        for method, params in notifications
+        if method == "notice.upsert" and params.get("interactionType") == "approval"
+    ]
     assert len(approvals) == 1
-    assert approvals[0]["kind"] == "command"
+    assert approvals[0]["context"]["kind"] == "command"
     result = await adapter.resolve_approval(
         {
             "sessionId": "sess_approval",
-            "approvalId": approvals[0]["id"],
+            "approvalId": approvals[0]["context"]["approvalId"],
             "status": "approved",
         }
     )
@@ -742,6 +746,7 @@ async def test_claude_sdk_adapter_approval_bridge_resolves_to_sdk_allow():
     assert result == {"resolved": True}
     assert isinstance(permission, FakeAllow)
     assert permission.updated_input == {"command": "ls"}
+    assert all(method != "approval.requested" for method, _params in notifications)
 
 
 @pytest.mark.anyio

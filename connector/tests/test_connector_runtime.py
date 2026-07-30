@@ -156,7 +156,7 @@ def test_connector_coalesces_duplicate_timeline_upserts_within_batch() -> None:
             "method": "timeline.itemUpsert",
             "params": {"sessionId": "sess_1", "item": {"id": "item_1", "revision": 2}},
         },
-        {"method": "approval.requested", "params": {"sessionId": "sess_1"}},
+        {"method": "notice.upsert", "params": {"sessionId": "sess_1"}},
     ]
 
     coalesced = _coalesce_timeline_item_upserts(notifications)
@@ -165,7 +165,7 @@ def test_connector_coalesces_duplicate_timeline_upserts_within_batch() -> None:
         "session.updated",
         "timeline.itemUpsert",
         "timeline.itemUpsert",
-        "approval.requested",
+        "notice.upsert",
     ]
     assert coalesced[1]["params"]["item"]["id"] == "item_2"
     assert coalesced[2]["params"]["item"] == {"id": "item_1", "revision": 2}

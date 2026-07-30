@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 
 import pytest
@@ -34,6 +35,7 @@ def test_empty_database_upgrades_to_current_schema(tmp_path) -> None:
         assert {"alembic_version", "device_runtimes", "notices", "sessions"}.issubset(
             tables
         )
+        assert "approvals" not in tables
     finally:
         engine.dispose()
     async_engine = create_async_engine(_sqlite_url(path))
@@ -44,7 +46,7 @@ def test_empty_database_upgrades_to_current_schema(tmp_path) -> None:
         asyncio.run(async_engine.dispose())
 
 
-def test_unversioned_v1_database_migrates_data_without_dropping_legacy_tables(
+def test_unversioned_v1_database_archives_then_removes_legacy_storage(
     tmp_path,
 ) -> None:
     path = tmp_path / "legacy.sqlite3"
@@ -55,22 +57,24 @@ def test_unversioned_v1_database_migrates_data_without_dropping_legacy_tables(
     engine = create_engine(f"sqlite:///{path}")
     try:
         inspector = inspect(engine)
-        assert inspector.has_table("device_agent_settings")
+        assert not inspector.has_table("device_agent_settings")
+        assert not inspector.has_table("agent_modes")
+        assert not inspector.has_table("approvals")
         assert inspector.has_table("device_runtimes")
         session_columns = {
             column["name"] for column in inspector.get_columns("sessions")
         }
-        assert {
-            "runtime_settings_override",
-            "model_selection_id",
-            "permission_selection_id",
-        }.issubset(session_columns)
+        assert {"model_selection_id", "permission_selection_id"}.issubset(
+            session_columns
+        )
+        assert "runtime_settings_override" not in session_columns
         connector_columns = {
             column["name"] for column in inspector.get_columns("connectors")
         }
         assert {"presence_instance_id", "presence_connection_id"}.issubset(
             connector_columns
         )
+        assert "runtime_capabilities" not in connector_columns
         with engine.connect() as connection:
             session_status = connection.execute(
                 text("SELECT status FROM sessions WHERE id = 'sess_legacy'")
@@ -166,6 +170,29 @@ def test_unversioned_v2_database_is_stamped_without_rebuilding(tmp_path) -> None
         engine.dispose()
 
 
+def test_unversioned_v2_2_database_is_stamped_then_upgraded(tmp_path) -> None:
+    path = tmp_path / "unversioned-v2-2.sqlite3"
+    upgrade_database(db_url=_sqlite_url(path), revision="v2_2")
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        with engine.begin() as connection:
+            connection.execute(text("DROP TABLE alembic_version"))
+    finally:
+        engine.dispose()
+
+    upgrade_database(db_url=_sqlite_url(path))
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        inspector = inspect(engine)
+        assert "approvals" not in inspector.get_table_names()
+        with engine.connect() as connection:
+            assert connection.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one() == CURRENT_SCHEMA_REVISION
+    finally:
+        engine.dispose()
+
 def test_v2_0_database_upgrades_through_current_revision(tmp_path) -> None:
     path = tmp_path / "versioned-v2-0.sqlite3"
     upgrade_database(db_url=_sqlite_url(path), revision="v2_0")
@@ -187,6 +214,7 @@ def test_v2_0_database_upgrades_through_current_revision(tmp_path) -> None:
             column["name"] for column in inspect(engine).get_columns("connectors")
         }
         assert {"presence_instance_id", "presence_connection_id"}.issubset(columns)
+        assert "approvals" not in inspect(engine).get_table_names()
         with engine.connect() as connection:
             assert (
                 connection.execute(
@@ -194,6 +222,150 @@ def test_v2_0_database_upgrades_through_current_revision(tmp_path) -> None:
                 ).scalar_one()
                 == CURRENT_SCHEMA_REVISION
             )
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize(
+    ("source_revision", "target_revision"),
+    [
+        ("v1_legacy", "v2_0"),
+        ("v2_0", "v2_1"),
+        ("v2_1", "v2_2"),
+        ("v2_2", "v2_3"),
+    ],
+)
+def test_every_adjacent_schema_upgrade(
+    tmp_path,
+    source_revision: str,
+    target_revision: str,
+) -> None:
+    path = tmp_path / f"{source_revision}-{target_revision}.sqlite3"
+    upgrade_database(db_url=_sqlite_url(path), revision=source_revision)
+
+    upgrade_database(db_url=_sqlite_url(path), revision=target_revision)
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        with engine.connect() as connection:
+            assert connection.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one() == target_revision
+    finally:
+        engine.dispose()
+
+
+def test_v2_3_migrates_approval_response_context_to_notice(tmp_path) -> None:
+    path = tmp_path / "approval-v2-2.sqlite3"
+    upgrade_database(db_url=_sqlite_url(path), revision="v2_2")
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        with engine.begin() as connection:
+            notice_id = "notice_approval_" + hashlib.sha256(
+                json.dumps(
+                    ("appr_migrate",),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    default=str,
+                ).encode("utf-8")
+            ).hexdigest()[:24]
+            connection.execute(
+                text(
+                    "INSERT INTO connectors "
+                    "(id, user_id, name, status, token_hash, token_prefix, revoked, created_at, updated_at) "
+                    "VALUES ('conn_approval', 'user_approval', 'Approval', 'offline', 'hash', 'cxt_', 0, :now, :now)"
+                ),
+                {"now": "2026-07-30T00:00:00Z"},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO sessions "
+                    "(id, connector_id, runtime, origin, status, takeover, pinned, archived, "
+                    "last_read_seq, seq, updated_seq, created_at, updated_at) "
+                    "VALUES ('sess_approval', 'conn_approval', 'codex', 'connector_import', "
+                    "'blocked', 1, 0, 0, 0, 7, 7, :now, :now)"
+                ),
+                {"now": "2026-07-30T00:00:00Z"},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO approvals "
+                    "(id, session_id, turn_id, status, kind, target_item_id, title, description, "
+                    "payload_json, choices_json, source_json, updated_seq, created_at) "
+                    "VALUES ('appr_migrate', 'sess_approval', 'turn_1', 'pending', 'command', "
+                    "'tool_1', 'Run command', 'pwd', :payload, :choices, :source, 7, :now)"
+                ),
+                {
+                    "payload": json.dumps({"command": "pwd"}),
+                    "choices": json.dumps(["approve", "reject"]),
+                    "source": json.dumps(
+                        {
+                            "runtime": "codex",
+                            "requestId": 42,
+                            "sessionId": "thread_1",
+                            "turnId": "turn_1",
+                        }
+                    ),
+                    "now": "2026-07-30T00:00:00Z",
+                },
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO notices "
+                    "(id, session_id, type, status, interaction_type, blocking_json, "
+                    "response_required, severity, title, message, source_json, actions_json, "
+                    "context_json, metadata_json, revision, updated_seq, created_at, updated_at) "
+                    "VALUES (:id, 'sess_approval', 'interaction', 'open', 'approval', :blocking, "
+                    "1, 'warning', 'Run command', 'pwd', :notice_source, :actions, :context, '{}', "
+                    "1, 7, :now, :now)"
+                ),
+                {
+                    "id": notice_id,
+                    "blocking": json.dumps(
+                        {"scope": "session", "targetId": "sess_approval"}
+                    ),
+                    "notice_source": json.dumps(
+                        {
+                            "runtime": "codex",
+                            "approvalId": "appr_migrate",
+                            "timelineItemId": "tool_1",
+                        }
+                    ),
+                    "actions": json.dumps(
+                        [{"actionId": "approve", "label": "Approve"}]
+                    ),
+                    "context": json.dumps({"approvalId": "appr_migrate"}),
+                    "now": "2026-07-30T00:00:00Z",
+                },
+            )
+    finally:
+        engine.dispose()
+
+    upgrade_database(db_url=_sqlite_url(path))
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        inspector = inspect(engine)
+        assert "approvals" not in inspector.get_table_names()
+        with engine.connect() as connection:
+            notice = connection.execute(
+                text(
+                    "SELECT interaction_type, status, source_json, context_json "
+                    "FROM notices WHERE session_id = 'sess_approval'"
+                )
+            ).mappings().one()
+            notice_count = connection.execute(
+                text(
+                    "SELECT COUNT(*) FROM notices WHERE session_id = 'sess_approval'"
+                )
+            ).scalar_one()
+        context = json.loads(notice["context_json"])
+        assert notice["interaction_type"] == "approval"
+        assert notice["status"] == "open"
+        assert context["approvalId"] == "appr_migrate"
+        assert context["approvalSource"]["requestId"] == 42
+        assert context["targetItemId"] == "tool_1"
+        assert notice_count == 1
     finally:
         engine.dispose()
 
@@ -260,6 +432,15 @@ def _create_legacy_v1_database(path) -> None:
     engine = create_engine(f"sqlite:///{path}")
     metadata.create_all(engine)
     with engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE approvals ("
+                "id TEXT PRIMARY KEY, session_id TEXT NOT NULL, turn_id TEXT, status TEXT NOT NULL, "
+                "kind TEXT NOT NULL, target_item_id TEXT, title TEXT NOT NULL, description TEXT, "
+                "payload_json TEXT NOT NULL, choices_json TEXT NOT NULL, source_json TEXT NOT NULL, "
+                "updated_seq INTEGER NOT NULL, created_at TEXT NOT NULL, resolved_at TEXT)"
+            )
+        )
         connection.execute(text("DROP TABLE notices"))
         connection.execute(text("DROP TABLE connector_protocol_capabilities"))
         connection.execute(text("DROP TABLE connector_runtime_catalogs"))

@@ -1,7 +1,7 @@
 # Agent Server
 
 FastAPI backend for Agents Anywhere. The server owns authentication, users,
-connectors, sessions, timeline state, approvals, file metadata, terminal
+connectors, sessions, timeline and Interaction state, file metadata, terminal
 brokering, and connector RPC dispatch.
 
 ## Layout
@@ -43,8 +43,8 @@ compatibility while that backend is being deprecated.
 
 The Server requires the database to be at its exact Alembic schema revision and
 does not mutate a production database during startup. `upgrade` fingerprints an
-unversioned v1 database, preserves its legacy tables, and applies every revision
-through the current schema (`v2_2`). Inspect the installed revision with:
+unversioned v1 database, archives required legacy data, and applies every revision
+through the current schema (`v2_3`). Inspect the installed revision with:
 
 ```bash
 uv run python -m agent_server.infra.db.migrations current --verbose
@@ -63,7 +63,8 @@ The source is opened read-only and copied with SQLite's backup API. Only the
 copy is upgraded. The PostgreSQL target must contain no product rows; the tool
 imports in one transaction and verifies every table by row count and SHA-256.
 Legacy-only rows and legacy JSON columns are retained in
-`legacy_import_archive`.
+`legacy_import_archive`; their superseded source tables and columns are removed
+by `v2_3`.
 
 The first startup on an empty database logs a bootstrap token. Use that token in
 the web UI to create the first admin user.

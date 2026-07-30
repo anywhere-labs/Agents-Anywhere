@@ -12,7 +12,7 @@ not introduce a persistent event log.
 | Session | `server/agent_server/core/models.py` | Connector legacy statuses are mapped at ingest; Android and iOS still consume `waiting_approval` and `error` as session states. |
 | Capability | `server/agent_server/core/protocol.py` and `services/effective_capabilities.py` | Connector repeats the Pydantic wire model; Web stores `effectiveCapabilities` but controls the composer from session status. |
 | Catalog | Server protocol models plus Connector catalog builders | Web repeats TypeScript types and selection lookup rules. |
-| Interaction | Server `Notice` plus the approval projection in `services/notices.py` | Durable `Approval` and `Notice` models coexist; timeline items retain `waiting_approval`. |
+| Interaction | Server `Notice` | Mobile compatibility approvals are projected from notices; timeline items retain `waiting_approval` until mobile migration. |
 | Event | `ProtocolEventEnvelope` and database-derived recovery responses | Redis notifications and WebSocket delivery are ephemeral; recovery is reconstructed from durable state rather than an event log. |
 
 The external v2 session state is already limited to `idle`, `pending`,
@@ -89,11 +89,15 @@ avoids combining a behavior refactor with a destructive migration.
 
 ### 7. Legacy storage removal
 
+Completed in schema revision `v2_3`.
+
 - Introduce schema revision `v2_3` only when the durable Approval/legacy columns
   are actually changed.
 - Preserve required v1 source data in `legacy_import_archive` before contract
   tables or columns are removed.
 - Test `v1_legacy -> v2_0 -> v2_1 -> v2_2 -> v2_3` and every adjacent upgrade.
+- Require Connector approval prompts to use `notice.upsert`; reject
+  `approval.requested` at Server ingress.
 
 ### 8. Mobile migration
 

@@ -70,6 +70,7 @@ from agent_server.services.interactions import (
     InteractionService,
     InteractionServiceError,
 )
+from agent_server.services.notices import pending_approvals_from_notices
 from agent_server.services.session_run import SessionRunError, SessionRunService
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
@@ -344,7 +345,9 @@ async def session_state(
             items, has_more = await db.list_timeline_since(
                 session_id=session_id, after_seq=after_seq, limit=limit
             )
-        approvals = await db.list_pending_approvals(session_id)
+        approvals = pending_approvals_from_notices(
+            await db.list_open_notices(session_id)
+        )
         next_seq = await db.get_session_seq(session_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
@@ -377,8 +380,8 @@ async def session_snapshot(
             )
         )
         items, has_more = await db.list_timeline_latest(session_id=session_id, limit=limit)
-        approvals = await db.list_pending_approvals(session_id)
         notices = await db.list_open_notices(session_id)
+        approvals = pending_approvals_from_notices(notices)
         next_seq = await db.get_session_seq(session_id)
         model_catalog = await db.get_protocol_catalog(
             session.connectorId,

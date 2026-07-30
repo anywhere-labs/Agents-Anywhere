@@ -1,27 +1,30 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
 import hashlib
 import json
 import time
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
-from connector.logging import logger
-
 from connector.attachments import attachment_target
-from connector.codex.reducer import CODEX_APPROVAL_METHODS, ReductionResult, TimelineReducer
+from connector.codex.reducer import (
+    CODEX_APPROVAL_METHODS,
+    ReductionResult,
+    TimelineReducer,
+)
 from connector.codex.rpc import JsonRpcStdioClient
+from connector.interactions import approval_notice
+from connector.logging import logger
+from connector.protocol import protocol_selection_id
 from connector.protocol_catalogs import (
     model_catalog_from_runtime_items,
     permission_catalog_from_items,
 )
-from connector.protocol import protocol_selection_id
 from connector.sync_state import SyncStateStore
 from connector.time import utc_now
-
 
 AttachmentDownloader = Callable[[str, str], Awaitable[tuple[bytes, str, str]]]
 """(session_id, file_id) -> (data, original_name, media_type)"""
@@ -971,7 +974,7 @@ def _backend_notifications_from_reduction(
         else:
             notifications.append({"method": timeline_method, "params": {"sessionId": session_id, "items": reduced.timeline_items}})
     for approval in reduced.approvals:
-        notifications.append({"method": "approval.requested", "params": approval})
+        notifications.append({"method": "notice.upsert", "params": approval_notice(approval)})
     for notice in reduced.notices:
         notifications.append({"method": "notice.upsert", "params": notice})
     return notifications

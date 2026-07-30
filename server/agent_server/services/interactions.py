@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
+from loguru import logger
+
 from agent_server.core.interactions import (
     InteractionDomainError,
     InteractionResponseCommand,
@@ -11,27 +13,25 @@ from agent_server.core.interactions import (
     require_new_interaction,
 )
 from agent_server.core.models import (
-    Approval,
-    ApprovalIn,
     Notice,
     NoticeIn,
     NoticeStatus,
     RpcResponsePayload,
 )
-from agent_server.services.approvals import (
-    ApprovalConflictError,
-    ApprovalExpiredError,
-    ApprovalNotFoundError,
-    ApprovalService,
-    ApprovalServiceError,
-    ApprovalUpstreamError,
+from agent_server.infra.connector_rpc import (
+    ConnectorOfflineError,
+    ConnectorRpcError,
+    ConnectorRpcManager,
 )
-from agent_server.services.notices import approval_interaction_notice
 from agent_server.services.repository_ports import (
     InteractionProjectionRepository,
     InteractionRepository,
+    InteractionResolutionRepository,
 )
 from agent_server.services.session_states import SessionStateService
+from agent_server.services.timeline_effects import (
+    apply_approval_resolution_to_target_item,
+)
 
 InteractionErrorKind = Literal["not_found", "conflict", "invalid", "upstream"]
 
@@ -70,8 +70,13 @@ class ApprovalInteractionPort(Protocol):
 
 
 class ApprovalInteractionResolver:
-    def __init__(self, approvals: ApprovalService) -> None:
-        self._approvals = approvals
+    def __init__(
+        self,
+        store: InteractionResolutionRepository,
+        manager: ConnectorRpcManager,
+    ) -> None:
+        self._store = store
+        self._manager = manager
 
     async def respond(
         self,
@@ -93,48 +98,77 @@ class ApprovalInteractionResolver:
                 "invalid approval action",
                 target_status="failed",
             )
+        approval_source = command.context.get("approvalSource")
+        request_id = (
+            approval_source.get("requestId")
+            if isinstance(approval_source, dict)
+            else None
+        )
+        if not isinstance(request_id, (str, int)):
+            raise InteractionServiceError(
+                "invalid",
+                "interaction is missing approval request id",
+                target_status="failed",
+            )
         try:
-            response = await self._approvals.resolve(
+            session = await self._store.get_session(command.session_id, user_id=user_id)
+            logger.info(
+                "approval interaction response requested approval_id={} status={} session_id={} connector_id={} request_id={}",
                 approval_id,
                 approval_status,
-                user_id=user_id,
+                session.id,
+                session.connectorId,
+                request_id,
+            )
+            result = await self._manager.request(
+                session.connectorId,
+                "approval.resolve",
+                {
+                    "approvalId": approval_id,
+                    "status": approval_status,
+                    "requestId": request_id,
+                    "sessionId": session.id,
+                    "runtime": session.runtime,
+                    "externalSessionId": session.externalSessionId,
+                },
+            )
+            await apply_approval_resolution_to_target_item(
+                self._store,
+                session_id=session.id,
+                approval_id=approval_id,
+                target_item_id=_optional_string(command.context.get("targetItemId")),
+                status=approval_status,
             )
             return InteractionResolution(
-                response=response,
+                response=RpcResponsePayload(ok=True, result=result),
                 context_patch={"approvalStatus": approval_status},
             )
-        except ApprovalExpiredError as exc:
-            raise InteractionServiceError(
-                "conflict",
-                exc.detail,
-                target_status="expired",
-                context_patch={
-                    "approvalStatus": "expired",
-                    "closedReason": "runtime_no_longer_accepts_response",
-                },
-            ) from exc
-        except ApprovalNotFoundError as exc:
+        except KeyError as exc:
             raise InteractionServiceError(
                 "not_found",
-                exc.detail,
+                "session not found",
                 target_status="failed",
             ) from exc
-        except ApprovalConflictError as exc:
+        except ConnectorOfflineError as exc:
             raise InteractionServiceError(
                 "conflict",
-                exc.detail,
+                str(exc),
                 target_status="failed",
             ) from exc
-        except ApprovalUpstreamError as exc:
+        except ConnectorRpcError as exc:
+            if _approval_no_longer_pending(exc):
+                raise InteractionServiceError(
+                    "conflict",
+                    "approval is no longer pending",
+                    target_status="expired",
+                    context_patch={
+                        "approvalStatus": "expired",
+                        "closedReason": "runtime_no_longer_accepts_response",
+                    },
+                ) from exc
             raise InteractionServiceError(
                 "upstream",
-                exc.detail,
-                target_status="failed",
-            ) from exc
-        except ApprovalServiceError as exc:
-            raise InteractionServiceError(
-                "upstream",
-                exc.detail,
+                exc.message or exc.code,
                 target_status="failed",
             ) from exc
 
@@ -258,36 +292,10 @@ class InteractionService:
             ) from exc
 
 
-@dataclass(frozen=True)
-class ApprovalInteractionProjection:
-    approval: Approval
-    interaction: Notice
-
-
 class InteractionProjectionService:
     def __init__(self, store: InteractionProjectionRepository) -> None:
         self._store = store
         self._session_states = SessionStateService(store)
-
-    async def project_approval(
-        self,
-        approval: ApprovalIn,
-        *,
-        session_id: str,
-    ) -> ApprovalInteractionProjection:
-        normalized = approval
-        if approval.sessionId != session_id:
-            normalized = ApprovalIn.model_validate(
-                {**approval.model_dump(), "sessionId": session_id}
-            )
-        stored_approval = await self._store.upsert_approval(normalized)
-        interaction = await self.project_interaction(
-            approval_interaction_notice(stored_approval)
-        )
-        return ApprovalInteractionProjection(
-            approval=stored_approval,
-            interaction=interaction,
-        )
 
     async def project_interaction(self, interaction: NoticeIn) -> Notice:
         require_new_interaction(interaction)
@@ -303,3 +311,15 @@ def _approval_status_for_action(action_id: str) -> str | None:
         "reject": "rejected",
         "cancel": "cancelled",
     }.get(action_id)
+
+
+def _approval_no_longer_pending(exc: ConnectorRpcError) -> bool:
+    text = f"{exc.code} {exc.message}".lower()
+    return any(
+        fragment in text
+        for fragment in ("not pending", "not found", "expired", "no longer")
+    )
+
+
+def _optional_string(value: Any) -> str | None:
+    return value if isinstance(value, str) else None
