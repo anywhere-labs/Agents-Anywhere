@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import base64
 from typing import Any
 
@@ -23,22 +22,6 @@ from agent_server.core.auth import (
     create_connector_access_token,
     verify_connector_access_token,
 )
-from agent_server.core.protocol import (
-    ProtocolCapabilitySet,
-    ProtocolModelCatalog,
-    ProtocolPermissionCatalog,
-)
-from agent_server.infra.connector_rpc import DuplicateConnectorConnectionError, ConnectorRpcManager
-from agent_server.deps import (
-    get_attachment_service,
-    get_connector_ingest_service,
-    get_fs_downloads,
-    get_rpc,
-    get_shell_tasks,
-    get_store,
-    get_timeline_broker,
-)
-from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.core.models import (
     ApprovalIn,
     ConnectorAuthResponse,
@@ -47,96 +30,43 @@ from agent_server.core.models import (
     NoticeIn,
     TimelineItemIn,
 )
+from agent_server.core.protocol import (
+    ProtocolCapabilitySet,
+    ProtocolModelCatalog,
+    ProtocolPermissionCatalog,
+)
+from agent_server.deps import (
+    get_attachment_service,
+    get_connector_ingest_service,
+    get_connector_realtime_service,
+    get_fs_downloads,
+    get_rpc,
+    get_store,
+    get_timeline_broker,
+)
+from agent_server.infra.connector_rpc import (
+    ConnectorRpcManager,
+    DuplicateConnectorConnectionError,
+)
+from agent_server.infra.fs_downloads import FsDownloadRelayManager
+from agent_server.infra.repositories.facade import Store
+from agent_server.infra.terminal_broker import TerminalBroker
+from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.services.attachments import AttachmentService
+from agent_server.services.connector_ingest import ConnectorIngestService, IngestEffect
+from agent_server.services.connector_realtime import ConnectorRealtimeService
 from agent_server.services.dashboard_events import publish_dashboard_changed
-from agent_server.services.connector_ingest import ConnectorIngestService
-from agent_server.services.timeline_effects import close_waiting_approval_items_for_finished_turn
-from agent_server.services.shell_tasks import ShellTaskManager
 from agent_server.services.notices import (
     cancel_turn_blocking_interactions,
     upsert_approval_interaction,
     upsert_execution_error_interaction,
 )
-from agent_server.infra.repositories.facade import Store
-from agent_server.infra.terminal_broker import TerminalBroker
-from agent_server.infra.terminal_stream_hub import TerminalStreamHub
-from agent_server.infra.timeline_broker import TimelineBroker
-
+from agent_server.services.timeline_effects import (
+    close_waiting_approval_items_for_finished_turn,
+)
 
 router = APIRouter(tags=["connector-ingress"])
 TIMELINE_SYNC_PUSH_LIMIT = 100
-
-
-@dataclass
-class IngestEffect:
-    """What one applied notification wants pushed to SSE subscribers.
-
-    Event-Carried State Transfer: timeline.itemUpsert and small timeline.sync
-    batches carry committed items directly. Large syncs ask clients to refetch
-    their bounded HTTP snapshot window.
-    """
-
-    session_id: str | None = None
-    item: dict[str, Any] | None = None
-    items: list[dict[str, Any]] | None = None
-    session_changed: bool = False
-    approvals_changed: bool = False
-    notices_changed: bool = False
-    needs_refetch: bool = False
-
-
-async def _publish_effects(
-    db: Store, timeline_broker: TimelineBroker, effects: list[IngestEffect]
-) -> None:
-    # Aggregate per session so a batch of N notifications fans out as one
-    # envelope per session, carrying every item committed in the batch.
-    by_session: dict[str, dict[str, Any]] = {}
-    for eff in effects:
-        if eff.session_id is None:
-            continue
-        bucket = by_session.setdefault(
-            eff.session_id,
-            {"items": [], "session": False, "approvals": False, "notices": False, "refetch": False},
-        )
-        if eff.item is not None:
-            bucket["items"].append(eff.item)
-        if eff.items:
-            bucket["items"].extend(eff.items)
-        bucket["session"] = bucket["session"] or eff.session_changed
-        bucket["approvals"] = bucket["approvals"] or eff.approvals_changed
-        bucket["notices"] = bucket["notices"] or eff.notices_changed
-        bucket["refetch"] = bucket["refetch"] or eff.needs_refetch
-
-    for session_id, bucket in by_session.items():
-        try:
-            next_seq = await db.get_session_seq(session_id)
-        except KeyError:
-            continue
-        envelope: dict[str, Any] = {"sessionId": session_id, "nextSeq": next_seq}
-        if bucket["refetch"]:
-            envelope["refetch"] = True
-        if bucket["items"]:
-            envelope["items"] = bucket["items"]
-        if bucket["session"]:
-            try:
-                envelope["session"] = (await db.get_session(session_id)).model_dump(mode="json")
-            except KeyError:
-                pass
-        if bucket["approvals"]:
-            envelope["approvals"] = [
-                a.model_dump(mode="json") for a in await db.list_pending_approvals(session_id)
-            ]
-        if bucket["notices"]:
-            envelope["notices"] = [
-                n.model_dump(mode="json") for n in await db.list_open_notices(session_id)
-            ]
-        await timeline_broker.publish(session_id, envelope)
-        await publish_dashboard_changed(
-            db,
-            timeline_broker,
-            session_id=session_id,
-            reason="session.changed",
-        )
 
 
 @router.post("/connector/auth", response_model=ConnectorAuthResponse)
@@ -166,7 +96,11 @@ async def connector_ingest(
 ) -> ConnectorIngestResponse:
     connector_id = _connector_id_from_bearer(authorization)
     await _require_active_connector(connector_id, db)
-    return await ingest_service.ingest(connector_id=connector_id, payload=payload)
+    return await ingest_service.ingest(
+        connector_id=connector_id,
+        payload=payload,
+        notification_applier=apply_connector_notification,
+    )
 
 
 @router.get("/connector/sessions/{session_id}/attachments/{file_id}/content")
@@ -251,7 +185,7 @@ async def connector_ws(
     websocket: WebSocket,
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
-    tasks: ShellTaskManager = Depends(get_shell_tasks),
+    realtime: ConnectorRealtimeService = Depends(get_connector_realtime_service),
     broker: TerminalBroker = Depends(get_terminal_broker),
     timeline_broker: TimelineBroker = Depends(get_timeline_broker),
 ) -> None:
@@ -299,9 +233,7 @@ async def connector_ws(
     await websocket.accept()
     ingest_service = ConnectorIngestService(
         db,
-        tasks,
-        broker,
-        websocket.app.state.terminal_stream_hub,
+        realtime,
         timeline_broker,
         websocket.app.state.device_runtime_service,
     )
@@ -311,7 +243,9 @@ async def connector_ws(
             message = await websocket.receive_json()
             if not await manager.touch(connector_id, connection):
                 break
-            await _handle_connector_message(connector_id, message, manager, ingest_service)
+            await _handle_connector_message(
+                connector_id, message, manager, ingest_service
+            )
     except WebSocketDisconnect:
         logger.info("connector disconnected: {}", connector_id)
     finally:
@@ -386,7 +320,9 @@ async def connector_terminal_relay_ws(
             mtype = message.get("type")
             if mtype == "ready":
                 pid = message.get("pid")
-                await broker.mark_running(terminal_id, pid=pid if isinstance(pid, int) else None)
+                await broker.mark_running(
+                    terminal_id, pid=pid if isinstance(pid, int) else None
+                )
             elif mtype == "output":
                 data_b64 = message.get("data")
                 seq = message.get("seq")
@@ -399,7 +335,11 @@ async def connector_terminal_relay_ws(
                         await broker.on_output(terminal_id, data=data, seq=seq)
             elif mtype == "exit":
                 exit_code = message.get("exitCode")
-                reason = message.get("reason") if isinstance(message.get("reason"), str) else None
+                reason = (
+                    message.get("reason")
+                    if isinstance(message.get("reason"), str)
+                    else None
+                )
                 await broker.on_exited(
                     terminal_id,
                     exit_code=exit_code if isinstance(exit_code, int) else None,
@@ -432,6 +372,7 @@ async def _handle_connector_message(
             connector_id=connector_id,
             method=method,
             params=params,
+            notification_applier=apply_connector_notification,
         )
 
 
@@ -460,9 +401,7 @@ async def apply_connector_notification(
     method: str,
     params: dict[str, Any],
     db: Store,
-    tasks: ShellTaskManager | None = None,
-    broker: TerminalBroker | None = None,
-    terminal_stream_hub: TerminalStreamHub | None = None,
+    realtime: ConnectorRealtimeService | None = None,
 ) -> IngestEffect:
     """Apply one connector notification, returning what to push to SSE.
 
@@ -473,6 +412,13 @@ async def apply_connector_notification(
     A `_IngestFilter` prevents late child notifications from resurrecting a
     session that no longer exists.
     """
+    if realtime is not None and await realtime.apply(
+        connector_id=connector_id,
+        method=method,
+        params=params,
+    ):
+        return IngestEffect()
+
     filter_ = _IngestFilter(db)
 
     if method == "connector.heartbeat":
@@ -485,7 +431,9 @@ async def apply_connector_notification(
         try:
             await db.update_connector_preferences(connector_id, dict(params))
         except KeyError:
-            logger.warning("preferences update for unknown connector connector_id={}", connector_id)
+            logger.warning(
+                "preferences update for unknown connector connector_id={}", connector_id
+            )
         return IngestEffect()
     elif method == "protocol.capabilitiesUpdated":
         try:
@@ -504,7 +452,10 @@ async def apply_connector_notification(
                 capability_set.model_dump(mode="json"),
             )
         except KeyError:
-            logger.warning("protocol capabilities update for unknown connector connector_id={}", connector_id)
+            logger.warning(
+                "protocol capabilities update for unknown connector connector_id={}",
+                connector_id,
+            )
         return IngestEffect()
     elif method == "protocol.modelCatalogUpdated":
         try:
@@ -526,7 +477,10 @@ async def apply_connector_notification(
                 catalog=catalog.model_dump(mode="json"),
             )
         except KeyError:
-            logger.warning("model catalog update for unknown connector connector_id={}", connector_id)
+            logger.warning(
+                "model catalog update for unknown connector connector_id={}",
+                connector_id,
+            )
         return IngestEffect()
     elif method == "protocol.permissionCatalogUpdated":
         try:
@@ -548,7 +502,10 @@ async def apply_connector_notification(
                 catalog=catalog.model_dump(mode="json"),
             )
         except KeyError:
-            logger.warning("permission catalog update for unknown connector connector_id={}", connector_id)
+            logger.warning(
+                "permission catalog update for unknown connector connector_id={}",
+                connector_id,
+            )
         return IngestEffect()
     elif method == "session.updated":
         local_state = _local_session_state(params)
@@ -593,7 +550,9 @@ async def apply_connector_notification(
                 connector_id=connector_id,
                 session_id=session_id,
                 runtime=params.get("runtime") or "codex",
-                external_session_id=external_session_id if isinstance(external_session_id, str) else None,
+                external_session_id=external_session_id
+                if isinstance(external_session_id, str)
+                else None,
                 title=params.get("title"),
                 cwd=params.get("cwd"),
                 status=_v2_session_status(params.get("status")),
@@ -610,13 +569,19 @@ async def apply_connector_notification(
             await db.refresh_session_status_from_timeline(session.id)
             return IngestEffect(session_id=session.id, session_changed=True)
     elif method == "timeline.sync":
-        items = [TimelineItemIn.model_validate(item) for item in params.get("items", [])]
-        session_id = await _resolve_timeline_session_id(connector_id, params["sessionId"], items, db)
+        items = [
+            TimelineItemIn.model_validate(item) for item in params.get("items", [])
+        ]
+        session_id = await _resolve_timeline_session_id(
+            connector_id, params["sessionId"], items, db
+        )
         if await filter_.session_disabled(session_id):
             return IngestEffect()
         items = [_timeline_item_for_session(item, session_id) for item in items]
         items = await _tag_active_run_user_messages(db, session_id, items)
-        should_replace_snapshot = await _should_replace_timeline_snapshot(db, session_id, items)
+        should_replace_snapshot = await _should_replace_timeline_snapshot(
+            db, session_id, items
+        )
         if should_replace_snapshot:
             stored_items = await db.replace_timeline_snapshot(
                 session_id=session_id,
@@ -658,7 +623,9 @@ async def apply_connector_notification(
         )
     elif method == "timeline.itemUpsert":
         item = TimelineItemIn.model_validate(params["item"])
-        session_id = await _resolve_timeline_session_id(connector_id, params["sessionId"], [item], db)
+        session_id = await _resolve_timeline_session_id(
+            connector_id, params["sessionId"], [item], db
+        )
         if await filter_.session_disabled(session_id):
             return IngestEffect()
         item = _timeline_item_for_session(item, session_id)
@@ -730,15 +697,20 @@ async def apply_connector_notification(
         )
     elif method == "runtime.error":
         session_id = params.get("sessionId")
-        if isinstance(session_id, str) and not await filter_.session_disabled(session_id):
+        if isinstance(session_id, str) and not await filter_.session_disabled(
+            session_id
+        ):
             await upsert_execution_error_interaction(
                 db,
                 session_id=session_id,
                 title="Runtime error",
-                message=params.get("message") if isinstance(params.get("message"), str) else None,
+                message=params.get("message")
+                if isinstance(params.get("message"), str)
+                else None,
                 error={
                     "code": "runtime_error",
-                    "message": params.get("message") or "The runtime reported an error.",
+                    "message": params.get("message")
+                    or "The runtime reported an error.",
                     "details": params,
                 },
                 reason="runtime_error",
@@ -750,57 +722,6 @@ async def apply_connector_notification(
                 notices_changed=True,
             )
         return IngestEffect()
-    elif method == "shell.task.started" and tasks is not None:
-        task_id = params.get("taskId")
-        session_id = params.get("sessionId")
-        if isinstance(task_id, str) and isinstance(session_id, str):
-            try:
-                await tasks.mark_running(task_id, session_id=session_id, connector_id=connector_id)
-            except KeyError:
-                logger.warning(
-                    "ignored shell task started from mismatched connector task_id={} connector_id={}",
-                    task_id,
-                    connector_id,
-                )
-    elif method == "shell.task.completed" and tasks is not None:
-        task_id = params.get("taskId")
-        session_id = params.get("sessionId")
-        status = params.get("status")
-        if isinstance(task_id, str) and isinstance(session_id, str):
-            await tasks.complete(
-                task_id,
-                session_id=session_id,
-                connector_id=connector_id,
-                status=status if status in {"completed", "failed", "cancelled"} else "failed",
-                result=params.get("result") if isinstance(params.get("result"), dict) else None,
-                error=params.get("error") if isinstance(params.get("error"), dict) else None,
-            )
-    elif method == "terminal.output":
-        terminal_id = params.get("terminalId")
-        data_b64 = params.get("dataBase64")
-        seq = params.get("seq")
-        if terminal_stream_hub is not None:
-            await terminal_stream_hub.publish_output(connector_id, params)
-        if broker is not None and isinstance(terminal_id, str) and isinstance(data_b64, str) and isinstance(seq, int):
-            import base64
-            try:
-                data = base64.b64decode(data_b64)
-            except Exception:
-                data = b""
-            if data:
-                await broker.on_output(terminal_id, data=data, seq=seq)
-    elif method == "terminal.exited":
-        terminal_id = params.get("terminalId")
-        exit_code = params.get("exitCode")
-        reason = params.get("reason") if isinstance(params.get("reason"), str) else None
-        if terminal_stream_hub is not None:
-            await terminal_stream_hub.publish_exit(connector_id, params)
-        if broker is not None and isinstance(terminal_id, str):
-            await broker.on_exited(
-                terminal_id,
-                exit_code=exit_code if isinstance(exit_code, int) else None,
-                reason=reason,
-            )
     # shell.* / terminal.* have their own brokers / task manager; nothing to
     # push down the timeline SSE channel.
     return IngestEffect()
@@ -963,7 +884,9 @@ def _active_run_user_message_matches(item: TimelineItemIn, expected_text: str) -
     return _client_message_text_matches(actual_text, expected_text)
 
 
-def _timeline_attachments_from_active_run(params: dict[str, Any]) -> list[dict[str, Any]]:
+def _timeline_attachments_from_active_run(
+    params: dict[str, Any],
+) -> list[dict[str, Any]]:
     raw = params.get("timelineAttachments")
     if not isinstance(raw, list):
         raw = params.get("attachments")
@@ -1013,7 +936,9 @@ def _parse_connector_authorization(authorization: str) -> tuple[str, str]:
         raise HTTPException(status_code=401, detail="expected Connector authorization")
     credential = authorization[len(prefix) :]
     if ":" not in credential:
-        raise HTTPException(status_code=401, detail="invalid connector credential format")
+        raise HTTPException(
+            status_code=401, detail="invalid connector credential format"
+        )
     connector_id, token = credential.split(":", 1)
     return connector_id, token
 
@@ -1031,5 +956,7 @@ async def _require_active_connector(connector_id: str | None, db: Store) -> str:
     try:
         await db.get_connector(connector_id)
     except KeyError:
-        raise HTTPException(status_code=401, detail="invalid connector access token") from None
+        raise HTTPException(
+            status_code=401, detail="invalid connector access token"
+        ) from None
     return connector_id

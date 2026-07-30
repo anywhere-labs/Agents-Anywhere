@@ -1,32 +1,33 @@
 from __future__ import annotations
 
-import asyncio
 import secrets
+import urllib.parse
 from datetime import UTC, datetime, timedelta
 from typing import Any
-import urllib.parse
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
-from fastapi.responses import StreamingResponse
-from loguru import logger
-
-from agent_server.core.auth import create_signed_token, verify_signed_token, verify_user_access_token
-from agent_server.core.api_namespace import api_v2_path
-from agent_server.core.protocol import ProtocolCapabilitiesResponse, ProtocolCapabilitySet
-from agent_server.infra.connector_rpc import (
-    ConnectorOfflineError,
-    ConnectorRpcError,
-    ConnectorRpcManager,
+from fastapi import (
+    APIRouter,
+    Body,
+    Depends,
+    Header,
+    HTTPException,
+    Query,
+    WebSocket,
+    WebSocketDisconnect,
 )
-from agent_server.deps import (
-    current_user_id,
-    get_device_runtime_service,
-    get_fs_downloads,
-    get_rpc,
-    get_shell_tasks,
-    get_store,
-    get_terminal_service,
-    get_timeline_broker,
+from fastapi.responses import StreamingResponse
+
+from agent_server.core.api_namespace import api_v2_path
+from agent_server.core.auth import (
+    create_signed_token,
+    verify_signed_token,
+    verify_user_access_token,
+)
+from agent_server.core.device_runtime import (
+    DeviceRuntimeListResponse,
+    DeviceRuntimeView,
+    RuntimeActivePutRequest,
+    RuntimeConfigPutRequest,
 )
 from agent_server.core.models import (
     ArchiveAllRequest,
@@ -35,8 +36,8 @@ from agent_server.core.models import (
     ConnectorCreateResponse,
     ConnectorListResponse,
     ConnectorPreferencesResponse,
-    ConnectorRevokeResponse,
     ConnectorResponse,
+    ConnectorRevokeResponse,
     ConnectorUpdateRequest,
     ConnectorView,
     FsPreviewReadRequest,
@@ -58,32 +59,50 @@ from agent_server.core.models import (
     TerminalResizeRequest,
     TerminalResponse,
 )
-from agent_server.core.device_runtime import (
-    DeviceRuntimeListResponse,
-    DeviceRuntimeView,
-    RuntimeActivePutRequest,
-    RuntimeConfigPutRequest,
+from agent_server.core.protocol import (
+    ProtocolCapabilitiesResponse,
+    ProtocolCapabilitySet,
 )
+from agent_server.core.utc import utc_now
+from agent_server.deps import (
+    current_user_id,
+    get_connector_file_service,
+    get_connector_shell_service,
+    get_device_runtime_service,
+    get_fs_downloads,
+    get_rpc,
+    get_store,
+    get_terminal_service,
+    get_timeline_broker,
+)
+from agent_server.infra.connector_rpc import ConnectorRpcManager
+from agent_server.infra.fs_downloads import FsDownloadRelayManager
+from agent_server.infra.repositories.facade import Store
+from agent_server.infra.terminal_broker import TerminalBroker
+from agent_server.infra.timeline_broker import TimelineBroker
+from agent_server.services.connector_files import ConnectorFileService
 from agent_server.services.connector_presence import (
     with_effective_connector_status,
     with_effective_connector_statuses,
     with_effective_session_connector_statuses,
 )
+from agent_server.services.connector_rpc import ConnectorServiceError
+from agent_server.services.connector_shell import (
+    ConnectorShellService,
+    ConnectorShellTaskNotFoundError,
+    ConnectorShellTaskTimeoutError,
+)
 from agent_server.services.dashboard_events import publish_dashboard_changed
-from agent_server.services.device_runtimes import DeviceRuntimeError, DeviceRuntimeService
-from agent_server.services.workspace import request_connector, resolve_workspace_path
-from agent_server.services.shell_tasks import ShellTaskManager
+from agent_server.services.device_runtimes import (
+    DeviceRuntimeError,
+    DeviceRuntimeService,
+)
 from agent_server.services.terminal import (
     TerminalService,
     TerminalServiceError,
     terminal_connector_scope_id,
 )
-from agent_server.infra.fs_downloads import FsDownloadRelayManager
-from agent_server.infra.repositories.facade import Store
-from agent_server.infra.terminal_broker import TerminalBroker
-from agent_server.infra.timeline_broker import TimelineBroker
-from agent_server.core.utc import utc_now
-
+from agent_server.services.workspace import request_connector, resolve_workspace_path
 
 router = APIRouter(prefix="/connectors", tags=["connectors"])
 FS_PREVIEW_OPEN_TOKEN_KIND = "fs_preview_open"
@@ -106,6 +125,10 @@ def _raise_device_runtime_error(exc: DeviceRuntimeError) -> None:
     raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
+def _raise_connector_service_error(exc: ConnectorServiceError) -> None:
+    raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+
 def _normalize_terminal_v2_view(
     terminal: Any,
     *,
@@ -124,7 +147,11 @@ def _normalize_terminal_v2_view(
     if root is not None:
         item["root"] = root
     elif not isinstance(item.get("root"), str) or not item["root"].strip():
-        item["root"] = item.get("cwd") if isinstance(item.get("cwd"), str) and item["cwd"].strip() else "."
+        item["root"] = (
+            item.get("cwd")
+            if isinstance(item.get("cwd"), str) and item["cwd"].strip()
+            else "."
+        )
     if cwd is not None:
         item.setdefault("cwd", cwd)
     else:
@@ -162,7 +189,9 @@ async def create_connector(
     db: Store = Depends(get_store),
     broker: TimelineBroker = Depends(get_timeline_broker),
 ) -> ConnectorCreateResponse:
-    connector, token, prefix = await db.create_connector(name=payload.name, user_id=user_id)
+    connector, token, prefix = await db.create_connector(
+        name=payload.name, user_id=user_id
+    )
     await publish_dashboard_changed(
         db,
         broker,
@@ -170,7 +199,9 @@ async def create_connector(
         connector_id=connector.id,
         reason="connector.created",
     )
-    return ConnectorCreateResponse(connector=connector, connectorToken=token, tokenPrefix=prefix)
+    return ConnectorCreateResponse(
+        connector=connector, connectorToken=token, tokenPrefix=prefix
+    )
 
 
 @router.get("/{connector_id}", response_model=ConnectorResponse)
@@ -192,14 +223,18 @@ async def get_connector(
     )
 
 
-@router.get("/{connector_id}/protocol/capabilities", response_model=ProtocolCapabilitiesResponse)
+@router.get(
+    "/{connector_id}/protocol/capabilities", response_model=ProtocolCapabilitiesResponse
+)
 async def get_connector_protocol_capabilities(
     connector_id: str,
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
 ) -> ProtocolCapabilitiesResponse:
     try:
-        capability_set = await db.get_protocol_capabilities(connector_id, user_id=user_id)
+        capability_set = await db.get_protocol_capabilities(
+            connector_id, user_id=user_id
+        )
     except KeyError:
         raise HTTPException(status_code=404, detail="connector not found") from None
     return ProtocolCapabilitiesResponse(
@@ -219,7 +254,9 @@ async def update_connector(
     broker: TimelineBroker = Depends(get_timeline_broker),
 ) -> ConnectorResponse:
     try:
-        connector = await db.update_connector(connector_id, owner_user_id=user_id, name=payload.name)
+        connector = await db.update_connector(
+            connector_id, owner_user_id=user_id, name=payload.name
+        )
     except KeyError:
         raise HTTPException(status_code=404, detail="connector not found") from None
     await publish_dashboard_changed(
@@ -317,14 +354,20 @@ async def connector_fs_list(
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
 ) -> RpcResponsePayload:
-    connector = await _require_owned_online_connector(connector_id, user_id, db, manager)
+    connector = await _require_owned_online_connector(
+        connector_id, user_id, db, manager
+    )
     root_value = root or payload.get("root")
     if not isinstance(root_value, str) or not root_value.strip():
         raise HTTPException(status_code=422, detail="root is required")
     raw_path = payload.get("path", ".")
     if not isinstance(raw_path, str):
         raise HTTPException(status_code=422, detail="path must be a string")
-    path = "" if connector.deviceOs == "windows" and raw_path == "" else resolve_workspace_path(root_value, raw_path)
+    path = (
+        ""
+        if connector.deviceOs == "windows" and raw_path == ""
+        else resolve_workspace_path(root_value, raw_path)
+    )
     result = await request_connector(
         manager,
         connector_id,
@@ -347,28 +390,21 @@ async def connector_fs_read(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
-    downloads: FsDownloadRelayManager = Depends(get_fs_downloads),
+    files: ConnectorFileService = Depends(get_connector_file_service),
 ) -> RpcResponsePayload:
     await _require_owned_online_connector(connector_id, user_id, db, manager)
     path = resolve_workspace_path(root, payload.path)
-    result = await request_connector(
-        manager,
-        connector_id,
-        "fs.prepareDownload",
-        {"sessionId": _connector_scope_id(connector_id), "root": root, "path": path},
-        timeout=30,
-    )
-    if not isinstance(result, dict):
-        raise HTTPException(status_code=502, detail="invalid fs.prepareDownload response")
-    transfer = await downloads.create(
-        connector_id=connector_id,
-        root=root,
-        path=str(result.get("path") or path),
-        name=str(result.get("name") or path.rsplit("/", 1)[-1] or "download"),
-        size=int(result.get("size") or 0),
-        sha256=str(result.get("sha256") or ""),
-        media_type=str(result.get("mediaType") or "application/octet-stream"),
-    )
+    try:
+        prepared = await files.prepare_download(
+            connector_id=connector_id,
+            scope_id=_connector_scope_id(connector_id),
+            root=root,
+            path=path,
+        )
+    except ConnectorServiceError as exc:
+        _raise_connector_service_error(exc)
+    result = prepared.result
+    transfer = prepared.transfer
     return RpcResponsePayload(
         ok=True,
         result={
@@ -380,7 +416,9 @@ async def connector_fs_read(
     )
 
 
-@router.post("/{connector_id}/fs/preview-token", response_model=FsPreviewTokenCreateResponse)
+@router.post(
+    "/{connector_id}/fs/preview-token", response_model=FsPreviewTokenCreateResponse
+)
 async def create_connector_fs_preview_token(
     connector_id: str,
     payload: FsReadRequest,
@@ -421,7 +459,9 @@ async def create_connector_fs_preview_session(
     payload: FsPreviewSessionRequest,
     db: Store = Depends(get_store),
 ) -> FsPreviewSessionResponse:
-    token_payload = verify_signed_token(FS_PREVIEW_OPEN_TOKEN_KIND, payload.previewToken)
+    token_payload = verify_signed_token(
+        FS_PREVIEW_OPEN_TOKEN_KIND, payload.previewToken
+    )
     if token_payload is None:
         raise HTTPException(status_code=400, detail="invalid preview token")
     user_id = str(token_payload.get("user_id") or "")
@@ -438,7 +478,9 @@ async def create_connector_fs_preview_session(
         path=path,
     )
     if not consumed:
-        raise HTTPException(status_code=400, detail="preview token was already used or expired")
+        raise HTTPException(
+            status_code=400, detail="preview token was already used or expired"
+        )
     expires_at = _utc_now_plus_seconds(FS_PREVIEW_ACCESS_EXPIRES_IN)
     access_token = create_signed_token(
         FS_PREVIEW_ACCESS_TOKEN_KIND,
@@ -491,31 +533,24 @@ async def connector_fs_preview_read(
     payload: FsPreviewReadRequest,
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
-    downloads: FsDownloadRelayManager = Depends(get_fs_downloads),
+    files: ConnectorFileService = Depends(get_connector_file_service),
 ) -> RpcResponsePayload:
     preview = _fs_preview_access_payload(payload.previewAccessToken)
     connector_id = preview["connector_id"]
     root = preview["root"]
     path = preview["path"]
     await _require_owned_online_connector(connector_id, preview["user_id"], db, manager)
-    result = await request_connector(
-        manager,
-        connector_id,
-        "fs.prepareDownload",
-        {"sessionId": _connector_scope_id(connector_id), "root": root, "path": path},
-        timeout=30,
-    )
-    if not isinstance(result, dict):
-        raise HTTPException(status_code=502, detail="invalid fs.prepareDownload response")
-    transfer = await downloads.create(
-        connector_id=connector_id,
-        root=root,
-        path=str(result.get("path") or path),
-        name=str(result.get("name") or path.rsplit("/", 1)[-1] or "download"),
-        size=int(result.get("size") or 0),
-        sha256=str(result.get("sha256") or ""),
-        media_type=str(result.get("mediaType") or "application/octet-stream"),
-    )
+    try:
+        prepared = await files.prepare_download(
+            connector_id=connector_id,
+            scope_id=_connector_scope_id(connector_id),
+            root=root,
+            path=path,
+        )
+    except ConnectorServiceError as exc:
+        _raise_connector_service_error(exc)
+    result = prepared.result
+    transfer = prepared.transfer
     return RpcResponsePayload(
         ok=True,
         result={
@@ -523,7 +558,9 @@ async def connector_fs_preview_read(
             "transferId": transfer.transfer_id,
             "token": transfer.token,
             "downloadUrl": (
-                api_v2_path(f"/connectors/{connector_id}/fs/transfers/{transfer.transfer_id}")
+                api_v2_path(
+                    f"/connectors/{connector_id}/fs/transfers/{transfer.transfer_id}"
+                )
                 + f"?token={transfer.token}&previewAccessToken={urllib.parse.quote(payload.previewAccessToken)}"
             ),
         },
@@ -540,6 +577,7 @@ async def connector_fs_transfer_download(
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
     downloads: FsDownloadRelayManager = Depends(get_fs_downloads),
+    files: ConnectorFileService = Depends(get_connector_file_service),
 ) -> StreamingResponse:
     transfer = await downloads.get(transfer_id, token)
     if previewAccessToken:
@@ -558,20 +596,15 @@ async def connector_fs_transfer_download(
     await _require_owned_online_connector(connector_id, user_id, db, manager)
     if transfer is None or transfer.connector_id != connector_id:
         raise HTTPException(status_code=404, detail="transfer not found")
-    await request_connector(
-        manager,
-        connector_id,
-        "fs.uploadPreparedDownload",
-        {
-            "sessionId": _connector_scope_id(connector_id),
-            "transferId": transfer.transfer_id,
-            "token": transfer.token,
-            "uploadUrl": api_v2_path(f"/connector/fs/transfers/{transfer.transfer_id}"),
-            "root": transfer.root,
-            "path": transfer.path,
-        },
-        timeout=10,
-    )
+    try:
+        await files.request_upload(
+            connector_id=connector_id,
+            scope_id=_connector_scope_id(connector_id),
+            transfer=transfer,
+            upload_url=api_v2_path(f"/connector/fs/transfers/{transfer.transfer_id}"),
+        )
+    except ConnectorServiceError as exc:
+        _raise_connector_service_error(exc)
     return StreamingResponse(
         downloads.stream(transfer_id=transfer_id, token=token),
         media_type=transfer.media_type or "application/octet-stream",
@@ -630,7 +663,9 @@ async def connector_fs_write(
     }
     if payload.ifMatch is not None:
         params["ifMatch"] = payload.ifMatch
-    result = await request_connector(manager, connector_id, "fs.writeFile", params, timeout=30)
+    result = await request_connector(
+        manager, connector_id, "fs.writeFile", params, timeout=30
+    )
     return RpcResponsePayload(ok=True, result=result)
 
 
@@ -642,23 +677,21 @@ async def connector_shell_exec(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
+    shell: ConnectorShellService = Depends(get_connector_shell_service),
 ) -> RpcResponsePayload:
     await _require_owned_online_connector(connector_id, user_id, db, manager)
     cwd = resolve_workspace_path(root, payload.cwd or ".")
-    timeout = min((payload.timeoutMs / 1000) + 5, 310)
-    result = await request_connector(
-        manager,
-        connector_id,
-        "shell.exec",
-        {
-            "sessionId": _connector_scope_id(connector_id),
-            "root": root,
-            "cwd": cwd,
-            "command": payload.command,
-            "timeoutMs": payload.timeoutMs,
-        },
-        timeout=timeout,
-    )
+    try:
+        result = await shell.exec(
+            connector_id=connector_id,
+            scope_id=_connector_scope_id(connector_id),
+            root=root,
+            cwd=cwd,
+            command=payload.command,
+            timeout_ms=payload.timeoutMs,
+        )
+    except ConnectorServiceError as exc:
+        _raise_connector_service_error(exc)
     return RpcResponsePayload(ok=True, result=result)
 
 
@@ -670,69 +703,50 @@ async def connector_shell_task_start(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
-    tasks: ShellTaskManager = Depends(get_shell_tasks),
+    shell: ConnectorShellService = Depends(get_connector_shell_service),
 ) -> ShellTaskStartResponse:
     await _require_owned_online_connector(connector_id, user_id, db, manager)
     cwd = resolve_workspace_path(root, payload.cwd or ".")
     scope_id = _connector_scope_id(connector_id)
-    task = await tasks.create(
-        session_id=scope_id,
-        connector_id=connector_id,
-        command=payload.command,
-        cwd=cwd,
-        timeout_ms=payload.timeoutMs,
-    )
     try:
-        await request_connector(
-            manager,
-            connector_id,
-            "shell.task.start",
-            {
-                "taskId": task.id,
-                "sessionId": scope_id,
-                "root": root,
-                "cwd": cwd,
-                "command": payload.command,
-                "timeoutMs": payload.timeoutMs,
-            },
-            timeout=10,
+        task = await shell.start(
+            connector_id=connector_id,
+            scope_id=scope_id,
+            root=root,
+            cwd=cwd,
+            command=payload.command,
+            timeout_ms=payload.timeoutMs,
         )
-    except HTTPException:
-        await tasks.abandon(task.id, session_id=scope_id)
-        raise
-    task = await tasks.mark_running(task.id, session_id=scope_id, connector_id=connector_id)
+    except ConnectorServiceError as exc:
+        _raise_connector_service_error(exc)
     return ShellTaskStartResponse(**task.view(), serverTime=utc_now())
 
 
-@router.get("/{connector_id}/shell/tasks/{task_id}/wait", response_model=ShellTaskWaitResponse)
+@router.get(
+    "/{connector_id}/shell/tasks/{task_id}/wait", response_model=ShellTaskWaitResponse
+)
 async def connector_shell_task_wait(
     connector_id: str,
     task_id: str,
     timeoutMs: int = Query(default=120_000, ge=1, le=300_000),
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
-    tasks: ShellTaskManager = Depends(get_shell_tasks),
+    shell: ConnectorShellService = Depends(get_connector_shell_service),
 ) -> ShellTaskWaitResponse:
     await _require_owned_connector(connector_id, user_id, db)
     scope_id = _connector_scope_id(connector_id)
     try:
-        task = await tasks.get(task_id, session_id=scope_id)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="shell task not found") from None
-    try:
-        task = await tasks.wait(
-            task.id,
-            session_id=scope_id,
+        completed = await shell.wait(
+            scope_id=scope_id,
+            task_id=task_id,
             timeout_seconds=timeoutMs / 1000,
         )
-    except TimeoutError:
-        await _abandon_connector_shell_task(scope_id, task.id, task.connector_id, manager, tasks)
-        raise HTTPException(status_code=408, detail="shell task wait timed out") from None
-    except asyncio.CancelledError:
-        await _abandon_connector_shell_task(scope_id, task.id, task.connector_id, manager, tasks)
-        raise
-    completed = await tasks.pop(task.id, session_id=scope_id)
+    except ConnectorShellTaskNotFoundError:
+        raise HTTPException(status_code=404, detail="shell task not found") from None
+    except ConnectorShellTaskTimeoutError:
+        raise HTTPException(
+            status_code=408, detail="shell task wait timed out"
+        ) from None
     return ShellTaskWaitResponse(**completed.view(), serverTime=utc_now())
 
 
@@ -869,7 +883,9 @@ async def connector_terminal_list_v2(
     return RpcResponsePayload(ok=True, result=result)
 
 
-@router.patch("/{connector_id}/terminals/{terminal_id}", response_model=TerminalResponse)
+@router.patch(
+    "/{connector_id}/terminals/{terminal_id}", response_model=TerminalResponse
+)
 async def connector_terminal_rename(
     connector_id: str,
     terminal_id: str,
@@ -880,12 +896,16 @@ async def connector_terminal_rename(
 ) -> TerminalResponse:
     await _require_owned_connector(connector_id, user_id, db)
     try:
-        return await terminal_service.rename_for_connector(connector_id, terminal_id, payload)
+        return await terminal_service.rename_for_connector(
+            connector_id, terminal_id, payload
+        )
     except TerminalServiceError as exc:
         _raise_terminal_service_error(exc)
 
 
-@router.patch("/{connector_id}/terminals-v2/{terminal_id}", response_model=RpcResponsePayload)
+@router.patch(
+    "/{connector_id}/terminals-v2/{terminal_id}", response_model=RpcResponsePayload
+)
 async def connector_terminal_rename_v2(
     connector_id: str,
     terminal_id: str,
@@ -922,7 +942,9 @@ async def connector_terminal_rename_v2(
     return RpcResponsePayload(ok=True, result=result)
 
 
-@router.delete("/{connector_id}/terminals/{terminal_id}", response_model=TerminalResponse)
+@router.delete(
+    "/{connector_id}/terminals/{terminal_id}", response_model=TerminalResponse
+)
 async def connector_terminal_close(
     connector_id: str,
     terminal_id: str,
@@ -938,7 +960,9 @@ async def connector_terminal_close(
         _raise_terminal_service_error(exc)
 
 
-@router.delete("/{connector_id}/terminals-v2/{terminal_id}", response_model=RpcResponsePayload)
+@router.delete(
+    "/{connector_id}/terminals-v2/{terminal_id}", response_model=RpcResponsePayload
+)
 async def connector_terminal_close_v2(
     connector_id: str,
     terminal_id: str,
@@ -951,14 +975,21 @@ async def connector_terminal_close_v2(
         manager,
         connector_id,
         "terminal.close",
-        {"terminalId": terminal_id, "sessionId": terminal_connector_scope_id(connector_id)},
+        {
+            "terminalId": terminal_id,
+            "sessionId": terminal_connector_scope_id(connector_id),
+        },
         timeout=10,
     )
-    await db.forget_connector_terminal_root(connector_id=connector_id, terminal_id=terminal_id)
+    await db.forget_connector_terminal_root(
+        connector_id=connector_id, terminal_id=terminal_id
+    )
     return RpcResponsePayload(ok=True, result=result)
 
 
-@router.post("/{connector_id}/terminals/{terminal_id}/resize", response_model=TerminalResponse)
+@router.post(
+    "/{connector_id}/terminals/{terminal_id}/resize", response_model=TerminalResponse
+)
 async def connector_terminal_resize(
     connector_id: str,
     terminal_id: str,
@@ -970,12 +1001,17 @@ async def connector_terminal_resize(
 ) -> TerminalResponse:
     await _require_owned_online_connector(connector_id, user_id, db, manager)
     try:
-        return await terminal_service.resize_for_connector(connector_id, terminal_id, payload)
+        return await terminal_service.resize_for_connector(
+            connector_id, terminal_id, payload
+        )
     except TerminalServiceError as exc:
         _raise_terminal_service_error(exc)
 
 
-@router.post("/{connector_id}/terminals-v2/{terminal_id}/resize", response_model=RpcResponsePayload)
+@router.post(
+    "/{connector_id}/terminals-v2/{terminal_id}/resize",
+    response_model=RpcResponsePayload,
+)
 async def connector_terminal_resize_v2(
     connector_id: str,
     terminal_id: str,
@@ -1000,7 +1036,10 @@ async def connector_terminal_resize_v2(
     return RpcResponsePayload(ok=True, result=result)
 
 
-@router.post("/{connector_id}/terminals-v2/{terminal_id}/write", response_model=RpcResponsePayload)
+@router.post(
+    "/{connector_id}/terminals-v2/{terminal_id}/write",
+    response_model=RpcResponsePayload,
+)
 async def connector_terminal_write_v2(
     connector_id: str,
     terminal_id: str,
@@ -1027,7 +1066,10 @@ async def connector_terminal_write_v2(
     return RpcResponsePayload(ok=True, result=result)
 
 
-@router.get("/{connector_id}/terminals-v2/{terminal_id}/snapshot", response_model=RpcResponsePayload)
+@router.get(
+    "/{connector_id}/terminals-v2/{terminal_id}/snapshot",
+    response_model=RpcResponsePayload,
+)
 async def connector_terminal_snapshot_v2(
     connector_id: str,
     terminal_id: str,
@@ -1076,7 +1118,7 @@ async def connector_terminal_stream_v2(
     token = websocket.query_params.get("token")
     auth_header = websocket.headers.get("authorization")
     if not token and auth_header and auth_header.startswith("Bearer "):
-        token = auth_header[len("Bearer "):]
+        token = auth_header[len("Bearer ") :]
     if not token:
         await websocket.close(code=4401)
         return
@@ -1113,10 +1155,14 @@ async def connector_terminal_stream_v2(
         except Exception as exc:
             code = getattr(exc, "status_code", 500)
             detail = getattr(exc, "detail", str(exc))
-            await websocket.send_json({"type": "error", "code": code, "message": str(detail)})
+            await websocket.send_json(
+                {"type": "error", "code": code, "message": str(detail)}
+            )
             return
 
-        terminal_snapshot = snapshot.get("terminal") if isinstance(snapshot, dict) else None
+        terminal_snapshot = (
+            snapshot.get("terminal") if isinstance(snapshot, dict) else None
+        )
         data_b64 = snapshot.get("dataBase64") if isinstance(snapshot, dict) else None
         seq = snapshot.get("seq") if isinstance(snapshot, dict) else None
         if isinstance(data_b64, str):
@@ -1129,7 +1175,10 @@ async def connector_terminal_stream_v2(
             )
         await hub.mark_ready(connector_id, terminal_id, websocket)
 
-        if isinstance(terminal_snapshot, dict) and terminal_snapshot.get("status") == "exited":
+        if (
+            isinstance(terminal_snapshot, dict)
+            and terminal_snapshot.get("status") == "exited"
+        ):
             exit_code = terminal_snapshot.get("exitCode")
             await websocket.send_json(
                 {
@@ -1161,7 +1210,9 @@ async def connector_terminal_stream_v2(
                 except Exception as exc:
                     code = getattr(exc, "status_code", 500)
                     detail = getattr(exc, "detail", str(exc))
-                    await websocket.send_json({"type": "error", "code": code, "message": str(detail)})
+                    await websocket.send_json(
+                        {"type": "error", "code": code, "message": str(detail)}
+                    )
             elif mtype == "resize":
                 try:
                     cols = int(message.get("cols") or 80)
@@ -1186,7 +1237,9 @@ async def connector_terminal_stream_v2(
                 except Exception as exc:
                     code = getattr(exc, "status_code", 500)
                     detail = getattr(exc, "detail", str(exc))
-                    await websocket.send_json({"type": "error", "code": code, "message": str(detail)})
+                    await websocket.send_json(
+                        {"type": "error", "code": code, "message": str(detail)}
+                    )
             elif mtype == "ping":
                 await websocket.send_json({"type": "pong"})
     except WebSocketDisconnect:
@@ -1205,7 +1258,7 @@ async def connector_terminal_stream(
     token = websocket.query_params.get("token")
     auth_header = websocket.headers.get("authorization")
     if not token and auth_header and auth_header.startswith("Bearer "):
-        token = auth_header[len("Bearer "):]
+        token = auth_header[len("Bearer ") :]
     if not token:
         await websocket.close(code=4401)
         return
@@ -1345,32 +1398,11 @@ def _fs_preview_access_payload(token: str) -> dict[str, str]:
 
 
 def _utc_now_plus_seconds(seconds: int) -> str:
-    return (datetime.now(UTC) + timedelta(seconds=seconds)).isoformat().replace("+00:00", "Z")
-
-
-async def _abandon_connector_shell_task(
-    scope_id: str,
-    task_id: str,
-    connector_id: str,
-    manager: ConnectorRpcManager,
-    tasks: ShellTaskManager,
-) -> None:
-    task = await tasks.abandon(task_id, session_id=scope_id)
-    if task is None:
-        return
-    try:
-        await manager.request(
-            connector_id,
-            "shell.task.cancel",
-            {"taskId": task_id, "sessionId": scope_id},
-            timeout=5,
-        )
-    except (ConnectorOfflineError, ConnectorRpcError, TimeoutError):
-        logger.warning(
-            "failed to cancel abandoned connector shell task task_id={} connector_id={}",
-            task_id,
-            connector_id,
-        )
+    return (
+        (datetime.now(UTC) + timedelta(seconds=seconds))
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
 @router.get(

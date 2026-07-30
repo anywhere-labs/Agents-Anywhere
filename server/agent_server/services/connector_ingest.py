@@ -1,30 +1,49 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Any, Protocol
+
 from agent_server.core.models import ConnectorIngestRequest, ConnectorIngestResponse
-from agent_server.services.dashboard_events import publish_dashboard_changed
-from agent_server.services.shell_tasks import ShellTaskManager
-from agent_server.infra.repositories.facade import Store
-from agent_server.infra.terminal_broker import TerminalBroker
-from agent_server.infra.terminal_stream_hub import TerminalStreamHub
 from agent_server.core.utc import utc_now
+from agent_server.infra.repositories.facade import Store
 from agent_server.infra.timeline_broker import TimelineBroker
+from agent_server.services.connector_realtime import ConnectorRealtimeService
+from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.device_runtimes import DeviceRuntimeService
+
+
+@dataclass
+class IngestEffect:
+    session_id: str | None = None
+    item: dict[str, Any] | None = None
+    items: list[dict[str, Any]] | None = None
+    session_changed: bool = False
+    approvals_changed: bool = False
+    notices_changed: bool = False
+    needs_refetch: bool = False
+
+
+class NotificationApplier(Protocol):
+    async def __call__(
+        self,
+        connector_id: str,
+        method: str,
+        params: dict[str, Any],
+        store: Store,
+        realtime: ConnectorRealtimeService | None = None,
+    ) -> IngestEffect: ...
 
 
 class ConnectorIngestService:
     def __init__(
         self,
         store: Store,
-        tasks: ShellTaskManager,
-        terminal_broker: TerminalBroker,
-        terminal_stream_hub: TerminalStreamHub,
+        realtime: ConnectorRealtimeService,
         timeline_broker: TimelineBroker,
         device_runtimes: DeviceRuntimeService,
     ) -> None:
         self._store = store
-        self._tasks = tasks
-        self._terminal_broker = terminal_broker
-        self._terminal_stream_hub = terminal_stream_hub
+        self._realtime = realtime
         self._timeline_broker = timeline_broker
         self._device_runtimes = device_runtimes
 
@@ -33,9 +52,8 @@ class ConnectorIngestService:
         *,
         connector_id: str,
         payload: ConnectorIngestRequest,
+        notification_applier: NotificationApplier,
     ) -> ConnectorIngestResponse:
-        from agent_server.api.connector_ingress import apply_connector_notification, _publish_effects
-
         await self._store.record_connector_activity(connector_id)
         effects = []
         saw_protocol_capabilities = False
@@ -43,7 +61,9 @@ class ConnectorIngestService:
         saw_runtime_inventory = False
         for notification in payload.notifications:
             if notification.method == "runtime.inventoryUpdated":
-                await self._device_runtimes.ingest_inventory(connector_id, notification.params)
+                await self._device_runtimes.ingest_inventory(
+                    connector_id, notification.params
+                )
                 saw_runtime_inventory = True
                 continue
             if notification.method == "runtime.statusChanged":
@@ -57,17 +77,15 @@ class ConnectorIngestService:
             }:
                 saw_protocol_catalog = True
             effects.append(
-                await apply_connector_notification(
+                await notification_applier(
                     connector_id,
                     notification.method,
                     notification.params,
                     self._store,
-                    self._tasks,
-                    self._terminal_broker,
-                    self._terminal_stream_hub,
+                    self._realtime,
                 )
             )
-        await _publish_effects(self._store, self._timeline_broker, effects)
+        await self._publish_effects(effects)
         if saw_protocol_capabilities or saw_protocol_catalog:
             await publish_dashboard_changed(
                 self._store,
@@ -75,15 +93,15 @@ class ConnectorIngestService:
                 connector_id=connector_id,
                 reason="protocol.catalog"
                 if saw_protocol_catalog
-                else "protocol.capabilities"
-                if saw_protocol_capabilities
                 else "protocol.capabilities",
             )
         if saw_runtime_inventory:
             import asyncio
 
             asyncio.create_task(self._device_runtimes.reconcile_active(connector_id))
-        return ConnectorIngestResponse(accepted=len(payload.notifications), serverTime=utc_now())
+        return ConnectorIngestResponse(
+            accepted=len(payload.notifications), serverTime=utc_now()
+        )
 
     async def handle_notification_message(
         self,
@@ -91,9 +109,8 @@ class ConnectorIngestService:
         connector_id: str,
         method: str,
         params: dict,
+        notification_applier: NotificationApplier,
     ) -> None:
-        from agent_server.api.connector_ingress import apply_connector_notification, _publish_effects
-
         if method == "runtime.inventoryUpdated":
             await self._device_runtimes.ingest_inventory(connector_id, params)
             import asyncio
@@ -104,16 +121,14 @@ class ConnectorIngestService:
             await self._apply_runtime_status(connector_id, params)
             return
 
-        effect = await apply_connector_notification(
+        effect = await notification_applier(
             connector_id,
             method,
             params,
             self._store,
-            self._tasks,
-            self._terminal_broker,
-            self._terminal_stream_hub,
+            self._realtime,
         )
-        await _publish_effects(self._store, self._timeline_broker, [effect])
+        await self._publish_effects([effect])
         if method in {
             "protocol.capabilitiesUpdated",
             "protocol.modelCatalogUpdated",
@@ -126,10 +141,71 @@ class ConnectorIngestService:
                 self._timeline_broker,
                 connector_id=connector_id,
                 reason="protocol.catalog"
-                if method in {"protocol.modelCatalogUpdated", "protocol.permissionCatalogUpdated"}
-                else "protocol.capabilities"
-                if method == "protocol.capabilitiesUpdated"
+                if method
+                in {"protocol.modelCatalogUpdated", "protocol.permissionCatalogUpdated"}
                 else "protocol.capabilities",
+            )
+
+    async def _publish_effects(self, effects: list[IngestEffect]) -> None:
+        by_session: dict[str, dict[str, Any]] = {}
+        for effect in effects:
+            if effect.session_id is None:
+                continue
+            bucket = by_session.setdefault(
+                effect.session_id,
+                {
+                    "items": [],
+                    "session": False,
+                    "approvals": False,
+                    "notices": False,
+                    "refetch": False,
+                },
+            )
+            if effect.item is not None:
+                bucket["items"].append(effect.item)
+            if effect.items:
+                bucket["items"].extend(effect.items)
+            bucket["session"] = bucket["session"] or effect.session_changed
+            bucket["approvals"] = bucket["approvals"] or effect.approvals_changed
+            bucket["notices"] = bucket["notices"] or effect.notices_changed
+            bucket["refetch"] = bucket["refetch"] or effect.needs_refetch
+
+        for session_id, bucket in by_session.items():
+            try:
+                next_seq = await self._store.get_session_seq(session_id)
+            except KeyError:
+                continue
+            envelope: dict[str, Any] = {
+                "sessionId": session_id,
+                "nextSeq": next_seq,
+            }
+            if bucket["refetch"]:
+                envelope["refetch"] = True
+            if bucket["items"]:
+                envelope["items"] = bucket["items"]
+            if bucket["session"]:
+                try:
+                    envelope["session"] = (
+                        await self._store.get_session(session_id)
+                    ).model_dump(mode="json")
+                except KeyError:
+                    pass
+            if bucket["approvals"]:
+                envelope["approvals"] = [
+                    approval.model_dump(mode="json")
+                    for approval in await self._store.list_pending_approvals(session_id)
+                ]
+            if bucket["notices"]:
+                envelope["notices"] = [
+                    notice.model_dump(mode="json")
+                    for notice in await self._store.list_open_notices(session_id)
+                ]
+            await self._timeline_broker.publish(session_id, envelope)
+            await publish_dashboard_changed(
+                self._store,
+                self._timeline_broker,
+                session_id=session_id,
+                reason="session.changed",
             )
 
     async def _apply_runtime_status(self, connector_id: str, params: dict) -> None:
