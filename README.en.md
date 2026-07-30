@@ -195,6 +195,21 @@ The first startup on an empty database logs a setup token. Use it in the Web UI 
 
 For custom ports, production secrets, SQLite/manual Docker runs, mirrors, connector images, and local development containers, see [docker/README.md](docker/README.md).
 
+## Local Source Development
+
+After installing `uv`, Node.js, and Corepack, run this from the repository root:
+
+```bash
+./local-up.sh
+```
+
+The script syncs dependencies, migrates a local SQLite database, and starts the
+FastAPI Server plus `web-next`. Logs and database state live under
+`.local-dev/`. Pass `--with-connector` explicitly when debugging a local
+Codex/Claude Connector; `./local-up.sh --help` lists environment-file,
+skip-install, and Connector config options. The legacy `./dev.sh` forwards to
+the same entry point.
+
 ## Onboarding
 
 After the Docker stack or server is running, follow this first-run flow.

@@ -195,6 +195,19 @@ http://127.0.0.1:5174
 
 自定义端口、生产环境密钥、SQLite/manual Docker 启动、镜像源、Connector 镜像和本地开发容器，请看 [docker/README.md](docker/README.md)。
 
+## 本地源码调试
+
+安装 `uv`、Node.js 和 Corepack 后，在仓库根目录运行：
+
+```bash
+./local-up.sh
+```
+
+脚本会同步依赖、迁移本地 SQLite 数据库，并启动 FastAPI Server 与
+`web-next`。日志和数据库位于 `.local-dev/`。需要同时调试 Codex/Claude
+Connector 时，显式传入 `--with-connector`；用 `./local-up.sh --help` 查看
+环境文件、跳过安装和 Connector 配置选项。旧的 `./dev.sh` 会转发到同一入口。
+
 ## 首次使用流程
 
 Docker stack 或 server 启动后，按下面流程完成第一次配置。

@@ -24,6 +24,7 @@ pnpm-lock.yaml
 agent-server/*-review.html
 
 # Local runtime state
+.local-dev/
 *.sqlite
 *.sqlite3
 *.db
