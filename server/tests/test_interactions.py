@@ -21,6 +21,7 @@ from agent_server.core.models import (
     NoticeIn,
     NoticeStatus,
     RpcResponsePayload,
+    SessionStatus,
     SessionView,
 )
 from agent_server.services.interactions import (
@@ -221,8 +222,33 @@ class _InteractionRepository:
         *,
         user_id: str | None = None,
     ) -> SessionView:
-        if session_id != self.session.id or user_id != "user-1":
+        if session_id != self.session.id or user_id not in {None, "user-1"}:
             raise KeyError(session_id)
+        return self.session
+
+    async def get_active_run(self, session_id: str) -> dict[str, Any] | None:
+        assert session_id == self.session.id
+        return None
+
+    async def get_open_turn_id(self, session_id: str) -> str | None:
+        assert session_id == self.session.id
+        return None
+
+    async def list_open_blocking_notices(self, session_id: str) -> list[Notice]:
+        assert session_id == self.session.id
+        return []
+
+    async def set_session_status(
+        self,
+        session_id: str,
+        status: SessionStatus,
+        *,
+        expected_status: SessionStatus | None = None,
+    ) -> SessionView:
+        assert session_id == self.session.id
+        if expected_status is not None and self.session.status != expected_status:
+            raise ValueError("session status changed")
+        self.session = self.session.model_copy(update={"status": status})
         return self.session
 
     async def get_notice(self, notice_id: str) -> Notice:
@@ -281,6 +307,39 @@ class _ProjectionRepository:
         self.refreshed: list[str] = []
         self.approval: Approval | None = None
         self.notice: Notice | None = None
+        self.session = SessionView(
+            id="session-1",
+            connectorId="connector-1",
+            connectorStatus="online",
+            runtime="codex",
+            status="idle",
+            takeover=True,
+            updatedSeq=1,
+        )
+
+    async def get_session(
+        self,
+        session_id: str,
+        *,
+        user_id: str | None = None,
+    ) -> SessionView:
+        if session_id != self.session.id:
+            raise KeyError(session_id)
+        return self.session
+
+    async def get_active_run(self, session_id: str) -> dict[str, Any] | None:
+        assert session_id == self.session.id
+        return None
+
+    async def get_open_turn_id(self, session_id: str) -> str | None:
+        assert session_id == self.session.id
+        return None
+
+    async def list_open_blocking_notices(self, session_id: str) -> list[Notice]:
+        assert session_id == self.session.id
+        if self.notice is None or self.notice.status != "open":
+            return []
+        return [self.notice] if self.notice.blocking is not None else []
 
     async def upsert_approval(self, approval: ApprovalIn) -> Approval:
         self.approval = Approval.model_validate(
@@ -303,20 +362,20 @@ class _ProjectionRepository:
         )
         return self.notice
 
-    async def refresh_session_status_from_timeline(
+    async def set_session_status(
         self,
         session_id: str,
+        status: SessionStatus,
+        *,
+        expected_status: SessionStatus | None = None,
     ) -> SessionView:
+        if expected_status is not None and self.session.status != expected_status:
+            raise ValueError("session status changed")
         self.refreshed.append(session_id)
-        return SessionView(
-            id=session_id,
-            connectorId="connector-1",
-            connectorStatus="online",
-            runtime="codex",
-            status="blocked",
-            takeover=True,
-            updatedSeq=2,
+        self.session = self.session.model_copy(
+            update={"status": status, "updatedSeq": self.session.updatedSeq + 1}
         )
+        return self.session
 
 
 def _interaction(

@@ -8,6 +8,7 @@ from agent_server.core.models import (
     ConnectorView,
     Notice,
     NoticeIn,
+    SessionStatus,
     SessionView,
     TimelineItem,
     TimelineItemIn,
@@ -43,6 +44,21 @@ class NoticeRepository(Protocol):
 
     async def list_open_blocking_notices(self, session_id: str) -> list[Notice]: ...
 
+
+class SessionStateRepository(SessionLookupRepository, NoticeRepository, Protocol):
+    async def get_active_run(self, session_id: str) -> dict[str, Any] | None: ...
+
+    async def get_open_turn_id(self, session_id: str) -> str | None: ...
+
+    async def set_session_status(
+        self,
+        session_id: str,
+        status: SessionStatus,
+        *,
+        expected_status: SessionStatus | None = None,
+    ) -> SessionView: ...
+
+
 class TimelineReader(Protocol):
     async def read(self, session_id: str) -> list[TimelineItem]: ...
 
@@ -65,26 +81,17 @@ class TimelineEffectRepository(Protocol):
 
 class ApprovalRepository(
     SessionLookupRepository,
-    NoticeRepository,
     TimelineEffectRepository,
     Protocol,
 ):
     async def get_approval(self, approval_id: str) -> Approval: ...
 
-    async def refresh_session_status_from_timeline(
-        self, session_id: str
-    ) -> SessionView: ...
 
-
-class InteractionRepository(SessionLookupRepository, NoticeRepository, Protocol):
+class InteractionRepository(SessionStateRepository, Protocol):
     pass
 
 
-class InteractionProjectionRepository(NoticeRepository, Protocol):
-    async def refresh_session_status_from_timeline(
-        self, session_id: str
-    ) -> SessionView: ...
-
+class InteractionProjectionRepository(SessionStateRepository, Protocol):
     async def upsert_approval(self, approval: ApprovalIn) -> Approval: ...
 
 
@@ -111,24 +118,15 @@ class ConnectorIngestRepository(DashboardEventRepository, Protocol):
 
 
 class ConnectorNotificationRepository(
-    SessionLookupRepository,
-    NoticeRepository,
+    SessionStateRepository,
     TimelineEffectRepository,
     Protocol,
 ):
     async def clear_active_run(self, session_id: str) -> None: ...
 
-    async def get_active_run(self, session_id: str) -> dict[str, Any] | None: ...
-
-    async def get_open_turn_id(self, session_id: str) -> str | None: ...
-
     async def get_session_runtime(self, session_id: str) -> str | None: ...
 
     async def record_connector_activity(self, connector_id: str) -> None: ...
-
-    async def refresh_session_status_from_timeline(
-        self, session_id: str
-    ) -> SessionView: ...
 
     async def replace_timeline(
         self,
@@ -189,7 +187,7 @@ class ConnectorNotificationRepository(
 
 class DeviceRuntimeRepository(
     DashboardEventRepository,
-    NoticeRepository,
+    SessionStateRepository,
     Protocol,
 ):
     async def clear_active_run(self, session_id: str) -> None: ...
@@ -255,22 +253,15 @@ class DeviceRuntimeRepository(
         error: dict[str, Any] | None = None,
     ) -> dict[str, Any]: ...
 
-    async def set_session_status(self, session_id: str, status: str) -> SessionView: ...
-
-
 class SessionRunRepository(
     DashboardEventRepository,
-    NoticeRepository,
+    SessionStateRepository,
     TimelineEffectRepository,
     Protocol,
 ):
     async def clear_active_run(self, session_id: str) -> None: ...
 
     async def create_session(self, **values: Any) -> SessionView: ...
-
-    async def get_active_run(self, session_id: str) -> dict[str, Any] | None: ...
-
-    async def get_open_turn_id(self, session_id: str) -> str | None: ...
 
     async def get_protocol_catalog(
         self,
@@ -288,10 +279,6 @@ class SessionRunRepository(
         file_id: str,
     ) -> dict[str, Any]: ...
 
-    async def refresh_session_status_from_timeline(
-        self, session_id: str
-    ) -> SessionView: ...
-
     async def resolve_connector_session_id(
         self,
         *,
@@ -299,8 +286,6 @@ class SessionRunRepository(
         session_id: str,
         external_session_id: str | None = None,
     ) -> str: ...
-
-    async def set_session_status(self, session_id: str, status: str) -> SessionView: ...
 
     async def start_active_run(self, **values: Any) -> None: ...
 

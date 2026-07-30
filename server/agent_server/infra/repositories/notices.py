@@ -33,7 +33,6 @@ class NoticeRepositoryMixin:
                     )
                     .values(**values)
                 )
-        await self.refresh_session_status_from_timeline(notice.sessionId)
         return await self.get_notice(notice.noticeId)
 
     async def get_notice(self, notice_id: str) -> Notice:
@@ -126,8 +125,6 @@ class NoticeRepositoryMixin:
             )
             if result.rowcount != 1:
                 raise ValueError("interaction status changed")
-            session_id = row["session_id"]
-        await self.refresh_session_status_from_timeline(session_id)
         return await self.get_notice(notice_id)
 
 def _notice_values(notice: NoticeIn, *, updated_seq: int, now: str) -> dict[str, Any]:

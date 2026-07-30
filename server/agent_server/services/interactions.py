@@ -31,6 +31,7 @@ from agent_server.services.repository_ports import (
     InteractionProjectionRepository,
     InteractionRepository,
 )
+from agent_server.services.session_states import SessionStateService
 
 InteractionErrorKind = Literal["not_found", "conflict", "invalid", "upstream"]
 
@@ -146,6 +147,7 @@ class InteractionService:
     ) -> None:
         self._store = store
         self._approval_resolver = approval_resolver
+        self._session_states = SessionStateService(store)
 
     async def respond(
         self,
@@ -203,6 +205,7 @@ class InteractionService:
                 context_patch={"error": exc.detail, **exc.context_patch},
                 changed_on_conflict=True,
             )
+            await self._session_states.reconcile(session_id)
             raise InteractionServiceError(
                 exc.kind,
                 exc.detail,
@@ -215,6 +218,7 @@ class InteractionService:
             context_patch=resolution.context_patch,
             changed_on_conflict=True,
         )
+        await self._session_states.reconcile(session_id)
         return resolution.response
 
     async def _resolve(
@@ -263,6 +267,7 @@ class ApprovalInteractionProjection:
 class InteractionProjectionService:
     def __init__(self, store: InteractionProjectionRepository) -> None:
         self._store = store
+        self._session_states = SessionStateService(store)
 
     async def project_approval(
         self,
@@ -279,7 +284,6 @@ class InteractionProjectionService:
         interaction = await self.project_interaction(
             approval_interaction_notice(stored_approval)
         )
-        await self._store.refresh_session_status_from_timeline(session_id)
         return ApprovalInteractionProjection(
             approval=stored_approval,
             interaction=interaction,
@@ -287,7 +291,9 @@ class InteractionProjectionService:
 
     async def project_interaction(self, interaction: NoticeIn) -> Notice:
         require_new_interaction(interaction)
-        return await self._store.upsert_notice(interaction)
+        stored = await self._store.upsert_notice(interaction)
+        await self._session_states.reconcile(stored.sessionId)
+        return stored
 
 
 def _approval_status_for_action(action_id: str) -> str | None:

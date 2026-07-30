@@ -5078,6 +5078,25 @@ def test_interaction_status_compare_and_set_rejects_stale_transition(tmp_path):
     assert asyncio.run(client.app.state.store.get_session_seq(session_id)) == sequence_before
 
 
+def test_session_status_compare_and_set_rejects_stale_transition(tmp_path):
+    client = make_client(tmp_path)
+    _, _, session_id, _ = create_connector_and_session(client)
+    sequence_before = asyncio.run(client.app.state.store.get_session_seq(session_id))
+
+    with pytest.raises(ValueError, match="session status changed"):
+        asyncio.run(
+            client.app.state.store.set_session_status(
+                session_id,
+                "running",
+                expected_status="pending",
+            )
+        )
+
+    current = asyncio.run(client.app.state.store.get_session(session_id))
+    assert current.status == "idle"
+    assert asyncio.run(client.app.state.store.get_session_seq(session_id)) == sequence_before
+
+
 def test_session_stays_blocked_until_all_blocking_interactions_resolve(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)

@@ -21,6 +21,7 @@ from agent_server.services.notices import (
     upsert_execution_error_interaction,
 )
 from agent_server.services.repository_ports import SessionRunRepository
+from agent_server.services.session_states import SessionStateService
 
 
 class SessionRunError(RuntimeError):
@@ -51,6 +52,7 @@ class SessionRunService:
     def __init__(self, store: SessionRunRepository, manager: ConnectorRpcManager) -> None:
         self._store = store
         self._manager = manager
+        self._session_states = SessionStateService(store)
 
     async def create_session(
         self,
@@ -161,12 +163,13 @@ class SessionRunService:
             session = await self._store.get_session(session_id, user_id=user_id)
         except KeyError:
             raise SessionRunNotFoundError("session not found") from None
+        session = await self._session_states.reconcile(session_id)
 
         if not session.takeover:
             raise SessionRunConflictError("session is read-only until takeover is enabled")
         if not await self._manager.is_online(session.connectorId):
             raise SessionRunConflictError("connector is offline")
-        if session.status != "idle":
+        if not (await self._session_states.inspect(session_id)).can_start_turn:
             raise SessionRunConflictError(f"session is {session.status}")
         try:
             if payload.permissionSelectionId is not None:
@@ -216,13 +219,13 @@ class SessionRunService:
                 _timeline_attachment_payload(item) for item in attachment_payloads
             ]
 
-        await self._store.set_session_status(session_id, "pending")
         await self._store.start_active_run(
             session_id=session_id,
             runtime=session.runtime,
             external_session_id=session.externalSessionId,
             params=params,
         )
+        await self._session_states.reconcile(session_id)
         try:
             result = await self._manager.request(
                 session.connectorId,
@@ -373,13 +376,15 @@ class SessionRunService:
             session = await self._store.get_session(session_id, user_id=user_id)
         except KeyError:
             raise SessionRunNotFoundError("session not found") from None
+        session = await self._session_states.reconcile(session_id)
         if require_takeover and not session.takeover:
             raise SessionRunConflictError("session is read-only until takeover is enabled")
         active_run = await self._store.get_active_run(session_id)
         turn_id = active_run.get("turnId") if active_run else None
         if turn_id is None:
             turn_id = await self._store.get_open_turn_id(session_id)
-        if turn_id is None and session.status not in {"pending", "running", "blocked"}:
+        decision = await self._session_states.inspect(session_id)
+        if not decision.can_interrupt_turn:
             raise SessionRunConflictError("no active turn to interrupt")
 
         params: dict[str, Any] = {
@@ -394,14 +399,14 @@ class SessionRunService:
         if external_session_id:
             params["externalSessionId"] = external_session_id
         previous_status = session.status
-        await self._store.set_session_status(session_id, "stopping")
+        await self._session_states.transition(session_id, "stopping")
         try:
             result = await self._manager.request(session.connectorId, "turn.interrupt", params)
         except ConnectorOfflineError as exc:
-            await self._store.set_session_status(session_id, previous_status)
+            await self._session_states.transition(session_id, previous_status)
             raise SessionRunConflictError(str(exc)) from exc
         except ConnectorRpcError as exc:
-            await self._store.set_session_status(session_id, previous_status)
+            await self._session_states.transition(session_id, previous_status)
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
         await cancel_session_blocking_interactions(
             self._store,
@@ -412,9 +417,10 @@ class SessionRunService:
             await self._store.resolve_approval(approval.id, "cancelled")
         if _interrupt_target_not_found(result):
             await self._store.clear_active_run(session_id)
-            await self._store.refresh_session_status_from_timeline(session_id)
-        else:
-            await self._store.set_session_status(session_id, "stopping")
+        await self._session_states.reconcile(
+            session_id,
+            settle_stopping=_interrupt_target_not_found(result),
+        )
         return RpcResponsePayload(ok=True, result=result)
 
 

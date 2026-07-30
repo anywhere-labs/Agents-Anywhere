@@ -23,30 +23,6 @@ class TimelineRepositoryMixin:
         return latest.turnId
 
 
-    async def derive_session_status(self, session_id: str) -> str:
-        if await self.list_open_blocking_notices(session_id):
-            return "blocked"
-        items = await self.timeline.read(session_id)
-        started_turns = {item.turnId for item in items if item.type == "turn.start" and item.turnId}
-        ended_turns = {item.turnId for item in items if item.type == "turn.end" and item.turnId}
-        open_turns = {
-            item.turnId
-            for item in items
-            if item.type == "turn.start" and item.turnId and item.turnId not in ended_turns
-        }
-        pending_approvals = await self.list_pending_approvals(session_id)
-        if any(
-            approval.turnId is None
-            or approval.turnId in open_turns
-            or (approval.turnId not in started_turns and approval.turnId not in ended_turns)
-            for approval in pending_approvals
-        ):
-            return "blocked"
-        if not open_turns:
-            return "idle"
-        return "running"
-
-
     async def replace_timeline(
         self,
         *,
@@ -109,7 +85,6 @@ class TimelineRepositoryMixin:
                     )
             normalized = list(normalized_by_id.values())
             await self.timeline.replace(session_id, normalized)
-        await self.refresh_session_status_from_timeline(session_id)
         return normalized
 
     async def replace_timeline_snapshot(
@@ -134,7 +109,6 @@ class TimelineRepositoryMixin:
                     for item in items
                 ]
             await self.timeline.replace(session_id, normalized)
-        await self.refresh_session_status_from_timeline(session_id)
         return normalized
 
 
@@ -199,7 +173,6 @@ class TimelineRepositoryMixin:
                         order_seq=order_seq,
                     )
                     await self.timeline.upsert_one(conn, result)
-        await self.refresh_session_status_from_timeline(session_id)
         return result
 
 

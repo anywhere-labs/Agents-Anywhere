@@ -83,7 +83,6 @@ class ApprovalService:
             )
             approval = await self._store.resolve_approval(approval_id, status)
             await apply_resolved_approval_to_target_item(self._store, approval)
-            await self._store.refresh_session_status_from_timeline(session.id)
             logger.info(
                 "approval resolve stored approval_id={} status={} session_id={} next_session_status={}",
                 approval_id,
@@ -118,7 +117,6 @@ class ApprovalService:
             )
             if _approval_no_longer_pending(exc):
                 approval = await self._store.resolve_approval(approval_id, "expired")
-                await self._store.refresh_session_status_from_timeline(approval.sessionId)
                 raise ApprovalExpiredError("approval is no longer pending") from exc
             raise ApprovalUpstreamError(exc.message or exc.code) from exc
         return RpcResponsePayload(ok=True, result=result)

@@ -14,7 +14,8 @@ from agent_server.core.models import (
     NoticeSource,
     TimelineItemIn,
 )
-from agent_server.services.repository_ports import NoticeRepository
+from agent_server.services.repository_ports import SessionStateRepository
+from agent_server.services.session_states import SessionStateService
 
 
 def stable_notice_id(kind: str, *values: Any) -> str:
@@ -53,7 +54,7 @@ def approval_interaction_notice(approval: Approval) -> NoticeIn:
 
 
 async def upsert_execution_error_interaction(
-    db: NoticeRepository,
+    db: SessionStateRepository,
     *,
     session_id: str,
     title: str = "Execution failed",
@@ -70,7 +71,7 @@ async def upsert_execution_error_interaction(
         "timelineItemId": timeline_item_id,
         "error": error or _error_from_timeline_item(timeline_item),
     }
-    return await db.upsert_notice(
+    notice = await db.upsert_notice(
         NoticeIn(
             noticeId=stable_notice_id("execution_error", session_id, turn_id, timeline_item_id, context["error"]),
             type="interaction",
@@ -90,10 +91,12 @@ async def upsert_execution_error_interaction(
             context=context,
         )
     )
+    await SessionStateService(db).reconcile(session_id)
+    return notice
 
 
 async def cancel_turn_blocking_interactions(
-    db: NoticeRepository,
+    db: SessionStateRepository,
     *,
     session_id: str,
     turn_id: str | None,
@@ -114,11 +117,12 @@ async def cancel_turn_blocking_interactions(
                 context_patch={"closedReason": reason},
             )
         )
+    await SessionStateService(db).reconcile(session_id)
     return closed
 
 
 async def cancel_session_blocking_interactions(
-    db: NoticeRepository,
+    db: SessionStateRepository,
     *,
     session_id: str,
     reason: str,
@@ -134,6 +138,7 @@ async def cancel_session_blocking_interactions(
                 context_patch={"closedReason": reason},
             )
         )
+    await SessionStateService(db).reconcile(session_id)
     return closed
 
 

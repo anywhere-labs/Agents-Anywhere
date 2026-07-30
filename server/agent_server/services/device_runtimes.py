@@ -22,6 +22,7 @@ from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.notices import cancel_session_blocking_interactions
 from agent_server.services.repository_ports import DeviceRuntimeRepository
+from agent_server.services.session_states import SessionStateService
 
 
 class DeviceRuntimeError(RuntimeError):
@@ -73,6 +74,7 @@ class DeviceRuntimeService:
         self._manager = manager
         self._timeline_broker = timeline_broker
         self._coordinator = coordinator
+        self._session_states = SessionStateService(store)
         self._locks: dict[tuple[str, str], asyncio.Lock] = {}
         self._locks_guard = asyncio.Lock()
 
@@ -391,7 +393,10 @@ class DeviceRuntimeService:
             for approval in await self._store.list_pending_approvals(session.id):
                 await self._store.resolve_approval(approval.id, "cancelled")
             await self._store.clear_active_run(session.id)
-            await self._store.set_session_status(session.id, "idle")
+            await self._session_states.reconcile(
+                session.id,
+                settle_stopping=True,
+            )
             if self._timeline_broker is not None:
                 await self._timeline_broker.publish(
                     session.id,

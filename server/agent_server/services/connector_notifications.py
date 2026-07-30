@@ -6,7 +6,7 @@ from loguru import logger
 from pydantic import ValidationError
 
 from agent_server.core.interactions import InteractionDomainError
-from agent_server.core.models import ApprovalIn, NoticeIn, TimelineItemIn
+from agent_server.core.models import ApprovalIn, NoticeIn, SessionStatus, TimelineItemIn
 from agent_server.core.protocol import (
     ProtocolCapabilitySet,
     ProtocolModelCatalog,
@@ -20,6 +20,7 @@ from agent_server.services.notices import (
     upsert_execution_error_interaction,
 )
 from agent_server.services.repository_ports import ConnectorNotificationRepository
+from agent_server.services.session_states import SessionStateService
 from agent_server.services.timeline_effects import (
     close_waiting_approval_items_for_finished_turn,
 )
@@ -182,6 +183,7 @@ class ConnectorProtocolNotificationHandler:
 class SessionNotificationHandler:
     def __init__(self, store: ConnectorNotificationRepository) -> None:
         self._store = store
+        self._session_states = SessionStateService(store)
 
     async def apply(
         self,
@@ -193,6 +195,7 @@ class SessionNotificationHandler:
         if method != "session.updated":
             return None
         local_state = _local_session_state(params)
+        observed_status = _v2_session_status(params.get("status"))
         session_id = params["sessionId"]
         external_session_id = params.get("externalSessionId")
         try:
@@ -204,7 +207,6 @@ class SessionNotificationHandler:
                 )
             await self._store.update_session_snapshot(
                 session_id=session_id,
-                status=_v2_session_status(params.get("status")),
                 title=params.get("title"),
                 cwd=params.get("cwd"),
                 external_session_id=external_session_id,
@@ -216,7 +218,11 @@ class SessionNotificationHandler:
                     params.get("permissionSelectionId")
                 ),
             )
-            await self._store.refresh_session_status_from_timeline(session_id)
+            await self._session_states.reconcile(
+                session_id,
+                observed_status=observed_status,
+                settle_stopping=observed_status not in {None, "stopping"},
+            )
             return IngestEffect(session_id=session_id, session_changed=True)
         except KeyError:
             if local_state in {"archived", "deleted", "unresumable"}:
@@ -235,7 +241,6 @@ class SessionNotificationHandler:
                 external_session_id=_string_or_none(external_session_id),
                 title=params.get("title"),
                 cwd=params.get("cwd"),
-                status=_v2_session_status(params.get("status")),
                 last_synced_at=params.get("lastSyncedAt"),
                 source_observed_at=params.get("sourceObservedAt"),
                 last_activity_at=params.get("lastActivityAt"),
@@ -244,7 +249,11 @@ class SessionNotificationHandler:
                     params.get("permissionSelectionId")
                 ),
             )
-            await self._store.refresh_session_status_from_timeline(session.id)
+            await self._session_states.reconcile(
+                session.id,
+                observed_status=observed_status,
+                settle_stopping=observed_status not in {None, "stopping"},
+            )
             return IngestEffect(session_id=session.id, session_changed=True)
 
 
@@ -253,6 +262,7 @@ class TimelineNotificationHandler:
 
     def __init__(self, store: ConnectorNotificationRepository) -> None:
         self._store = store
+        self._session_states = SessionStateService(store)
 
     async def apply(
         self,
@@ -315,6 +325,10 @@ class TimelineNotificationHandler:
                     turn_id=item.turnId,
                     reason="turn_finished",
                 )
+        await self._session_states.reconcile(
+            session_id,
+            settle_stopping=any(item.type == "turn.end" for item in items),
+        )
         push_items = len(stored_items) <= TIMELINE_SYNC_PUSH_LIMIT
         return IngestEffect(
             session_id=session_id,
@@ -369,6 +383,10 @@ class TimelineNotificationHandler:
                     reason="turn_finished",
                 )
             await self._store.clear_active_run(session_id)
+        await self._session_states.reconcile(
+            session_id,
+            settle_stopping=item.type == "turn.end",
+        )
         return IngestEffect(
             session_id=session_id,
             item=stored.model_dump(mode="json"),
@@ -391,6 +409,7 @@ class InteractionNotificationHandler:
     ) -> None:
         self._store = store
         self._projections = projections
+        self._session_states = SessionStateService(store)
 
     async def apply(
         self,
@@ -424,6 +443,7 @@ class InteractionNotificationHandler:
                 ) from exc
         else:
             stored = await self._store.upsert_notice(notice)
+            await self._session_states.reconcile(stored.sessionId)
         return IngestEffect(
             session_id=stored.sessionId,
             session_changed=stored.blocking is not None,
@@ -538,7 +558,7 @@ def _local_session_state(params: dict[str, Any]) -> str:
     return "active"
 
 
-def _v2_session_status(value: Any) -> str | None:
+def _v2_session_status(value: Any) -> SessionStatus | None:
     if value is None:
         return None
     if value in {"idle", "pending", "running", "stopping", "blocked"}:

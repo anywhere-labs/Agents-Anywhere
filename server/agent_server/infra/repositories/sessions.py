@@ -611,26 +611,37 @@ class SessionRepositoryMixin:
         return sessions, not_found
 
 
-    async def set_session_status(self, session_id: str, status: str) -> SessionView:
+    async def set_session_status(
+        self,
+        session_id: str,
+        status: str,
+        *,
+        expected_status: str | None = None,
+    ) -> SessionView:
         async with self._engine.begin() as conn:
+            statement = select(sessions_t.c.status).where(sessions_t.c.id == session_id)
+            if expected_status is not None:
+                statement = statement.with_for_update()
             row = (
-                await conn.execute(
-                    select(sessions_t.c.status).where(sessions_t.c.id == session_id)
-                )
+                await conn.execute(statement)
             ).first()
             if row is None:
                 raise KeyError(session_id)
+            if expected_status is not None and row.status != expected_status:
+                raise ValueError("session status changed")
             if row.status != status:
                 await self._bump_session(conn, session_id)
-                await conn.execute(
-                    update(sessions_t).where(sessions_t.c.id == session_id).values(status=status)
+                update_statement = update(sessions_t).where(
+                    sessions_t.c.id == session_id
                 )
+                if expected_status is not None:
+                    update_statement = update_statement.where(
+                        sessions_t.c.status == expected_status
+                    )
+                result = await conn.execute(update_statement.values(status=status))
+                if result.rowcount != 1:
+                    raise ValueError("session status changed")
         return await self.get_session(session_id)
-
-
-    async def refresh_session_status_from_timeline(self, session_id: str) -> SessionView:
-        status = await self.derive_session_status(session_id)
-        return await self.set_session_status(session_id, status)
 
 
     async def update_session_snapshot(
