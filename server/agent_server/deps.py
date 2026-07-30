@@ -5,8 +5,8 @@ from starlette.requests import HTTPConnection
 
 from agent_server.core.auth import verify_user_access_token
 from agent_server.core.models import UserView
-from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.infra.connector_gateway import ConnectorGateway
+from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.timeline_broker import TimelineBroker
@@ -14,6 +14,7 @@ from agent_server.services.approvals import ApprovalService
 from agent_server.services.attachments import AttachmentService
 from agent_server.services.connector_files import ConnectorFileService
 from agent_server.services.connector_ingest import ConnectorIngestService
+from agent_server.services.connector_notifications import ConnectorNotificationService
 from agent_server.services.connector_realtime import ConnectorRealtimeService
 from agent_server.services.connector_shell import ConnectorShellService
 from agent_server.services.device_runtimes import DeviceRuntimeService
@@ -34,9 +35,10 @@ def get_approval_service(conn: HTTPConnection) -> ApprovalService:
 
 
 def get_connector_ingest_service(conn: HTTPConnection) -> ConnectorIngestService:
+    realtime = get_connector_realtime_service(conn)
     return ConnectorIngestService(
         conn.app.state.store,
-        get_connector_realtime_service(conn),
+        ConnectorNotificationService(conn.app.state.store, realtime),
         conn.app.state.timeline_broker,
         conn.app.state.device_runtime_service,
     )

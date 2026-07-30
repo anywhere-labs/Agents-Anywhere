@@ -1936,6 +1936,27 @@ def test_protocol_capabilities_ingest_and_read(tmp_path):
     }
 
 
+def test_protocol_capabilities_validation_is_mapped_by_transport(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, _, _ = create_connector_and_session(client)
+
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "protocol.capabilitiesUpdated",
+                    "params": {"revision": "invalid", "capabilities": []},
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "invalid_protocol_capabilities"
+
+
 def test_notice_upsert_ingest_projects_notification_to_snapshot(tmp_path):
     client = make_client(tmp_path)
     _connector_id, access_token, session_id, headers = create_connector_and_session(client)

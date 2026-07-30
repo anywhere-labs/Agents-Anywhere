@@ -1,49 +1,27 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any
 
 from agent_server.core.models import ConnectorIngestRequest, ConnectorIngestResponse
 from agent_server.core.utc import utc_now
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.timeline_broker import TimelineBroker
-from agent_server.services.connector_realtime import ConnectorRealtimeService
+from agent_server.services.connector_notifications import ConnectorNotificationService
 from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.device_runtimes import DeviceRuntimeService
-
-
-@dataclass
-class IngestEffect:
-    session_id: str | None = None
-    item: dict[str, Any] | None = None
-    items: list[dict[str, Any]] | None = None
-    session_changed: bool = False
-    approvals_changed: bool = False
-    notices_changed: bool = False
-    needs_refetch: bool = False
-
-
-class NotificationApplier(Protocol):
-    async def __call__(
-        self,
-        connector_id: str,
-        method: str,
-        params: dict[str, Any],
-        store: Store,
-        realtime: ConnectorRealtimeService | None = None,
-    ) -> IngestEffect: ...
+from agent_server.services.ingest_effects import IngestEffect
 
 
 class ConnectorIngestService:
     def __init__(
         self,
         store: Store,
-        realtime: ConnectorRealtimeService,
+        notifications: ConnectorNotificationService,
         timeline_broker: TimelineBroker,
         device_runtimes: DeviceRuntimeService,
     ) -> None:
         self._store = store
-        self._realtime = realtime
+        self._notifications = notifications
         self._timeline_broker = timeline_broker
         self._device_runtimes = device_runtimes
 
@@ -52,7 +30,6 @@ class ConnectorIngestService:
         *,
         connector_id: str,
         payload: ConnectorIngestRequest,
-        notification_applier: NotificationApplier,
     ) -> ConnectorIngestResponse:
         await self._store.record_connector_activity(connector_id)
         effects = []
@@ -77,12 +54,10 @@ class ConnectorIngestService:
             }:
                 saw_protocol_catalog = True
             effects.append(
-                await notification_applier(
-                    connector_id,
-                    notification.method,
-                    notification.params,
-                    self._store,
-                    self._realtime,
+                await self._notifications.apply(
+                    connector_id=connector_id,
+                    method=notification.method,
+                    params=notification.params,
                 )
             )
         await self._publish_effects(effects)
@@ -109,7 +84,6 @@ class ConnectorIngestService:
         connector_id: str,
         method: str,
         params: dict,
-        notification_applier: NotificationApplier,
     ) -> None:
         if method == "runtime.inventoryUpdated":
             await self._device_runtimes.ingest_inventory(connector_id, params)
@@ -121,12 +95,10 @@ class ConnectorIngestService:
             await self._apply_runtime_status(connector_id, params)
             return
 
-        effect = await notification_applier(
-            connector_id,
-            method,
-            params,
-            self._store,
-            self._realtime,
+        effect = await self._notifications.apply(
+            connector_id=connector_id,
+            method=method,
+            params=params,
         )
         await self._publish_effects([effect])
         if method in {
