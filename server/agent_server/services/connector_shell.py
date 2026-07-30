@@ -4,12 +4,7 @@ import asyncio
 
 from loguru import logger
 
-from agent_server.infra.connector_rpc import (
-    ConnectorOfflineError,
-    ConnectorRpcError,
-    ConnectorRpcManager,
-)
-from agent_server.services.connector_rpc import ConnectorServiceError, request_connector
+from agent_server.services.connector_rpc import ConnectorRpcPort, ConnectorServiceError
 from agent_server.services.shell_tasks import ShellTask, ShellTaskManager
 
 
@@ -24,10 +19,10 @@ class ConnectorShellTaskTimeoutError(TimeoutError):
 class ConnectorShellService:
     def __init__(
         self,
-        manager: ConnectorRpcManager,
+        gateway: ConnectorRpcPort,
         tasks: ShellTaskManager,
     ) -> None:
-        self._manager = manager
+        self._gateway = gateway
         self._tasks = tasks
 
     async def exec(
@@ -40,8 +35,7 @@ class ConnectorShellService:
         command: str,
         timeout_ms: int,
     ) -> object:
-        return await request_connector(
-            self._manager,
+        return await self._gateway.request(
             connector_id,
             "shell.exec",
             {
@@ -72,8 +66,7 @@ class ConnectorShellService:
             timeout_ms=timeout_ms,
         )
         try:
-            await request_connector(
-                self._manager,
+            await self._gateway.request(
                 connector_id,
                 "shell.task.start",
                 {
@@ -125,13 +118,13 @@ class ConnectorShellService:
         if abandoned is None:
             return
         try:
-            await self._manager.request(
+            await self._gateway.request(
                 task.connector_id,
                 "shell.task.cancel",
                 {"taskId": task.id, "sessionId": scope_id},
                 timeout=5,
             )
-        except (ConnectorOfflineError, ConnectorRpcError, TimeoutError):
+        except ConnectorServiceError:
             logger.warning(
                 "failed to cancel abandoned connector shell task task_id={} connector_id={}",
                 task.id,

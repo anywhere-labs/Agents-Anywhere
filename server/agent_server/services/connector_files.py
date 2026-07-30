@@ -3,9 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.infra.fs_downloads import FsDownloadRelayManager, FsDownloadTransfer
-from agent_server.services.connector_rpc import ConnectorServiceError, request_connector
+from agent_server.services.connector_rpc import ConnectorProtocolError, ConnectorRpcPort
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,10 +16,10 @@ class PreparedConnectorDownload:
 class ConnectorFileService:
     def __init__(
         self,
-        manager: ConnectorRpcManager,
+        gateway: ConnectorRpcPort,
         downloads: FsDownloadRelayManager,
     ) -> None:
-        self._manager = manager
+        self._gateway = gateway
         self._downloads = downloads
 
     async def prepare_download(
@@ -31,15 +30,14 @@ class ConnectorFileService:
         root: str,
         path: str,
     ) -> PreparedConnectorDownload:
-        result = await request_connector(
-            self._manager,
+        result = await self._gateway.request(
             connector_id,
             "fs.prepareDownload",
             {"sessionId": scope_id, "root": root, "path": path},
             timeout=30,
         )
         if not isinstance(result, dict):
-            raise ConnectorServiceError(502, "invalid fs.prepareDownload response")
+            raise ConnectorProtocolError("invalid fs.prepareDownload response")
         transfer = await self._downloads.create(
             connector_id=connector_id,
             root=root,
@@ -59,8 +57,7 @@ class ConnectorFileService:
         transfer: FsDownloadTransfer,
         upload_url: str,
     ) -> None:
-        await request_connector(
-            self._manager,
+        await self._gateway.request(
             connector_id,
             "fs.uploadPreparedDownload",
             {

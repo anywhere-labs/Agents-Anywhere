@@ -86,7 +86,13 @@ from agent_server.services.connector_presence import (
     with_effective_connector_statuses,
     with_effective_session_connector_statuses,
 )
-from agent_server.services.connector_rpc import ConnectorServiceError
+from agent_server.services.connector_rpc import (
+    ConnectorProtocolError,
+    ConnectorRequestTimeoutError,
+    ConnectorServiceError,
+    ConnectorUnavailableError,
+    ConnectorUpstreamError,
+)
 from agent_server.services.connector_shell import (
     ConnectorShellService,
     ConnectorShellTaskNotFoundError,
@@ -126,7 +132,15 @@ def _raise_device_runtime_error(exc: DeviceRuntimeError) -> None:
 
 
 def _raise_connector_service_error(exc: ConnectorServiceError) -> None:
-    raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    if isinstance(exc, ConnectorUnavailableError):
+        status_code = 409
+    elif isinstance(exc, ConnectorRequestTimeoutError):
+        status_code = 504
+    elif isinstance(exc, (ConnectorUpstreamError, ConnectorProtocolError)):
+        status_code = 502
+    else:
+        status_code = 500
+    raise HTTPException(status_code=status_code, detail=exc.detail) from exc
 
 
 def _normalize_terminal_v2_view(

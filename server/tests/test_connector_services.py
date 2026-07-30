@@ -5,11 +5,17 @@ from typing import Any
 
 import pytest
 
-from agent_server.infra.connector_rpc import ConnectorRpcError
+from agent_server.infra.connector_gateway import ConnectorGateway
+from agent_server.infra.connector_rpc import ConnectorOfflineError, ConnectorRpcError
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.services.connector_files import ConnectorFileService
 from agent_server.services.connector_realtime import ConnectorRealtimeService
-from agent_server.services.connector_rpc import ConnectorServiceError
+from agent_server.services.connector_rpc import (
+    ConnectorProtocolError,
+    ConnectorRequestTimeoutError,
+    ConnectorUnavailableError,
+    ConnectorUpstreamError,
+)
 from agent_server.services.connector_shell import ConnectorShellService
 from agent_server.services.shell_tasks import ShellTaskManager
 
@@ -34,13 +40,38 @@ class StubRpc:
         return self.result
 
 
+@pytest.mark.parametrize(
+    ("transport_error", "service_error"),
+    [
+        (ConnectorOfflineError("offline"), ConnectorUnavailableError),
+        (ConnectorRpcError("upstream_error", "failed"), ConnectorUpstreamError),
+        (TimeoutError(), ConnectorRequestTimeoutError),
+    ],
+)
+def test_connector_gateway_translates_transport_errors(
+    transport_error: Exception,
+    service_error: type[Exception],
+) -> None:
+    async def exercise() -> None:
+        gateway = ConnectorGateway(StubRpc(error=transport_error))
+        with pytest.raises(service_error):
+            await gateway.request(
+                "connector-1",
+                "shell.exec",
+                {},
+                timeout=1,
+            )
+
+    asyncio.run(exercise())
+
+
 def test_shell_service_abandons_task_when_start_rpc_fails() -> None:
     async def exercise() -> None:
         rpc = StubRpc(error=ConnectorRpcError("upstream_error", "start failed"))
         tasks = ShellTaskManager()
-        service = ConnectorShellService(rpc, tasks)  # type: ignore[arg-type]
+        service = ConnectorShellService(ConnectorGateway(rpc), tasks)
 
-        with pytest.raises(ConnectorServiceError, match="start failed") as exc_info:
+        with pytest.raises(ConnectorUpstreamError, match="start failed"):
             await service.start(
                 connector_id="connector-1",
                 scope_id="browse_connector-1",
@@ -50,7 +81,6 @@ def test_shell_service_abandons_task_when_start_rpc_fails() -> None:
                 timeout_ms=30_000,
             )
 
-        assert exc_info.value.status_code == 502
         task_id = rpc.requests[0][2]["taskId"]
         with pytest.raises(KeyError):
             await tasks.get(task_id, session_id="browse_connector-1")
@@ -70,7 +100,7 @@ def test_file_service_prepares_ephemeral_download() -> None:
             }
         )
         downloads = FsDownloadRelayManager()
-        service = ConnectorFileService(rpc, downloads)  # type: ignore[arg-type]
+        service = ConnectorFileService(rpc, downloads)
 
         prepared = await service.prepare_download(
             connector_id="connector-1",
@@ -100,6 +130,22 @@ def test_file_service_prepares_ephemeral_download() -> None:
                 30,
             )
         ]
+
+    asyncio.run(exercise())
+
+
+def test_file_service_rejects_invalid_connector_response() -> None:
+    async def exercise() -> None:
+        service = ConnectorFileService(
+            StubRpc(result="invalid"), FsDownloadRelayManager()
+        )
+        with pytest.raises(ConnectorProtocolError, match="invalid fs.prepareDownload"):
+            await service.prepare_download(
+                connector_id="connector-1",
+                scope_id="browse_connector-1",
+                root="/repo",
+                path="/repo/report.txt",
+            )
 
     asyncio.run(exercise())
 

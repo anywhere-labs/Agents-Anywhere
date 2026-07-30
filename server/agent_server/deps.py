@@ -6,6 +6,7 @@ from starlette.requests import HTTPConnection
 from agent_server.core.auth import verify_user_access_token
 from agent_server.core.models import UserView
 from agent_server.infra.connector_rpc import ConnectorRpcManager
+from agent_server.infra.connector_gateway import ConnectorGateway
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.timeline_broker import TimelineBroker
@@ -50,11 +51,17 @@ def get_connector_realtime_service(conn: HTTPConnection) -> ConnectorRealtimeSer
 
 
 def get_connector_shell_service(conn: HTTPConnection) -> ConnectorShellService:
-    return ConnectorShellService(conn.app.state.rpc, conn.app.state.shell_tasks)
+    return ConnectorShellService(
+        ConnectorGateway(conn.app.state.rpc),
+        conn.app.state.shell_tasks,
+    )
 
 
 def get_connector_file_service(conn: HTTPConnection) -> ConnectorFileService:
-    return ConnectorFileService(conn.app.state.rpc, conn.app.state.fs_downloads)
+    return ConnectorFileService(
+        ConnectorGateway(conn.app.state.rpc),
+        conn.app.state.fs_downloads,
+    )
 
 
 def get_session_run_service(conn: HTTPConnection) -> SessionRunService:
