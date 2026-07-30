@@ -11,8 +11,8 @@ from sqlalchemy import and_, delete, func, insert, select
 
 from agent_server.core.models import (
     DashboardBreakdownItem,
-    DashboardHistogramSettings,
     DashboardHistogramBucket,
+    DashboardHistogramSettings,
     DashboardIntensitySettings,
     DashboardOverviewResponse,
     DashboardRange,
@@ -26,18 +26,33 @@ from agent_server.core.models import (
 from agent_server.core.utc import utc_now
 from agent_server.infra.db import (
     connectors as connectors_t,
+)
+from agent_server.infra.db import (
     dashboard_daily_metrics as dashboard_daily_metrics_t,
+)
+from agent_server.infra.db import (
     dashboard_settings as dashboard_settings_t,
+)
+from agent_server.infra.db import (
     dashboard_user_daily_facts as dashboard_user_daily_facts_t,
+)
+from agent_server.infra.db import (
     device_runtimes as device_runtimes_t,
+)
+from agent_server.infra.db import (
     platform_user_activity as platform_user_activity_t,
+)
+from agent_server.infra.db import (
     sessions as sessions_t,
+)
+from agent_server.infra.db import (
     timeline_items as timeline_items_t,
+)
+from agent_server.infra.db import (
     users as users_t,
 )
 from agent_server.infra.repositories.store_support import _json_loads
-from agent_server.infra.repositories.facade import Store
-
+from agent_server.services.repository_ports import AdminDashboardRepository
 
 DASHBOARD_SETTINGS_KEY = "settings"
 DASHBOARD_SNAPSHOT_VERSION = 4
@@ -98,7 +113,7 @@ class DeviceSnapshot:
 
 
 class AdminDashboardService:
-    def __init__(self, store: Store) -> None:
+    def __init__(self, store: AdminDashboardRepository) -> None:
         self._store = store
 
     async def get_settings(self) -> DashboardSettingsView:

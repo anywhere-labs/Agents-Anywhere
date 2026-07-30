@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
-
 from loguru import logger
 
-from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.core.models import (
     TerminalCreateRequest,
     TerminalListResponse,
@@ -13,14 +10,15 @@ from agent_server.core.models import (
     TerminalResponse,
     TerminalView,
 )
+from agent_server.core.utc import utc_now
+from agent_server.infra.connector_rpc import ConnectorRpcManager
+from agent_server.infra.terminal_broker import TerminalBroker
+from agent_server.services.repository_ports import TerminalRepository
 from agent_server.services.workspace import (
     local_rpc_session,
     request_connector,
     resolve_workspace_path,
 )
-from agent_server.infra.repositories.facade import Store
-from agent_server.infra.terminal_broker import TerminalBroker
-from agent_server.core.utc import utc_now
 
 
 class TerminalServiceError(RuntimeError):
@@ -54,7 +52,7 @@ def terminal_connector_scope_id(connector_id: str) -> str:
 class TerminalService:
     def __init__(
         self,
-        store: Store,
+        store: TerminalRepository,
         manager: ConnectorRpcManager,
         broker: TerminalBroker,
     ) -> None:

@@ -13,7 +13,7 @@ from agent_server.core.models import (
     NoticeSource,
     TimelineItemIn,
 )
-from agent_server.infra.repositories.facade import Store
+from agent_server.services.repository_ports import NoticeRepository
 
 
 def stable_notice_id(kind: str, *values: Any) -> str:
@@ -23,7 +23,7 @@ def stable_notice_id(kind: str, *values: Any) -> str:
     return f"notice_{kind}_{digest}"
 
 
-async def upsert_approval_interaction(db: Store, approval: Approval) -> Notice:
+async def upsert_approval_interaction(db: NoticeRepository, approval: Approval) -> Notice:
     return await db.upsert_notice(
         NoticeIn(
             noticeId=stable_notice_id("approval", approval.id),
@@ -54,7 +54,7 @@ async def upsert_approval_interaction(db: Store, approval: Approval) -> Notice:
 
 
 async def resolve_approval_interaction(
-    db: Store,
+    db: NoticeRepository,
     approval: Approval,
     *,
     status: str = "resolved",
@@ -72,7 +72,7 @@ async def resolve_approval_interaction(
 
 
 async def upsert_execution_error_interaction(
-    db: Store,
+    db: NoticeRepository,
     *,
     session_id: str,
     title: str = "Execution failed",
@@ -112,7 +112,7 @@ async def upsert_execution_error_interaction(
 
 
 async def cancel_turn_blocking_interactions(
-    db: Store,
+    db: NoticeRepository,
     *,
     session_id: str,
     turn_id: str | None,
@@ -135,7 +135,7 @@ async def cancel_turn_blocking_interactions(
 
 
 async def cancel_session_blocking_interactions(
-    db: Store,
+    db: NoticeRepository,
     *,
     session_id: str,
     reason: str,

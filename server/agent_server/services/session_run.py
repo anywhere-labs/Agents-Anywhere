@@ -2,13 +2,25 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent_server.infra.connector_rpc import ConnectorOfflineError, ConnectorRpcError, ConnectorRpcManager
 from agent_server.core.api_namespace import api_v2_path
-from agent_server.core.models import MessageCreateRequest, RpcResponsePayload, RuntimeName, SessionCreateRequest
-from agent_server.infra.repositories.facade import Store
-from agent_server.core.utc import utc_now
+from agent_server.core.models import (
+    MessageCreateRequest,
+    RpcResponsePayload,
+    RuntimeName,
+    SessionCreateRequest,
+)
 from agent_server.core.protocol import ProtocolModelCatalog, ProtocolPermissionCatalog
-from agent_server.services.notices import cancel_session_blocking_interactions, upsert_execution_error_interaction
+from agent_server.core.utc import utc_now
+from agent_server.infra.connector_rpc import (
+    ConnectorOfflineError,
+    ConnectorRpcError,
+    ConnectorRpcManager,
+)
+from agent_server.services.notices import (
+    cancel_session_blocking_interactions,
+    upsert_execution_error_interaction,
+)
+from agent_server.services.repository_ports import SessionRunRepository
 
 
 class SessionRunError(RuntimeError):
@@ -36,7 +48,7 @@ class SessionRunInvalidConfigError(SessionRunError):
 
 
 class SessionRunService:
-    def __init__(self, store: Store, manager: ConnectorRpcManager) -> None:
+    def __init__(self, store: SessionRunRepository, manager: ConnectorRpcManager) -> None:
         self._store = store
         self._manager = manager
 

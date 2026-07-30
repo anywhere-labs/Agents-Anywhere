@@ -7,9 +7,8 @@ from urllib.parse import urlencode
 import httpx
 
 from agent_server.core.auth import create_signed_token, verify_signed_token
-from agent_server.infra.repositories.facade import Store
 from agent_server.infra.repositories.store_support import USERNAME_RE
-
+from agent_server.services.repository_ports import OAuthRepository
 
 OAUTH_STATE_TOKEN_KIND = "oauth_state"
 OAUTH_PENDING_TOKEN_KIND = "oauth_pending"
@@ -170,7 +169,7 @@ def verify_pending_token(token: str) -> OAuthIdentity | None:
     )
 
 
-async def unique_user_id(store: Store, preferred: str) -> str:
+async def unique_user_id(store: OAuthRepository, preferred: str) -> str:
     base = normalize_suggested_user_id(preferred)
     if not await store.user_exists(base):
         return base

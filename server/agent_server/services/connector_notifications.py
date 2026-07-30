@@ -11,7 +11,6 @@ from agent_server.core.protocol import (
     ProtocolModelCatalog,
     ProtocolPermissionCatalog,
 )
-from agent_server.infra.repositories.facade import Store
 from agent_server.services.connector_realtime import ConnectorRealtimeService
 from agent_server.services.ingest_effects import IngestEffect
 from agent_server.services.notices import (
@@ -19,6 +18,7 @@ from agent_server.services.notices import (
     upsert_approval_interaction,
     upsert_execution_error_interaction,
 )
+from agent_server.services.repository_ports import ConnectorNotificationRepository
 from agent_server.services.timeline_effects import (
     close_waiting_approval_items_for_finished_turn,
 )
@@ -36,7 +36,7 @@ class NotificationValidationError(ValueError):
 class ConnectorNotificationService:
     def __init__(
         self,
-        store: Store,
+        store: ConnectorNotificationRepository,
         realtime: ConnectorRealtimeService,
     ) -> None:
         self._realtime = realtime
@@ -80,7 +80,7 @@ class ConnectorProtocolNotificationHandler:
         "protocol.permissionCatalogUpdated",
     }
 
-    def __init__(self, store: Store) -> None:
+    def __init__(self, store: ConnectorNotificationRepository) -> None:
         self._store = store
 
     async def apply(
@@ -176,7 +176,7 @@ class ConnectorProtocolNotificationHandler:
 
 
 class SessionNotificationHandler:
-    def __init__(self, store: Store) -> None:
+    def __init__(self, store: ConnectorNotificationRepository) -> None:
         self._store = store
 
     async def apply(
@@ -247,7 +247,7 @@ class SessionNotificationHandler:
 class TimelineNotificationHandler:
     METHODS: ClassVar[set[str]] = {"timeline.sync", "timeline.itemUpsert"}
 
-    def __init__(self, store: Store) -> None:
+    def __init__(self, store: ConnectorNotificationRepository) -> None:
         self._store = store
 
     async def apply(
@@ -380,7 +380,7 @@ class InteractionNotificationHandler:
         "runtime.error",
     }
 
-    def __init__(self, store: Store) -> None:
+    def __init__(self, store: ConnectorNotificationRepository) -> None:
         self._store = store
 
     async def apply(
@@ -463,12 +463,12 @@ class InteractionNotificationHandler:
         )
 
 
-async def _session_disabled(store: Store, session_id: str) -> bool:
+async def _session_disabled(store: ConnectorNotificationRepository, session_id: str) -> bool:
     return await store.get_session_runtime(session_id) is None
 
 
 async def _resolve_timeline_session_id(
-    store: Store,
+    store: ConnectorNotificationRepository,
     connector_id: str,
     session_id: str,
     items: list[TimelineItemIn],
@@ -488,7 +488,7 @@ async def _resolve_timeline_session_id(
 
 
 async def _resolve_approval_session_id(
-    store: Store,
+    store: ConnectorNotificationRepository,
     connector_id: str,
     approval: ApprovalIn,
 ) -> str:
@@ -559,7 +559,7 @@ def _timeline_item_failed(item: TimelineItemIn) -> bool:
 
 
 async def _should_replace_timeline_snapshot(
-    store: Store,
+    store: ConnectorNotificationRepository,
     session_id: str,
     items: list[TimelineItemIn],
 ) -> bool:
@@ -573,7 +573,7 @@ async def _should_replace_timeline_snapshot(
 
 
 async def _reconcile_active_run_from_timeline(
-    store: Store,
+    store: ConnectorNotificationRepository,
     session_id: str,
 ) -> None:
     if await store.get_open_turn_id(session_id) is None:
@@ -581,7 +581,7 @@ async def _reconcile_active_run_from_timeline(
 
 
 async def _tag_active_run_user_messages(
-    store: Store,
+    store: ConnectorNotificationRepository,
     session_id: str,
     items: list[TimelineItemIn],
 ) -> list[TimelineItemIn]:

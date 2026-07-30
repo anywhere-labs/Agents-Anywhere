@@ -18,10 +18,10 @@ from agent_server.infra.connector_rpc import (
     ConnectorRpcManager,
 )
 from agent_server.infra.redis_coordinator import RedisCoordinator
-from agent_server.infra.repositories.facade import Store
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.notices import cancel_session_blocking_interactions
+from agent_server.services.repository_ports import DeviceRuntimeRepository
 
 
 class DeviceRuntimeError(RuntimeError):
@@ -64,7 +64,7 @@ class DeviceRuntimeOfflineError(DeviceRuntimeError):
 class DeviceRuntimeService:
     def __init__(
         self,
-        store: Store,
+        store: DeviceRuntimeRepository,
         manager: ConnectorRpcManager,
         timeline_broker: TimelineBroker | None = None,
         coordinator: RedisCoordinator | None = None,

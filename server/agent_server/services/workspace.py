@@ -7,10 +7,13 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from agent_server.infra.connector_rpc import ConnectorOfflineError, ConnectorRpcError, ConnectorRpcManager
 from agent_server.core.models import SessionView
-from agent_server.infra.repositories.facade import Store
-
+from agent_server.infra.connector_rpc import (
+    ConnectorOfflineError,
+    ConnectorRpcError,
+    ConnectorRpcManager,
+)
+from agent_server.services.repository_ports import WorkspaceRepository
 
 _WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:")
 
@@ -18,7 +21,7 @@ _WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:")
 async def local_rpc_session(
     session_id: str,
     user_id: str,
-    db: Store,
+    db: WorkspaceRepository,
     manager: ConnectorRpcManager,
 ) -> SessionView:
     try:

@@ -4,18 +4,18 @@ from typing import Any
 
 from agent_server.core.models import ConnectorIngestRequest, ConnectorIngestResponse
 from agent_server.core.utc import utc_now
-from agent_server.infra.repositories.facade import Store
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.services.connector_notifications import ConnectorNotificationService
 from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.device_runtimes import DeviceRuntimeService
 from agent_server.services.ingest_effects import IngestEffect
+from agent_server.services.repository_ports import ConnectorIngestRepository
 
 
 class ConnectorIngestService:
     def __init__(
         self,
-        store: Store,
+        store: ConnectorIngestRepository,
         notifications: ConnectorNotificationService,
         timeline_broker: TimelineBroker,
         device_runtimes: DeviceRuntimeService,

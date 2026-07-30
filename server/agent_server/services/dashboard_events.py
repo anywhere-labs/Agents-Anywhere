@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from agent_server.core.utc import utc_now
-from agent_server.infra.repositories.facade import Store
 from agent_server.infra.timeline_broker import TimelineBroker
+from agent_server.services.repository_ports import DashboardEventRepository
 
 
 async def publish_dashboard_changed(
-    store: Store,
+    store: DashboardEventRepository,
     broker: TimelineBroker,
     *,
     connector_id: str | None = None,
