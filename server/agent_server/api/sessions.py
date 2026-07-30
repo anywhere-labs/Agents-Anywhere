@@ -1,31 +1,27 @@
 from __future__ import annotations
 
-from typing import Any
-
 import asyncio
 import hashlib
 import json
+from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from starlette.requests import HTTPConnection
 from starlette.responses import StreamingResponse
 
-from agent_server.infra.connector_rpc import ConnectorOfflineError, ConnectorRpcError, ConnectorRpcManager
-from agent_server.deps import (
-    current_user_id,
-    get_approval_service,
-    get_rpc,
-    get_session_run_service,
-    get_store,
-    get_timeline_broker,
-)
-from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.core.models import (
     BulkArchiveRequest,
     BulkArchiveResponse,
     BulkReadRequest,
-    MessageCreateRequest,
     InteractionRespondRequest,
+    MessageCreateRequest,
     RpcResponsePayload,
     SessionCreateRequest,
     SessionPatchRequest,
@@ -34,7 +30,6 @@ from agent_server.core.models import (
     TakeoverResponse,
 )
 from agent_server.core.protocol import (
-    ProtocolCapabilitySet,
     ProtocolEventEnvelope,
     ProtocolEventRecoveryResponse,
     ProtocolModelCatalog,
@@ -42,18 +37,31 @@ from agent_server.core.protocol import (
     ProtocolSessionSnapshotResponse,
     ProtocolTimelineSnapshot,
 )
-from agent_server.services.session_run import SessionRunError, SessionRunService
+from agent_server.core.utc import utc_now
+from agent_server.deps import (
+    current_user_id,
+    get_approval_service,
+    get_rpc,
+    get_session_run_service,
+    get_store,
+    get_timeline_broker,
+)
+from agent_server.infra.connector_rpc import (
+    ConnectorOfflineError,
+    ConnectorRpcError,
+    ConnectorRpcManager,
+)
+from agent_server.infra.repositories.facade import Store
+from agent_server.infra.timeline_broker import TimelineBroker
+from agent_server.infra.ws_tickets import ClientWsTicketManager
 from agent_server.services.approvals import ApprovalService, ApprovalServiceError
 from agent_server.services.connector_presence import (
     with_effective_session_connector_status,
     with_effective_session_connector_statuses,
 )
 from agent_server.services.dashboard_events import publish_dashboard_changed
-from agent_server.services.effective_capabilities import derive_session_effective_capabilities
-from agent_server.infra.repositories.facade import Store
-from agent_server.infra.ws_tickets import ClientWsTicketManager
-from agent_server.core.utc import utc_now
-
+from agent_server.services.effective_capabilities import project_session_capabilities
+from agent_server.services.session_run import SessionRunError, SessionRunService
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -136,12 +144,19 @@ def _events_from_broker_message(message: str) -> list[ProtocolEventEnvelope]:
     if isinstance(session, dict):
         sequence = int(session.get("updatedSeq") or payload.get("nextSeq") or 0)
         if sequence > 0:
+            event_payload: dict[str, Any] = {
+                "session": session,
+                "status": session.get("status"),
+            }
+            effective_capabilities = payload.get("effectiveCapabilities")
+            if isinstance(effective_capabilities, dict):
+                event_payload["effectiveCapabilities"] = effective_capabilities
             events.append(
                 _protocol_event(
                     session_id,
                     sequence=sequence,
                     event_type="session.status_changed",
-                    payload={"session": session, "status": session.get("status")},
+                    payload=event_payload,
                 )
             )
     notices = payload.get("notices")
@@ -180,6 +195,7 @@ def _events_from_broker_message(message: str) -> list[ProtocolEventEnvelope]:
 async def _publish_session_protocol_update(
     db: Store,
     broker: TimelineBroker,
+    manager: ConnectorRpcManager,
     session_id: str,
     *,
     extra_notices: list[Any] | None = None,
@@ -193,10 +209,18 @@ async def _publish_session_protocol_update(
         notice_id = getattr(notice, "noticeId", None)
         if isinstance(notice_id, str):
             notices_by_id[notice_id] = notice.model_dump(mode="json")
+    session, _runtime_capabilities, effective_capabilities = (
+        await project_session_capabilities(
+            db,
+            manager,
+            await db.get_session(session_id),
+        )
+    )
     envelope: dict[str, Any] = {
         "sessionId": session_id,
         "nextSeq": next_seq,
-        "session": (await db.get_session(session_id)).model_dump(mode="json"),
+        "session": session.model_dump(mode="json"),
+        "effectiveCapabilities": effective_capabilities.model_dump(mode="json"),
         "notices": list(notices_by_id.values()),
     }
     await broker.publish(session_id, envelope)
@@ -205,13 +229,14 @@ async def _publish_session_protocol_update(
 async def _best_effort_publish_session_protocol_update(
     db: Store,
     broker: TimelineBroker,
+    manager: ConnectorRpcManager,
     session_id: str,
     *,
     user_id: str,
 ) -> None:
     try:
         await db.get_session(session_id, user_id=user_id)
-        await _publish_session_protocol_update(db, broker, session_id)
+        await _publish_session_protocol_update(db, broker, manager, session_id)
     except Exception:
         return
 
@@ -219,12 +244,14 @@ async def _best_effort_publish_session_protocol_update(
 async def _publish_session_protocol_changes_since(
     db: Store,
     broker: TimelineBroker,
+    manager: ConnectorRpcManager,
     session_id: str,
     before_seq: int,
 ) -> None:
     await _publish_session_protocol_update(
         db,
         broker,
+        manager,
         session_id,
         extra_notices=await db.list_notices_since(session_id, before_seq),
     )
@@ -440,14 +467,18 @@ async def session_snapshot(
 ) -> ProtocolSessionSnapshotResponse:
     try:
         session = await db.get_session(session_id, user_id=user_id)
-        session = await with_effective_session_connector_status(manager, session)
+        session, runtime_capabilities, effective_capabilities = (
+            await project_session_capabilities(
+                db,
+                manager,
+                session,
+                user_id=user_id,
+            )
+        )
         items, has_more = await db.list_timeline_latest(session_id=session_id, limit=limit)
         approvals = await db.list_pending_approvals(session_id)
         notices = await db.list_open_notices(session_id)
         next_seq = await db.get_session_seq(session_id)
-        runtime_capabilities = ProtocolCapabilitySet.model_validate(
-            await db.get_protocol_capabilities(session.connectorId, user_id=user_id)
-        )
         model_catalog = await db.get_protocol_catalog(
             session.connectorId,
             runtime=session.runtime,
@@ -462,10 +493,6 @@ async def session_snapshot(
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
-    effective_capabilities = derive_session_effective_capabilities(
-        session=session,
-        runtime_capabilities=runtime_capabilities,
-    )
     return ProtocolSessionSnapshotResponse(
         session=session,
         timeline=ProtocolTimelineSnapshot(items=items, nextSeq=next_seq, hasMore=has_more),
@@ -529,9 +556,18 @@ async def session_events(
     after: str = Query("seq:0"),
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
+    manager: ConnectorRpcManager = Depends(get_rpc),
 ) -> ProtocolEventRecoveryResponse:
     try:
         session = await db.get_session(session_id, user_id=user_id)
+        session, _runtime_capabilities, effective_capabilities = (
+            await project_session_capabilities(
+                db,
+                manager,
+                session,
+                user_id=user_id,
+            )
+        )
         after_seq = _parse_event_cursor(after)
         items, _has_more = await db.list_timeline_since(
             session_id=session_id,
@@ -549,7 +585,13 @@ async def session_events(
                 session_id,
                 sequence=session.updatedSeq,
                 event_type="session.status_changed",
-                payload={"session": session.model_dump(mode="json"), "status": session.status},
+                payload={
+                    "session": session.model_dump(mode="json"),
+                    "status": session.status,
+                    "effectiveCapabilities": effective_capabilities.model_dump(
+                        mode="json"
+                    ),
+                },
             )
         )
     for notice in notices:
@@ -625,10 +667,12 @@ async def enable_takeover(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
+    broker: TimelineBroker = Depends(get_timeline_broker),
 ) -> TakeoverResponse:
     try:
         await db.get_session(session_id, user_id=user_id)
         session = await db.set_takeover(session_id, True)
+        await _publish_session_protocol_update(db, broker, manager, session_id)
         return TakeoverResponse(
             session=await with_effective_session_connector_status(manager, session)
         )
@@ -642,10 +686,12 @@ async def disable_takeover(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
+    broker: TimelineBroker = Depends(get_timeline_broker),
 ) -> TakeoverResponse:
     try:
         await db.get_session(session_id, user_id=user_id)
         session = await db.set_takeover(session_id, False)
+        await _publish_session_protocol_update(db, broker, manager, session_id)
         return TakeoverResponse(
             session=await with_effective_session_connector_status(manager, session)
         )
@@ -661,13 +707,20 @@ async def send_message(
     run_service: SessionRunService = Depends(get_session_run_service),
     db: Store = Depends(get_store),
     broker: TimelineBroker = Depends(get_timeline_broker),
+    manager: ConnectorRpcManager = Depends(get_rpc),
 ) -> RpcResponsePayload:
     try:
         result = await run_service.send_message(session_id, payload, user_id=user_id)
-        await _publish_session_protocol_update(db, broker, session_id)
+        await _publish_session_protocol_update(db, broker, manager, session_id)
         return result
     except SessionRunError as exc:
-        await _best_effort_publish_session_protocol_update(db, broker, session_id, user_id=user_id)
+        await _best_effort_publish_session_protocol_update(
+            db,
+            broker,
+            manager,
+            session_id,
+            user_id=user_id,
+        )
         _raise_session_run_error(exc)
 
 
@@ -678,14 +731,27 @@ async def interrupt_session(
     run_service: SessionRunService = Depends(get_session_run_service),
     db: Store = Depends(get_store),
     broker: TimelineBroker = Depends(get_timeline_broker),
+    manager: ConnectorRpcManager = Depends(get_rpc),
 ) -> RpcResponsePayload:
     try:
         before_seq = await db.get_session_seq(session_id)
         result = await run_service.interrupt_session(session_id, user_id=user_id)
-        await _publish_session_protocol_changes_since(db, broker, session_id, before_seq)
+        await _publish_session_protocol_changes_since(
+            db,
+            broker,
+            manager,
+            session_id,
+            before_seq,
+        )
         return result
     except SessionRunError as exc:
-        await _best_effort_publish_session_protocol_update(db, broker, session_id, user_id=user_id)
+        await _best_effort_publish_session_protocol_update(
+            db,
+            broker,
+            manager,
+            session_id,
+            user_id=user_id,
+        )
         _raise_session_run_error(exc)
 
 
@@ -697,6 +763,7 @@ async def respond_interaction(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     broker: TimelineBroker = Depends(get_timeline_broker),
+    manager: ConnectorRpcManager = Depends(get_rpc),
     approval_service: ApprovalService = Depends(get_approval_service),
 ) -> RpcResponsePayload:
     try:
@@ -721,16 +788,22 @@ async def respond_interaction(
         approval_id = notice.context.get("approvalId")
         if not isinstance(approval_id, str):
             await db.update_notice_status(notice.noticeId, "failed", context_patch={"error": "missing approval id"})
-            await _publish_session_protocol_changes_since(db, broker, session.id, before_seq)
+            await _publish_session_protocol_changes_since(
+                db, broker, manager, session.id, before_seq
+            )
             raise HTTPException(status_code=422, detail="interaction is missing approval id")
         status = _approval_status_for_action(payload.actionId)
         if status is None:
             await db.update_notice_status(notice.noticeId, "failed", context_patch={"error": "invalid approval action"})
-            await _publish_session_protocol_changes_since(db, broker, session.id, before_seq)
+            await _publish_session_protocol_changes_since(
+                db, broker, manager, session.id, before_seq
+            )
             raise HTTPException(status_code=422, detail="invalid approval action")
         try:
             result = await approval_service.resolve(approval_id, status, user_id=user_id)
-            await _publish_session_protocol_changes_since(db, broker, session.id, before_seq)
+            await _publish_session_protocol_changes_since(
+                db, broker, manager, session.id, before_seq
+            )
             return result
         except ApprovalServiceError as exc:
             current_notice = await db.get_notice(notice.noticeId)
@@ -740,16 +813,22 @@ async def respond_interaction(
                     "failed",
                     context_patch={"error": exc.detail},
                 )
-            await _publish_session_protocol_changes_since(db, broker, session.id, before_seq)
+            await _publish_session_protocol_changes_since(
+                db, broker, manager, session.id, before_seq
+            )
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     if notice.interactionType == "execution_error":
         await db.update_notice_status(notice.noticeId, "resolved")
         await db.refresh_session_status_from_timeline(session.id)
-        await _publish_session_protocol_changes_since(db, broker, session.id, before_seq)
+        await _publish_session_protocol_changes_since(
+            db, broker, manager, session.id, before_seq
+        )
         return RpcResponsePayload(ok=True, result={"resolved": True})
     await db.update_notice_status(notice.noticeId, "resolved")
     await db.refresh_session_status_from_timeline(session.id)
-    await _publish_session_protocol_changes_since(db, broker, session.id, before_seq)
+    await _publish_session_protocol_changes_since(
+        db, broker, manager, session.id, before_seq
+    )
     return RpcResponsePayload(ok=True, result={"resolved": True})
 
 

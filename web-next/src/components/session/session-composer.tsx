@@ -23,7 +23,12 @@ import {
   type AttachedFile,
 } from "@/components/attachment-input"
 import { cn } from "@/lib/utils"
-import type { ProtocolModelCatalog, ProtocolPermissionCatalog, SessionView } from "@/features/dashboard/types"
+import type {
+  ProtocolCapabilitySet,
+  ProtocolModelCatalog,
+  ProtocolPermissionCatalog,
+  SessionView,
+} from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
 import {
   modelIdsForSelectionId,
@@ -33,6 +38,7 @@ import {
   permissionSelectionIdForCatalog,
 } from "@/components/session/catalog-selection"
 import { SelectionSettingsDrawer } from "@/components/session/selection-settings-drawer"
+import { CAPABILITY, capabilityIsUsable } from "@/components/session/capabilities"
 import { useElementWidth } from "@/hooks/use-element-width"
 
 export type { AttachedFile }
@@ -46,6 +52,7 @@ export function SessionComposer({
   takeoverBusy,
   value,
   runtimeSettings,
+  effectiveCapabilities,
   modelCatalog,
   permissionCatalog,
   onValueChange,
@@ -61,6 +68,7 @@ export function SessionComposer({
   takeoverBusy: boolean
   value: string
   runtimeSettings: Record<string, unknown> | null
+  effectiveCapabilities: ProtocolCapabilitySet | null
   modelCatalog: ProtocolModelCatalog | null
   permissionCatalog: ProtocolPermissionCatalog | null
   onValueChange: (value: string) => void
@@ -82,15 +90,18 @@ export function SessionComposer({
   const isStopping = session.status === "stopping"
   const isPending = session.status === "pending"
   const connectorOnline = session.connectorStatus === "online"
+  const canUseSendMessage = capabilityIsUsable(effectiveCapabilities, CAPABILITY.sendMessage)
+  const canUseInterrupt = capabilityIsUsable(effectiveCapabilities, CAPABILITY.interrupt)
+  const canUseModelCatalog = capabilityIsUsable(effectiveCapabilities, CAPABILITY.modelCatalog)
+  const canUsePermissionCatalog = capabilityIsUsable(effectiveCapabilities, CAPABILITY.permissionCatalog)
+  const canUseEffortCatalog = capabilityIsUsable(effectiveCapabilities, CAPABILITY.effortCatalog)
   const canSend =
-    connectorOnline &&
-    session.takeover &&
+    canUseSendMessage &&
     !creatingSession &&
     !sending &&
-    !interrupting &&
-    session.status === "idle"
+    !interrupting
   const hasInput = value.trim().length > 0 || attachments.length > 0
-  const showInterrupt = !creatingSession && (session.status === "running" || session.status === "blocked" || session.status === "pending") && !isStopping
+  const showInterrupt = !creatingSession && canUseInterrupt
   const [selectedPermissionMode, setSelectedPermissionMode] = React.useState("")
   const [selectedModel, setSelectedModel] = React.useState("")
   const [selectedReasoning, setSelectedReasoning] = React.useState("")
@@ -125,7 +136,10 @@ export function SessionComposer({
   const effortLabel = effortItems.find((item) => item.id === selectedReasoning)?.label ?? tNew("reasoning")
   const hasSelectors = Boolean(permissionItems.length > 0 || modelItems.length > 0)
   const compactSelectors = hasSelectors && composerWidth > 0 && composerWidth < 560
-  const selectorsDisabled = !session.takeover || !connectorOnline || creatingSession
+  const permissionSelectorDisabled = creatingSession || !canUsePermissionCatalog
+  const modelSelectorDisabled = creatingSession || !canUseModelCatalog
+  const effortSelectorDisabled = creatingSession || !canUseEffortCatalog
+  const selectorsDisabled = permissionSelectorDisabled && modelSelectorDisabled
 
   React.useEffect(() => {
     const nextPermission = permissionItems.some((item) => item.id === permissionValue)
@@ -235,6 +249,9 @@ export function SessionComposer({
               compactSelectors ? (
                 <SelectionSettingsDrawer
                   disabled={selectorsDisabled}
+                  permissionDisabled={permissionSelectorDisabled}
+                  modelDisabled={modelSelectorDisabled}
+                  reasoningDisabled={effortSelectorDisabled}
                   buttonLabel={tNew("selectionSettings")}
                   title={tNew("selectionSettings")}
                   description={tNew("selectionSettingsDescription")}
@@ -262,7 +279,7 @@ export function SessionComposer({
                         variant="ghost"
                         size="sm"
                         className="h-8 gap-1.5 rounded-xl px-2.5 text-muted-foreground"
-                        disabled={selectorsDisabled}
+                        disabled={permissionSelectorDisabled}
                       >
                         <span className="size-1.5 rounded-full bg-primary" />
                         <span className="text-foreground">{permissionLabel}</span>
@@ -291,7 +308,7 @@ export function SessionComposer({
                         variant="ghost"
                         size="sm"
                         className="h-8 gap-1.5 rounded-xl px-2.5 text-muted-foreground"
-                        disabled={selectorsDisabled}
+                        disabled={modelSelectorDisabled}
                       >
                         {effortItems.length > 0 ? <span className="text-foreground">{effortLabel}</span> : null}
                         {effortItems.length > 0 ? <span className="text-muted-foreground/50">·</span> : null}
@@ -320,7 +337,7 @@ export function SessionComposer({
                           }
                           return (
                             <DropdownMenuSub key={modelItem.id}>
-                              <DropdownMenuSubTrigger className="gap-2">
+                              <DropdownMenuSubTrigger className="gap-2" disabled={effortSelectorDisabled}>
                                 <Check className={cn("size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
                                 <span className="max-w-40 truncate">{modelItem.label}</span>
                               </DropdownMenuSubTrigger>
@@ -394,7 +411,7 @@ export function SessionComposer({
               size="icon"
               aria-label={showInterrupt ? tSession("interrupt") : tSession("send")}
               className={cn("size-8 rounded-full", showInterrupt && "bg-destructive text-destructive-foreground hover:bg-destructive/90")}
-              disabled={showInterrupt ? !connectorOnline || interrupting : !canSend || !hasInput}
+              disabled={showInterrupt ? interrupting : !canSend || !hasInput}
               onClick={primaryAction}
             >
               {sending || interrupting ? (

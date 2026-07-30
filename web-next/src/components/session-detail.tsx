@@ -1049,6 +1049,7 @@ export function SessionDetail({
             takeoverBusy={takeoverBusy}
             value={composerDraft}
             runtimeSettings={runtimeSettings}
+            effectiveCapabilities={state?.effectiveCapabilities ?? null}
             modelCatalog={state?.catalogs.model ?? null}
             permissionCatalog={state?.catalogs.permission ?? null}
             onValueChange={setComposerDraft}

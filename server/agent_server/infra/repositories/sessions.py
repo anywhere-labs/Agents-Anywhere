@@ -271,6 +271,23 @@ class SessionRepositoryMixin:
             rows = (await conn.execute(query)).mappings().all()
         return [await self._session_from_row(row) for row in rows]
 
+    async def list_sessions_for_connector(
+        self,
+        connector_id: str,
+    ) -> list[SessionView]:
+        query = (
+            select(sessions_t, connectors_t.c.status.label("connector_status"))
+            .join(connectors_t, connectors_t.c.id == sessions_t.c.connector_id)
+            .where(
+                sessions_t.c.connector_id == connector_id,
+                connectors_t.c.revoked == 0,
+            )
+            .order_by(sessions_t.c.created_at.desc())
+        )
+        async with self._engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [await self._session_from_row(row) for row in rows]
+
 
     async def get_session(self, session_id: str, *, user_id: str | None = None) -> SessionView:
         query = (

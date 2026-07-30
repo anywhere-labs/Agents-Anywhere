@@ -6,8 +6,13 @@ from agent_server.core.models import ConnectorIngestRequest, ConnectorIngestResp
 from agent_server.core.utc import utc_now
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.services.connector_notifications import ConnectorNotificationService
+from agent_server.services.connector_presence import ConnectorPresencePort
 from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.device_runtimes import DeviceRuntimeService
+from agent_server.services.effective_capabilities import (
+    project_session_capabilities,
+    publish_connector_session_capabilities,
+)
 from agent_server.services.ingest_effects import IngestEffect
 from agent_server.services.repository_ports import ConnectorIngestRepository
 
@@ -19,11 +24,13 @@ class ConnectorIngestService:
         notifications: ConnectorNotificationService,
         timeline_broker: TimelineBroker,
         device_runtimes: DeviceRuntimeService,
+        presence: ConnectorPresencePort,
     ) -> None:
         self._store = store
         self._notifications = notifications
         self._timeline_broker = timeline_broker
         self._device_runtimes = device_runtimes
+        self._presence = presence
 
     async def ingest(
         self,
@@ -61,6 +68,13 @@ class ConnectorIngestService:
                 )
             )
         await self._publish_effects(effects)
+        if saw_protocol_capabilities:
+            await publish_connector_session_capabilities(
+                self._store,
+                self._presence,
+                self._timeline_broker,
+                connector_id,
+            )
         if saw_protocol_capabilities or saw_protocol_catalog:
             await publish_dashboard_changed(
                 self._store,
@@ -101,6 +115,13 @@ class ConnectorIngestService:
             params=params,
         )
         await self._publish_effects([effect])
+        if method == "protocol.capabilitiesUpdated":
+            await publish_connector_session_capabilities(
+                self._store,
+                self._presence,
+                self._timeline_broker,
+                connector_id,
+            )
         if method in {
             "protocol.capabilitiesUpdated",
             "protocol.modelCatalogUpdated",
@@ -157,9 +178,17 @@ class ConnectorIngestService:
                 envelope["items"] = bucket["items"]
             if bucket["session"]:
                 try:
-                    envelope["session"] = (
-                        await self._store.get_session(session_id)
-                    ).model_dump(mode="json")
+                    session, _runtime_capabilities, effective_capabilities = (
+                        await project_session_capabilities(
+                            self._store,
+                            self._presence,
+                            await self._store.get_session(session_id),
+                        )
+                    )
+                    envelope["session"] = session.model_dump(mode="json")
+                    envelope["effectiveCapabilities"] = (
+                        effective_capabilities.model_dump(mode="json")
+                    )
                 except KeyError:
                     pass
             if bucket["approvals"]:

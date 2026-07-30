@@ -26,6 +26,9 @@ export type ModelSelectionOption = SelectionOption & {
 
 export function SelectionSettingsDrawer({
   disabled,
+  permissionDisabled = false,
+  modelDisabled = false,
+  reasoningDisabled = false,
   buttonLabel,
   title,
   description,
@@ -41,6 +44,9 @@ export function SelectionSettingsDrawer({
   onModelChange,
 }: {
   disabled?: boolean
+  permissionDisabled?: boolean
+  modelDisabled?: boolean
+  reasoningDisabled?: boolean
   buttonLabel: string
   title: string
   description?: string
@@ -84,6 +90,7 @@ export function SelectionSettingsDrawer({
                   key={item.id}
                   selected={selectedPermission === item.id}
                   label={item.label}
+                  disabled={permissionDisabled}
                   onClick={() => {
                     onPermissionChange(item.id)
                     setOpen(false)
@@ -103,6 +110,7 @@ export function SelectionSettingsDrawer({
                     <SelectionRow
                       selected={selectedModel === model.id}
                       label={model.label}
+                      disabled={modelDisabled}
                       onClick={() => {
                         onModelChange(model.id, "")
                         setOpen(false)
@@ -117,6 +125,7 @@ export function SelectionSettingsDrawer({
                           selected={selectedModel === model.id && selectedReasoning === reasoning.id}
                           label={`${reasoning.label} · ${model.label}`}
                           helper={reasoningLabel}
+                          disabled={modelDisabled || reasoningDisabled}
                           onClick={() => {
                             onModelChange(model.id, reasoning.id)
                             setOpen(false)
@@ -148,20 +157,24 @@ function SelectionRow({
   selected,
   label,
   helper,
+  disabled = false,
   onClick,
 }: {
   selected: boolean
   label: string
   helper?: string
+  disabled?: boolean
   onClick: () => void
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       className={cn(
         "flex min-h-10 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition-colors",
         selected ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+        disabled && "cursor-not-allowed opacity-50 hover:bg-transparent hover:text-muted-foreground",
       )}
     >
       <Check className={cn("size-4 shrink-0", selected ? "opacity-100" : "opacity-0")} />

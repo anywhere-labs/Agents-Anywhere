@@ -51,6 +51,9 @@ from agent_server.services.connector_notifications import (
 )
 from agent_server.services.connector_realtime import ConnectorRealtimeService
 from agent_server.services.dashboard_events import publish_dashboard_changed
+from agent_server.services.effective_capabilities import (
+    publish_connector_session_capabilities,
+)
 
 router = APIRouter(tags=["connector-ingress"])
 
@@ -212,11 +215,18 @@ async def connector_ws(
     # connector can observe an accepted socket and immediately query stale
     # device metadata.
     await websocket.accept()
+    await publish_connector_session_capabilities(
+        db,
+        manager,
+        timeline_broker,
+        connector_id,
+    )
     ingest_service = ConnectorIngestService(
         db,
         ConnectorNotificationService(db, realtime),
         timeline_broker,
         websocket.app.state.device_runtime_service,
+        manager,
     )
     logger.info("connector connected: {}", connector_id)
     try:
@@ -239,6 +249,12 @@ async def connector_ws(
                 len(removed_terminals),
             )
         await manager.unregister(connector_id, connection)
+        await publish_connector_session_capabilities(
+            db,
+            manager,
+            timeline_broker,
+            connector_id,
+        )
         await publish_dashboard_changed(
             db,
             timeline_broker,

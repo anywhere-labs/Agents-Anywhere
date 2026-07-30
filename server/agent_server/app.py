@@ -54,6 +54,9 @@ from agent_server.infra.ws_tickets import ClientWsTicketManager
 from agent_server.services.connector_rpc import ConnectorServiceError
 from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.device_runtimes import DeviceRuntimeService
+from agent_server.services.effective_capabilities import (
+    publish_connector_session_capabilities,
+)
 from agent_server.services.shell_tasks import ShellTaskManager
 from agent_server.services.workspace import WorkspaceServiceError
 
@@ -65,6 +68,12 @@ async def _connector_presence_watchdog(app: FastAPI) -> None:
         await asyncio.sleep(CONNECTOR_PRESENCE_SWEEP_SECONDS)
         stale_connections = await app.state.rpc.expire_stale()
         for connection in stale_connections:
+            await publish_connector_session_capabilities(
+                app.state.store,
+                app.state.rpc,
+                app.state.timeline_broker,
+                connection.connector_id,
+            )
             await publish_dashboard_changed(
                 app.state.store,
                 app.state.timeline_broker,

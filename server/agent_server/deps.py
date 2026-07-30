@@ -41,6 +41,7 @@ def get_connector_ingest_service(conn: HTTPConnection) -> ConnectorIngestService
         ConnectorNotificationService(conn.app.state.store, realtime),
         conn.app.state.timeline_broker,
         conn.app.state.device_runtime_service,
+        conn.app.state.rpc,
     )
 
 

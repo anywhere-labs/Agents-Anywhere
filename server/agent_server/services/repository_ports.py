@@ -86,7 +86,19 @@ class ApprovalRepository(
 class ConnectorIngestRepository(DashboardEventRepository, Protocol):
     async def record_connector_activity(self, connector_id: str) -> None: ...
 
+    async def get_protocol_capabilities(
+        self,
+        connector_id: str,
+        *,
+        user_id: str | None = None,
+    ) -> dict[str, Any]: ...
+
     async def get_session_seq(self, session_id: str) -> int: ...
+
+    async def list_sessions_for_connector(
+        self,
+        connector_id: str,
+    ) -> list[SessionView]: ...
 
     async def list_pending_approvals(self, session_id: str) -> list[Approval]: ...
 

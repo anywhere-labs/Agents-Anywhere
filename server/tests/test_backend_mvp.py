@@ -4396,6 +4396,35 @@ def test_session_ws_projects_timeline_and_notice_events(tmp_path):
         assert "timeline.item_created" in event_types
         assert "session.status_changed" in event_types
         assert "notice.created" in event_types or "notice.updated" in event_types
+        session_event = next(
+            event for event in received if event["type"] == "session.status_changed"
+        )
+        capabilities = {
+            capability["capabilityId"]: capability
+            for capability in session_event["payload"]["effectiveCapabilities"][
+                "capabilities"
+            ]
+        }
+        assert capabilities["session.send_message"]["allowed"] is False
+
+
+def test_session_ws_updates_effective_capabilities_after_takeover(tmp_path):
+    client = make_client(tmp_path)
+    _, _, session_id, headers = create_connector_and_session(client)
+    ticket = ws_ticket(client, session_id, headers)
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        response = client.post(f"/sessions/{session_id}/takeover", headers=headers)
+        assert response.status_code == 200, response.text
+
+        event = ws.receive_json()
+        assert event["type"] == "session.status_changed"
+        capabilities = {
+            capability["capabilityId"]: capability
+            for capability in event["payload"]["effectiveCapabilities"]["capabilities"]
+        }
+        assert capabilities["session.send_message"]["allowed"] is True
 
 
 def test_session_ws_projects_codex_timeline_sync_items_without_refetch(tmp_path):
@@ -4494,6 +4523,10 @@ def test_session_events_recovery_returns_json_events(tmp_path):
     assert body["snapshotRequired"] is False
     assert body["nextCursor"].startswith("seq:")
     assert "timeline.item_created" in [event["type"] for event in body["events"]]
+    session_event = next(
+        event for event in body["events"] if event["type"] == "session.status_changed"
+    )
+    assert "effectiveCapabilities" in session_event["payload"]
 
 
 def test_existing_connector_session_metadata_sync_does_not_rearm_unread(tmp_path):
