@@ -86,6 +86,32 @@ def test_effective_capabilities_apply_session_takeover_to_allowed() -> None:
     assert interrupt.allowed is False
 
 
+def test_unknown_runtime_capability_is_preserved_but_not_promoted() -> None:
+    unknown_capability_id = "vendor.example.future_action"
+    runtime_capabilities = ProtocolCapabilitySet(
+        revision=3,
+        capabilities=[
+            ProtocolCapability(
+                capabilityId=unknown_capability_id,
+                runtime="codex",
+                parameters={"extension": {"enabled": True}},
+            )
+        ],
+    )
+
+    dumped = runtime_capabilities.model_dump(mode="json")
+    assert dumped["capabilities"][0]["capabilityId"] == unknown_capability_id
+    assert dumped["capabilities"][0]["parameters"] == {
+        "extension": {"enabled": True}
+    }
+
+    effective = derive_session_effective_capabilities(
+        session=_session(takeover=True),
+        runtime_capabilities=runtime_capabilities,
+    )
+    assert find_capability(effective, unknown_capability_id) is None
+
+
 def test_presence_change_publishes_reprojected_session_capabilities() -> None:
     session = _session(takeover=True)
 
