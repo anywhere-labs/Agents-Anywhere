@@ -28,7 +28,7 @@ async def create_ws_ticket(
         await db.get_session(payload.scope.sessionId, user_id=user_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
-    ticket, expires_at = tickets.issue(
+    ticket, expires_at = await tickets.issue(
         user_id=user_id,
         client_id=payload.clientId,
         session_id=payload.scope.sessionId,

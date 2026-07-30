@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
-import json
 import time
 from typing import Any
 
@@ -12,6 +11,7 @@ from conftest import ApiV2TestClient as TestClient
 
 from agent_server.api.sessions_terminal import _send_terminal_ws_error
 from agent_server.app import create_app
+from agent_server.core.protocol import protocol_selection_id
 from agent_server.infra.connector_rpc import (
     ConnectorOfflineError,
     ConnectorRpcError,
@@ -19,7 +19,6 @@ from agent_server.infra.connector_rpc import (
     DuplicateConnectorConnectionError,
 )
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
-from agent_server.core.protocol import protocol_selection_id
 from agent_server.services.notices import upsert_execution_error_interaction
 
 
@@ -175,7 +174,7 @@ def test_revoke_connector_rotates_token_and_disconnects(tmp_path):
             self.disconnected: list[tuple[str, str]] = []
             self.online = True
 
-        def is_online(self, requested_connector_id: str) -> bool:
+        async def is_online(self, requested_connector_id: str) -> bool:
             return self.online and requested_connector_id == connector_id
 
         async def disconnect(self, requested_connector_id: str, *, reason: str) -> bool:
@@ -269,7 +268,7 @@ def test_platform_session_create_uses_connector_returned_session_id(tmp_path):
         def __init__(self) -> None:
             self.requests: list[tuple[str, dict[str, Any]]] = []
 
-        def is_online(self, requested_connector_id: str) -> bool:
+        async def is_online(self, requested_connector_id: str) -> bool:
             return requested_connector_id == connector_id
 
         async def request(self, requested_connector_id: str, method: str, params: dict[str, Any], *, timeout: float = 30) -> dict[str, str]:
@@ -323,7 +322,7 @@ def test_session_create_passes_model_selection_id(tmp_path):
         def __init__(self) -> None:
             self.requests: list[tuple[str, dict[str, Any]]] = []
 
-        def is_online(self, requested_connector_id: str) -> bool:
+        async def is_online(self, requested_connector_id: str) -> bool:
             return requested_connector_id == connector_id
 
         async def request(self, requested_connector_id: str, method: str, params: dict[str, Any], *, timeout: float = 30) -> dict[str, str]:
@@ -374,7 +373,7 @@ def test_session_create_passes_permission_selection_id(tmp_path):
         def __init__(self) -> None:
             self.requests: list[tuple[str, dict[str, Any]]] = []
 
-        def is_online(self, requested_connector_id: str) -> bool:
+        async def is_online(self, requested_connector_id: str) -> bool:
             return requested_connector_id == connector_id
 
         async def request(self, requested_connector_id: str, method: str, params: dict[str, Any], *, timeout: float = 30) -> dict[str, str]:
@@ -450,7 +449,7 @@ def test_claude_session_create_allows_initial_missing_external_session_id(tmp_pa
         def __init__(self) -> None:
             self.requests: list[tuple[str, dict[str, Any]]] = []
 
-        def is_online(self, requested_connector_id: str) -> bool:
+        async def is_online(self, requested_connector_id: str) -> bool:
             return requested_connector_id == connector_id
 
         async def request(
@@ -632,7 +631,7 @@ class FakeApprovalRpc:
         self.gone = gone
         self.requests: list[tuple[str, str, dict[str, Any], float]] = []
 
-    def is_online(self, connector_id: str) -> bool:
+    async def is_online(self, connector_id: str) -> bool:
         return True
 
     async def request(
@@ -662,7 +661,7 @@ class FakeLocalRpc:
         self.terminal_relay_broker: Any | None = None
         self.terminal_relay_sockets: dict[str, FakeWebSocket] = {}
 
-    def is_online(self, connector_id: str) -> bool:
+    async def is_online(self, connector_id: str) -> bool:
         return True
 
     async def request(
@@ -884,36 +883,61 @@ def test_connector_status_response_uses_live_ws_not_stale_db(tmp_path):
         assert session["connectorStatus"] == "online"
 
 
+def test_connector_connection_records_metadata_without_persisting_presence(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, _, _ = create_connector_and_session(client)
+
+    async def exercise() -> None:
+        store = client.app.state.store
+        assert await store.record_connector_connection(
+            connector_id,
+            device_os="linux",
+        )
+        connector = await store.get_connector(connector_id)
+        assert connector.status == "offline"
+        assert connector.deviceOs == "linux"
+        assert connector.lastSeenAt is not None
+
+    asyncio.run(exercise())
+
+
 def test_rpc_manager_expires_stale_connector_heartbeats():
     now = 0.0
 
     def clock() -> float:
         return now
 
-    manager = ConnectorRpcManager(heartbeat_timeout_seconds=60, clock=clock)
-    websocket = FakeWebSocket()
-    connection = manager.register("conn_1", websocket)  # type: ignore[arg-type]
-    assert manager.is_online("conn_1")
+    async def exercise() -> None:
+        nonlocal now
+        manager = ConnectorRpcManager(heartbeat_timeout_seconds=60, clock=clock)
+        websocket = FakeWebSocket()
+        connection = await manager.register("conn_1", websocket)  # type: ignore[arg-type]
+        assert await manager.is_online("conn_1")
 
-    now = 59.0
-    assert manager.is_online("conn_1")
+        now = 59.0
+        assert await manager.is_online("conn_1")
 
-    now = 61.0
-    assert not manager.is_online("conn_1")
-    assert manager.expire_stale() == [connection]
-    assert not manager.is_online("conn_1")
+        now = 61.0
+        assert not await manager.is_online("conn_1")
+        assert await manager.expire_stale() == [connection]
+        assert not await manager.is_online("conn_1")
+
+    asyncio.run(exercise())
 
 
 def test_active_duplicate_connector_connection_is_rejected():
-    manager = ConnectorRpcManager()
-    old = manager.register("conn_1", FakeWebSocket())  # type: ignore[arg-type]
+    async def exercise() -> None:
+        manager = ConnectorRpcManager()
+        old = await manager.register("conn_1", FakeWebSocket())  # type: ignore[arg-type]
 
-    with pytest.raises(DuplicateConnectorConnectionError):
-        manager.register("conn_1", FakeWebSocket())  # type: ignore[arg-type]
+        with pytest.raises(DuplicateConnectorConnectionError):
+            await manager.register("conn_1", FakeWebSocket())  # type: ignore[arg-type]
 
-    assert manager.is_online("conn_1")
-    assert manager.unregister("conn_1", old) is True
-    assert not manager.is_online("conn_1")
+        assert await manager.is_online("conn_1")
+        assert await manager.unregister("conn_1", old) is True
+        assert not await manager.is_online("conn_1")
+
+    asyncio.run(exercise())
 
 
 def test_stale_connector_connection_can_be_replaced():
@@ -922,14 +946,18 @@ def test_stale_connector_connection_can_be_replaced():
     def clock() -> float:
         return now
 
-    manager = ConnectorRpcManager(heartbeat_timeout_seconds=60, clock=clock)
-    old = manager.register("conn_1", FakeWebSocket())  # type: ignore[arg-type]
-    now = 61.0
-    current = manager.register("conn_1", FakeWebSocket())  # type: ignore[arg-type]
+    async def exercise() -> None:
+        nonlocal now
+        manager = ConnectorRpcManager(heartbeat_timeout_seconds=60, clock=clock)
+        old = await manager.register("conn_1", FakeWebSocket())  # type: ignore[arg-type]
+        now = 61.0
+        current = await manager.register("conn_1", FakeWebSocket())  # type: ignore[arg-type]
 
-    assert manager.unregister("conn_1", old) is False
-    assert manager.is_online("conn_1")
-    assert manager.unregister("conn_1", current) is True
+        assert await manager.unregister("conn_1", old) is False
+        assert await manager.is_online("conn_1")
+        assert await manager.unregister("conn_1", current) is True
+
+    asyncio.run(exercise())
 
 
 def test_rpc_manager_unregisters_connector_when_ws_send_is_closed():
@@ -937,18 +965,17 @@ def test_rpc_manager_unregisters_connector_when_ws_send_is_closed():
         async def send_json(self, message: dict[str, Any]) -> None:
             raise RuntimeError('Cannot call "send" once a close message has been sent.')
 
-    manager = ConnectorRpcManager()
-    manager.register("conn_1", ClosedWebSocket())  # type: ignore[arg-type]
-
     async def run_request() -> str:
+        manager = ConnectorRpcManager()
+        await manager.register("conn_1", ClosedWebSocket())  # type: ignore[arg-type]
         try:
             await manager.request("conn_1", "terminal.list", {}, timeout=0.1)
         except ConnectorOfflineError as exc:
+            assert not await manager.is_online("conn_1")
             return str(exc)
         return "unexpected success"
 
     assert asyncio.run(run_request()) == "connector disconnected"
-    assert not manager.is_online("conn_1")
 
 
 def test_terminal_ws_error_send_ignores_already_closed_socket():
@@ -979,7 +1006,7 @@ def test_connector_crud_updates_and_revokes_devices(tmp_path):
         def __init__(self) -> None:
             self.disconnected: list[tuple[str, str]] = []
 
-        def is_online(self, requested_connector_id: str) -> bool:
+        async def is_online(self, requested_connector_id: str) -> bool:
             return requested_connector_id == connector_id
 
         async def disconnect(self, requested_connector_id: str, *, reason: str) -> bool:
@@ -1894,6 +1921,27 @@ def test_protocol_capabilities_ingest_and_read(tmp_path):
     assert {item["capabilityId"] for item in body["capabilitySet"]["capabilities"]} == {
         "session.interrupt"
     }
+
+
+def test_protocol_capabilities_validation_is_mapped_by_transport(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, _, _ = create_connector_and_session(client)
+
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "protocol.capabilitiesUpdated",
+                    "params": {"revision": "invalid", "capabilities": []},
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "invalid_protocol_capabilities"
 
 
 def test_notice_upsert_ingest_projects_notification_to_snapshot(tmp_path):
@@ -2890,7 +2938,9 @@ def test_connector_terminal_lifecycle_uses_workspace_scope(tmp_path):
         {
             "terminalId": terminal_id,
             "sessionId": scope_id,
-            "token": client.app.state.terminal_broker.get(terminal_id).relay_token,
+            "token": asyncio.run(
+                client.app.state.terminal_broker.get(terminal_id)
+            ).relay_token,
         },
         15,
     )
@@ -3099,8 +3149,10 @@ def test_terminal_broker_removes_connector_user_terminals_only(tmp_path):
     )
 
     assert [terminal.id for terminal in removed] == [user_terminal_id]
-    assert client.app.state.terminal_broker.get(user_terminal_id) is None
-    assert client.app.state.terminal_broker.get(other_terminal_id) is not None
+    assert asyncio.run(client.app.state.terminal_broker.get(user_terminal_id)) is None
+    assert (
+        asyncio.run(client.app.state.terminal_broker.get(other_terminal_id)) is not None
+    )
 
 
 def test_terminal_broker_forwards_browser_events_to_connector_relay(tmp_path):
@@ -5085,7 +5137,7 @@ def test_fs_download_relay_streams_uploaded_chunks():
 
 async def _exercise_fs_download_relay_streams_uploaded_chunks() -> None:
     manager = FsDownloadRelayManager()
-    transfer = manager.create(
+    transfer = await manager.create(
         connector_id="conn_1",
         root="/repo",
         path="/repo/payload.bin",
@@ -5475,7 +5527,7 @@ def test_client_uploads_attachment_and_connector_downloads_by_session(tmp_path):
 async def _exercise_rpc_manager():
     manager = ConnectorRpcManager()
     websocket = FakeWebSocket()
-    manager.register("conn_1", websocket)  # type: ignore[arg-type]
+    await manager.register("conn_1", websocket)  # type: ignore[arg-type]
 
     request_task = asyncio.create_task(
         manager.request("conn_1", "turn.start", {"sessionId": "sess_1", "content": "hi"})

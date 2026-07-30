@@ -5,7 +5,7 @@ import json
 from typing import Any
 
 from agent_server.core.models import Approval, TimelineItemIn
-from agent_server.infra.repositories.facade import Store
+from agent_server.services.repository_ports import TimelineEffectRepository
 
 
 def timeline_content_hash(*values: Any) -> str:
@@ -14,7 +14,7 @@ def timeline_content_hash(*values: Any) -> str:
     ).hexdigest()
 
 
-async def apply_resolved_approval_to_target_item(db: Store, approval: Approval) -> None:
+async def apply_resolved_approval_to_target_item(db: TimelineEffectRepository, approval: Approval) -> None:
     if approval.targetItemId is None:
         return
     current = {item.id: item for item in await db.timeline.read(approval.sessionId)}
@@ -40,7 +40,7 @@ async def apply_resolved_approval_to_target_item(db: Store, approval: Approval) 
 
 
 async def close_waiting_approval_items_for_finished_turn(
-    db: Store, session_id: str, turn_end: TimelineItemIn
+    db: TimelineEffectRepository, session_id: str, turn_end: TimelineItemIn
 ) -> None:
     if turn_end.turnId is None:
         return

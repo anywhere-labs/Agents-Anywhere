@@ -2,11 +2,17 @@ from __future__ import annotations
 
 from loguru import logger
 
-from agent_server.infra.connector_rpc import ConnectorOfflineError, ConnectorRpcError, ConnectorRpcManager
 from agent_server.core.models import RpcResponsePayload
-from agent_server.services.timeline_effects import apply_resolved_approval_to_target_item
+from agent_server.infra.connector_rpc import (
+    ConnectorOfflineError,
+    ConnectorRpcError,
+    ConnectorRpcManager,
+)
 from agent_server.services.notices import resolve_approval_interaction
-from agent_server.infra.repositories.facade import Store
+from agent_server.services.repository_ports import ApprovalRepository
+from agent_server.services.timeline_effects import (
+    apply_resolved_approval_to_target_item,
+)
 
 
 class ApprovalServiceError(RuntimeError):
@@ -30,7 +36,7 @@ class ApprovalUpstreamError(ApprovalServiceError):
 
 
 class ApprovalService:
-    def __init__(self, store: Store, manager: ConnectorRpcManager) -> None:
+    def __init__(self, store: ApprovalRepository, manager: ConnectorRpcManager) -> None:
         self._store = store
         self._manager = manager
 

@@ -5,36 +5,52 @@ import posixpath
 import re
 from typing import Any
 
-from fastapi import HTTPException
-
-from agent_server.infra.connector_rpc import ConnectorOfflineError, ConnectorRpcError, ConnectorRpcManager
 from agent_server.core.models import SessionView
-from agent_server.infra.repositories.facade import Store
-
+from agent_server.infra.connector_rpc import (
+    ConnectorOfflineError,
+    ConnectorRpcError,
+    ConnectorRpcManager,
+)
+from agent_server.services.connector_rpc import (
+    ConnectorRequestTimeoutError,
+    ConnectorUnavailableError,
+    ConnectorUpstreamError,
+)
+from agent_server.services.repository_ports import WorkspaceRepository
 
 _WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:")
+
+
+class WorkspaceServiceError(RuntimeError):
+    def __init__(self, detail: str) -> None:
+        super().__init__(detail)
+        self.detail = detail
+
+
+class WorkspaceSessionNotFoundError(WorkspaceServiceError):
+    pass
 
 
 async def local_rpc_session(
     session_id: str,
     user_id: str,
-    db: Store,
+    db: WorkspaceRepository,
     manager: ConnectorRpcManager,
 ) -> SessionView:
     try:
         session = await db.get_session(session_id, user_id=user_id)
     except KeyError:
-        raise HTTPException(status_code=404, detail="session not found") from None
-    if not manager.is_online(session.connectorId):
-        raise HTTPException(status_code=409, detail="connector is offline")
+        raise WorkspaceSessionNotFoundError("session not found") from None
+    if not await manager.is_online(session.connectorId):
+        raise ConnectorUnavailableError("connector is offline")
     if not session.cwd:
-        raise HTTPException(status_code=409, detail="session cwd is required")
+        raise WorkspaceServiceError("session cwd is required")
     return session
 
 
 def resolve_workspace_path(root: str | None, raw_path: str) -> str:
     if not root:
-        raise HTTPException(status_code=409, detail="session cwd is required")
+        raise WorkspaceServiceError("session cwd is required")
     if _looks_like_windows_path(root):
         return _resolve_windows_workspace_path(root, raw_path)
     return _resolve_posix_workspace_path(root, raw_path)
@@ -43,8 +59,7 @@ def resolve_workspace_path(root: str | None, raw_path: str) -> str:
 def _looks_like_windows_path(path: str) -> bool:
     return (
         bool(_WINDOWS_DRIVE_RE.match(path))
-        or path.startswith("\\\\")
-        or path.startswith("//")
+        or path.startswith(("\\\\", "//"))
         or ("\\" in path and not path.startswith("/"))
     )
 
@@ -96,8 +111,8 @@ async def request_connector(
     try:
         return await manager.request(connector_id, method, params, timeout=timeout)
     except ConnectorOfflineError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise ConnectorUnavailableError(str(exc)) from exc
     except ConnectorRpcError as exc:
-        raise HTTPException(status_code=502, detail=exc.message or exc.code) from exc
+        raise ConnectorUpstreamError(exc.message or exc.code) from exc
     except TimeoutError as exc:
-        raise HTTPException(status_code=504, detail=f"{method} timed out") from exc
+        raise ConnectorRequestTimeoutError(f"{method} timed out") from exc

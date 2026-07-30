@@ -1,48 +1,61 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import time
-import asyncio
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncIterator
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
+from redis.exceptions import RedisError
 
-from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.api import (
     admin,
     admin_dashboard,
     agents,
     auth,
     client_ws,
+    connector_files,
     connector_ingress,
+    connector_runtimes,
+    connector_shell,
+    connector_terminal,
     connectors,
+    error_handlers,
     oauth,
     pairing,
+    service,
     sessions,
     sessions_fs,
     sessions_terminal,
-    service,
 )
-from agent_server.core.setup_token import SetupToken
 from agent_server.core.api_namespace import API_V2_PREFIX
-from agent_server.services.shell_tasks import ShellTaskManager
-from agent_server.services.dashboard_events import publish_dashboard_changed
-from agent_server.services.device_runtimes import DeviceRuntimeService
+from agent_server.core.setup_token import SetupToken
+from agent_server.core.utc import utc_now
+from agent_server.infra.connector_rpc import ConnectorRpcManager
+from agent_server.infra.db.migrations import (
+    database_schema_version,
+    require_current_database,
+    upgrade_database,
+)
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
+from agent_server.infra.redis_coordinator import RedisCoordinator
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.terminal_broker import TerminalBroker
 from agent_server.infra.terminal_stream_hub import TerminalStreamHub
-from agent_server.core.utc import utc_now
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.infra.ws_tickets import ClientWsTicketManager
-
+from agent_server.services.connector_rpc import ConnectorServiceError
+from agent_server.services.dashboard_events import publish_dashboard_changed
+from agent_server.services.device_runtimes import DeviceRuntimeService
+from agent_server.services.shell_tasks import ShellTaskManager
+from agent_server.services.workspace import WorkspaceServiceError
 
 CONNECTOR_PRESENCE_SWEEP_SECONDS = 5
 
@@ -50,40 +63,73 @@ CONNECTOR_PRESENCE_SWEEP_SECONDS = 5
 async def _connector_presence_watchdog(app: FastAPI) -> None:
     while True:
         await asyncio.sleep(CONNECTOR_PRESENCE_SWEEP_SECONDS)
-        stale_connections = app.state.rpc.expire_stale()
+        stale_connections = await app.state.rpc.expire_stale()
         for connection in stale_connections:
-            await app.state.store.set_connector_status(connection.connector_id, "offline")
             await publish_dashboard_changed(
                 app.state.store,
                 app.state.timeline_broker,
                 connector_id=connection.connector_id,
-                reason="connector.offline",
+                reason="connector.presence",
             )
 
 
-def create_app(db_path: str | Path | None = None) -> FastAPI:
+def create_app(
+    db_path: str | Path | None = None,
+    *,
+    migrate_database: bool | None = None,
+    redis_url: str | None = None,
+) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        await app.state.store.init_schema()
-        await app.state.store.set_all_connectors_offline()
-        presence_task = asyncio.create_task(_connector_presence_watchdog(app))
-        # If the user table is empty, eagerly generate + log the bootstrap
-        # token so the operator sees it on startup. Otherwise stay dormant;
-        # the token instance only generates one when /api/v2/auth/* asks for it.
-        if await app.state.store.count_users() == 0:
-            app.state.setup_token.snapshot()
+        presence_task: asyncio.Task[None] | None = None
         try:
+            await require_current_database(app.state.store.engine)
+            app.state.database_schema_version = await database_schema_version(
+                app.state.store.engine
+            )
+            await app.state.redis.start()
+            await app.state.timeline_broker.start()
+            await app.state.terminal_stream_hub.start()
+            await app.state.terminal_broker.start()
+            await app.state.rpc.start()
+            presence_task = asyncio.create_task(_connector_presence_watchdog(app))
+            # Generate the bootstrap token early so operators see it in logs.
+            if await app.state.store.count_users() == 0:
+                app.state.setup_token.snapshot()
             yield
         finally:
-            presence_task.cancel()
+            if presence_task is not None:
+                presence_task.cancel()
+                try:
+                    await presence_task
+                except asyncio.CancelledError:
+                    pass
             try:
-                await presence_task
-            except asyncio.CancelledError:
-                pass
-            await app.state.store.set_all_connectors_offline()
-            await app.state.store.close()
+                await app.state.rpc.close()
+            finally:
+                try:
+                    await app.state.terminal_broker.close()
+                finally:
+                    try:
+                        await app.state.terminal_stream_hub.close()
+                    finally:
+                        try:
+                            await app.state.timeline_broker.close()
+                        finally:
+                            try:
+                                await app.state.redis.close()
+                            finally:
+                                await app.state.store.close()
 
     app = FastAPI(title="Agent Server", version="0.1.7.2", lifespan=lifespan)
+    app.add_exception_handler(
+        ConnectorServiceError,
+        error_handlers.connector_service_error_handler,
+    )
+    app.add_exception_handler(
+        WorkspaceServiceError,
+        error_handlers.workspace_service_error_handler,
+    )
     cors_origins = os.environ.get("AGENT_SERVER_CORS_ORIGINS")
     app.add_middleware(
         CORSMiddleware,
@@ -95,26 +141,111 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    app.state.store = Store(db_path or os.environ.get("AGENT_SERVER_DB"))
-    app.state.rpc = ConnectorRpcManager()
-    app.state.fs_downloads = FsDownloadRelayManager()
-    app.state.shell_tasks = ShellTaskManager()
-    app.state.terminal_broker = TerminalBroker()
-    app.state.terminal_stream_hub = TerminalStreamHub()
-    app.state.timeline_broker = TimelineBroker()
+    resolved_db_path = db_path or os.environ.get("AGENT_SERVER_DB")
+    should_migrate = (
+        db_path is not None if migrate_database is None else migrate_database
+    )
+    if should_migrate:
+        upgrade_database(sqlite_path=resolved_db_path)
+    app.state.store = Store(resolved_db_path)
+    if app.state.store.backend == "sqlite":
+        logger.warning(
+            "SQLite backend is deprecated for v2; use PostgreSQL for production "
+            "and retain SQLite only for legacy migration or local compatibility"
+        )
+    app.state.database_schema_version = "unknown"
+    resolved_redis_url = redis_url
+    if resolved_redis_url is None and db_path is None:
+        resolved_redis_url = os.environ.get("AGENT_SERVER_REDIS_URL")
+    app.state.redis = RedisCoordinator(
+        resolved_redis_url,
+        prefix=os.environ.get("AGENT_SERVER_REDIS_PREFIX", "agents-anywhere"),
+        connect_timeout_seconds=float(
+            os.environ.get("AGENT_SERVER_REDIS_CONNECT_TIMEOUT", "5")
+        ),
+        health_check_interval_seconds=float(
+            os.environ.get("AGENT_SERVER_REDIS_HEALTH_CHECK_INTERVAL", "30")
+        ),
+    )
+    app.state.rpc = ConnectorRpcManager(
+        app.state.redis,
+        instance_id=os.environ.get("AGENT_SERVER_INSTANCE_ID"),
+    )
+    app.state.fs_downloads = FsDownloadRelayManager(app.state.redis)
+    app.state.shell_tasks = ShellTaskManager(app.state.redis)
+    app.state.terminal_broker = TerminalBroker(
+        app.state.redis,
+        instance_id=app.state.rpc.instance_id,
+    )
+    app.state.terminal_stream_hub = TerminalStreamHub(app.state.redis)
+    app.state.timeline_broker = TimelineBroker(app.state.redis)
     app.state.device_runtime_service = DeviceRuntimeService(
         app.state.store,
         app.state.rpc,
         app.state.timeline_broker,
+        app.state.redis,
     )
-    app.state.ws_tickets = ClientWsTicketManager()
+    app.state.ws_tickets = ClientWsTicketManager(app.state.redis)
     app.state.setup_token = SetupToken()
     app.state.started_at_iso = utc_now()
     app.state.started_at_monotonic = time.monotonic()
 
+    @app.exception_handler(RedisError)
+    async def coordination_unavailable(
+        _request: Request, exc: RedisError
+    ) -> JSONResponse:
+        logger.error("redis coordination unavailable: {}", exc)
+        return JSONResponse(
+            status_code=503,
+            content={
+                "detail": {
+                    "code": "coordination_unavailable",
+                    "message": "Redis coordination is unavailable",
+                }
+            },
+        )
+
     @app.get(f"{API_V2_PREFIX}/health")
+    @app.get(f"{API_V2_PREFIX}/health/live")
     def health() -> dict[str, str]:
         return {"status": "ok", "serverTime": utc_now()}
+
+    @app.get(f"{API_V2_PREFIX}/health/ready")
+    async def readiness() -> JSONResponse:
+        checks: dict[str, dict[str, str]] = {}
+        ready = True
+        try:
+            await asyncio.wait_for(
+                require_current_database(app.state.store.engine), timeout=3
+            )
+            app.state.database_schema_version = await asyncio.wait_for(
+                database_schema_version(app.state.store.engine), timeout=3
+            )
+            checks["database"] = {
+                "status": "ok",
+                "schemaVersion": app.state.database_schema_version,
+            }
+        except Exception as exc:  # readiness must report dependency failures
+            ready = False
+            checks["database"] = {"status": "error", "message": str(exc)}
+        if app.state.redis.distributed:
+            try:
+                await app.state.redis.ping(timeout_seconds=2)
+                checks["redis"] = {"status": "ok"}
+            except Exception as exc:  # readiness must report dependency failures
+                ready = False
+                checks["redis"] = {"status": "error", "message": str(exc)}
+        else:
+            checks["redis"] = {"status": "not_configured"}
+        return JSONResponse(
+            status_code=200 if ready else 503,
+            content={
+                "status": "ready" if ready else "not_ready",
+                "checks": checks,
+                "instanceId": app.state.rpc.instance_id,
+                "serverTime": utc_now(),
+            },
+        )
 
     app.include_router(auth.router, prefix=API_V2_PREFIX)
     app.include_router(admin.router, prefix=API_V2_PREFIX)
@@ -122,6 +253,10 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     app.include_router(service.router, prefix=API_V2_PREFIX)
     app.include_router(oauth.router, prefix=API_V2_PREFIX)
     app.include_router(connectors.router, prefix=API_V2_PREFIX)
+    app.include_router(connector_files.router, prefix=API_V2_PREFIX)
+    app.include_router(connector_runtimes.router, prefix=API_V2_PREFIX)
+    app.include_router(connector_shell.router, prefix=API_V2_PREFIX)
+    app.include_router(connector_terminal.router, prefix=API_V2_PREFIX)
     app.include_router(client_ws.router, prefix=API_V2_PREFIX)
     app.include_router(connector_ingress.router, prefix=API_V2_PREFIX)
     app.include_router(agents.router, prefix=API_V2_PREFIX)
@@ -139,7 +274,11 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         for mount_name in ("_next", "assets", "brand"):
             mount_path = static_path / mount_name
             if mount_path.is_dir():
-                app.mount(f"/{mount_name}", StaticFiles(directory=mount_path), name=f"web-{mount_name}")
+                app.mount(
+                    f"/{mount_name}",
+                    StaticFiles(directory=mount_path),
+                    name=f"web-{mount_name}",
+                )
 
         def _static_index(path: str = "") -> FileResponse:
             relative = path.strip("/")
@@ -154,7 +293,10 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                 if html_candidate.is_file():
                     return FileResponse(html_candidate)
                 default_locale_candidate = static_path / default_locale / relative
-                if default_locale_candidate.is_dir() and (default_locale_candidate / "index.html").is_file():
+                if (
+                    default_locale_candidate.is_dir()
+                    and (default_locale_candidate / "index.html").is_file()
+                ):
                     return FileResponse(default_locale_candidate / "index.html")
 
             default_index = static_path / default_locale / "index.html"
@@ -171,6 +313,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             return _static_index(path)
 
     return app
+
 
 def main() -> None:
     uvicorn.run(

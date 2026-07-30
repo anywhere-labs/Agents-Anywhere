@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from sqlalchemy import (
     Column,
-    ForeignKey,
     Float,
+    ForeignKey,
     Index,
     Integer,
     MetaData,
@@ -23,6 +23,8 @@ connectors = Table(
     Column("name", Text, nullable=False),
     Column("device_os", Text),
     Column("status", Text, nullable=False),
+    Column("presence_instance_id", Text),
+    Column("presence_connection_id", Text),
     Column("last_seen_at", Text),
     Column("token_hash", Text, nullable=False),
     Column("token_prefix", Text, nullable=False),
@@ -39,7 +41,12 @@ connectors = Table(
 device_runtimes = Table(
     "device_runtimes",
     metadata,
-    Column("connector_id", Text, ForeignKey("connectors.id", ondelete="CASCADE"), nullable=False),
+    Column(
+        "connector_id",
+        Text,
+        ForeignKey("connectors.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
     Column("runtime_id", Text, nullable=False),
     Column("runtime_type", Text, nullable=False),
     Column("display_name", Text, nullable=False),
@@ -62,7 +69,12 @@ device_runtimes = Table(
 connector_runtime_catalogs = Table(
     "connector_runtime_catalogs",
     metadata,
-    Column("connector_id", Text, ForeignKey("connectors.id", ondelete="CASCADE"), nullable=False),
+    Column(
+        "connector_id",
+        Text,
+        ForeignKey("connectors.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
     Column("runtime", Text, nullable=False),
     Column("catalog_type", Text, nullable=False),
     Column("revision", Integer, nullable=False),
@@ -75,7 +87,12 @@ connector_runtime_catalogs = Table(
 connector_protocol_capabilities = Table(
     "connector_protocol_capabilities",
     metadata,
-    Column("connector_id", Text, ForeignKey("connectors.id", ondelete="CASCADE"), primary_key=True),
+    Column(
+        "connector_id",
+        Text,
+        ForeignKey("connectors.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
     Column("revision", Integer, nullable=False),
     Column("capabilities_json", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
@@ -172,7 +189,12 @@ fs_preview_tokens = Table(
     metadata,
     Column("token_hash", Text, primary_key=True),
     Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
-    Column("connector_id", Text, ForeignKey("connectors.id", ondelete="CASCADE"), nullable=False),
+    Column(
+        "connector_id",
+        Text,
+        ForeignKey("connectors.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
     Column("root", Text, nullable=False),
     Column("path", Text, nullable=False),
     Column("expires_at", Text, nullable=False),
@@ -184,7 +206,12 @@ fs_preview_tokens = Table(
 connector_terminal_roots = Table(
     "connector_terminal_roots",
     metadata,
-    Column("connector_id", Text, ForeignKey("connectors.id", ondelete="CASCADE"), nullable=False),
+    Column(
+        "connector_id",
+        Text,
+        ForeignKey("connectors.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
     Column("terminal_id", Text, nullable=False),
     Column("session_id", Text, nullable=False),
     Column("root", Text, nullable=False),
@@ -202,6 +229,17 @@ instance_settings = Table(
     Column("key", Text, primary_key=True),
     Column("value", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
+)
+
+
+legacy_import_archive = Table(
+    "legacy_import_archive",
+    metadata,
+    Column("source_table", Text, nullable=False),
+    Column("row_key", Text, nullable=False),
+    Column("payload_json", Text, nullable=False),
+    Column("archived_at", Text, nullable=False),
+    PrimaryKeyConstraint("source_table", "row_key"),
 )
 
 
@@ -237,7 +275,12 @@ sessions = Table(
 session_active_runs = Table(
     "session_active_runs",
     metadata,
-    Column("session_id", Text, ForeignKey("sessions.id", ondelete="CASCADE"), primary_key=True),
+    Column(
+        "session_id",
+        Text,
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
     Column("runtime", Text, nullable=False),
     Column("external_session_id", Text),
     Column("turn_id", Text),
@@ -251,7 +294,12 @@ session_active_runs = Table(
 timeline_items = Table(
     "timeline_items",
     metadata,
-    Column("session_id", Text, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False),
+    Column(
+        "session_id",
+        Text,
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
     Column("id", Text, nullable=False),
     Column("type", Text, nullable=False),
     Column("status", Text, nullable=False),
@@ -317,7 +365,12 @@ approvals = Table(
     "approvals",
     metadata,
     Column("id", Text, primary_key=True),
-    Column("session_id", Text, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False),
+    Column(
+        "session_id",
+        Text,
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
     Column("turn_id", Text),
     Column("status", Text, nullable=False),
     Column("kind", Text, nullable=False),
@@ -337,7 +390,12 @@ notices = Table(
     "notices",
     metadata,
     Column("id", Text, primary_key=True),
-    Column("session_id", Text, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False),
+    Column(
+        "session_id",
+        Text,
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
     Column("type", Text, nullable=False),
     Column("status", Text, nullable=False),
     Column("interaction_type", Text),
