@@ -27,6 +27,7 @@ from agent_server.api import (
     connector_shell,
     connector_terminal,
     connectors,
+    error_handlers,
     oauth,
     pairing,
     service,
@@ -50,9 +51,11 @@ from agent_server.infra.terminal_broker import TerminalBroker
 from agent_server.infra.terminal_stream_hub import TerminalStreamHub
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.infra.ws_tickets import ClientWsTicketManager
+from agent_server.services.connector_rpc import ConnectorServiceError
 from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.device_runtimes import DeviceRuntimeService
 from agent_server.services.shell_tasks import ShellTaskManager
+from agent_server.services.workspace import WorkspaceServiceError
 
 CONNECTOR_PRESENCE_SWEEP_SECONDS = 5
 
@@ -119,6 +122,14 @@ def create_app(
                                 await app.state.store.close()
 
     app = FastAPI(title="Agent Server", version="0.1.7.2", lifespan=lifespan)
+    app.add_exception_handler(
+        ConnectorServiceError,
+        error_handlers.connector_service_error_handler,
+    )
+    app.add_exception_handler(
+        WorkspaceServiceError,
+        error_handlers.workspace_service_error_handler,
+    )
     cors_origins = os.environ.get("AGENT_SERVER_CORS_ORIGINS")
     app.add_middleware(
         CORSMiddleware,

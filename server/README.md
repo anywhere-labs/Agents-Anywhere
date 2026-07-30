@@ -8,10 +8,10 @@ brokering, and connector RPC dispatch.
 
 ```text
 agent_server/
-  api/          FastAPI route modules
-  core/         Shared domain helpers and auth/setup primitives
-  infra/        Database, file storage, connector RPC, timeline, terminal broker
-  services/     Session, shell, and terminal workflows
+  api/          FastAPI HTTP/WebSocket transport and error mapping
+  core/         API-neutral domain values, models, and validation
+  infra/        PostgreSQL/Redis/file adapters and runtime brokers
+  services/     Use cases, application errors, and dependency ports
   app.py        FastAPI app factory and local uvicorn entry helper
 tests/          Backend tests
 pyproject.toml  Server dependencies
@@ -87,7 +87,7 @@ curl http://127.0.0.1:8000/api/v2/health/ready
 | `AGENT_SERVER_DB_POOL_TIMEOUT` | Seconds to wait for a PostgreSQL pool checkout. Defaults to `30`. |
 | `AGENT_SERVER_DB_POOL_RECYCLE` | PostgreSQL connection recycle interval in seconds. Defaults to `1800`. |
 | `AGENT_SERVER_MIGRATION_LOCK_TIMEOUT` | Seconds a migrator waits for the PostgreSQL advisory lock. Defaults to `120`. |
-| `AGENT_SERVER_REDIS_URL` | Optional Redis URL for Connector presence/RPC routing, cross-instance invalidations, single-use WebSocket tickets, and distributed runtime locks. |
+| `AGENT_SERVER_REDIS_URL` | Redis URL for production/distributed Connector presence, RPC routing, invalidations, single-use WebSocket tickets, and distributed locks. When unset, only the single-process development fallback is available. |
 | `AGENT_SERVER_REDIS_PREFIX` | Redis key/channel prefix. Defaults to `agents-anywhere`. |
 | `AGENT_SERVER_REDIS_CONNECT_TIMEOUT` | Redis connection timeout in seconds. Defaults to `5`. |
 | `AGENT_SERVER_REDIS_HEALTH_CHECK_INTERVAL` | Redis connection health-check interval in seconds. Defaults to `30`. |
@@ -113,6 +113,9 @@ remain in the database; Redis Pub/Sub only tells instances to re-fetch them.
 The Compose Redis service disables both RDB snapshots and AOF persistence.
 It also caps memory at `REDIS_MAXMEMORY` (default `256mb`) and uses
 `volatile-lru`; all coordination keys that retain data have finite TTLs.
+
+See `../docs/server-architecture.md` for layer boundaries, state ownership, and
+database versioning rules.
 
 ## Main API Areas
 
