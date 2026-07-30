@@ -68,6 +68,9 @@ class CodexIpcStateRegistry:
     def reset(self) -> None:
         self._states.clear()
 
+    def discard(self, conversation_id: str) -> None:
+        self._states.pop(conversation_id, None)
+
     def remove_owner(self, client_id: str) -> list[str]:
         removed = [
             conversation_id

@@ -13,7 +13,10 @@ from connector.codex.adapter import (
     stable_session_id,
 )
 from connector.codex.history import read_timeline_history, read_tool_history
-from connector.codex.ipc_protocol import CodexIpcStreamStateChangedBroadcast
+from connector.codex.ipc_protocol import (
+    CodexIpcFollowingChangedBroadcast,
+    CodexIpcStreamStateChangedBroadcast,
+)
 from connector.codex.reducer import TimelineReducer
 from connector.codex.rpc import APP_SERVER_STREAM_LIMIT, JsonRpcStdioClient
 from connector.protocol import protocol_selection_id
@@ -1251,6 +1254,10 @@ def test_adapter_reduces_ipc_snapshot_and_token_patch() -> None:
     asyncio.run(_exercise_ipc_snapshot_and_patch())
 
 
+def test_adapter_publishes_local_app_server_state_to_ipc_followers() -> None:
+    asyncio.run(_exercise_ipc_local_owner_projection())
+
+
 def test_reducer_ipc_item_indexes_use_unfiltered_turn_positions() -> None:
     reducer = TimelineReducer()
     reducer.bind_session("sess_1", "thr_1")
@@ -1471,6 +1478,92 @@ async def _exercise_ipc_snapshot_and_patch() -> None:
     await ipc_client.message_handler(gap)
     assert notifications == []
     assert len(ipc_client.broadcasts) == following_before + 1
+
+
+async def _exercise_ipc_local_owner_projection() -> None:
+    rpc = FakeCodexRpc()
+    ipc_client = FakeCodexIpcClient()
+    notifications: list[tuple[str, dict[str, Any]]] = []
+
+    async def sink(method: str, params: dict[str, Any]) -> None:
+        notifications.append((method, params))
+
+    adapter = CodexAdapter(  # type: ignore[arg-type]
+        rpc=rpc,
+        ipc_client=ipc_client,
+        notification_sink=sink,
+    )
+    await adapter.sync_session({"sessionId": "sess_1", "externalSessionId": "thr_1"})
+    assert ipc_client.message_handler is not None
+    await ipc_client.message_handler(
+        CodexIpcFollowingChangedBroadcast.model_validate(
+            {
+                "sourceClientId": "ide_follower",
+                "params": {
+                    "conversationId": "thr_1",
+                    "following": True,
+                },
+            }
+        )
+    )
+    broadcasts_before = len(ipc_client.broadcasts)
+
+    await adapter.handle_notification(
+        {
+            "method": "item/agentMessage/delta",
+            "params": {
+                "threadId": "thr_1",
+                "turnId": "turn_1",
+                "itemId": "item_2",
+                "delta": "!",
+            },
+        }
+    )
+
+    owner_broadcasts = ipc_client.broadcasts[broadcasts_before:]
+    assert owner_broadcasts[0][0] == "thread-stream-following-changed"
+    assert owner_broadcasts[0][1]["following"] is False
+    assert owner_broadcasts[1][0] == "thread-stream-state-changed"
+    assert owner_broadcasts[1][2]["target_client_ids"] == ["ide_follower"]
+    first_change = owner_broadcasts[1][1]["change"]
+    assert first_change["type"] == "snapshot"
+    assert first_change["revision"] == 1
+
+    await adapter.handle_notification(
+        {
+            "method": "item/agentMessage/delta",
+            "params": {
+                "threadId": "thr_1",
+                "turnId": "turn_1",
+                "itemId": "item_2",
+                "delta": "?",
+            },
+        }
+    )
+    second_change = ipc_client.broadcasts[-1][1]["change"]
+    assert second_change["type"] == "patches"
+    assert (second_change["baseRevision"], second_change["revision"]) == (1, 2)
+    assert second_change["patches"][0]["value"] == "hi!?"
+
+    notifications.clear()
+    remote_snapshot = CodexIpcStreamStateChangedBroadcast.model_validate(
+        {
+            "sourceClientId": "other_owner",
+            "params": {
+                "conversationId": "thr_1",
+                "change": {
+                    "type": "snapshot",
+                    "revision": 9,
+                    "conversationState": {
+                        "id": "thr_1",
+                        "turns": [],
+                    },
+                },
+            },
+        }
+    )
+    await ipc_client.message_handler(remote_snapshot)
+    assert notifications == []
 
 
 async def _exercise_persisted_existing_thread_sync(tmp_path) -> None:

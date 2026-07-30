@@ -195,9 +195,10 @@ Recommended implementation sequence:
 
 ## Publishing local app-server state
 
-The Connector's app-server is authoritative for threads it starts or resumes
-locally. Those threads must be visible to Codex IDE/App clients through the IPC
-router even though the Connector is not the router.
+The Connector's app-server is authoritative for threads it creates or actively
+drives locally. Merely loading or resuming a thread for synchronization does
+not claim ownership. Locally owned threads must be visible to Codex IDE/App
+clients through the IPC router even though the Connector is not the router.
 
 The outbound flow is:
 
@@ -219,6 +220,21 @@ This is state replication, not raw event forwarding. App-server notification
 names and payloads are not valid IPC methods, so they must first update the
 canonical state. This also gives late followers a complete snapshot and keeps
 token text replacement semantics consistent with Codex App and IDE.
+
+The Connector keeps a state loaded by ordinary sync inactive until it creates
+the thread, starts a turn, or observes a local app-server event for that thread.
+This prevents a passive `thread/read` from competing with an existing Codex App
+owner. Activation explicitly sends `following=false`, discards any remote
+mirror for that conversation, and sends a snapshot to waiting followers.
+
+The local projector currently emits incremental patches for thread names, turn
+start/completion, item start/completion, agent-message text, command output,
+and turn diffs. Agent-message and command-output deltas are accumulated into
+full-field replacements. An event that is not safely projectable activates the
+owner with its current snapshot and schedules an asynchronous `thread/read`;
+the refreshed canonical state is then sent as a new snapshot if it changed.
+The refresh runs outside the app-server notification callback so JSON-RPC
+responses are not blocked behind that callback.
 
 ## Control requests
 

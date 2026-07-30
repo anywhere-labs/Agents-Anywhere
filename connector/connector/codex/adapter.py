@@ -13,10 +13,12 @@ from pydantic import ValidationError
 
 from connector.attachments import attachment_target
 from connector.codex.ipc_client import CodexIpcClient
+from connector.codex.ipc_publisher import CodexIpcPublisher
 from connector.codex.ipc_protocol import (
     CodexIpcBroadcast,
     CodexIpcClientStatusChangedBroadcast,
     CodexIpcConnectionResetBroadcast,
+    CodexIpcFollowingChangedBroadcast,
     CodexIpcFollowingStatusRequestedBroadcast,
     CodexIpcRouterMessage,
     CodexIpcStreamStateChangedBroadcast,
@@ -198,6 +200,8 @@ class CodexAdapter:
     )
     _ipc_followed_by_client: dict[str, str] = field(default_factory=dict)
     _ipc_connection_client_id: str | None = None
+    _ipc_publisher: CodexIpcPublisher = field(init=False, repr=False)
+    _ipc_refresh_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict)
     _start_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -205,6 +209,7 @@ class CodexAdapter:
             self.rpc = JsonRpcStdioClient()
         if self.reducer is None:
             self.reducer = TimelineReducer()
+        self._ipc_publisher = CodexIpcPublisher(self.ipc_client)
         if self.ipc_client is not None:
             self.ipc_client.set_message_handler(self.handle_ipc_message)
 
@@ -232,8 +237,12 @@ class CodexAdapter:
             self._started = True
 
     async def stop(self) -> None:
-        tasks = list(self._history_sync_tasks.values())
+        tasks = [
+            *self._history_sync_tasks.values(),
+            *self._ipc_refresh_tasks.values(),
+        ]
         self._history_sync_tasks.clear()
+        self._ipc_refresh_tasks.clear()
         for task in tasks:
             task.cancel()
         if tasks:
@@ -245,6 +254,7 @@ class CodexAdapter:
         self._ipc_state_registry.reset()
         self._ipc_followed_by_client.clear()
         self._ipc_connection_client_id = None
+        self._ipc_publisher.reset()
         self._started = False
         self._model_list_result = None
 
@@ -273,6 +283,13 @@ class CodexAdapter:
         if thread_id is None:
             raise RuntimeError(f"Codex thread/start did not return a thread id: {json.dumps(result, ensure_ascii=False)}")
         self._loaded_thread_ids.add(thread_id)
+        thread = result.get("thread") if isinstance(result.get("thread"), dict) else result
+        if isinstance(thread, dict):
+            await self._ipc_publisher.load_thread(
+                thread,
+                fallback_thread_id=thread_id,
+                activate=True,
+            )
         session_id = params.get("sessionId")
         connector_id = params.get("connectorId")
         if not isinstance(session_id, str) and isinstance(connector_id, str):
@@ -552,11 +569,15 @@ class CodexAdapter:
         if client_id != self._ipc_connection_client_id:
             self._ipc_state_registry.reset()
             self._ipc_followed_by_client.clear()
+            self._ipc_publisher.reset_connection()
             self._ipc_connection_client_id = client_id
         return connected
 
     async def _follow_ipc_thread(self, thread_id: str, *, force: bool = False) -> bool:
         if self.ipc_client is None or not self.ipc_client.is_connected:
+            return False
+        if self._ipc_publisher.is_active(thread_id):
+            await self._stop_following_ipc_thread(thread_id)
             return False
         client_id = self.ipc_client.client_id
         if client_id is None:
@@ -576,10 +597,42 @@ class CodexAdapter:
             self._ipc_followed_by_client.pop(thread_id, None)
         return sent
 
+    async def _stop_following_ipc_thread(self, thread_id: str) -> None:
+        client_id = self._ipc_followed_by_client.pop(thread_id, None)
+        self._ipc_state_registry.discard(thread_id)
+        if (
+            client_id is None
+            or self.ipc_client is None
+            or not self.ipc_client.is_connected
+        ):
+            return
+        await self.ipc_client.send_broadcast(
+            "thread-stream-following-changed",
+            {
+                "conversationId": thread_id,
+                "hostId": "local",
+                "following": False,
+            },
+        )
+
     async def handle_ipc_message(self, message: CodexIpcRouterMessage) -> None:
         if not isinstance(message, CodexIpcBroadcast):
             return
         if message.sourceClientId == self._ipc_connection_client_id:
+            return
+
+        if message.method == "thread-stream-following-changed":
+            try:
+                following = CodexIpcFollowingChangedBroadcast.model_validate(
+                    message.model_dump()
+                )
+            except ValidationError as exc:
+                logger.warning(
+                    "ignoring invalid codex IPC following update validation_errors={}",
+                    exc.error_count(),
+                )
+                return
+            await self._ipc_publisher.handle_following(following)
             return
 
         if message.method == "ipc-connection-reset":
@@ -594,6 +647,7 @@ class CodexAdapter:
             followed_threads = list(self._ipc_followed_by_client)
             self._ipc_state_registry.reset()
             self._ipc_followed_by_client.clear()
+            self._ipc_publisher.reset_connection()
             for thread_id in followed_threads:
                 await self._follow_ipc_thread(thread_id, force=True)
             return
@@ -623,6 +677,7 @@ class CodexAdapter:
                 return
             if status.params.status == "disconnected":
                 self._ipc_state_registry.remove_owner(status.params.clientId)
+                self._ipc_publisher.remove_follower(status.params.clientId)
             return
 
         if message.method != "thread-stream-state-changed":
@@ -650,6 +705,13 @@ class CodexAdapter:
                 type(exc).__name__,
             )
             await self._follow_ipc_thread(thread_id, force=True)
+            return
+        if (
+            self._ipc_followed_by_client.get(thread_id)
+            != self._ipc_connection_client_id
+            or self._ipc_publisher.is_active(thread_id)
+        ):
+            self._ipc_state_registry.discard(thread_id)
             return
         await self._emit_ipc_state(applied)
 
@@ -834,6 +896,8 @@ class CodexAdapter:
                     attachments=timeline_attachments,
                 )
             result = await self.rpc.request("turn/start", turn_params)
+        await self._stop_following_ipc_thread(thread_id)
+        await self._ipc_publisher.activate(thread_id)
         turn_id = _turn_id_from_result(result)
         if client_message_id and turn_id:
             self.reducer.register_client_message(
@@ -961,6 +1025,12 @@ class CodexAdapter:
     async def handle_notification(self, message: dict[str, Any]) -> None:
         assert self.reducer is not None
         reduced = self.reducer.reduce_notification(message)
+        thread_id = _thread_id_from_turn_message(message)
+        if thread_id is not None:
+            await self._stop_following_ipc_thread(thread_id)
+        projected_to_ipc = await self._ipc_publisher.handle_notification(message)
+        if not projected_to_ipc:
+            self._schedule_ipc_snapshot_refresh(message)
         self._schedule_history_sync_after_turn_completion(message)
         if message.get("method") == "turn/completed":
             session_id = _session_id_from_reduction(reduced)
@@ -1113,11 +1183,59 @@ class CodexAdapter:
         thread = snapshot_result.get("thread") if isinstance(snapshot_result.get("thread"), dict) else snapshot_result
         if not isinstance(thread, dict):
             thread = {}
+        await self._ipc_publisher.load_thread(
+            thread,
+            fallback_thread_id=thread_id,
+        )
         return self.reducer.reduce_thread_snapshot(
             session_id,
             thread,
             fallback_thread_id=thread_id,
         ), thread
+
+    def _schedule_ipc_snapshot_refresh(self, message: dict[str, Any]) -> None:
+        params = message.get("params") if isinstance(message.get("params"), dict) else {}
+        thread_id = _optional_string(params.get("threadId")) or _nested_string(
+            params, "thread", "id"
+        )
+        if thread_id is None:
+            return
+        old_task = self._ipc_refresh_tasks.get(thread_id)
+        if old_task is not None and not old_task.done():
+            old_task.cancel()
+        self._ipc_refresh_tasks[thread_id] = asyncio.create_task(
+            self._delayed_refresh_ipc_snapshot(thread_id)
+        )
+
+    async def _delayed_refresh_ipc_snapshot(self, thread_id: str) -> None:
+        try:
+            await asyncio.sleep(0.05)
+            assert self.rpc is not None
+            snapshot_result = await self.rpc.request(
+                "thread/read",
+                {"threadId": thread_id, "includeTurns": True},
+            )
+            thread = (
+                snapshot_result.get("thread")
+                if isinstance(snapshot_result.get("thread"), dict)
+                else snapshot_result
+            )
+            if isinstance(thread, dict):
+                await self._ipc_publisher.load_thread(
+                    thread,
+                    fallback_thread_id=thread_id,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "codex IPC owner snapshot refresh failed thread_id={}",
+                thread_id,
+            )
+        finally:
+            current = self._ipc_refresh_tasks.get(thread_id)
+            if current is asyncio.current_task():
+                self._ipc_refresh_tasks.pop(thread_id, None)
 
     def _schedule_history_sync_after_turn_completion(self, message: dict[str, Any]) -> None:
         if message.get("method") != "turn/completed":
