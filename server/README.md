@@ -26,24 +26,44 @@ Install dependencies:
 uv sync
 ```
 
-Start the backend from this directory:
+PostgreSQL is the v2 runtime database. Start the backend from this directory
+after provisioning PostgreSQL and Redis:
 
 ```bash
-AGENT_SERVER_DB=agent-server.sqlite3 \
+AGENT_SERVER_DB_URL=postgresql+asyncpg://agents:password@127.0.0.1:5432/agents_anywhere \
   uv run python -m agent_server.infra.db.migrations upgrade
 
-AGENT_SERVER_DB=agent-server.sqlite3 \
+AGENT_SERVER_DB_URL=postgresql+asyncpg://agents:password@127.0.0.1:5432/agents_anywhere \
+AGENT_SERVER_REDIS_URL=redis://127.0.0.1:6379/0 \
   uv run uvicorn agent_server.app:create_app --factory --host 127.0.0.1 --port 8000
 ```
+
+SQLite startup remains available only for legacy v1 migration and local
+compatibility while that backend is being deprecated.
 
 The Server requires the database to be at its exact Alembic schema revision and
 does not mutate a production database during startup. `upgrade` fingerprints an
 unversioned v1 database, preserves its legacy tables, and applies every revision
-through the current schema (`v2_1`). Inspect the installed revision with:
+through the current schema (`v2_2`). Inspect the installed revision with:
 
 ```bash
 uv run python -m agent_server.infra.db.migrations current --verbose
 ```
+
+Rehearse a v1 SQLite migration against a disposable, empty PostgreSQL database:
+
+```bash
+uv run python -m agent_server.infra.db.migrations rehearse-v1 \
+  --source-sqlite /path/to/v1.sqlite3 \
+  --target-url postgresql+asyncpg://agents:password@127.0.0.1:5432/agents_rehearsal \
+  --report migration-report.json
+```
+
+The source is opened read-only and copied with SQLite's backup API. Only the
+copy is upgraded. The PostgreSQL target must contain no product rows; the tool
+imports in one transaction and verifies every table by row count and SHA-256.
+Legacy-only rows and legacy JSON columns are retained in
+`legacy_import_archive`.
 
 The first startup on an empty database logs a bootstrap token. Use that token in
 the web UI to create the first admin user.
@@ -52,6 +72,7 @@ Health check:
 
 ```bash
 curl http://127.0.0.1:8000/api/v2/health
+curl http://127.0.0.1:8000/api/v2/health/ready
 ```
 
 ## Environment

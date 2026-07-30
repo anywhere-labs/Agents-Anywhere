@@ -8,6 +8,7 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from agent_server.infra.db.engine import build_engine
+from agent_server.infra.db.legacy_import import rehearse_v1_import
 from agent_server.infra.db.migrations import (
     CURRENT_SCHEMA_REVISION,
     DatabaseMigrationError,
@@ -96,7 +97,37 @@ def test_unversioned_v1_database_migrates_data_without_dropping_legacy_tables(
         assert (
             json.loads(runtime["discovery_json"])["selected"] == "/usr/local/bin/codex"
         )
-        assert json.loads(runtime["config_json"]) == {}
+        assert json.loads(runtime["config_json"]) == {
+            "model": "gpt-5.4",
+            "permissionMode": "ask",
+        }
+        with engine.connect() as connection:
+            selections = (
+                connection.execute(
+                    text(
+                        "SELECT model_selection_id, permission_selection_id "
+                        "FROM sessions WHERE id = 'sess_legacy'"
+                    )
+                )
+                .mappings()
+                .one()
+            )
+        assert selections == {
+            "model_selection_id": "gpt-5.4",
+            "permission_selection_id": "ask",
+        }
+        with engine.connect() as connection:
+            archived_sources = set(
+                connection.execute(
+                    text("SELECT source_table FROM legacy_import_archive")
+                ).scalars()
+            )
+        assert archived_sources == {
+            "agent_modes",
+            "connectors.runtime_capabilities",
+            "device_agent_settings",
+            "sessions.runtime_settings_override",
+        }
     finally:
         engine.dispose()
 
@@ -135,7 +166,7 @@ def test_unversioned_v2_database_is_stamped_without_rebuilding(tmp_path) -> None
         engine.dispose()
 
 
-def test_v2_0_database_upgrades_through_v2_1(tmp_path) -> None:
+def test_v2_0_database_upgrades_through_current_revision(tmp_path) -> None:
     path = tmp_path / "versioned-v2-0.sqlite3"
     upgrade_database(db_url=_sqlite_url(path), revision="v2_0")
 
@@ -214,6 +245,17 @@ def test_invalid_migration_lock_timeout_is_rejected(tmp_path, monkeypatch) -> No
         upgrade_database(db_url=_sqlite_url(tmp_path / "invalid-lock.sqlite3"))
 
 
+def test_v1_rehearsal_requires_postgres_target(tmp_path) -> None:
+    source = tmp_path / "legacy.sqlite3"
+    _create_legacy_v1_database(source)
+
+    with pytest.raises(DatabaseMigrationError, match="must be a PostgreSQL"):
+        rehearse_v1_import(
+            source_sqlite=source,
+            target_url=_sqlite_url(tmp_path / "target.sqlite3"),
+        )
+
+
 def _create_legacy_v1_database(path) -> None:
     engine = create_engine(f"sqlite:///{path}")
     metadata.create_all(engine)
@@ -245,6 +287,12 @@ def _create_legacy_v1_database(path) -> None:
                 "schema_version INTEGER NOT NULL, updated_at TEXT NOT NULL, "
                 "PRIMARY KEY (connector_id, runtime))"
             )
+        )
+        connection.execute(
+            text("CREATE TABLE agent_modes (id TEXT PRIMARY KEY, label TEXT NOT NULL)")
+        )
+        connection.execute(
+            text("INSERT INTO agent_modes (id, label) VALUES ('mode_legacy', 'Legacy')")
         )
         connection.execute(
             text(

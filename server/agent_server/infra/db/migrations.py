@@ -22,8 +22,8 @@ from agent_server.infra.db.engine import POSTGRES_BACKEND, resolve_db_url
 
 LEGACY_V1_REVISION = "v1_legacy"
 BASELINE_V2_REVISION = "v2_0"
-CURRENT_SCHEMA_REVISION = "v2_1"
-CURRENT_SCHEMA_VERSION = "2.1"
+CURRENT_SCHEMA_REVISION = "v2_2"
+CURRENT_SCHEMA_VERSION = "2.2"
 POSTGRES_MIGRATION_LOCK_ID = 0x414147454E545332
 DEFAULT_MIGRATION_LOCK_TIMEOUT_SECONDS = 120.0
 
@@ -60,9 +60,9 @@ def _upgrade_database(
     revision: str,
 ) -> None:
     backend, resolved_url = resolve_db_url(url=db_url, sqlite_path=sqlite_path)
-    timeout = _migration_lock_timeout()
+    timeout = migration_lock_timeout()
     with _migration_lock(backend, resolved_url, timeout_seconds=timeout):
-        state = asyncio.run(_classify_database(resolved_url))
+        state = asyncio.run(classify_database(resolved_url))
         config = _alembic_config(resolved_url)
         if state.kind == "v1":
             command.stamp(config, LEGACY_V1_REVISION)
@@ -83,7 +83,7 @@ def _migration_lock(
     timeout_seconds: float,
 ) -> Iterator[None]:
     if backend == POSTGRES_BACKEND:
-        with _postgres_migration_lock(db_url, timeout_seconds=timeout_seconds):
+        with postgres_migration_lock(db_url, timeout_seconds=timeout_seconds):
             yield
         return
     with nullcontext():
@@ -91,7 +91,7 @@ def _migration_lock(
 
 
 @contextmanager
-def _postgres_migration_lock(
+def postgres_migration_lock(
     db_url: str,
     *,
     timeout_seconds: float,
@@ -162,7 +162,7 @@ def _postgres_migration_lock(
             raise errors[0]
 
 
-def _migration_lock_timeout() -> float:
+def migration_lock_timeout() -> float:
     raw = os.environ.get("AGENT_SERVER_MIGRATION_LOCK_TIMEOUT", "120")
     try:
         timeout = float(raw)
@@ -247,7 +247,7 @@ def _alembic_config(db_url: str) -> Config:
     return config
 
 
-async def _classify_database(db_url: str) -> UnversionedDatabase:
+async def classify_database(db_url: str) -> UnversionedDatabase:
     engine = create_async_engine(db_url)
     try:
         async with engine.connect() as connection:
@@ -315,6 +315,13 @@ def main() -> None:
         "current", help="print the current database schema version"
     )
     current_parser.add_argument("--verbose", action="store_true")
+    rehearsal_parser = subparsers.add_parser(
+        "rehearse-v1",
+        help="copy a legacy v1 SQLite database into an empty PostgreSQL v2 database",
+    )
+    rehearsal_parser.add_argument("--source-sqlite", required=True)
+    rehearsal_parser.add_argument("--target-url", required=True)
+    rehearsal_parser.add_argument("--report")
     args = parser.parse_args()
 
     if args.command == "upgrade":
@@ -324,8 +331,24 @@ def main() -> None:
         )
         return
 
+    if args.command == "rehearse-v1":
+        from agent_server.infra.db.legacy_import import rehearse_v1_import
+
+        try:
+            report = rehearse_v1_import(
+                source_sqlite=Path(args.source_sqlite),
+                target_url=args.target_url,
+            )
+        except DatabaseMigrationError as exc:
+            raise SystemExit(f"migration rehearsal failed: {exc}") from exc
+        rendered = report.to_json()
+        if args.report:
+            Path(args.report).write_text(rendered + "\n", encoding="utf-8")
+        print(rendered)
+        return
+
     _, db_url = resolve_db_url()
-    state = asyncio.run(_classify_database(db_url))
+    state = asyncio.run(classify_database(db_url))
     revision = state.revision if state.kind == "versioned" else None
     if args.verbose:
         print(
