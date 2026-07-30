@@ -324,7 +324,6 @@ export type SessionSnapshotResponse = Pick<
 > & {
   session: SessionView;
   timeline: SessionTimelineSnapshot;
-  approvals: Approval[];
   notices: Notice[];
   effectiveCapabilities: ProtocolCapabilitySet;
   runtimeCapabilities: ProtocolCapabilitySet;

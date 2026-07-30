@@ -1975,6 +1975,71 @@ def test_notice_upsert_ingest_projects_notification_to_snapshot(tmp_path):
     assert notices[0]["metadata"]["category"] == "compact"
 
 
+def test_notice_upsert_projects_open_interaction_through_application_service(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    notice = {
+        "noticeId": "interaction_input_1",
+        "type": "interaction",
+        "sessionId": session_id,
+        "source": {"runtime": "codex", "adapter": "codex"},
+        "title": "Input required",
+        "status": "open",
+        "interactionType": "input_request",
+        "responseRequired": True,
+        "actions": [{"actionId": "submit", "label": "Submit"}],
+    }
+
+    ingest = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={"notifications": [{"method": "notice.upsert", "params": notice}]},
+    )
+    assert ingest.status_code == 200, ingest.text
+
+    response = client.post(
+        f"/sessions/{session_id}/interactions/interaction_input_1/respond",
+        headers=headers,
+        json={"actionId": "submit", "input": {"value": "confirmed"}},
+    )
+
+    assert response.status_code == 200, response.text
+    stored = asyncio.run(client.app.state.store.get_notice("interaction_input_1"))
+    assert stored.status == "resolved"
+    assert stored.context["response"] == {
+        "actionId": "submit",
+        "input": {"value": "confirmed"},
+    }
+
+
+def test_notice_upsert_rejects_interaction_terminal_state_from_connector(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, _ = create_connector_and_session(client)
+
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "notice.upsert",
+                    "params": {
+                        "noticeId": "interaction_resolved_1",
+                        "type": "interaction",
+                        "sessionId": session_id,
+                        "title": "Already resolved",
+                        "status": "resolved",
+                        "interactionType": "confirmation",
+                    },
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 400, response.text
+    assert response.json()["detail"]["code"] == "invalid_interaction"
+
+
 def test_session_snapshot_includes_effective_capabilities(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, session_id, headers = create_connector_and_session(client)
@@ -4950,6 +5015,67 @@ def test_approval_interaction_expires_when_runtime_no_longer_accepts_response(tm
     assert approval.status == "expired"
     notice = asyncio.run(client.app.state.store.get_notice(notice_id))
     assert notice.status == "expired"
+    assert notice.context["approvalStatus"] == "expired"
+    assert notice.context["closedReason"] == "runtime_no_longer_accepts_response"
+
+
+def test_failed_approval_interaction_can_retry(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    ingest_pending_command_approval(client, access_token, session_id)
+    rpc = FakeApprovalRpc(fail=True)
+    client.app.state.rpc = rpc
+    notice_id = interaction_notice_id(client, session_id, headers, "approval")
+
+    failed = client.post(
+        f"/sessions/{session_id}/interactions/{notice_id}/respond",
+        headers=headers,
+        json={"actionId": "approve"},
+    )
+
+    assert failed.status_code == 502, failed.text
+    notice = asyncio.run(client.app.state.store.get_notice(notice_id))
+    assert notice.status == "failed"
+    assert notice.resolvedAt is None
+    assert notice.context["response"] == {"actionId": "approve", "input": {}}
+
+    rpc.fail = False
+    resolved = client.post(
+        f"/sessions/{session_id}/interactions/{notice_id}/respond",
+        headers=headers,
+        json={"actionId": "approve"},
+    )
+
+    assert resolved.status_code == 200, resolved.text
+    notice = asyncio.run(client.app.state.store.get_notice(notice_id))
+    assert notice.status == "resolved"
+    assert notice.resolvedAt is not None
+
+
+def test_interaction_status_compare_and_set_rejects_stale_transition(tmp_path):
+    client = make_client(tmp_path)
+    _, _, session_id, _ = create_connector_and_session(client)
+    notice = asyncio.run(
+        upsert_execution_error_interaction(
+            client.app.state.store,
+            session_id=session_id,
+            error={"code": "runtime_error", "message": "boom"},
+        )
+    )
+    sequence_before = asyncio.run(client.app.state.store.get_session_seq(session_id))
+
+    with pytest.raises(ValueError, match="interaction status changed"):
+        asyncio.run(
+            client.app.state.store.update_notice_status(
+                notice.noticeId,
+                "resolved",
+                expected_status="failed",
+            )
+        )
+
+    current = asyncio.run(client.app.state.store.get_notice(notice.noticeId))
+    assert current.status == "open"
+    assert asyncio.run(client.app.state.store.get_session_seq(session_id)) == sequence_before
 
 
 def test_session_stays_blocked_until_all_blocking_interactions_resolve(tmp_path):

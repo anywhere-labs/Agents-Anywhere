@@ -4,6 +4,7 @@ import hashlib
 import json
 from typing import Any
 
+from agent_server.core.interactions import require_interaction_transition
 from agent_server.core.models import (
     Approval,
     Notice,
@@ -23,52 +24,32 @@ def stable_notice_id(kind: str, *values: Any) -> str:
     return f"notice_{kind}_{digest}"
 
 
-async def upsert_approval_interaction(db: NoticeRepository, approval: Approval) -> Notice:
-    return await db.upsert_notice(
-        NoticeIn(
-            noticeId=stable_notice_id("approval", approval.id),
-            type="interaction",
-            sessionId=approval.sessionId,
-            source=NoticeSource(
-                runtime=approval.source.runtime,
-                approvalId=approval.id,
-                timelineItemId=approval.targetItemId,
-            ),
-            title=approval.title,
-            message=approval.description,
-            severity="warning",
-            status="open",
-            interactionType="approval",
-            blocking=NoticeBlocking(scope="session", targetId=approval.sessionId),
-            responseRequired=True,
-            actions=_approval_actions(approval),
-            context={
-                "approvalId": approval.id,
-                "turnId": approval.turnId,
-                "kind": approval.kind,
-                "payload": approval.payload,
-                "choices": approval.choices,
-            },
-        )
+def approval_interaction_notice(approval: Approval) -> NoticeIn:
+    return NoticeIn(
+        noticeId=stable_notice_id("approval", approval.id),
+        type="interaction",
+        sessionId=approval.sessionId,
+        source=NoticeSource(
+            runtime=approval.source.runtime,
+            approvalId=approval.id,
+            timelineItemId=approval.targetItemId,
+        ),
+        title=approval.title,
+        message=approval.description,
+        severity="warning",
+        status="open",
+        interactionType="approval",
+        blocking=NoticeBlocking(scope="session", targetId=approval.sessionId),
+        responseRequired=True,
+        actions=_approval_actions(approval),
+        context={
+            "approvalId": approval.id,
+            "turnId": approval.turnId,
+            "kind": approval.kind,
+            "payload": approval.payload,
+            "choices": approval.choices,
+        },
     )
-
-
-async def resolve_approval_interaction(
-    db: NoticeRepository,
-    approval: Approval,
-    *,
-    status: str = "resolved",
-    reason: str | None = None,
-) -> Notice | None:
-    notice_id = stable_notice_id("approval", approval.id)
-    try:
-        return await db.update_notice_status(
-            notice_id,
-            status,
-            context_patch={"approvalStatus": approval.status, **({"closedReason": reason} if reason else {})},
-        )
-    except KeyError:
-        return None
 
 
 async def upsert_execution_error_interaction(
@@ -124,10 +105,12 @@ async def cancel_turn_blocking_interactions(
     for notice in await db.list_open_blocking_notices(session_id):
         if notice.context.get("turnId") != turn_id:
             continue
+        require_interaction_transition(notice, "cancelled")
         closed.append(
             await db.update_notice_status(
                 notice.noticeId,
                 "cancelled",
+                expected_status=notice.status,
                 context_patch={"closedReason": reason},
             )
         )
@@ -140,12 +123,18 @@ async def cancel_session_blocking_interactions(
     session_id: str,
     reason: str,
 ) -> list[Notice]:
-    return await db.close_open_blocking_notices(
-        session_id,
-        status="cancelled",
-        reason=reason,
-        turn_id=None,
-    )
+    closed: list[Notice] = []
+    for notice in await db.list_open_blocking_notices(session_id):
+        require_interaction_transition(notice, "cancelled")
+        closed.append(
+            await db.update_notice_status(
+                notice.noticeId,
+                "cancelled",
+                expected_status=notice.status,
+                context_patch={"closedReason": reason},
+            )
+        )
+    return closed
 
 
 def _approval_actions(approval: Approval) -> list[NoticeAction]:

@@ -18,6 +18,10 @@ from agent_server.services.connector_notifications import ConnectorNotificationS
 from agent_server.services.connector_realtime import ConnectorRealtimeService
 from agent_server.services.connector_shell import ConnectorShellService
 from agent_server.services.device_runtimes import DeviceRuntimeService
+from agent_server.services.interactions import (
+    ApprovalInteractionResolver,
+    InteractionService,
+)
 from agent_server.services.session_run import SessionRunService
 from agent_server.services.terminal import TerminalService
 
@@ -30,8 +34,13 @@ def get_attachment_service(conn: HTTPConnection) -> AttachmentService:
     return conn.app.state.store.attachments
 
 
-def get_approval_service(conn: HTTPConnection) -> ApprovalService:
-    return ApprovalService(conn.app.state.store, conn.app.state.rpc)
+def get_interaction_service(conn: HTTPConnection) -> InteractionService:
+    return InteractionService(
+        conn.app.state.store,
+        ApprovalInteractionResolver(
+            ApprovalService(conn.app.state.store, conn.app.state.rpc)
+        ),
+    )
 
 
 def get_connector_ingest_service(conn: HTTPConnection) -> ConnectorIngestService:

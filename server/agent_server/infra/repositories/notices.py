@@ -1,9 +1,8 @@
+# ruff: noqa: F403, F405, I001
+
 from __future__ import annotations
 
-# ruff: noqa: F403,F405
-
 from agent_server.infra.repositories.store_support import *
-
 
 OPEN_NOTICE_STATUSES = {"open", "response_accepted", "resolving", "failed"}
 
@@ -88,22 +87,32 @@ class NoticeRepositoryMixin:
         notice_id: str,
         status: str,
         *,
+        expected_status: str | None = None,
         context_patch: dict[str, Any] | None = None,
     ) -> Notice:
         now = utc_now()
         async with self._engine.begin() as conn:
+            statement = select(notices_t).where(notices_t.c.id == notice_id)
+            if expected_status is not None:
+                statement = statement.with_for_update()
             row = (
-                await conn.execute(select(notices_t).where(notices_t.c.id == notice_id))
+                await conn.execute(statement)
             ).mappings().first()
             if row is None:
                 raise KeyError(notice_id)
+            if expected_status is not None and row["status"] != expected_status:
+                raise ValueError("interaction status changed")
             context = _json_loads(row["context_json"]) or {}
             if context_patch:
                 context = {**context, **context_patch}
             updated_seq = await self._bump_session(conn, row["session_id"])
-            await conn.execute(
-                update(notices_t)
-                .where(notices_t.c.id == notice_id)
+            update_statement = update(notices_t).where(notices_t.c.id == notice_id)
+            if expected_status is not None:
+                update_statement = update_statement.where(
+                    notices_t.c.status == expected_status
+                )
+            result = await conn.execute(
+                update_statement
                 .values(
                     status=status,
                     context_json=_json_dumps(context),
@@ -111,42 +120,15 @@ class NoticeRepositoryMixin:
                     updated_seq=updated_seq,
                     updated_at=now,
                     resolved_at=now
-                    if status in {"resolved", "expired", "cancelled", "failed"}
-                    else row["resolved_at"],
+                    if status in {"resolved", "expired", "cancelled"}
+                    else None,
                 )
             )
+            if result.rowcount != 1:
+                raise ValueError("interaction status changed")
             session_id = row["session_id"]
         await self.refresh_session_status_from_timeline(session_id)
         return await self.get_notice(notice_id)
-
-    async def close_open_blocking_notices(
-        self,
-        session_id: str,
-        *,
-        status: str,
-        reason: str,
-        turn_id: str | None = None,
-    ) -> list[Notice]:
-        notices = await self.list_open_blocking_notices(session_id)
-        if turn_id is not None:
-            notices = [
-                notice
-                for notice in notices
-                if notice.context.get("turnId") == turn_id
-                or notice.source.timelineItemId == turn_id
-                or notice.source.approvalId is not None
-            ]
-        closed = []
-        for notice in notices:
-            closed.append(
-                await self.update_notice_status(
-                    notice.noticeId,
-                    status,
-                    context_patch={"closedReason": reason},
-                )
-            )
-        return closed
-
 
 def _notice_values(notice: NoticeIn, *, updated_seq: int, now: str) -> dict[str, Any]:
     return {

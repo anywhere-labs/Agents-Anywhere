@@ -8,7 +8,6 @@ from agent_server.infra.connector_rpc import (
     ConnectorRpcError,
     ConnectorRpcManager,
 )
-from agent_server.services.notices import resolve_approval_interaction
 from agent_server.services.repository_ports import ApprovalRepository
 from agent_server.services.timeline_effects import (
     apply_resolved_approval_to_target_item,
@@ -16,23 +15,25 @@ from agent_server.services.timeline_effects import (
 
 
 class ApprovalServiceError(RuntimeError):
-    status_code = 500
-
     def __init__(self, detail: str) -> None:
         super().__init__(detail)
         self.detail = detail
 
 
 class ApprovalNotFoundError(ApprovalServiceError):
-    status_code = 404
+    pass
 
 
 class ApprovalConflictError(ApprovalServiceError):
-    status_code = 409
+    pass
 
 
 class ApprovalUpstreamError(ApprovalServiceError):
-    status_code = 502
+    pass
+
+
+class ApprovalExpiredError(ApprovalConflictError):
+    pass
 
 
 class ApprovalService:
@@ -82,7 +83,6 @@ class ApprovalService:
             )
             approval = await self._store.resolve_approval(approval_id, status)
             await apply_resolved_approval_to_target_item(self._store, approval)
-            await resolve_approval_interaction(self._store, approval)
             await self._store.refresh_session_status_from_timeline(session.id)
             logger.info(
                 "approval resolve stored approval_id={} status={} session_id={} next_session_status={}",
@@ -118,24 +118,8 @@ class ApprovalService:
             )
             if _approval_no_longer_pending(exc):
                 approval = await self._store.resolve_approval(approval_id, "expired")
-                await resolve_approval_interaction(
-                    self._store,
-                    approval,
-                    status="expired",
-                    reason="runtime_no_longer_accepts_response",
-                )
                 await self._store.refresh_session_status_from_timeline(approval.sessionId)
-                raise ApprovalConflictError("approval is no longer pending") from exc
-            try:
-                pending = await self._store.get_approval(approval_id)
-                await resolve_approval_interaction(
-                    self._store,
-                    pending,
-                    status="failed",
-                    reason=exc.message or exc.code,
-                )
-            except KeyError:
-                pass
+                raise ApprovalExpiredError("approval is no longer pending") from exc
             raise ApprovalUpstreamError(exc.message or exc.code) from exc
         return RpcResponsePayload(ok=True, result=result)
 

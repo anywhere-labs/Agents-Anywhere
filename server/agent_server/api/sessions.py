@@ -40,7 +40,7 @@ from agent_server.core.protocol import (
 from agent_server.core.utc import utc_now
 from agent_server.deps import (
     current_user_id,
-    get_approval_service,
+    get_interaction_service,
     get_rpc,
     get_session_run_service,
     get_store,
@@ -54,13 +54,16 @@ from agent_server.infra.connector_rpc import (
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.infra.ws_tickets import ClientWsTicketManager
-from agent_server.services.approvals import ApprovalService, ApprovalServiceError
 from agent_server.services.connector_presence import (
     with_effective_session_connector_status,
     with_effective_session_connector_statuses,
 )
 from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.effective_capabilities import project_session_capabilities
+from agent_server.services.interactions import (
+    InteractionService,
+    InteractionServiceError,
+)
 from agent_server.services.session_run import SessionRunError, SessionRunService
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
@@ -74,13 +77,14 @@ def _raise_session_run_error(exc: SessionRunError) -> None:
     raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
-def _approval_status_for_action(action_id: str) -> str | None:
-    return {
-        "approve": "approved",
-        "approve_for_session": "approved_for_session",
-        "reject": "rejected",
-        "cancel": "cancelled",
-    }.get(action_id)
+def _raise_interaction_error(exc: InteractionServiceError) -> None:
+    status_code = {
+        "not_found": 404,
+        "conflict": 409,
+        "invalid": 422,
+        "upstream": 502,
+    }[exc.kind]
+    raise HTTPException(status_code=status_code, detail=exc.detail) from exc
 
 
 def _parse_event_cursor(cursor: str) -> int:
@@ -764,72 +768,38 @@ async def respond_interaction(
     db: Store = Depends(get_store),
     broker: TimelineBroker = Depends(get_timeline_broker),
     manager: ConnectorRpcManager = Depends(get_rpc),
-    approval_service: ApprovalService = Depends(get_approval_service),
+    interaction_service: InteractionService = Depends(get_interaction_service),
 ) -> RpcResponsePayload:
     try:
-        session = await db.get_session(session_id, user_id=user_id)
-        notice = await db.get_notice(notice_id)
+        before_seq = await db.get_session_seq(session_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="interaction not found") from None
-    if notice.sessionId != session.id or notice.type != "interaction":
-        raise HTTPException(status_code=404, detail="interaction not found")
-    if notice.status not in {"open", "failed"}:
-        raise HTTPException(status_code=409, detail="interaction is not open")
-    allowed_actions = {action.actionId for action in notice.actions}
-    if payload.actionId not in allowed_actions:
-        raise HTTPException(status_code=422, detail="invalid interaction action")
-    before_seq = await db.get_session_seq(session.id)
-    await db.update_notice_status(
-        notice.noticeId,
-        "response_accepted",
-        context_patch={"response": {"actionId": payload.actionId, "input": payload.input or {}}},
-    )
-    if notice.interactionType == "approval":
-        approval_id = notice.context.get("approvalId")
-        if not isinstance(approval_id, str):
-            await db.update_notice_status(notice.noticeId, "failed", context_patch={"error": "missing approval id"})
-            await _publish_session_protocol_changes_since(
-                db, broker, manager, session.id, before_seq
-            )
-            raise HTTPException(status_code=422, detail="interaction is missing approval id")
-        status = _approval_status_for_action(payload.actionId)
-        if status is None:
-            await db.update_notice_status(notice.noticeId, "failed", context_patch={"error": "invalid approval action"})
-            await _publish_session_protocol_changes_since(
-                db, broker, manager, session.id, before_seq
-            )
-            raise HTTPException(status_code=422, detail="invalid approval action")
-        try:
-            result = await approval_service.resolve(approval_id, status, user_id=user_id)
-            await _publish_session_protocol_changes_since(
-                db, broker, manager, session.id, before_seq
-            )
-            return result
-        except ApprovalServiceError as exc:
-            current_notice = await db.get_notice(notice.noticeId)
-            if current_notice.status not in {"resolved", "expired", "cancelled"}:
-                await db.update_notice_status(
-                    notice.noticeId,
-                    "failed",
-                    context_patch={"error": exc.detail},
-                )
-            await _publish_session_protocol_changes_since(
-                db, broker, manager, session.id, before_seq
-            )
-            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
-    if notice.interactionType == "execution_error":
-        await db.update_notice_status(notice.noticeId, "resolved")
-        await db.refresh_session_status_from_timeline(session.id)
-        await _publish_session_protocol_changes_since(
-            db, broker, manager, session.id, before_seq
+    try:
+        result = await interaction_service.respond(
+            session_id,
+            notice_id,
+            action_id=payload.actionId,
+            input_data=payload.input,
+            user_id=user_id,
         )
-        return RpcResponsePayload(ok=True, result={"resolved": True})
-    await db.update_notice_status(notice.noticeId, "resolved")
-    await db.refresh_session_status_from_timeline(session.id)
+    except InteractionServiceError as exc:
+        if exc.changed:
+            await _publish_session_protocol_changes_since(
+                db,
+                broker,
+                manager,
+                session_id,
+                before_seq,
+            )
+        _raise_interaction_error(exc)
     await _publish_session_protocol_changes_since(
-        db, broker, manager, session.id, before_seq
+        db,
+        broker,
+        manager,
+        session_id,
+        before_seq,
     )
-    return RpcResponsePayload(ok=True, result={"resolved": True})
+    return result
 
 
 @router.post("/{session_id}/sync", response_model=RpcResponsePayload)

@@ -28,6 +28,8 @@ class DashboardEventRepository(SessionLookupRepository, Protocol):
 
 
 class NoticeRepository(Protocol):
+    async def get_notice(self, notice_id: str) -> Notice: ...
+
     async def upsert_notice(self, notice: NoticeIn) -> Notice: ...
 
     async def update_notice_status(
@@ -35,20 +37,11 @@ class NoticeRepository(Protocol):
         notice_id: str,
         status: str,
         *,
+        expected_status: str | None = None,
         context_patch: dict[str, Any] | None = None,
     ) -> Notice: ...
 
     async def list_open_blocking_notices(self, session_id: str) -> list[Notice]: ...
-
-    async def close_open_blocking_notices(
-        self,
-        session_id: str,
-        *,
-        status: str,
-        reason: str,
-        turn_id: str | None,
-    ) -> list[Notice]: ...
-
 
 class TimelineReader(Protocol):
     async def read(self, session_id: str) -> list[TimelineItem]: ...
@@ -81,6 +74,18 @@ class ApprovalRepository(
     async def refresh_session_status_from_timeline(
         self, session_id: str
     ) -> SessionView: ...
+
+
+class InteractionRepository(SessionLookupRepository, NoticeRepository, Protocol):
+    pass
+
+
+class InteractionProjectionRepository(NoticeRepository, Protocol):
+    async def refresh_session_status_from_timeline(
+        self, session_id: str
+    ) -> SessionView: ...
+
+    async def upsert_approval(self, approval: ApprovalIn) -> Approval: ...
 
 
 class ConnectorIngestRepository(DashboardEventRepository, Protocol):

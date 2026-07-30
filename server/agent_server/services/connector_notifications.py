@@ -5,6 +5,7 @@ from typing import Any, ClassVar
 from loguru import logger
 from pydantic import ValidationError
 
+from agent_server.core.interactions import InteractionDomainError
 from agent_server.core.models import ApprovalIn, NoticeIn, TimelineItemIn
 from agent_server.core.protocol import (
     ProtocolCapabilitySet,
@@ -13,9 +14,9 @@ from agent_server.core.protocol import (
 )
 from agent_server.services.connector_realtime import ConnectorRealtimeService
 from agent_server.services.ingest_effects import IngestEffect
+from agent_server.services.interactions import InteractionProjectionService
 from agent_server.services.notices import (
     cancel_turn_blocking_interactions,
-    upsert_approval_interaction,
     upsert_execution_error_interaction,
 )
 from agent_server.services.repository_ports import ConnectorNotificationRepository
@@ -44,7 +45,10 @@ class ConnectorNotificationService:
             ConnectorProtocolNotificationHandler(store),
             SessionNotificationHandler(store),
             TimelineNotificationHandler(store),
-            InteractionNotificationHandler(store),
+            InteractionNotificationHandler(
+                store,
+                InteractionProjectionService(store),
+            ),
         )
 
     async def apply(
@@ -380,8 +384,13 @@ class InteractionNotificationHandler:
         "runtime.error",
     }
 
-    def __init__(self, store: ConnectorNotificationRepository) -> None:
+    def __init__(
+        self,
+        store: ConnectorNotificationRepository,
+        projections: InteractionProjectionService,
+    ) -> None:
         self._store = store
+        self._projections = projections
 
     async def apply(
         self,
@@ -405,7 +414,16 @@ class InteractionNotificationHandler:
             raise NotificationValidationError("invalid_notice", str(exc)) from exc
         if await _session_disabled(self._store, notice.sessionId):
             return IngestEffect()
-        stored = await self._store.upsert_notice(notice)
+        if notice.type == "interaction":
+            try:
+                stored = await self._projections.project_interaction(notice)
+            except InteractionDomainError as exc:
+                raise NotificationValidationError(
+                    "invalid_interaction",
+                    exc.detail,
+                ) from exc
+        else:
+            stored = await self._store.upsert_notice(notice)
         return IngestEffect(
             session_id=stored.sessionId,
             session_changed=stored.blocking is not None,
@@ -425,10 +443,7 @@ class InteractionNotificationHandler:
         )
         if await _session_disabled(self._store, session_id):
             return IngestEffect()
-        approval = _approval_for_session(approval, session_id)
-        stored_approval = await self._store.upsert_approval(approval)
-        await upsert_approval_interaction(self._store, stored_approval)
-        await self._store.refresh_session_status_from_timeline(session_id)
+        await self._projections.project_approval(approval, session_id=session_id)
         return IngestEffect(
             session_id=session_id,
             approvals_changed=True,
@@ -684,9 +699,3 @@ def _client_message_text_matches(actual: str, expected: str) -> bool:
     if actual == expected:
         return True
     return actual.startswith(expected) and actual[len(expected) :].startswith("\n\n[")
-
-
-def _approval_for_session(approval: ApprovalIn, session_id: str) -> ApprovalIn:
-    if approval.sessionId == session_id:
-        return approval
-    return ApprovalIn.model_validate({**approval.model_dump(), "sessionId": session_id})

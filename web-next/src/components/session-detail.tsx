@@ -66,7 +66,7 @@ export type SessionMemorySnapshot = {
   pendingInteractionCount: number
 }
 
-type SessionRemoteState = SessionStateResponse & {
+type SessionRemoteState = Omit<SessionStateResponse, "approvals"> & {
   notices: Notice[]
   eventCursor: string
   effectiveCapabilities: ProtocolCapabilitySet | null
@@ -169,7 +169,6 @@ function sessionStateFromSnapshot(snapshot: SessionSnapshotResponse): SessionRem
   return {
     session: snapshot.session,
     items: sortTimelineItems(snapshot.timeline.items),
-    approvals: [],
     notices: snapshot.notices,
     nextSeq: snapshot.timeline.nextSeq,
     hasMore: snapshot.timeline.hasMore,
