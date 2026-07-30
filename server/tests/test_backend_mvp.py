@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
-import json
 import time
 from typing import Any
 
@@ -12,6 +11,7 @@ from conftest import ApiV2TestClient as TestClient
 
 from agent_server.api.sessions_terminal import _send_terminal_ws_error
 from agent_server.app import create_app
+from agent_server.core.protocol import protocol_selection_id
 from agent_server.infra.connector_rpc import (
     ConnectorOfflineError,
     ConnectorRpcError,
@@ -19,7 +19,6 @@ from agent_server.infra.connector_rpc import (
     DuplicateConnectorConnectionError,
 )
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
-from agent_server.core.protocol import protocol_selection_id
 from agent_server.services.notices import upsert_execution_error_interaction
 
 
@@ -884,32 +883,20 @@ def test_connector_status_response_uses_live_ws_not_stale_db(tmp_path):
         assert session["connectorStatus"] == "online"
 
 
-def test_stale_connector_connection_cannot_overwrite_new_presence(tmp_path):
+def test_connector_connection_records_metadata_without_persisting_presence(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, _, _ = create_connector_and_session(client)
 
     async def exercise() -> None:
         store = client.app.state.store
-        assert await store.set_connector_online(
+        assert await store.record_connector_connection(
             connector_id,
-            instance_id="server-a",
-            connection_id="connection-old",
+            device_os="linux",
         )
-        assert await store.set_connector_online(
-            connector_id,
-            instance_id="server-b",
-            connection_id="connection-new",
-        )
-        assert not await store.set_connector_offline_if_connection(
-            connector_id,
-            connection_id="connection-old",
-        )
-        assert (await store.get_connector(connector_id)).status == "online"
-        assert await store.set_connector_offline_if_connection(
-            connector_id,
-            connection_id="connection-new",
-        )
-        assert (await store.get_connector(connector_id)).status == "offline"
+        connector = await store.get_connector(connector_id)
+        assert connector.status == "offline"
+        assert connector.deviceOs == "linux"
+        assert connector.lastSeenAt is not None
 
     asyncio.run(exercise())
 

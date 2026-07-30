@@ -190,16 +190,14 @@ async def connector_ws(
         logger.warning("rejected duplicate connector websocket: {}", connector_id)
         return
     try:
-        marked_online = await db.set_connector_online(
+        recorded_connection = await db.record_connector_connection(
             connector_id,
-            instance_id=manager.instance_id,
-            connection_id=connection.connection_id,
             device_os=_connector_device_os(websocket.headers.get("x-device-os")),
         )
     except Exception:  # noqa: BLE001 - release the lease before propagating startup failure
         await manager.unregister(connector_id, connection)
         raise
-    if not marked_online:
+    if not recorded_connection:
         await manager.unregister(connector_id, connection)
         await websocket.close(code=1008, reason="connector was revoked")
         return
@@ -241,17 +239,12 @@ async def connector_ws(
                 len(removed_terminals),
             )
         await manager.unregister(connector_id, connection)
-        changed = await db.set_connector_offline_if_connection(
-            connector_id,
-            connection_id=connection.connection_id,
+        await publish_dashboard_changed(
+            db,
+            timeline_broker,
+            connector_id=connector_id,
+            reason="connector.presence",
         )
-        if changed:
-            await publish_dashboard_changed(
-                db,
-                timeline_broker,
-                connector_id=connector_id,
-                reason="connector.offline",
-            )
 
 
 def _connector_device_os(value: str | None) -> str | None:

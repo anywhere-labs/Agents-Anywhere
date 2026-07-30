@@ -62,17 +62,12 @@ async def _connector_presence_watchdog(app: FastAPI) -> None:
         await asyncio.sleep(CONNECTOR_PRESENCE_SWEEP_SECONDS)
         stale_connections = await app.state.rpc.expire_stale()
         for connection in stale_connections:
-            changed = await app.state.store.set_connector_offline_if_connection(
-                connection.connector_id,
-                connection_id=connection.connection_id,
+            await publish_dashboard_changed(
+                app.state.store,
+                app.state.timeline_broker,
+                connector_id=connection.connector_id,
+                reason="connector.presence",
             )
-            if changed:
-                await publish_dashboard_changed(
-                    app.state.store,
-                    app.state.timeline_broker,
-                    connector_id=connection.connector_id,
-                    reason="connector.offline",
-                )
 
 
 def create_app(
@@ -84,7 +79,6 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         presence_task: asyncio.Task[None] | None = None
-        startup_complete = False
         try:
             await require_current_database(app.state.store.engine)
             app.state.database_schema_version = await database_schema_version(
@@ -95,13 +89,10 @@ def create_app(
             await app.state.terminal_stream_hub.start()
             await app.state.terminal_broker.start()
             await app.state.rpc.start()
-            if not app.state.redis.distributed:
-                await app.state.store.set_all_connectors_offline()
             presence_task = asyncio.create_task(_connector_presence_watchdog(app))
             # Generate the bootstrap token early so operators see it in logs.
             if await app.state.store.count_users() == 0:
                 app.state.setup_token.snapshot()
-            startup_complete = True
             yield
         finally:
             if presence_task is not None:
@@ -111,13 +102,7 @@ def create_app(
                 except asyncio.CancelledError:
                     pass
             try:
-                released_connections = await app.state.rpc.close()
-                if startup_complete:
-                    for connection in released_connections:
-                        await app.state.store.set_connector_offline_if_connection(
-                            connection.connector_id,
-                            connection_id=connection.connection_id,
-                        )
+                await app.state.rpc.close()
             finally:
                 try:
                     await app.state.terminal_broker.close()
@@ -131,8 +116,6 @@ def create_app(
                             try:
                                 await app.state.redis.close()
                             finally:
-                                if startup_complete and not app.state.redis.distributed:
-                                    await app.state.store.set_all_connectors_offline()
                                 await app.state.store.close()
 
     app = FastAPI(title="Agent Server", version="0.1.7.2", lifespan=lifespan)

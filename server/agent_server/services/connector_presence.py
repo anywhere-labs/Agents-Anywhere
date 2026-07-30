@@ -1,38 +1,44 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Protocol
 
 from agent_server.core.models import ConnectorView, SessionView
 
 
-async def effective_connector_status(manager: Any, connector_id: str) -> str:
-    return "online" if await manager.is_online(connector_id) else "offline"
+class ConnectorPresencePort(Protocol):
+    async def is_online(self, connector_id: str) -> bool: ...
+
+
+async def effective_connector_status(
+    presence: ConnectorPresencePort, connector_id: str
+) -> str:
+    return "online" if await presence.is_online(connector_id) else "offline"
 
 
 async def with_effective_connector_status(
-    manager: Any, connector: ConnectorView
+    presence: ConnectorPresencePort, connector: ConnectorView
 ) -> ConnectorView:
-    status = await effective_connector_status(manager, connector.id)
+    status = await effective_connector_status(presence, connector.id)
     if connector.status == status:
         return connector
     return connector.model_copy(update={"status": status})
 
 
 async def with_effective_session_connector_status(
-    manager: Any, session: SessionView
+    presence: ConnectorPresencePort, session: SessionView
 ) -> SessionView:
-    status = await effective_connector_status(manager, session.connectorId)
+    status = await effective_connector_status(presence, session.connectorId)
     if session.connectorStatus == status:
         return session
     return session.model_copy(update={"connectorStatus": status})
 
 
 async def with_effective_connector_statuses(
-    manager: Any,
+    presence: ConnectorPresencePort,
     connectors: list[ConnectorView],
 ) -> list[ConnectorView]:
     statuses = await _online_statuses(
-        manager, [connector.id for connector in connectors]
+        presence, [connector.id for connector in connectors]
     )
     result: list[ConnectorView] = []
     for connector in connectors:
@@ -46,11 +52,11 @@ async def with_effective_connector_statuses(
 
 
 async def with_effective_session_connector_statuses(
-    manager: Any,
+    presence: ConnectorPresencePort,
     sessions: list[SessionView],
 ) -> list[SessionView]:
     statuses = await _online_statuses(
-        manager, [session.connectorId for session in sessions]
+        presence, [session.connectorId for session in sessions]
     )
     result: list[SessionView] = []
     for session in sessions:
@@ -63,12 +69,14 @@ async def with_effective_session_connector_statuses(
     return result
 
 
-async def _online_statuses(manager: Any, connector_ids: list[str]) -> dict[str, bool]:
-    batch = getattr(manager, "online_statuses", None)
+async def _online_statuses(
+    presence: ConnectorPresencePort, connector_ids: list[str]
+) -> dict[str, bool]:
+    batch = getattr(presence, "online_statuses", None)
     if callable(batch):
         return await batch(connector_ids)
     unique_ids = list(dict.fromkeys(connector_ids))
     return {
-        connector_id: await manager.is_online(connector_id)
+        connector_id: await presence.is_online(connector_id)
         for connector_id in unique_ids
     }

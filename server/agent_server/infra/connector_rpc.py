@@ -11,6 +11,7 @@ from typing import Any
 from fastapi import WebSocket
 from loguru import logger
 
+from agent_server.core.connector_presence import ConnectorLease
 from agent_server.infra.redis_coordinator import RedisCoordinator
 
 
@@ -38,12 +39,6 @@ class ConnectorConnection:
     last_seen_monotonic: float
     pending: dict[str, asyncio.Future[dict[str, Any]]] = field(default_factory=dict)
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-
-
-@dataclass(frozen=True, slots=True)
-class ConnectorLease:
-    instance_id: str
-    connection_id: str
 
 
 class ConnectorRpcManager:
