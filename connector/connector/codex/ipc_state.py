@@ -229,9 +229,6 @@ def codex_ipc_patch_scope(change: CodexIpcPatchesChange) -> CodexIpcPatchScope:
         if isinstance(patch, CodexIpcRemovePatch):
             requires_timeline_sync = True
             continue
-        if isinstance(patch, CodexIpcAddPatch) and len(path) == 6:
-            requires_timeline_sync = True
-            continue
         item_indexes.setdefault(entity_key, set()).add(path[5])
 
     return CodexIpcPatchScope(

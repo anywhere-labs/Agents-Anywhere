@@ -362,6 +362,9 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   // ── Dashboard SSE + polling ────────────────────────────────
   const tokenRef = React.useRef(authSession?.accessToken ?? null)
   tokenRef.current = authSession?.accessToken ?? null
+  const sessionsRef = React.useRef(sessions)
+  sessionsRef.current = sessions
+  const readRequestsRef = React.useRef(new Set<string>())
 
   React.useEffect(() => {
     if (!authSession?.accessToken) return
@@ -432,8 +435,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   // ── Navigation helpers ────────────────────────────────────
 
   const markSessionRead = React.useCallback((id: string) => {
-    const targetSession = sessions.find((session) => session.id === id)
-    if (!targetSession || !targetSession.unread) return
+    const targetSession = sessionsRef.current.find((session) => session.id === id)
+    if (!targetSession || !targetSession.unread || readRequestsRef.current.has(id)) return
 
     setSessions((prev) =>
       prev.map((session) =>
@@ -444,6 +447,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     )
 
     if (!authSession?.accessToken) return
+    readRequestsRef.current.add(id)
     dashboardApi
       .markSessionRead(authSession.accessToken, id)
       .then((response) => {
@@ -459,7 +463,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       .catch(() => {
         fetchData()
       })
-  }, [authSession?.accessToken, fetchData, sessions])
+      .finally(() => {
+        readRequestsRef.current.delete(id)
+      })
+  }, [authSession?.accessToken, fetchData])
 
   const openSession = React.useCallback(
     (id: string) => {

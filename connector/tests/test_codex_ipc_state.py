@@ -240,7 +240,7 @@ def test_item_removal_requires_authoritative_timeline_sync() -> None:
     asyncio.run(exercise())
 
 
-def test_item_insertion_requires_authoritative_timeline_sync() -> None:
+def test_item_insertion_reports_new_item_without_timeline_sync() -> None:
     async def exercise() -> None:
         registry = CodexIpcStateRegistry()
         await _apply_snapshot(registry)
@@ -271,6 +271,9 @@ def test_item_insertion_requires_authoritative_timeline_sync() -> None:
                 }
             )
         )
-        assert applied.patch_scope.requires_timeline_sync
+        assert applied.patch_scope.item_indexes_by_entity == {
+            "turn_key": frozenset({1})
+        }
+        assert not applied.patch_scope.requires_timeline_sync
 
     asyncio.run(exercise())

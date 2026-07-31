@@ -1529,7 +1529,7 @@ async def _exercise_ipc_snapshot_and_patch() -> None:
     assert notifications[0][1]["item"]["content"]["text"] == "hello"
     notifications.clear()
 
-    status_patch = CodexIpcStreamStateChangedBroadcast.model_validate(
+    insertion_patch = CodexIpcStreamStateChangedBroadcast.model_validate(
         {
             "sourceClientId": "owner_1",
             "params": {
@@ -1538,6 +1538,43 @@ async def _exercise_ipc_snapshot_and_patch() -> None:
                     "type": "patches",
                     "baseRevision": 2,
                     "revision": 3,
+                    "patches": [
+                        {
+                            "op": "add",
+                            "path": [
+                                "turnHistory",
+                                "history",
+                                "entitiesByKey",
+                                "turn_key",
+                                "items",
+                                1,
+                            ],
+                            "value": {
+                                "id": "msg_ipc_2",
+                                "type": "agentMessage",
+                                "status": "inProgress",
+                                "text": "next",
+                            },
+                        }
+                    ],
+                },
+            },
+        }
+    )
+    await ipc_client.message_handler(insertion_patch)
+    assert [method for method, _params in notifications] == ["timeline.itemUpsert"]
+    assert notifications[0][1]["item"]["content"]["text"] == "next"
+    notifications.clear()
+
+    status_patch = CodexIpcStreamStateChangedBroadcast.model_validate(
+        {
+            "sourceClientId": "owner_1",
+            "params": {
+                "conversationId": "thr_1",
+                "change": {
+                    "type": "patches",
+                    "baseRevision": 3,
+                    "revision": 4,
                     "patches": [
                         {
                             "op": "replace",
@@ -1561,8 +1598,8 @@ async def _exercise_ipc_snapshot_and_patch() -> None:
                 "conversationId": "thr_1",
                 "change": {
                     "type": "patches",
-                    "baseRevision": 4,
-                    "revision": 5,
+                    "baseRevision": 5,
+                    "revision": 6,
                     "patches": [],
                 },
             },
