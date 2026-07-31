@@ -1528,6 +1528,8 @@ async def _exercise_ipc_local_owner_projection() -> None:
     )
     broadcasts_before = len(ipc_client.broadcasts)
 
+    # App-server notifications emitted by passive thread/resume sync must not
+    # make this Connector steal ownership from Codex App.
     await adapter.handle_notification(
         {
             "method": "item/agentMessage/delta",
@@ -1539,6 +1541,15 @@ async def _exercise_ipc_local_owner_projection() -> None:
             },
         }
     )
+    assert ipc_client.broadcasts[broadcasts_before:] == []
+
+    await adapter.start_turn(
+        {
+            "sessionId": "sess_1",
+            "externalSessionId": "thr_1",
+            "content": "continue locally",
+        }
+    )
 
     owner_broadcasts = ipc_client.broadcasts[broadcasts_before:]
     assert owner_broadcasts[0][0] == "thread-stream-following-changed"
@@ -1547,7 +1558,7 @@ async def _exercise_ipc_local_owner_projection() -> None:
     assert owner_broadcasts[1][2]["target_client_ids"] == ["ide_follower"]
     first_change = owner_broadcasts[1][1]["change"]
     assert first_change["type"] == "snapshot"
-    assert first_change["revision"] == 1
+    assert first_change["revision"] == 0
 
     await adapter.handle_notification(
         {
@@ -1562,8 +1573,8 @@ async def _exercise_ipc_local_owner_projection() -> None:
     )
     second_change = ipc_client.broadcasts[-1][1]["change"]
     assert second_change["type"] == "patches"
-    assert (second_change["baseRevision"], second_change["revision"]) == (1, 2)
-    assert second_change["patches"][0]["value"] == "hi!?"
+    assert (second_change["baseRevision"], second_change["revision"]) == (0, 1)
+    assert second_change["patches"][0]["value"] == "hi?"
 
     notifications.clear()
     remote_snapshot = CodexIpcStreamStateChangedBroadcast.model_validate(
@@ -1591,6 +1602,13 @@ async def _exercise_local_and_incoming_ipc_steer() -> None:
     ipc_client = FakeCodexIpcClient()
     adapter = CodexAdapter(rpc=rpc, ipc_client=ipc_client)  # type: ignore[arg-type]
     await adapter.sync_session({"sessionId": "sess_1", "externalSessionId": "thr_1"})
+    await adapter.start_turn(
+        {
+            "sessionId": "sess_1",
+            "externalSessionId": "thr_1",
+            "content": "begin locally",
+        }
+    )
     await adapter.handle_notification(
         {
             "method": "turn/started",

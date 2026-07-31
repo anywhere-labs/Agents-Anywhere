@@ -155,33 +155,18 @@ class CodexIpcPublisher:
         lock = self._locks.setdefault(conversation_id, asyncio.Lock())
         async with lock:
             current = self._threads.get(conversation_id)
-            if current is None:
-                current = CodexIpcOwnedThread(
-                    state=codex_ipc_conversation_from_thread(
-                        {"id": conversation_id},
-                        fallback_thread_id=conversation_id,
-                    )
-                )
-                self._threads[conversation_id] = current
-            first_owned_event = not current.active
-            current.active = True
+            if current is None or not current.active:
+                return False
             projected = _project_notification(current.state, message)
             if projected is None:
-                if first_owned_event:
-                    await self._send_snapshot_locked(conversation_id, current)
                 return False
             next_state, patches = projected
             if next_state == current.state:
-                if first_owned_event:
-                    await self._send_snapshot_locked(conversation_id, current)
                 return True
 
             current.state = next_state
             current.revision += 1
-            if first_owned_event:
-                await self._send_snapshot_locked(conversation_id, current)
-            else:
-                await self._send_patches_locked(conversation_id, current, patches)
+            await self._send_patches_locked(conversation_id, current, patches)
             return True
 
     async def _send_snapshot_locked(

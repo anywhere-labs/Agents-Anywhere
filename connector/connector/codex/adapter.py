@@ -905,6 +905,7 @@ class CodexAdapter:
             params.get("modelSelectionId"),
             params.get("permissionSelectionId"),
         )
+        await self._claim_ipc_thread(thread_id)
         try:
             result = await self.rpc.request("turn/start", turn_params)
         except RuntimeError as exc:
@@ -920,6 +921,7 @@ class CodexAdapter:
             backend_notifications.extend(extra_notifications)
             self.reducer.bind_session(session_id, thread_id)
             turn_params["threadId"] = thread_id
+            await self._claim_ipc_thread(thread_id)
             if client_message_id:
                 self.reducer.register_client_message(
                     session_id=session_id,
@@ -929,8 +931,6 @@ class CodexAdapter:
                     attachments=timeline_attachments,
                 )
             result = await self.rpc.request("turn/start", turn_params)
-        await self._stop_following_ipc_thread(thread_id)
-        await self._ipc_publisher.activate(thread_id)
         turn_id = _turn_id_from_result(result)
         if client_message_id and turn_id:
             self.reducer.register_client_message(
@@ -1162,15 +1162,18 @@ class CodexAdapter:
         )
         return {"resolved": True}
 
+    async def _claim_ipc_thread(self, thread_id: str) -> None:
+        await self._stop_following_ipc_thread(thread_id)
+        await self._ipc_publisher.activate(thread_id)
+
     async def handle_notification(self, message: dict[str, Any]) -> None:
         assert self.reducer is not None
         reduced = self.reducer.reduce_notification(message)
         thread_id = _thread_id_from_turn_message(message)
-        if thread_id is not None:
-            await self._stop_following_ipc_thread(thread_id)
-        projected_to_ipc = await self._ipc_publisher.handle_notification(message)
-        if not projected_to_ipc:
-            self._schedule_ipc_snapshot_refresh(message)
+        if thread_id is not None and self._ipc_publisher.is_active(thread_id):
+            projected_to_ipc = await self._ipc_publisher.handle_notification(message)
+            if not projected_to_ipc:
+                self._schedule_ipc_snapshot_refresh(message)
         self._schedule_history_sync_after_turn_completion(message)
         if message.get("method") == "turn/completed":
             session_id = _session_id_from_reduction(reduced)

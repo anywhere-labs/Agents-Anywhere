@@ -203,13 +203,13 @@ clients through the IPC router even though the Connector is not the router.
 The outbound flow is:
 
 1. Build canonical conversation state from `thread/read` during the normal
-   sync and retain it as the local owner state.
+   sync and retain it as inactive state.
 2. Observe `thread-stream-following-changed` broadcasts. For `following=true`,
    register the follower's `sourceClientId` and immediately send that client a
    targeted version-11 snapshot at the current revision. For `following=false`,
    remove it.
-3. Reduce each local app-server notification into both the existing backend
-   timeline event and the retained canonical IPC state.
+3. After explicit local ownership, reduce each app-server notification into
+   both the existing backend timeline event and retained canonical IPC state.
 4. Generate `add`, `replace`, or `remove` patches from the previous canonical
    state, increment the revision by exactly one, and target the current follower
    client ids.
@@ -221,18 +221,20 @@ names and payloads are not valid IPC methods, so they must first update the
 canonical state. This also gives late followers a complete snapshot and keeps
 token text replacement semantics consistent with Codex App and IDE.
 
-The Connector keeps a state loaded by ordinary sync inactive until it creates
-the thread, starts a turn, or observes a local app-server event for that thread.
-This prevents a passive `thread/read` from competing with an existing Codex App
-owner. Activation explicitly sends `following=false`, discards any remote
-mirror for that conversation, and sends a snapshot to waiting followers.
+The Connector keeps state loaded by ordinary sync inactive until it creates the
+thread or explicitly starts a turn. Notifications caused by passive
+`thread/resume` and `thread/read` operations never claim ownership. This is
+essential because the Connector's separate app-server can emit notifications
+for a thread currently owned by Codex App. Activation explicitly sends
+`following=false`, discards any remote mirror for that conversation, and sends
+a snapshot to waiting followers.
 
 The local projector currently emits incremental patches for thread names, turn
 start/completion, item start/completion, agent-message text, command output,
 and turn diffs. Agent-message and command-output deltas are accumulated into
-full-field replacements. An event that is not safely projectable activates the
-owner with its current snapshot and schedules an asynchronous `thread/read`;
-the refreshed canonical state is then sent as a new snapshot if it changed.
+full-field replacements. For an already owned thread, an event that is not
+safely projectable schedules an asynchronous `thread/read`; the refreshed
+canonical state is then sent as a new snapshot if it changed.
 The refresh runs outside the app-server notification callback so JSON-RPC
 responses are not blocked behind that callback.
 

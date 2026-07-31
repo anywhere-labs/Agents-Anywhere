@@ -107,7 +107,7 @@ def test_active_owner_sends_targeted_snapshot_to_late_follower() -> None:
     asyncio.run(exercise())
 
 
-def test_first_owned_event_sends_snapshot_to_waiting_follower() -> None:
+def test_passive_notification_does_not_claim_thread_ownership() -> None:
     async def exercise() -> None:
         sender = FakeSender()
         publisher = CodexIpcPublisher(sender)
@@ -126,15 +126,11 @@ def test_first_owned_event_sends_snapshot_to_waiting_follower() -> None:
             }
         )
 
-        assert handled is True
-        assert len(sender.broadcasts) == 1
-        change = sender.broadcasts[0]["params"]["change"]
-        assert change["type"] == "snapshot"
-        assert change["revision"] == 1
-        entities = change["conversationState"]["turnHistory"]["history"][
-            "entitiesByKey"
-        ]
-        assert "turn_2" in entities
+        assert handled is False
+        assert sender.broadcasts == []
+        owned = publisher.get("thr_1")
+        assert owned is not None
+        assert owned.active is False
 
     asyncio.run(exercise())
 
@@ -220,6 +216,7 @@ def test_unknown_owned_event_requests_snapshot_refresh() -> None:
         publisher = CodexIpcPublisher(sender)
         await publisher.load_thread(_thread(), fallback_thread_id="thr_1")
         await publisher.handle_following(_following())
+        await publisher.activate("thr_1")
 
         handled = await publisher.handle_notification(
             {
