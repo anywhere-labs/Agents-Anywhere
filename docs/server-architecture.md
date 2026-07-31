@@ -46,8 +46,8 @@ after restart.
 
 ## Database Versions
 
-Alembic revisions use product schema versions (`v2_0`, `v2_1`, `v2_2`, `v2_3`, and so
-on), independent of package SemVer. Every schema change adds one revision.
+Alembic revisions use product schema versions (`v2_0`, `v2_1`, `v2_2`, `v2_3`,
+`v2_4`, and so on), independent of package SemVer. Every schema change adds one revision.
 Alembic applies all intermediate revisions in order, so a database may upgrade
 across multiple versions in one command.
 

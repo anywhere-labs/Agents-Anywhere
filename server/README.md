@@ -45,7 +45,7 @@ migration tests.
 The Server requires the database to be at its exact Alembic schema revision and
 does not mutate a production database during startup. `upgrade` fingerprints an
 unversioned v1 database, archives required legacy data, and applies every revision
-through the current schema (`v2_3`). Inspect the installed revision with:
+through the current schema (`v2_4`). Inspect the installed revision with:
 
 ```bash
 uv run python -m agent_server.infra.db.migrations current --verbose

@@ -5,7 +5,7 @@ import hashlib
 import json
 
 import pytest
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import BigInteger, create_engine, inspect, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from agent_server.infra.db.engine import build_engine, resolve_db_url
@@ -17,11 +17,20 @@ from agent_server.infra.db.migrations import (
     require_current_database,
     upgrade_database,
 )
-from agent_server.infra.db.schema import metadata
+from agent_server.infra.db.schema import (
+    connector_protocol_capabilities,
+    connector_runtime_catalogs,
+    metadata,
+)
 
 
 def _sqlite_url(path) -> str:
     return f"sqlite+aiosqlite:///{path}"
+
+
+def test_protocol_clock_revisions_use_64_bit_columns() -> None:
+    assert isinstance(connector_protocol_capabilities.c.revision.type, BigInteger)
+    assert isinstance(connector_runtime_catalogs.c.revision.type, BigInteger)
 
 
 def test_runtime_database_url_is_required(monkeypatch) -> None:
@@ -258,6 +267,7 @@ def test_v2_0_database_upgrades_through_current_revision(tmp_path) -> None:
         ("v2_0", "v2_1"),
         ("v2_1", "v2_2"),
         ("v2_2", "v2_3"),
+        ("v2_3", "v2_4"),
     ],
 )
 def test_every_adjacent_schema_upgrade(

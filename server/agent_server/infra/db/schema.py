@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from sqlalchemy import (
+    BigInteger,
     Column,
     Float,
     ForeignKey,
@@ -77,7 +78,7 @@ connector_runtime_catalogs = Table(
     ),
     Column("runtime", Text, nullable=False),
     Column("catalog_type", Text, nullable=False),
-    Column("revision", Integer, nullable=False),
+    Column("revision", BigInteger, nullable=False),
     Column("catalog_json", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
     PrimaryKeyConstraint("connector_id", "runtime", "catalog_type"),
@@ -93,7 +94,7 @@ connector_protocol_capabilities = Table(
         ForeignKey("connectors.id", ondelete="CASCADE"),
         primary_key=True,
     ),
-    Column("revision", Integer, nullable=False),
+    Column("revision", BigInteger, nullable=False),
     Column("capabilities_json", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
 )

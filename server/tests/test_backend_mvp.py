@@ -1890,9 +1890,10 @@ def test_connector_preferences_round_trip_via_daemon_notification(tmp_path):
 def test_protocol_capabilities_ingest_and_read(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, _, headers = create_connector_and_session(client)
+    revision = 1_785_489_256_422_611
 
     capability_set = {
-        "revision": 2,
+        "revision": revision,
         "capabilities": [
             {
                 "capabilityId": "session.interrupt",
@@ -1917,11 +1918,11 @@ def test_protocol_capabilities_ingest_and_read(tmp_path):
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["connectorId"] == connector_id
-    assert body["capabilitySet"]["revision"] == 2
+    assert body["capabilitySet"]["revision"] == revision
     assert body["capabilitySet"]["capabilities"][0]["capabilityId"] == "session.interrupt"
 
     stale = {
-        "revision": 1,
+        "revision": revision - 1,
         "capabilities": [
             {
                 "capabilityId": "session.steer",
@@ -1938,7 +1939,7 @@ def test_protocol_capabilities_ingest_and_read(tmp_path):
 
     assert stale_ingest.status_code == 200, stale_ingest.text
     body = client.get(f"/connectors/{connector_id}/protocol/capabilities", headers=headers).json()
-    assert body["capabilitySet"]["revision"] == 2
+    assert body["capabilitySet"]["revision"] == revision
     assert {item["capabilityId"] for item in body["capabilitySet"]["capabilities"]} == {
         "session.interrupt"
     }
@@ -1968,6 +1969,7 @@ def test_protocol_capabilities_validation_is_mapped_by_transport(tmp_path):
 def test_catalog_revision_prevents_stale_and_conflicting_updates(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, _, headers = create_connector_and_session(client)
+    revision = 1_785_489_256_422_611
 
     def payload(revision: int, display_name: str) -> dict[str, Any]:
         return {
@@ -1997,12 +1999,12 @@ def test_catalog_revision_prevents_stale_and_conflicting_updates(tmp_path):
             },
         )
 
-    initial = payload(10, "Current")
+    initial = payload(revision, "Current")
     assert ingest(initial).status_code == 200
     assert ingest(initial).status_code == 200
-    assert ingest(payload(9, "Stale")).status_code == 200
+    assert ingest(payload(revision - 1, "Stale")).status_code == 200
 
-    conflict = ingest(payload(10, "Conflicting"))
+    conflict = ingest(payload(revision, "Conflicting"))
     assert conflict.status_code == 400, conflict.text
     assert conflict.json()["detail"]["code"] == "catalog_revision_conflict"
 
@@ -2011,16 +2013,16 @@ def test_catalog_revision_prevents_stale_and_conflicting_updates(tmp_path):
         headers=headers,
         params={"connectorId": connector_id},
     ).json()["catalog"]
-    assert current["revision"] == 10
+    assert current["revision"] == revision
     assert current["models"][0]["displayName"] == "Current"
 
-    assert ingest(payload(11, "Next")).status_code == 200
+    assert ingest(payload(revision + 1, "Next")).status_code == 200
     updated = client.get(
         "/agents/codex/model-catalog",
         headers=headers,
         params={"connectorId": connector_id},
     ).json()["catalog"]
-    assert updated["revision"] == 11
+    assert updated["revision"] == revision + 1
     assert updated["models"][0]["displayName"] == "Next"
 
 
