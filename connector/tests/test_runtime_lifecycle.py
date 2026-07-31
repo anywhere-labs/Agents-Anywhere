@@ -233,6 +233,12 @@ async def _test_codex_provider_uses_dynamic_default_and_environment_overrides(mo
     provider = CodexRuntimeProvider(_bindings())
     inventory = await provider.discover(status="stopped")
     assert inventory["schema"]["properties"]["executablePath"]["default"] == "/opt/codex"
+    assert inventory["schema"]["properties"]["ipcEnabled"]["default"] is True
+    assert inventory["uiSchema"]["order"] == [
+        "executablePath",
+        "ipcEnabled",
+        "environment",
+    ]
     assert "required" not in inventory["schema"]
 
     effective = await provider.validate_config(
@@ -248,7 +254,11 @@ async def _test_codex_provider_uses_dynamic_default_and_environment_overrides(mo
     assert effective.environment["INHERITED_VALUE"] == "keep"
     assert effective.environment["NEW_VALUE"] == "new"
     assert "REMOVE_VALUE" not in effective.environment
+    assert effective.ipc_enabled is True
     assert checked[-1][0] == "/opt/codex"
+
+    ipc_disabled = await provider.validate_config({"ipcEnabled": False})
+    assert ipc_disabled.ipc_enabled is False
 
 
 def test_runtime_environment_rejects_connector_credentials(monkeypatch) -> None:
@@ -269,6 +279,58 @@ async def _test_runtime_environment_rejects_connector_credentials(monkeypatch) -
         await provider.validate_config(
             {"environment": {"AGENT_CONNECTOR_TOKEN": "do-not-forward"}}
         )
+
+
+def test_codex_provider_only_creates_ipc_client_when_enabled(monkeypatch) -> None:
+    asyncio.run(_test_codex_provider_only_creates_ipc_client_when_enabled(monkeypatch))
+
+
+async def _test_codex_provider_only_creates_ipc_client_when_enabled(monkeypatch) -> None:
+    created_ipc_environments: list[dict[str, str]] = []
+    created_adapters: list[Any] = []
+
+    class FakeRpc:
+        def __init__(self, **_kwargs: Any) -> None:
+            return None
+
+    class FakeIpcClient:
+        def __init__(self, *, environment: dict[str, str]) -> None:
+            created_ipc_environments.append(environment)
+
+    class FakeCodexAdapter:
+        def __init__(self, **kwargs: Any) -> None:
+            self.ipc_client = kwargs["ipc_client"]
+            created_adapters.append(self)
+
+        async def start(self) -> None:
+            return None
+
+        async def stop(self) -> None:
+            return None
+
+    monkeypatch.setattr("connector.runtime_lifecycle.JsonRpcStdioClient", FakeRpc)
+    monkeypatch.setattr("connector.runtime_lifecycle.CodexIpcClient", FakeIpcClient)
+    monkeypatch.setattr("connector.runtime_lifecycle.CodexAdapter", FakeCodexAdapter)
+
+    provider = CodexRuntimeProvider(_bindings())
+    target = launch_target("configured", "/opt/codex")
+    disabled = EffectiveRuntimeConfig(
+        target=target,
+        environment={"IPC_TEST": "disabled"},
+        ipc_enabled=False,
+    )
+    await provider.create_adapter(disabled)
+    assert created_adapters[-1].ipc_client is None
+    assert created_ipc_environments == []
+
+    enabled = EffectiveRuntimeConfig(
+        target=target,
+        environment={"IPC_TEST": "enabled"},
+        ipc_enabled=True,
+    )
+    await provider.create_adapter(enabled)
+    assert created_adapters[-1].ipc_client is not None
+    assert created_ipc_environments == [{"IPC_TEST": "enabled"}]
 
 
 def _bindings() -> RuntimeBindings:

@@ -68,6 +68,7 @@ class RuntimeBindings:
 class EffectiveRuntimeConfig:
     target: LaunchTarget
     environment: dict[str, str]
+    ipc_enabled: bool = False
 
 
 class RuntimeProvider(Protocol):
@@ -239,6 +240,33 @@ class CodexRuntimeProvider(ExecutableRuntimeProvider):
     ) -> dict[str, Any]:
         return await check_codex_target(target, environment=environment)
 
+    async def validate_config(self, config: dict[str, Any]) -> EffectiveRuntimeConfig:
+        effective = await super().validate_config(config)
+        return EffectiveRuntimeConfig(
+            target=effective.target,
+            environment=effective.environment,
+            ipc_enabled=bool(config.get("ipcEnabled", True)),
+        )
+
+    def _config_schema(self, target: LaunchTarget | None) -> dict[str, Any]:
+        schema = super()._config_schema(target)
+        schema["properties"]["ipcEnabled"] = {
+            "type": "boolean",
+            "title": "Codex IPC",
+            "description": "Synchronize Codex App and IDE extension sessions through the local IPC socket.",
+            "default": True,
+        }
+        return schema
+
+    @staticmethod
+    def _ui_schema() -> dict[str, Any]:
+        return {
+            "order": ["executablePath", "ipcEnabled", "environment"],
+            "executablePath": {"component": "path"},
+            "ipcEnabled": {"component": "switch"},
+            "environment": {"component": "keyValue"},
+        }
+
     async def create_adapter(self, effective: EffectiveRuntimeConfig) -> Adapter:
         adapter = CodexAdapter(
             rpc=JsonRpcStdioClient(
@@ -248,7 +276,11 @@ class CodexRuntimeProvider(ExecutableRuntimeProvider):
             notification_sink=self.bindings.notification_sink,
             attachment_downloader=self.bindings.attachment_downloader,
             sync_state_store=self.bindings.sync_state_store,
-            ipc_client=CodexIpcClient(environment=effective.environment),
+            ipc_client=(
+                CodexIpcClient(environment=effective.environment)
+                if effective.ipc_enabled
+                else None
+            ),
         )
         try:
             await adapter.start()
