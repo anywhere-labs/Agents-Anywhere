@@ -233,7 +233,12 @@ async def _test_codex_provider_uses_dynamic_default_and_environment_overrides(mo
     provider = CodexRuntimeProvider(_bindings())
     inventory = await provider.discover(status="stopped")
     assert inventory["schema"]["properties"]["executablePath"]["default"] == "/opt/codex"
-    assert inventory["schema"]["properties"]["ipcEnabled"]["default"] is True
+    ipc_schema = inventory["schema"]["properties"]["ipcEnabled"]
+    assert ipc_schema["default"] is True
+    assert ipc_schema["title"] == "Codex IPC (Beta)"
+    assert "macOS only" in ipc_schema["description"]
+    assert "Windows and Linux have not yet been tested" in ipc_schema["description"]
+    assert "runtime instability" in ipc_schema["description"]
     assert inventory["uiSchema"]["order"] == [
         "executablePath",
         "ipcEnabled",

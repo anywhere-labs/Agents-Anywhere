@@ -252,8 +252,12 @@ class CodexRuntimeProvider(ExecutableRuntimeProvider):
         schema = super()._config_schema(target)
         schema["properties"]["ipcEnabled"] = {
             "type": "boolean",
-            "title": "Codex IPC",
-            "description": "Synchronize Codex App and IDE extension sessions through the local IPC socket.",
+            "title": "Codex IPC (Beta)",
+            "description": (
+                "Synchronize Codex App and IDE extension sessions through the local IPC socket. "
+                "Tested on macOS only; Windows and Linux have not yet been tested. "
+                "May cause synchronization issues or runtime instability."
+            ),
             "default": True,
         }
         return schema
