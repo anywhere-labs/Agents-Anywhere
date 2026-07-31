@@ -277,3 +277,58 @@ def test_item_insertion_reports_new_item_without_timeline_sync() -> None:
         assert not applied.patch_scope.requires_timeline_sync
 
     asyncio.run(exercise())
+
+
+def test_ephemeral_turn_and_history_patches_do_not_require_timeline_sync() -> None:
+    async def exercise() -> None:
+        registry = CodexIpcStateRegistry()
+        await _apply_snapshot(registry)
+        applied = await registry.apply(
+            _stream_message(
+                {
+                    "type": "patches",
+                    "baseRevision": 3,
+                    "revision": 4,
+                    "patches": [
+                        {
+                            "op": "replace",
+                            "path": [
+                                "turnHistory",
+                                "history",
+                                "entitiesByKey",
+                                "turn_key",
+                                "durationMs",
+                            ],
+                            "value": 1250,
+                        },
+                        {
+                            "op": "replace",
+                            "path": ["turnHistory", "history", "generation"],
+                            "value": 2,
+                        },
+                        {
+                            "op": "replace",
+                            "path": ["turnHistory", "history", "isComplete"],
+                            "value": False,
+                        },
+                        {
+                            "op": "replace",
+                            "path": [
+                                "turnHistory",
+                                "history",
+                                "islands",
+                                0,
+                                "id",
+                            ],
+                            "value": "tail:2",
+                        },
+                    ],
+                }
+            )
+        )
+
+        assert applied.patch_scope.item_indexes_by_entity == {}
+        assert not applied.patch_scope.metadata_changed
+        assert not applied.patch_scope.requires_timeline_sync
+
+    asyncio.run(exercise())

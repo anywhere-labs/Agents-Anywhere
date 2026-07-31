@@ -1096,6 +1096,15 @@ def _message_text(item: dict[str, Any]) -> str:
     content = item.get("content")
     if isinstance(content, list):
         return "".join(str(part.get("text") or "") for part in content if isinstance(part, dict))
+    input_value = item.get("input")
+    if isinstance(input_value, str):
+        return input_value
+    if isinstance(input_value, list):
+        return "".join(
+            str(part.get("text") or "")
+            for part in input_value
+            if isinstance(part, dict)
+        )
     return ""
 
 

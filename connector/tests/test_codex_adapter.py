@@ -609,7 +609,9 @@ def test_reducer_projects_steering_user_message_for_web_timeline() -> None:
                     "id": "msg_steer",
                     "type": "steeringUserMessage",
                     "status": "completed",
-                    "text": "focus on the failing test",
+                    "input": [
+                        {"type": "text", "text": "focus on the failing test"}
+                    ],
                 },
             ],
         },

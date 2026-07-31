@@ -205,6 +205,12 @@ def codex_ipc_patch_scope(change: CodexIpcPatchesChange) -> CodexIpcPatchScope:
         "recencyAt",
         "resumeState",
     }
+    turn_timing_fields = {
+        "turnStartedAtMs",
+        "firstTurnWorkItemStartedAtMs",
+        "finalAssistantStartedAtMs",
+        "durationMs",
+    }
 
     for patch in change.patches:
         path = patch.path
@@ -216,6 +222,12 @@ def codex_ipc_patch_scope(change: CodexIpcPatchesChange) -> CodexIpcPatchScope:
             metadata_changed = True
             continue
         if path[:3] != ["turnHistory", "history", "entitiesByKey"]:
+            if path[:3] == ["turnHistory", "history", "islands"]:
+                continue
+            if path[:3] == ["turnHistory", "history", "generation"]:
+                continue
+            if path[:3] == ["turnHistory", "history", "isComplete"]:
+                continue
             if path[0] in {"turnHistory", "turns"}:
                 requires_timeline_sync = True
             continue
@@ -223,6 +235,8 @@ def codex_ipc_patch_scope(change: CodexIpcPatchesChange) -> CodexIpcPatchScope:
             requires_timeline_sync = True
             continue
         entity_key = path[3]
+        if len(path) >= 5 and path[4] in turn_timing_fields:
+            continue
         if len(path) < 6 or path[4] != "items" or not isinstance(path[5], int):
             requires_timeline_sync = True
             continue
