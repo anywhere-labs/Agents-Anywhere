@@ -1756,9 +1756,10 @@ async def _exercise_start_turn_through_remote_ipc_owner() -> None:
     assert request_params["turnStartParams"]["input"][0]["text"] == (
         "start through the App owner"
     )
-    assert request_params["turnStartParams"]["attachments"] == []
-    assert request_params["turnStartParams"]["commentAttachments"] == []
-    assert request_params["turnStartParams"]["runtimeWorkspaceRoots"] == []
+    assert set(request_params["turnStartParams"]) == {
+        "input",
+        "clientUserMessageId",
+    }
     assert options["target_client_id"] == "app_owner"
     assert ipc_client.broadcasts[broadcasts_before:] == []
     assert not any(

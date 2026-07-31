@@ -929,7 +929,6 @@ class CodexAdapter:
         ipc_result = await self._start_turn_through_ipc(
             thread_id=thread_id,
             turn_params=turn_params,
-            cwd=cwd,
             client_message_id=client_message_id,
             additional_context=params.get("additionalContext"),
         )
@@ -1014,7 +1013,6 @@ class CodexAdapter:
         *,
         thread_id: str,
         turn_params: dict[str, Any],
-        cwd: str | None,
         client_message_id: str,
         additional_context: Any,
     ) -> dict[str, Any] | None:
@@ -1025,19 +1023,13 @@ class CodexAdapter:
             or self._ipc_publisher.is_active(thread_id)
         ):
             return None
+        # Runtime selections belong to the current IPC owner's UI state. Values
+        # resolved against this Connector's app-server are not interchangeable
+        # with that state and can make the owner's turn-start pipeline fail.
         ipc_turn_params = {
-            key: value
-            for key, value in turn_params.items()
-            if key != "threadId" and value is not None
+            "input": turn_params["input"],
+            "clientUserMessageId": client_message_id,
         }
-        ipc_turn_params["clientUserMessageId"] = client_message_id
-        if cwd is not None:
-            ipc_turn_params["cwd"] = cwd
-        # The IPC owner runs the desktop UI's turn-start pipeline, whose contract
-        # includes these iterable attachment collections even when they are empty.
-        ipc_turn_params.setdefault("attachments", [])
-        ipc_turn_params.setdefault("commentAttachments", [])
-        ipc_turn_params.setdefault("runtimeWorkspaceRoots", [])
         if additional_context is not None:
             ipc_turn_params["additionalContext"] = additional_context
         ipc_params = CodexIpcFollowerStartTurnParams.model_validate(
@@ -1050,7 +1042,9 @@ class CodexAdapter:
         try:
             response = await self.ipc_client.send_request(
                 "thread-follower-start-turn",
-                ipc_params.model_dump(mode="json", exclude_none=True),
+                ipc_params.model_dump(
+                    mode="json", exclude_defaults=True, exclude_none=True
+                ),
                 target_client_id=(
                     remote_state.owner_client_id if remote_state is not None else None
                 ),
