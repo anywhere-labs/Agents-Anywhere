@@ -548,6 +548,10 @@ export function SessionDetail({
               return
             }
             for (const event of recovery.events) applyEvent(event)
+            nextSeqRef.current = Math.max(
+              nextSeqRef.current,
+              cursorSequence(recovery.nextCursor),
+            )
           })
           .catch(() => {
             scheduleRefetch(`${reason}:events-request-failed`)
