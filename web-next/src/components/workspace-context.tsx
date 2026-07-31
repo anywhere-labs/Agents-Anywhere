@@ -57,12 +57,6 @@ export type OptimisticSessionMessage = {
   localSessionId?: string
 }
 
-export type SessionRefreshRequest = {
-  id: number
-  sessionId: string
-  clientMessageId?: string
-}
-
 // ─── Hash routing helpers ─────────────────────────────────────
 
 type ParsedRoute =
@@ -207,7 +201,6 @@ type WorkspaceState = {
   pairDeviceDialogOpen: boolean
   composerInsertion: ComposerInsertion | null
   optimisticMessages: OptimisticSessionMessage[]
-  sessionRefreshRequest: SessionRefreshRequest | null
 
   // Actions
   openSession: (id: string) => void
@@ -235,7 +228,6 @@ type WorkspaceState = {
   getOptimisticSessionState: (sessionId: string) => SessionStateResponse | null
   isOptimisticSession: (sessionId: string) => boolean
   markOptimisticMessageFailed: (clientMessageId: string, message: string) => void
-  requestSessionRefresh: (sessionId: string, clientMessageId?: string) => void
   appendPathToComposer: (path: string) => boolean
   refreshData: () => void
 }
@@ -316,10 +308,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [pairDeviceDialogOpen, setPairDeviceDialogOpen] = React.useState(false)
   const [composerInsertion, setComposerInsertion] = React.useState<ComposerInsertion | null>(null)
   const [optimisticMessages, setOptimisticMessages] = React.useState<OptimisticSessionMessage[]>([])
-  const [sessionRefreshRequest, setSessionRefreshRequest] = React.useState<SessionRefreshRequest | null>(null)
   const firstDeviceWizardCheckedRef = React.useRef(false)
   const composerInsertionSeqRef = React.useRef(0)
-  const sessionRefreshRequestSeqRef = React.useRef(0)
   const routeRef = React.useRef<ParsedRoute>({ page: "home" })
 
   // ── Fetch data from mock API ──────────────────────────────
@@ -716,15 +706,6 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     return optimisticMessages.some((message) => message.localSessionId === sessionId && message.sessionId === sessionId)
   }, [optimisticMessages])
 
-  const requestSessionRefresh = React.useCallback((sessionId: string, clientMessageId?: string) => {
-    sessionRefreshRequestSeqRef.current += 1
-    setSessionRefreshRequest({
-      id: sessionRefreshRequestSeqRef.current,
-      sessionId,
-      clientMessageId,
-    })
-  }, [])
-
   const appendPathToComposer = React.useCallback((path: string) => {
     if (route.page !== "session" || !route.sessionId) return false
     const targetSession = sessions.find((session) => session.id === route.sessionId)
@@ -767,7 +748,6 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     pairDeviceDialogOpen,
     composerInsertion,
     optimisticMessages,
-    sessionRefreshRequest,
     openSession,
     goHome,
     navigate,
@@ -793,7 +773,6 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     getOptimisticSessionState,
     isOptimisticSession,
     markOptimisticMessageFailed,
-    requestSessionRefresh,
     appendPathToComposer,
     refreshData: fetchData,
   }

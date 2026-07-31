@@ -287,6 +287,7 @@ class TimelineNotificationHandler:
             return IngestEffect()
         items = [_timeline_item_for_session(item, session_id) for item in items]
         items = await _tag_active_run_user_messages(self._store, session_id, items)
+        previous_open_turn_id = await self._store.get_open_turn_id(session_id)
         if await _should_replace_timeline_snapshot(self._store, session_id, items):
             stored_items = await self._store.replace_timeline_snapshot(
                 session_id=session_id,
@@ -316,11 +317,18 @@ class TimelineNotificationHandler:
                     session_id=session_id,
                     turn_id=item.turnId,
                     reason="turn_finished",
+                    reconcile=False,
                 )
-        await self._session_states.reconcile(
-            session_id,
-            settle_stopping=any(item.type == "turn.end" for item in items),
+        open_turn_id = await self._store.get_open_turn_id(session_id)
+        closed_previous_turn = previous_open_turn_id is not None and any(
+            item.type == "turn.end" and item.turnId == previous_open_turn_id
+            for item in items
         )
+        if open_turn_id is not None or closed_previous_turn:
+            await self._session_states.reconcile(
+                session_id,
+                settle_stopping=closed_previous_turn,
+            )
         push_items = len(stored_items) <= TIMELINE_SYNC_PUSH_LIMIT
         return IngestEffect(
             session_id=session_id,
@@ -372,12 +380,14 @@ class TimelineNotificationHandler:
                     session_id=session_id,
                     turn_id=item.turnId,
                     reason="turn_finished",
+                    reconcile=False,
                 )
             await self._store.clear_active_run(session_id)
-        await self._session_states.reconcile(
-            session_id,
-            settle_stopping=item.type == "turn.end",
-        )
+        if item.type in {"turn.start", "turn.end"}:
+            await self._session_states.reconcile(
+                session_id,
+                settle_stopping=item.type == "turn.end",
+            )
         return IngestEffect(
             session_id=session_id,
             item=stored.model_dump(mode="json"),

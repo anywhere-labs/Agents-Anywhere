@@ -30,6 +30,8 @@ class SessionStateFacts:
 def derive_session_status(facts: SessionStateFacts) -> SessionStatus:
     if facts.has_blocking_interaction:
         return "blocked"
+    if facts.observed_status == "blocked":
+        return "blocked"
     if facts.current_status == "stopping" and not facts.settle_stopping:
         return "stopping"
     if facts.observed_status == "stopping" and (
@@ -38,7 +40,11 @@ def derive_session_status(facts: SessionStateFacts) -> SessionStatus:
         return "stopping"
     if facts.has_active_turn:
         return "running"
+    if facts.observed_status == "running":
+        return "running"
     if facts.has_active_run:
+        return "pending"
+    if facts.observed_status == "pending":
         return "pending"
     return "idle"
 

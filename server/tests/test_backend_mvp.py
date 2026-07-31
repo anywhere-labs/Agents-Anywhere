@@ -1227,7 +1227,7 @@ def test_session_state_supports_latest_and_before_timeline_windows(tmp_path):
         assert oldest["hasMore"] is False
 
 
-def test_session_status_is_derived_from_turn_ledger(tmp_path):
+def test_session_status_uses_runtime_observation_until_turn_ledger_arrives(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
 
@@ -1246,9 +1246,9 @@ def test_session_status_is_derived_from_turn_ledger(tmp_path):
             client,
             session_id,
             headers,
-            lambda body: body["session"]["status"] == "idle",
+            lambda body: body["session"]["status"] == "running",
         )
-        assert state["session"]["status"] == "idle"
+        assert state["session"]["status"] == "running"
 
         turn_start = {
             "id": "tl_turn_start",
@@ -3826,6 +3826,42 @@ def test_connector_http_ingest_accepts_status_update_before_external_id(tmp_path
                         "sessionId": "sess_codex_out_of_order",
                         "items": [
                             {
+                                "id": "tl_out_of_order_start",
+                                "sessionId": "sess_codex_out_of_order",
+                                "turnId": "turn_historical",
+                                "type": "turn.start",
+                                "status": "done",
+                                "role": None,
+                                "content": {},
+                                "source": {
+                                    "runtime": "codex",
+                                    "sessionId": "thr_later",
+                                    "turnId": "turn_historical",
+                                    "derivedKey": "turn-start",
+                                },
+                                "orderSeq": 1,
+                                "revision": 1,
+                                "contentHash": "sha256:out-of-order-start",
+                            },
+                            {
+                                "id": "tl_out_of_order_end",
+                                "sessionId": "sess_codex_out_of_order",
+                                "turnId": "turn_historical",
+                                "type": "turn.end",
+                                "status": "done",
+                                "role": None,
+                                "content": {"result": "completed"},
+                                "source": {
+                                    "runtime": "codex",
+                                    "sessionId": "thr_later",
+                                    "turnId": "turn_historical",
+                                    "derivedKey": "turn-end",
+                                },
+                                "orderSeq": 2,
+                                "revision": 1,
+                                "contentHash": "sha256:out-of-order-end",
+                            },
+                            {
                                 "id": "tl_out_of_order",
                                 "sessionId": "sess_codex_out_of_order",
                                 "type": "message",
@@ -3838,7 +3874,7 @@ def test_connector_http_ingest_accepts_status_update_before_external_id(tmp_path
                                     "itemId": "item_later",
                                     "itemType": "agentMessage",
                                 },
-                                "orderSeq": 1,
+                                "orderSeq": 3,
                                 "revision": 1,
                                 "contentHash": "sha256:out-of-order",
                             }
@@ -3854,7 +3890,9 @@ def test_connector_http_ingest_accepts_status_update_before_external_id(tmp_path
     state = client.get("/sessions/sess_codex_out_of_order/state", headers=headers).json()
     assert state["session"]["runtime"] == "codex"
     assert state["session"]["externalSessionId"] is None
-    assert state["items"][0]["content"]["text"] == "timeline arrived after status"
+    assert state["session"]["status"] == "running"
+    message = next(item for item in state["items"] if item["type"] == "message")
+    assert message["content"]["text"] == "timeline arrived after status"
 
 
 def test_timeline_sync_keeps_existing_realtime_items_missing_from_snapshot(tmp_path):

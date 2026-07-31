@@ -23,7 +23,10 @@ export function preserveOptimisticItems(baseItems: TimelineItem[], previousItems
   const preserved = previousItems.filter((item) => {
     if (!isOptimisticTimelineItem(item)) return false
     const clientMessageId = timelineClientMessageId(item)
-    return !clientMessageId || !hasTimelineItemForClientMessage(baseItems, clientMessageId)
+    if (clientMessageId && hasTimelineItemForClientMessage(baseItems, clientMessageId)) return false
+    return !baseItems.some((serverItem) =>
+      optimisticUserMessageMatchesServerItem(item, serverItem, timelineClientMessageId(serverItem)),
+    )
   })
   return preserved.length > 0 ? mergeTimelineItems(baseItems, preserved) : baseItems
 }

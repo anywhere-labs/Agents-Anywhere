@@ -31,6 +31,18 @@ from agent_server.services.session_states import SessionStateService
             "running",
         ),
         (
+            SessionStateFacts(current_status="idle", observed_status="running"),
+            "running",
+        ),
+        (
+            SessionStateFacts(current_status="idle", observed_status="pending"),
+            "pending",
+        ),
+        (
+            SessionStateFacts(current_status="running", observed_status="blocked"),
+            "blocked",
+        ),
+        (
             SessionStateFacts(
                 current_status="running",
                 has_active_turn=True,

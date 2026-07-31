@@ -116,6 +116,7 @@ async def cancel_turn_blocking_interactions(
     session_id: str,
     turn_id: str | None,
     reason: str,
+    reconcile: bool = True,
 ) -> list[Notice]:
     if turn_id is None:
         return []
@@ -132,7 +133,8 @@ async def cancel_turn_blocking_interactions(
                 context_patch={"closedReason": reason},
             )
         )
-    await SessionStateService(db).reconcile(session_id)
+    if reconcile:
+        await SessionStateService(db).reconcile(session_id)
     return closed
 
 

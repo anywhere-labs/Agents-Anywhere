@@ -83,8 +83,6 @@ const SCROLL_TO_BOTTOM_PRUNE_CHECK_MS = 120
 const INITIAL_TIMELINE_LIMIT = 100
 const TIMELINE_PAGE_LIMIT = 100
 const LOAD_OLDER_SCROLL_THRESHOLD = 96
-const SESSION_REFRESH_RETRY_LIMIT = 3
-const SESSION_REFRESH_RETRY_DELAY_MS = 700
 const COMPOSER_DRAFT_STORAGE_PREFIX = "agents-anywhere.sessionComposerDraft.v1."
 const COMPOSER_BLUR_LAYERS = buildComposerBlurLayers({
   height: 144,
@@ -201,12 +199,6 @@ function writeComposerDraft(sessionId: string, value: string) {
   }
 }
 
-function hasRealTimelineItemForClientMessage(items: TimelineItem[], clientMessageId: string): boolean {
-  return items.some((item) =>
-    !isOptimisticTimelineItem(item) && timelineClientMessageId(item) === clientMessageId,
-  )
-}
-
 export function SessionDetail({
   token,
   sessionId,
@@ -225,7 +217,6 @@ export function SessionDetail({
     getOptimisticSessionState,
     isOptimisticSession,
     markOptimisticMessageFailed,
-    sessionRefreshRequest,
   } = useWorkspace()
   const [state, setState] = React.useState<SessionRemoteState | null>(null)
   const [loading, setLoading] = React.useState(true)
@@ -252,6 +243,7 @@ export function SessionDetail({
   const lastScrollToBottomAtRef = React.useRef(0)
   const scrollToBottomTimerRef = React.useRef<number | null>(null)
   const pruneAfterScrollTimerRef = React.useRef<number | null>(null)
+  const streamConnectedRef = React.useRef(false)
 
   const session = state?.session ?? fallbackSession
   const composerDraft = composerDraftState.sessionId === sessionId ? composerDraftState.value : ""
@@ -400,39 +392,6 @@ export function SessionDetail({
     onSessionUpdated?.(next.session)
     return next
   }, [markAutoScrollIfNearBottom, onSessionUpdated, sessionId, token])
-
-  React.useEffect(() => {
-    if (!sessionRefreshRequest || sessionRefreshRequest.sessionId !== sessionId || isLocalOptimisticSession) return
-    let cancelled = false
-    let retryTimer: number | null = null
-
-    const run = async (attempt: number) => {
-      try {
-        const next = await refresh({ scrollToBottom: true })
-        if (cancelled) return
-        const clientMessageId = sessionRefreshRequest.clientMessageId
-        if (!clientMessageId || hasRealTimelineItemForClientMessage(next.items, clientMessageId)) return
-        if (attempt >= SESSION_REFRESH_RETRY_LIMIT) return
-        retryTimer = window.setTimeout(() => {
-          retryTimer = null
-          void run(attempt + 1)
-        }, SESSION_REFRESH_RETRY_DELAY_MS)
-      } catch {
-        if (cancelled || attempt >= SESSION_REFRESH_RETRY_LIMIT) return
-        retryTimer = window.setTimeout(() => {
-          retryTimer = null
-          void run(attempt + 1)
-        }, SESSION_REFRESH_RETRY_DELAY_MS)
-      }
-    }
-
-    void run(0)
-
-    return () => {
-      cancelled = true
-      if (retryTimer !== null) window.clearTimeout(retryTimer)
-    }
-  }, [isLocalOptimisticSession, refresh, sessionId, sessionRefreshRequest])
 
   const loadOlderTimeline = React.useCallback(async () => {
     if (loadingOlderRef.current || loadingOlder || !state?.hasMore) return
@@ -590,6 +549,9 @@ export function SessionDetail({
         const ticket = await dashboardApi.createWsTicket(token, createClientId("web"), sessionId)
         if (cancelled) return
         socket = new WebSocket(dashboardApi.sessionWebSocketUrl(sessionId, ticket.ticket))
+        socket.onopen = () => {
+          if (!cancelled) streamConnectedRef.current = true
+        }
         socket.onmessage = (message) => {
           if (cancelled || typeof message.data !== "string") return
           const event = parseProtocolEvent(message.data)
@@ -602,6 +564,7 @@ export function SessionDetail({
         }
         socket.onclose = () => {
           if (cancelled) return
+          streamConnectedRef.current = false
           reconnectTimer = window.setTimeout(() => {
             reconnectTimer = null
             void connect()
@@ -647,6 +610,7 @@ export function SessionDetail({
 
     return () => {
       cancelled = true
+      streamConnectedRef.current = false
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
       if (delayedRefetchTimer !== null) window.clearTimeout(delayedRefetchTimer)
       socket?.close()
@@ -699,7 +663,13 @@ export function SessionDetail({
         clientMessageId,
         ...selections,
       })
-      await refresh({ scrollToBottom: true })
+      if (!streamConnectedRef.current) {
+        try {
+          await refresh({ scrollToBottom: true })
+        } catch {
+          // The message was accepted; reconnect recovery remains authoritative.
+        }
+      }
       scrollToBottomThrottled()
       return true
     } catch (err) {
@@ -746,7 +716,13 @@ export function SessionDetail({
     setInterrupting(true)
     try {
       await dashboardApi.interruptSession(token, session.id)
-      await refresh()
+      if (!streamConnectedRef.current) {
+        try {
+          await refresh()
+        } catch {
+          // The interrupt was accepted; reconnect recovery will settle the UI.
+        }
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : tSession("interruptFailed"))
     } finally {
@@ -761,7 +737,13 @@ export function SessionDetail({
     try {
       if (!session) return
       await dashboardApi.respondInteraction(token, session.id, noticeId, actionId)
-      await refresh()
+      if (!streamConnectedRef.current) {
+        try {
+          await refresh()
+        } catch {
+          // The response was accepted; reconnect recovery will settle the UI.
+        }
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : tSession("resolveInteractionFailed"))
     } finally {
