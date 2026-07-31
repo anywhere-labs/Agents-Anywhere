@@ -1037,6 +1037,7 @@ class CodexAdapter:
         # includes these iterable attachment collections even when they are empty.
         ipc_turn_params.setdefault("attachments", [])
         ipc_turn_params.setdefault("commentAttachments", [])
+        ipc_turn_params.setdefault("runtimeWorkspaceRoots", [])
         if additional_context is not None:
             ipc_turn_params["additionalContext"] = additional_context
         ipc_params = CodexIpcFollowerStartTurnParams.model_validate(

@@ -216,6 +216,7 @@ class CodexIpcTurnStartParams(CodexIpcModel):
     additionalContext: Any = None
     attachments: list[Any] = Field(default_factory=list)
     commentAttachments: list[Any] = Field(default_factory=list)
+    runtimeWorkspaceRoots: list[str] = Field(default_factory=list)
 
 
 class CodexIpcFollowerStartTurnParams(CodexIpcModel):
