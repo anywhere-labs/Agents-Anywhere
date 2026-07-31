@@ -1629,6 +1629,43 @@ async def _exercise_ipc_snapshot_and_patch() -> None:
     await ipc_client.message_handler(gap)
     assert notifications == []
     assert len(ipc_client.broadcasts) == following_before + 1
+    await ipc_client.message_handler(gap)
+    assert len(ipc_client.broadcasts) == following_before + 1
+
+    resynced = CodexIpcStreamStateChangedBroadcast.model_validate(
+        {
+            "sourceClientId": "owner_1",
+            "params": {
+                "conversationId": "thr_1",
+                "change": {
+                    "type": "snapshot",
+                    "revision": 6,
+                    "conversationState": snapshot.params.change.conversationState.model_dump(
+                        mode="json"
+                    ),
+                },
+            },
+        }
+    )
+    await ipc_client.message_handler(resynced)
+    notifications.clear()
+    await ipc_client.message_handler(
+        CodexIpcStreamStateChangedBroadcast.model_validate(
+            {
+                "sourceClientId": "owner_1",
+                "params": {
+                    "conversationId": "thr_1",
+                    "change": {
+                        "type": "patches",
+                        "baseRevision": 7,
+                        "revision": 8,
+                        "patches": [],
+                    },
+                },
+            }
+        )
+    )
+    assert len(ipc_client.broadcasts) == following_before + 2
 
 
 async def _exercise_ipc_local_owner_projection() -> None:

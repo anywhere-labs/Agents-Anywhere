@@ -37,7 +37,7 @@ import {
   permissionSelectionIdForCatalog,
 } from "@/components/session/catalog-selection"
 import { SelectionSettingsDrawer } from "@/components/session/selection-settings-drawer"
-import { CAPABILITY, capabilityIsUsable } from "@/components/session/capabilities"
+import { CAPABILITY, capabilityIsUsable, findCapability } from "@/components/session/capabilities"
 import { useElementWidth } from "@/hooks/use-element-width"
 
 export type { AttachedFile }
@@ -89,6 +89,7 @@ export function SessionComposer({
   const connectorOnline = session.connectorStatus === "online"
   const canUseSendMessage = capabilityIsUsable(effectiveCapabilities, CAPABILITY.sendMessage)
   const canUseInterrupt = capabilityIsUsable(effectiveCapabilities, CAPABILITY.interrupt)
+  const interruptCapability = findCapability(effectiveCapabilities, CAPABILITY.interrupt)
   const canUseModelCatalog = capabilityIsUsable(effectiveCapabilities, CAPABILITY.modelCatalog)
   const canUsePermissionCatalog = capabilityIsUsable(effectiveCapabilities, CAPABILITY.permissionCatalog)
   const canUseEffortCatalog = capabilityIsUsable(effectiveCapabilities, CAPABILITY.effortCatalog)
@@ -98,7 +99,13 @@ export function SessionComposer({
     !sending &&
     !interrupting
   const hasInput = value.trim().length > 0 || attachments.length > 0
-  const showInterrupt = !creatingSession && canUseInterrupt
+  const activeSessionCanInterrupt = Boolean(
+    connectorOnline &&
+    interruptCapability?.supported &&
+    interruptCapability.allowed &&
+    (isPending || isBusy),
+  )
+  const showInterrupt = !creatingSession && (canUseInterrupt || activeSessionCanInterrupt)
   const [selectedPermissionMode, setSelectedPermissionMode] = React.useState("")
   const [selectedModel, setSelectedModel] = React.useState("")
   const [selectedReasoning, setSelectedReasoning] = React.useState("")

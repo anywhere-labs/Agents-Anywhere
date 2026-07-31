@@ -15,20 +15,9 @@ export function isOptimisticTimelineItem(item: TimelineItem): boolean {
   return item.id.startsWith(OPTIMISTIC_ITEM_PREFIX) || item.source.optimistic === true
 }
 
-function hasTimelineItemForClientMessage(items: TimelineItem[], clientMessageId: string): boolean {
-  return items.some((item) => !isOptimisticTimelineItem(item) && timelineClientMessageId(item) === clientMessageId)
-}
-
 export function preserveOptimisticItems(baseItems: TimelineItem[], previousItems: TimelineItem[]): TimelineItem[] {
-  const preserved = previousItems.filter((item) => {
-    if (!isOptimisticTimelineItem(item)) return false
-    const clientMessageId = timelineClientMessageId(item)
-    if (clientMessageId && hasTimelineItemForClientMessage(baseItems, clientMessageId)) return false
-    return !baseItems.some((serverItem) =>
-      optimisticUserMessageMatchesServerItem(item, serverItem, timelineClientMessageId(serverItem)),
-    )
-  })
-  return preserved.length > 0 ? mergeTimelineItems(baseItems, preserved) : baseItems
+  const optimisticItems = previousItems.filter(isOptimisticTimelineItem)
+  return optimisticItems.length > 0 ? mergeTimelineItems(optimisticItems, baseItems) : baseItems
 }
 
 export function mergeTimelineItems(

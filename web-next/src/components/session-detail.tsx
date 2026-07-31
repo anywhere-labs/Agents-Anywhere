@@ -251,7 +251,7 @@ export function SessionDetail({
 
   const applyOptimisticItems = React.useCallback((next: SessionRemoteState): SessionRemoteState => ({
     ...next,
-    items: mergeTimelineItems(next.items, getOptimisticItems(sessionId)),
+    items: preserveOptimisticItems(next.items, getOptimisticItems(sessionId)),
   }), [getOptimisticItems, sessionId])
   const applyOptimisticItemsRef = React.useRef(applyOptimisticItems)
   const clearResolvedOptimisticMessagesRef = React.useRef(clearResolvedOptimisticMessages)
@@ -280,8 +280,11 @@ export function SessionDetail({
       return
     }
     const optimisticItems = getOptimisticItems(sessionId)
-    if (optimisticItems.length === 0) return
-    setState((current) => current ? { ...current, items: mergeTimelineItems(current.items, optimisticItems) } : current)
+    setState((current) => {
+      if (!current) return current
+      const serverItems = current.items.filter((item) => !isOptimisticTimelineItem(item))
+      return { ...current, items: preserveOptimisticItems(serverItems, optimisticItems) }
+    })
   }, [getOptimisticItems, getOptimisticSessionState, isLocalOptimisticSession, sessionId])
 
   React.useEffect(() => {
@@ -517,6 +520,10 @@ export function SessionDetail({
       setState((current) => mergeSessionEvent(current, event))
       const item = readPayloadValue<TimelineItem>(event.payload.item)
       if (item) clearResolvedOptimisticMessagesRef.current(sessionId, [item])
+      const items = Array.isArray(event.payload.items)
+        ? event.payload.items.filter(isTimelineItem)
+        : []
+      if (items.length > 0) clearResolvedOptimisticMessagesRef.current(sessionId, items)
       nextSeqRef.current = Math.max(nextSeqRef.current, event.sequence)
     }
 
@@ -645,10 +652,13 @@ export function SessionDetail({
       sessionId: session.id,
       item: optimisticMessage,
     })
+    const previousSessionStatus = session.status
+    const previousSessionUpdatedSeq = session.updatedSeq
     setState((current) => {
       if (!current) return current
       return {
         ...current,
+        session: { ...current.session, status: "pending" },
         items: mergeTimelineItems(current.items, [optimisticMessage]),
       }
     })
@@ -679,6 +689,11 @@ export function SessionDetail({
         if (!current) return current
         return {
           ...current,
+          session:
+            current.session.status === "pending" &&
+            current.session.updatedSeq === previousSessionUpdatedSeq
+              ? { ...current.session, status: previousSessionStatus }
+              : current.session,
           items: current.items.map((item) =>
             timelineClientMessageId(item) === clientMessageId && isOptimisticTimelineItem(item)
               ? markOptimisticItemFailed(item, message)
@@ -1379,7 +1394,12 @@ function mergeSessionEvent(
     : item
       ? mergeTimelineItems(current.items, [item])
       : current.items
-  const nextSession = session && session.updatedSeq >= current.session.updatedSeq ? session : current.session
+  const acceptsSession = Boolean(session && session.updatedSeq >= current.session.updatedSeq)
+  const nextSession = acceptsSession && session ? session : current.session
+  const nextEffectiveCapabilities =
+    effectiveCapabilities && (!session || acceptsSession)
+      ? effectiveCapabilities
+      : current.effectiveCapabilities
   const nextSeq = Math.max(current.nextSeq, event.sequence)
 
   return {
@@ -1389,7 +1409,7 @@ function mergeSessionEvent(
     notices: nextNotices,
     nextSeq,
     eventCursor: event.sequence >= current.nextSeq ? event.cursor : current.eventCursor,
-    effectiveCapabilities: effectiveCapabilities ?? current.effectiveCapabilities,
+    effectiveCapabilities: nextEffectiveCapabilities,
     serverTime: event.emittedAt ?? current.serverTime,
   }
 }

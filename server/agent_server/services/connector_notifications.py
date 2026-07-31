@@ -288,7 +288,13 @@ class TimelineNotificationHandler:
         items = [_timeline_item_for_session(item, session_id) for item in items]
         items = await _tag_active_run_user_messages(self._store, session_id, items)
         previous_open_turn_id = await self._store.get_open_turn_id(session_id)
-        if await _should_replace_timeline_snapshot(self._store, session_id, items):
+        previous_seq = await self._store.get_session_seq(session_id)
+        replace_snapshot = await _should_replace_timeline_snapshot(
+            self._store,
+            session_id,
+            items,
+        )
+        if replace_snapshot:
             stored_items = await self._store.replace_timeline_snapshot(
                 session_id=session_id,
                 source_observed_at=params.get("sourceObservedAt"),
@@ -329,11 +335,18 @@ class TimelineNotificationHandler:
                 session_id,
                 settle_stopping=closed_previous_turn,
             )
-        push_items = len(stored_items) <= TIMELINE_SYNC_PUSH_LIMIT
+        changed_items = (
+            stored_items
+            if replace_snapshot
+            else [item for item in stored_items if item.updatedSeq > previous_seq]
+        )
+        push_items = len(changed_items) <= TIMELINE_SYNC_PUSH_LIMIT
         return IngestEffect(
             session_id=session_id,
-            items=[item.model_dump(mode="json") for item in stored_items] if push_items else None,
-            timeline_reset=True,
+            items=[item.model_dump(mode="json") for item in changed_items]
+            if push_items
+            else None,
+            timeline_reset=replace_snapshot,
             session_changed=True,
             notices_changed=any(item.type == "turn.end" for item in items),
             needs_refetch=not push_items,

@@ -204,6 +204,7 @@ class CodexAdapter:
         repr=False,
     )
     _ipc_followed_by_client: dict[str, str] = field(default_factory=dict)
+    _ipc_resyncing_threads: set[str] = field(default_factory=set)
     _ipc_connection_client_id: str | None = None
     _ipc_publisher: CodexIpcPublisher = field(init=False, repr=False)
     _ipc_refresh_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict)
@@ -262,6 +263,7 @@ class CodexAdapter:
             await self.ipc_client.close()
         self._ipc_state_registry.reset()
         self._ipc_followed_by_client.clear()
+        self._ipc_resyncing_threads.clear()
         self._ipc_connection_client_id = None
         self._ipc_publisher.reset()
         self._started = False
@@ -568,6 +570,7 @@ class CodexAdapter:
         if client_id != self._ipc_connection_client_id:
             self._ipc_state_registry.reset()
             self._ipc_followed_by_client.clear()
+            self._ipc_resyncing_threads.clear()
             self._ipc_publisher.reset_connection()
             self._ipc_connection_client_id = client_id
         return connected
@@ -598,6 +601,7 @@ class CodexAdapter:
 
     async def _stop_following_ipc_thread(self, thread_id: str) -> None:
         client_id = self._ipc_followed_by_client.pop(thread_id, None)
+        self._ipc_resyncing_threads.discard(thread_id)
         self._ipc_state_registry.discard(thread_id)
         if (
             client_id is None
@@ -646,6 +650,7 @@ class CodexAdapter:
             followed_threads = list(self._ipc_followed_by_client)
             self._ipc_state_registry.reset()
             self._ipc_followed_by_client.clear()
+            self._ipc_resyncing_threads.clear()
             self._ipc_publisher.reset_connection()
             for thread_id in followed_threads:
                 await self._follow_ipc_thread(thread_id, force=True)
@@ -698,13 +703,22 @@ class CodexAdapter:
         try:
             applied = await self._ipc_state_registry.apply(state_message)
         except CodexIpcStateError as exc:
+            cause = exc.__cause__ or exc
             logger.warning(
-                "codex IPC state desynchronized thread_id={} error_type={}",
+                "codex IPC state desynchronized thread_id={} error_type={} error={}",
                 thread_id,
                 type(exc).__name__,
+                cause,
             )
-            await self._follow_ipc_thread(thread_id, force=True)
+            self._ipc_state_registry.discard(thread_id)
+            if thread_id in self._ipc_resyncing_threads:
+                return
+            self._ipc_resyncing_threads.add(thread_id)
+            if not await self._follow_ipc_thread(thread_id, force=True):
+                self._ipc_resyncing_threads.discard(thread_id)
             return
+        if state_message.params.change.type == "snapshot":
+            self._ipc_resyncing_threads.discard(thread_id)
         if (
             self._ipc_followed_by_client.get(thread_id)
             != self._ipc_connection_client_id

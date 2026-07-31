@@ -4670,7 +4670,7 @@ def test_session_ws_updates_effective_capabilities_after_takeover(tmp_path):
         assert capabilities["session.send_message"]["allowed"] is True
 
 
-def test_session_ws_projects_codex_timeline_sync_as_snapshot_without_refetch(tmp_path):
+def test_session_ws_projects_codex_timeline_sync_as_incremental_update_without_refetch(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
     ticket = ws_ticket(client, session_id, headers)
@@ -4716,9 +4716,66 @@ def test_session_ws_projects_codex_timeline_sync_as_snapshot_without_refetch(tmp
 
         received = [ws.receive_json() for _ in range(2)]
         assert "session.refetch_required" not in {event["type"] for event in received}
-        timeline_events = [event for event in received if event["type"] == "timeline.snapshot"]
+        timeline_events = [
+            event for event in received if event["type"] == "timeline.item_created"
+        ]
         assert timeline_events
-        assert timeline_events[0]["payload"]["items"][0]["content"]["text"] == "synced over ws"
+        assert timeline_events[0]["payload"]["item"]["content"]["text"] == "synced over ws"
+
+
+def test_unchanged_large_codex_timeline_sync_does_not_request_another_snapshot(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    ticket = ws_ticket(client, session_id, headers)
+    items = [
+        {
+            "id": f"tl_ws_large_{index}",
+            "sessionId": session_id,
+            "turnId": "turn_ws_large",
+            "type": "message",
+            "status": "done",
+            "role": "assistant",
+            "content": {"text": f"message {index}"},
+            "source": {
+                "runtime": "codex",
+                "sessionId": "thr_1",
+                "turnId": "turn_ws_large",
+                "itemId": f"msg_large_{index}",
+                "itemType": "agentMessage",
+            },
+            "orderSeq": index + 1,
+            "revision": 1,
+            "contentHash": f"sha256:ws-large-{index}",
+        }
+        for index in range(101)
+    ]
+    payload = {
+        "notifications": [
+            {
+                "method": "timeline.sync",
+                "params": {"sessionId": session_id, "items": items},
+            }
+        ]
+    }
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json=payload,
+        )
+        assert response.status_code == 200, response.text
+        initial_events = [ws.receive_json() for _ in range(2)]
+        assert "session.refetch_required" in {event["type"] for event in initial_events}
+
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json=payload,
+        )
+        assert response.status_code == 200, response.text
+        assert ws.receive_json()["type"] == "session.status_changed"
 
 
 def test_session_events_recovery_returns_json_events(tmp_path):
