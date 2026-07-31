@@ -214,6 +214,8 @@ class CodexIpcTurnStartParams(CodexIpcModel):
     collaborationMode: Any = None
     serviceTier: str | None = None
     additionalContext: Any = None
+    attachments: list[Any] = Field(default_factory=list)
+    commentAttachments: list[Any] = Field(default_factory=list)
 
 
 class CodexIpcFollowerStartTurnParams(CodexIpcModel):

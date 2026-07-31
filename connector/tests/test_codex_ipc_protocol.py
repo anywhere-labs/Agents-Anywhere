@@ -232,4 +232,6 @@ def test_follower_start_params_match_recovered_extension_contract() -> None:
 
     assert params.turnStartParams.input[0]["text"] == "start"
     assert params.turnStartParams.clientUserMessageId == "msg_1"
+    assert params.turnStartParams.attachments == []
+    assert params.turnStartParams.commentAttachments == []
     assert codex_ipc_method_version("thread-follower-start-turn") == 1

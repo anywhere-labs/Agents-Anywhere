@@ -748,6 +748,7 @@ class CodexAdapter:
             turn_params = params.turnStartParams.model_dump(
                 mode="python",
                 exclude={"clientUserMessageId", "additionalContext"},
+                exclude_defaults=True,
                 exclude_none=True,
             )
             turn_params["threadId"] = params.conversationId
@@ -928,6 +929,7 @@ class CodexAdapter:
         ipc_result = await self._start_turn_through_ipc(
             thread_id=thread_id,
             turn_params=turn_params,
+            cwd=cwd,
             client_message_id=client_message_id,
             additional_context=params.get("additionalContext"),
         )
@@ -1012,6 +1014,7 @@ class CodexAdapter:
         *,
         thread_id: str,
         turn_params: dict[str, Any],
+        cwd: str | None,
         client_message_id: str,
         additional_context: Any,
     ) -> dict[str, Any] | None:
@@ -1028,6 +1031,12 @@ class CodexAdapter:
             if key != "threadId" and value is not None
         }
         ipc_turn_params["clientUserMessageId"] = client_message_id
+        if cwd is not None:
+            ipc_turn_params["cwd"] = cwd
+        # The IPC owner runs the desktop UI's turn-start pipeline, whose contract
+        # includes these iterable attachment collections even when they are empty.
+        ipc_turn_params.setdefault("attachments", [])
+        ipc_turn_params.setdefault("commentAttachments", [])
         if additional_context is not None:
             ipc_turn_params["additionalContext"] = additional_context
         ipc_params = CodexIpcFollowerStartTurnParams.model_validate(
