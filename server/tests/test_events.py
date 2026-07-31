@@ -87,7 +87,9 @@ def test_recovery_requires_every_durable_revision_to_be_projected() -> None:
     )
 
 
-def test_destructive_timeline_replace_leaves_durable_recovery_barrier(tmp_path) -> None:
+def test_timeline_snapshot_replace_does_not_require_snapshot_for_sparse_watermark(
+    tmp_path,
+) -> None:
     async def exercise() -> None:
         path = tmp_path / "events.sqlite3"
         upgrade_database(sqlite_path=path)
@@ -122,8 +124,7 @@ def test_destructive_timeline_replace_leaves_durable_recovery_barrier(tmp_path) 
                 user_id="user-1",
             )
 
-            assert recovery.snapshotRequired is True
-            assert recovery.events == []
+            assert recovery.snapshotRequired is False
         finally:
             await presence.close()
             await store.close()

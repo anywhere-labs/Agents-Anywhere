@@ -6,7 +6,6 @@ from agent_server.core.events import (
     event_cursor,
     parse_event_cursor,
     protocol_event,
-    revisions_are_complete,
     timeline_events_from_items,
 )
 from agent_server.core.models import Notice, SessionView, TimelineItem
@@ -69,8 +68,15 @@ class EventRecoveryService:
         after_sequence = parse_event_cursor(after)
         await self._store.get_session(session_id, user_id=user_id)
         current_sequence = await self._store.get_session_seq(session_id)
-        if after_sequence >= current_sequence:
+        if after_sequence > current_sequence:
             return self._snapshot_required(current_sequence)
+        if after_sequence == current_sequence:
+            return ProtocolEventRecoveryResponse(
+                events=[],
+                nextCursor=event_cursor(current_sequence),
+                snapshotRequired=False,
+                serverTime=utc_now(),
+            )
 
         for _attempt in range(self._stability_attempts):
             start_sequence = await self._store.get_session_seq(session_id)
@@ -132,12 +138,6 @@ class EventRecoveryService:
                 )
             )
         events.sort(key=lambda event: (event.sequence, event.eventId))
-        if not revisions_are_complete(
-            after_sequence=after_sequence,
-            current_sequence=current_sequence,
-            events=events,
-        ):
-            return self._snapshot_required(current_sequence)
         return ProtocolEventRecoveryResponse(
             events=events,
             nextCursor=event_cursor(current_sequence),

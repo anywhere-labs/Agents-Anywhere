@@ -2754,8 +2754,13 @@ def test_interrupt_cancels_blocking_interactions(tmp_path):
         headers=headers,
         params={"after": f"seq:{before_seq}"},
     ).json()
-    assert recovered["snapshotRequired"] is True
-    assert recovered["events"] == []
+    assert recovered["snapshotRequired"] is False
+    notice_events = [
+        event for event in recovered["events"] if event["type"] == "notice.updated"
+    ]
+    assert len(notice_events) == 1
+    assert notice_events[0]["payload"]["notice"]["noticeId"] == notice_id
+    assert notice_events[0]["payload"]["notice"]["status"] == "cancelled"
 
 
 def test_turn_start_updates_and_turn_end_clears_active_run(tmp_path):
@@ -4992,7 +4997,7 @@ def test_session_events_recovery_requires_snapshot_for_future_cursor(tmp_path):
     assert response.json()["events"] == []
 
 
-def test_session_events_recovery_refreshes_ephemeral_state_at_current_cursor(tmp_path):
+def test_session_events_recovery_is_noop_at_current_cursor(tmp_path):
     client = make_client(tmp_path)
     _, _, session_id, headers = create_connector_and_session(client)
     snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers).json()
@@ -5004,11 +5009,11 @@ def test_session_events_recovery_refreshes_ephemeral_state_at_current_cursor(tmp
     )
 
     assert response.status_code == 200
-    assert response.json()["snapshotRequired"] is True
+    assert response.json()["snapshotRequired"] is False
     assert response.json()["events"] == []
 
 
-def test_session_events_recovery_requires_snapshot_for_collapsed_gap(tmp_path):
+def test_session_events_recovery_returns_latest_upsert_for_sparse_watermark(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
 
@@ -5055,8 +5060,14 @@ def test_session_events_recovery_requires_snapshot_for_collapsed_gap(tmp_path):
     )
 
     assert response.status_code == 200
-    assert response.json()["snapshotRequired"] is True
-    assert response.json()["events"] == []
+    body = response.json()
+    assert body["snapshotRequired"] is False
+    assert body["nextCursor"].startswith("seq:")
+    item_events = [
+        event for event in body["events"] if event["type"] == "timeline.item_updated"
+    ]
+    assert len(item_events) == 1
+    assert item_events[0]["payload"]["item"]["content"]["text"] == "second"
 
 
 def test_session_events_recovery_requires_snapshot_for_truncated_delta(tmp_path):
@@ -5579,8 +5590,14 @@ def test_interaction_response_recovery_falls_back_across_legacy_approval_gap(tmp
         params={"after": f"seq:{before_seq}"},
     )
     assert recovered.status_code == 200, recovered.text
-    assert recovered.json()["snapshotRequired"] is True
-    assert recovered.json()["events"] == []
+    recovery_body = recovered.json()
+    assert recovery_body["snapshotRequired"] is False
+    notice_events = [
+        event for event in recovery_body["events"] if event["type"] == "notice.updated"
+    ]
+    assert len(notice_events) == 1
+    assert notice_events[0]["payload"]["notice"]["noticeId"] == notice_id
+    assert notice_events[0]["payload"]["notice"]["status"] == "resolved"
     notice = asyncio.run(client.app.state.store.get_notice(notice_id))
     assert notice.status == "resolved"
 
