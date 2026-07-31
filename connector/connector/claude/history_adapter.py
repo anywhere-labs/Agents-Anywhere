@@ -6,12 +6,11 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from connector.logging import logger
-
 from connector.claude.normalizers import ClaudeTranscriptNormalizer
 from connector.claude.path_utils import stable_claude_session_id
-from connector.claude.timeline_identity import content_hash
+from connector.claude.timeline_identity import item_content_hash
 from connector.claude.timeline_reducer import ClaudeTimelineReducer
+from connector.logging import logger
 from connector.sync_state import SyncStateStore
 from connector.time import utc_now
 
@@ -493,7 +492,12 @@ def _turn_boundary_item(
         },
         "orderSeq": order_seq,
         "revision": 1,
-        "contentHash": content_hash(content),
+        "contentHash": item_content_hash(
+            item_type=item_type,
+            status=status,
+            role=None,
+            content=content,
+        ),
         "createdAt": now,
         "updatedAt": now,
         "completedAt": now if is_end else None,

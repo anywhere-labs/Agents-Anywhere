@@ -188,7 +188,10 @@ Recommended implementation sequence:
    targeted snapshot and then targeted patches in revision order.
 9. Tag every update with its source. Never republish a remote IPC update back to
    IPC. Deduplicate backend notifications by the existing stable timeline id
-   and content hash.
+   and content hash. `contentHash` is the hash of canonical item state
+   (`type`, `status`, `role`, and `content`) only; source event names, revisions,
+   timestamps, and ordering metadata are transport metadata and must not change
+   it.
 10. On disconnect, owner change, schema/version mismatch, or revision gap, stop
    incremental emission and request a new snapshot. The existing periodic
    app-server sync remains the fallback source of final state.

@@ -608,6 +608,54 @@ def test_reducer_replays_completed_turn_snapshot_without_new_completion_time() -
     assert second_end["revision"] == first_end["revision"]
 
 
+def test_reducer_content_hash_ignores_transport_event_source() -> None:
+    reducer = TimelineReducer()
+    reducer.bind_session("sess_1", "thr_1")
+
+    live = reducer.reduce_turn_item_snapshots(
+        "sess_1",
+        "thr_1",
+        {
+            "turnId": "turn_1",
+            "items": [
+                {
+                    "id": "msg_1",
+                    "type": "agentMessage",
+                    "status": "completed",
+                    "text": "same final answer",
+                }
+            ],
+        },
+        {0},
+    )
+    snapshot = reducer.reduce_thread_snapshot(
+        "sess_1",
+        {
+            "id": "thr_1",
+            "status": {"type": "completed"},
+            "turns": [
+                {
+                    "id": "turn_1",
+                    "status": "completed",
+                    "items": [
+                        {
+                            "id": "msg_1",
+                            "type": "agentMessage",
+                            "status": "completed",
+                            "text": "same final answer",
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+
+    live_item = next(item for item in live.timeline_items if item["type"] == "message")
+    snapshot_item = next(item for item in snapshot.timeline_items if item["type"] == "message")
+    assert snapshot_item["contentHash"] == live_item["contentHash"]
+    assert snapshot_item["revision"] == live_item["revision"]
+
+
 def test_reducer_tags_user_message_with_registered_client_message_id() -> None:
     reducer = TimelineReducer()
     reducer.bind_session("sess_1", "thr_1")

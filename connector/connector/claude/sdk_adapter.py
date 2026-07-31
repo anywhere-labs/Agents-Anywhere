@@ -1087,7 +1087,12 @@ def _prepare_live_stream_item(
         return item
     existing = runtime.live_stream_items.get(item_id)
     content = item.get("content") if isinstance(item.get("content"), dict) else {}
-    content_hash = _hash_content(content)
+    content_hash = _hash_content(
+        content,
+        item_type=item.get("type"),
+        status="running",
+        role=item.get("role"),
+    )
     now = utc_now()
     if existing is not None and existing.get("contentHash") == content_hash:
         return None
@@ -1124,7 +1129,12 @@ def _prepare_live_stream_final_item(
     if existing is None:
         return None
     content = item.get("content") if isinstance(item.get("content"), dict) else {}
-    content_hash = _hash_content(content)
+    content_hash = _hash_content(
+        content,
+        item_type=item.get("type"),
+        status="done",
+        role=item.get("role"),
+    )
     finalized = dict(item)
     finalized["orderSeq"] = existing.get("orderSeq")
     finalized["revision"] = int(existing.get("revision") or 1) + (
@@ -1153,7 +1163,12 @@ def _prepare_live_tool_item(
         prepared = dict(item)
         prepared["orderSeq"] = _next_order(runtime)
         prepared["revision"] = int(prepared.get("revision") or 1)
-        prepared["contentHash"] = _hash_content(prepared.get("content") if isinstance(prepared.get("content"), dict) else {})
+        prepared["contentHash"] = _hash_content(
+            prepared.get("content") if isinstance(prepared.get("content"), dict) else {},
+            item_type=prepared.get("type"),
+            status=prepared.get("status"),
+            role=prepared.get("role"),
+        )
         prepared["createdAt"] = item.get("createdAt") or now
         prepared["updatedAt"] = item.get("updatedAt") or now
         if prepared.get("status") not in {"done", "failed", "interrupted", "cancelled"}:
@@ -1163,8 +1178,13 @@ def _prepare_live_tool_item(
 
     merged_content = dict(existing.get("content") if isinstance(existing.get("content"), dict) else {})
     merged_content.update(incoming_content)
-    content_hash = _hash_content(merged_content)
     incoming_status = _optional_string(item.get("status")) or _optional_string(existing.get("status")) or "running"
+    content_hash = _hash_content(
+        merged_content,
+        item_type=item.get("type") or existing.get("type"),
+        status=incoming_status,
+        role=item.get("role") or existing.get("role"),
+    )
     if existing.get("contentHash") == content_hash and existing.get("status") == incoming_status:
         return None
     prepared = dict(existing)
@@ -1376,7 +1396,12 @@ def _timeline_item(
         "source": source,
         "orderSeq": order_seq,
         "revision": 1,
-        "contentHash": _hash_content(content),
+        "contentHash": _hash_content(
+            content,
+            item_type=item_type,
+            status=status,
+            role=role,
+        ),
         "createdAt": now,
         "updatedAt": now,
         "completedAt": now if status in {"done", "failed", "interrupted", "cancelled"} else None,
@@ -1454,9 +1479,26 @@ def _stable_message_id(value: Any) -> str:
     return "msg_" + _short_hash(repr(value))
 
 
-def _hash_content(content: Any) -> str:
+def _hash_content(
+    content: Any,
+    *,
+    item_type: Any = None,
+    status: Any = None,
+    role: Any = None,
+) -> str:
+    canonical = {
+        "type": item_type,
+        "status": status,
+        "role": role,
+        "content": content,
+    }
     return "sha256:" + hashlib.sha256(
-        json.dumps(content, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        json.dumps(
+            canonical,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
     ).hexdigest()
 
 

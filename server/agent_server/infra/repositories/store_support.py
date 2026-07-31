@@ -213,13 +213,10 @@ def _source_item_preference(item: TimelineItem) -> tuple[int, int, int, int, int
 
 
 def _timeline_item_unchanged(existing: TimelineItem, incoming: TimelineItemIn) -> bool:
-    if _timeline_source_client_message_id(existing) != _timeline_source_client_message_id(incoming):
-        return False
-    return (
-        existing.contentHash == incoming.contentHash
-        and existing.revision == incoming.revision
-        and existing.status == incoming.status
-    )
+    # contentHash is the canonical state identity supplied by the runtime.
+    # Revision/status/source metadata can differ between live IPC events and a
+    # later full snapshot without changing the item itself.
+    return existing.contentHash == incoming.contentHash
 
 
 def _should_keep_existing_timeline_item(existing: TimelineItem, incoming: TimelineItemIn) -> bool:

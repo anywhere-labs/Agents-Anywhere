@@ -4,7 +4,7 @@ import json
 from typing import Any
 
 from connector.claude.normalized import NormalizedClaudeEvent
-from connector.claude.timeline_identity import ClaudeTimelineIdentity, content_hash
+from connector.claude.timeline_identity import ClaudeTimelineIdentity, item_content_hash
 
 
 class ClaudeTimelineReducer:
@@ -63,7 +63,9 @@ class ClaudeTimelineReducer:
                 "source": _source(event, turn_id, "tool_result"),
                 "orderSeq": order_seq,
                 "revision": 1,
-                "contentHash": content_hash(content),
+                "contentHash": item_content_hash(
+                    item_type="tool", status=status, role="tool", content=content
+                ),
                 "createdAt": event.timestamp,
                 "updatedAt": event.timestamp,
                 "completedAt": event.timestamp,
@@ -87,7 +89,9 @@ class ClaudeTimelineReducer:
                 "source": _source(event, turn_id, "tool_use"),
                 "orderSeq": order_seq,
                 "revision": 1,
-                "contentHash": content_hash(content),
+                "contentHash": item_content_hash(
+                    item_type="tool", status="running", role="tool", content=content
+                ),
                 "createdAt": event.timestamp,
                 "updatedAt": event.timestamp,
             }
@@ -115,7 +119,9 @@ class ClaudeTimelineReducer:
                 "source": source,
                 "orderSeq": order_seq,
                 "revision": 1,
-                "contentHash": content_hash(content),
+                "contentHash": item_content_hash(
+                    item_type="message", status="done", role=event.role, content=content
+                ),
                 "createdAt": event.timestamp,
                 "updatedAt": event.timestamp,
                 "completedAt": event.timestamp,
@@ -168,7 +174,12 @@ def _merge_item(existing: dict[str, Any], incoming: dict[str, Any]) -> dict[str,
         data["status"] = incoming.get("status")
         data["role"] = incoming.get("role") or data.get("role")
         data["revision"] = int(data.get("revision") or 1) + 1
-        data["contentHash"] = content_hash(content)
+        data["contentHash"] = item_content_hash(
+            item_type=str(data.get("type") or "system"),
+            status=str(data.get("status") or "running"),
+            role=data.get("role") if isinstance(data.get("role"), str) else None,
+            content=content,
+        )
         data["updatedAt"] = incoming.get("updatedAt")
         data["completedAt"] = incoming.get("completedAt")
         return data

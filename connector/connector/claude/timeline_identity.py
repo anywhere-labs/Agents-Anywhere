@@ -42,6 +42,17 @@ def content_hash(*values: Any) -> str:
     return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def item_content_hash(
+    *,
+    item_type: str,
+    status: str,
+    role: str | None,
+    content: Any,
+) -> str:
+    """Hash canonical item state, excluding transport metadata."""
+    return content_hash(item_type, status, role, content)
+
+
 def _short(*values: Any) -> str:
     payload = json.dumps(values, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]

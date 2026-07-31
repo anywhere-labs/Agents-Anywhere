@@ -2941,6 +2941,61 @@ def test_timeline_sync_keeps_existing_client_message_id(tmp_path):
     assert state["items"][0]["source"]["clientMessageId"] == "opt_keep"
 
 
+def test_timeline_sync_uses_content_hash_as_state_identity(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+
+    def ingest(*, revision: int, status: str, event: str) -> None:
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "notifications": [
+                    {
+                        "method": "timeline.sync",
+                        "params": {
+                            "sessionId": session_id,
+                            "items": [
+                                {
+                                    "id": "tl_hash_identity",
+                                    "sessionId": session_id,
+                                    "turnId": "turn_hash",
+                                    "type": "message",
+                                    "status": status,
+                                    "role": "assistant",
+                                    "content": {"text": "same final answer"},
+                                    "source": {
+                                        "runtime": "codex",
+                                        "sessionId": "thread_hash",
+                                        "turnId": "turn_hash",
+                                        "itemId": "msg_hash",
+                                        "itemType": "agentMessage",
+                                        "event": event,
+                                    },
+                                    "orderSeq": 1,
+                                    "revision": revision,
+                                    "contentHash": "sha256:canonical-final",
+                                }
+                            ],
+                        },
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 200, response.text
+
+    ingest(revision=1, status="running", event="ipc/thread-stream-state-changed")
+    first = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+    first_item = first["items"][0]
+    ingest(revision=9, status="done", event="thread/read")
+    second = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+    second_item = second["items"][0]
+
+    assert second_item["updatedSeq"] == first_item["updatedSeq"]
+    assert second_item["revision"] == first_item["revision"]
+    assert second_item["status"] == "running"
+
+
 def test_timeline_sync_tags_only_latest_active_run_message_and_keeps_run(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, session_id, headers = create_connector_and_session(client)

@@ -898,7 +898,10 @@ class TimelineReducer:
         if source_extra:
             source.update(source_extra)
         source = {key: value for key, value in source.items() if value is not None}
-        content_hash = _content_hash(item_type, status, role, content, source)
+        # The hash represents the canonical item state. Transport metadata such
+        # as source.event may change when the same item is observed through IPC
+        # and a full thread snapshot, but that is not a content change.
+        content_hash = _content_hash(item_type, status, role, content)
         if existing and existing.get("contentHash") == content_hash:
             return existing
         snapshot = {
