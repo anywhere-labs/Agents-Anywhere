@@ -587,6 +587,44 @@ def test_reducer_tags_user_message_with_registered_client_message_id() -> None:
     assert reduced.timeline_items[0]["source"]["clientMessageId"] == "opt_123"
 
 
+def test_reducer_projects_steering_user_message_for_web_timeline() -> None:
+    reducer = TimelineReducer()
+    reducer.bind_session("sess_1", "thr_1")
+    reducer.register_client_message(
+        session_id="sess_1",
+        thread_id="thr_1",
+        turn_id="turn_1",
+        client_message_id="opt_steer",
+        text="focus on the failing test",
+    )
+
+    reduced = reducer.reduce_turn_item_snapshots(
+        "sess_1",
+        "thr_1",
+        {
+            "turnId": "turn_1",
+            "items": [
+                {"id": "msg_initial", "type": "userMessage", "text": "start"},
+                {
+                    "id": "msg_steer",
+                    "type": "steeringUserMessage",
+                    "status": "completed",
+                    "text": "focus on the failing test",
+                },
+            ],
+        },
+        {0, 1},
+    )
+
+    initial, steering = reduced.timeline_items
+    assert initial["type"] == "message"
+    assert "clientMessageId" not in initial["source"]
+    assert steering["type"] == "message"
+    assert steering["role"] == "user"
+    assert steering["content"]["text"] == "focus on the failing test"
+    assert steering["source"]["clientMessageId"] == "opt_steer"
+
+
 def test_reducer_matches_pending_client_message_after_attachment_suffix() -> None:
     reducer = TimelineReducer()
     reducer.bind_session("sess_1", "thr_1")
@@ -1414,6 +1452,7 @@ async def _exercise_ipc_snapshot_and_patch() -> None:
                         "id": "thr_1",
                         "title": "IPC thread",
                         "cwd": "/repo",
+                        "threadRuntimeStatus": {"type": "active"},
                         "turnHistory": {
                             "kind": "canonical",
                             "history": {
@@ -1454,6 +1493,7 @@ async def _exercise_ipc_snapshot_and_patch() -> None:
         "session.updated",
         "timeline.sync",
     ]
+    assert notifications[0][1]["status"] == "running"
     notifications.clear()
 
     patch = CodexIpcStreamStateChangedBroadcast.model_validate(
@@ -1489,6 +1529,31 @@ async def _exercise_ipc_snapshot_and_patch() -> None:
     assert notifications[0][1]["item"]["content"]["text"] == "hello"
     notifications.clear()
 
+    status_patch = CodexIpcStreamStateChangedBroadcast.model_validate(
+        {
+            "sourceClientId": "owner_1",
+            "params": {
+                "conversationId": "thr_1",
+                "change": {
+                    "type": "patches",
+                    "baseRevision": 2,
+                    "revision": 3,
+                    "patches": [
+                        {
+                            "op": "replace",
+                            "path": ["threadRuntimeStatus"],
+                            "value": {"type": "idle"},
+                        }
+                    ],
+                },
+            },
+        }
+    )
+    await ipc_client.message_handler(status_patch)
+    assert [method for method, _params in notifications] == ["session.updated"]
+    assert notifications[0][1]["status"] == "idle"
+    notifications.clear()
+
     gap = CodexIpcStreamStateChangedBroadcast.model_validate(
         {
             "sourceClientId": "owner_1",
@@ -1496,8 +1561,8 @@ async def _exercise_ipc_snapshot_and_patch() -> None:
                 "conversationId": "thr_1",
                 "change": {
                     "type": "patches",
-                    "baseRevision": 3,
-                    "revision": 4,
+                    "baseRevision": 4,
+                    "revision": 5,
                     "patches": [],
                 },
             },

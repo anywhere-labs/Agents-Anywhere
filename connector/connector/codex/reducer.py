@@ -133,7 +133,7 @@ class TimelineReducer:
                     idx = _reasoning_index_by_turn.get(turn_id, 0)
                     item["_reasoningTurnIndex"] = idx
                     _reasoning_index_by_turn[turn_id] = idx + 1
-                if codex_type in {"userMessage", "agentMessage"}:
+                if codex_type in {"userMessage", "steeringUserMessage", "agentMessage"}:
                     message_index = message_indices.get(codex_type, 0)
                     message_indices[codex_type] = message_index + 1
                     if message_counts.get(codex_type, 0) > 1:
@@ -194,7 +194,7 @@ class TimelineReducer:
             item = dict(raw_item)
             codex_type = _string_value(item.get("type"))
             message_index = message_indices.get(codex_type or "", 0)
-            if codex_type in {"userMessage", "agentMessage"}:
+            if codex_type in {"userMessage", "steeringUserMessage", "agentMessage"}:
                 message_indices[codex_type] = message_index + 1
             current_reasoning_index = reasoning_index
             if codex_type == "reasoning":
@@ -206,7 +206,7 @@ class TimelineReducer:
             if codex_type == "reasoning":
                 item["_reasoningTurnIndex"] = current_reasoning_index
             if (
-                codex_type in {"userMessage", "agentMessage"}
+                codex_type in {"userMessage", "steeringUserMessage", "agentMessage"}
                 and message_counts.get(codex_type, 0) > 1
             ):
                 item["_messageKey"] = f"message-{codex_type}-{message_index}"
@@ -258,7 +258,7 @@ class TimelineReducer:
             turn_id = _string_value(item_record.get("turnId")) or _string_value(item_record.get("turn_id"))
             item = dict(raw_item)
             codex_type = _string_value(item.get("type"))
-            if codex_type in {"userMessage", "agentMessage"}:
+            if codex_type in {"userMessage", "steeringUserMessage", "agentMessage"}:
                 message_counts[f"{turn_id}:{codex_type}"] = message_counts.get(f"{turn_id}:{codex_type}", 0) + 1
             if codex_type == "turnEnd" and turn_id is not None:
                 completed_turns[turn_id] = _turn_result_to_status(_turn_result(item))
@@ -268,7 +268,7 @@ class TimelineReducer:
         message_indices: dict[str, int] = {}
         for turn_id, item in records:
             codex_type = _string_value(item.get("type"))
-            if codex_type in {"userMessage", "agentMessage"} and _string_value(item.get("_derivedKey")) is None:
+            if codex_type in {"userMessage", "steeringUserMessage", "agentMessage"} and _string_value(item.get("_derivedKey")) is None:
                 message_index = message_indices.get(f"{turn_id}:{codex_type}", 0)
                 message_indices[f"{turn_id}:{codex_type}"] = message_index + 1
                 if message_counts.get(f"{turn_id}:{codex_type}", 0) > 1:
@@ -493,7 +493,7 @@ class TimelineReducer:
         content: dict[str, Any]
         source_extra: dict[str, Any] | None = None
 
-        if codex_type == "userMessage":
+        if codex_type in {"userMessage", "steeringUserMessage"}:
             timeline_type = "message"
             role = "user"
             content = {"text": _message_text(item), "format": "markdown"}
@@ -606,7 +606,10 @@ class TimelineReducer:
     ) -> dict[str, Any] | None:
         if turn_id is not None:
             mapped = self._client_message_by_turn.get((session_id, thread_id, turn_id))
-            if mapped:
+            if mapped and (
+                mapped.get("text") is None
+                or _client_message_text_matches(text, mapped.get("text"))
+            ):
                 return mapped
         pending_key = (session_id, thread_id)
         pending = self._pending_client_messages.get(pending_key)
@@ -1079,7 +1082,7 @@ def _message_type_counts(items: list[dict[str, Any]]) -> dict[str, int]:
     counts: dict[str, int] = {}
     for item in items:
         codex_type = _string_value(item.get("type"))
-        if codex_type in {"userMessage", "agentMessage"}:
+        if codex_type in {"userMessage", "steeringUserMessage", "agentMessage"}:
             counts[codex_type] = counts.get(codex_type, 0) + 1
     return counts
 
@@ -1121,7 +1124,7 @@ def _stable_item_key(item: dict[str, Any]) -> str | None:
     if message_key:
         return message_key
     codex_type = _string_value(item.get("type")) or "unknown"
-    if codex_type in {"userMessage", "agentMessage"}:
+    if codex_type in {"userMessage", "steeringUserMessage", "agentMessage"}:
         item_id = _string_value(item.get("id")) or _string_value(item.get("_eventItemId"))
         if item_id and not item_id.startswith("item-"):
             return None
@@ -1385,11 +1388,14 @@ def _session_status_from_turn(turn: dict[str, Any]) -> str:
 def _session_status_from_thread(thread: dict[str, Any]) -> str:
     status = thread.get("status")
     status_type = status.get("type") if isinstance(status, dict) else status
-    if status_type in {"running", "inProgress"}:
+    normalized = (
+        status_type.replace("_", "").replace("-", "").lower()
+        if isinstance(status_type, str)
+        else ""
+    )
+    if normalized in {"active", "running", "inprogress"}:
         return "running"
-    if status_type == "waiting_approval":
-        return "blocked"
-    if status_type == "error":
+    if normalized in {"blocked", "error", "systemerror", "waitingapproval"}:
         return "blocked"
     return "idle"
 

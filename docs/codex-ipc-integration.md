@@ -241,6 +241,12 @@ canonical state is then sent as a new snapshot if it changed.
 The refresh runs outside the app-server notification callback so JSON-RPC
 responses are not blocked behind that callback.
 
+For inbound state, `threadRuntimeStatus.type=active` maps to the shared session
+status `running`; idle or unloaded states map to `idle`, and runtime error or
+approval-waiting states map to `blocked`. Codex `steeringUserMessage` items are
+normalized to the shared timeline contract as `message` items with `role=user`
+and retain `clientMessageId` so clients can replace their optimistic message.
+
 ## Control requests
 
 The same router supports `thread-follower-*` requests for start, steer,
