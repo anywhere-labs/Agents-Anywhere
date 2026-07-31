@@ -52,6 +52,10 @@ export type SessionStateQuery = {
   limit?: number;
 };
 
+export type SessionSnapshotRequestOptions = {
+  reason?: string;
+};
+
 export class DashboardApi {
   constructor(private readonly client: ApiClient = apiClient) {}
 
@@ -254,7 +258,16 @@ export class DashboardApi {
     token: string,
     sessionId: string,
     limit = 200,
+    options: SessionSnapshotRequestOptions = {},
   ): Promise<SessionSnapshotResponse> {
+    const reason = options.reason ?? "unspecified";
+    console.info("[AgentsAnywhere] session snapshot request", {
+      sessionId,
+      limit,
+      reason,
+      requestedAt: new Date().toISOString(),
+      stack: new Error().stack,
+    });
     return this.client.get<SessionSnapshotResponse>(
       `/sessions/${encodeURIComponent(sessionId)}/snapshot`,
       { token, query: { limit } },

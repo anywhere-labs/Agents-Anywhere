@@ -149,7 +149,7 @@ function buildComposerBlurLayers({
 async function loadInitialSessionState(
   token: string,
   sessionId: string,
-  options: { syncRuntime?: boolean } = {},
+  options: { syncRuntime?: boolean; reason?: string } = {},
 ): Promise<SessionRemoteState> {
   if (options.syncRuntime) {
     try {
@@ -160,7 +160,11 @@ async function loadInitialSessionState(
       // the fallback source of truth.
     }
   }
-  return sessionStateFromSnapshot(await dashboardApi.getSessionSnapshot(token, sessionId, INITIAL_TIMELINE_LIMIT))
+  return sessionStateFromSnapshot(
+    await dashboardApi.getSessionSnapshot(token, sessionId, INITIAL_TIMELINE_LIMIT, {
+      reason: options.reason ?? "session-detail.initial-load",
+    }),
+  )
 }
 
 function sessionStateFromSnapshot(snapshot: SessionSnapshotResponse): SessionRemoteState {
@@ -384,11 +388,17 @@ export function SessionDetail({
     }
   }, [])
 
-  const refresh = React.useCallback(async (options: { scrollToBottom?: boolean; preserveBottom?: boolean } = {}) => {
+  const refresh = React.useCallback(async (options: {
+    scrollToBottom?: boolean
+    preserveBottom?: boolean
+    reason?: string
+  } = {}) => {
     if (options.preserveBottom ?? true) markAutoScrollIfNearBottom()
     if (options.scrollToBottom) forceScrollOnNextUpdateRef.current = true
     setError(null)
-    const next = applyOptimisticItemsRef.current(await loadInitialSessionState(token, sessionId))
+    const next = applyOptimisticItemsRef.current(await loadInitialSessionState(token, sessionId, {
+      reason: options.reason ?? "session-detail.refresh",
+    }))
     clearResolvedOptimisticMessagesRef.current(sessionId, next.items)
     setState((current) => current ? { ...next, items: preserveOptimisticItems(next.items, current.items) } : next)
     nextSeqRef.current = Math.max(nextSeqRef.current, next.nextSeq)
@@ -482,10 +492,10 @@ export function SessionDetail({
     let recoveryPromise: Promise<void> | null = null
     let snapshotReady = false
     let bufferedEvents: ProtocolEventEnvelope[] = []
-    const refetch = () => {
+    const refetch = (reason: string) => {
       if (refetchPromise) return refetchPromise
       markAutoScrollIfNearBottom()
-      refetchPromise = loadInitialSessionState(token, sessionId)
+      refetchPromise = loadInitialSessionState(token, sessionId, { reason })
         .then((next) => {
           if (cancelled) return
           const merged = applyOptimisticItemsRef.current(next)
@@ -501,11 +511,11 @@ export function SessionDetail({
       return refetchPromise
     }
 
-    const scheduleRefetch = () => {
+    const scheduleRefetch = (reason: string) => {
       if (cancelled || refetchPromise || delayedRefetchTimer !== null) return
       delayedRefetchTimer = window.setTimeout(() => {
         delayedRefetchTimer = null
-        void refetch()
+        void refetch(reason)
       }, 1200)
     }
 
@@ -513,7 +523,7 @@ export function SessionDetail({
       if (cancelled || event.sessionId !== sessionId) return
       if (event.type === "keepalive") return
       if (event.type === "session.refetch_required") {
-        void recoverEvents(nextSeqRef.current)
+        void recoverEvents(nextSeqRef.current, "session.refetch_required")
         return
       }
       markAutoScrollIfNearBottom()
@@ -527,27 +537,27 @@ export function SessionDetail({
       nextSeqRef.current = Math.max(nextSeqRef.current, event.sequence)
     }
 
-    const recoverEvents = async (afterSeq: number) => {
+    const recoverEvents = async (afterSeq: number, reason: string) => {
       if (recoveryPromise) return recoveryPromise
       try {
         recoveryPromise = dashboardApi.getSessionEvents(token, sessionId, `seq:${afterSeq}`)
           .then((recovery) => {
             if (cancelled) return
             if (recovery.snapshotRequired) {
-              scheduleRefetch()
+              scheduleRefetch(`${reason}:snapshot-required`)
               return
             }
             for (const event of recovery.events) applyEvent(event)
           })
           .catch(() => {
-            scheduleRefetch()
+            scheduleRefetch(`${reason}:events-request-failed`)
           })
           .finally(() => {
             recoveryPromise = null
           })
         return recoveryPromise
       } catch {
-        scheduleRefetch()
+        scheduleRefetch(`${reason}:events-request-threw`)
       }
     }
 
@@ -575,7 +585,7 @@ export function SessionDetail({
           reconnectTimer = window.setTimeout(() => {
             reconnectTimer = null
             void connect()
-            void recoverEvents(nextSeqRef.current)
+            void recoverEvents(nextSeqRef.current, "websocket.reconnect")
           }, 1200)
         }
       } catch {
@@ -591,6 +601,7 @@ export function SessionDetail({
 
     loadInitialSessionState(token, sessionId, {
       syncRuntime: getOptimisticSessionStateRef.current(sessionId) === null,
+      reason: "session-detail.initial-load",
     })
       .then((next) => {
         if (cancelled) return
@@ -675,7 +686,10 @@ export function SessionDetail({
       })
       if (!streamConnectedRef.current) {
         try {
-          await refresh({ scrollToBottom: true })
+          await refresh({
+            scrollToBottom: true,
+            reason: "send-message.stream-disconnected",
+          })
         } catch {
           // The message was accepted; reconnect recovery remains authoritative.
         }
@@ -733,7 +747,7 @@ export function SessionDetail({
       await dashboardApi.interruptSession(token, session.id)
       if (!streamConnectedRef.current) {
         try {
-          await refresh()
+          await refresh({ reason: "interrupt.stream-disconnected" })
         } catch {
           // The interrupt was accepted; reconnect recovery will settle the UI.
         }
@@ -754,7 +768,7 @@ export function SessionDetail({
       await dashboardApi.respondInteraction(token, session.id, noticeId, actionId)
       if (!streamConnectedRef.current) {
         try {
-          await refresh()
+          await refresh({ reason: "interaction.stream-disconnected" })
         } catch {
           // The response was accepted; reconnect recovery will settle the UI.
         }
