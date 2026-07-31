@@ -18,6 +18,7 @@ from connector.codex.ipc_protocol import (
     CodexIpcBroadcast,
     CodexIpcClientStatusChangedBroadcast,
     CodexIpcConnectionResetBroadcast,
+    CodexIpcFollowerStartTurnParams,
     CodexIpcFollowerSteerTurnParams,
     CodexIpcFollowingChangedBroadcast,
     CodexIpcFollowingStatusRequestedBroadcast,
@@ -724,6 +725,12 @@ class CodexAdapter:
         await self._emit_ipc_state(applied)
 
     def can_handle_ipc_request(self, request: CodexIpcRequest) -> bool:
+        if request.method == "thread-follower-start-turn":
+            try:
+                params = CodexIpcFollowerStartTurnParams.model_validate(request.params)
+            except ValidationError:
+                return False
+            return self._ipc_publisher.is_active(params.conversationId)
         if request.method != "thread-follower-steer-turn":
             return False
         try:
@@ -733,6 +740,19 @@ class CodexAdapter:
         return self._ipc_publisher.active_turn_id(params.conversationId) is not None
 
     async def handle_ipc_request(self, request: CodexIpcRequest) -> dict[str, Any]:
+        if request.method == "thread-follower-start-turn":
+            params = CodexIpcFollowerStartTurnParams.model_validate(request.params)
+            if not self._ipc_publisher.is_active(params.conversationId):
+                raise RuntimeError("Codex thread is not owned by this Connector")
+            assert self.rpc is not None
+            turn_params = params.turnStartParams.model_dump(
+                mode="python",
+                exclude={"clientUserMessageId", "additionalContext"},
+                exclude_none=True,
+            )
+            turn_params["threadId"] = params.conversationId
+            result = await self.rpc.request("turn/start", turn_params)
+            return {"result": result}
         if request.method != "thread-follower-steer-turn":
             raise ValueError(f"unsupported Codex IPC request: {request.method}")
         params = CodexIpcFollowerSteerTurnParams.model_validate(request.params)
@@ -870,7 +890,7 @@ class CodexAdapter:
             {"type": "text", "text": text_content, "text_elements": []},
             *extra_inputs,
         ]
-        client_message_id = _optional_string(params.get("clientMessageId"))
+        client_message_id = _optional_string(params.get("clientMessageId")) or str(uuid4())
         timeline_attachments = _timeline_attachments(params)
         if client_message_id:
             self.reducer.register_client_message(
@@ -905,6 +925,37 @@ class CodexAdapter:
             params.get("modelSelectionId"),
             params.get("permissionSelectionId"),
         )
+        ipc_result = await self._start_turn_through_ipc(
+            thread_id=thread_id,
+            turn_params=turn_params,
+            client_message_id=client_message_id,
+            additional_context=params.get("additionalContext"),
+        )
+        if ipc_result is not None:
+            result = ipc_result
+            turn_id = _turn_id_from_result(result)
+            if turn_id:
+                self.reducer.register_client_message(
+                    session_id=session_id,
+                    thread_id=thread_id,
+                    turn_id=turn_id,
+                    client_message_id=client_message_id,
+                    text=text_content,
+                    attachments=timeline_attachments,
+                )
+            logger.info(
+                "started codex turn through IPC session_id={} thread_id={} turn_id={}",
+                session_id,
+                thread_id,
+                turn_id,
+            )
+            return {
+                "turnId": turn_id,
+                "turn": result.get("turn") or result,
+                "externalSessionId": thread_id,
+                "backendNotifications": backend_notifications,
+            }
+
         await self._claim_ipc_thread(thread_id)
         try:
             result = await self.rpc.request("turn/start", turn_params)
@@ -955,6 +1006,53 @@ class CodexAdapter:
             "externalSessionId": thread_id,
             "backendNotifications": backend_notifications,
         }
+
+    async def _start_turn_through_ipc(
+        self,
+        *,
+        thread_id: str,
+        turn_params: dict[str, Any],
+        client_message_id: str,
+        additional_context: Any,
+    ) -> dict[str, Any] | None:
+        await self._discover_ipc_router()
+        if (
+            self.ipc_client is None
+            or not self.ipc_client.is_connected
+            or self._ipc_publisher.is_active(thread_id)
+        ):
+            return None
+        ipc_turn_params = {
+            key: value
+            for key, value in turn_params.items()
+            if key != "threadId" and value is not None
+        }
+        ipc_turn_params["clientUserMessageId"] = client_message_id
+        if additional_context is not None:
+            ipc_turn_params["additionalContext"] = additional_context
+        ipc_params = CodexIpcFollowerStartTurnParams.model_validate(
+            {
+                "conversationId": thread_id,
+                "turnStartParams": ipc_turn_params,
+            }
+        )
+        remote_state = self._ipc_state_registry.get(thread_id)
+        try:
+            response = await self.ipc_client.send_request(
+                "thread-follower-start-turn",
+                ipc_params.model_dump(mode="json", exclude_none=True),
+                target_client_id=(
+                    remote_state.owner_client_id if remote_state is not None else None
+                ),
+            )
+        except RuntimeError as exc:
+            if not _ipc_owner_unavailable(str(exc)):
+                raise
+            return None
+        result = response.get("result") if isinstance(response, dict) else response
+        if not isinstance(result, dict):
+            raise RuntimeError("Codex IPC owner returned an invalid turn/start result")
+        return result
 
     async def _materialize_attachments(
         self,
@@ -1804,6 +1902,10 @@ def _unresumable_thread_failure_reason(error_text: str) -> str | None:
     if "model provider" in normalized and "not found" in normalized:
         return "missing_model_provider"
     return None
+
+
+def _ipc_owner_unavailable(error_text: str) -> bool:
+    return "no-client-found" in error_text.lower()
 
 
 def _attachment_file_id(att: Any) -> str | None:

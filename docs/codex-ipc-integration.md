@@ -195,10 +195,13 @@ Recommended implementation sequence:
 
 ## Publishing local app-server state
 
-The Connector's app-server is authoritative for threads it creates or actively
-drives locally. Merely loading or resuming a thread for synchronization does
-not claim ownership. Locally owned threads must be visible to Codex IDE/App
-clients through the IPC router even though the Connector is not the router.
+The Connector's app-server is authoritative for threads it creates or drives
+locally when no IPC owner is available. Merely loading or resuming a thread for
+synchronization does not claim ownership. A Web message also does not transfer
+ownership: when Codex App or IDE owns the thread, the Connector forwards a
+`thread-follower-start-turn` request to that owner. Locally owned threads must
+still be visible to Codex IDE/App clients through the IPC router even though
+the Connector is not the router.
 
 The outbound flow is:
 
@@ -222,12 +225,12 @@ canonical state. This also gives late followers a complete snapshot and keeps
 token text replacement semantics consistent with Codex App and IDE.
 
 The Connector keeps state loaded by ordinary sync inactive until it creates the
-thread or explicitly starts a turn. Notifications caused by passive
-`thread/resume` and `thread/read` operations never claim ownership. This is
-essential because the Connector's separate app-server can emit notifications
-for a thread currently owned by Codex App. Activation explicitly sends
-`following=false`, discards any remote mirror for that conversation, and sends
-a snapshot to waiting followers.
+thread or falls back to starting a turn through its own app-server after the IPC
+router explicitly reports that no owner can handle the request. Notifications
+caused by passive `thread/resume` and `thread/read` operations never claim
+ownership. Neither does a Web-originated start while an IPC owner is available.
+Activation explicitly sends `following=false`, discards any remote mirror for
+that conversation, and sends a snapshot to waiting followers.
 
 The local projector currently emits incremental patches for thread names, turn
 start/completion, item start/completion, agent-message text, command output,
@@ -252,11 +255,15 @@ active turn. It derives `expectedTurnId` from that state and calls app-server
 be steered.
 
 When Agents Anywhere is the follower, it materializes attachments, targets the
-owner recorded by the current IPC snapshot, and sends the same version-1
-request through the discovered router. The owner response is returned through
-the normal `turn.steer` Connector RPC. If no remote owner is known, the adapter
-falls back to its local app-server. Start, interrupt, settings, and approval
-control requests are not yet routed through IPC.
+owner recorded by the current IPC snapshot when available, and sends version-1
+`thread-follower-start-turn` or `thread-follower-steer-turn` requests through
+the discovered router. The owner response is returned through the normal
+Connector RPC without changing ownership. A start falls back to the local
+app-server only when the router explicitly reports `no-client-found`. A
+timeout, missing method handler, or version mismatch is not safe to retry
+locally because an owner still exists or may already have accepted the request.
+Interrupt, settings, and approval control requests are not yet routed through
+IPC.
 
 ## Compatibility boundary
 

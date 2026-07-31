@@ -5,6 +5,8 @@ import json
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+import pytest
+
 from connector.codex.adapter import (
     EXISTING_SYNC_CHANGED_THREAD_TIMEOUT_SECONDS,
     EXISTING_SYNC_SCAN_TIMEOUT_SECONDS,
@@ -99,6 +101,7 @@ class FakeCodexIpcClient:
         self.message_handler = None
         self.request_handler = None
         self.request_predicate = None
+        self.request_error: RuntimeError | None = None
 
     @property
     def is_connected(self) -> bool:
@@ -124,6 +127,8 @@ class FakeCodexIpcClient:
 
     async def send_request(self, method: str, params: dict[str, Any], **kwargs):
         self.requests.append((method, params, kwargs))
+        if self.request_error is not None:
+            raise self.request_error
         return {"result": {"turnId": "turn_ipc"}}
 
     async def close(self) -> None:
@@ -1270,6 +1275,10 @@ def test_adapter_publishes_local_app_server_state_to_ipc_followers() -> None:
     asyncio.run(_exercise_ipc_local_owner_projection())
 
 
+def test_adapter_routes_new_turn_to_remote_ipc_owner() -> None:
+    asyncio.run(_exercise_start_turn_through_remote_ipc_owner())
+
+
 def test_adapter_steers_local_owner_and_handles_ipc_follower_request() -> None:
     asyncio.run(_exercise_local_and_incoming_ipc_steer())
 
@@ -1503,6 +1512,7 @@ async def _exercise_ipc_snapshot_and_patch() -> None:
 async def _exercise_ipc_local_owner_projection() -> None:
     rpc = FakeCodexRpc()
     ipc_client = FakeCodexIpcClient()
+    ipc_client.request_error = RuntimeError("no-client-found")
     notifications: list[tuple[str, dict[str, Any]]] = []
 
     async def sink(method: str, params: dict[str, Any]) -> None:
@@ -1597,9 +1607,75 @@ async def _exercise_ipc_local_owner_projection() -> None:
     assert notifications == []
 
 
+async def _exercise_start_turn_through_remote_ipc_owner() -> None:
+    rpc = FakeCodexRpc()
+    ipc_client = FakeCodexIpcClient()
+    adapter = CodexAdapter(rpc=rpc, ipc_client=ipc_client)  # type: ignore[arg-type]
+    await adapter.sync_session({"sessionId": "sess_1", "externalSessionId": "thr_1"})
+    assert ipc_client.message_handler is not None
+    await ipc_client.message_handler(
+        CodexIpcStreamStateChangedBroadcast.model_validate(
+            {
+                "sourceClientId": "app_owner",
+                "params": {
+                    "conversationId": "thr_1",
+                    "change": {
+                        "type": "snapshot",
+                        "revision": 7,
+                        "conversationState": {
+                            "id": "thr_1",
+                            "threadRuntimeStatus": {"type": "idle"},
+                            "turns": [],
+                        },
+                    },
+                },
+            }
+        )
+    )
+    broadcasts_before = len(ipc_client.broadcasts)
+    rpc_requests_before = len(rpc.requests)
+
+    result = await adapter.start_turn(
+        {
+            "sessionId": "sess_1",
+            "externalSessionId": "thr_1",
+            "content": "start through the App owner",
+            "clientMessageId": "msg_web",
+        }
+    )
+
+    assert result["turnId"] == "turn_ipc"
+    method, request_params, options = ipc_client.requests[-1]
+    assert method == "thread-follower-start-turn"
+    assert request_params["conversationId"] == "thr_1"
+    assert request_params["turnStartParams"]["clientUserMessageId"] == "msg_web"
+    assert request_params["turnStartParams"]["input"][0]["text"] == (
+        "start through the App owner"
+    )
+    assert options["target_client_id"] == "app_owner"
+    assert ipc_client.broadcasts[broadcasts_before:] == []
+    assert not any(
+        method == "turn/start" for method, _params in rpc.requests[rpc_requests_before:]
+    )
+    assert adapter._ipc_publisher.is_active("thr_1") is False  # noqa: SLF001
+
+    ipc_client.request_error = RuntimeError("thread-follower-start-turn-timeout")
+    with pytest.raises(RuntimeError, match="timeout"):
+        await adapter.start_turn(
+            {
+                "sessionId": "sess_1",
+                "externalSessionId": "thr_1",
+                "content": "must not retry locally",
+            }
+        )
+    assert ipc_client.broadcasts[broadcasts_before:] == []
+    assert adapter._ipc_publisher.is_active("thr_1") is False  # noqa: SLF001
+
+
 async def _exercise_local_and_incoming_ipc_steer() -> None:
     rpc = FakeCodexRpc()
     ipc_client = FakeCodexIpcClient()
+    ipc_client.request_error = RuntimeError("no-client-found")
     adapter = CodexAdapter(rpc=rpc, ipc_client=ipc_client)  # type: ignore[arg-type]
     await adapter.sync_session({"sessionId": "sess_1", "externalSessionId": "thr_1"})
     await adapter.start_turn(
@@ -1609,6 +1685,8 @@ async def _exercise_local_and_incoming_ipc_steer() -> None:
             "content": "begin locally",
         }
     )
+    assert ipc_client.requests[-1][0] == "thread-follower-start-turn"
+    ipc_client.requests.clear()
     await adapter.handle_notification(
         {
             "method": "turn/started",
@@ -1665,6 +1743,34 @@ async def _exercise_local_and_incoming_ipc_steer() -> None:
     assert response == {"result": {}}
     assert rpc.requests[-1][0] == "turn/steer"
     assert rpc.requests[-1][1]["expectedTurnId"] == "turn_live"
+
+    start_request = CodexIpcRequest(
+        requestId="ipc_start_1",
+        sourceClientId="ide_follower",
+        method="thread-follower-start-turn",
+        version=1,
+        params={
+            "conversationId": "thr_1",
+            "turnStartParams": {
+                "input": [
+                    {"type": "text", "text": "new turn", "text_elements": []}
+                ],
+                "clientUserMessageId": "msg_ide_start",
+            },
+        },
+    )
+    assert ipc_client.request_predicate(start_request) is True
+    start_response = await ipc_client.request_handler(start_request)
+    assert "result" in start_response
+    assert rpc.requests[-1] == (
+        "turn/start",
+        {
+            "threadId": "thr_1",
+            "input": [
+                {"type": "text", "text": "new turn", "text_elements": []}
+            ],
+        },
+    )
 
 
 async def _exercise_remote_ipc_steer() -> None:

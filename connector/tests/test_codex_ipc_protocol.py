@@ -7,6 +7,7 @@ from connector.codex.ipc_protocol import (
     CODEX_IPC_COORDINATION_BROADCAST_ADAPTER,
     CODEX_IPC_ROUTER_MESSAGE_ADAPTER,
     CodexIpcClientDiscoveryRequest,
+    CodexIpcFollowerStartTurnParams,
     CodexIpcFollowerSteerTurnParams,
     CodexIpcInitializeParams,
     CodexIpcInitializeRequest,
@@ -212,3 +213,23 @@ def test_follower_steer_params_match_recovered_extension_contract() -> None:
     assert params.conversationId == "thr_1"
     assert params.input[0]["text"] == "focus"
     assert codex_ipc_method_version("thread-follower-steer-turn") == 1
+
+
+def test_follower_start_params_match_recovered_extension_contract() -> None:
+    params = CodexIpcFollowerStartTurnParams.model_validate(
+        {
+            "conversationId": "thr_1",
+            "turnStartParams": {
+                "input": [
+                    {"type": "text", "text": "start", "text_elements": []}
+                ],
+                "clientUserMessageId": "msg_1",
+                "model": "gpt-5",
+                "effort": "high",
+            },
+        }
+    )
+
+    assert params.turnStartParams.input[0]["text"] == "start"
+    assert params.turnStartParams.clientUserMessageId == "msg_1"
+    assert codex_ipc_method_version("thread-follower-start-turn") == 1

@@ -200,6 +200,35 @@ class CodexIpcFollowingStatusRequestedBroadcast(CodexIpcBroadcast):
     version: Literal[1] = 1
 
 
+class CodexIpcTurnStartParams(CodexIpcModel):
+    """Turn parameters forwarded unchanged to the current thread owner."""
+
+    input: list[dict[str, Any]] = Field(min_length=1)
+    clientUserMessageId: str
+    cwd: str | None = None
+    approvalPolicy: Any = None
+    sandboxPolicy: Any = None
+    model: str | None = None
+    effort: str | None = None
+    approvalsReviewer: Any = None
+    collaborationMode: Any = None
+    serviceTier: str | None = None
+    additionalContext: Any = None
+
+
+class CodexIpcFollowerStartTurnParams(CodexIpcModel):
+    """Follower request for starting a new turn without changing IPC owner."""
+
+    conversationId: str
+    turnStartParams: CodexIpcTurnStartParams
+
+
+class CodexIpcFollowerStartTurnRequest(CodexIpcRequest):
+    method: Literal["thread-follower-start-turn"] = "thread-follower-start-turn"
+    params: CodexIpcFollowerStartTurnParams
+    version: Literal[1] = 1
+
+
 class CodexIpcFollowerSteerTurnParams(CodexIpcModel):
     """IDE/App follower request for steering the owner's active Codex turn."""
 
