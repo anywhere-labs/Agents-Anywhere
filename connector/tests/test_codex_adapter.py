@@ -1332,6 +1332,49 @@ def test_adapter_interrupt_thread_not_found_is_soft_result() -> None:
     asyncio.run(exercise())
 
 
+def test_adapter_interrupts_remote_ipc_owner_without_turn_id() -> None:
+    async def exercise() -> None:
+        rpc = FakeCodexRpc()
+        ipc_client = FakeCodexIpcClient()
+        adapter = CodexAdapter(rpc=rpc, ipc_client=ipc_client)  # type: ignore[arg-type]
+        await adapter.sync_session(
+            {"sessionId": "sess_1", "externalSessionId": "thr_1"}
+        )
+        assert ipc_client.message_handler is not None
+        await ipc_client.message_handler(
+            CodexIpcStreamStateChangedBroadcast.model_validate(
+                {
+                    "sourceClientId": "app_owner",
+                    "params": {
+                        "conversationId": "thr_1",
+                        "change": {
+                            "type": "snapshot",
+                            "revision": 1,
+                            "conversationState": {
+                                "id": "thr_1",
+                                "threadRuntimeStatus": {"type": "active"},
+                                "turns": [],
+                            },
+                        },
+                    },
+                }
+            )
+        )
+
+        result = await adapter.interrupt_turn(
+            {"sessionId": "sess_1", "externalSessionId": "thr_1"}
+        )
+
+        assert result["interrupted"] is True
+        method, request_params, options = ipc_client.requests[-1]
+        assert method == "thread-follower-interrupt-turn"
+        assert request_params == {"conversationId": "thr_1"}
+        assert options["target_client_id"] == "app_owner"
+        assert not any(method == "turn/interrupt" for method, _params in rpc.requests)
+
+    asyncio.run(exercise())
+
+
 async def _exercise_thread_read_only_sync() -> None:
     rpc = FakeCodexRpc()
     adapter = CodexAdapter(rpc=rpc)  # type: ignore[arg-type]

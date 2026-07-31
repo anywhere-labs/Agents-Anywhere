@@ -18,6 +18,7 @@ from connector.codex.ipc_protocol import (
     CodexIpcBroadcast,
     CodexIpcClientStatusChangedBroadcast,
     CodexIpcConnectionResetBroadcast,
+    CodexIpcFollowerInterruptTurnParams,
     CodexIpcFollowerStartTurnParams,
     CodexIpcFollowerSteerTurnParams,
     CodexIpcFollowingChangedBroadcast,
@@ -735,6 +736,14 @@ class CodexAdapter:
             except ValidationError:
                 return False
             return self._ipc_publisher.is_active(params.conversationId)
+        if request.method == "thread-follower-interrupt-turn":
+            try:
+                params = CodexIpcFollowerInterruptTurnParams.model_validate(
+                    request.params
+                )
+            except ValidationError:
+                return False
+            return self._ipc_publisher.is_active(params.conversationId)
         if request.method != "thread-follower-steer-turn":
             return False
         try:
@@ -757,6 +766,20 @@ class CodexAdapter:
             )
             turn_params["threadId"] = params.conversationId
             result = await self.rpc.request("turn/start", turn_params)
+            return {"result": result}
+        if request.method == "thread-follower-interrupt-turn":
+            params = CodexIpcFollowerInterruptTurnParams.model_validate(request.params)
+            turn_id = (
+                params.expectedTurnId
+                or self._ipc_publisher.active_turn_id(params.conversationId)
+            )
+            if turn_id is None:
+                raise RuntimeError("Codex thread has no active turn to interrupt")
+            assert self.rpc is not None
+            result = await self.rpc.request(
+                "turn/interrupt",
+                {"threadId": params.conversationId, "turnId": turn_id},
+            )
             return {"result": result}
         if request.method != "thread-follower-steer-turn":
             raise ValueError(f"unsupported Codex IPC request: {request.method}")
@@ -1275,7 +1298,37 @@ class CodexAdapter:
             thread_id = self.reducer.thread_for_session(session_id)
         if thread_id is None:
             raise ValueError("externalSessionId is required before interrupting a Codex turn")
-        turn_id = _required_string(params, "turnId")
+        turn_id = _optional_string(params.get("turnId"))
+        await self._discover_ipc_router()
+        remote_state = self._ipc_state_registry.get(thread_id)
+        if (
+            remote_state is not None
+            and self.ipc_client is not None
+            and self.ipc_client.is_connected
+            and not self._ipc_publisher.is_active(thread_id)
+        ):
+            request_params = {"conversationId": thread_id}
+            if turn_id is not None:
+                request_params["expectedTurnId"] = turn_id
+            response = await self.ipc_client.send_request(
+                "thread-follower-interrupt-turn",
+                request_params,
+                target_client_id=remote_state.owner_client_id,
+            )
+            result = response.get("result") if isinstance(response, dict) else response
+            if not isinstance(result, dict):
+                result = {"result": result}
+            logger.info(
+                "interrupted codex turn through IPC thread_id={} turn_id={} owner_client_id={}",
+                thread_id,
+                turn_id,
+                remote_state.owner_client_id,
+            )
+            return {"interrupted": True, **result}
+        if turn_id is None:
+            turn_id = self._ipc_publisher.active_turn_id(thread_id)
+        if turn_id is None:
+            raise ValueError("turnId is required before interrupting a Codex turn")
         try:
             result = await self.rpc.request("turn/interrupt", {"threadId": thread_id, "turnId": turn_id})
         except RuntimeError as exc:

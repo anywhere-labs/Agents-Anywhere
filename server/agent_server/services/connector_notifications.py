@@ -308,8 +308,7 @@ class TimelineNotificationHandler:
             )
         if replace_snapshot:
             removed_items = False
-        if any(item.type == "turn.end" for item in items):
-            await _reconcile_active_run_from_timeline(self._store, session_id)
+        await _reconcile_active_run_from_timeline(self._store, session_id, items)
         for item in items:
             if item.type != "turn.end":
                 continue
@@ -586,8 +585,38 @@ async def _should_replace_timeline_snapshot(
 async def _reconcile_active_run_from_timeline(
     store: ConnectorNotificationRepository,
     session_id: str,
+    items: list[TimelineItemIn],
 ) -> None:
-    if await store.get_open_turn_id(session_id) is None:
+    active = await store.get_active_run(session_id)
+    if active is None:
+        return
+    turn_id = active.get("turnId")
+    if not isinstance(turn_id, str) or not turn_id:
+        params = active.get("params")
+        client_message_id = (
+            params.get("clientMessageId") if isinstance(params, dict) else None
+        )
+        if isinstance(client_message_id, str) and client_message_id:
+            tagged_candidates = [
+                item
+                for item in items
+                if item.source.clientMessageId == client_message_id
+                and item.turnId is not None
+            ]
+            tagged = (
+                max(tagged_candidates, key=lambda item: item.orderSeq)
+                if tagged_candidates
+                else None
+            )
+            if tagged is not None:
+                turn_id = tagged.turnId
+        if not isinstance(turn_id, str) or not turn_id:
+            turn_id = await store.get_open_turn_id(session_id)
+        if isinstance(turn_id, str) and turn_id:
+            await store.update_active_run_turn_id(session_id, turn_id)
+    if isinstance(turn_id, str) and any(
+        item.type == "turn.end" and item.turnId == turn_id for item in items
+    ):
         await store.clear_active_run(session_id)
 
 
@@ -610,10 +639,24 @@ async def _tag_active_run_user_messages(
     if not isinstance(expected_text, str):
         return items
 
+    active_turn_id = active.get("turnId")
+    candidate_indexes = [
+        index
+        for index, item in enumerate(items)
+        if _active_run_user_message_matches(item, expected_text)
+        and (
+            not isinstance(active_turn_id, str)
+            or not active_turn_id
+            or item.turnId == active_turn_id
+        )
+    ]
+    if not candidate_indexes:
+        return items
+    target_index = max(candidate_indexes, key=lambda index: items[index].orderSeq)
+
     tagged: list[TimelineItemIn] = []
-    did_tag = False
-    for item in items:
-        if did_tag or not _active_run_user_message_matches(item, expected_text):
+    for index, item in enumerate(items):
+        if index != target_index:
             tagged.append(item)
             continue
         source = item.source.model_dump()
@@ -628,7 +671,6 @@ async def _tag_active_run_user_messages(
             next_content = {**next_content, "attachments": attachments}
             changed = True
         if not changed:
-            did_tag = True
             tagged.append(item)
             continue
         tagged.append(
@@ -640,7 +682,6 @@ async def _tag_active_run_user_messages(
                 }
             )
         )
-        did_tag = True
     return tagged
 
 
@@ -649,6 +690,8 @@ def _active_run_user_message_matches(
     expected_text: str,
 ) -> bool:
     if item.type != "message" or item.role != "user":
+        return False
+    if item.source.itemType == "steeringUserMessage":
         return False
     content = item.content if isinstance(item.content, dict) else {}
     actual_text = content.get("text")

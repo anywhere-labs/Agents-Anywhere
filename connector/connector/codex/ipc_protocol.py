@@ -18,7 +18,7 @@ CODEX_IPC_INITIALIZING_CLIENT_ID = "initializing-client"
 CODEX_IPC_LOCAL_HOST_ID = "local"
 
 # Codex returns version 0 for methods absent from this table. These values were
-# recovered from the 26.721.41059 IDE extension and must be treated as an
+# recovered from the 26.727.40816 IDE extension and must be treated as an
 # internal compatibility contract, not as a public OpenAI API.
 CODEX_IPC_METHOD_VERSIONS = MappingProxyType(
     {
@@ -33,7 +33,7 @@ CODEX_IPC_METHOD_VERSIONS = MappingProxyType(
         "thread-follower-load-complete-history": 1,
         "thread-follower-compact-thread": 1,
         "thread-follower-steer-turn": 1,
-        "thread-follower-interrupt-turn": 3,
+        "thread-follower-interrupt-turn": 4,
         "thread-follower-update-thread-settings": 1,
         "thread-follower-edit-last-user-turn": 2,
         "thread-follower-command-approval-decision": 1,
@@ -58,8 +58,22 @@ CodexIpcClientStatus = Literal["connected", "disconnected"]
 CodexIpcPatchPathSegment = StrictStr | StrictInt
 
 
-def codex_ipc_method_version(method: str) -> int:
+def codex_ipc_method_version(
+    method: str,
+    params: dict[str, Any] | None = None,
+) -> int:
+    if (
+        method == "thread-follower-interrupt-turn"
+        and (params is None or params.get("expectedTurnId") is None)
+    ):
+        return 3
     return CODEX_IPC_METHOD_VERSIONS.get(method, 0)
+
+
+def codex_ipc_method_version_supported(method: str, version: int) -> bool:
+    return version == CODEX_IPC_METHOD_VERSIONS.get(method, 0) or (
+        method == "thread-follower-interrupt-turn" and version == 3
+    )
 
 
 class CodexIpcModel(BaseModel):
@@ -322,6 +336,11 @@ class CodexIpcConversationState(CodexIpcModel):
     requests: list[Any] | dict[str, Any] = Field(default_factory=list)
     turns: list[CodexIpcTurn] = Field(default_factory=list)
     turnHistory: CodexIpcCanonicalTurnHistory | None = None
+
+
+class CodexIpcFollowerInterruptTurnParams(CodexIpcModel):
+    conversationId: str
+    expectedTurnId: str | None = None
 
 
 class CodexIpcAddPatch(CodexIpcModel):

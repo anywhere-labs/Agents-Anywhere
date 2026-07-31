@@ -27,6 +27,7 @@ from connector.codex.ipc_protocol import (
     CodexIpcResponse,
     CodexIpcRouterMessage,
     codex_ipc_method_version,
+    codex_ipc_method_version_supported,
 )
 from connector.logging import logger
 
@@ -186,7 +187,7 @@ class CodexIpcClient:
             method=method,
             sourceClientId=self.client_id,
             params=params or {},
-            version=codex_ipc_method_version(method) if version is None else version,
+            version=codex_ipc_method_version(method, params) if version is None else version,
             targetClientIds=target_client_ids,
         )
         try:
@@ -217,7 +218,7 @@ class CodexIpcClient:
                 method=method,
                 params=params or {},
                 version=(
-                    codex_ipc_method_version(method)
+                    codex_ipc_method_version(method, params)
                     if version is None
                     else version
                 ),
@@ -320,7 +321,7 @@ class CodexIpcClient:
     def _can_handle_request(self, request: CodexIpcRequest) -> bool:
         if self.request_handler is None:
             return False
-        if request.version != codex_ipc_method_version(request.method):
+        if not codex_ipc_method_version_supported(request.method, request.version):
             return False
         if self.request_predicate is None:
             return True

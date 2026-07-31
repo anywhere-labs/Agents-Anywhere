@@ -2941,6 +2941,85 @@ def test_timeline_sync_keeps_existing_client_message_id(tmp_path):
     assert state["items"][0]["source"]["clientMessageId"] == "opt_keep"
 
 
+def test_timeline_sync_tags_only_latest_active_run_message_and_keeps_run(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+    client.post(
+        f"/sessions/{session_id}/messages",
+        headers=headers,
+        json={"content": "same text", "clientMessageId": "opt_latest"},
+    ).raise_for_status()
+
+    def user_item(item_id: str, turn_id: str, order_seq: int):
+        return {
+            "id": item_id,
+            "sessionId": session_id,
+            "turnId": turn_id,
+            "type": "message",
+            "status": "done",
+            "role": "user",
+            "content": {"text": "same text"},
+            "source": {
+                "runtime": "codex",
+                "sessionId": "thread-demo",
+                "turnId": turn_id,
+                "itemId": f"source-{item_id}",
+                "itemType": "userMessage",
+                "event": "ipc/thread-stream-state-changed",
+            },
+            "orderSeq": order_seq,
+            "revision": 1,
+            "contentHash": f"sha256:{item_id}",
+        }
+
+    items = [
+        user_item("tl_old_user", "turn_old", 1),
+        {
+            "id": "tl_old_end",
+            "sessionId": session_id,
+            "turnId": "turn_old",
+            "type": "turn.end",
+            "status": "done",
+            "content": {"result": "completed"},
+            "source": {
+                "runtime": "codex",
+                "sessionId": "thread-demo",
+                "turnId": "turn_old",
+                "derivedKey": "turn-end",
+            },
+            "orderSeq": 2,
+            "revision": 1,
+            "contentHash": "sha256:old-end",
+        },
+        user_item("tl_new_user", "turn_new", 3),
+    ]
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.sync",
+                    "params": {"sessionId": session_id, "items": items},
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+    by_id = {item["id"]: item for item in state["items"]}
+    assert by_id["tl_old_user"]["source"].get("clientMessageId") is None
+    assert by_id["tl_new_user"]["source"]["clientMessageId"] == "opt_latest"
+    active = asyncio.run(client.app.state.store.get_active_run(session_id))
+    assert active is not None
+    assert active["turnId"] == "turn_new"
+
+
 def test_live_timeline_upsert_appends_when_connector_order_seq_restarts(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, session_id, headers = create_connector_and_session(client)

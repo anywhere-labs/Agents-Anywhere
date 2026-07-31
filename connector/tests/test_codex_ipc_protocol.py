@@ -196,6 +196,13 @@ def test_stream_snapshot_rejects_mismatched_conversation_id() -> None:
 def test_known_method_versions_match_recovered_extension_contract() -> None:
     assert codex_ipc_method_version("thread-stream-state-changed") == 11
     assert codex_ipc_method_version("thread-follower-interrupt-turn") == 3
+    assert (
+        codex_ipc_method_version(
+            "thread-follower-interrupt-turn",
+            {"conversationId": "thr_1", "expectedTurnId": "turn_1"},
+        )
+        == 4
+    )
     assert codex_ipc_method_version("client-status-changed") == 0
 
 
