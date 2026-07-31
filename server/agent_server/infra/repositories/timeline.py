@@ -29,7 +29,7 @@ class TimelineRepositoryMixin:
         session_id: str,
         items: list[TimelineItemIn],
         source_observed_at: str | None = None,
-    ) -> list[TimelineItem]:
+    ) -> tuple[list[TimelineItem], bool]:
         async with self._timeline_lock(session_id):
             current = {existing.id: existing for existing in await self.timeline.read(session_id)}
             candidate_by_id: dict[str, TimelineItem | TimelineItemIn] = {}
@@ -88,7 +88,7 @@ class TimelineRepositoryMixin:
             await self.timeline.replace(session_id, normalized)
             if removed_items:
                 await self._mark_recovery_barrier(session_id)
-        return normalized
+        return normalized, bool(removed_items)
 
     async def replace_timeline_snapshot(
         self,

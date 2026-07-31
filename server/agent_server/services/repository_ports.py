@@ -148,7 +148,7 @@ class ConnectorNotificationRepository(
         session_id: str,
         items: list[TimelineItemIn],
         source_observed_at: str | None = None,
-    ) -> list[TimelineItem]: ...
+    ) -> tuple[list[TimelineItem], bool]: ...
 
     async def replace_timeline_snapshot(
         self,

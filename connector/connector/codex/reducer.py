@@ -1129,14 +1129,14 @@ def _stable_item_key(item: dict[str, Any]) -> str | None:
     derived_key = _string_value(item.get("_derivedKey"))
     if derived_key:
         return derived_key
-    message_key = _string_value(item.get("_messageKey"))
-    if message_key:
-        return message_key
     codex_type = _string_value(item.get("type")) or "unknown"
     if codex_type in {"userMessage", "steeringUserMessage", "agentMessage"}:
         item_id = _string_value(item.get("id")) or _string_value(item.get("_eventItemId"))
         if item_id and not item_id.startswith("item-"):
             return None
+        message_key = _string_value(item.get("_messageKey"))
+        if message_key:
+            return message_key
         return _message_item_key(codex_type)
     if codex_type == "reasoning":
         idx = item.get("_reasoningTurnIndex")

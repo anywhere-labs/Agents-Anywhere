@@ -5203,6 +5203,100 @@ def test_timeline_sync_dedupes_snapshot_message_already_seen_live(tmp_path):
         assert [item["id"] for item in state["items"] if item["type"] == "message"] == ["tl_live_msg"]
 
 
+def test_timeline_sync_dedupes_same_source_item_with_snapshot_derived_key(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    source = {
+        "runtime": "codex",
+        "sessionId": "thr_1",
+        "turnId": "turn_1",
+        "itemId": "msg_real_1",
+        "itemType": "agentMessage",
+    }
+    live_item = {
+        "id": "tl_live_real_msg",
+        "sessionId": session_id,
+        "turnId": "turn_1",
+        "type": "message",
+        "status": "done",
+        "role": "assistant",
+        "content": {"text": "same answer", "format": "markdown"},
+        "source": source,
+        "orderSeq": 10,
+        "revision": 2,
+        "contentHash": "sha256:live-real-message",
+    }
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.itemUpsert",
+                    "params": {"sessionId": session_id, "item": live_item},
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    snapshot_item = {
+        **live_item,
+        "id": "tl_snapshot_real_msg",
+        "source": {**source, "derivedKey": "message-agentMessage-0"},
+        "orderSeq": 20,
+        "revision": 1,
+        "contentHash": "sha256:snapshot-real-message",
+    }
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.itemUpsert",
+                    "params": {"sessionId": session_id, "item": snapshot_item},
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    sync_payload = {
+        "notifications": [
+            {
+                "method": "timeline.sync",
+                "params": {"sessionId": session_id, "items": [snapshot_item]},
+            }
+        ]
+    }
+    ticket = ws_ticket(client, session_id, headers)
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json=sync_payload,
+        )
+        assert response.status_code == 200, response.text
+        cleanup_events = [ws.receive_json() for _ in range(2)]
+        assert "session.refetch_required" in {
+            event["type"] for event in cleanup_events
+        }
+
+        state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+        messages = [item for item in state["items"] if item["type"] == "message"]
+        assert [item["id"] for item in messages] == ["tl_live_real_msg"]
+
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json=sync_payload,
+        )
+        assert response.status_code == 200, response.text
+        assert ws.receive_json()["type"] == "session.status_changed"
+
+
 def test_timeline_sync_deduped_snapshot_message_does_not_rearm_unread(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)

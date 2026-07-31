@@ -301,11 +301,13 @@ class TimelineNotificationHandler:
                 items=items,
             )
         else:
-            stored_items = await self._store.replace_timeline(
+            stored_items, removed_items = await self._store.replace_timeline(
                 session_id=session_id,
                 source_observed_at=params.get("sourceObservedAt"),
                 items=items,
             )
+        if replace_snapshot:
+            removed_items = False
         if any(item.type == "turn.end" for item in items):
             await _reconcile_active_run_from_timeline(self._store, session_id)
         for item in items:
@@ -349,7 +351,7 @@ class TimelineNotificationHandler:
             timeline_reset=replace_snapshot,
             session_changed=True,
             notices_changed=any(item.type == "turn.end" for item in items),
-            needs_refetch=not push_items,
+            needs_refetch=removed_items or not push_items,
         )
 
     async def _upsert(

@@ -160,7 +160,56 @@ def _dedupe_legacy_history_items(items: list[TimelineItem]) -> list[TimelineItem
         if legacy_key is not None and legacy_key in canonical_keys:
             continue
         result.append(item)
+    return _dedupe_source_items(result)
+
+
+def _dedupe_source_items(items: list[TimelineItem]) -> list[TimelineItem]:
+    result: list[TimelineItem] = []
+    indexes: dict[tuple[str, str, str, str, str], int] = {}
+    for item in items:
+        key = _source_item_duplicate_key(item)
+        if key is None:
+            result.append(item)
+            continue
+        existing_index = indexes.get(key)
+        if existing_index is None:
+            indexes[key] = len(result)
+            result.append(item)
+            continue
+        existing = result[existing_index]
+        if _source_item_preference(item) > _source_item_preference(existing):
+            result[existing_index] = item
     return result
+
+
+def _source_item_duplicate_key(
+    item: TimelineItem,
+) -> tuple[str, str, str, str, str] | None:
+    source = item.source
+    if (
+        not source.sessionId
+        or not source.turnId
+        or not source.itemId
+        or not source.itemType
+    ):
+        return None
+    return (
+        source.runtime,
+        source.sessionId,
+        source.turnId,
+        source.itemId,
+        source.itemType,
+    )
+
+
+def _source_item_preference(item: TimelineItem) -> tuple[int, int, int, int, int]:
+    return (
+        int(item.source.derivedKey is None),
+        int(item.source.clientMessageId is not None),
+        int(item.status in {"done", "failed", "cancelled", "interrupted"}),
+        _content_completeness_score(item.content),
+        item.revision,
+    )
 
 
 def _timeline_item_unchanged(existing: TimelineItem, incoming: TimelineItemIn) -> bool:

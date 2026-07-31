@@ -537,6 +537,52 @@ def test_reducer_keeps_multiple_agent_messages_in_one_turn() -> None:
     ]
 
 
+def test_reducer_keeps_real_message_item_ids_stable_across_live_and_snapshot() -> None:
+    reducer = TimelineReducer()
+    reducer.bind_session("sess_1", "thr_1")
+    live = reducer.reduce_notification(
+        {
+            "method": "item/completed",
+            "params": {
+                "threadId": "thr_1",
+                "turnId": "turn_1",
+                "item": {
+                    "id": "msg_1",
+                    "type": "agentMessage",
+                    "status": "completed",
+                    "text": "first",
+                },
+            },
+        }
+    )
+    snapshot = reducer.reduce_thread_snapshot(
+        "sess_1",
+        {
+            "id": "thr_1",
+            "status": {"type": "idle"},
+            "turns": [
+                {
+                    "id": "turn_1",
+                    "status": "completed",
+                    "items": [
+                        {"id": "msg_1", "type": "agentMessage", "text": "first"},
+                        {"id": "msg_2", "type": "agentMessage", "text": "second"},
+                    ],
+                }
+            ],
+        },
+    )
+
+    snapshot_messages = [
+        item for item in snapshot.timeline_items if item["type"] == "message"
+    ]
+    assert snapshot_messages[0]["id"] == live.timeline_items[0]["id"]
+    assert [item["source"].get("derivedKey") for item in snapshot_messages] == [
+        None,
+        None,
+    ]
+
+
 def test_reducer_replays_completed_turn_snapshot_without_new_completion_time() -> None:
     reducer = TimelineReducer()
     snapshot = {
