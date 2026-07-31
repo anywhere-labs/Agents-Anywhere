@@ -481,6 +481,34 @@ export function DevicePage() {
     }
   }
 
+  const configureAndStartRuntime = async (runtime: DeviceRuntimeView, config: Record<string, unknown>) => {
+    if (!authSession?.accessToken) return
+    setSavingRuntimeId(runtime.runtimeId)
+    try {
+      const saved = await dashboardApi.putConnectorRuntimeConfig(
+        authSession.accessToken,
+        connector.id,
+        runtime.runtimeId,
+        config,
+      )
+      replaceRuntime(saved)
+      const started = await dashboardApi.setConnectorRuntimeActive(
+        authSession.accessToken,
+        connector.id,
+        runtime.runtimeId,
+        true,
+      )
+      replaceRuntime(started)
+      toast.success(t("runtimeConfiguredAndStarted", { name: runtime.displayName }))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : t("configureAndStartRuntimeFailed")
+      toast.error(message)
+      throw error
+    } finally {
+      setSavingRuntimeId(null)
+    }
+  }
+
   const toggleRuntime = async (runtime: DeviceRuntimeView, active: boolean) => {
     if (!authSession?.accessToken) return
     setRuntimeActionId(runtime.runtimeId)
@@ -939,9 +967,12 @@ export function DevicePage() {
           uiSchema={configRuntime.uiSchema}
           config={configRuntime.config}
           saving={savingRuntimeId === configRuntime.runtimeId}
+          submitLabel={!configRuntime.configured ? t("configureAndStart") : undefined}
           open
           onOpenChange={(open) => { if (!open) setConfigRuntime(null) }}
-          onSave={(config) => saveRuntimeConfig(configRuntime, config)}
+          onSave={(config) => configRuntime.configured
+            ? saveRuntimeConfig(configRuntime, config)
+            : configureAndStartRuntime(configRuntime, config)}
         />
       ) : null}
 

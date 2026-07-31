@@ -60,6 +60,7 @@ type RuntimeConfigDialogProps = {
   config: Record<string, unknown> | null
   open: boolean
   saving: boolean
+  submitLabel?: string
   onOpenChange: (open: boolean) => void
   onSave: (config: Record<string, unknown>) => Promise<void>
 }
@@ -71,6 +72,7 @@ export function RuntimeConfigDialog({
   config,
   open,
   saving,
+  submitLabel,
   onOpenChange,
   onSave,
 }: RuntimeConfigDialogProps) {
@@ -179,7 +181,7 @@ export function RuntimeConfigDialog({
               {tCommon("cancel")}
             </Button>
             <Button type="button" onClick={() => void submit()} disabled={saving || !schema}>
-              {saving ? t("saving") : tCommon("save")}
+              {saving ? t("saving") : submitLabel ?? tCommon("save")}
             </Button>
           </div>
         </DialogFooter>
