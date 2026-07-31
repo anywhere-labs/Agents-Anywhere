@@ -47,8 +47,14 @@ uvx anywhere-cli configure \
 uvx anywhere-cli start
 ```
 
-The default config path is `~/.agent-server/connector.json`. Override it with
+The default config path is `~/.agents-anywhere/connector.json`. Override it with
 `--config` or `AGENT_CONNECTOR_CONFIG`.
+
+Connector configuration, runtime ownership, sync state, and attachments all
+live under `~/.agents-anywhere` by default. Runtime sync cursors are stored as
+atomic JSON in `connector-state.json`; Connector does not use SQLite. On first
+use, files from the old `~/.agent-server` directory are merged into this
+directory and obsolete SQLite sync state is discarded.
 
 ## Runtime Discovery
 
@@ -88,9 +94,11 @@ The server can ask an online connector to perform local work:
 | Variable | Purpose |
 | --- | --- |
 | `AGENT_CONNECTOR_CONFIG` | Connector config path. |
+| `AGENT_CONNECTOR_DATA_DIR` | Connector data directory. Defaults to `~/.agents-anywhere`. |
 | `AGENT_SERVER_URL` | Server URL used when `--server-url` is omitted. |
 | `AGENT_CONNECTOR_ID` | Connector id used when `--connector-id` is omitted. |
 | `AGENT_CONNECTOR_TOKEN` | Connector token used when `--connector-token` is omitted. |
+| `AGENT_CONNECTOR_STATE_FILE` | Runtime sync state JSON path. Defaults to `~/.agents-anywhere/connector-state.json`. |
 | `AGENT_CONNECTOR_ATTACHMENTS_ROOT` | Runtime attachment download directory. Defaults to `~/.agents-anywhere/attachments`. |
 | `CODEX_BIN` | Explicit Codex CLI/app-server path. |
 | `CLAUDE_BIN` | Explicit Claude Code CLI path. |

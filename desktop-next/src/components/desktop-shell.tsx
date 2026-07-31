@@ -124,7 +124,7 @@ const defaultConfig: ConnectorConfig = {
   reconnectSeconds: 3,
   syncExistingOnConnect: true,
   syncIntervalSeconds: 30,
-  stateDbPath: null,
+  statePath: null,
 }
 
 const desktopMessages = {

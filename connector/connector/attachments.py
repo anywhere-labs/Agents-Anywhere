@@ -3,9 +3,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from connector.paths import connector_data_dir
 
 ATTACHMENTS_ROOT_ENV = "AGENT_CONNECTOR_ATTACHMENTS_ROOT"
-DEFAULT_ATTACHMENTS_DIR = ".agents-anywhere/attachments"
 _SAFE_FILENAME_RE = re.compile(r"[^\w.\-+]+")
 
 
@@ -14,7 +14,11 @@ def attachments_root() -> Path:
     import os
 
     configured = os.environ.get(ATTACHMENTS_ROOT_ENV)
-    root = Path(configured).expanduser() if configured else Path.home() / DEFAULT_ATTACHMENTS_DIR
+    root = (
+        Path(configured).expanduser()
+        if configured
+        else connector_data_dir() / "attachments"
+    )
     return root.resolve(strict=False)
 
 

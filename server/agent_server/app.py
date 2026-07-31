@@ -150,18 +150,12 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    resolved_db_path = db_path or os.environ.get("AGENT_SERVER_DB")
     should_migrate = (
         db_path is not None if migrate_database is None else migrate_database
     )
     if should_migrate:
-        upgrade_database(sqlite_path=resolved_db_path)
-    app.state.store = Store(resolved_db_path)
-    if app.state.store.backend == "sqlite":
-        logger.warning(
-            "SQLite backend is deprecated for v2; use PostgreSQL for production "
-            "and retain SQLite only for legacy migration or local compatibility"
-        )
+        upgrade_database(sqlite_path=db_path)
+    app.state.store = Store(db_path)
     app.state.database_schema_version = "unknown"
     resolved_redis_url = redis_url
     if resolved_redis_url is None and db_path is None:

@@ -225,7 +225,7 @@ def default_config_payload() -> dict[str, Any]:
         "reconnectSeconds": 3,
         "syncExistingOnConnect": True,
         "syncIntervalSeconds": 30,
-        "stateDbPath": None,
+        "statePath": None,
     }
 
 
@@ -238,7 +238,7 @@ def config_to_payload(config: ConnectorConfig) -> dict[str, Any]:
         "reconnectSeconds": config.reconnect_seconds,
         "syncExistingOnConnect": config.sync_existing_on_connect,
         "syncIntervalSeconds": config.sync_interval_seconds,
-        "stateDbPath": config.state_db_path,
+        "statePath": config.state_path,
     }
 
 
@@ -263,7 +263,11 @@ def config_from_params(params: Any) -> ConnectorConfig:
         reconnect_seconds=float(params.get("reconnectSeconds", 3)),
         sync_existing_on_connect=bool(params.get("syncExistingOnConnect", True)),
         sync_interval_seconds=float(params.get("syncIntervalSeconds", 30)),
-        state_db_path=params.get("stateDbPath") if isinstance(params.get("stateDbPath"), str) else None,
+        state_path=(
+            params.get("statePath")
+            if isinstance(params.get("statePath"), str)
+            else None
+        ),
     )
 
 

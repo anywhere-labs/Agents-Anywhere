@@ -10,7 +10,7 @@ paths from the same origin.
 
 Run from the repository root.
 
-Development container:
+Development container (requires reachable PostgreSQL and Redis services):
 
 ```bash
 docker build -f docker/Dockerfile.dev -t agents-anywhere:dev . \
@@ -18,6 +18,8 @@ docker build -f docker/Dockerfile.dev -t agents-anywhere:dev . \
     --name agents-anywhere-dev \
     -p 5174:5174 \
     -v agents-anywhere-dev-data:/data \
+    -e AGENT_SERVER_DB_URL=postgresql+asyncpg://agents:password@host.docker.internal:5432/agents_anywhere \
+    -e AGENT_SERVER_REDIS_URL=redis://host.docker.internal:6379/0 \
     agents-anywhere:dev
 ```
 
@@ -43,6 +45,8 @@ docker build -f docker/Dockerfile.dev -t agents-anywhere:dev .
 docker run --rm -it \
   -p 5174:5174 \
   -v agents-anywhere-data:/data \
+  -e AGENT_SERVER_DB_URL=postgresql+asyncpg://agents:password@host.docker.internal:5432/agents_anywhere \
+  -e AGENT_SERVER_REDIS_URL=redis://host.docker.internal:6379/0 \
   agents-anywhere:dev
 ```
 
@@ -51,14 +55,15 @@ Inside the container:
 - backend listens on `127.0.0.1:8000`
 - Next dev listens on `0.0.0.0:5174`
 - Next rewrites API/WebSocket traffic to the backend
-- SQLite data is stored at `/data/agent-server.sqlite3`
+- PostgreSQL is required and configured with `AGENT_SERVER_DB_URL`
+- local uploads and attachments can be stored under `/data`
 
 ## Production Images
 
 `docker/Dockerfile` builds the `web-next` static export in an intermediate
 stage and copies it into the final `server` image.
 
-Build and run a SQLite-backed service manually:
+Build and run the PostgreSQL-backed service manually:
 
 ```bash
 docker build -f docker/Dockerfile --target server -t agents-anywhere-server:latest .
@@ -68,13 +73,13 @@ docker run -d \
   -p 5174:8000 \
   -v agents-anywhere-data:/data \
   -e AGENT_SERVER_SECRET=change-me-before-production \
+  -e AGENT_SERVER_DB_URL=postgresql+asyncpg://agents:password@host.docker.internal:5432/agents_anywhere \
+  -e AGENT_SERVER_REDIS_URL=redis://host.docker.internal:6379/0 \
   agents-anywhere-server:latest
 ```
 
-Persistent server data under `/data`:
-
-- SQLite database: `/data/agent-server.sqlite3`
-- uploaded files / attachments: `/data/agent-server.files/`
+Database state is stored by PostgreSQL. Uploaded files and attachments use
+`/data/agent-server.files/` unless S3-compatible storage is configured.
 
 Set `AGENT_SERVER_FILES_BACKEND=s3` and the matching
 `AGENT_SERVER_FILES_S3_*` variables to store uploaded files in S3-compatible

@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from agent_server.infra.db.engine import build_engine
+from agent_server.infra.db.engine import build_engine, resolve_db_url
 from agent_server.infra.db.legacy_import import rehearse_v1_import
 from agent_server.infra.db.migrations import (
     CURRENT_SCHEMA_REVISION,
@@ -22,6 +22,31 @@ from agent_server.infra.db.schema import metadata
 
 def _sqlite_url(path) -> str:
     return f"sqlite+aiosqlite:///{path}"
+
+
+def test_runtime_database_url_is_required(monkeypatch) -> None:
+    monkeypatch.delenv("AGENT_SERVER_DB_URL", raising=False)
+    monkeypatch.delenv("AGENT_SERVER_DB_BACKEND", raising=False)
+    monkeypatch.delenv("AGENT_SERVER_DB", raising=False)
+
+    with pytest.raises(ValueError, match="AGENT_SERVER_DB_URL is required"):
+        resolve_db_url()
+
+
+def test_runtime_sqlite_environment_is_rejected(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AGENT_SERVER_DB_URL", _sqlite_url(tmp_path / "runtime.sqlite3"))
+    monkeypatch.delenv("AGENT_SERVER_DB_BACKEND", raising=False)
+
+    with pytest.raises(
+        ValueError, match="SQLite runtime configuration is no longer supported"
+    ):
+        resolve_db_url()
+
+
+def test_explicit_sqlite_url_remains_available_for_legacy_tools(tmp_path) -> None:
+    url = _sqlite_url(tmp_path / "legacy.sqlite3")
+
+    assert resolve_db_url(url=url) == ("sqlite", url)
 
 
 def test_empty_database_upgrades_to_current_schema(tmp_path) -> None:

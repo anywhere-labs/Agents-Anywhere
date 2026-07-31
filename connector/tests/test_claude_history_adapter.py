@@ -6,7 +6,7 @@ from typing import Any
 
 from connector.claude.history_adapter import ClaudeHistoryAdapter
 from connector.claude.path_utils import stable_claude_session_id
-from connector.sync_state import SqliteSyncStateStore
+from connector.sync_state import JsonSyncStateStore
 
 
 @dataclass
@@ -180,7 +180,7 @@ def test_sdk_history_sync_after_cursor_emits_incremental_item_upserts() -> None:
 
 
 def test_sdk_history_sync_uses_persisted_cursor_after_restart(tmp_path) -> None:
-    store = SqliteSyncStateStore(tmp_path / "connector-state.sqlite3")
+    store = JsonSyncStateStore(tmp_path / "connector-state.json")
     first_adapter = ClaudeHistoryAdapter(sdk_module=FakeHistorySdk, sync_state_store=store)
     second_adapter = ClaudeHistoryAdapter(sdk_module=FakeHistorySdk, sync_state_store=store)
 

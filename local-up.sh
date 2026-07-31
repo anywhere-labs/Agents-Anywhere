@@ -14,6 +14,7 @@ SKIP_INSTALL=false
 WITH_CONNECTOR=false
 SERVER_RELOAD=true
 SHUTTING_DOWN=false
+DEPENDENCIES_STARTED=false
 
 SERVICE_PIDS=()
 SERVICE_NAMES=()
@@ -34,10 +35,10 @@ Options:
   --no-reload           Disable uvicorn source reload
   -h, --help            Show this help
 
-The default stack uses SQLite and the Server's single-process coordination
-fallback, so Docker is not required. An existing .env.local is loaded
-automatically. Connector startup is opt-in because its saved config may point
-at another Server.
+The stack starts PostgreSQL and Redis with Docker Compose, then runs the Server
+and Web from source. PostgreSQL data persists in a named volume. An existing
+.env.local is loaded automatically. Connector startup is opt-in because its
+saved config may point at another Server.
 EOF
 }
 
@@ -46,7 +47,7 @@ fail() {
   exit 1
 }
 
-CONNECTOR_CONFIG="${AGENT_CONNECTOR_CONFIG:-${HOME}/.agent-server/connector.json}"
+CONNECTOR_CONFIG="${AGENT_CONNECTOR_CONFIG:-${AGENT_CONNECTOR_DATA_DIR:-${HOME}/.agents-anywhere}/connector.json}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -94,7 +95,7 @@ elif [[ "${ENV_FILE_EXPLICIT}" == true ]]; then
 fi
 
 if [[ "${CONNECTOR_CONFIG_EXPLICIT}" != true ]]; then
-  CONNECTOR_CONFIG="${AGENT_CONNECTOR_CONFIG:-${HOME}/.agent-server/connector.json}"
+  CONNECTOR_CONFIG="${AGENT_CONNECTOR_CONFIG:-${AGENT_CONNECTOR_DATA_DIR:-${HOME}/.agents-anywhere}/connector.json}"
 fi
 
 SERVER_HOST="${SERVER_HOST:-127.0.0.1}"
@@ -103,8 +104,12 @@ WEB_HOST="${WEB_HOST:-127.0.0.1}"
 WEB_PORT="${WEB_PORT:-5174}"
 LOCAL_DIR="${AGENTS_ANYWHERE_LOCAL_DIR:-${ROOT_DIR}/.local-dev}"
 LOG_DIR="${LOCAL_DIR}/logs"
-AGENT_SERVER_DB="${AGENT_SERVER_DB:-${LOCAL_DIR}/agent-server.sqlite3}"
 AGENT_SERVER_FILES_LOCAL_ROOT="${AGENT_SERVER_FILES_LOCAL_ROOT:-${LOCAL_DIR}/files}"
+POSTGRES_PORT="${AGENTS_ANYWHERE_POSTGRES_PORT:-55432}"
+REDIS_PORT="${AGENTS_ANYWHERE_REDIS_PORT:-56379}"
+COMPOSE_FILE="${ROOT_DIR}/docker/docker-compose.local.yml"
+AGENT_SERVER_DB_URL="postgresql+asyncpg://agents_anywhere:agents_anywhere_dev_password@127.0.0.1:${POSTGRES_PORT}/agents_anywhere"
+AGENT_SERVER_REDIS_URL="redis://127.0.0.1:${REDIS_PORT}/0"
 LOCAL_SERVER_URL="http://${SERVER_HOST}:${SERVER_PORT}"
 AGENTS_ANYWHERE_API="${AGENTS_ANYWHERE_API:-${LOCAL_SERVER_URL}}"
 
@@ -203,6 +208,9 @@ cleanup() {
     kill -TERM "${pid}" >/dev/null 2>&1 || true
     wait "${pid}" >/dev/null 2>&1 || true
   done
+  if [[ "${DEPENDENCIES_STARTED}" == true ]]; then
+    docker compose -f "${COMPOSE_FILE}" down >/dev/null 2>&1 || true
+  fi
   if [[ -n "${RUNTIME_DIR:-}" && -d "${RUNTIME_DIR}" ]]; then
     find "${RUNTIME_DIR}" -type p -delete
     rmdir "${RUNTIME_DIR}" >/dev/null 2>&1 || true
@@ -239,12 +247,16 @@ wait_for_url() {
   fail "${name} did not become ready: ${url}"
 }
 
-for command in corepack curl mkfifo nc perl pgrep tee uv; do
+for command in corepack curl docker mkfifo nc perl pgrep tee uv; do
   require_command "${command}"
 done
+docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is required"
 
 assert_port_available "${SERVER_PORT}" "server"
 assert_port_available "${WEB_PORT}" "web"
+docker compose -f "${COMPOSE_FILE}" down >/dev/null 2>&1 || true
+assert_port_available "${POSTGRES_PORT}" "postgres"
+assert_port_available "${REDIS_PORT}" "redis"
 
 if [[ "${WITH_CONNECTOR}" == true ]]; then
   if [[ -z "${AGENT_CONNECTOR_ID:-}" || -z "${AGENT_CONNECTOR_TOKEN:-}" ]]; then
@@ -259,6 +271,12 @@ RUNTIME_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agents-anywhere-local.XXXXXX")"
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+printf '%s[setup]%s Starting PostgreSQL and Redis...\n' "${CYAN}" "${RESET}"
+DEPENDENCIES_STARTED=true
+AGENTS_ANYWHERE_POSTGRES_PORT="${POSTGRES_PORT}" \
+  AGENTS_ANYWHERE_REDIS_PORT="${REDIS_PORT}" \
+  docker compose -f "${COMPOSE_FILE}" up -d --wait
 
 if [[ "${SKIP_INSTALL}" != true ]]; then
   printf '%s[setup]%s Syncing Server dependencies...\n' "${CYAN}" "${RESET}"
@@ -276,18 +294,17 @@ fi
 printf '%s[setup]%s Applying local database migrations...\n' "${CYAN}" "${RESET}"
 (
   cd "${SERVER_DIR}"
-  env -u AGENT_SERVER_DB_URL -u AGENT_SERVER_REDIS_URL \
-    AGENT_SERVER_DB_BACKEND=sqlite \
-    AGENT_SERVER_DB="${AGENT_SERVER_DB}" \
+  env \
+    AGENT_SERVER_DB_BACKEND=postgres \
+    AGENT_SERVER_DB_URL="${AGENT_SERVER_DB_URL}" \
     uv run python -m agent_server.infra.db.migrations upgrade
 )
 
 SERVER_COMMAND=(
   env
-  -u AGENT_SERVER_DB_URL
-  -u AGENT_SERVER_REDIS_URL
-  "AGENT_SERVER_DB_BACKEND=sqlite"
-  "AGENT_SERVER_DB=${AGENT_SERVER_DB}"
+  "AGENT_SERVER_DB_BACKEND=postgres"
+  "AGENT_SERVER_DB_URL=${AGENT_SERVER_DB_URL}"
+  "AGENT_SERVER_REDIS_URL=${AGENT_SERVER_REDIS_URL}"
   "AGENT_SERVER_FILES_LOCAL_ROOT=${AGENT_SERVER_FILES_LOCAL_ROOT}"
   "AGENT_SERVER_PUBLIC_ORIGIN=http://${WEB_HOST}:${WEB_PORT}"
   "AGENT_SERVER_CORS_ORIGINS=http://${WEB_HOST}:${WEB_PORT},http://localhost:${WEB_PORT}"
@@ -324,7 +341,8 @@ wait_for_url web "http://${WEB_HOST}:${WEB_PORT}/"
 printf '\n%s[local]%s Stack is ready.\n' "${GREEN}" "${RESET}"
 printf '  Web:       http://%s:%s\n' "${WEB_HOST}" "${WEB_PORT}"
 printf '  Server:    %s\n' "${AGENTS_ANYWHERE_API}"
-printf '  Database:  %s\n' "${AGENT_SERVER_DB}"
+printf '  PostgreSQL: 127.0.0.1:%s/agents_anywhere\n' "${POSTGRES_PORT}"
+printf '  Redis:      127.0.0.1:%s\n' "${REDIS_PORT}"
 printf '  Logs:      %s\n' "${LOG_DIR}"
 if [[ "${WITH_CONNECTOR}" == true ]]; then
   printf '  Connector: enabled\n'

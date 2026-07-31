@@ -27,7 +27,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_PROJECT_ENVIRONMENT=/opt/venv \
     PYTHONPATH=/app/server \
-    AGENT_SERVER_DB=/data/agent-server.sqlite3 \
+    AGENT_SERVER_DB_BACKEND=postgres \
     AGENT_SERVER_STATIC_DIR=/app/web-static
 
 WORKDIR /app

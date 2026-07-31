@@ -20,6 +20,7 @@ from connector.adapter import Adapter
 from connector.claude.preferences import read_local_preferences
 from connector.local_ops import create_local_ops
 from connector.logging import logger
+from connector.paths import connector_data_dir
 from connector.protocol_revision import ProtocolRevisionClock
 from connector.runtime_lifecycle import (
     RuntimeBindings,
@@ -27,7 +28,7 @@ from connector.runtime_lifecycle import (
     RuntimeSupervisor,
     default_runtime_providers,
 )
-from connector.sync_state import SqliteSyncStateStore, SyncStateStore
+from connector.sync_state import JsonSyncStateStore, SyncStateStore
 
 ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 60.0
 RUNTIME_SYNC_TIMEOUT_SECONDS = 15.0
@@ -51,11 +52,16 @@ class ConnectorConfig:
     reconnect_seconds: float = 3
     sync_existing_on_connect: bool = True
     sync_interval_seconds: float = 30
-    state_db_path: str | None = None
+    state_path: str | None = None
 
     @classmethod
     def default_path(cls) -> Path:
-        return Path(os.environ.get("AGENT_CONNECTOR_CONFIG", Path.home() / ".agent-server" / "connector.json"))
+        configured = os.environ.get("AGENT_CONNECTOR_CONFIG")
+        return (
+            Path(configured).expanduser()
+            if configured
+            else connector_data_dir() / "connector.json"
+        )
 
     @classmethod
     def from_env(cls) -> ConnectorConfig:
@@ -74,7 +80,7 @@ class ConnectorConfig:
             reconnect_seconds=float(os.environ.get("AGENT_CONNECTOR_RECONNECT_SECONDS", "3")),
             sync_existing_on_connect=_bool_env("AGENT_CONNECTOR_SYNC_EXISTING", True),
             sync_interval_seconds=float(os.environ.get("AGENT_CONNECTOR_SYNC_INTERVAL_SECONDS", "30")),
-            state_db_path=os.environ.get("AGENT_CONNECTOR_STATE_DB"),
+            state_path=os.environ.get("AGENT_CONNECTOR_STATE_FILE"),
         )
 
     @classmethod
@@ -93,7 +99,11 @@ class ConnectorConfig:
             reconnect_seconds=float(data.get("reconnectSeconds", 3)),
             sync_existing_on_connect=bool(data.get("syncExistingOnConnect", True)),
             sync_interval_seconds=float(data.get("syncIntervalSeconds", 30)),
-            state_db_path=data.get("stateDbPath") if isinstance(data.get("stateDbPath"), str) else None,
+            state_path=(
+                data.get("statePath")
+                if isinstance(data.get("statePath"), str)
+                else None
+            ),
         )
 
     def save(self, path: str | Path | None = None) -> Path:
@@ -109,7 +119,7 @@ class ConnectorConfig:
                     "reconnectSeconds": self.reconnect_seconds,
                     "syncExistingOnConnect": self.sync_existing_on_connect,
                     "syncIntervalSeconds": self.sync_interval_seconds,
-                    "stateDbPath": self.state_db_path,
+                    "statePath": self.state_path,
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -138,7 +148,9 @@ class BackendRpcClient:
         self.config = config
         self.sync_state_store = sync_state_store
         if adapters is None and self.sync_state_store is None:
-            self.sync_state_store = SqliteSyncStateStore(config.state_db_path or SqliteSyncStateStore.default_path())
+            self.sync_state_store = JsonSyncStateStore(
+                config.state_path or JsonSyncStateStore.default_path()
+            )
         bindings = RuntimeBindings(
             notification_sink=self.send_backend_notification,
             attachment_downloader=self.download_attachment,

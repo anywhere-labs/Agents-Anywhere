@@ -65,7 +65,7 @@ Agents Anywhere 是遥控器，不是新的 Agent 运行环境。你的代码仍
 - **本地文件访问。** 通过在线 Connector 浏览工作目录、读取/写入文件、上传和下载内容。
 - **远程 shell 与终端。** 支持一次性 shell 命令、shell task 和交互式 terminal。
 - **设备配对。** 通过 Windows/macOS Connector App 或 Linux Connector CLI，把真正拥有工作区的机器接入控制面。
-- **自托管后端。** FastAPI 后端支持 SQLite 本地开发和 PostgreSQL 生产风格部署。
+- **自托管后端。** FastAPI 后端统一使用 PostgreSQL，Redis 负责跨实例协调和事件分发。
 - **Web 和 Android 客户端。** 使用 Web 控制台或 Android App 管理 Session、Device、审批、文件、终端和远程控制流程。
 
 ## 支持的 Agent 与 Runtime
@@ -153,7 +153,7 @@ flowchart LR
 仓库结构：
 
 ```text
-server/      FastAPI 后端，SQLite/PostgreSQL 存储，Connector RPC broker
+server/      FastAPI 后端，PostgreSQL 存储，Connector RPC broker
 connector/   本地守护进程和 CLI，集成 Codex / Claude runtime
 desktop/     Windows/macOS Electron App，用于运行本机 Connector
 web-next/    Next.js + shadcn Web 控制台
@@ -186,27 +186,30 @@ docker compose -f docker/docker-compose.postgres.yml up --build
 http://127.0.0.1:5174
 ```
 
-这会启动两个服务：
+这会启动四个服务：
 
 - `postgres-next` 服务运行 PostgreSQL 17。
+- `redis-next` 服务提供跨实例协调和事件分发。
+- `migrate-next` 在 Server 启动前执行数据库迁移。
 - `server-next` 服务运行 FastAPI 后端，发布在宿主机 `5174` 端口；它会同源托管静态导出的 `web-next` UI，并处理 API/WebSocket 路径。
 
 首次启动空数据库时，服务日志会输出 setup token。用它在 Web UI 中创建第一个管理员用户。
 
-自定义端口、生产环境密钥、SQLite/manual Docker 启动、镜像源、Connector 镜像和本地开发容器，请看 [docker/README.md](docker/README.md)。
+自定义端口、生产环境密钥、手动 Docker 启动、镜像源、Connector 镜像和本地开发容器，请看 [docker/README.md](docker/README.md)。
 
 ## 本地源码调试
 
-安装 `uv`、Node.js 和 Corepack 后，在仓库根目录运行：
+安装 Docker、`uv`、Node.js 和 Corepack 后，在仓库根目录运行：
 
 ```bash
 ./local-up.sh
 ```
 
-脚本会同步依赖、迁移本地 SQLite 数据库，并启动 FastAPI Server 与
-`web-next`。日志和数据库位于 `.local-dev/`。需要同时调试 Codex/Claude
-Connector 时，显式传入 `--with-connector`；用 `./local-up.sh --help` 查看
-环境文件、跳过安装和 Connector 配置选项。旧的 `./dev.sh` 会转发到同一入口。
+脚本会用 Docker Compose 启动 PostgreSQL/Redis、执行数据库迁移，并从源码
+启动 FastAPI Server 与 `web-next`。日志位于 `.local-dev/`，PostgreSQL 数据
+保存在 Docker volume 中。需要同时调试 Codex/Claude Connector 时，显式传入
+`--with-connector`；用 `./local-up.sh --help` 查看环境文件、跳过安装和
+Connector 配置选项。旧的 `./dev.sh` 会转发到同一入口。
 
 ## 首次使用流程
 

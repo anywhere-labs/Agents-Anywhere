@@ -21,33 +21,47 @@ def resolve_db_url(
     url: str | None = None,
     sqlite_path: str | Path | None = None,
 ) -> tuple[str, str]:
-    """Return (backend, async_url) from explicit args or env vars.
+    """Resolve a PostgreSQL runtime URL or an explicitly requested SQLite URL.
 
-    Precedence:
-      1. AGENT_SERVER_DB_URL — explicit SQLAlchemy URL wins.
-      2. AGENT_SERVER_DB_BACKEND + (AGENT_SERVER_DB for sqlite).
-      3. Legacy AGENT_SERVER_DB — defaults to sqlite at that path.
+    SQLite is retained only for tests and the legacy import pipeline. Normal
+    runtime configuration must use AGENT_SERVER_DB_URL with PostgreSQL.
     """
-    url = url if url is not None else os.environ.get("AGENT_SERVER_DB_URL")
+    explicit_url = url is not None
+    url = url if explicit_url else os.environ.get("AGENT_SERVER_DB_URL")
     backend = (
         backend if backend is not None else os.environ.get("AGENT_SERVER_DB_BACKEND")
     )
-    legacy = (
-        sqlite_path if sqlite_path is not None else os.environ.get("AGENT_SERVER_DB")
-    )
 
     if url:
-        resolved_backend = backend or _infer_backend_from_url(url)
+        inferred_backend = _infer_backend_from_url(url)
+        if backend is not None and backend != inferred_backend:
+            raise ValueError(
+                f"database backend {backend!r} does not match "
+                f"URL backend {inferred_backend!r}"
+            )
+        if inferred_backend == SQLITE_BACKEND and not explicit_url:
+            raise ValueError(
+                "SQLite runtime configuration is no longer supported; "
+                "set AGENT_SERVER_DB_URL to a postgresql+asyncpg URL"
+            )
+        resolved_backend = backend or inferred_backend
         return resolved_backend, url
 
-    if backend == POSTGRES_BACKEND:
+    if sqlite_path is not None:
+        if backend not in (None, SQLITE_BACKEND):
+            raise ValueError("sqlite_path cannot be used with a non-SQLite backend")
+        return SQLITE_BACKEND, f"sqlite+aiosqlite:///{sqlite_path}"
+
+    if backend == SQLITE_BACKEND or os.environ.get("AGENT_SERVER_DB"):
         raise ValueError(
-            "AGENT_SERVER_DB_BACKEND=postgres requires AGENT_SERVER_DB_URL "
-            "(e.g. postgresql+asyncpg://user:pass@host:5432/dbname)"
+            "SQLite runtime configuration is no longer supported; "
+            "set AGENT_SERVER_DB_URL to a postgresql+asyncpg URL"
         )
 
-    path = str(legacy or "agent-server.sqlite3")
-    return SQLITE_BACKEND, f"sqlite+aiosqlite:///{path}"
+    raise ValueError(
+        "AGENT_SERVER_DB_URL is required "
+        "(e.g. postgresql+asyncpg://user:pass@host:5432/dbname)"
+    )
 
 
 def _infer_backend_from_url(url: str) -> str:

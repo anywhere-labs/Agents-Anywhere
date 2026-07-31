@@ -139,17 +139,17 @@ def test_connector_controller_getters_accept_json_rpc_params(tmp_path) -> None:
     assert lines[1]["result"]["serverUrl"] == ""
 
 
-def test_config_to_payload_keeps_optional_state_db_path() -> None:
+def test_config_to_payload_keeps_optional_state_path() -> None:
     payload = config_to_payload(
         ConnectorConfig(
             server_url="http://127.0.0.1:8000",
             connector_id="conn_1",
             connector_token="token",
-            state_db_path="/tmp/state.db",
+            state_path="/tmp/state.json",
         )
     )
 
-    assert payload["stateDbPath"] == "/tmp/state.db"
+    assert payload["statePath"] == "/tmp/state.json"
 
 
 def test_connector_controller_rejects_existing_runtime_owner(tmp_path) -> None:

@@ -23,7 +23,7 @@ from connector.codex.ipc_protocol import (
 from connector.codex.reducer import TimelineReducer
 from connector.codex.rpc import APP_SERVER_STREAM_LIMIT, JsonRpcStdioClient
 from connector.protocol import protocol_selection_id
-from connector.sync_state import SqliteSyncStateStore
+from connector.sync_state import JsonSyncStateStore
 
 
 class FakeCodexRpc:
@@ -1960,7 +1960,7 @@ async def _exercise_remote_ipc_steer() -> None:
 
 
 async def _exercise_persisted_existing_thread_sync(tmp_path) -> None:
-    store = SqliteSyncStateStore(tmp_path / "connector-state.sqlite3")
+    store = JsonSyncStateStore(tmp_path / "connector-state.json")
     first_rpc = FakeCodexRpc()
     first_adapter = CodexAdapter(rpc=first_rpc, sync_state_store=store)  # type: ignore[arg-type]
 

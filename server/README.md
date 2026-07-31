@@ -15,7 +15,7 @@ agent_server/
   app.py        FastAPI app factory and local uvicorn entry helper
 tests/          Backend tests
 pyproject.toml  Server dependencies
-run.sh          Local helper for SQLite development
+run.sh          Local helper for PostgreSQL-backed development
 ```
 
 ## Run
@@ -38,8 +38,9 @@ AGENT_SERVER_REDIS_URL=redis://127.0.0.1:6379/0 \
   uv run uvicorn agent_server.app:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
-SQLite startup remains available only for legacy v1 migration and local
-compatibility while that backend is being deprecated.
+SQLite is not a supported Server runtime backend. It is retained only as a
+read-only source format for the one-time legacy v1 import tool and in isolated
+migration tests.
 
 The Server requires the database to be at its exact Alembic schema revision and
 does not mutate a production database during startup. `upgrade` fingerprints an
@@ -80,9 +81,8 @@ curl http://127.0.0.1:8000/api/v2/health/ready
 
 | Variable | Purpose |
 | --- | --- |
-| `AGENT_SERVER_DB` | Deprecated SQLite database path. Retained for v1 migration and local compatibility only. |
-| `AGENT_SERVER_DB_URL` | Explicit SQLAlchemy URL. Takes precedence over `AGENT_SERVER_DB`. |
-| `AGENT_SERVER_DB_BACKEND` | Database backend selector. PostgreSQL is required for production v2 deployments. |
+| `AGENT_SERVER_DB_URL` | Required PostgreSQL SQLAlchemy URL using the `postgresql+asyncpg` scheme. |
+| `AGENT_SERVER_DB_BACKEND` | Optional backend assertion. When set for runtime use, it must be `postgres`. |
 | `AGENT_SERVER_DB_POOL_SIZE` | PostgreSQL base connection pool size. Defaults to `10`. |
 | `AGENT_SERVER_DB_MAX_OVERFLOW` | PostgreSQL overflow connections per instance. Defaults to `20`. |
 | `AGENT_SERVER_DB_POOL_TIMEOUT` | Seconds to wait for a PostgreSQL pool checkout. Defaults to `30`. |

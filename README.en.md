@@ -65,7 +65,7 @@ When you are at a desktop, you can also use the Web console. It provides the sam
 - **Local file access.** Browse workspaces, read/write files, upload content, and download content through an online Connector.
 - **Remote shell and terminal.** Run one-shot shell commands, shell tasks, and interactive terminals.
 - **Device pairing.** Pair the machine that owns your workspace through the Windows/macOS Connector app or the Linux Connector CLI.
-- **Self-hosted backend.** The FastAPI backend supports SQLite for local development and PostgreSQL for production-style deployments.
+- **Self-hosted backend.** The FastAPI backend uses PostgreSQL, with Redis for cross-instance coordination and event delivery.
 - **Web and Android clients.** Use the Web console or Android app to manage sessions, devices, approvals, files, terminals, and remote control workflows.
 
 ## Supported Agents And Runtimes
@@ -153,7 +153,7 @@ flowchart LR
 Repository layout:
 
 ```text
-server/      FastAPI backend, SQLite/PostgreSQL storage, Connector RPC broker
+server/      FastAPI backend, PostgreSQL storage, Connector RPC broker
 connector/   Local daemon and CLI for Codex / Claude runtime integration
 desktop/     Windows/macOS Electron app for running the local Connector
 web-next/    Next.js + shadcn Web console
@@ -186,29 +186,31 @@ Open:
 http://127.0.0.1:5174
 ```
 
-This starts two services:
+This starts four services:
 
 - `postgres-next`: PostgreSQL 17 with a persistent Docker volume.
+- `redis-next`: cross-instance coordination and event delivery.
+- `migrate-next`: applies database migrations before Server startup.
 - `server-next`: FastAPI backend published on host port `5174`; it serves the statically exported `web-next` UI and handles API/WebSocket paths from the same origin.
 
 The first startup on an empty database logs a setup token. Use it in the Web UI to create the first admin user.
 
-For custom ports, production secrets, SQLite/manual Docker runs, mirrors, connector images, and local development containers, see [docker/README.md](docker/README.md).
+For custom ports, production secrets, manual Docker runs, mirrors, connector images, and local development containers, see [docker/README.md](docker/README.md).
 
 ## Local Source Development
 
-After installing `uv`, Node.js, and Corepack, run this from the repository root:
+After installing Docker, `uv`, Node.js, and Corepack, run this from the repository root:
 
 ```bash
 ./local-up.sh
 ```
 
-The script syncs dependencies, migrates a local SQLite database, and starts the
-FastAPI Server plus `web-next`. Logs and database state live under
-`.local-dev/`. Pass `--with-connector` explicitly when debugging a local
-Codex/Claude Connector; `./local-up.sh --help` lists environment-file,
-skip-install, and Connector config options. The legacy `./dev.sh` forwards to
-the same entry point.
+The script starts PostgreSQL and Redis with Docker Compose, applies migrations,
+and runs the FastAPI Server plus `web-next` from source. Logs live under
+`.local-dev/`, while PostgreSQL data persists in a Docker volume. Pass
+`--with-connector` explicitly when debugging a local Codex/Claude Connector;
+`./local-up.sh --help` lists environment-file, skip-install, and Connector
+config options. The legacy `./dev.sh` forwards to the same entry point.
 
 ## Onboarding
 
