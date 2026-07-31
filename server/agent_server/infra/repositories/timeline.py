@@ -22,6 +22,22 @@ class TimelineRepositoryMixin:
         latest = max(open_starts, key=lambda item: item.orderSeq)
         return latest.turnId
 
+    async def has_active_timeline_item(self, session_id: str) -> bool:
+        async with self._engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    select(timeline_items_t.c.id)
+                    .where(
+                        timeline_items_t.c.session_id == session_id,
+                        timeline_items_t.c.type != "turn.start",
+                        timeline_items_t.c.status.in_(
+                            ("pending", "running", "waiting_approval")
+                        ),
+                    )
+                    .limit(1)
+                )
+            ).first()
+        return row is not None
 
     async def replace_timeline(
         self,
@@ -96,9 +112,6 @@ class TimelineRepositoryMixin:
         source_observed_at: str | None = None,
     ) -> list[TimelineItem]:
         async with self._timeline_lock(session_id):
-            current_ids = {
-                item.id for item in await self.timeline.read(session_id)
-            }
             now = utc_now()
             async with self._engine.begin() as conn:
                 if source_observed_at is not None:
@@ -330,5 +343,5 @@ class TimelineRepositoryMixin:
                 # unlock is best-effort.
                 try:
                     await conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": lock_key})
-                except Exception:  # noqa: BLE001 — broad on purpose for cleanup
+                except Exception:  # noqa: BLE001, S110 — broad on purpose for cleanup
                     pass

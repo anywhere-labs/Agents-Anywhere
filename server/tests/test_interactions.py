@@ -234,6 +234,10 @@ class _InteractionRepository:
         assert session_id == self.session.id
         return None
 
+    async def has_active_timeline_item(self, session_id: str) -> bool:
+        assert session_id == self.session.id
+        return False
+
     async def get_open_turn_id(self, session_id: str) -> str | None:
         assert session_id == self.session.id
         return None
@@ -333,6 +337,10 @@ class _ProjectionRepository:
     async def get_active_run(self, session_id: str) -> dict[str, Any] | None:
         assert session_id == self.session.id
         return None
+
+    async def has_active_timeline_item(self, session_id: str) -> bool:
+        assert session_id == self.session.id
+        return False
 
     async def get_open_turn_id(self, session_id: str) -> str | None:
         assert session_id == self.session.id

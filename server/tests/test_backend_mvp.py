@@ -2234,6 +2234,83 @@ def test_session_snapshot_includes_effective_capabilities(tmp_path):
     assert running_caps["session.steer"]["available"] is True
 
 
+def test_running_tool_item_keeps_session_interruptible(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, session_id, headers = create_connector_and_session(client)
+    client.app.state.rpc = FakeLocalRpc()
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+
+    capability_set = {
+        "revision": 4,
+        "capabilities": [
+            {
+                "capabilityId": "session.interrupt",
+                "scope": "runtime",
+                "runtime": "codex",
+                "supported": True,
+                "available": True,
+                "allowed": True,
+            },
+        ],
+    }
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={"notifications": [{"method": "protocol.capabilitiesUpdated", "params": capability_set}]},
+    )
+    assert response.status_code == 200, response.text
+
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.itemUpsert",
+                    "params": {
+                        "sessionId": session_id,
+                        "item": {
+                            "id": "tl_running_tool",
+                            "sessionId": session_id,
+                            "turnId": "turn_tool_only",
+                            "type": "tool",
+                            "status": "running",
+                            "role": "tool",
+                            "content": {"name": "shell", "input": {"cmd": "sleep 10"}},
+                            "source": {
+                                "runtime": "codex",
+                                "sessionId": "thr_1",
+                                "turnId": "turn_tool_only",
+                                "itemId": "tool_1",
+                                "itemType": "toolCall",
+                            },
+                            "orderSeq": 1,
+                            "revision": 1,
+                            "contentHash": "sha256:running-tool",
+                        },
+                    },
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
+    assert snapshot.status_code == 200, snapshot.text
+    body = snapshot.json()
+    assert body["session"]["status"] == "running"
+    caps = {
+        item["capabilityId"]: item
+        for item in body["effectiveCapabilities"]["capabilities"]
+    }
+    assert caps["session.interrupt"]["available"] is True
+
+    interrupt = client.post(f"/sessions/{session_id}/interrupt", headers=headers)
+    assert interrupt.status_code == 200, interrupt.text
+    assert client.app.state.rpc.requests[-1][1] == "turn.interrupt"
+
+
 # ── Delete (detach) ────────────────────────────────────────────────────────
 
 

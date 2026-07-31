@@ -331,7 +331,11 @@ class TimelineNotificationHandler:
             item.type == "turn.end" and item.turnId == previous_open_turn_id
             for item in items
         )
-        if open_turn_id is not None or closed_previous_turn:
+        if (
+            open_turn_id is not None
+            or closed_previous_turn
+            or any(_timeline_item_is_active_work(item) for item in items)
+        ):
             await self._session_states.reconcile(
                 session_id,
                 settle_stopping=closed_previous_turn,
@@ -397,7 +401,8 @@ class TimelineNotificationHandler:
                     reconcile=False,
                 )
             await self._store.clear_active_run(session_id)
-        if item.type in {"turn.start", "turn.end"}:
+        affects_run_state = _timeline_item_affects_run_state(item)
+        if affects_run_state:
             await self._session_states.reconcile(
                 session_id,
                 settle_stopping=item.type == "turn.end",
@@ -405,7 +410,7 @@ class TimelineNotificationHandler:
         return IngestEffect(
             session_id=session_id,
             item=stored.model_dump(mode="json"),
-            session_changed=item.type in ("turn.start", "turn.end"),
+            session_changed=affects_run_state,
             notices_changed=item.type == "turn.end",
         )
 
@@ -566,6 +571,18 @@ def _timeline_item_failed(item: TimelineItemIn) -> bool:
         if isinstance(item.content.get("error"), dict):
             return True
     return False
+
+
+def _timeline_item_affects_run_state(item: TimelineItemIn) -> bool:
+    if item.type in {"turn.start", "turn.end"}:
+        return True
+    return _timeline_item_is_active_work(item)
+
+
+def _timeline_item_is_active_work(item: TimelineItemIn) -> bool:
+    if item.type == "turn.start":
+        return False
+    return item.status in {"pending", "running", "waiting_approval"}
 
 
 async def _should_replace_timeline_snapshot(

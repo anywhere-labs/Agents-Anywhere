@@ -120,6 +120,16 @@ def test_session_state_service_reconciles_with_compare_and_set() -> None:
     assert repository.writes == [("pending", "idle")]
 
 
+def test_session_state_service_treats_active_timeline_item_as_running() -> None:
+    repository = _SessionStateRepository(status="idle", active_timeline_item=True)
+    service = SessionStateService(repository)
+
+    session = asyncio.run(service.reconcile("session-1"))
+
+    assert session.status == "running"
+    assert repository.writes == [("running", "idle")]
+
+
 def test_session_state_service_retries_concurrent_equivalent_update() -> None:
     repository = _SessionStateRepository(status="idle", active_run=True)
     repository.conflict_once = True
@@ -144,7 +154,13 @@ def test_session_reconciliation_can_correct_idle_to_observed_stopping() -> None:
 
 
 class _SessionStateRepository:
-    def __init__(self, *, status: SessionStatus, active_run: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        status: SessionStatus,
+        active_run: bool = False,
+        active_timeline_item: bool = False,
+    ) -> None:
         self.session = SessionView(
             id="session-1",
             connectorId="connector-1",
@@ -155,6 +171,7 @@ class _SessionStateRepository:
             updatedSeq=1,
         )
         self.active_run = active_run
+        self.active_timeline_item = active_timeline_item
         self.conflict_once = False
         self.writes: list[tuple[SessionStatus, SessionStatus | None]] = []
 
@@ -171,6 +188,10 @@ class _SessionStateRepository:
     async def get_active_run(self, session_id: str) -> dict[str, Any] | None:
         assert session_id == self.session.id
         return {"sessionId": session_id} if self.active_run else None
+
+    async def has_active_timeline_item(self, session_id: str) -> bool:
+        assert session_id == self.session.id
+        return self.active_timeline_item
 
     async def get_open_turn_id(self, session_id: str) -> str | None:
         assert session_id == self.session.id
