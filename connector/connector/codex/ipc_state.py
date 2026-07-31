@@ -169,6 +169,8 @@ def codex_ipc_thread_snapshot(state: CodexIpcConversationState) -> dict[str, Any
         "title": state.title,
         "cwd": state.cwd,
         "status": state.threadRuntimeStatus,
+        "model": state.latestModel,
+        "reasoningEffort": state.latestReasoningEffort,
         "turns": turns,
     }
 
@@ -201,6 +203,8 @@ def codex_ipc_patch_scope(change: CodexIpcPatchesChange) -> CodexIpcPatchScope:
         "title",
         "cwd",
         "threadRuntimeStatus",
+        "latestModel",
+        "latestReasoningEffort",
         "updatedAt",
         "recencyAt",
         "resumeState",

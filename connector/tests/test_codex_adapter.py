@@ -1416,7 +1416,6 @@ async def _exercise_ipc_client_lifecycle() -> None:
     rpc = FakeCodexRpc()
     ipc_client = FakeCodexIpcClient()
     adapter = CodexAdapter(rpc=rpc, ipc_client=ipc_client)  # type: ignore[arg-type]
-
     await adapter.sync_session({"sessionId": "sess_1", "externalSessionId": "thr_1"})
     await adapter.sync_existing_sessions("conn_1")
 
@@ -1440,6 +1439,14 @@ async def _exercise_ipc_snapshot_and_patch() -> None:
         notification_sink=sink,
     )
     await adapter.sync_session({"sessionId": "sess_1", "externalSessionId": "thr_1"})
+    adapter._model_list_result = {  # noqa: SLF001
+        "data": [
+            {
+                "id": "gpt-5.6-sol",
+                "supportedReasoningEfforts": ["low", "high"],
+            }
+        ]
+    }
     assert ipc_client.broadcasts[-1][0] == "thread-stream-following-changed"
 
     snapshot = CodexIpcStreamStateChangedBroadcast.model_validate(
@@ -1455,6 +1462,8 @@ async def _exercise_ipc_snapshot_and_patch() -> None:
                         "title": "IPC thread",
                         "cwd": "/repo",
                         "threadRuntimeStatus": {"type": "active"},
+                        "latestModel": "gpt-5.6-sol",
+                        "latestReasoningEffort": "low",
                         "turnHistory": {
                             "kind": "canonical",
                             "history": {
@@ -1496,6 +1505,15 @@ async def _exercise_ipc_snapshot_and_patch() -> None:
         "timeline.sync",
     ]
     assert notifications[0][1]["status"] == "running"
+    assert notifications[0][1]["runtimeSettings"] == {
+        "model": "gpt-5.6-sol",
+        "effort": "low",
+    }
+    assert notifications[0][1]["modelSelectionId"] == protocol_selection_id(
+        "codex",
+        "model",
+        {"model_id": "gpt-5.6-sol", "reasoning_id": "low"},
+    )
     notifications.clear()
 
     patch = CodexIpcStreamStateChangedBroadcast.model_validate(
@@ -1729,6 +1747,8 @@ async def _exercise_start_turn_through_remote_ipc_owner() -> None:
                         "conversationState": {
                             "id": "thr_1",
                             "threadRuntimeStatus": {"type": "idle"},
+                            "latestModel": "gpt-5.6-sol",
+                            "latestReasoningEffort": "low",
                             "turns": [],
                         },
                     },
@@ -1749,6 +1769,14 @@ async def _exercise_start_turn_through_remote_ipc_owner() -> None:
     )
 
     assert result["turnId"] == "turn_ipc"
+    assert [item["method"] for item in result["backendNotifications"]] == [
+        "session.updated",
+        "timeline.itemUpsert",
+    ]
+    assert result["backendNotifications"][0]["params"]["status"] == "running"
+    assert result["backendNotifications"][1]["params"]["item"]["type"] == (
+        "turn.start"
+    )
     method, request_params, options = ipc_client.requests[-1]
     assert method == "thread-follower-start-turn"
     assert request_params["conversationId"] == "thr_1"

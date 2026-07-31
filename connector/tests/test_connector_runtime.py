@@ -23,6 +23,7 @@ class FakeAdapter:
     def __init__(self) -> None:
         self.notification_sink = None
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.turn_notifications: list[dict[str, Any]] = []
 
     async def create_session(self, params: dict[str, Any]) -> dict[str, Any]:
         self.calls.append(("session.create", params))
@@ -65,7 +66,10 @@ class FakeAdapter:
 
     async def start_turn(self, params: dict[str, Any]) -> dict[str, Any]:
         self.calls.append(("turn.start", params))
-        return {"turnId": "turn_1"}
+        return {
+            "turnId": "turn_1",
+            "backendNotifications": self.turn_notifications,
+        }
 
     async def steer_turn(self, params: dict[str, Any]) -> dict[str, Any]:
         self.calls.append(("turn.steer", params))
@@ -306,6 +310,12 @@ async def _exercise_runtime() -> None:
         "result": {"sessionId": "sess_1", "externalSessionId": "thr_1"},
     }
 
+    adapter.turn_notifications = [
+        {
+            "method": "session.updated",
+            "params": {"sessionId": "sess_1", "status": "running"},
+        }
+    ]
     await client.handle_message(
         {
             "id": "rpc_2",
@@ -314,6 +324,7 @@ async def _exercise_runtime() -> None:
             "params": {"runtime": "codex", "sessionId": "sess_1", "externalSessionId": "thr_1", "content": "hi"},
         }
     )
+    assert ingested[-1] == adapter.turn_notifications
     assert ws.messages[-1]["result"] == {"turnId": "turn_1"}
 
     await client.handle_message(

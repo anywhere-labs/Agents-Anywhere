@@ -317,6 +317,8 @@ class CodexIpcConversationState(CodexIpcModel):
     ephemeral: bool = False
     resumeState: str | None = None
     threadRuntimeStatus: Any = None
+    latestModel: str | None = None
+    latestReasoningEffort: str | None = None
     requests: list[Any] | dict[str, Any] = Field(default_factory=list)
     turns: list[CodexIpcTurn] = Field(default_factory=list)
     turnHistory: CodexIpcCanonicalTurnHistory | None = None

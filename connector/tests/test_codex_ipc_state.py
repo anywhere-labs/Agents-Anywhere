@@ -21,6 +21,8 @@ def _conversation_state() -> dict:
         "title": "IPC thread",
         "cwd": "/repo",
         "threadRuntimeStatus": {"type": "active"},
+        "latestModel": "gpt-5.6-sol",
+        "latestReasoningEffort": "low",
         "turns": [],
         "turnHistory": {
             "kind": "canonical",
@@ -94,8 +96,40 @@ def test_snapshot_flattens_canonical_history_in_island_order() -> None:
         assert state is not None
         thread = codex_ipc_thread_snapshot(state.conversation_state)
         assert thread["id"] == "thr_1"
+        assert thread["model"] == "gpt-5.6-sol"
+        assert thread["reasoningEffort"] == "low"
         assert thread["turns"][0]["turnId"] == "turn_1"
         assert thread["turns"][0]["items"][0]["text"] == "hel"
+
+    asyncio.run(exercise())
+
+
+def test_model_patch_is_reported_as_metadata_change() -> None:
+    async def exercise() -> None:
+        registry = CodexIpcStateRegistry()
+        await _apply_snapshot(registry)
+        applied = await registry.apply(
+            _stream_message(
+                {
+                    "type": "patches",
+                    "baseRevision": 3,
+                    "revision": 4,
+                    "patches": [
+                        {
+                            "op": "replace",
+                            "path": ["latestModel"],
+                            "value": "gpt-5.6",
+                        }
+                    ],
+                }
+            )
+        )
+
+        assert applied.patch_scope.metadata_changed is True
+        assert applied.patch_scope.requires_timeline_sync is False
+        assert codex_ipc_thread_snapshot(
+            applied.thread_state.conversation_state
+        )["model"] == "gpt-5.6"
 
     asyncio.run(exercise())
 

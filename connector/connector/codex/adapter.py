@@ -390,17 +390,7 @@ class CodexAdapter:
                 ],
             }
         reduced, thread = await self._reduce_current_timeline(session_id, thread_id)
-        runtime_settings, permission_selection_id = _runtime_settings_and_permission_selection_from_codex_result(thread)
-        model_selection_id = _codex_model_selection_from_runtime_settings(
-            runtime_settings,
-            self._model_list_result,
-        )
-        if runtime_settings and reduced.session_update is not None:
-            reduced.session_update["runtimeSettings"] = runtime_settings
-        if model_selection_id and reduced.session_update is not None:
-            reduced.session_update["modelSelectionId"] = model_selection_id
-        if permission_selection_id and reduced.session_update is not None:
-            reduced.session_update["permissionSelectionId"] = permission_selection_id
+        self._add_runtime_selection_to_reduction(reduced, thread)
         elapsed_ms = (time.perf_counter() - started) * 1000
         logger.info(
             "codex session sync completed session_id={} thread_id={} timeline_items={} approvals={} elapsed_ms={:.1f}",
@@ -783,6 +773,7 @@ class CodexAdapter:
                 thread,
                 fallback_thread_id=thread_id,
             )
+            self._add_runtime_selection_to_reduction(reduced, thread)
             await self._emit_reduction(reduced, timeline_method="timeline.sync")
             return
 
@@ -792,6 +783,7 @@ class CodexAdapter:
                 thread,
                 fallback_thread_id=thread_id,
             )
+            self._add_runtime_selection_to_reduction(reduced, thread)
             await self._emit_reduction(reduced, timeline_method="timeline.itemUpsert")
 
         history = applied.thread_state.conversation_state.turnHistory
@@ -826,6 +818,27 @@ class CodexAdapter:
             timeline_method=timeline_method,
         ):
             await self.notification_sink(notification["method"], notification["params"])
+
+    def _add_runtime_selection_to_reduction(
+        self,
+        reduced: ReductionResult,
+        thread: dict[str, Any],
+    ) -> None:
+        if reduced.session_update is None:
+            return
+        runtime_settings, permission_selection_id = (
+            _runtime_settings_and_permission_selection_from_codex_result(thread)
+        )
+        model_selection_id = _codex_model_selection_from_runtime_settings(
+            runtime_settings,
+            self._model_list_result,
+        )
+        if runtime_settings:
+            reduced.session_update["runtimeSettings"] = runtime_settings
+        if model_selection_id:
+            reduced.session_update["modelSelectionId"] = model_selection_id
+        if permission_selection_id:
+            reduced.session_update["permissionSelectionId"] = permission_selection_id
 
     def _persist_sync_state(
         self,
@@ -944,6 +957,17 @@ class CodexAdapter:
                     text=text_content,
                     attachments=timeline_attachments,
                 )
+            running = self.reducer.reduce_notification(
+                {
+                    "method": "turn/started",
+                    "params": {
+                        "platformSessionId": session_id,
+                        "threadId": thread_id,
+                        "turnId": turn_id,
+                        "turn": result.get("turn") or result,
+                    },
+                }
+            )
             logger.info(
                 "started codex turn through IPC session_id={} thread_id={} turn_id={}",
                 session_id,
@@ -954,7 +978,13 @@ class CodexAdapter:
                 "turnId": turn_id,
                 "turn": result.get("turn") or result,
                 "externalSessionId": thread_id,
-                "backendNotifications": backend_notifications,
+                "backendNotifications": [
+                    *backend_notifications,
+                    *_backend_notifications_from_reduction(
+                        running,
+                        timeline_method="timeline.itemUpsert",
+                    ),
+                ],
             }
 
         await self._claim_ipc_thread(thread_id)

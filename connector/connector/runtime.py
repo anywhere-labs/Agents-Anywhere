@@ -336,9 +336,11 @@ class BackendRpcClient:
             await self._send_backend_notifications(result)
             return _strip_backend_notifications(result)
         if method == "turn.start":
-            return await self._resolve_adapter(params).start_turn(
+            result = await self._resolve_adapter(params).start_turn(
                 {**params, "connectorId": self.config.connector_id}
             )
+            await self._send_backend_notifications(result)
+            return _strip_backend_notifications(result)
         if method == "turn.steer":
             return await self._resolve_adapter(params).steer_turn(params)
         if method == "turn.interrupt":
