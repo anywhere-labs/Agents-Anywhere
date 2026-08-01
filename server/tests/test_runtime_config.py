@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from copy import deepcopy
 from typing import Any
 
 from fastapi.testclient import TestClient
-from sqlalchemy import delete, update
+from sqlalchemy import delete, select, update
 
 from agent_server.app import create_app
 from agent_server.core.runtime_config import DEFAULT_RUNTIME_CONFIG_SCHEMAS
 from agent_server.infra.db import (
     agent_efforts as agent_efforts_t,
     agent_models as agent_models_t,
+    user_agent_defaults as user_agent_defaults_t,
 )
 
 
@@ -267,7 +269,7 @@ def test_user_agent_defaults_ignore_default_flags(tmp_path):
     ]
 
 
-def test_codex_catalog_upgrade_migrates_only_legacy_builtin_snapshots(tmp_path):
+def test_codex_catalog_upgrade_inherits_only_legacy_builtin_snapshots(tmp_path):
     client = make_client(tmp_path)
     headers = auth_headers(client)
     legacy_update = client.patch(
@@ -387,6 +389,27 @@ def test_codex_catalog_upgrade_migrates_only_legacy_builtin_snapshots(tmp_path):
         await client.app.state.store.seed_runtime_config_schemas()
 
     asyncio.run(downgrade_and_reseed())
+
+    async def persisted_models(user_id: str) -> list[dict[str, Any]]:
+        async with client.app.state.store.engine.connect() as conn:
+            raw = (
+                await conn.execute(
+                    select(user_agent_defaults_t.c.models_json).where(
+                        user_agent_defaults_t.c.user_id == user_id,
+                        user_agent_defaults_t.c.runtime == "codex",
+                    )
+                )
+            ).scalar_one()
+        return json.loads(raw)
+
+    persisted_legacy_snapshot = asyncio.run(persisted_models("user1"))
+    assert [model["key"] for model in persisted_legacy_snapshot] == [
+        "gpt-5.5",
+        "gpt-5.4",
+        "gpt-5.4-mini",
+        "gpt-5.3-codex",
+        "gpt-5.2",
+    ]
 
     upgraded = client.get("/agents/defaults", headers=headers).json()["runtimes"]["codex"]
     assert [model["key"] for model in upgraded["models"]][:4] == [

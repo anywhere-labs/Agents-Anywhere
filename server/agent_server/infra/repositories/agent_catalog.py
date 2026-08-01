@@ -186,7 +186,14 @@ class AgentCatalogRepositoryMixin:
         if row is not None:
             enabled = bool(row["enabled"])
             settings = _json_loads(row["settings_json"]) or {}
-            models = _catalog_entries_from_json(runtime, row["models_json"])
+            # Read exact legacy built-in snapshots through the current global
+            # catalog without rewriting them, so a server rollback stays safe.
+            models = (
+                []
+                if runtime == "codex"
+                and _is_legacy_builtin_codex_models_json(row["models_json"])
+                else _catalog_entries_from_json(runtime, row["models_json"])
+            )
         else:
             enabled = True
             settings = default_agent_settings(runtime)

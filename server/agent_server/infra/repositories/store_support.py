@@ -833,47 +833,11 @@ _LEGACY_CODEX_EFFORT_SIGNATURE = (
 def _migrate_codex_catalog_sync(conn: Any) -> None:
     for statement in _codex_catalog_metadata_updates():
         conn.execute(statement)
-    now = utc_now()
-    rows = conn.execute(
-        select(user_agent_defaults_t.c.user_id, user_agent_defaults_t.c.models_json).where(
-            user_agent_defaults_t.c.runtime == "codex"
-        )
-    ).mappings().all()
-    for row in rows:
-        if not _is_legacy_builtin_codex_models_json(row["models_json"]):
-            continue
-        conn.execute(
-            update(user_agent_defaults_t)
-            .where(
-                user_agent_defaults_t.c.user_id == row["user_id"],
-                user_agent_defaults_t.c.runtime == "codex",
-            )
-            .values(models_json=_json_dumps([]), updated_at=now)
-        )
 
 
 async def _migrate_codex_catalog_async(conn: AsyncConnection) -> None:
     for statement in _codex_catalog_metadata_updates():
         await conn.execute(statement)
-    now = utc_now()
-    rows = (
-        await conn.execute(
-            select(user_agent_defaults_t.c.user_id, user_agent_defaults_t.c.models_json).where(
-                user_agent_defaults_t.c.runtime == "codex"
-            )
-        )
-    ).mappings().all()
-    for row in rows:
-        if not _is_legacy_builtin_codex_models_json(row["models_json"]):
-            continue
-        await conn.execute(
-            update(user_agent_defaults_t)
-            .where(
-                user_agent_defaults_t.c.user_id == row["user_id"],
-                user_agent_defaults_t.c.runtime == "codex",
-            )
-            .values(models_json=_json_dumps([]), updated_at=now)
-        )
 
 
 def _codex_catalog_metadata_updates() -> list[Any]:
