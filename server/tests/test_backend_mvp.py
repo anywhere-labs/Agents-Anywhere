@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 from conftest import ApiV2TestClient as TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from agent_server.api.sessions_terminal import _send_terminal_ws_error
 from agent_server.app import create_app
@@ -866,6 +867,20 @@ def ws_ticket(client: TestClient, session_id: str, headers: dict[str, str], clie
     return response.json()["ticket"]
 
 
+def dashboard_ws_ticket(
+    client: TestClient,
+    headers: dict[str, str],
+    client_id: str = "web_dashboard_test",
+) -> str:
+    response = client.post(
+        "/ws-ticket",
+        headers=headers,
+        json={"clientId": client_id, "scope": {"dashboard": True}},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["ticket"]
+
+
 def test_connectors_can_be_listed_without_sessions(tmp_path):
     client = make_client(tmp_path)
     headers = auth_headers(client)
@@ -880,6 +895,51 @@ def test_connectors_can_be_listed_without_sessions(tmp_path):
     body = listed.json()
     assert body["connectors"] == [connector]
     assert body["serverTime"]
+
+
+def test_dashboard_ws_returns_connector_and_session_snapshot(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _access_token, session_id, headers = create_connector_and_session(client)
+    ticket = dashboard_ws_ticket(client, headers)
+
+    with client.websocket_connect(f"/dashboard/ws?ticket={ticket}") as ws:
+        snapshot = ws.receive_json()
+        assert snapshot["type"] == "dashboard.snapshot"
+        assert [connector["id"] for connector in snapshot["connectors"]] == [connector_id]
+        assert [session["id"] for session in snapshot["sessions"]] == [session_id]
+
+
+def test_dashboard_ws_rejects_session_scoped_ticket(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, _access_token, session_id, headers = create_connector_and_session(client)
+    ticket = ws_ticket(client, session_id, headers)
+
+    with pytest.raises(WebSocketDisconnect), client.websocket_connect(
+        f"/dashboard/ws?ticket={ticket}"
+    ):
+        pass
+
+
+def test_ws_ticket_scope_must_select_exactly_one_target(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, _access_token, session_id, headers = create_connector_and_session(client)
+
+    missing = client.post(
+        "/ws-ticket",
+        headers=headers,
+        json={"clientId": "web", "scope": {}},
+    )
+    assert missing.status_code == 422
+
+    ambiguous = client.post(
+        "/ws-ticket",
+        headers=headers,
+        json={
+            "clientId": "web",
+            "scope": {"dashboard": True, "sessionId": session_id},
+        },
+    )
+    assert ambiguous.status_code == 422
 
 
 def test_connector_status_response_uses_live_ws_not_stale_db(tmp_path):

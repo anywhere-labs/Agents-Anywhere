@@ -2,14 +2,24 @@
   "$defs": {
     "ProtocolWsTicketScope": {
       "properties": {
+        "dashboard": {
+          "default": false,
+          "title": "Dashboard",
+          "type": "boolean"
+        },
         "sessionId": {
-          "title": "Sessionid",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sessionid"
         }
       },
-      "required": [
-        "sessionId"
-      ],
       "title": "ProtocolWsTicketScope",
       "type": "object"
     }

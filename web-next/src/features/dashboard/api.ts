@@ -305,8 +305,24 @@ export class DashboardApi {
     );
   }
 
+  createDashboardWsTicket(token: string, clientId: string): Promise<WsTicketResponse> {
+    return this.client.post<WsTicketResponse>(
+      "/ws-ticket",
+      { clientId, scope: { dashboard: true } },
+      { token },
+    );
+  }
+
   sessionWebSocketUrl(sessionId: string, ticket: string): string {
     const path = `${apiPath(`/sessions/${encodeURIComponent(sessionId)}/ws`)}?ticket=${encodeURIComponent(ticket)}`;
+    if (typeof window === "undefined") return path;
+    const url = new URL(path, window.location.origin);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    return url.toString();
+  }
+
+  dashboardWebSocketUrl(ticket: string): string {
+    const path = `${apiPath("/dashboard/ws")}?ticket=${encodeURIComponent(ticket)}`;
     if (typeof window === "undefined") return path;
     const url = new URL(path, window.location.origin);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";

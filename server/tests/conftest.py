@@ -23,6 +23,7 @@ _API_ROOTS = (
     "/auth",
     "/connector",
     "/connectors",
+    "/dashboard",
     "/health",
     "/oauth",
     "/pairing",

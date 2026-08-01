@@ -159,6 +159,13 @@ export type SessionListResponse = {
   serverTime: string;
 };
 
+export type DashboardSnapshotMessage = {
+  type: "dashboard.snapshot";
+  connectors: ConnectorView[];
+  sessions: SessionView[];
+  serverTime: string;
+};
+
 export type ArchiveAllScope = "active" | "archived" | "all";
 
 export type ArchiveAllResponse = {

@@ -27,6 +27,7 @@ from agent_server.api import (
     connector_shell,
     connector_terminal,
     connectors,
+    dashboard_stream,
     error_handlers,
     oauth,
     pairing,
@@ -253,6 +254,7 @@ def create_app(
     app.include_router(auth.router, prefix=API_V2_PREFIX)
     app.include_router(admin.router, prefix=API_V2_PREFIX)
     app.include_router(admin_dashboard.router, prefix=API_V2_PREFIX)
+    app.include_router(dashboard_stream.router, prefix=API_V2_PREFIX)
     app.include_router(service.router, prefix=API_V2_PREFIX)
     app.include_router(oauth.router, prefix=API_V2_PREFIX)
     app.include_router(connectors.router, prefix=API_V2_PREFIX)

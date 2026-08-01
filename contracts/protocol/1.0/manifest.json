@@ -77,7 +77,7 @@
       "model": "ProtocolWsTicketRequest",
       "path": "schemas/ws-ticket-request.schema.json",
       "pydanticMode": "validation",
-      "sha256": "b48cb743ad7a8494a7f24bab67b1579b466ba181b8932cbb1f403fd6194ded6e",
+      "sha256": "8c6003289c8bffd8d1be069405c28618db3e854b815f313a5e5741d910aef0c6",
       "slug": "ws-ticket-request"
     },
     {

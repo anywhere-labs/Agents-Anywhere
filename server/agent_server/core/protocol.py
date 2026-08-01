@@ -5,7 +5,7 @@ import hashlib
 import json
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from agent_server.core.models import (
     Approval,
@@ -137,7 +137,15 @@ class ProtocolSessionSnapshotResponse(ProtocolWireModel):
 
 
 class ProtocolWsTicketScope(ProtocolWireModel):
-    sessionId: str
+    sessionId: str | None = None
+    dashboard: bool = False
+
+    @model_validator(mode="after")
+    def validate_single_scope(self) -> ProtocolWsTicketScope:
+        has_session = self.sessionId is not None
+        if has_session == self.dashboard:
+            raise ValueError("exactly one WebSocket ticket scope is required")
+        return self
 
 
 class ProtocolWsTicketRequest(ProtocolWireModel):

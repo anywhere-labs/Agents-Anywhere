@@ -14,6 +14,7 @@ import { useAuth } from "@/components/auth/auth-context"
 import { dashboardApi } from "@/features/dashboard/api"
 import type {
   ConnectorView as RealConnectorView,
+  DashboardSnapshotMessage,
   SessionStateResponse,
   SessionView as RealSessionView,
   TimelineItem,
@@ -146,6 +147,16 @@ function mapSession(session: RealSessionView): SessionView {
     runtimeSettings: session.runtimeSettings ?? null,
     updatedAt: relativeSessionTime(session),
   }
+}
+
+function isDashboardSnapshotMessage(value: unknown): value is DashboardSnapshotMessage {
+  if (!value || typeof value !== "object") return false
+  const message = value as Partial<DashboardSnapshotMessage>
+  return (
+    message.type === "dashboard.snapshot" &&
+    Array.isArray(message.connectors) &&
+    Array.isArray(message.sessions)
+  )
 }
 
 function runtimeLabel(runtime: string): string {
@@ -349,7 +360,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     fetchData()
   }, [fetchData])
 
-  // ── Dashboard SSE + polling ────────────────────────────────
+  // ── Dashboard WebSocket + disconnected fallback ────────────
   const tokenRef = React.useRef(authSession?.accessToken ?? null)
   tokenRef.current = authSession?.accessToken ?? null
   const sessionsRef = React.useRef(sessions)
@@ -359,44 +370,69 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   React.useEffect(() => {
     if (!authSession?.accessToken) return
     let cancelled = false
-    let eventSource: EventSource | null = null
+    let socket: WebSocket | null = null
     let pollTimer: number | null = null
+    let reconnectTimer: number | null = null
 
     const refetch = () => {
       if (cancelled) return
       fetchData()
     }
 
-    // SSE for real-time dashboard updates
-    try {
-      eventSource = new EventSource(dashboardApi.dashboardEventsUrl(authSession.accessToken))
-      eventSource.onmessage = (event) => {
-        if (cancelled || !event.data) return
-        try {
-          const msg = JSON.parse(event.data) as { type?: string }
-          if (msg.type === "dashboard.changed" || msg.type === "dashboard.sync") {
-            refetch()
-          }
-        } catch { /* ignore malformed */ }
+    const connect = async () => {
+      try {
+        const ticket = await dashboardApi.createDashboardWsTicket(
+          authSession.accessToken,
+          "web-dashboard",
+        )
+        if (cancelled) return
+        socket = new WebSocket(dashboardApi.dashboardWebSocketUrl(ticket.ticket))
+        socket.onmessage = (event) => {
+          if (cancelled || typeof event.data !== "string") return
+          try {
+            const message = JSON.parse(event.data) as unknown
+            if (!isDashboardSnapshotMessage(message)) return
+            setConnectors(message.connectors.map(mapConnector))
+            setSessions(message.sessions.map(mapSession))
+            setIsLoading(false)
+            initialLoadDoneRef.current = true
+          } catch { /* ignore malformed */ }
+        }
+        socket.onclose = () => {
+          if (cancelled) return
+          socket = null
+          reconnectTimer = window.setTimeout(() => {
+            reconnectTimer = null
+            void connect()
+          }, 2000)
+        }
+        socket.onerror = () => {
+          socket?.close()
+        }
+      } catch {
+        if (cancelled) return
+        reconnectTimer = window.setTimeout(() => {
+          reconnectTimer = null
+          void connect()
+        }, 2000)
       }
-      eventSource.onerror = () => {
-        eventSource?.close()
-        eventSource = null
-      }
-    } catch { /* SSE unavailable */ }
+    }
 
-    // Fallback polling when SSE is disconnected
+    void connect()
+
+    // Fallback polling only while the dashboard WebSocket is disconnected.
     pollTimer = window.setInterval(() => {
       if (cancelled) return
-      if (!eventSource || eventSource.readyState !== EventSource.OPEN) {
+      if (!socket || socket.readyState !== WebSocket.OPEN) {
         refetch()
       }
     }, 30_000)
 
     return () => {
       cancelled = true
-      eventSource?.close()
+      socket?.close()
       if (pollTimer !== null) window.clearInterval(pollTimer)
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
     }
   }, [authSession?.accessToken, fetchData])
 
