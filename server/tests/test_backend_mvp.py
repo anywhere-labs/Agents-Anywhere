@@ -237,6 +237,8 @@ def test_platform_session_create_uses_connector_returned_session_id(tmp_path):
                 "title": "New Codex session",
                 "cwd": "/repo",
                 "approvalPolicy": "on-request",
+                "model": "gpt-5.6-sol",
+                "effort": "medium",
                 "sandbox": {
                     "type": "workspaceWrite",
                     "writableRoots": ["/repo"],
@@ -1598,13 +1600,37 @@ def test_codex_agent_catalog_lists_seeded_entries(tmp_path):
     models = client.get("/agents/codex/models", headers=headers).json()
     assert models["runtime"] == "codex"
     assert [entry["key"] for entry in models["entries"]] == [
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
         "gpt-5.5",
         "gpt-5.4",
         "gpt-5.4-mini",
         "gpt-5.3-codex",
         "gpt-5.2",
     ]
-    assert next(e for e in models["entries"] if e["isDefault"])["key"] == "gpt-5.5"
+    assert next(e for e in models["entries"] if e["isDefault"])["key"] == "gpt-5.6-sol"
+    assert [entry["key"] for entry in models["entries"][0]["efforts"]] == [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra",
+    ]
+    assert [entry["key"] for entry in models["entries"][2]["efforts"]] == [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+    ]
+    assert [entry["key"] for entry in models["entries"][3]["efforts"]] == [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+    ]
 
     efforts = client.get("/agents/codex/efforts", headers=headers).json()
     assert efforts["runtime"] == "codex"
@@ -1613,8 +1639,10 @@ def test_codex_agent_catalog_lists_seeded_entries(tmp_path):
         "medium",
         "high",
         "xhigh",
+        "max",
+        "ultra",
     ]
-    assert next(e for e in efforts["entries"] if e["isDefault"])["key"] == "xhigh"
+    assert next(e for e in efforts["entries"] if e["isDefault"])["key"] == "medium"
 
 
 def test_agent_catalog_requires_authentication(tmp_path):
@@ -2601,7 +2629,7 @@ def test_ingest_adds_active_run_attachments_to_user_message(tmp_path):
     ]
 
 
-def test_send_message_omits_unspecified_overrides(tmp_path):
+def test_send_message_uses_codex_defaults_without_explicit_overrides(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, session_id, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
@@ -2617,8 +2645,9 @@ def test_send_message_omits_unspecified_overrides(tmp_path):
 
     assert response.status_code == 200
     params = fake_rpc.requests[-1][2]
-    for key in ("permissionMode", "model", "effort"):
-        assert key not in params
+    assert "permissionMode" not in params
+    assert params["model"] == "gpt-5.6-sol"
+    assert params["effort"] == "medium"
     assert params["approvalPolicy"] == "on-request"
     assert params["sandboxPolicy"]["type"] == "workspaceWrite"
 

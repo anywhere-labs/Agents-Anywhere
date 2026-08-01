@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 from typing import Any
 
 from fastapi.testclient import TestClient
+from sqlalchemy import delete, update
 
 from agent_server.app import create_app
+from agent_server.core.runtime_config import DEFAULT_RUNTIME_CONFIG_SCHEMAS
+from agent_server.infra.db import (
+    agent_efforts as agent_efforts_t,
+    agent_models as agent_models_t,
+)
 
 
 def make_client(tmp_path):
@@ -74,6 +81,33 @@ class FakeRpc:
         return {"ok": True}
 
 
+def legacy_codex_models() -> list[dict[str, Any]]:
+    efforts = [
+        {"key": "low", "displayLabel": "Low", "sortOrder": 1},
+        {"key": "medium", "displayLabel": "Medium", "sortOrder": 2},
+        {"key": "high", "displayLabel": "High", "sortOrder": 3},
+        {"key": "xhigh", "displayLabel": "Extra high", "sortOrder": 4},
+    ]
+    return [
+        {
+            "key": key,
+            "displayLabel": label,
+            "sortOrder": index,
+            "efforts": deepcopy(efforts),
+        }
+        for index, (key, label) in enumerate(
+            (
+                ("gpt-5.5", "GPT-5.5"),
+                ("gpt-5.4", "GPT-5.4"),
+                ("gpt-5.4-mini", "GPT-5.4 Mini"),
+                ("gpt-5.3-codex", "GPT-5.3 Codex"),
+                ("gpt-5.2", "GPT-5.2"),
+            ),
+            start=1,
+        )
+    ]
+
+
 def test_runtime_config_schema_is_seeded_and_readable(tmp_path):
     client = make_client(tmp_path)
     headers = auth_headers(client)
@@ -96,6 +130,8 @@ def test_user_agent_defaults_customize_schema_and_new_connectors(tmp_path):
     defaults = client.get("/agents/defaults", headers=headers)
     assert defaults.status_code == 200, defaults.text
     assert defaults.json()["runtimes"]["codex"]["enabled"] is True
+    assert defaults.json()["runtimes"]["codex"]["settings"]["model"] == "gpt-5.6-sol"
+    assert defaults.json()["runtimes"]["codex"]["settings"]["effort"] == "medium"
     assert "runMode" not in defaults.json()["runtimes"]["claude"]["settings"]
 
     updated = client.patch(
@@ -163,7 +199,8 @@ def test_user_agent_defaults_customize_schema_and_new_connectors(tmp_path):
     )
     assert codex_settings.status_code == 200, codex_settings.text
     assert codex_settings.json()["settings"]["permissionMode"] == "ask"
-    assert codex_settings.json()["settings"]["model"] is None
+    assert codex_settings.json()["settings"]["model"] == "gpt-custom"
+    assert codex_settings.json()["settings"]["effort"] == "custom-effort"
 
     claude_settings = client.get(
         f"/connectors/{connector_id}/agents/claude/settings",
@@ -228,6 +265,171 @@ def test_user_agent_defaults_ignore_default_flags(tmp_path):
         ("lowish", True),
         ("highish", False),
     ]
+
+
+def test_codex_catalog_upgrade_migrates_only_legacy_builtin_snapshots(tmp_path):
+    client = make_client(tmp_path)
+    headers = auth_headers(client)
+    legacy_update = client.patch(
+        "/agents/defaults",
+        headers=headers,
+        json={"runtimes": {"codex": {"models": legacy_codex_models()}}},
+    )
+    assert legacy_update.status_code == 200, legacy_update.text
+
+    asyncio.run(
+        client.app.state.store.create_user(
+            user_id="user2",
+            password="secret2",
+        )
+    )
+    custom_headers = auth_headers(client, user_id="user2", password="secret2")
+    custom_models = legacy_codex_models()
+    custom_models[0]["description"] = "Private deployment"
+    custom_update = client.patch(
+        "/agents/defaults",
+        headers=custom_headers,
+        json={"runtimes": {"codex": {"models": custom_models}}},
+    )
+    assert custom_update.status_code == 200, custom_update.text
+    custom_before = custom_update.json()["runtimes"]["codex"]["models"]
+
+    explicit_connector = client.post(
+        "/connectors",
+        headers=headers,
+        json={"name": "explicit"},
+    ).json()["connector"]["id"]
+    explicit = client.patch(
+        f"/connectors/{explicit_connector}/agents/codex/settings",
+        headers=headers,
+        json={"settings": {"model": "gpt-5.5", "effort": "xhigh"}},
+    )
+    assert explicit.status_code == 200, explicit.text
+
+    null_connector = client.post(
+        "/connectors",
+        headers=headers,
+        json={"name": "null-defaults"},
+    ).json()["connector"]["id"]
+    cleared = client.patch(
+        f"/connectors/{null_connector}/agents/codex/settings",
+        headers=headers,
+        json={"settings": {"model": None, "effort": None}},
+    )
+    assert cleared.status_code == 200, cleared.text
+
+    async def downgrade_and_reseed() -> None:
+        legacy_schema = deepcopy(DEFAULT_RUNTIME_CONFIG_SCHEMAS["codex"]).model_dump(
+            exclude_none=True
+        )
+        legacy_schema["schemaVersion"] = 3
+        for field in legacy_schema["fields"]:
+            if field["key"] == "model":
+                field["options"] = [
+                    option
+                    for option in field["options"]
+                    if not str(option["value"]).startswith("gpt-5.6-")
+                ]
+            elif field["key"] == "effort":
+                field["options"] = [
+                    option
+                    for option in field["options"]
+                    if option["value"] not in {"max", "ultra"}
+                ]
+        await client.app.state.store.set_runtime_config_schema("codex", legacy_schema)
+
+        async with client.app.state.store.engine.begin() as conn:
+            await conn.execute(
+                delete(agent_models_t).where(
+                    agent_models_t.c.runtime == "codex",
+                    agent_models_t.c.key.in_(
+                        {"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}
+                    ),
+                )
+            )
+            await conn.execute(
+                delete(agent_efforts_t).where(
+                    agent_efforts_t.c.runtime == "codex",
+                    agent_efforts_t.c.key.in_({"max", "ultra"}),
+                )
+            )
+            await conn.execute(
+                update(agent_models_t)
+                .where(agent_models_t.c.runtime == "codex")
+                .values(is_default=0)
+            )
+            await conn.execute(
+                update(agent_efforts_t)
+                .where(agent_efforts_t.c.runtime == "codex")
+                .values(is_default=0)
+            )
+            for sort_order, key in enumerate(
+                ("gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.2"),
+                start=1,
+            ):
+                await conn.execute(
+                    update(agent_models_t)
+                    .where(agent_models_t.c.runtime == "codex", agent_models_t.c.key == key)
+                    .values(is_default=1 if key == "gpt-5.5" else 0, sort_order=sort_order)
+                )
+            await conn.execute(
+                update(agent_efforts_t)
+                .where(
+                    agent_efforts_t.c.runtime == "codex",
+                    agent_efforts_t.c.key == "xhigh",
+                )
+                .values(is_default=1)
+            )
+
+        await client.app.state.store.seed_agent_catalog()
+        await client.app.state.store.seed_runtime_config_schemas()
+        await client.app.state.store.seed_agent_catalog()
+        await client.app.state.store.seed_runtime_config_schemas()
+
+    asyncio.run(downgrade_and_reseed())
+
+    upgraded = client.get("/agents/defaults", headers=headers).json()["runtimes"]["codex"]
+    assert [model["key"] for model in upgraded["models"]][:4] == [
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+        "gpt-5.5",
+    ]
+    assert [model["key"] for model in upgraded["models"] if model["isDefault"]] == [
+        "gpt-5.6-sol"
+    ]
+    assert [
+        effort["key"]
+        for effort in upgraded["models"][0]["efforts"]
+        if effort["isDefault"]
+    ] == ["medium"]
+
+    custom_after = client.get("/agents/defaults", headers=custom_headers).json()["runtimes"][
+        "codex"
+    ]["models"]
+    assert custom_after == custom_before
+
+    explicit_after = client.get(
+        f"/connectors/{explicit_connector}/agents/codex/settings",
+        headers=headers,
+    ).json()["settings"]
+    assert explicit_after["model"] == "gpt-5.5"
+    assert explicit_after["effort"] == "xhigh"
+
+    null_after = client.get(
+        f"/connectors/{null_connector}/agents/codex/settings",
+        headers=headers,
+    ).json()["settings"]
+    assert null_after["model"] == "gpt-5.6-sol"
+    assert null_after["effort"] == "medium"
+
+    schema = client.get("/agents/codex/config-schema", headers=headers).json()["schema"]
+    assert schema["schemaVersion"] == 4
+
+    models = asyncio.run(client.app.state.store.list_agent_models("codex"))
+    efforts = asyncio.run(client.app.state.store.list_agent_efforts("codex"))
+    assert [model.key for model in models if model.isDefault] == ["gpt-5.6-sol"]
+    assert [effort.key for effort in efforts if effort.isDefault] == ["medium"]
 
 
 def test_first_discovery_respects_user_agent_default_enabled(tmp_path):
@@ -390,6 +592,120 @@ def test_claude_effort_options_are_constrained_by_model(tmp_path):
     assert haiku_bad.status_code == 422
 
 
+def test_codex_effort_options_are_constrained_by_model(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+
+    schema_response = client.get("/agents/codex/config-schema", headers=headers)
+    assert schema_response.status_code == 200, schema_response.text
+    schema = schema_response.json()["schema"]
+    assert schema["schemaVersion"] == 4
+    fields = {field["key"]: field for field in schema["fields"]}
+    models = {option["value"]: option for option in fields["model"]["options"]}
+    assert list(models)[:4] == [
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+        "gpt-5.5",
+    ]
+    assert [item["value"] for item in models["gpt-5.6-sol"]["efforts"]] == [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra",
+    ]
+    assert [item["value"] for item in models["gpt-5.6-terra"]["efforts"]] == [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra",
+    ]
+    assert [item["value"] for item in models["gpt-5.6-luna"]["efforts"]] == [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+    ]
+    assert [item["value"] for item in models["gpt-5.5"]["efforts"]] == [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+    ]
+
+    accepted = (
+        ("gpt-5.6-sol", "ultra"),
+        ("gpt-5.6-terra", "ultra"),
+        ("gpt-5.6-luna", "max"),
+        ("gpt-5.5", "xhigh"),
+    )
+    for model, effort in accepted:
+        response = client.patch(
+            f"/connectors/{connector_id}/agents/codex/settings",
+            headers=headers,
+            json={"settings": {"model": model, "effort": effort}},
+        )
+        assert response.status_code == 200, response.text
+
+    rejected = (
+        ("gpt-5.6-luna", "ultra"),
+        ("gpt-5.5", "max"),
+    )
+    for model, effort in rejected:
+        response = client.patch(
+            f"/connectors/{connector_id}/agents/codex/settings",
+            headers=headers,
+            json={"settings": {"model": model, "effort": effort}},
+        )
+        assert response.status_code == 422
+
+    session_ok = client.patch(
+        f"/sessions/{session_id}/runtime-settings",
+        headers=headers,
+        json={"settings": {"model": "gpt-5.6-sol", "effort": "medium"}},
+    )
+    assert session_ok.status_code == 200, session_ok.text
+    session_bad = client.patch(
+        f"/sessions/{session_id}/runtime-settings",
+        headers=headers,
+        json={"settings": {"model": "gpt-5.6-luna", "effort": "ultra"}},
+    )
+    assert session_bad.status_code == 422
+
+
+def test_codex_sol_medium_defaults_are_sent_to_connector(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+
+    device_settings = client.get(
+        f"/connectors/{connector_id}/agents/codex/settings",
+        headers=headers,
+    )
+    assert device_settings.status_code == 200, device_settings.text
+    assert device_settings.json()["settings"]["model"] == "gpt-5.6-sol"
+    assert device_settings.json()["settings"]["effort"] == "medium"
+
+    fake_rpc = FakeRpc()
+    client.app.state.rpc = fake_rpc
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+    sent = client.post(
+        f"/sessions/{session_id}/messages",
+        headers=headers,
+        json={"content": "use the product defaults"},
+    )
+    assert sent.status_code == 200, sent.text
+    connector_id_sent, method, params = fake_rpc.requests[-1]
+    assert connector_id_sent == connector_id
+    assert method == "turn.start"
+    assert params["model"] == "gpt-5.6-sol"
+    assert params["effort"] == "medium"
+
+
 def test_custom_model_efforts_drive_runtime_settings_validation(tmp_path):
     client = make_client(tmp_path)
     headers = auth_headers(client)
@@ -470,7 +786,11 @@ def test_session_runtime_settings_override_respects_schema(tmp_path):
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["runtimeSettingsOverride"] == {"permissionMode": "fullAccess"}
+    assert body["runtimeSettingsOverride"] == {
+        "permissionMode": "fullAccess",
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+    }
     assert body["runtimeSettings"]["permissionMode"] == "fullAccess"
 
     bad = client.patch(

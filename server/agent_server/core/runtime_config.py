@@ -20,6 +20,9 @@ RuntimeName = Annotated[
 
 _RUNTIME_ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
+CODEX_DEFAULT_MODEL = "gpt-5.6-sol"
+CODEX_DEFAULT_EFFORT = "medium"
+
 
 class RuntimeConfigOption(BaseModel):
     value: str | bool
@@ -105,8 +108,8 @@ DEFAULT_RUNTIME_SETTINGS: dict[str, dict[str, Any]] = {
     },
     "codex": {
         "permissionMode": "ask",
-        "model": None,
-        "effort": None,
+        "model": CODEX_DEFAULT_MODEL,
+        "effort": CODEX_DEFAULT_EFFORT,
     },
     "gemini": {
         "permissionMode": None,
@@ -273,7 +276,7 @@ DEFAULT_RUNTIME_CONFIG_SCHEMAS: dict[str, RuntimeConfigSchema] = {
     ),
     "codex": RuntimeConfigSchema(
         runtime="codex",
-        schemaVersion=3,
+        schemaVersion=4,
         fields=[
             RuntimeConfigField(
                 key="permissionMode",
@@ -304,6 +307,9 @@ DEFAULT_RUNTIME_CONFIG_SCHEMAS: dict[str, RuntimeConfigSchema] = {
                 type="enum",
                 allowSessionOverride=True,
                 options=[
+                    RuntimeConfigOption(value="gpt-5.6-sol", label="GPT-5.6-Sol"),
+                    RuntimeConfigOption(value="gpt-5.6-terra", label="GPT-5.6-Terra"),
+                    RuntimeConfigOption(value="gpt-5.6-luna", label="GPT-5.6-Luna"),
                     RuntimeConfigOption(value="gpt-5.5", label="GPT-5.5"),
                     RuntimeConfigOption(value="gpt-5.4", label="GPT-5.4"),
                     RuntimeConfigOption(value="gpt-5.4-mini", label="GPT-5.4 Mini"),
@@ -321,6 +327,8 @@ DEFAULT_RUNTIME_CONFIG_SCHEMAS: dict[str, RuntimeConfigSchema] = {
                     RuntimeConfigOption(value="medium", label="Medium"),
                     RuntimeConfigOption(value="high", label="High"),
                     RuntimeConfigOption(value="xhigh", label="Extra high"),
+                    RuntimeConfigOption(value="max", label="Max"),
+                    RuntimeConfigOption(value="ultra", label="Ultra"),
                 ],
             ),
         ],
@@ -330,6 +338,11 @@ DEFAULT_RUNTIME_CONFIG_SCHEMAS: dict[str, RuntimeConfigSchema] = {
 CLAUDE_NO_EFFORT_MODEL = "claude-haiku-4-5"
 _CLAUDE_OPUS_48_47_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max"})
 _CLAUDE_OPUS_46_SONNET_46_EFFORTS = frozenset({"low", "medium", "high", "max"})
+_CODEX_56_SOL_TERRA_EFFORTS = frozenset(
+    {"low", "medium", "high", "xhigh", "max", "ultra"}
+)
+_CODEX_56_LUNA_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max"})
+_CODEX_LEGACY_EFFORTS = frozenset({"low", "medium", "high", "xhigh"})
 
 
 def runtime_schema_key(runtime: str) -> str:
@@ -586,6 +599,15 @@ def claude_efforts_for_model(model: Any) -> frozenset[str]:
     return _CLAUDE_OPUS_46_SONNET_46_EFFORTS
 
 
+def codex_efforts_for_model(model: Any) -> frozenset[str]:
+    key = model if isinstance(model, str) else ""
+    if key in {"gpt-5.6-sol", "gpt-5.6-terra"}:
+        return _CODEX_56_SOL_TERRA_EFFORTS
+    if key == "gpt-5.6-luna":
+        return _CODEX_56_LUNA_EFFORTS
+    return _CODEX_LEGACY_EFFORTS
+
+
 def _normalize_model_effort_from_schema(
     settings: dict[str, Any],
     *,
@@ -603,6 +625,15 @@ def _normalize_model_effort_from_schema(
     result = deepcopy(settings)
     model = result.get("model")
     effort = result.get("effort")
+    model_options = model_field.options or []
+    if schema.runtime == "codex" and isinstance(model, str) and model and not any(
+        option.value == model for option in model_options
+    ):
+        if "model" in explicit_keys:
+            raise ValueError(f"model has unsupported value: {model}")
+        if model_options:
+            model = model_options[0].value
+            result["model"] = model
     allowed = _schema_efforts_for_model(model_field, effort_field, model)
     if allowed is None:
         return None
@@ -614,8 +645,29 @@ def _normalize_model_effort_from_schema(
     if effort is not None and effort not in allowed:
         if "effort" in explicit_keys:
             raise ValueError(f"effort {effort} is not supported by {model}")
-        result["effort"] = None
+        result["effort"] = (
+            _first_schema_effort_for_model(model_field, model)
+            if schema.runtime == "codex"
+            else None
+        )
     return result
+
+
+def _first_schema_effort_for_model(
+    model_field: RuntimeConfigField,
+    model: Any,
+) -> str | None:
+    selected = next(
+        (
+            option
+            for option in model_field.options or []
+            if isinstance(model, str) and model and option.value == model
+        ),
+        None,
+    )
+    if selected is None or not selected.efforts:
+        return None
+    return str(selected.efforts[0].value)
 
 
 def _schema_efforts_for_model(
@@ -667,9 +719,12 @@ def _default_effort_options_for_model(
     model: Any,
     effort_options: list[RuntimeConfigOption],
 ) -> list[RuntimeConfigOption]:
-    if runtime != "claude":
+    if runtime == "claude":
+        allowed = claude_efforts_for_model(model)
+    elif runtime == "codex":
+        allowed = codex_efforts_for_model(model)
+    else:
         return deepcopy(effort_options)
-    allowed = claude_efforts_for_model(model)
     return [deepcopy(option) for option in effort_options if str(option.value) in allowed]
 
 
