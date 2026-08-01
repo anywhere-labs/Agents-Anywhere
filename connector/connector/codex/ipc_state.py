@@ -164,7 +164,8 @@ def codex_ipc_thread_snapshot(state: CodexIpcConversationState) -> dict[str, Any
     elif state.turns:
         turns = [turn.model_dump(mode="python") for turn in state.turns]
 
-    return {
+    raw_state = state.model_dump(mode="python")
+    snapshot = {
         "id": state.id,
         "title": state.title,
         "cwd": state.cwd,
@@ -173,6 +174,19 @@ def codex_ipc_thread_snapshot(state: CodexIpcConversationState) -> dict[str, Any
         "reasoningEffort": state.latestReasoningEffort,
         "turns": turns,
     }
+    for key in (
+        "approvalPolicy",
+        "sandbox",
+        "sandboxPolicy",
+        "settings",
+        "threadSettings",
+        "turnStartParams",
+        "latestTurnStartParams",
+    ):
+        value = raw_state.get(key)
+        if value is not None:
+            snapshot[key] = value
+    return snapshot
 
 
 def codex_ipc_active_turn_id(state: CodexIpcConversationState) -> str | None:

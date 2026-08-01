@@ -1090,13 +1090,13 @@ class CodexAdapter:
             or self._ipc_publisher.is_active(thread_id)
         ):
             return None
-        # Runtime selections belong to the current IPC owner's UI state. Values
-        # resolved against this Connector's app-server are not interchangeable
-        # with that state and can make the owner's turn-start pipeline fail.
         ipc_turn_params = {
             "input": turn_params["input"],
             "clientUserMessageId": client_message_id,
         }
+        for key in ("approvalPolicy", "sandboxPolicy"):
+            if turn_params.get(key) is not None:
+                ipc_turn_params[key] = turn_params[key]
         if additional_context is not None:
             ipc_turn_params["additionalContext"] = additional_context
         ipc_params = CodexIpcFollowerStartTurnParams.model_validate(
@@ -1894,9 +1894,32 @@ def _codex_permission_id_from_selection_id(selection_id: str) -> str | None:
     return None
 
 
-def _codex_permission_state_from_native_result(value: dict[str, Any]) -> tuple[str | None, str | None]:
-    approval_policy = _optional_string(value.get("approvalPolicy"))
-    sandbox = _sandbox_mode(value.get("sandbox") or value.get("sandboxPolicy"))
+def _codex_permission_state_from_native_result(
+    value: dict[str, Any],
+) -> tuple[str | None, str | None]:
+    approval_policy = _first_optional_string(
+        value,
+        "approvalPolicy",
+        ("turnStartParams", "approvalPolicy"),
+        ("threadSettings", "approvalPolicy"),
+        ("settings", "approvalPolicy"),
+        ("latestTurnStartParams", "approvalPolicy"),
+    )
+    sandbox = _sandbox_mode(
+        _first_present(
+            value,
+            "sandbox",
+            "sandboxPolicy",
+            ("turnStartParams", "sandbox"),
+            ("turnStartParams", "sandboxPolicy"),
+            ("threadSettings", "sandbox"),
+            ("threadSettings", "sandboxPolicy"),
+            ("settings", "sandbox"),
+            ("settings", "sandboxPolicy"),
+            ("latestTurnStartParams", "sandbox"),
+            ("latestTurnStartParams", "sandboxPolicy"),
+        )
+    )
     if approval_policy is None and sandbox is None:
         return None, None
     for item in _codex_permission_catalog_items():
@@ -1909,6 +1932,38 @@ def _codex_permission_state_from_native_result(value: dict[str, Any]) -> tuple[s
             continue
         return str(item["id"]), _codex_permission_selection_id(item)
     return None, None
+
+
+def _first_optional_string(
+    value: dict[str, Any],
+    *paths: str | tuple[str, ...],
+) -> str | None:
+    for path in paths:
+        candidate = _nested_value(value, path)
+        if (text := _optional_string(candidate)) is not None:
+            return text
+    return None
+
+
+def _first_present(
+    value: dict[str, Any],
+    *paths: str | tuple[str, ...],
+) -> Any:
+    for path in paths:
+        candidate = _nested_value(value, path)
+        if candidate is not None:
+            return candidate
+    return None
+
+
+def _nested_value(value: dict[str, Any], path: str | tuple[str, ...]) -> Any:
+    keys = (path,) if isinstance(path, str) else path
+    current: Any = value
+    for key in keys:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return current
 
 
 def _runtime_settings_and_permission_selection_from_codex_result(value: dict[str, Any]) -> tuple[dict[str, Any], str | None]:

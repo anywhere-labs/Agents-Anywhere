@@ -1601,6 +1601,13 @@ async def _exercise_ipc_snapshot_and_patch() -> None:
                         "threadRuntimeStatus": {"type": "active"},
                         "latestModel": "gpt-5.6-sol",
                         "latestReasoningEffort": "low",
+                        "threadSettings": {
+                            "approvalPolicy": "on-request",
+                            "sandboxPolicy": {
+                                "type": "workspaceWrite",
+                                "networkAccess": False,
+                            },
+                        },
                         "turnHistory": {
                             "kind": "canonical",
                             "history": {
@@ -1645,11 +1652,17 @@ async def _exercise_ipc_snapshot_and_patch() -> None:
     assert notifications[0][1]["runtimeSettings"] == {
         "model": "gpt-5.6-sol",
         "effort": "low",
+        "permissionMode": "on_request_workspace_write",
     }
     assert notifications[0][1]["modelSelectionId"] == protocol_selection_id(
         "codex",
         "model",
         {"model_id": "gpt-5.6-sol", "reasoning_id": "low"},
+    )
+    assert notifications[0][1]["permissionSelectionId"] == protocol_selection_id(
+        "codex",
+        "permission",
+        {"approval_policy": "on-request", "sandbox": "workspace-write"},
     )
     notifications.clear()
 
@@ -1939,6 +1952,11 @@ async def _exercise_start_turn_through_remote_ipc_owner() -> None:
             "externalSessionId": "thr_1",
             "content": "start through the App owner",
             "clientMessageId": "msg_web",
+            "permissionSelectionId": protocol_selection_id(
+                "codex",
+                "permission",
+                {"approval_policy": "never", "sandbox": "danger-full-access"},
+            ),
         }
     )
 
@@ -1961,6 +1979,12 @@ async def _exercise_start_turn_through_remote_ipc_owner() -> None:
     assert set(request_params["turnStartParams"]) == {
         "input",
         "clientUserMessageId",
+        "approvalPolicy",
+        "sandboxPolicy",
+    }
+    assert request_params["turnStartParams"]["approvalPolicy"] == "never"
+    assert request_params["turnStartParams"]["sandboxPolicy"] == {
+        "type": "dangerFullAccess"
     }
     assert options["target_client_id"] == "app_owner"
     assert ipc_client.broadcasts[broadcasts_before:] == []
