@@ -942,6 +942,65 @@ def test_ws_ticket_scope_must_select_exactly_one_target(tmp_path):
     assert ambiguous.status_code == 422
 
 
+def test_session_command_help_is_not_a_message(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, _access_token, session_id, headers = create_connector_and_session(client)
+
+    response = client.post(
+        f"/sessions/{session_id}/commands",
+        headers=headers,
+        json={"command": "help", "raw": "/help"},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["command"] == "help"
+    assert body["ok"] is True
+    assert [item["command"] for item in body["result"]["commands"]] == [
+        "help",
+        "interrupt",
+        "takeover",
+        "release",
+    ]
+    state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+    assert state["items"] == []
+
+
+def test_session_command_toggles_takeover(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, _access_token, session_id, headers = create_connector_and_session(client)
+
+    enabled = client.post(
+        f"/sessions/{session_id}/commands",
+        headers=headers,
+        json={"command": "takeover", "raw": "/takeover"},
+    )
+    assert enabled.status_code == 200, enabled.text
+    assert enabled.json()["session"]["takeover"] is True
+
+    disabled = client.post(
+        f"/sessions/{session_id}/commands",
+        headers=headers,
+        json={"command": "release", "raw": "/release"},
+    )
+    assert disabled.status_code == 200, disabled.text
+    assert disabled.json()["session"]["takeover"] is False
+
+
+def test_session_command_rejects_unknown_command(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, _access_token, session_id, headers = create_connector_and_session(client)
+
+    response = client.post(
+        f"/sessions/{session_id}/commands",
+        headers=headers,
+        json={"command": "does-not-exist", "raw": "/does-not-exist"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "unsupported_session_command"
+
+
 def test_connector_status_response_uses_live_ws_not_stale_db(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, session_id, headers = create_connector_and_session(client)

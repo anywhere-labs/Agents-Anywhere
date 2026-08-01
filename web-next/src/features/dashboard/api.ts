@@ -31,6 +31,7 @@ import type {
   RpcResponse,
   SessionCreateRequest,
   SessionCreateResponse,
+  SessionCommandResponse,
   SessionListResponse,
   SessionPatchRequest,
   SessionResponse,
@@ -592,6 +593,23 @@ export class DashboardApi {
     return this.client.post<RpcResponse<unknown>>(
       `/sessions/${encodeURIComponent(sessionId)}/interrupt`,
       {},
+      { token },
+    );
+  }
+
+  sendSessionCommand(
+    token: string,
+    sessionId: string,
+    command: string,
+    options: { args?: string[]; raw?: string } = {},
+  ): Promise<SessionCommandResponse> {
+    return this.client.post<SessionCommandResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/commands`,
+      {
+        command,
+        ...(options.args && options.args.length > 0 ? { args: options.args } : {}),
+        ...(options.raw ? { raw: options.raw } : {}),
+      },
       { token },
     );
   }

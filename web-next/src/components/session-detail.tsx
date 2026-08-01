@@ -36,7 +36,7 @@ import { InteractionCard, NotificationCard } from "@/components/session/session-
 import { SessionSkeleton, SessionSkeletonInline } from "@/components/session/session-skeleton"
 import { TimelineEntry } from "@/components/session/session-timeline-entry"
 import { isCreatedFileChange, JsonBlock } from "@/components/session/session-tool-cards"
-import { SessionComposer, type AttachedFile } from "@/components/session/session-composer"
+import { SessionComposer, type AttachedFile, type SessionCommandId } from "@/components/session/session-composer"
 import {
   buildOptimisticUserMessage,
   isOptimisticTimelineItem,
@@ -763,6 +763,37 @@ export function SessionDetail({
     }
   }
 
+  const handleSessionCommand = async (
+    command: SessionCommandId,
+    options: { args: string[]; raw: string },
+  ) => {
+    if (!session) return
+    try {
+      const response = await dashboardApi.sendSessionCommand(
+        token,
+        session.id,
+        command,
+        options,
+      )
+      if (response.session) {
+        setState((current) => current ? { ...current, session: response.session! } : current)
+        onSessionUpdated?.(response.session)
+      }
+      if (response.message) {
+        toast.message(response.message)
+      }
+      if (!streamConnectedRef.current) {
+        try {
+          await refresh({ reason: `command.${command}.stream-disconnected` })
+        } catch {
+          // The command was accepted; reconnect recovery remains authoritative.
+        }
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : tSession("commandFailed"))
+    }
+  }
+
   const handleRespondInteraction = async (noticeId: string, actionId: string) => {
     if (resolvingNoticeId) return
     setResolvingNoticeId(noticeId)
@@ -1067,6 +1098,7 @@ export function SessionDetail({
             onValueChange={setComposerDraft}
             onSend={handleSend}
             onInterrupt={handleInterrupt}
+            onCommand={handleSessionCommand}
             onToggleTakeover={() => setPendingTakeover(!session.takeover)}
           />
         </div>

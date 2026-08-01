@@ -159,6 +159,15 @@ export type SessionListResponse = {
   serverTime: string;
 };
 
+export type SessionCommandResponse = {
+  command: string;
+  ok: boolean;
+  message: string | null;
+  result: unknown;
+  session: SessionView | null;
+  serverTime: string;
+};
+
 export type DashboardSnapshotMessage = {
   type: "dashboard.snapshot";
   connectors: ConnectorView[];

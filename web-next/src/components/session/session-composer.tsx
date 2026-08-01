@@ -42,6 +42,8 @@ import { useElementWidth } from "@/hooks/use-element-width"
 
 export type { AttachedFile }
 
+export type SessionCommandId = "help" | "interrupt" | "release" | "takeover"
+
 export function SessionComposer({
   session,
   pendingInteractionCount,
@@ -56,6 +58,7 @@ export function SessionComposer({
   onValueChange,
   onSend,
   onInterrupt,
+  onCommand,
   onToggleTakeover,
 }: {
   session: SessionView
@@ -75,6 +78,7 @@ export function SessionComposer({
     selections: { modelSelectionId?: string; permissionSelectionId?: string },
   ) => Promise<boolean>
   onInterrupt: () => void
+  onCommand: (command: SessionCommandId, options: { args: string[]; raw: string }) => void
   onToggleTakeover: () => void
 }) {
   const tSession = useTranslations("dashboard.session")
@@ -98,6 +102,7 @@ export function SessionComposer({
     !creatingSession &&
     !sending &&
     !interrupting
+  const canRunCommand = !creatingSession && !sending && !interrupting && connectorOnline
   const hasInput = value.trim().length > 0 || attachments.length > 0
   const activeSessionCanInterrupt = Boolean(
     connectorOnline &&
@@ -182,9 +187,48 @@ export function SessionComposer({
           : isStopping || isBusy
             ? tSession("busyPlaceholder")
             : tSession("replyPlaceholder")
+  const commandQuery = commandQueryFromValue(value)
+  const commandSuggestions = React.useMemo(
+    () =>
+      sessionCommands({
+        canInterrupt: showInterrupt && !interrupting,
+        canRelease: session.takeover,
+        canTakeover: !session.takeover && connectorOnline && !takeoverBusy && !creatingSession,
+        t: tSession,
+      }).filter((command) =>
+        commandQuery === null
+          ? false
+          : command.id.includes(commandQuery) ||
+            command.label.toLowerCase().includes(commandQuery) ||
+            command.aliases.some((alias) => alias.includes(commandQuery)),
+      ),
+    [
+      commandQuery,
+      connectorOnline,
+      creatingSession,
+      interrupting,
+      session.takeover,
+      showInterrupt,
+      tSession,
+      takeoverBusy,
+    ],
+  )
+  const showCommandMenu = commandQuery !== null && attachments.length === 0
+  const canSubmitCommand = commandQuery !== null && attachments.length === 0 && canRunCommand
+  const canSubmitMessage = canSend && session.takeover && hasInput
 
   const submit = async () => {
-    if (!canSend || !hasInput) return
+    if (!hasInput) return
+    const command = commandFromValue(value, commandSuggestions)
+    if (commandQuery !== null && attachments.length === 0) {
+      if (command && canRunCommand) {
+        const parsed = parseCommandValue(value)
+        onValueChange("")
+        onCommand(command.id, { args: parsed.args, raw: parsed.raw })
+      }
+      return
+    }
+    if (!canSubmitMessage) return
     const text = value
     const files = attachments
     onValueChange("")
@@ -227,6 +271,36 @@ export function SessionComposer({
           ) : null}
           <div className="space-y-3 px-4 pt-4">
             <AttachmentPreviewList attachments={attachments} onRemove={remove} />
+            {showCommandMenu ? (
+              <div className="rounded-xl border border-border bg-popover p-1 text-sm shadow-sm">
+                {commandSuggestions.length > 0 ? (
+                  commandSuggestions.map((command) => (
+                    <button
+                      key={command.id}
+                      type="button"
+                      className={cn(
+                        "flex w-full items-start gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-accent hover:text-accent-foreground",
+                        command.disabled && "cursor-not-allowed opacity-50 hover:bg-transparent hover:text-current",
+                      )}
+                      disabled={command.disabled}
+                      onClick={() => {
+                        if (command.disabled) return
+                        onValueChange("")
+                        onCommand(command.id, { args: [], raw: `/${command.id}` })
+                      }}
+                    >
+                      <span className="code-mono shrink-0 text-xs text-primary">/{command.id}</span>
+                      <span className="min-w-0">
+                        <span className="block font-medium">{command.label}</span>
+                        <span className="block text-xs text-muted-foreground">{command.description}</span>
+                      </span>
+                    </button>
+                  ))
+                ) : (
+                  <div className="px-3 py-2 text-xs text-muted-foreground">{tSession("commandNoMatches")}</div>
+                )}
+              </div>
+            ) : null}
             <Textarea
               value={value}
               onChange={(event) => onValueChange(event.currentTarget.value)}
@@ -238,7 +312,7 @@ export function SessionComposer({
                 }
               }}
               placeholder={placeholder}
-              disabled={!session.takeover || !connectorOnline}
+              disabled={!connectorOnline || creatingSession}
               className="min-h-12 max-h-40 resize-none overflow-y-auto rounded-none border-0 bg-transparent p-0 text-sm shadow-none focus-visible:ring-0 dark:bg-transparent"
             />
           </div>
@@ -415,7 +489,7 @@ export function SessionComposer({
               size="icon"
               aria-label={showInterrupt ? tSession("interrupt") : tSession("send")}
               className={cn("size-8 rounded-full", showInterrupt && "bg-destructive text-destructive-foreground hover:bg-destructive/90")}
-              disabled={showInterrupt ? interrupting : !canSend || !hasInput}
+              disabled={showInterrupt ? interrupting : !(canSubmitCommand || canSubmitMessage)}
               onClick={primaryAction}
             >
               {sending || interrupting ? (
@@ -431,4 +505,82 @@ export function SessionComposer({
       </div>
     </div>
   )
+}
+
+type SessionCommand = {
+  id: SessionCommandId
+  label: string
+  description: string
+  aliases: string[]
+  disabled?: boolean
+}
+
+function sessionCommands({
+  canInterrupt,
+  canRelease,
+  canTakeover,
+  t,
+}: {
+  canInterrupt: boolean
+  canRelease: boolean
+  canTakeover: boolean
+  t: ReturnType<typeof useTranslations>
+}): SessionCommand[] {
+  return [
+    {
+      id: "help",
+      label: t("commandHelp"),
+      description: t("commandHelpDescription"),
+      aliases: ["commands", "?"],
+    },
+    {
+      id: "interrupt",
+      label: t("commandInterrupt"),
+      description: t("commandInterruptDescription"),
+      aliases: ["stop", "cancel"],
+      disabled: !canInterrupt,
+    },
+    {
+      id: "takeover",
+      label: t("commandTakeover"),
+      description: t("commandTakeoverDescription"),
+      aliases: ["control"],
+      disabled: !canTakeover,
+    },
+    {
+      id: "release",
+      label: t("commandRelease"),
+      description: t("commandReleaseDescription"),
+      aliases: ["readonly", "read-only"],
+      disabled: !canRelease,
+    },
+  ]
+}
+
+function commandQueryFromValue(value: string): string | null {
+  const parsed = parseCommandValue(value)
+  return parsed.command
+}
+
+function commandFromValue(value: string, suggestions: SessionCommand[]): SessionCommand | null {
+  const parsed = parseCommandValue(value)
+  const query = parsed.command
+  if (query === null) return null
+  const exact = suggestions.find((command) => command.id === query || command.aliases.includes(query))
+  if (exact && !exact.disabled) return exact
+  if (parsed.args.length > 0) return null
+  const onlyEnabled = suggestions.filter((command) => !command.disabled)
+  return onlyEnabled.length === 1 ? onlyEnabled[0] ?? null : null
+}
+
+function parseCommandValue(value: string): { command: string | null; args: string[]; raw: string } {
+  const raw = value.trim()
+  if (!raw.startsWith("/") || raw.includes("\n")) return { command: null, args: [], raw }
+  const parts = raw.slice(1).split(/\s+/).filter(Boolean)
+  const command = parts[0]?.toLowerCase() ?? ""
+  return {
+    command: command || null,
+    args: parts.slice(1),
+    raw,
+  }
 }

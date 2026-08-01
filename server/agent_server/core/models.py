@@ -4,7 +4,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
 RuntimeName = Literal["codex", "claude", "opencode", "acp"]
 ConnectorStatus = Literal["offline", "online"]
 ConnectorDeviceOs = Literal["macos", "windows", "linux"]
@@ -746,6 +745,23 @@ class MessageCreateRequest(BaseModel):
     # the connector tags the resulting timeline item so the frontend can
     # dedupe its optimistic placeholder against the real server item.
     clientMessageId: str | None = None
+
+
+class SessionCommandRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    command: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z][A-Za-z0-9_-]*$")
+    args: list[str] = Field(default_factory=list, max_length=32)
+    raw: str | None = Field(default=None, max_length=4096)
+
+
+class SessionCommandResponse(BaseModel):
+    command: str
+    ok: bool = True
+    message: str | None = None
+    result: Any = None
+    session: SessionView | None = None
+    serverTime: str
 
 
 class SteerTurnRequest(BaseModel):
