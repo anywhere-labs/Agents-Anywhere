@@ -338,7 +338,8 @@ Acceptance:
 
 ## Phase 5: add Server `SessionState` as durable projection
 
-Goal: make `SessionState` a first-class durable model while keeping compatibility.
+Goal: make `SessionState` a first-class durable model and migrate old session
+projection data into it.
 
 Add database/repository/service/API support for:
 
@@ -373,7 +374,8 @@ Rules:
 Acceptance:
 
 - A session can refresh and recover status/selections from `SessionState`.
-- Existing Web remains compatible through transitional projection.
+- Web reads the new `SessionState` projection; any old field merge is part of the
+  migration/backfill step, not a long-term compatibility path.
 
 ## Phase 6: add `SessionNotice` native path
 

@@ -339,7 +339,7 @@ Rules:
 
 | Current route | Target | Status |
 | --- | --- | --- |
-| `POST /api/v2/sessions` | `POST /api/v2/sessions/create-and-start` | Deprecated target; keep as compatibility during migration. |
+| `POST /api/v2/sessions` | `POST /api/v2/sessions/create-and-start` | Deprecated target; migrate callers to create-and-start; do not treat as the new active path. |
 | `GET /api/v2/sessions/{id}/state?afterSeq=...` | `GET /api/v2/sessions/{id}/timeline` plus `GET /state` | Current route mixes state and timeline. |
 | `GET /api/v2/sessions/{id}/snapshot` | Same path, new response shape | Remove `catalogs`; split `meta/state/timeline/notices`. |
 | `POST /api/v2/sessions/{id}/messages` with selections | Same path without selections | Selection fields deprecated. |

@@ -67,7 +67,8 @@ See [Realtime API](./realtime.md).
 
 ## Deprecated or transitional API areas
 
-These routes may remain for compatibility, but should not be used as the target design for new work:
+These routes are migration/deprecation areas. They may exist while data and
+callers are moved, but they are not the target design for new work:
 
 ```text
 GET  /api/v2/agents/{runtime}/model-catalog

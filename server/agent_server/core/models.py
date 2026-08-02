@@ -538,8 +538,6 @@ class SessionView(BaseModel):
     lastItemOrderSeq: int | None = None
     sortAt: str | None = None
     updatedSeq: int
-    modelSelectionId: str | None = None
-    permissionSelectionId: str | None = None
 
 
 class SessionRuntimeState(BaseModel):

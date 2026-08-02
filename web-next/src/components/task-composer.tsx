@@ -500,14 +500,29 @@ export function TaskComposer() {
       sortAt: now,
       updatedSeq: 1,
       effectiveRunMode: "chat",
-      modelSelectionId,
-      permissionSelectionId,
+    }
+    const optimisticState = {
+      sessionId: localSessionId,
+      runtime: selectedAgent,
+      externalSessionId: null,
+      status: "waiting" as const,
+      selections: {
+        ...(modelSelectionId ? { model: modelSelectionId } : {}),
+        ...(permissionSelectionId ? { permission: permissionSelectionId } : {}),
+      },
+      statusReason: null,
+      error: null,
+      metadata: {},
+      updatedSeq: 1,
+      createdAt: now,
+      updatedAt: now,
     }
     addOptimisticMessage({
       clientMessageId,
       sessionId: localSessionId,
       localSessionId,
       session: optimisticSession,
+      state: optimisticState,
       item: buildOptimisticUserMessage({
         sessionId: localSessionId,
         clientMessageId,

@@ -82,40 +82,49 @@ export type Lastitemat = string | null
 export type Lastitemorderseq = number | null
 export type Lastreadseq = number
 export type Lastsyncedat = string | null
-export type Modelselectionid = string | null
-export type Permissionselectionid = string | null
 export type Pinned = boolean
 export type Pinnedat = string | null
 export type Runtime3 = "codex" | "claude" | "opencode" | "acp"
 export type Sortat = string | null
 export type Sourceobservedat = string | null
-export type Status2 = "idle" | "pending" | "running" | "stopping" | "blocked"
+export type Status2 = "idle" | "waiting" | "pending" | "running" | "stopping" | "blocked"
 export type Takeover = boolean
 export type Title2 = string | null
 export type Unread = boolean
 export type Updatedseq2 = number
+export type Createdat2 = string
+export type Error = {
+  [k: string]: unknown
+} | null
+export type Externalsessionid1 = string | null
+export type Runtime4 = "codex" | "claude" | "opencode" | "acp"
+export type Sessionid4 = string
+export type Status3 = "idle" | "waiting" | "pending" | "running" | "stopping" | "blocked"
+export type Statusreason = string | null
+export type Updatedat1 = string
+export type Updatedseq3 = number
 export type Hasmore = boolean
 export type Completedat = string | null
 export type Contenthash = string
-export type Createdat2 = string
+export type Createdat3 = string
 export type Id2 = string
 export type Orderseq = number
 export type Revision2 = number
 export type Role = ("user" | "assistant" | "system" | "tool") | null
-export type Sessionid4 = string
+export type Sessionid5 = string
 export type Clientmessageid = string | null
 export type Derivedkey = string | null
 export type Event = string | null
 export type Itemid1 = string | null
 export type Itemtype = string | null
-export type Runtime4 = ("codex" | "claude" | "opencode" | "acp") | "platform"
-export type Sessionid5 = string | null
+export type Runtime5 = ("codex" | "claude" | "opencode" | "acp") | "platform"
+export type Sessionid6 = string | null
 export type Turnid2 = string | null
-export type Status3 = "pending" | "running" | "waiting_approval" | "done" | "failed" | "cancelled" | "interrupted"
+export type Status4 = "pending" | "running" | "waiting_approval" | "done" | "failed" | "cancelled" | "interrupted"
 export type Turnid3 = string | null
 export type Type1 = "turn.start" | "turn.end" | "message" | "tool" | "artifact" | "system"
-export type Updatedat1 = string
-export type Updatedseq3 = number
+export type Updatedat2 = string
+export type Updatedseq4 = number
 export type Items = TimelineItem[]
 export type Nextseq = number
 
@@ -128,6 +137,7 @@ export interface ProtocolSessionSnapshotResponse {
   runtimeCapabilities: ProtocolCapabilitySet
   serverTime: Servertime
   session: SessionView
+  state: SessionRuntimeState | null
   timeline: ProtocolTimelineSnapshot
   [k: string]: unknown
 }
@@ -252,8 +262,6 @@ export interface SessionView {
   lastItemOrderSeq?: Lastitemorderseq
   lastReadSeq?: Lastreadseq
   lastSyncedAt?: Lastsyncedat
-  modelSelectionId?: Modelselectionid
-  permissionSelectionId?: Permissionselectionid
   pinned?: Pinned
   pinnedAt?: Pinnedat
   runtime: Runtime3
@@ -266,6 +274,26 @@ export interface SessionView {
   updatedSeq: Updatedseq2
   [k: string]: unknown
 }
+export interface SessionRuntimeState {
+  createdAt: Createdat2
+  error?: Error
+  externalSessionId?: Externalsessionid1
+  metadata?: Metadata1
+  runtime: Runtime4
+  selections?: Selections
+  sessionId: Sessionid4
+  status?: Status3
+  statusReason?: Statusreason
+  updatedAt: Updatedat1
+  updatedSeq: Updatedseq3
+  [k: string]: unknown
+}
+export interface Metadata1 {
+  [k: string]: unknown
+}
+export interface Selections {
+  [k: string]: string | null
+}
 export interface ProtocolTimelineSnapshot {
   hasMore: Hasmore
   items: Items
@@ -276,18 +304,18 @@ export interface TimelineItem {
   completedAt?: Completedat
   content?: Content
   contentHash: Contenthash
-  createdAt: Createdat2
+  createdAt: Createdat3
   id: Id2
   orderSeq: Orderseq
   revision?: Revision2
   role?: Role
-  sessionId: Sessionid4
+  sessionId: Sessionid5
   source: TimelineSource
-  status: Status3
+  status: Status4
   turnId?: Turnid3
   type: Type1
-  updatedAt: Updatedat1
-  updatedSeq: Updatedseq3
+  updatedAt: Updatedat2
+  updatedSeq: Updatedseq4
   [k: string]: unknown
 }
 export interface Content {
@@ -299,8 +327,8 @@ export interface TimelineSource {
   event?: Event
   itemId?: Itemid1
   itemType?: Itemtype
-  runtime: Runtime4
-  sessionId?: Sessionid5
+  runtime: Runtime5
+  sessionId?: Sessionid6
   turnId?: Turnid2
   [k: string]: unknown
 }

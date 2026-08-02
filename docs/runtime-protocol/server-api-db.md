@@ -68,7 +68,7 @@ Example:
 
 Selection and status changes should be applied from runtime projection events, not by the server guessing runtime-native state.
 
-`SessionState.status` is the final UI running-state source. Legacy `sessions.status` should be kept only as a migration compatibility projection. State updates are partial and merge non-empty fields. Selection updates merge by scope, and `selections_json` may contain future scopes beyond the built-in `model` and `permission` keys.
+`SessionState.status` is the final UI running-state source. Legacy `sessions.status` should be kept only as a migration/backfill projection. State updates are partial and merge non-empty fields. Selection updates merge by scope, and `selections_json` may contain future scopes beyond the built-in `model` and `permission` keys.
 
 ### `timeline_items` -> `SessionTimeline`
 

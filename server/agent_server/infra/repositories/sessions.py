@@ -394,21 +394,40 @@ class SessionRepositoryMixin:
             query = query.where(connectors_t.c.user_id == user_id)
         async with self._engine.connect() as conn:
             row = (await conn.execute(query)).mappings().first()
-        if row is not None:
-            return _session_runtime_state_from_row(row)
-        session = await self.get_session(session_id, user_id=user_id)
+            if row is not None:
+                return _session_runtime_state_from_row(row)
+            fallback_query = (
+                select(
+                    sessions_t.c.id,
+                    sessions_t.c.runtime,
+                    sessions_t.c.external_session_id,
+                    sessions_t.c.status,
+                    sessions_t.c.model_selection_id,
+                    sessions_t.c.permission_selection_id,
+                    sessions_t.c.updated_seq,
+                    sessions_t.c.created_at,
+                    sessions_t.c.updated_at,
+                )
+                .join(connectors_t, connectors_t.c.id == sessions_t.c.connector_id)
+                .where(sessions_t.c.id == session_id, connectors_t.c.revoked == 0)
+            )
+            if user_id is not None:
+                fallback_query = fallback_query.where(connectors_t.c.user_id == user_id)
+            fallback = (await conn.execute(fallback_query)).mappings().first()
+        if fallback is None:
+            raise KeyError(session_id)
         return SessionRuntimeState(
-            sessionId=session.id,
-            runtime=session.runtime,
-            externalSessionId=session.externalSessionId,
-            status=session.status,
+            sessionId=fallback["id"],
+            runtime=fallback["runtime"],
+            externalSessionId=fallback["external_session_id"],
+            status=fallback["status"],
             selections=_selection_map(
-                session.modelSelectionId,
-                session.permissionSelectionId,
+                fallback["model_selection_id"],
+                fallback["permission_selection_id"],
             ),
-            updatedSeq=session.updatedSeq,
-            createdAt=session.lastSyncedAt or session.sortAt or utc_now(),
-            updatedAt=session.lastSyncedAt or session.sortAt or utc_now(),
+            updatedSeq=int(fallback["updated_seq"] or 0),
+            createdAt=fallback["created_at"],
+            updatedAt=fallback["updated_at"],
         )
 
 
@@ -867,8 +886,6 @@ class SessionRepositoryMixin:
         last_synced_at: str | None = None,
         source_observed_at: str | None = None,
         last_activity_at: str | None = None,
-        model_selection_id: str | None = None,
-        permission_selection_id: str | None = None,
     ) -> SessionView:
         values: dict[str, Any] = {}
         if status is not None:
@@ -885,10 +902,6 @@ class SessionRepositoryMixin:
             values["source_observed_at"] = source_observed_at
         if last_activity_at is not None:
             values["last_activity_at"] = last_activity_at
-        if model_selection_id is not None:
-            values["model_selection_id"] = model_selection_id
-        if permission_selection_id is not None:
-            values["permission_selection_id"] = permission_selection_id
         async with self._engine.begin() as conn:
             row = (
                 await conn.execute(
@@ -897,8 +910,6 @@ class SessionRepositoryMixin:
                         sessions_t.c.title,
                         sessions_t.c.cwd,
                         sessions_t.c.external_session_id,
-                        sessions_t.c.model_selection_id,
-                        sessions_t.c.permission_selection_id,
                         sessions_t.c.last_activity_at,
                     ).where(sessions_t.c.id == session_id)
                 )
@@ -910,8 +921,6 @@ class SessionRepositoryMixin:
                 "title",
                 "cwd",
                 "external_session_id",
-                "model_selection_id",
-                "permission_selection_id",
             }
             if any(field in values and values[field] != getattr(row, field) for field in semantic_fields):
                 await self._bump_session(conn, session_id)
@@ -994,6 +1003,4 @@ class SessionRepositoryMixin:
             lastItemOrderSeq=latest.orderSeq if latest else None,
             sortAt=sort_at,
             updatedSeq=updated_seq,
-            modelSelectionId=row["model_selection_id"],
-            permissionSelectionId=row["permission_selection_id"],
         )

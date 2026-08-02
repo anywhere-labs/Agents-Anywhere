@@ -15,6 +15,7 @@ import { dashboardApi } from "@/features/dashboard/api"
 import type {
   ConnectorView as RealConnectorView,
   DashboardSnapshotMessage,
+  SessionRuntimeState,
   SessionStateResponse,
   SessionView as RealSessionView,
   TimelineItem,
@@ -55,6 +56,7 @@ export type OptimisticSessionMessage = {
   sessionId: string
   item: TimelineItem
   session?: RealSessionView
+  state?: SessionRuntimeState
   localSessionId?: string
 }
 
@@ -671,6 +673,13 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
               ...message,
               sessionId: session.id,
               session,
+              state: message.state
+                ? {
+                    ...message.state,
+                    sessionId: session.id,
+                    externalSessionId: session.externalSessionId,
+                  }
+                : undefined,
               item: { ...message.item, sessionId: session.id },
             }
           : message,
@@ -725,11 +734,13 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const getOptimisticSessionState = React.useCallback((sessionId: string): SessionStateResponse | null => {
     const messages = optimisticMessages.filter((message) => message.sessionId === sessionId)
     const session = messages.find((message) => message.session)?.session
+    const state = messages.find((message) => message.state)?.state
     if (!session) return null
     const items = mergeTimelineItems([], messages.map((message) => message.item))
     const nextSeq = items.reduce((max, item) => Math.max(max, item.updatedSeq), 0)
     return {
       session,
+      state: state ?? null,
       items,
       approvals: [],
       nextSeq,

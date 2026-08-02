@@ -106,8 +106,6 @@ export type SessionView = {
   effectiveRunMode?: "chat" | "terminal" | null;
   runtimeSettings?: Record<string, unknown> | null;
   runtimeSettingsOverride?: Record<string, unknown> | null;
-  modelSelectionId?: string | null;
-  permissionSelectionId?: string | null;
 };
 
 export type ConnectorListResponse = {

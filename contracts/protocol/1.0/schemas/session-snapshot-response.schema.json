@@ -906,30 +906,6 @@
           "default": null,
           "title": "Lastsyncedat"
         },
-        "modelSelectionId": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Modelselectionid"
-        },
-        "permissionSelectionId": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Permissionselectionid"
-        },
         "pinned": {
           "default": false,
           "title": "Pinned",
