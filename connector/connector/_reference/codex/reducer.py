@@ -7,7 +7,6 @@ from typing import Any
 
 from connector.time import utc_now
 
-
 CODEX_APPROVAL_METHODS = {
     "item/commandExecution/requestApproval",
     "item/fileChange/requestApproval",

@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from connector.codex.ipc_protocol import CodexIpcFollowingChangedBroadcast
-from connector.codex.ipc_publisher import (
+from connector._reference.codex.ipc_protocol import CodexIpcFollowingChangedBroadcast
+from connector._reference.codex.ipc_publisher import (
     CodexIpcPublisher,
     codex_ipc_conversation_from_thread,
 )

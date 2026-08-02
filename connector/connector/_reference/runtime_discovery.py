@@ -9,9 +9,8 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from connector._reference.codex.rpc import codex_candidate_paths
 from connector.launch import LaunchTarget, launch_target, path_exists_for_launch
-from connector.codex.rpc import codex_candidate_paths
-
 
 _COMMAND_CHECK_TIMEOUT_S = 8.0
 

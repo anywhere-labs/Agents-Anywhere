@@ -13,7 +13,7 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
-from connector.codex.ipc_protocol import (
+from connector._reference.codex.ipc_protocol import (
     CODEX_IPC_INITIALIZING_CLIENT_ID,
     CODEX_IPC_MAX_FRAME_BYTES,
     CODEX_IPC_ROUTER_MESSAGE_ADAPTER,

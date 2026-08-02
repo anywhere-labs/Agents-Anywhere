@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from connector.claude.trust import ensure_trust
+from connector._reference.claude.trust import ensure_trust
 
 
 def test_creates_config_file_when_missing(tmp_path: Path) -> None:

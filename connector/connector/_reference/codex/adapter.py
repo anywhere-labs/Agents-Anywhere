@@ -12,9 +12,8 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
-from connector.attachments import attachment_target
-from connector.codex.ipc_client import CodexIpcClient
-from connector.codex.ipc_protocol import (
+from connector._reference.codex.ipc_client import CodexIpcClient
+from connector._reference.codex.ipc_protocol import (
     CodexIpcBroadcast,
     CodexIpcClientStatusChangedBroadcast,
     CodexIpcConnectionResetBroadcast,
@@ -27,20 +26,21 @@ from connector.codex.ipc_protocol import (
     CodexIpcRouterMessage,
     CodexIpcStreamStateChangedBroadcast,
 )
-from connector.codex.ipc_publisher import CodexIpcPublisher
-from connector.codex.ipc_state import (
+from connector._reference.codex.ipc_publisher import CodexIpcPublisher
+from connector._reference.codex.ipc_state import (
     CodexIpcAppliedState,
     CodexIpcStateError,
     CodexIpcStateRegistry,
     codex_ipc_active_turn_id,
     codex_ipc_thread_snapshot,
 )
-from connector.codex.reducer import (
+from connector._reference.codex.reducer import (
     CODEX_APPROVAL_METHODS,
     ReductionResult,
     TimelineReducer,
 )
-from connector.codex.rpc import JsonRpcStdioClient
+from connector._reference.codex.rpc import JsonRpcStdioClient
+from connector.attachments import attachment_target
 from connector.interactions import approval_notice
 from connector.logging import logger
 from connector.protocol import protocol_selection_id

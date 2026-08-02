@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from connector.codex.ipc_protocol import (
+from connector._reference.codex.ipc_protocol import (
     CODEX_IPC_COORDINATION_BROADCAST_ADAPTER,
     CODEX_IPC_ROUTER_MESSAGE_ADAPTER,
     CodexIpcClientDiscoveryRequest,

@@ -3,8 +3,11 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from connector.claude.normalized import NormalizedClaudeEvent
-from connector.claude.timeline_identity import ClaudeTimelineIdentity, item_content_hash
+from connector._reference.claude.normalized import NormalizedClaudeEvent
+from connector._reference.claude.timeline_identity import (
+    ClaudeTimelineIdentity,
+    item_content_hash,
+)
 
 
 class ClaudeTimelineReducer:

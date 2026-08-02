@@ -7,8 +7,14 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from connector.codex.ipc_client import CodexIpcClient, default_codex_ipc_socket_path
-from connector.codex.ipc_protocol import CODEX_IPC_MAX_FRAME_BYTES, CodexIpcBroadcast
+from connector._reference.codex.ipc_client import (
+    CodexIpcClient,
+    default_codex_ipc_socket_path,
+)
+from connector._reference.codex.ipc_protocol import (
+    CODEX_IPC_MAX_FRAME_BYTES,
+    CodexIpcBroadcast,
+)
 
 
 async def _read_frame(reader: asyncio.StreamReader) -> dict[str, Any]:

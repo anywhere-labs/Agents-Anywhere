@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from pydantic import ValidationError
 
-from connector.codex.ipc_protocol import (
+from connector._reference.codex.ipc_protocol import (
     CodexIpcAddPatch,
     CodexIpcConversationState,
     CodexIpcPatch,

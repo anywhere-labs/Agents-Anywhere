@@ -10,15 +10,15 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from connector.adapter import NotificationSink
-from connector.attachments import attachment_target
-from connector.claude.history_adapter import ClaudeHistoryAdapter
-from connector.claude.normalized import NormalizedClaudeEvent
-from connector.claude.normalizers import ClaudeLiveNormalizer
-from connector.claude.timeline_reducer import (
+from connector._reference.claude.history_adapter import ClaudeHistoryAdapter
+from connector._reference.claude.normalized import NormalizedClaudeEvent
+from connector._reference.claude.normalizers import ClaudeLiveNormalizer
+from connector._reference.claude.timeline_reducer import (
     ClaudeTimelineReducer,
     is_task_event_tool_name,
 )
+from connector._reference.legacy.adapter import NotificationSink
+from connector.attachments import attachment_target
 from connector.interactions import approval_notice
 from connector.launch import LaunchTarget, launch_target
 from connector.logging import logger

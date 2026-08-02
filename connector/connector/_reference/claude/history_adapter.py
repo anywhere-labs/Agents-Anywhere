@@ -6,10 +6,10 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from connector.claude.normalizers import ClaudeTranscriptNormalizer
-from connector.claude.path_utils import stable_claude_session_id
-from connector.claude.timeline_identity import item_content_hash
-from connector.claude.timeline_reducer import ClaudeTimelineReducer
+from connector._reference.claude.normalizers import ClaudeTranscriptNormalizer
+from connector._reference.claude.path_utils import stable_claude_session_id
+from connector._reference.claude.timeline_identity import item_content_hash
+from connector._reference.claude.timeline_reducer import ClaudeTimelineReducer
 from connector.logging import logger
 from connector.server.sync_state import SyncStateStore
 from connector.time import utc_now

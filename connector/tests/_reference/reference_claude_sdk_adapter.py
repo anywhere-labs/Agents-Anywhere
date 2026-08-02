@@ -7,8 +7,8 @@ from typing import Any
 
 import pytest
 
-from connector.claude.history_adapter import ClaudeHistoryAdapter
-from connector.claude.sdk_adapter import ClaudeSdkAdapter
+from connector._reference.claude.history_adapter import ClaudeHistoryAdapter
+from connector._reference.claude.sdk_adapter import ClaudeSdkAdapter
 from connector.launch import launch_target
 
 

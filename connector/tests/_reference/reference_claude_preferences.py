@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from connector.claude.preferences import read_local_preferences
+from connector._reference.claude.preferences import read_local_preferences
 
 
 def test_reads_known_fields_from_settings_json(tmp_path: Path) -> None:

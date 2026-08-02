@@ -10,10 +10,8 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
-from connector.logging import logger
-
 from connector.launch import launch_target
-
+from connector.logging import logger
 
 NotificationHandler = Callable[[dict[str, Any]], Awaitable[None]]
 APP_SERVER_STREAM_LIMIT = 64 * 1024 * 1024

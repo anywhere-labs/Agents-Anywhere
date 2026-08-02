@@ -5,7 +5,7 @@ import copy
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from connector.codex.ipc_protocol import (
+from connector._reference.codex.ipc_protocol import (
     CODEX_IPC_LOCAL_HOST_ID,
     CodexIpcConversationState,
     CodexIpcFollowingChangedBroadcast,
@@ -13,7 +13,7 @@ from connector.codex.ipc_protocol import (
     CodexIpcSnapshotChange,
     CodexIpcStreamStateParams,
 )
-from connector.codex.ipc_state import codex_ipc_active_turn_id
+from connector._reference.codex.ipc_state import codex_ipc_active_turn_id
 
 
 class CodexIpcBroadcastSender(Protocol):

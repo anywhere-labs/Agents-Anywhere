@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from connector.claude.normalized import NormalizedClaudeEvent
+from connector._reference.claude.normalized import NormalizedClaudeEvent
 
 
 class ClaudeLiveNormalizer:

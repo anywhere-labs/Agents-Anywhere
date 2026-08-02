@@ -6,22 +6,22 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 import pytest
-from connector.codex.adapter import (
+
+from connector._reference.codex.adapter import (
     EXISTING_SYNC_CHANGED_THREAD_TIMEOUT_SECONDS,
     EXISTING_SYNC_SCAN_TIMEOUT_SECONDS,
     CodexAdapter,
     _backend_notifications_from_reduction,
     stable_session_id,
 )
-from connector.codex.history import read_timeline_history, read_tool_history
-from connector.codex.ipc_protocol import (
+from connector._reference.codex.history import read_timeline_history, read_tool_history
+from connector._reference.codex.ipc_protocol import (
     CodexIpcFollowingChangedBroadcast,
     CodexIpcRequest,
     CodexIpcStreamStateChangedBroadcast,
 )
-from connector.codex.reducer import TimelineReducer
-from connector.codex.rpc import APP_SERVER_STREAM_LIMIT, JsonRpcStdioClient
-
+from connector._reference.codex.reducer import TimelineReducer
+from connector._reference.codex.rpc import APP_SERVER_STREAM_LIMIT, JsonRpcStdioClient
 from connector.protocol import protocol_selection_id
 from connector.server.sync_state import JsonSyncStateStore
 

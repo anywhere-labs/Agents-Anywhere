@@ -4,8 +4,8 @@ import asyncio
 
 import pytest
 
-from connector.codex.ipc_protocol import CodexIpcStreamStateChangedBroadcast
-from connector.codex.ipc_state import (
+from connector._reference.codex.ipc_protocol import CodexIpcStreamStateChangedBroadcast
+from connector._reference.codex.ipc_state import (
     CodexIpcOwnerError,
     CodexIpcPatchError,
     CodexIpcRevisionError,

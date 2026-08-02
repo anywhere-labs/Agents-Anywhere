@@ -1,7 +1,10 @@
 from __future__ import annotations
 
-from connector.claude.normalizers import ClaudeLiveNormalizer, ClaudeTranscriptNormalizer
-from connector.claude.timeline_reducer import ClaudeTimelineReducer
+from connector._reference.claude.normalizers import (
+    ClaudeLiveNormalizer,
+    ClaudeTranscriptNormalizer,
+)
+from connector._reference.claude.timeline_reducer import ClaudeTimelineReducer
 
 
 def test_live_and_transcript_normalizers_reduce_to_same_timeline_items():
