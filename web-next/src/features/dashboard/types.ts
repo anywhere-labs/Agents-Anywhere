@@ -215,6 +215,16 @@ export type SessionCreateRequest = {
   permissionSelectionId?: string | null;
 };
 
+export type SessionCreateAndStartRequest = {
+  connectorId: string;
+  runtime: string;
+  title?: string;
+  cwd?: string;
+  content: string;
+  selections?: Record<string, string | null>;
+  clientMessageId?: string | null;
+};
+
 export type SessionCreateResponse = {
   session: SessionView;
   connectorResult: unknown;

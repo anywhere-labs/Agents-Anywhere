@@ -341,6 +341,7 @@
       "agent": "Agent",
       "createFailed": "Failed to create session.",
       "attachmentOnlyPrompt": "(No text content.)",
+      "newSessionAttachmentsUnsupported": "Attachments for new sessions need the new create-and-start upload flow and are not available yet.",
       "deviceOffline": "No online device is available.",
       "dropTitle": "Drop files here",
       "dropDescription": "Any file type is supported",

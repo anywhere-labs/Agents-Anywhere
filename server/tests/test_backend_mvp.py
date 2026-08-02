@@ -415,6 +415,84 @@ def test_session_create_passes_permission_selection_id(tmp_path):
     assert "sandbox" not in params
 
 
+def test_session_create_and_start_preallocates_session_and_runtime_state(tmp_path):
+    app = create_app(tmp_path / "test.sqlite3")
+    client = TestClient(app)
+    headers = auth_headers(client)
+    connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
+    connector_id = connector_response.json()["connector"]["id"]
+    model_selection_id = seed_codex_model_catalog(app, connector_id)
+
+    class FakeCreateAndStartRpc:
+        def __init__(self) -> None:
+            self.requests: list[tuple[str, dict[str, Any]]] = []
+
+        async def is_online(self, requested_connector_id: str) -> bool:
+            return requested_connector_id == connector_id
+
+        async def request(
+            self,
+            requested_connector_id: str,
+            method: str,
+            params: dict[str, Any],
+            *,
+            timeout: float = 30,
+        ) -> dict[str, str]:
+            self.requests.append((method, params))
+            assert requested_connector_id == connector_id
+            return {
+                "sessionId": params["sessionId"],
+                "externalSessionId": "thr_create_and_start",
+                "turnId": "turn_create_and_start",
+            }
+
+    fake_rpc = FakeCreateAndStartRpc()
+    app.state.rpc = fake_rpc
+
+    response = client.post(
+        "/sessions/create-and-start",
+        headers=headers,
+        json={
+            "connectorId": connector_id,
+            "runtime": "codex",
+            "title": "Start now",
+            "cwd": "/repo",
+            "content": "hello",
+            "selections": {"model": model_selection_id},
+            "clientMessageId": "cm_create_and_start",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    session = body["session"]
+    assert session["takeover"] is True
+    assert session["externalSessionId"] == "thr_create_and_start"
+    assert fake_rpc.requests == [
+        (
+            "session.create",
+            {
+                "runtime": "codex",
+                "sessionId": session["id"],
+                "content": "hello",
+                "title": "Start now",
+                "cwd": "/repo",
+                "selections": {"model": model_selection_id},
+                "clientMessageId": "cm_create_and_start",
+            },
+        )
+    ]
+    state = client.get(f"/sessions/{session['id']}/runtime-state", headers=headers)
+    assert state.status_code == 200
+    assert state.json()["state"]["status"] == "running"
+    assert state.json()["state"]["selections"] == {"model": model_selection_id}
+    active = asyncio.run(client.app.state.store.get_active_run(session["id"]))
+    assert active is not None
+    assert active["status"] == "running"
+    assert active["externalSessionId"] == "thr_create_and_start"
+    assert active["turnId"] == "turn_create_and_start"
+
+
 def test_session_create_rejects_legacy_runtime_settings_model_fields(tmp_path):
     app = create_app(tmp_path / "test.sqlite3")
     client = TestClient(app)

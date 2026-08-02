@@ -31,6 +31,7 @@ from agent_server.core.models import (
     SessionCommandListResponse,
     SessionCommandRequest,
     SessionCommandResponse,
+    SessionCreateAndStartRequest,
     SessionCreateRequest,
     SessionPatchRequest,
     SessionResponse,
@@ -194,6 +195,37 @@ async def create_session(
             session_id=session.id,
             reason="session.created",
         )
+    return result
+
+
+@router.post("/create-and-start")
+async def create_and_start_session(
+    payload: SessionCreateAndStartRequest,
+    user_id: str = Depends(current_user_id),
+    run_service: SessionRunService = Depends(get_session_run_service),
+    manager: ConnectorRpcManager = Depends(get_rpc),
+    db: Store = Depends(get_store),
+    broker: TimelineBroker = Depends(get_timeline_broker),
+) -> dict[str, Any]:
+    try:
+        result = await run_service.create_and_start_session(payload, user_id=user_id)
+    except SessionRunError as exc:
+        _raise_session_run_error(exc)
+    session = result.get("session")
+    if session is not None:
+        result = {
+            **result,
+            "session": await with_effective_session_connector_status(manager, session),
+        }
+        await publish_dashboard_changed(
+            db,
+            broker,
+            user_id=user_id,
+            connector_id=session.connectorId,
+            session_id=session.id,
+            reason="session.create-and-start",
+        )
+        await _publish_session_protocol_update(db, broker, manager, session.id)
     return result
 
 

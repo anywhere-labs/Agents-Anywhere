@@ -21,6 +21,17 @@ def _selection_map(
     return selections
 
 
+def _merged_selections(
+    model_selection_id: str | None,
+    permission_selection_id: str | None,
+    selections: dict[str, str | None] | None,
+) -> dict[str, str | None]:
+    out: dict[str, str | None] = _selection_map(model_selection_id, permission_selection_id)
+    if selections:
+        out.update(selections)
+    return out
+
+
 def _session_runtime_state_from_row(row: Any) -> SessionRuntimeState:
     selections = _json_loads(row["selections_json"])
     metadata = _json_loads(row["metadata_json"])
@@ -61,9 +72,16 @@ class SessionRepositoryMixin:
         cwd: str | None,
         model_selection_id: str | None = None,
         permission_selection_id: str | None = None,
+        selections: dict[str, str | None] | None = None,
+        takeover: bool = False,
     ) -> SessionView:
         session_id = f"sess_{secrets.token_urlsafe(10)}"
         now = utc_now()
+        state_selections = _merged_selections(
+            model_selection_id,
+            permission_selection_id,
+            selections,
+        )
         async with self._engine.begin() as conn:
             connector_q = select(connectors_t.c.status).where(
                 connectors_t.c.id == connector_id, connectors_t.c.revoked == 0
@@ -85,7 +103,7 @@ class SessionRepositoryMixin:
                     title=title,
                     cwd=cwd,
                     status="idle",
-                    takeover=0,
+                    takeover=int(takeover),
                     seq=0,
                     updated_seq=0,
                     created_at=now,
@@ -98,9 +116,7 @@ class SessionRepositoryMixin:
                     runtime=runtime,
                     external_session_id=external_session_id,
                     status="idle",
-                    selections_json=_json_dumps(
-                        _selection_map(model_selection_id, permission_selection_id)
-                    ),
+                    selections_json=_json_dumps(state_selections),
                     status_reason=None,
                     error_json=None,
                     metadata_json=_json_dumps({}),

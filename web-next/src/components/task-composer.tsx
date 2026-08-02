@@ -471,6 +471,10 @@ export function TaskComposer() {
     if (catalogsLoading) return
     if (requiresModelSelection && !modelSelectionId) return
     if (requiresPermissionSelection && !permissionSelectionId) return
+    if (attachments.length > 0) {
+      toast.error(t("newSessionAttachmentsUnsupported"))
+      return
+    }
     const localSessionId = createClientId("session")
     const clientMessageId = createClientId("msg")
     const messageText = prompt.trim() || t("attachmentOnlyPrompt")
@@ -537,14 +541,16 @@ export function TaskComposer() {
     openSession(localSessionId)
     setCreating(true)
     try {
-      const created = await dashboardApi.createSession(authSession.accessToken, {
+      const selections = {
+        ...(modelSelectionId ? { model: modelSelectionId } : {}),
+        ...(permissionSelectionId ? { permission: permissionSelectionId } : {}),
+      }
+      const createBody = {
         connectorId: selectedConnector.id,
         runtime: selectedAgent,
         title: prompt.trim() || undefined,
         cwd: workspace?.path || undefined,
-        modelSelectionId,
-        permissionSelectionId,
-      })
+      }
       const nextPreference = withNewSessionSelectionPreference(
         preference,
         selectedConnector.id,
@@ -556,25 +562,14 @@ export function TaskComposer() {
       )
       writeNewSessionPreference(nextPreference)
       setPreference(nextPreference)
+      const created = await dashboardApi.createAndStartSession(authSession.accessToken, {
+        ...createBody,
+        content: messageText,
+        selections,
+        clientMessageId,
+      })
       bindOptimisticSession(localSessionId, created.session)
-      const takeover = await dashboardApi.enableTakeover(authSession.accessToken, created.session.id)
-      const sessionId = takeover.session.id
-      bindOptimisticSession(localSessionId, takeover.session)
-      const files = selectedAttachments.map((attachment) => attachment.file)
-      const upload = files.length > 0
-        ? await dashboardApi.uploadSessionAttachments(authSession.accessToken, sessionId, files)
-        : null
-      const attachmentRefs = upload?.attachments.map((attachment) => ({ fileId: attachment.fileId })) ?? []
-      await dashboardApi.sendSessionMessage(
-        authSession.accessToken,
-        sessionId,
-        messageText,
-        {
-          attachments: attachmentRefs,
-          clientMessageId,
-        },
-      )
-      upsertSession(takeover.session)
+      upsertSession(created.session)
       refreshData()
     } catch (err) {
       const message = err instanceof Error ? err.message : t("createFailed")

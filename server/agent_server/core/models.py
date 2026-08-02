@@ -515,6 +515,18 @@ class SessionCreateRequest(BaseModel):
     permissionSelectionId: str | None = None
 
 
+class SessionCreateAndStartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    connectorId: str
+    runtime: RuntimeName = "codex"
+    title: str | None = None
+    cwd: str | None = None
+    content: str
+    selections: dict[str, str | None] = Field(default_factory=dict)
+    clientMessageId: str | None = None
+
+
 class SessionView(BaseModel):
     id: str
     connectorId: str

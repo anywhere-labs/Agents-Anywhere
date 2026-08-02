@@ -6,6 +6,7 @@ from agent_server.core.api_namespace import api_v2_path
 from agent_server.core.models import (
     MessageCreateRequest,
     RpcResponsePayload,
+    SessionCreateAndStartRequest,
     SessionCreateRequest,
     SessionRuntimeState,
     SessionSelectionPatchRequest,
@@ -141,6 +142,151 @@ class SessionRunService:
             selections=_payload_selections(payload),
         )
         return {"session": session, "connectorResult": connector_result}
+
+    async def create_and_start_session(
+        self,
+        payload: SessionCreateAndStartRequest,
+        *,
+        user_id: str,
+    ) -> dict[str, Any]:
+        try:
+            connector = await self._store.get_connector(payload.connectorId)
+            if connector.userId != user_id:
+                raise KeyError(payload.connectorId)
+        except KeyError:
+            raise SessionRunNotFoundError("connector not found") from None
+        if not await self._manager.is_online(payload.connectorId):
+            raise SessionRunConflictError("connector is offline")
+
+        selections = _selections_from_mapping(payload.selections)
+        session = await self._store.create_session(
+            connector_id=payload.connectorId,
+            user_id=user_id,
+            runtime=payload.runtime,
+            external_session_id=None,
+            title=payload.title,
+            cwd=payload.cwd,
+            selections=selections,
+            takeover=True,
+        )
+        params: dict[str, Any] = {
+            "runtime": payload.runtime,
+            "sessionId": session.id,
+            "content": payload.content,
+        }
+        if payload.title is not None:
+            params["title"] = payload.title
+        if payload.cwd is not None:
+            params["cwd"] = payload.cwd
+        if selections:
+            params["selections"] = selections
+        if payload.clientMessageId:
+            params["clientMessageId"] = payload.clientMessageId
+
+        await self._store.start_active_run(
+            session_id=session.id,
+            runtime=payload.runtime,
+            status="waiting",
+            params=params,
+        )
+        await self._store.upsert_session_runtime_state(
+            session_id=session.id,
+            runtime=payload.runtime,
+            status="waiting",
+            selections=selections,
+            metadata={"source": "server.session.create-and-start"},
+        )
+        try:
+            connector_result = await self._manager.request(
+                payload.connectorId,
+                "session.create",
+                params,
+                timeout=60,
+            )
+        except ConnectorOfflineError as exc:
+            await self._store.clear_active_run(session.id)
+            await self._store.upsert_session_runtime_state(
+                session_id=session.id,
+                runtime=payload.runtime,
+                status="blocked",
+                error={"code": "connector_offline", "message": str(exc)},
+                metadata={"source": "server.session.create-and-start.failed"},
+            )
+            raise SessionRunConflictError(str(exc)) from exc
+        except ConnectorRpcError as exc:
+            await self._store.clear_active_run(session.id)
+            await self._store.upsert_session_runtime_state(
+                session_id=session.id,
+                runtime=payload.runtime,
+                status="blocked",
+                error={"code": exc.code, "message": exc.message or exc.code},
+                metadata={"source": "server.session.create-and-start.failed"},
+            )
+            raise SessionRunUpstreamError(exc.message or exc.code) from exc
+
+        if not isinstance(connector_result, dict):
+            await self._mark_create_and_start_failed(
+                session.id,
+                runtime=payload.runtime,
+                code="invalid_connector_result",
+                message="connector did not return a session result",
+            )
+            raise SessionRunUpstreamError("connector did not return a session result")
+        external_session_id = connector_result.get("externalSessionId")
+        if payload.runtime != "claude" and not isinstance(external_session_id, str):
+            await self._mark_create_and_start_failed(
+                session.id,
+                runtime=payload.runtime,
+                code="missing_external_session_id",
+                message="connector did not return an external session id",
+            )
+            raise SessionRunUpstreamError("connector did not return an external session id")
+        turn_id = connector_result.get("turnId")
+        await self._store.start_active_run(
+            session_id=session.id,
+            runtime=payload.runtime,
+            status="running",
+            external_session_id=external_session_id if isinstance(external_session_id, str) else None,
+            turn_id=turn_id if isinstance(turn_id, str) else None,
+            params=params,
+        )
+        session = await self._store.upsert_connector_session(
+            connector_id=payload.connectorId,
+            session_id=session.id,
+            runtime=payload.runtime,
+            external_session_id=external_session_id if isinstance(external_session_id, str) else None,
+            title=payload.title,
+            cwd=payload.cwd,
+            status="running",
+            last_synced_at=utc_now(),
+            origin="platform",
+        )
+        await self._store.upsert_session_runtime_state(
+            session_id=session.id,
+            runtime=payload.runtime,
+            external_session_id=external_session_id if isinstance(external_session_id, str) else None,
+            status="running",
+            selections=selections,
+            metadata={"source": "server.session.create-and-start.accepted"},
+        )
+        return {"session": session, "connectorResult": connector_result}
+
+    async def _mark_create_and_start_failed(
+        self,
+        session_id: str,
+        *,
+        runtime: str,
+        code: str,
+        message: str,
+    ) -> None:
+        await self._store.clear_active_run(session_id)
+        await self._store.upsert_session_runtime_state(
+            session_id=session_id,
+            runtime=runtime,
+            status="blocked",
+            error={"code": code, "message": message},
+            metadata={"source": "server.session.create-and-start.failed"},
+        )
 
     async def send_message(
         self,
@@ -447,6 +593,10 @@ def _payload_selections(payload: SessionCreateRequest) -> dict[str, str]:
     if payload.permissionSelectionId:
         selections["permission"] = payload.permissionSelectionId
     return selections
+
+
+def _selections_from_mapping(value: dict[str, str | None]) -> dict[str, str]:
+    return {key: item for key, item in value.items() if isinstance(item, str) and item}
 
 
 def _timeline_attachment_payload(value: dict[str, Any]) -> dict[str, Any]:

@@ -341,6 +341,7 @@
       "agent": "Agent",
       "createFailed": "无法创建会话。",
       "attachmentOnlyPrompt": "（无文字内容。）",
+      "newSessionAttachmentsUnsupported": "新会话附件需要新的 create-and-start 上传流程，目前暂未开放。",
       "deviceOffline": "没有可用的在线设备。",
       "dropTitle": "拖拽文件到此处",
       "dropDescription": "支持任意文件类型",

@@ -30,6 +30,7 @@ import type {
   ProtocolPermissionCatalogResponse,
   RpcResponse,
   SessionCommandListResponse,
+  SessionCreateAndStartRequest,
   SessionCreateRequest,
   SessionCreateResponse,
   SessionCommandResponse,
@@ -183,6 +184,13 @@ export class DashboardApi {
     body: SessionCreateRequest,
   ): Promise<SessionCreateResponse> {
     return this.client.post<SessionCreateResponse>("/sessions", body, { token });
+  }
+
+  createAndStartSession(
+    token: string,
+    body: SessionCreateAndStartRequest,
+  ): Promise<SessionCreateResponse> {
+    return this.client.post<SessionCreateResponse>("/sessions/create-and-start", body, { token });
   }
 
   patchSession(
