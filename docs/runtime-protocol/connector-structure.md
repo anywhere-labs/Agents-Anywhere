@@ -120,6 +120,21 @@ Small shared primitives:
 
 `core/` must not import runtime adapters or server application code.
 
+Runtime config persistence:
+
+```text
+core/runtime_config_store.py
+  JsonRuntimeConfigStore
+```
+
+The runtime config store persists raw runtime config values by runtime id in the canonical Connector data directory:
+
+```text
+~/.agents-anywhere/runtime-configs.json
+```
+
+It is JSON-backed and replaces sqlite for Connector-local runtime configuration. It does not validate runtime semantics; validation belongs to `RuntimeProvider.validate_config()`. It does not store running runtime state; lifecycle state belongs to the supervisor.
+
 ### `server/`
 
 Connector application layer for talking to Agents Anywhere Server:

@@ -218,9 +218,26 @@ Rules:
 - Runtime adapters must not receive `notification_sink`.
 - Keep commits small: one concern per commit.
 
+Runtime config store:
+
+```text
+connector/connector/core/runtime_config_store.py
+```
+
+Rules:
+
+- Store values by runtime id.
+- Use the canonical Connector data directory.
+- Do not use sqlite.
+- Do not validate runtime semantics in the store.
+- Return defensive copies so callers cannot mutate cached state.
+
 Acceptance:
 
 - Root `runtime.py` becomes an application assembly/coordinator, not a 900-line networking/runtime/local-ops module.
+- Runtime config values survive process restart through JSON.
+- Missing runtime config loads as `{}`.
+- Invalid JSON or invalid root shape fails explicitly.
 - Generic runtime code no longer imports Codex or Claude modules.
 - Server RPC dispatch resolves an `AgentRuntime`.
 - New runtime code emits through `RuntimeHostClient`, not raw notification result dictionaries.
