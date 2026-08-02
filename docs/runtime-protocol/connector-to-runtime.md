@@ -107,13 +107,13 @@ class RuntimePermissionCatalog:
 
 `revision` is a runtime-supplied version for the live read result. It must not make the server catalog cache authoritative.
 
-## Session projections
+## Session domain objects
 
-Session selection and runtime session state are separate projections.
+Session data is split into `SessionMeta`, `SessionState`, and `SessionTimeline`.
 
 ```py
 @dataclass(frozen=True, slots=True)
-class RuntimeSession:
+class SessionMeta:
     session_id: str
     external_session_id: str | None
     runtime: str
@@ -125,28 +125,19 @@ class RuntimeSession:
 
 
 @dataclass(frozen=True, slots=True)
-class RuntimeSessionState:
+class SessionState:
     session_id: str
     external_session_id: str | None
     runtime: str
     status: RuntimeStatus
+    selections: Mapping[str, str | None] = field(default_factory=dict)
     ordering_time: str | None = None
     status_reason: str | None = None
     error: Mapping[str, Any] | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True, slots=True)
-class SessionSelectionState:
-    session_id: str
-    external_session_id: str | None
-    runtime: str
-    selections: Mapping[str, str | None]
-    ordering_time: str | None = None
-    metadata: Mapping[str, Any] = field(default_factory=dict)
 ```
 
-`RuntimeSessionState` deliberately does not include model selection, permission selection, or active turn id.
+`SessionState` deliberately does not include active turn id, runtime catalog data, command lists, or timeline items. Model and permission selections belong here because they are current session state, not session metadata.
 
 ## Commands
 
@@ -270,7 +261,7 @@ class AgentRuntime(ABC):
         limit: int = 100,
         cursor: str | None = None,
         force: bool = False,
-    ) -> tuple[RuntimeSession, ...]:
+    ) -> tuple[SessionMeta, ...]:
         raise RuntimeUnsupportedError("list_sessions")
 
     async def get_session_snapshot(
@@ -285,14 +276,7 @@ class AgentRuntime(ABC):
         self,
         session_id: str,
         external_session_id: str | None = None,
-    ) -> RuntimeSessionState | None:
-        return None
-
-    async def get_session_selection(
-        self,
-        session_id: str,
-        external_session_id: str | None = None,
-    ) -> SessionSelectionState | None:
+    ) -> SessionState | None:
         return None
 
     async def create_and_start_session(
@@ -335,13 +319,13 @@ class AgentRuntime(ABC):
     ) -> RuntimeOperationResult:
         raise RuntimeUnsupportedError("interrupt_turn")
 
-    async def update_session_selection(
+    async def update_session_selections(
         self,
         session_id: str,
         external_session_id: str | None,
         selections: Mapping[str, str | None],
     ) -> RuntimeOperationResult:
-        raise RuntimeUnsupportedError("update_session_selection")
+        raise RuntimeUnsupportedError("update_session_selections")
 
     async def list_commands(
         self,

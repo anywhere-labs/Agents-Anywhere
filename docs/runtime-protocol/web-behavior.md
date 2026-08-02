@@ -35,8 +35,9 @@ Initial load:
 
 ```text
 Load session snapshot
-  -> read runtime state projection
-  -> read session selection projection
+  -> read SessionMeta
+  -> read SessionState
+  -> read SessionTimeline
   -> render timeline/notices
 ```
 
@@ -56,10 +57,10 @@ Changing selectors:
 User chooses selection
   -> PATCH session selection
   -> runtime accepts or rejects
-  -> Web updates from returned result and/or session.selection.updated event
+  -> Web updates from returned result and/or session.state.updated event
 ```
 
-The runtime may also update selections without direct user action. Web must treat `session.selection.updated` as authoritative.
+The runtime may also update selections without direct user action. Web must treat `session.state.updated` as authoritative.
 
 ## Message composer
 
@@ -106,13 +107,14 @@ POST /sessions/{id}/commands
 
 Command execution returns a normal RPC result. If the runtime changes timeline, state, selection, or notices, those changes arrive through normal runtime events.
 
-## Runtime state UI
+## Session state UI
 
-Web should render busy/interrupt/blocking UI from runtime session state and timeline/notices.
+Web should render busy/interrupt/blocking UI from session state and timeline/notices.
 
-`RuntimeSessionState` includes only:
+`SessionState` includes:
 
 - status
+- selections
 - ordering time
 - status reason
 - error
@@ -121,9 +123,9 @@ Web should render busy/interrupt/blocking UI from runtime session state and time
 It does not include:
 
 - active turn id
-- model selection
-- permission selection
 - command list
+- catalog data
+- timeline items
 
 ## Snapshot and recovery
 

@@ -57,8 +57,7 @@ This stage should replace direct adapter dependencies on:
 
 Add durable projections:
 
-- `runtime_session_states`
-- `session_selection_states`
+- `session_states`
 
 Add repository/service APIs for upsert/read.
 
@@ -70,15 +69,14 @@ Add or replace APIs:
 
 - live runtime model catalog
 - live runtime permission catalog
-- session selection read/update
-- runtime state read
+- session state read
+- session selection update through SessionState
 - command list/execute
 - create-and-start session
 
 Add ingest handlers for:
 
-- `session.runtime_state.updated`
-- `session.selection.updated`
+- `session.state.updated`
 
 ## 6. Codex runtime adapter
 
@@ -105,12 +103,12 @@ Claude may implement a smaller feature subset. Unsupported behavior must be expl
 Update Web:
 
 - read model/permission catalogs on selector open
-- read session selection/runtime state on session load
+- read SessionMeta/SessionState/SessionTimeline on session load
 - update selection before message send
 - remove model/permission from message send payload
 - list commands with live RPC on `/`
 - remove frontend-built command list
-- use runtime state projection for busy/interrupt rendering
+- use session state projection for busy/interrupt rendering
 
 ## 9. Remove old protocol paths
 
@@ -127,8 +125,8 @@ Before accepting the migration:
 
 - existing session sends messages without selection fields
 - model/permission selectors read live runtime catalogs
-- session selection survives refresh through persisted projection
-- runtime busy/blocked/stopping state survives refresh through persisted projection
+- session selections survive refresh through persisted SessionState
+- runtime busy/blocked/stopping state survives refresh through persisted SessionState
 - command list is runtime-driven and fuzzy-matched by frontend
 - command execution does not create a user message
-- Codex IPC state updates map to runtime state/selection/timeline projections without leaking IPC methods upward
+- Codex IPC state updates map to SessionState/SessionTimeline projections without leaking IPC methods upward

@@ -44,19 +44,25 @@ Native runtime process, SDK, IPC, local history, and filesystem state
 
 The Connector application layer must not know Codex IPC, Claude SDK, or runtime-native selection details. Runtime adapters must not know server notification method names such as `timeline.itemUpsert` or `protocol.modelCatalogUpdated`. They call the host client instead.
 
-## Source-of-truth model
+## Domain model
 
-The protocol separates runtime-level catalogs, session-level selections, runtime session state, commands, and timeline.
+The protocol separates session data into three domain objects:
+
+- `SessionMeta`: what this session is.
+- `SessionState`: what this session is currently doing and which runtime options it currently selected.
+- `SessionTimeline`: what happened in this session.
+
+Runtime-level catalogs and command lists are live reads, not session state.
 
 | Concept | Scope | Source of truth | Durable on Server | Notes |
 | --- | --- | --- | --- | --- |
+| Session meta | Session | Platform and runtime metadata projection | Yes | Identity, connector/runtime binding, title, cwd, archive/pin/read metadata. |
+| Session state | Session | Runtime projection | Yes | Status, selections, ordering time, status reason, error, metadata. |
+| Session timeline | Session | Runtime normalized projection | Yes | Timeline items, notices, interactions, and recovery cursor. |
 | Model catalog | Runtime | Runtime local read | No, except transitional code | Read on demand when the UI opens the selector. |
 | Permission catalog | Runtime | Runtime local read | No, except transitional code | Read on demand when the UI opens the selector. |
-| Session selection | Session | Runtime projection | Yes | Runtime can push updates at any time. |
-| Runtime session state | Session | Runtime projection | Yes | Only UI running/status metadata, not model/permission. |
 | Command list | Session | Runtime local read | No | Read on demand when the user types `/`. |
 | Command execution | Session | Runtime RPC result | No | Side effects are reported separately through host events. |
-| Timeline | Session | Runtime normalized projection | Yes | Upsert-only; hiding replaces deletion. |
 
 ## Breaking changes
 
@@ -85,12 +91,13 @@ runtime + scope + option identity -> selectionId
 
 Within one runtime and one scope, a `selectionId` uniquely identifies one option. A stable hash remains acceptable and preferred for controllability.
 
-Selections are session-level projections:
+Selections are part of `SessionState`, not `SessionMeta` and not message payloads:
 
 ```json
 {
   "sessionId": "sess_...",
   "runtime": "codex",
+  "status": "idle",
   "selections": {
     "model": "sel_model_...",
     "permission": "sel_permission_..."
@@ -118,7 +125,7 @@ The frontend reads runtime-level model and permission catalogs before creation. 
 For an existing session, sending a message only sends message content and attachments.
 
 ```text
-update_session_selection(...)
+update_session_selections(...)
 start_turn(content, attachments, client_message_id)
 ```
 

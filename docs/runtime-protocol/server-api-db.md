@@ -10,10 +10,9 @@ The Server remains the durable platform source of truth for:
 
 - users
 - connectors
-- platform sessions
-- runtime session state projections
-- session selection projections
-- timeline items
+- session meta
+- session state
+- session timeline
 - notices/interactions
 - active WebSocket/SSE recovery cursors
 
@@ -21,7 +20,7 @@ The Server is not the source of truth for runtime model/permission catalogs. Cat
 
 ## Session model split
 
-### `sessions`
+### `sessions` -> `SessionMeta`
 
 Platform session metadata only:
 
@@ -34,16 +33,17 @@ Platform session metadata only:
 - pin/archive/read metadata
 - platform ordering/read metadata
 
-Do not store runtime selections in `sessions`.
+Do not store runtime selections or running state in `sessions`.
 
-### `runtime_session_states`
+### `session_states` -> `SessionState`
 
-Persisted runtime-owned UI state projection.
+Persisted runtime-owned current session projection.
 
 ```text
 session_id primary key
 runtime
 status
+selections_json
 ordering_time
 status_reason
 error_json
@@ -52,32 +52,31 @@ updated_seq
 updated_at
 ```
 
-This state deliberately excludes model selection, permission selection, command data, catalog data, and active turn id.
-
-### `session_selection_states`
-
-Persisted runtime-owned session selection projection.
-
-```text
-session_id primary key
-runtime
-selections_json
-ordering_time
-metadata_json
-updated_seq
-updated_at
-```
+This state deliberately excludes command data, catalog data, timeline items, and active turn id.
 
 Example:
 
 ```json
 {
-  "model": "sel_model_...",
-  "permission": "sel_permission_..."
+  "status": "idle",
+  "selections": {
+    "model": "sel_model_...",
+    "permission": "sel_permission_..."
+  }
 }
 ```
 
-Selection changes should be applied from runtime projection events, not by the server guessing runtime-native state.
+Selection and status changes should be applied from runtime projection events, not by the server guessing runtime-native state.
+
+### `timeline_items` and `notices` -> `SessionTimeline`
+
+Persisted chronological session record:
+
+- timeline items
+- notices/interactions
+- event/recovery cursor state
+
+Timeline remains upsert-only. Hiding replaces deletion.
 
 ## API target
 
@@ -92,24 +91,16 @@ GET /api/v2/connectors/{connectorId}/runtimes/{runtimeId}/catalogs/permissions
 
 These routes call Connector RPC, which calls runtime local reads. They do not read the durable server catalog tables as the primary path.
 
-### Existing session selection
+### Existing session state
 
 ```text
-GET /api/v2/sessions/{sessionId}/selection
-PATCH /api/v2/sessions/{sessionId}/selection
+GET /api/v2/sessions/{sessionId}/state
+PATCH /api/v2/sessions/{sessionId}/state/selections
 ```
 
 `GET` returns the latest persisted runtime projection, and may refresh from Connector when online.
 
-`PATCH` asks the runtime to update session selection. The runtime may accept or reject based on current state. The durable UI update should arrive as `session.selection.updated`.
-
-### Existing session runtime state
-
-```text
-GET /api/v2/sessions/{sessionId}/runtime-state
-```
-
-Returns the latest persisted runtime state projection, and may refresh from Connector when online.
+`PATCH` asks the runtime to update selections in `SessionState`. The runtime may accept or reject based on current state. The durable UI update should arrive as `session.state.updated`.
 
 ### Commands
 
@@ -152,9 +143,8 @@ Message send only carries content, attachments, and client message id. It must n
 Runtime host client calls should be mapped to server ingest methods. Draft semantic events:
 
 ```text
-session.upsert
-session.runtime_state.updated
-session.selection.updated
+session.meta.upsert
+session.state.updated
 timeline.sync
 timeline.item.upsert
 notice.upsert
@@ -169,9 +159,8 @@ Session snapshot should return separate fields:
 
 ```json
 {
-  "session": {},
-  "runtimeState": {},
-  "selectionState": {},
+  "meta": {},
+  "state": {},
   "timeline": {},
   "notices": [],
   "effectiveCapabilities": {},

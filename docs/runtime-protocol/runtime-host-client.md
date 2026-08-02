@@ -37,7 +37,7 @@ class RuntimeHostClient(ABC):
     def connector_id(self) -> str:
         raise NotImplementedError
 
-    async def session_upsert(
+    async def session_meta_upsert(
         self,
         session_id: str,
         runtime: str,
@@ -54,22 +54,12 @@ class RuntimeHostClient(ABC):
         self,
         session_id: str,
         runtime: str,
-        status: RuntimeStatus,
+        status: RuntimeStatus | None = None,
+        selections: Mapping[str, str | None] | None = None,
         external_session_id: str | None = None,
         ordering_time: str | None = None,
         status_reason: str | None = None,
         error: Mapping[str, Any] | None = None,
-        metadata: Mapping[str, Any] | None = None,
-    ) -> None:
-        raise NotImplementedError
-
-    async def session_selection_update(
-        self,
-        session_id: str,
-        runtime: str,
-        selections: Mapping[str, str | None],
-        external_session_id: str | None = None,
-        ordering_time: str | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
         raise NotImplementedError
@@ -160,17 +150,13 @@ class RuntimeNotice:
 
 ## Semantics
 
-### `session_upsert`
+### `session_meta_upsert`
 
-Reports the existence and metadata of a runtime session. This is not runtime running state and not model/permission selection.
+Reports the existence and metadata of a runtime session. This is `SessionMeta`, not current running state and not `SessionState` selections.
 
 ### `session_state_update`
 
-Reports persisted UI runtime state: status, reason, error, and ordering time. It must not include model/permission selection or active turn id.
-
-### `session_selection_update`
-
-Reports the current session-level selections, such as model and permission. Runtime may call this at any time. User-triggered changes are only one source of selection updates.
+Reports persisted `SessionState`: status, selections, reason, error, metadata, and ordering time. Runtime may call this at any time. User-triggered selection changes are only one source of state updates.
 
 ### `timeline_sync`
 
