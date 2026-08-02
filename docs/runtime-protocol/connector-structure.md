@@ -315,12 +315,24 @@ Supervisor start flow:
 ```text
 start(runtime, raw_values)
   -> provider.validate_config(raw_values)
+  -> effective RuntimeConfig
+  -> if already running with same raw values: return existing runtime
+  -> if already running with same effective RuntimeConfig: keep existing runtime
+     and update the remembered accepted raw values
+  -> if validation fails while an old runtime is running: keep the old runtime
+     running and return the validation error to the caller
+  -> only after successful validation of a changed effective config:
+     stop old runtime if present
   -> provider.create_runtime(RuntimeConfig, RuntimeHostClient)
   -> AgentRuntime.start()
   -> status = running
 ```
 
-If the same runtime is already running with the same effective config values, `start()` returns the existing `AgentRuntime`. If config values differ, the supervisor stops the old runtime before creating a new one.
+The supervisor must never stop a healthy running runtime before the replacement
+configuration has been validated. Raw config values and effective config values
+are intentionally distinct: providers may normalize `auto` or aliases into a
+stable effective config, and equivalent effective configs should not force a
+restart.
 
 ## Connector application flow
 
