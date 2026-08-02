@@ -161,6 +161,7 @@ export type SessionListResponse = {
 export type SessionCommandResponse = {
   command: string;
   ok: boolean;
+  code: string | null;
   message: string | null;
   result: unknown;
   session: SessionView | null;

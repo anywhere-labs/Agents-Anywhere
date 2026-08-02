@@ -435,8 +435,9 @@ Acceptance:
 
 ## Phase 7: add live runtime catalog and command APIs
 
-Status: next major protocol feature. Model/permission live catalog paths exist
-in part; runtime-driven commands are the main missing piece.
+Status: partially implemented. Server/Connector command RPC and Web slash menu
+now use runtime reads. Remaining work is concrete runtime command catalogs and
+runtime-specific command execution behavior.
 
 Goal: move model/permission/command reads to Connector RPC.
 
@@ -524,8 +525,8 @@ Acceptance:
 
 ## Phase 10: Web protocol-driven UI
 
-Status: partial. Message selection payload cleanup is done; command mode,
-dashboard lifecycle updates, and snapshot-poll elimination remain.
+Status: partial. Message selection payload cleanup and runtime-driven command
+mode are done; dashboard lifecycle updates and snapshot-poll elimination remain.
 
 Goal: make UI read the new protocol projections and live catalogs.
 

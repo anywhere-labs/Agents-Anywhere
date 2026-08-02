@@ -861,6 +861,7 @@ class FakeLocalRpc:
             return {
                 "command": params["command"],
                 "ok": True,
+                "code": "executed",
                 "message": "Command executed.",
                 "result": {"echo": params},
             }
@@ -1140,6 +1141,7 @@ def test_session_command_execute_calls_runtime(tmp_path):
     body = response.json()
     assert body["command"] == "resume"
     assert body["ok"] is True
+    assert body["code"] == "executed"
     assert body["message"] == "Command executed."
     assert fake_rpc.requests[-1] == (
         connector_id,

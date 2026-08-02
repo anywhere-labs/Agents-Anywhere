@@ -328,6 +328,7 @@ Response:
 
 ```json
 {
+  "command": "xxx",
   "ok": true,
   "code": null,
   "message": "done",

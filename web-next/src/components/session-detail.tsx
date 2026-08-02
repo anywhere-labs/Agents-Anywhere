@@ -26,6 +26,7 @@ import type {
   ProtocolEventEnvelope,
   ProtocolModelCatalog,
   ProtocolPermissionCatalog,
+  RuntimeCommand,
   SessionSnapshotResponse,
   SessionRuntimeState,
   SessionStateResponse,
@@ -37,7 +38,7 @@ import { InteractionCard, NotificationCard } from "@/components/session/session-
 import { SessionSkeleton, SessionSkeletonInline } from "@/components/session/session-skeleton"
 import { TimelineEntry } from "@/components/session/session-timeline-entry"
 import { isCreatedFileChange, JsonBlock } from "@/components/session/session-tool-cards"
-import { SessionComposer, type AttachedFile, type SessionCommandId } from "@/components/session/session-composer"
+import { SessionComposer, type AttachedFile } from "@/components/session/session-composer"
 import {
   buildOptimisticUserMessage,
   isOptimisticTimelineItem,
@@ -85,6 +86,7 @@ const SCROLL_TO_BOTTOM_PRUNE_CHECK_MS = 120
 const INITIAL_TIMELINE_LIMIT = 100
 const TIMELINE_PAGE_LIMIT = 100
 const LOAD_OLDER_SCROLL_THRESHOLD = 96
+const COMMAND_QUERY_DEBOUNCE_MS = 120
 const COMPOSER_DRAFT_STORAGE_PREFIX = "agents-anywhere.sessionComposerDraft.v1."
 const COMPOSER_BLUR_LAYERS = buildComposerBlurLayers({
   height: 144,
@@ -271,6 +273,9 @@ export function SessionDetail({
   const [showScrollBottom, setShowScrollBottom] = React.useState(false)
   const [loadingOlder, setLoadingOlder] = React.useState(false)
   const [pendingTakeover, setPendingTakeover] = React.useState<boolean | null>(null)
+  const [commandQuery, setCommandQuery] = React.useState<string | null>(null)
+  const [runtimeCommands, setRuntimeCommands] = React.useState<RuntimeCommand[]>([])
+  const [commandsLoading, setCommandsLoading] = React.useState(false)
   const [composerDraftState, setComposerDraftState] = React.useState<ComposerDraftState>(() => ({
     sessionId,
     value: readComposerDraft(sessionId),
@@ -290,8 +295,12 @@ export function SessionDetail({
   const session = state?.session ?? fallbackSession
   const runtimeState = state?.state ?? null
   const runtimeStatus = runtimeState?.status ?? session?.status ?? "idle"
+  const commandSessionId = session?.id ?? null
   const composerDraft = composerDraftState.sessionId === sessionId ? composerDraftState.value : ""
   const isLocalOptimisticSession = isOptimisticSession(sessionId)
+  const handleCommandQueryChange = React.useCallback((query: string | null) => {
+    setCommandQuery(query)
+  }, [])
 
   const applyOptimisticItems = React.useCallback((next: SessionRemoteState): SessionRemoteState => ({
     ...next,
@@ -308,6 +317,35 @@ export function SessionDetail({
     getOptimisticSessionStateRef.current = getOptimisticSessionState
     tSessionRef.current = tSession
   }, [applyOptimisticItems, clearResolvedOptimisticMessages, getOptimisticSessionState, tSession])
+
+  React.useEffect(() => {
+    if (commandQuery === null || !commandSessionId) {
+      setRuntimeCommands([])
+      setCommandsLoading(false)
+      return
+    }
+    let cancelled = false
+    setCommandsLoading(true)
+    const timer = window.setTimeout(() => {
+      void dashboardApi.getSessionCommands(token, commandSessionId, {
+        query: commandQuery,
+        limit: 50,
+      }).then((response) => {
+        if (cancelled) return
+        setRuntimeCommands(response.commands)
+      }).catch(() => {
+        if (cancelled) return
+        setRuntimeCommands([])
+      }).finally(() => {
+        if (cancelled) return
+        setCommandsLoading(false)
+      })
+    }, COMMAND_QUERY_DEBOUNCE_MS)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [commandQuery, commandSessionId, token])
 
   React.useEffect(() => {
     const optimisticState = getOptimisticSessionState(sessionId)
@@ -820,7 +858,7 @@ export function SessionDetail({
   }
 
   const handleSessionCommand = async (
-    command: SessionCommandId,
+    command: string,
     options: { args: string[]; raw: string },
   ) => {
     if (!session) return
@@ -1152,6 +1190,9 @@ export function SessionDetail({
             effectiveCapabilities={state?.effectiveCapabilities ?? null}
             modelCatalog={state?.catalogs.model ?? null}
             permissionCatalog={state?.catalogs.permission ?? null}
+            runtimeCommands={runtimeCommands}
+            commandsLoading={commandsLoading}
+            onCommandQueryChange={handleCommandQueryChange}
             onValueChange={setComposerDraft}
             onSend={handleSend}
             onInterrupt={handleInterrupt}

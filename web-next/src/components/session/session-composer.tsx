@@ -27,6 +27,7 @@ import type {
   ProtocolCapabilitySet,
   ProtocolModelCatalog,
   ProtocolPermissionCatalog,
+  RuntimeCommand,
   SessionRuntimeState,
   SessionView,
 } from "@/features/dashboard/types"
@@ -43,8 +44,6 @@ import { useElementWidth } from "@/hooks/use-element-width"
 
 export type { AttachedFile }
 
-export type SessionCommandId = "help" | "interrupt" | "release" | "takeover"
-
 export function SessionComposer({
   session,
   runtimeState,
@@ -57,6 +56,9 @@ export function SessionComposer({
   effectiveCapabilities,
   modelCatalog,
   permissionCatalog,
+  runtimeCommands,
+  commandsLoading = false,
+  onCommandQueryChange,
   onValueChange,
   onSend,
   onInterrupt,
@@ -74,6 +76,9 @@ export function SessionComposer({
   effectiveCapabilities: ProtocolCapabilitySet | null
   modelCatalog: ProtocolModelCatalog | null
   permissionCatalog: ProtocolPermissionCatalog | null
+  runtimeCommands: RuntimeCommand[]
+  commandsLoading?: boolean
+  onCommandQueryChange: (query: string | null) => void
   onValueChange: (value: string) => void
   onSend: (
     content: string,
@@ -81,7 +86,7 @@ export function SessionComposer({
     selections: { model?: string; permission?: string },
   ) => Promise<boolean>
   onInterrupt: () => void
-  onCommand: (command: SessionCommandId, options: { args: string[]; raw: string }) => void
+  onCommand: (command: string, options: { args: string[]; raw: string }) => void
   onToggleTakeover: () => void
 }) {
   const tSession = useTranslations("dashboard.session")
@@ -193,32 +198,14 @@ export function SessionComposer({
             ? tSession("busyPlaceholder")
             : tSession("replyPlaceholder")
   const commandQuery = commandQueryFromValue(value)
-  const commandSuggestions = React.useMemo(
-    () =>
-      sessionCommands({
-        canInterrupt: showInterrupt && !interrupting,
-        canRelease: session.takeover,
-        canTakeover: !session.takeover && connectorOnline && !takeoverBusy && !creatingSession,
-        t: tSession,
-      }).filter((command) =>
-        commandQuery === null
-          ? false
-          : command.id.includes(commandQuery) ||
-            command.label.toLowerCase().includes(commandQuery) ||
-            command.aliases.some((alias) => alias.includes(commandQuery)),
-      ),
-    [
-      commandQuery,
-      connectorOnline,
-      creatingSession,
-      interrupting,
-      session.takeover,
-      showInterrupt,
-      tSession,
-      takeoverBusy,
-    ],
-  )
   const showCommandMenu = commandQuery !== null && attachments.length === 0
+  const commandSuggestions = React.useMemo(
+    () => runtimeCommands.filter((command) => commandMatchesQuery(command, commandQuery)),
+    [commandQuery, runtimeCommands],
+  )
+  React.useEffect(() => {
+    onCommandQueryChange(showCommandMenu ? commandQuery : null)
+  }, [commandQuery, onCommandQueryChange, showCommandMenu])
   const canSubmitCommand = commandQuery !== null && attachments.length === 0 && canRunCommand
   const canSubmitMessage = canSend && session.takeover && hasInput
 
@@ -285,22 +272,26 @@ export function SessionComposer({
                       type="button"
                       className={cn(
                         "flex w-full items-start gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-accent hover:text-accent-foreground",
-                        command.disabled && "cursor-not-allowed opacity-50 hover:bg-transparent hover:text-current",
+                        !command.enabled && "cursor-not-allowed opacity-50 hover:bg-transparent hover:text-current",
                       )}
-                      disabled={command.disabled}
+                      disabled={!command.enabled}
                       onClick={() => {
-                        if (command.disabled) return
+                        if (!command.enabled) return
                         onValueChange("")
                         onCommand(command.id, { args: [], raw: `/${command.id}` })
                       }}
                     >
                       <span className="code-mono shrink-0 text-xs text-primary">/{command.id}</span>
                       <span className="min-w-0">
-                        <span className="block font-medium">{command.label}</span>
-                        <span className="block text-xs text-muted-foreground">{command.description}</span>
+                        <span className="block font-medium">{command.title}</span>
+                        <span className="block text-xs text-muted-foreground">
+                          {command.disabledReason || command.description}
+                        </span>
                       </span>
                     </button>
                   ))
+                ) : commandsLoading ? (
+                  <div className="px-3 py-2 text-xs text-muted-foreground">{tSession("commandLoading")}</div>
                 ) : (
                   <div className="px-3 py-2 text-xs text-muted-foreground">{tSession("commandNoMatches")}</div>
                 )}
@@ -512,70 +503,46 @@ export function SessionComposer({
   )
 }
 
-type SessionCommand = {
-  id: SessionCommandId
-  label: string
-  description: string
-  aliases: string[]
-  disabled?: boolean
-}
-
-function sessionCommands({
-  canInterrupt,
-  canRelease,
-  canTakeover,
-  t,
-}: {
-  canInterrupt: boolean
-  canRelease: boolean
-  canTakeover: boolean
-  t: ReturnType<typeof useTranslations>
-}): SessionCommand[] {
-  return [
-    {
-      id: "help",
-      label: t("commandHelp"),
-      description: t("commandHelpDescription"),
-      aliases: ["commands", "?"],
-    },
-    {
-      id: "interrupt",
-      label: t("commandInterrupt"),
-      description: t("commandInterruptDescription"),
-      aliases: ["stop", "cancel"],
-      disabled: !canInterrupt,
-    },
-    {
-      id: "takeover",
-      label: t("commandTakeover"),
-      description: t("commandTakeoverDescription"),
-      aliases: ["control"],
-      disabled: !canTakeover,
-    },
-    {
-      id: "release",
-      label: t("commandRelease"),
-      description: t("commandReleaseDescription"),
-      aliases: ["readonly", "read-only"],
-      disabled: !canRelease,
-    },
-  ]
-}
-
 function commandQueryFromValue(value: string): string | null {
   const parsed = parseCommandValue(value)
   return parsed.command
 }
 
-function commandFromValue(value: string, suggestions: SessionCommand[]): SessionCommand | null {
+function commandFromValue(value: string, suggestions: RuntimeCommand[]): RuntimeCommand | null {
   const parsed = parseCommandValue(value)
   const query = parsed.command
   if (query === null) return null
+  if (!query) return null
   const exact = suggestions.find((command) => command.id === query || command.aliases.includes(query))
-  if (exact && !exact.disabled) return exact
+  if (exact && exact.enabled && (commandAcceptsParsedArgs(exact, parsed.args))) return exact
   if (parsed.args.length > 0) return null
-  const onlyEnabled = suggestions.filter((command) => !command.disabled)
+  const onlyEnabled = suggestions.filter((command) => command.enabled)
   return onlyEnabled.length === 1 ? onlyEnabled[0] ?? null : null
+}
+
+function commandMatchesQuery(command: RuntimeCommand, query: string | null): boolean {
+  if (query === null) return false
+  const normalized = query.toLowerCase()
+  if (!normalized) return true
+  return (
+    fuzzyIncludes(command.id.toLowerCase(), normalized) ||
+    fuzzyIncludes(command.title.toLowerCase(), normalized) ||
+    command.aliases.some((alias) => fuzzyIncludes(alias.toLowerCase(), normalized))
+  )
+}
+
+function fuzzyIncludes(value: string, query: string): boolean {
+  if (value.includes(query)) return true
+  let index = 0
+  for (const char of value) {
+    if (char === query[index]) index += 1
+    if (index === query.length) return true
+  }
+  return query.length === 0
+}
+
+function commandAcceptsParsedArgs(command: RuntimeCommand, args: string[]): boolean {
+  return args.length === 0 || command.acceptsArgs
 }
 
 function parseCommandValue(value: string): { command: string | null; args: string[]; raw: string } {
@@ -584,7 +551,7 @@ function parseCommandValue(value: string): { command: string | null; args: strin
   const parts = raw.slice(1).split(/\s+/).filter(Boolean)
   const command = parts[0]?.toLowerCase() ?? ""
   return {
-    command: command || null,
+    command,
     args: parts.slice(1),
     raw,
   }

@@ -817,6 +817,7 @@ class SessionCommandListResponse(BaseModel):
 class SessionCommandResponse(BaseModel):
     command: str
     ok: bool = True
+    code: str | None = None
     message: str | None = None
     result: Any = None
     session: SessionView | None = None

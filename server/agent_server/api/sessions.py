@@ -753,6 +753,7 @@ async def execute_session_command(
     return SessionCommandResponse(
         command=str(result.get("command") or payload.command),
         ok=bool(result.get("ok", True)),
+        code=result.get("code") if isinstance(result.get("code"), str) else None,
         message=result.get("message") if isinstance(result.get("message"), str) else None,
         result=result.get("result"),
         serverTime=utc_now(),
