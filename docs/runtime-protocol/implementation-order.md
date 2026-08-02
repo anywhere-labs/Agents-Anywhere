@@ -249,7 +249,7 @@ Goal: replace adapter-side server notification construction with a Connector-own
 Add:
 
 ```text
-connector/connector/runtime_protocol/host_server.py
+connector/connector/server/runtime_host.py
 ```
 
 This host client maps semantic runtime events to the Connector server channel:
@@ -275,6 +275,8 @@ Rules:
 Acceptance:
 
 - Codex/Claude runtime implementations can report meta/state/timeline/notice through `RuntimeHostClient`.
+- `BackendRpcClient` can route migrated runtime calls through `RuntimeSupervisor -> AgentRuntime`.
+- Migrated `turn.start`, `turn.steer`, and `turn.interrupt` dispatch paths prefer `AgentRuntime` and fall back to legacy adapters only during migration.
 - `backendNotifications` is no longer needed for newly migrated runtime code.
 
 ## Phase 4: migrate Codex provider/runtime directly
@@ -332,7 +334,7 @@ Acceptance:
 - Codex turn start updates `SessionState.status` through `waiting` then `running`, and `turn/completed` maps back to `idle`.
 - Codex no longer returns `backendNotifications`.
 - Codex runtime events produce `SessionMeta`, `SessionState`, `SessionTimeline`, and `SessionNotice`.
-- Codex message, steer, interrupt, and selection update paths use `AgentRuntime`.
+- Codex turn start, steer, and interrupt paths use `AgentRuntime` when the native runtime is running.
 
 ## Phase 5: add Server `SessionState` as durable projection
 

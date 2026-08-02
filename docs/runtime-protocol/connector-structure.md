@@ -147,6 +147,15 @@ Connector application layer for talking to Agents Anywhere Server:
 - mapping `RuntimeHostClient` calls to server ingest notifications
 - attachment download/upload bridge
 
+Current implementation has started this split with:
+
+```text
+server/runtime_host.py
+  ConnectorRuntimeHost
+```
+
+`ConnectorRuntimeHost` is the compatibility boundary that maps semantic runtime host calls to the current `session.updated`, `timeline.sync`, `timeline.itemUpsert`, `notice.upsert`, and `runtime.error` ingest notifications. Runtime adapters should call the host client, not emit server notification method names themselves.
+
 `server/` owns the actual network client. Runtime adapters must not call server HTTP/WS directly.
 
 ### `runtime/`

@@ -10,13 +10,23 @@ from typing import Any
 from websockets.exceptions import ConnectionClosedError
 from websockets.frames import Close
 
+from connector.core.runtime_config_store import JsonRuntimeConfigStore
+from connector.local.terminal import TerminalBackend
 from connector.runtime import (
     BackendRpcClient,
     ConnectorAuthenticationError,
     ConnectorConfig,
     _coalesce_timeline_item_upserts,
 )
-from connector.local.terminal import TerminalBackend
+from connector.runtime_protocol import (
+    AgentRuntime,
+    RuntimeConfig,
+    RuntimeIdentity,
+    RuntimeInventoryItem,
+    RuntimeOperationResult,
+    RuntimeProvider,
+)
+from connector.runtime_protocol.host import RuntimeHostClient
 
 
 class FakeAdapter:
@@ -82,6 +92,126 @@ class FakeAdapter:
     async def resolve_approval(self, params: dict[str, Any]) -> dict[str, Any]:
         self.calls.append(("approval.resolve", params))
         return {"resolved": True}
+
+
+class FakeAgentRuntime(AgentRuntime):
+    def __init__(self) -> None:
+        self.started = False
+        self.stopped = False
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    @property
+    def identity(self) -> RuntimeIdentity:
+        return RuntimeIdentity(runtime="codex", adapter_version="test")
+
+    async def start(self) -> None:
+        self.started = True
+
+    async def stop(self) -> None:
+        self.stopped = True
+
+    async def start_turn(
+        self,
+        session_id: str,
+        external_session_id: str | None,
+        content: str,
+        attachments=(),  # type: ignore[no-untyped-def]
+        client_message_id: str | None = None,
+    ) -> RuntimeOperationResult:
+        self.calls.append(
+            (
+                "turn.start",
+                {
+                    "sessionId": session_id,
+                    "externalSessionId": external_session_id,
+                    "content": content,
+                    "attachments": attachments,
+                    "clientMessageId": client_message_id,
+                },
+            )
+        )
+        return RuntimeOperationResult(ok=True, result={"turnId": "turn_agent"})
+
+    async def steer_turn(
+        self,
+        session_id: str,
+        external_session_id: str | None,
+        content: str,
+        attachments=(),  # type: ignore[no-untyped-def]
+        client_message_id: str | None = None,
+    ) -> RuntimeOperationResult:
+        self.calls.append(
+            (
+                "turn.steer",
+                {
+                    "sessionId": session_id,
+                    "externalSessionId": external_session_id,
+                    "content": content,
+                    "attachments": attachments,
+                    "clientMessageId": client_message_id,
+                },
+            )
+        )
+        return RuntimeOperationResult(ok=True, result={"steered": True, "turnId": "turn_agent"})
+
+    async def interrupt_turn(
+        self,
+        session_id: str,
+        external_session_id: str | None = None,
+        reason: str | None = None,
+    ) -> RuntimeOperationResult:
+        self.calls.append(
+            (
+                "turn.interrupt",
+                {
+                    "sessionId": session_id,
+                    "externalSessionId": external_session_id,
+                    "reason": reason,
+                },
+            )
+        )
+        return RuntimeOperationResult(ok=True, result={"interrupted": True, "turnId": "turn_agent"})
+
+
+class FakeAgentProvider(RuntimeProvider):
+    def __init__(self, runtime: FakeAgentRuntime) -> None:
+        self._runtime = runtime
+
+    @property
+    def runtime(self) -> str:
+        return "codex"
+
+    @property
+    def runtime_type(self) -> str:
+        return "codex"
+
+    @property
+    def display_name(self) -> str:
+        return "Codex"
+
+    async def discover(self) -> RuntimeInventoryItem:
+        return RuntimeInventoryItem(
+            runtime="codex",
+            runtime_type="codex",
+            display_name="Codex",
+            available=True,
+            configured=True,
+        )
+
+    async def validate_config(self, values) -> RuntimeConfig:  # type: ignore[no-untyped-def]
+        return RuntimeConfig(runtime="codex", revision=1, values=dict(values))
+
+    async def create_runtime(
+        self,
+        config: RuntimeConfig,
+        host: RuntimeHostClient,
+    ) -> AgentRuntime:
+        _ = config
+        _ = host
+        return self._runtime
+
+    async def stop_runtime(self, runtime: AgentRuntime) -> None:
+        await runtime.stop()
 
 
 
@@ -209,6 +339,14 @@ def test_connector_runtime_dispatches_async_shell_tasks(tmp_path) -> None:
 
 def test_connector_runtime_routes_by_runtime_param() -> None:
     asyncio.run(_exercise_multi_adapter_routing())
+
+
+def test_connector_runtime_prefers_agent_runtime_for_turn_rpc(tmp_path) -> None:
+    asyncio.run(_exercise_agent_runtime_turn_rpc(tmp_path))
+
+
+def test_connector_runtime_discovers_agent_runtime_inventory() -> None:
+    asyncio.run(_exercise_agent_runtime_discovery())
 
 
 
@@ -731,6 +869,100 @@ async def _exercise_multi_adapter_routing() -> None:
     assert codex.calls[0][1]["connectorId"] == "conn_1"
     assert claude.calls[0][1]["sessionId"] == "s2"
     assert claude.calls[0][1]["connectorId"] == "conn_1"
+
+
+async def _exercise_agent_runtime_turn_rpc(tmp_path) -> None:
+    legacy = FakeAdapter()
+    agent_runtime = FakeAgentRuntime()
+    client = BackendRpcClient(
+        ConnectorConfig(
+            server_url="http://127.0.0.1:8000",
+            connector_id="conn_1",
+            connector_token="token",
+            sync_existing_on_connect=False,
+        ),
+        adapters={"codex": legacy},
+        agent_runtime_providers=(FakeAgentProvider(agent_runtime),),
+        runtime_config_store=JsonRuntimeConfigStore(tmp_path / "runtime-configs.json"),
+    )
+    client._ws = FakeWebSocket()  # type: ignore[assignment]
+    await client.dispatch("runtime.start", {"runtimeId": "codex", "config": {}})
+
+    started = await client.dispatch(
+        "turn.start",
+        {
+            "runtime": "codex",
+            "sessionId": "sess_1",
+            "externalSessionId": "thr_1",
+            "content": "hi",
+            "clientMessageId": "cm_1",
+            "attachments": [{"fileId": "file_1", "name": "a.txt"}],
+        },
+    )
+    steered = await client.dispatch(
+        "turn.steer",
+        {
+            "runtime": "codex",
+            "sessionId": "sess_1",
+            "externalSessionId": "thr_1",
+            "content": "focus",
+            "clientMessageId": "cm_2",
+        },
+    )
+    interrupted = await client.dispatch(
+        "turn.interrupt",
+        {
+            "runtime": "codex",
+            "sessionId": "sess_1",
+            "externalSessionId": "thr_1",
+            "reason": "user",
+        },
+    )
+
+    assert agent_runtime.started is True
+    assert legacy.calls == []
+    assert started == {"turnId": "turn_agent"}
+    assert steered == {"steered": True, "turnId": "turn_agent"}
+    assert interrupted == {"interrupted": True, "turnId": "turn_agent"}
+    assert [call[0] for call in agent_runtime.calls] == [
+        "turn.start",
+        "turn.steer",
+        "turn.interrupt",
+    ]
+    assert agent_runtime.calls[0][1]["attachments"][0].file_id == "file_1"
+    assert agent_runtime.calls[0][1]["clientMessageId"] == "cm_1"
+
+
+async def _exercise_agent_runtime_discovery() -> None:
+    agent_runtime = FakeAgentRuntime()
+    client = BackendRpcClient(
+        ConnectorConfig(
+            server_url="http://127.0.0.1:8000",
+            connector_id="conn_1",
+            connector_token="token",
+            sync_existing_on_connect=False,
+        ),
+        adapters={},
+        agent_runtime_providers=(FakeAgentProvider(agent_runtime),),
+    )
+    client._ws = FakeWebSocket()  # type: ignore[assignment]
+
+    inventory = await client.dispatch("runtime.discover", {})
+
+    assert inventory["runtimes"] == [
+        {
+            "runtimeId": "codex",
+            "runtimeType": "codex",
+            "displayName": "Codex",
+            "discovery": {"available": True},
+            "schema": None,
+            "uiSchema": None,
+            "defaults": {},
+            "status": "available",
+            "configured": True,
+            "metadata": {},
+        }
+    ]
 
 
 

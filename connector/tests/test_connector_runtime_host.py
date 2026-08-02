@@ -1,0 +1,105 @@
+from __future__ import annotations
+
+import asyncio
+from typing import Any
+
+from connector.runtime_protocol import RuntimeTimelineItem
+from connector.server.runtime_host import ConnectorRuntimeHost
+
+
+def test_connector_runtime_host_maps_timeline_item_to_backend_notification() -> None:
+    asyncio.run(_exercise_timeline_item_notification())
+
+
+async def _exercise_timeline_item_notification() -> None:
+    notifications: list[tuple[str, dict[str, Any]]] = []
+
+    async def notify(method: str, params: dict[str, Any]) -> None:
+        notifications.append((method, params))
+
+    async def download(session_id: str, file_id: str) -> tuple[bytes, str, str]:
+        _ = session_id
+        return b"data", f"{file_id}.txt", "text/plain"
+
+    host = ConnectorRuntimeHost(
+        connector_id="conn_1",
+        notifier=notify,
+        attachment_downloader=download,
+    )
+
+    await host.timeline_item_upsert(
+        RuntimeTimelineItem(
+            id="item_1",
+            session_id="sess_1",
+            type="message",
+            status="running",
+            order_seq=7,
+            content_hash="sha256:abc",
+            role="assistant",
+            turn_id="turn_1",
+            content={"text": "hi", "format": "markdown"},
+            source={
+                "runtime": "codex",
+                "threadId": "thr_1",
+                "rawType": "agentMessage",
+                "event": "item/agentMessage/delta",
+            },
+            revision=3,
+        )
+    )
+
+    assert notifications == [
+        (
+            "timeline.itemUpsert",
+            {
+                "sessionId": "sess_1",
+                "item": {
+                    "id": "item_1",
+                    "sessionId": "sess_1",
+                    "turnId": "turn_1",
+                    "type": "message",
+                    "status": "running",
+                    "role": "assistant",
+                    "content": {"text": "hi", "format": "markdown"},
+                    "source": {
+                        "runtime": "codex",
+                        "sessionId": "thr_1",
+                        "turnId": "turn_1",
+                        "itemId": "item_1",
+                        "itemType": "agentMessage",
+                        "event": "item/agentMessage/delta",
+                    },
+                    "orderSeq": 7,
+                    "revision": 3,
+                    "contentHash": "sha256:abc",
+                },
+            },
+        )
+    ]
+
+
+def test_connector_runtime_host_maps_attachment_download() -> None:
+    asyncio.run(_exercise_attachment_download())
+
+
+async def _exercise_attachment_download() -> None:
+    async def notify(method: str, params: dict[str, Any]) -> None:
+        _ = method
+        _ = params
+
+    async def download(session_id: str, file_id: str) -> tuple[bytes, str, str]:
+        assert session_id == "sess_1"
+        assert file_id == "file_1"
+        return b"data", "example.txt", "text/plain"
+
+    host = ConnectorRuntimeHost(
+        connector_id="conn_1",
+        notifier=notify,
+        attachment_downloader=download,
+    )
+
+    content = await host.attachment_download("sess_1", "file_1")
+
+    assert content.content == b"data"
+    assert content.name == "example.txt"
+    assert content.media_type == "text/plain"
