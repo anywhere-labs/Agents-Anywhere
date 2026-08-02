@@ -528,8 +528,10 @@ Acceptance:
 
 Status: partial. Message selection payload cleanup, runtime-driven command
 mode, and dashboard WebSocket lifecycle without fixed connector/session polling
-are done. Session snapshot-poll elimination and full meta/state/timeline/notices
-split remain.
+are done. Session detail no longer snapshots after ordinary disconnected
+message/command/interaction actions; direct snapshots are limited to initial
+load and explicit `snapshotRequired` recovery. The full
+meta/state/timeline/notices endpoint split remains.
 
 Goal: make UI read the new protocol projections and live catalogs.
 

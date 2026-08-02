@@ -467,24 +467,6 @@ export function SessionDetail({
     }
   }, [])
 
-  const refresh = React.useCallback(async (options: {
-    scrollToBottom?: boolean
-    preserveBottom?: boolean
-    reason?: string
-  } = {}) => {
-    if (options.preserveBottom ?? true) markAutoScrollIfNearBottom()
-    if (options.scrollToBottom) forceScrollOnNextUpdateRef.current = true
-    setError(null)
-    const next = applyOptimisticItemsRef.current(await loadInitialSessionState(token, sessionId, {
-      reason: options.reason ?? "session-detail.refresh",
-    }))
-    clearResolvedOptimisticMessagesRef.current(sessionId, next.items)
-    setState((current) => current ? { ...next, items: preserveOptimisticItems(next.items, current.items) } : next)
-    nextSeqRef.current = Math.max(nextSeqRef.current, next.nextSeq)
-    onSessionUpdated?.(next.session)
-    return next
-  }, [markAutoScrollIfNearBottom, onSessionUpdated, sessionId, token])
-
   const loadOlderTimeline = React.useCallback(async () => {
     if (loadingOlderRef.current || loadingOlder || !state?.hasMore) return
     const oldestItem = state.items[0]
@@ -632,15 +614,13 @@ export function SessionDetail({
               cursorSequence(recovery.nextCursor),
             )
           })
-          .catch(() => {
-            scheduleRefetch(`${reason}:events-request-failed`)
-          })
+          .catch(() => undefined)
           .finally(() => {
             recoveryPromise = null
           })
         return recoveryPromise
       } catch {
-        scheduleRefetch(`${reason}:events-request-threw`)
+        return undefined
       }
     }
 
@@ -783,16 +763,6 @@ export function SessionDetail({
         attachments: upload?.attachments.map((attachment) => ({ fileId: attachment.fileId })) ?? [],
         clientMessageId,
       })
-      if (!streamConnectedRef.current) {
-        try {
-          await refresh({
-            scrollToBottom: true,
-            reason: "send-message.stream-disconnected",
-          })
-        } catch {
-          // The message was accepted; reconnect recovery remains authoritative.
-        }
-      }
       scrollToBottomThrottled()
       return true
     } catch (err) {
@@ -843,13 +813,6 @@ export function SessionDetail({
     setInterrupting(true)
     try {
       await dashboardApi.interruptSession(token, session.id)
-      if (!streamConnectedRef.current) {
-        try {
-          await refresh({ reason: "interrupt.stream-disconnected" })
-        } catch {
-          // The interrupt was accepted; reconnect recovery will settle the UI.
-        }
-      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : tSession("interruptFailed"))
     } finally {
@@ -876,13 +839,6 @@ export function SessionDetail({
       if (response.message) {
         toast.message(response.message)
       }
-      if (!streamConnectedRef.current) {
-        try {
-          await refresh({ reason: `command.${command}.stream-disconnected` })
-        } catch {
-          // The command was accepted; reconnect recovery remains authoritative.
-        }
-      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : tSession("commandFailed"))
     }
@@ -895,13 +851,6 @@ export function SessionDetail({
     try {
       if (!session) return
       await dashboardApi.respondInteraction(token, session.id, noticeId, actionId)
-      if (!streamConnectedRef.current) {
-        try {
-          await refresh({ reason: "interaction.stream-disconnected" })
-        } catch {
-          // The response was accepted; reconnect recovery will settle the UI.
-        }
-      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : tSession("resolveInteractionFailed"))
     } finally {
