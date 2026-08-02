@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from copy import deepcopy
 from typing import Annotated, Any, Literal
@@ -24,10 +25,21 @@ CODEX_DEFAULT_MODEL = "gpt-5.6-sol"
 CODEX_DEFAULT_EFFORT = "medium"
 
 
+class PersistedRuntimeConfigError(ValueError):
+    """Stored runtime configuration is corrupt or no longer decodable."""
+
+
 class RuntimeConfigOption(BaseModel):
     value: str | bool
     label: str
     description: str | None = None
+    # `isDefault` is deliberately optional-on-the-wire: older servers did not
+    # expose it, while newer clients need a deterministic fallback when a
+    # model switch invalidates the previous reasoning effort.
+    isDefault: bool = False
+    # None means the runtime did not describe per-model effort constraints and
+    # the top-level effort field remains authoritative. An empty list means the
+    # model explicitly does not support a reasoning-effort setting.
     efforts: list["RuntimeConfigOption"] | None = None
 
 
@@ -307,7 +319,7 @@ DEFAULT_RUNTIME_CONFIG_SCHEMAS: dict[str, RuntimeConfigSchema] = {
                 type="enum",
                 allowSessionOverride=True,
                 options=[
-                    RuntimeConfigOption(value="gpt-5.6-sol", label="GPT-5.6-Sol"),
+                    RuntimeConfigOption(value="gpt-5.6-sol", label="GPT-5.6-Sol", isDefault=True),
                     RuntimeConfigOption(value="gpt-5.6-terra", label="GPT-5.6-Terra"),
                     RuntimeConfigOption(value="gpt-5.6-luna", label="GPT-5.6-Luna"),
                     RuntimeConfigOption(value="gpt-5.5", label="GPT-5.5"),
@@ -324,7 +336,7 @@ DEFAULT_RUNTIME_CONFIG_SCHEMAS: dict[str, RuntimeConfigSchema] = {
                 allowSessionOverride=True,
                 options=[
                     RuntimeConfigOption(value="low", label="Low"),
-                    RuntimeConfigOption(value="medium", label="Medium"),
+                    RuntimeConfigOption(value="medium", label="Medium", isDefault=True),
                     RuntimeConfigOption(value="high", label="High"),
                     RuntimeConfigOption(value="xhigh", label="Extra high"),
                     RuntimeConfigOption(value="max", label="Max"),
@@ -334,6 +346,94 @@ DEFAULT_RUNTIME_CONFIG_SCHEMAS: dict[str, RuntimeConfigSchema] = {
         ],
     ),
 }
+
+
+def _rollback_safe_runtime_config_schemas() -> dict[str, RuntimeConfigSchema]:
+    """Return the schema shape a pre-GPT-5.6 server can safely consume.
+
+    The current service projects GPT-5.6 into memory, but startup seeds only
+    this Codex v3 representation.  A rollback therefore sees its familiar
+    catalog rather than rows it cannot validate.
+    """
+    result = deepcopy(DEFAULT_RUNTIME_CONFIG_SCHEMAS)
+    codex = result["codex"]
+    codex.schemaVersion = 3
+    for field in codex.fields:
+        if field.key == "model":
+            field.options = [
+                # v3 persistence deliberately carries no new-only default
+                # metadata. The preceding server derives its own defaults.
+                option.model_copy(update={"isDefault": False})
+                for option in field.options or []
+                if str(option.value) in {
+                    "gpt-5.5",
+                    "gpt-5.4",
+                    "gpt-5.4-mini",
+                    "gpt-5.3-codex",
+                    "gpt-5.2",
+                }
+            ]
+        elif field.key == "effort":
+            field.options = [
+                option.model_copy(update={"isDefault": False})
+                for option in field.options or []
+                if str(option.value) in {"low", "medium", "high", "xhigh"}
+            ]
+    return result
+
+
+ROLLBACK_SAFE_RUNTIME_CONFIG_SCHEMAS = _rollback_safe_runtime_config_schemas()
+
+
+def is_rollback_safe_codex_schema(schema: RuntimeConfigSchema) -> bool:
+    return _schema_builtin_signature(schema) == _schema_builtin_signature(
+        ROLLBACK_SAFE_RUNTIME_CONFIG_SCHEMAS["codex"]
+    )
+
+
+def is_current_builtin_codex_schema(schema: RuntimeConfigSchema) -> bool:
+    return _schema_builtin_signature(schema) == _schema_builtin_signature(
+        DEFAULT_RUNTIME_CONFIG_SCHEMAS["codex"]
+    )
+
+
+def _schema_builtin_signature(schema: RuntimeConfigSchema) -> tuple[Any, ...]:
+    def option_signature(option: RuntimeConfigOption) -> tuple[Any, ...]:
+        return (
+            option.value,
+            option.label,
+            option.description,
+            option.isDefault,
+            None
+            if option.efforts is None
+            else tuple(option_signature(effort) for effort in option.efforts),
+        )
+
+    def field_signature(field: RuntimeConfigField) -> tuple[Any, ...]:
+        return (
+            field.key,
+            field.label,
+            field.type,
+            field.description,
+            field.runtimeOptionsSource,
+            json.dumps(field.visibleWhen, sort_keys=True, separators=(",", ":"))
+            if field.visibleWhen is not None
+            else None,
+            field.allowSessionOverride,
+            field.hidden,
+            None
+            if field.options is None
+            else tuple(option_signature(option) for option in field.options),
+            None
+            if field.fields is None
+            else tuple(field_signature(child) for child in field.fields),
+        )
+
+    return (
+        schema.runtime,
+        schema.schemaVersion,
+        tuple(field_signature(field) for field in schema.fields),
+    )
 
 CLAUDE_NO_EFFORT_MODEL = "claude-haiku-4-5"
 _CLAUDE_OPUS_48_47_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max"})
@@ -355,6 +455,38 @@ def default_runtime_settings(runtime: str) -> dict[str, Any]:
         # ACP / unknown agents: empty defaults (no model/permission schema yet).
         return {}
     return deepcopy(settings)
+
+
+def inherited_runtime_setting_keys(runtime: str, persisted: Any) -> set[str]:
+    """Return Codex settings that still inherit the server default.
+
+    A durable ``null`` means "use this server's default", rather than
+    pinning a newly introduced model into a row read by an older server.  The
+    caller supplies the persisted/raw value so an explicit user selection is
+    never mistaken for inheritance.
+    """
+    if runtime != "codex":
+        return set()
+    raw = persisted if isinstance(persisted, dict) else {}
+    return {key for key in ("model", "effort") if raw.get(key) is None}
+
+
+def rollback_safe_inherited_runtime_settings(
+    runtime: str,
+    settings: dict[str, Any],
+    *,
+    inherited_keys: set[str],
+) -> dict[str, Any]:
+    """Persist inherited Codex model/effort as ``null`` values.
+
+    This is intentionally provenance-driven, not value-driven: an explicit
+    choice of the current default (for example Sol / Medium) remains durable.
+    """
+    result = deepcopy(settings)
+    if runtime == "codex":
+        for key in inherited_keys & {"model", "effort"}:
+            result[key] = None
+    return result
 
 
 def normalize_runtime_settings(runtime: str, settings: dict[str, Any]) -> dict[str, Any]:
@@ -513,13 +645,16 @@ def merge_schema_with_agent_options(
 
     if models:
         model_field = next((field for field in result.fields if field.key == "model"), None)
+        static_options = {
+            str(option.value): option
+            for option in (model_field.options if model_field is not None else []) or []
+        }
         options = [
-            RuntimeConfigOption(
-                value=str(item.get("value")),
-                label=str(item.get("label") or item.get("name") or item.get("value")),
-            )
+            option
             for item in models
-            if item.get("value") is not None
+            if isinstance(item, dict)
+            for option in [_runtime_option_from_agent_option(item, static_options)]
+            if option is not None
         ]
         if model_field is None and options:
             result.fields.append(
@@ -540,9 +675,10 @@ def merge_schema_with_agent_options(
             RuntimeConfigOption(
                 value=str(item.get("value")),
                 label=str(item.get("label") or item.get("name") or item.get("value")),
+                isDefault=bool(item.get("isDefault", False)),
             )
             for item in modes
-            if item.get("value") is not None
+            if isinstance(item, dict) and item.get("value") is not None
         ]
         if mode_field is None and options:
             result.fields.append(
@@ -560,6 +696,82 @@ def merge_schema_with_agent_options(
     return result
 
 
+def _runtime_option_from_agent_option(
+    item: dict[str, Any],
+    static_options: dict[str, RuntimeConfigOption],
+) -> RuntimeConfigOption | None:
+    """Normalize a device-discovered model while retaining static constraints.
+
+    Codex emits `model` / `displayName` / `supportedReasoningEfforts`; ACP
+    adapters historically emit `value` / `label`.  A live entry that omits
+    nested efforts is not an assertion that effort is unsupported: retain the
+    matching static option, or leave it as None so the global effort field is
+    used.  An explicit empty array is the only "no effort" signal.
+    """
+    value = item.get("value")
+    if value is None:
+        value = item.get("model")
+    if value is None:
+        value = item.get("id")
+    if not isinstance(value, (str, bool)) or value == "":
+        return None
+    if item.get("hidden") is True:
+        return None
+    key = str(value)
+    static = static_options.get(key)
+    label = item.get("label") or item.get("displayName") or item.get("name") or key
+    raw_efforts = item.get("supportedReasoningEfforts")
+    if raw_efforts is None and "efforts" in item:
+        raw_efforts = item.get("efforts")
+    efforts = _runtime_effort_options(
+        raw_efforts,
+        default=item.get("defaultReasoningEffort"),
+    )
+    if raw_efforts is None and static is not None:
+        efforts = deepcopy(static.efforts)
+    return RuntimeConfigOption(
+        value=value,
+        label=str(label),
+        description=(
+            item.get("description")
+            if isinstance(item.get("description"), str)
+            else (static.description if static is not None else None)
+        ),
+        isDefault=bool(item.get("isDefault", static.isDefault if static is not None else False)),
+        efforts=efforts,
+    )
+
+
+def _runtime_effort_options(raw: Any, *, default: Any) -> list[RuntimeConfigOption] | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        # A malformed live constraint must not be reinterpreted as an explicit
+        # empty list (which would silently disable a valid setting).
+        return None
+    default_key = default if isinstance(default, str) else None
+    result: list[RuntimeConfigOption] = []
+    seen: set[str] = set()
+    for item in raw:
+        if isinstance(item, str):
+            value = item
+            label = item.replace("xhigh", "Extra high").replace("_", " ").title()
+            is_default = value == default_key
+        elif isinstance(item, dict):
+            value = item.get("value") or item.get("effort") or item.get("key")
+            if not isinstance(value, str) or not value:
+                continue
+            label = item.get("label") or item.get("displayName") or item.get("name") or value
+            is_default = bool(item.get("isDefault", value == default_key))
+        else:
+            continue
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(RuntimeConfigOption(value=value, label=str(label), isDefault=is_default))
+    return result
+
+
 def _options_from_acp_config(
     config_options: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -573,6 +785,7 @@ def _options_from_acp_config(
         values = opt.get("options") if isinstance(opt.get("options"), list) else []
         parsed = [
             {
+                **entry,
                 "value": str(entry.get("value")),
                 "label": str(entry.get("name") or entry.get("label") or entry.get("value")),
             }
@@ -632,7 +845,7 @@ def _normalize_model_effort_from_schema(
         if "model" in explicit_keys:
             raise ValueError(f"model has unsupported value: {model}")
         if model_options:
-            model = model_options[0].value
+            model = _default_schema_model(model_options)
             result["model"] = model
     allowed = _schema_efforts_for_model(model_field, effort_field, model)
     if allowed is None:
@@ -646,14 +859,19 @@ def _normalize_model_effort_from_schema(
         if "effort" in explicit_keys:
             raise ValueError(f"effort {effort} is not supported by {model}")
         result["effort"] = (
-            _first_schema_effort_for_model(model_field, model)
+            _default_schema_effort_for_model(model_field, model)
             if schema.runtime == "codex"
             else None
         )
     return result
 
 
-def _first_schema_effort_for_model(
+def _default_schema_model(model_options: list[RuntimeConfigOption]) -> str | bool:
+    selected = next((option for option in model_options if option.isDefault), model_options[0])
+    return selected.value
+
+
+def _default_schema_effort_for_model(
     model_field: RuntimeConfigField,
     model: Any,
 ) -> str | None:
@@ -665,9 +883,10 @@ def _first_schema_effort_for_model(
         ),
         None,
     )
-    if selected is None or not selected.efforts:
+    if selected is None or selected.efforts is None or not selected.efforts:
         return None
-    return str(selected.efforts[0].value)
+    effort = next((option for option in selected.efforts if option.isDefault), selected.efforts[0])
+    return str(effort.value)
 
 
 def _schema_efforts_for_model(
@@ -683,11 +902,13 @@ def _schema_efforts_for_model(
                 for option in model_options
                 if isinstance(model, str) and model and option.value == model
             ),
-            model_options[0] if not isinstance(model, str) or not model else None,
+            _default_schema_option(model_options) if not isinstance(model, str) or not model else None,
         )
         if selected is None:
             return None
-        return {str(effort.value) for effort in (selected.efforts or [])}
+        if selected.efforts is None:
+            return {str(option.value) for option in (effort_field.options or [])}
+        return {str(effort.value) for effort in selected.efforts}
     if isinstance(model, str) and model:
         for option in model_options:
             if option.value == model:
@@ -696,6 +917,12 @@ def _schema_efforts_for_model(
     if effort_field.options:
         return {str(option.value) for option in effort_field.options}
     return None
+
+
+def _default_schema_option(options: list[RuntimeConfigOption]) -> RuntimeConfigOption | None:
+    if not options:
+        return None
+    return next((option for option in options if option.isDefault), options[0])
 
 
 def _attach_default_model_efforts(schema: RuntimeConfigSchema) -> None:
@@ -737,6 +964,7 @@ def _catalog_entry_to_option(entry: Any, *, include_efforts: bool) -> RuntimeCon
         value=key,
         label=label,
         description=description if isinstance(description, str) else None,
+        isDefault=bool(_entry_value(entry, "isDefault")),
         efforts=[
             _catalog_entry_to_option(effort, include_efforts=False)
             for effort in (efforts if include_efforts and isinstance(efforts, list) else [])
@@ -751,6 +979,11 @@ def _aggregate_effort_options(model_options: list[RuntimeConfigOption]) -> list[
         for effort in model.efforts or []:
             key = str(effort.value)
             if key in seen:
+                if effort.isDefault:
+                    result = [
+                        item.model_copy(update={"isDefault": True}) if str(item.value) == key else item
+                        for item in result
+                    ]
                 continue
             seen.add(key)
             result.append(effort.model_copy(update={"efforts": None}))

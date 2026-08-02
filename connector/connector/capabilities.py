@@ -20,6 +20,8 @@ from connector.logging import logger
 
 _CODEX_CHECK_TIMEOUT_S = 8.0
 _COMMAND_CHECK_TIMEOUT_S = 8.0
+_CODEX_MODEL_PAGE_SIZE = 100
+_CODEX_MODEL_MAX_PAGES = 100
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,13 +133,19 @@ async def discover_codex_capability(
         result = await _check_codex_candidate(candidate)
         checked.append(result)
         if result["status"] == "ok":
+            report: dict[str, Any] = {
+                "history": "ok",
+                "execution": "ok",
+                "selected": _selected_from_check(result),
+                "checked": checked,
+            }
+            if isinstance(result.get("modelOptions"), list):
+                # Runtime reports are persisted by the server exactly at this
+                # level. Keep the selected candidate's live catalog available
+                # to device/session schema validation and clients.
+                report["modelOptions"] = result["modelOptions"]
             return (
-                {
-                    "history": "ok",
-                    "execution": "ok",
-                    "selected": _selected_from_check(result),
-                    "checked": checked,
-                },
+                report,
                 target,
             )
     return (
@@ -215,11 +223,16 @@ async def _check_codex_candidate(candidate: dict[str, str] | LaunchTarget) -> di
             client.request("thread/list", {"limit": 1, "sortKey": "updated_at"}),
             timeout=_CODEX_CHECK_TIMEOUT_S,
         )
+        model_options = await asyncio.wait_for(
+            _read_codex_model_options(client),
+            timeout=_CODEX_CHECK_TIMEOUT_S,
+        )
     except Exception as exc:
+        stage = "model-list" if "model_options" in locals() or _is_model_list_error(exc) else "app-server"
         return {
             **base,
             "status": "failed",
-            "stage": "app-server",
+            "stage": stage,
             "version": version.get("stdout"),
             "reason": _exception_reason(exc),
         }
@@ -234,7 +247,117 @@ async def _check_codex_candidate(candidate: dict[str, str] | LaunchTarget) -> di
         "status": "ok",
         "version": version.get("stdout"),
         "threadListKeys": sorted(list_result.keys()),
+        "modelOptions": model_options,
     }
+
+
+async def _read_codex_model_options(client: JsonRpcStdioClient) -> list[dict[str, Any]]:
+    """Read every model/list page from the already-started app-server.
+
+    Discovery must prove that the selected Codex can execute the catalog we
+    advertise.  Treat absent, malformed, or empty catalogs as unavailable
+    instead of defaulting to a GPT-5.6 model that an older CLI rejects.
+    """
+    options: list[dict[str, Any]] = []
+    seen_models: set[str] = set()
+    cursor: str | None = None
+    seen_cursors: set[str] = set()
+    for _ in range(_CODEX_MODEL_MAX_PAGES):
+        params: dict[str, Any] = {"limit": _CODEX_MODEL_PAGE_SIZE}
+        if cursor is not None:
+            params["cursor"] = cursor
+        try:
+            result = await asyncio.wait_for(
+                client.request("model/list", params),
+                timeout=_CODEX_CHECK_TIMEOUT_S,
+            )
+        except Exception as exc:
+            raise RuntimeError(f"model/list failed: {_exception_reason(exc)}") from exc
+        page, next_cursor = _codex_model_page(result)
+        for item in page:
+            option = _normalize_codex_model_option(item)
+            if option is None or option["hidden"]:
+                continue
+            model = option["model"]
+            if model in seen_models:
+                continue
+            seen_models.add(model)
+            options.append(option)
+        if next_cursor is None:
+            break
+        if next_cursor in seen_cursors:
+            raise RuntimeError("model/list returned a repeated cursor")
+        seen_cursors.add(next_cursor)
+        cursor = next_cursor
+    else:
+        raise RuntimeError("model/list exceeded pagination limit")
+    if not options:
+        raise RuntimeError("model/list returned no usable models")
+    return options
+
+
+def _codex_model_page(result: Any) -> tuple[list[Any], str | None]:
+    if not isinstance(result, dict):
+        raise RuntimeError("model/list returned a non-object response")
+    raw_models: Any = result.get("models")
+    if raw_models is None:
+        raw_models = result.get("items")
+    if raw_models is None:
+        raw_models = result.get("data")
+    if isinstance(raw_models, dict):
+        raw_models = raw_models.get("items") or raw_models.get("models")
+    if not isinstance(raw_models, list):
+        raise RuntimeError("model/list response has no models list")
+    raw_cursor = (
+        result.get("nextCursor")
+        or result.get("nextPageToken")
+        or result.get("next_page_token")
+    )
+    if raw_cursor is not None and (not isinstance(raw_cursor, str) or not raw_cursor):
+        raise RuntimeError("model/list response has an invalid next cursor")
+    return raw_models, raw_cursor
+
+
+def _normalize_codex_model_option(item: Any) -> dict[str, Any] | None:
+    if not isinstance(item, dict):
+        return None
+    model = item.get("model") or item.get("id") or item.get("value")
+    if not isinstance(model, str) or not model:
+        return None
+    supported = item.get("supportedReasoningEfforts")
+    if supported is None:
+        supported = item.get("supported_reasoning_efforts")
+    if supported is not None and not isinstance(supported, list):
+        raise RuntimeError(f"model/list returned malformed efforts for {model}")
+    normalized_efforts: list[str] | None = None
+    if supported is not None:
+        normalized_efforts = []
+        for effort in supported:
+            if isinstance(effort, str):
+                value = effort
+            elif isinstance(effort, dict):
+                value = effort.get("reasoningEffort") or effort.get("effort")
+            else:
+                value = None
+            if not isinstance(value, str) or not value:
+                raise RuntimeError(f"model/list returned malformed effort for {model}")
+            if value not in normalized_efforts:
+                normalized_efforts.append(value)
+    default_effort = item.get("defaultReasoningEffort") or item.get("default_reasoning_effort")
+    if default_effort is not None and not isinstance(default_effort, str):
+        raise RuntimeError(f"model/list returned malformed default effort for {model}")
+    return {
+        "model": model,
+        "displayName": str(item.get("displayName") or item.get("name") or item.get("label") or model),
+        "isDefault": bool(item.get("isDefault") or item.get("default")),
+        "defaultReasoningEffort": default_effort,
+        "supportedReasoningEfforts": normalized_efforts,
+        "hidden": bool(item.get("hidden", False)),
+    }
+
+
+def _is_model_list_error(exc: BaseException) -> bool:
+    return "model/list" in str(exc)
 
 
 async def _check_claude_candidate(candidate: dict[str, str] | LaunchTarget) -> dict[str, Any]:

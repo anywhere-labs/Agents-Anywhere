@@ -133,115 +133,32 @@ struct SessionDetailView: View {
 
     var body: some View {
         ScrollViewReader { proxy in
-            ZStack(alignment: .bottomTrailing) {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 18) {
-                        if isLoading && displayEntries.isEmpty {
-                            ProgressView()
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 60)
-                        } else if displayEntries.isEmpty {
-                            ContentUnavailableView(
-                                "No Messages Yet",
-                                systemImage: "bubble.left.and.bubble.right",
-                                description: Text("Messages from this session will appear here."),
-                            )
-                            .padding(.top, 80)
-                        } else {
-                            if timeline.hasMore || isLoadingOlder {
-                                ProgressView()
-                                    .opacity(isLoadingOlder ? 1 : 0)
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 12)
-                                .id("load-older")
-                            }
-
-                            ForEach(displayEntries) { entry in
-                                ChatEntryView(
-                                    entry: entry,
-                                    api: appState.api,
-                                    token: appState.accessToken(),
-                                    resolvingApprovalId: resolvingApprovalId,
-                                    resolvingApprovalStatus: resolvingApprovalStatus,
-                                    onResolveApproval: { approval, status in
-                                        Task { await resolveApproval(approval, status: status) }
-                                    },
-                                    onPreviewAttachment: { url in
-                                        attachmentPreviewURL = url
-                                    },
-                                )
-                                    .id(entry.id)
-                            }
-
-                            if session.status == "running" {
-                                WorkingIndicator(runtime: session.runtime)
-                                    .id("working")
-                            }
-                        }
-
-                        Color.clear
-                            .frame(height: 1)
-                            .id(timelineBottomAnchorID)
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 14)
-                    .background {
-                        GeometryReader { geometry in
-                            Color.clear.preference(
-                                key: TimelineContentHeightPreferenceKey.self,
-                                value: geometry.size.height,
-                            )
-                        }
-                    }
-                    .opacity(isTimelineReadyForDisplay || displayEntries.isEmpty ? 1 : 0)
-                    .allowsHitTesting(isTimelineReadyForDisplay || displayEntries.isEmpty)
-                }
-                .contentShape(Rectangle())
-                .simultaneousGesture(
-                    TapGesture().onEnded {
-                        dismissComposerKeyboard()
-                    },
-                )
-                .onScrollGeometryChange(for: Bool.self) { geometry in
-                    distanceToBottom(geometry) <= scrollBottomButtonDistance
-                } action: { _, isNearBottom in
-                    isTimelineNearBottom = isNearBottom
-                }
-                .onScrollGeometryChange(for: Bool.self) { geometry in
-                    distanceToBottom(geometry) <= autoScrollBottomDistance
-                } action: { _, isNearEnoughForAutoScroll in
-                    isTimelineWithinAutoScrollDistance = isNearEnoughForAutoScroll
-                }
-                .onScrollGeometryChange(for: Bool.self) { geometry in
-                    geometry.visibleRect.minY <= loadOlderScrollThreshold
-                } action: { _, isNearTop in
-                    guard isNearTop, isTimelineReadyForDisplay, !displayEntries.isEmpty else { return }
-                    Task { await loadOlderTimeline(proxy) }
-                }
-
-                if shouldShowScrollToBottomButton {
-                    Button {
-                        shouldForceScrollOnTimelineUpdate = false
-                        shouldAutoScrollOnTimelineUpdate = false
-                        scrollToBottom(proxy, animated: true)
-                    } label: {
-                        Image(systemName: "arrow.down")
-                            .font(.system(size: 17, weight: .semibold))
-                            .frame(width: 44, height: 44)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.primary)
-                    .frame(width: 56, height: 56)
-                    .contentShape(Circle())
-                    .composerGlassEffect(shape: Circle())
-                    .accessibilityLabel("Scroll to Bottom")
-                    .padding(.trailing, 18)
-                    .padding(.bottom, 12)
-                    .zIndex(10)
-                    .transition(.scale(scale: 0.92).combined(with: .opacity))
-                }
-            }
-            .animation(.smooth(duration: 0.18), value: shouldShowScrollToBottomButton)
+            SessionTimelineContent(
+                proxy: proxy,
+                isLoading: isLoading,
+                entries: displayEntries,
+                hasMore: timeline.hasMore,
+                isLoadingOlder: isLoadingOlder,
+                isRunning: session.status == "running",
+                runtime: session.runtime,
+                isTimelineReadyForDisplay: isTimelineReadyForDisplay,
+                shouldShowScrollToBottomButton: shouldShowScrollToBottomButton,
+                api: appState.api,
+                token: appState.accessToken(),
+                resolvingApprovalId: resolvingApprovalId,
+                resolvingApprovalStatus: resolvingApprovalStatus,
+                onResolveApproval: resolveTimelineApproval,
+                onPreviewAttachment: previewTimelineAttachment,
+                onDismissKeyboard: dismissComposerKeyboard,
+                onNearBottomChanged: { isTimelineNearBottom = $0 },
+                onNearAutoScrollDistanceChanged: { isTimelineWithinAutoScrollDistance = $0 },
+                onLoadOlder: { Task { await loadOlderTimeline(proxy) } },
+                onScrollToBottom: {
+                    shouldForceScrollOnTimelineUpdate = false
+                    shouldAutoScrollOnTimelineUpdate = false
+                    scrollToBottom(proxy, animated: true)
+                },
+            )
             .onChange(of: timelineRevision) { _, _ in
                 reconcileTimelineScroll(proxy)
             }
@@ -249,32 +166,15 @@ struct SessionDetailView: View {
                 timelineContentHeight = height
             }
             .onChange(of: session.status) { _, _ in
-                if isInterrupting && !serverBusy {
-                    isInterrupting = false
-                }
+                handleSessionStatusChange()
             }
             .task {
-                hasPositionedInitialScroll = false
-                isTimelineReadyForDisplay = false
-                shouldForceScrollOnTimelineUpdate = true
-                pendingPrependAnchorID = nil
-                await markRead()
-                await loadState(replace: true)
-                lastEntryRefreshAt = Date()
-                Task { await loadRuntimeSettingsIfNeeded() }
-                startEventStream()
+                await prepareInitialSession()
             }
             .onChange(of: scenePhase) { _, phase in
-                if phase == .active {
-                    Task { await refreshOnEntry() }
-                }
+                handleScenePhaseChange(phase)
             }
-            .onDisappear {
-                initialBottomScrollGeneration += 1
-                isSettlingInitialBottomScroll = false
-                sseTask?.cancel()
-                pollTask?.cancel()
-            }
+            .onDisappear(perform: handleSessionDetailDisappear)
         }
         .navigationTitle(session.displayTitle)
         .navigationBarTitleDisplayMode(.inline)
@@ -424,8 +324,47 @@ struct SessionDetailView: View {
         filterRuntimeEffortField(
             runtime: session.runtime,
             field: runtimeFields.first { $0.key == "effort" },
+            modelField: modelField,
             model: runtimeSettingsObject["model"],
         )
+    }
+
+    private func resolveTimelineApproval(_ approval: Approval, _ status: ApprovalResolveStatus) {
+        Task { await resolveApproval(approval, status: status) }
+    }
+
+    private func previewTimelineAttachment(_ url: URL) {
+        attachmentPreviewURL = url
+    }
+
+    private func prepareInitialSession() async {
+        hasPositionedInitialScroll = false
+        isTimelineReadyForDisplay = false
+        shouldForceScrollOnTimelineUpdate = true
+        pendingPrependAnchorID = nil
+        await markRead()
+        await loadState(replace: true)
+        lastEntryRefreshAt = Date()
+        Task { await loadRuntimeSettingsIfNeeded() }
+        startEventStream()
+    }
+
+    private func handleSessionStatusChange() {
+        if isInterrupting && !serverBusy {
+            isInterrupting = false
+        }
+    }
+
+    private func handleScenePhaseChange(_ phase: ScenePhase) {
+        guard phase == .active else { return }
+        Task { await refreshOnEntry() }
+    }
+
+    private func handleSessionDetailDisappear() {
+        initialBottomScrollGeneration += 1
+        isSettlingInitialBottomScroll = false
+        sseTask?.cancel()
+        pollTask?.cancel()
     }
 
     private var messageInputActions: [MessageInputAction] {
@@ -689,7 +628,7 @@ struct SessionDetailView: View {
             async let settingsResponse = api.getSessionRuntimeSettings(token: token, sessionId: initialSession.id)
             let loadedSchema = try await schemaResponse
             let loadedSettings = try await settingsResponse
-            runtimeSchema = loadedSchema.schema
+            runtimeSchema = loadedSettings.schema ?? loadedSchema.schema
             runtimeSettings = loadedSettings
         } catch {
             errorMessage = error.localizedDescription
@@ -707,6 +646,7 @@ struct SessionDetailView: View {
                 settings: [key: value],
             )
             runtimeSettings = response
+            runtimeSchema = response.schema ?? runtimeSchema
             session = session.updatingRuntimeSettings(from: response)
         } catch {
             errorMessage = error.localizedDescription
@@ -1182,6 +1122,159 @@ private struct SessionTimelineState {
             return itemsById.values.contains { $0.matchesOptimisticMessage(optimistic.id) }
         }
         return optimisticItems != before
+    }
+}
+
+private struct SessionTimelineContent: View {
+    let proxy: ScrollViewProxy
+    let isLoading: Bool
+    let entries: [ChatEntry]
+    let hasMore: Bool
+    let isLoadingOlder: Bool
+    let isRunning: Bool
+    let runtime: String
+    let isTimelineReadyForDisplay: Bool
+    let shouldShowScrollToBottomButton: Bool
+    let api: APIClient?
+    let token: String?
+    let resolvingApprovalId: String?
+    let resolvingApprovalStatus: ApprovalResolveStatus?
+    let onResolveApproval: (Approval, ApprovalResolveStatus) -> Void
+    let onPreviewAttachment: (URL) -> Void
+    let onDismissKeyboard: () -> Void
+    let onNearBottomChanged: (Bool) -> Void
+    let onNearAutoScrollDistanceChanged: (Bool) -> Void
+    let onLoadOlder: () -> Void
+    let onScrollToBottom: () -> Void
+
+    var body: some View {
+        ZStack(alignment: .bottomTrailing) {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 18) {
+                    if isLoading && entries.isEmpty {
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 60)
+                    } else if entries.isEmpty {
+                        ContentUnavailableView(
+                            "No Messages Yet",
+                            systemImage: "bubble.left.and.bubble.right",
+                            description: Text("Messages from this session will appear here."),
+                        )
+                        .padding(.top, 80)
+                    } else {
+                        if hasMore || isLoadingOlder {
+                            ProgressView()
+                                .opacity(isLoadingOlder ? 1 : 0)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                            .id("load-older")
+                        }
+
+                        ForEach(entries) { entry in
+                            TimelineEntryRow(
+                                entry: entry,
+                                api: api,
+                                token: token,
+                                resolvingApprovalId: resolvingApprovalId,
+                                resolvingApprovalStatus: resolvingApprovalStatus,
+                                onResolveApproval: onResolveApproval,
+                                onPreviewAttachment: onPreviewAttachment,
+                            )
+                        }
+
+                        if isRunning {
+                            WorkingIndicator(runtime: runtime)
+                                .id("working")
+                        }
+                    }
+
+                    Color.clear
+                        .frame(height: 1)
+                        .id(timelineBottomAnchorID)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 14)
+                .background {
+                    GeometryReader { geometry in
+                        Color.clear.preference(
+                            key: TimelineContentHeightPreferenceKey.self,
+                            value: geometry.size.height,
+                        )
+                    }
+                }
+                .opacity(isTimelineReadyForDisplay || entries.isEmpty ? 1 : 0)
+                .allowsHitTesting(isTimelineReadyForDisplay || entries.isEmpty)
+            }
+            .contentShape(Rectangle())
+            .simultaneousGesture(
+                TapGesture().onEnded {
+                    onDismissKeyboard()
+                },
+            )
+            .onScrollGeometryChange(for: Bool.self) { geometry in
+                distanceToBottom(geometry) <= scrollBottomButtonDistance
+            } action: { _, isNearBottom in
+                onNearBottomChanged(isNearBottom)
+            }
+            .onScrollGeometryChange(for: Bool.self) { geometry in
+                distanceToBottom(geometry) <= autoScrollBottomDistance
+            } action: { _, isNearEnoughForAutoScroll in
+                onNearAutoScrollDistanceChanged(isNearEnoughForAutoScroll)
+            }
+            .onScrollGeometryChange(for: Bool.self) { geometry in
+                geometry.visibleRect.minY <= loadOlderScrollThreshold
+            } action: { _, isNearTop in
+                guard isNearTop, isTimelineReadyForDisplay, !entries.isEmpty else { return }
+                onLoadOlder()
+            }
+
+            if shouldShowScrollToBottomButton {
+                Button(action: onScrollToBottom) {
+                    Image(systemName: "arrow.down")
+                        .font(.system(size: 17, weight: .semibold))
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.primary)
+                .frame(width: 56, height: 56)
+                .contentShape(Circle())
+                .composerGlassEffect(shape: Circle())
+                .accessibilityLabel("Scroll to Bottom")
+                .padding(.trailing, 18)
+                .padding(.bottom, 12)
+                .zIndex(10)
+                .transition(.scale(scale: 0.92).combined(with: .opacity))
+            }
+        }
+        .animation(.smooth(duration: 0.18), value: shouldShowScrollToBottomButton)
+    }
+
+    private func distanceToBottom(_ geometry: ScrollGeometry) -> CGFloat {
+        max(0, geometry.contentSize.height - geometry.visibleRect.maxY)
+    }
+}
+
+private struct TimelineEntryRow: View {
+    let entry: ChatEntry
+    let api: APIClient?
+    let token: String?
+    let resolvingApprovalId: String?
+    let resolvingApprovalStatus: ApprovalResolveStatus?
+    let onResolveApproval: (Approval, ApprovalResolveStatus) -> Void
+    let onPreviewAttachment: (URL) -> Void
+
+    var body: some View {
+        ChatEntryView(
+            entry: entry,
+            api: api,
+            token: token,
+            resolvingApprovalId: resolvingApprovalId,
+            resolvingApprovalStatus: resolvingApprovalStatus,
+            onResolveApproval: onResolveApproval,
+            onPreviewAttachment: onPreviewAttachment,
+        )
+        .id(entry.id)
     }
 }
 
@@ -2577,16 +2670,64 @@ func runtimeConfigFieldIsVisible(_ field: RuntimeConfigField, settings: [String:
 func filterRuntimeEffortField(
     runtime: String,
     field: RuntimeConfigField?,
+    modelField: RuntimeConfigField? = nil,
     model: JSONValue?
 ) -> RuntimeConfigField? {
     guard let field else { return nil }
-    guard runtime == "claude", field.key == "effort" else { return field }
+    guard field.key == "effort" else { return field }
+
+    if let modelValue = model?.stringValue,
+       let modelOption = modelField.flatMap({ fieldForModelOption(modelValue, in: $0) }),
+       let constrainedEfforts = modelOption.efforts
+    {
+        // An explicit empty nested list means this model does not expose an
+        // effort selector. A missing nested list is legacy/unknown and falls
+        // through to the global field below.
+        return constrainedEfforts.isEmpty ? nil : field.withOptions(constrainedEfforts)
+    }
+
+    // Older server schemas do not carry nested constraints. Keep the legacy
+    // Claude behavior as a compatibility fallback only; all modern runtimes
+    // use the server-provided model option contract above.
+    guard runtime == "claude" else { return field }
     let allowed = claudeEffortValues(for: model?.stringValue)
     guard !allowed.isEmpty else { return nil }
     return field.withOptions(field.options?.filter { option in
         guard let value = option.value.stringValue else { return false }
         return allowed.contains(value)
     } ?? [])
+}
+
+private func fieldForModelOption(_ model: String, in field: RuntimeConfigField) -> RuntimeConfigOption? {
+    field.options?.first { $0.value.stringValue == model }
+}
+
+func runtimeSettingsSelectingModel(
+    _ settings: [String: JSONValue],
+    model: JSONValue,
+    modelField: RuntimeConfigField?
+) -> [String: JSONValue] {
+    var result = settings
+    result["model"] = model
+    guard let modelValue = model.stringValue,
+          let option = modelField.flatMap({ fieldForModelOption(modelValue, in: $0) }),
+          let efforts = option.efforts
+    else { return result }
+
+    guard !efforts.isEmpty else {
+        result.removeValue(forKey: "effort")
+        return result
+    }
+    let allowed = Set(efforts.compactMap { $0.value.stringValue })
+    if let current = result["effort"]?.stringValue, allowed.contains(current) {
+        return result
+    }
+    if let fallback = efforts.first(where: { $0.isDefault == true }) ?? efforts.first {
+        result["effort"] = fallback.value
+    } else {
+        result.removeValue(forKey: "effort")
+    }
+    return result
 }
 
 private func claudeEffortValues(for model: String?) -> Set<String> {

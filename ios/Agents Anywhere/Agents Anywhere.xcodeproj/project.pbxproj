@@ -12,12 +12,18 @@
 
 /* Begin PBXFileReference section */
 		000000000000000000000120 /* Agents Anywhere.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Agents Anywhere.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		000000000000000000000121 /* Agents AnywhereTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Agents AnywhereTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		000000000000000000000010 /* Agents Anywhere */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = "Agents Anywhere";
+			sourceTree = "<group>";
+		};
+		000000000000000000000011 /* Agents AnywhereTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "Agents AnywhereTests";
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -29,6 +35,11 @@
 				000000000000000130000001 /* MarkdownUI in Frameworks */,
 			);
 		};
+		000000000000000130000002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -36,6 +47,7 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000010 /* Agents Anywhere */,
+				000000000000000000000011 /* Agents AnywhereTests */,
 				000000000000000000000020 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -44,6 +56,7 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000120 /* Agents Anywhere.app */,
+				000000000000000000000121 /* Agents AnywhereTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -72,7 +85,40 @@
 			productReference = 000000000000000000000120 /* Agents Anywhere.app */;
 			productType = "com.apple.product-type.application";
 		};
+		000000000000000100000001 /* Agents AnywhereTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 000000000000000110000001 /* Build configuration list for PBXNativeTarget "Agents AnywhereTests" */;
+			buildPhases = (
+				000000000000000120000001 /* Sources */,
+				000000000000000130000002 /* Frameworks */,
+				000000000000000140000001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				000000000000000150000001 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				000000000000000000000011 /* Agents AnywhereTests */,
+			);
+			name = "Agents AnywhereTests";
+			packageProductDependencies = (
+			);
+			productName = "Agents AnywhereTests";
+			productReference = 000000000000000000000121 /* Agents AnywhereTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
+
+/* Begin PBXContainerItemProxy section */
+		000000000000000160000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 000000000000000000000000 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 000000000000000100000000;
+			remoteInfo = "Agents Anywhere";
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXProject section */
 		000000000000000000000000 /* Project object */ = {
@@ -87,6 +133,10 @@
 				TargetAttributes = {
 					000000000000000100000000 = {
 						CreatedOnToolsVersion = 26.3;
+					};
+					000000000000000100000001 = {
+						CreatedOnToolsVersion = 26.3;
+						TestTargetID = 000000000000000100000000;
 					};
 				};
 			};
@@ -108,12 +158,18 @@
 			projectRoot = "";
 			targets = (
 				000000000000000100000000 /* Agents Anywhere */,
+				000000000000000100000001 /* Agents AnywhereTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		000000000000000140000000 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
+		000000000000000140000001 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			files = (
 			);
@@ -126,7 +182,20 @@
 			files = (
 			);
 		};
+		000000000000000120000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		000000000000000150000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 000000000000000100000000 /* Agents Anywhere */;
+			targetProxy = 000000000000000160000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		000000000000000011000000 /* Debug configuration for PBXProject "Agents Anywhere" */ = {
@@ -367,6 +436,40 @@
 			};
 			name = Release;
 		};
+		000000000000000111000001 /* Debug configuration for PBXNativeTarget "Agents AnywhereTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.6;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.t4wefan.agents-anywhere.tests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Agents Anywhere.app/Agents Anywhere";
+				"TEST_HOST[sdk=macosx*]" = "$(BUILT_PRODUCTS_DIR)/Agents Anywhere.app/Contents/MacOS/Agents Anywhere";
+			};
+			name = Debug;
+		};
+		000000000000000112000001 /* Release configuration for PBXNativeTarget "Agents AnywhereTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.6;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.t4wefan.agents-anywhere.tests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Agents Anywhere.app/Agents Anywhere";
+				"TEST_HOST[sdk=macosx*]" = "$(BUILT_PRODUCTS_DIR)/Agents Anywhere.app/Contents/MacOS/Agents Anywhere";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -384,6 +487,15 @@
 				000000000000000111000000 /* Debug configuration for PBXNativeTarget "Agents Anywhere" */,
 				000000000000000112000000 /* Release configuration for PBXNativeTarget "Agents Anywhere" */,
 			);
+			defaultConfigurationName = Release;
+		};
+		000000000000000110000001 /* Build configuration list for PBXNativeTarget "Agents AnywhereTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				000000000000000111000001 /* Debug configuration for PBXNativeTarget "Agents AnywhereTests" */,
+				000000000000000112000001 /* Release configuration for PBXNativeTarget "Agents AnywhereTests" */,
+			);
+			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */

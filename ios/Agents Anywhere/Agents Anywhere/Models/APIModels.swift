@@ -456,6 +456,7 @@ struct RuntimeSettingsResponse: Decodable {
     let settings: JSONValue
     let runtimeSettings: JSONValue?
     let runtimeSettingsOverride: JSONValue?
+    let schema: RuntimeConfigSchema?
     let effectiveRunMode: String?
     let defaultRunModeConfigured: Bool
     let schemaVersion: Int
@@ -468,6 +469,7 @@ struct RuntimeSettingsResponse: Decodable {
         case settings
         case runtimeSettings
         case runtimeSettingsOverride
+        case schema
         case effectiveRunMode
         case defaultRunModeConfigured
         case schemaVersion
@@ -482,6 +484,7 @@ struct RuntimeSettingsResponse: Decodable {
         settings = try container.decodeOrDefault(JSONValue.self, forKey: .settings, default: .emptyObject)
         runtimeSettings = try container.decodeIfPresent(JSONValue.self, forKey: .runtimeSettings)
         runtimeSettingsOverride = try container.decodeIfPresent(JSONValue.self, forKey: .runtimeSettingsOverride)
+        schema = try container.decodeIfPresent(RuntimeConfigSchema.self, forKey: .schema)
         effectiveRunMode = try container.decodeIfPresent(String.self, forKey: .effectiveRunMode)
         defaultRunModeConfigured = try container.decodeOrDefault(Bool.self, forKey: .defaultRunModeConfigured, default: false)
         schemaVersion = try container.decodeOrDefault(Int.self, forKey: .schemaVersion, default: 0)
@@ -590,6 +593,10 @@ struct RuntimeConfigOption: Decodable, Identifiable {
     let value: JSONValue
     let label: String
     let description: String?
+    // Absent is a pre-GPT-5.6 server; callers must retain the global effort
+    // field. An empty array is an explicit "this model has no effort" signal.
+    let efforts: [RuntimeConfigOption]?
+    let isDefault: Bool?
 
     var id: String { value.stringValue ?? label }
 }
