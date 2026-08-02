@@ -81,7 +81,7 @@ def test_active_connector_code_does_not_import_deprecated_root_modules() -> None
 
     for path in _active_python_files():
         for module in _imported_modules(path):
-            if module in FORBIDDEN_ACTIVE_IMPORTS:
+            if module in FORBIDDEN_ACTIVE_IMPORTS or module.startswith("connector._reference"):
                 relative_path = path.relative_to(CONNECTOR_PACKAGE.parent)
                 violations.append(f"{relative_path}: imports {module}")
 

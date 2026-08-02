@@ -32,6 +32,9 @@ from connector.runtime_protocol import (
     SessionState,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
+from connector.runtimes import default_runtime_providers
+from connector.runtimes.claude.provider import ClaudeProvider
+from connector.runtimes.codex.provider import CodexProvider
 from connector.server.auth import ConnectorAuthenticationError
 from connector.server.client import BackendRpcClient
 from connector.server.ingest import coalesce_timeline_item_upserts
@@ -567,6 +570,15 @@ def test_connector_runtime_uses_agent_runtime_for_turn_rpc(tmp_path) -> None:
 
 def test_connector_runtime_discovers_agent_runtime_inventory() -> None:
     asyncio.run(_exercise_agent_runtime_discovery())
+
+
+def test_default_runtime_providers_use_new_protocol_providers() -> None:
+    providers = default_runtime_providers()
+
+    assert tuple(provider.runtime for provider in providers) == ("codex", "claude")
+    assert isinstance(providers[0], CodexProvider)
+    assert isinstance(providers[1], ClaudeProvider)
+    assert all(provider.__class__.__module__.startswith("connector.runtimes.") for provider in providers)
 
 
 def test_connector_runtime_starts_saved_runtime_configs(tmp_path) -> None:
