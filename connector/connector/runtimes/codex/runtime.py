@@ -14,6 +14,8 @@ from connector.logging import logger
 from connector.runtime_protocol import (
     AgentRuntime,
     RuntimeAttachment,
+    RuntimeCommand,
+    RuntimeCommandResult,
     RuntimeConfig,
     RuntimeIdentity,
     RuntimeModelCatalog,
@@ -473,6 +475,88 @@ class CodexRuntime(AgentRuntime):
                 "turnId": turn_id,
                 "externalSessionId": external_session_id,
                 "turn": result.get("turn") or result,
+            },
+        )
+
+    async def list_commands(
+        self,
+        session_id: str,
+        external_session_id: str | None = None,
+        query: str | None = None,
+        limit: int = 50,
+    ) -> tuple[RuntimeCommand, ...]:
+        _ = session_id
+        commands = (
+            RuntimeCommand(
+                id="compact",
+                title="Compact conversation",
+                description="Ask Codex to compact this thread's context.",
+                aliases=("summarize",),
+                category="context",
+                scope="session",
+                enabled=external_session_id is not None and self.client is not None,
+                disabled_reason=(
+                    None
+                    if external_session_id is not None and self.client is not None
+                    else "Codex compact requires a loaded local thread."
+                ),
+            ),
+        )
+        if query:
+            lowered = query.casefold()
+            commands = tuple(
+                command
+                for command in commands
+                if lowered in command.id.casefold()
+                or lowered in command.title.casefold()
+                or any(lowered in alias.casefold() for alias in command.aliases)
+            )
+        return commands[:limit]
+
+    async def execute_command(
+        self,
+        session_id: str,
+        command: str,
+        external_session_id: str | None = None,
+        raw: str | None = None,
+        args: tuple[str, ...] = (),
+    ) -> RuntimeCommandResult:
+        _ = session_id
+        _ = raw
+        if command != "compact":
+            return RuntimeCommandResult(
+                command=command,
+                ok=False,
+                code="unknown_command",
+                message=f"Codex runtime does not support /{command}",
+            )
+        if args:
+            return RuntimeCommandResult(
+                command=command,
+                ok=False,
+                code="arguments_not_supported",
+                message="/compact does not accept arguments.",
+            )
+        if self.client is None or external_session_id is None:
+            return RuntimeCommandResult(
+                command=command,
+                ok=False,
+                code="codex_thread_required",
+                message="Codex compact requires a loaded local thread.",
+            )
+        await self.start()
+        result = await self.client.request(
+            "thread/compact/start",
+            {"threadId": external_session_id},
+        )
+        return RuntimeCommandResult(
+            command=command,
+            ok=True,
+            code="started",
+            message="Codex compaction started.",
+            result={
+                "externalSessionId": external_session_id,
+                "thread": result,
             },
         )
 

@@ -436,8 +436,9 @@ Acceptance:
 ## Phase 7: add live runtime catalog and command APIs
 
 Status: partially implemented. Server/Connector command RPC and Web slash menu
-now use runtime reads. Remaining work is concrete runtime command catalogs and
-runtime-specific command execution behavior.
+now use runtime reads. Codex exposes the native `/compact` command through
+`thread/compact/start`. Remaining work is additional concrete runtime command
+catalog entries and runtime-specific command execution behavior.
 
 Goal: move model/permission/command reads to Connector RPC.
 

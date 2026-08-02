@@ -93,6 +93,7 @@ class FakeCodexClient:
                     "id": "turn_new",
                 }
             },
+            "thread/compact/start": {},
         }
 
     async def start(self, handler) -> None:  # type: ignore[no-untyped-def]
@@ -431,6 +432,59 @@ async def _test_codex_runtime_create_and_start_session_reports_meta_and_state() 
         "model": model_selection,
         "permission": permission_selection,
     }
+
+
+def test_codex_runtime_lists_compact_command_for_loaded_thread() -> None:
+    asyncio.run(_test_codex_runtime_lists_compact_command_for_loaded_thread())
+
+
+async def _test_codex_runtime_lists_compact_command_for_loaded_thread() -> None:
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=FakeCodexClient())
+
+    commands = await runtime.list_commands(
+        "sess_1",
+        external_session_id="thread_1",
+        query="comp",
+    )
+
+    assert [command.id for command in commands] == ["compact"]
+    assert commands[0].enabled is True
+
+
+def test_codex_runtime_compact_command_calls_app_server() -> None:
+    asyncio.run(_test_codex_runtime_compact_command_calls_app_server())
+
+
+async def _test_codex_runtime_compact_command_calls_app_server() -> None:
+    client = FakeCodexClient()
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=client)
+
+    result = await runtime.execute_command(
+        "sess_1",
+        "compact",
+        external_session_id="thread_1",
+        raw="/compact",
+    )
+
+    assert result.ok is True
+    assert result.code == "started"
+    assert client.requests[-1] == (
+        "thread/compact/start",
+        {"threadId": "thread_1"},
+    )
+
+
+def test_codex_runtime_rejects_unknown_command_without_transport_error() -> None:
+    asyncio.run(_test_codex_runtime_rejects_unknown_command_without_transport_error())
+
+
+async def _test_codex_runtime_rejects_unknown_command_without_transport_error() -> None:
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=FakeCodexClient())
+
+    result = await runtime.execute_command("sess_1", "nope", external_session_id="thread_1")
+
+    assert result.ok is False
+    assert result.code == "unknown_command"
 
 
 def test_codex_runtime_turn_completed_notification_sets_idle() -> None:
