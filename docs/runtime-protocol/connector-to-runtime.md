@@ -51,6 +51,28 @@ class RuntimeConfig:
     schema: Mapping[str, Any] | None = None
     ui_schema: Mapping[str, Any] | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeConfigSchema:
+    runtime: str
+    revision: int
+    schema: Mapping[str, Any]
+    ui_schema: Mapping[str, Any] | None = None
+    defaults: Mapping[str, Any] = field(default_factory=dict)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeInventoryItem:
+    runtime: str
+    runtime_type: str
+    display_name: str
+    available: bool
+    configured: bool = False
+    reason: str | None = None
+    config_schema: RuntimeConfigSchema | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 ```
 
 `RuntimeConfig` is runtime-owned configuration, not Connector app configuration. `ConnectorConfig` answers how this Connector talks to the Server. `RuntimeConfig` answers how one local runtime is configured: executable path, IPC/socket mode, SDK mode, environment profile, feature flags, and other runtime-specific options.
@@ -60,6 +82,64 @@ Runtime config is a provider-managed startup surface, plus a runtime read-only e
 A running `AgentRuntime` must not accept config mutation directly. Runtime config changes flow through the provider/supervisor path: validate the new raw values, persist the accepted effective config, then restart or recreate the runtime if necessary. This avoids hidden in-place reconfiguration semantics and keeps runtime instances stable.
 
 `schema` and `ui_schema` are optional because some runtimes may expose a fixed form in Web/CLI while others need runtime-provided fields. The protocol carries them as data so the upper Connector layer does not need Codex- or Claude-specific config conditionals.
+
+`RuntimeConfigSchema` is the provider's live configuration form contract. `RuntimeInventoryItem` is the provider's discovery result. A runtime may be available but not configured, unavailable because an executable or SDK is missing, or configured but currently stopped.
+
+## Runtime providers
+
+Providers own startup-time lifecycle and config validation. They are deliberately separate from running `AgentRuntime` instances.
+
+```py
+class RuntimeProvider(ABC):
+    @property
+    @abstractmethod
+    def runtime(self) -> str:
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def runtime_type(self) -> str:
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def display_name(self) -> str:
+        raise NotImplementedError
+
+    async def discover(self) -> RuntimeInventoryItem:
+        raise RuntimeUnsupportedError("discover")
+
+    async def get_config_schema(self) -> RuntimeConfigSchema:
+        raise RuntimeUnsupportedError("get_config_schema")
+
+    async def validate_config(
+        self,
+        values: Mapping[str, Any],
+    ) -> RuntimeConfig:
+        raise RuntimeUnsupportedError("validate_config")
+
+    async def create_runtime(
+        self,
+        config: RuntimeConfig,
+        host: RuntimeHostClient,
+    ) -> AgentRuntime:
+        raise RuntimeUnsupportedError("create_runtime")
+
+    async def stop_runtime(self, runtime: AgentRuntime) -> None:
+        await runtime.stop()
+```
+
+Startup must flow through validation:
+
+```text
+raw runtime config values
+  -> RuntimeProvider.validate_config(values)
+  -> effective RuntimeConfig
+  -> RuntimeProvider.create_runtime(config, host)
+  -> AgentRuntime.start()
+```
+
+`get_config_schema()` can help UI/CLI render a form, but it is not the only validator. `validate_config()` must perform semantic checks and return the normalized effective config used to create the runtime.
 
 ## Runtime-level catalogs
 

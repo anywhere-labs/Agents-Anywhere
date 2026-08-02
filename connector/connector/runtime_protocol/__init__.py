@@ -13,7 +13,9 @@ from connector.runtime_protocol.models import (
     RuntimeCommand,
     RuntimeCommandResult,
     RuntimeConfig,
+    RuntimeConfigSchema,
     RuntimeIdentity,
+    RuntimeInventoryItem,
     RuntimeModelCatalog,
     RuntimeModelItem,
     RuntimeOperationResult,
@@ -29,6 +31,7 @@ from connector.runtime_protocol.models import (
     SessionState,
 )
 from connector.runtime_protocol.protocol import AgentRuntime
+from connector.runtime_protocol.provider import RuntimeProvider
 
 __all__ = [
     "AgentRuntime",
@@ -37,16 +40,19 @@ __all__ = [
     "RuntimeCommand",
     "RuntimeCommandResult",
     "RuntimeConfig",
+    "RuntimeConfigSchema",
     "RuntimeConflictError",
     "RuntimeHostClient",
     "RuntimeIdentity",
     "RuntimeInvalidRequestError",
+    "RuntimeInventoryItem",
     "RuntimeModelCatalog",
     "RuntimeModelItem",
     "RuntimeOperationResult",
     "RuntimePermissionCatalog",
     "RuntimePermissionItem",
     "RuntimeProtocolError",
+    "RuntimeProvider",
     "RuntimeReasoningItem",
     "RuntimeStatus",
     "RuntimeTimelineItem",

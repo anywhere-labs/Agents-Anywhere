@@ -50,9 +50,14 @@ connector/connector/
     registry.py
     supervisor.py
 
+  _reference/
+    codex/
+    claude/
+    runtime_discovery.py
+
   runtimes/
     codex/
-      adapter.py
+      runtime.py
       history.py
       provider.py
       reducer.py
@@ -64,7 +69,7 @@ connector/connector/
         state.py
 
     claude/
-      adapter.py
+      runtime.py
       history.py
       normalized.py
       normalizers.py
@@ -86,6 +91,8 @@ connector/connector/
 ```
 
 The first implementation does not need to move every file at once. The tree is the target shape. Prefer incremental commits that create the protocol layer before performing large moves.
+
+Existing Codex/Claude implementations from the pre-protocol adapter architecture live under `_reference/`. They are retained only as migration source material and must not be imported by the active Connector runtime path. New implementations should be written under `runtimes/codex` and `runtimes/claude` against `RuntimeProvider`, `AgentRuntime`, and `RuntimeHostClient`.
 
 ## Layer responsibilities
 
@@ -210,19 +217,27 @@ Target provider shape:
 
 ```py
 class RuntimeProvider(ABC):
-    runtime_id: str
-    runtime_type: str
-    display_name: str
+    @property
+    def runtime(self) -> str: ...
 
-    async def discover(self, status: str) -> RuntimeInventoryItem: ...
-    async def validate_config(self, config: Mapping[str, Any]) -> EffectiveRuntimeConfig: ...
+    @property
+    def runtime_type(self) -> str: ...
+
+    @property
+    def display_name(self) -> str: ...
+
+    async def discover(self) -> RuntimeInventoryItem: ...
+    async def get_config_schema(self) -> RuntimeConfigSchema: ...
+    async def validate_config(self, values: Mapping[str, Any]) -> RuntimeConfig: ...
     async def create_runtime(
         self,
-        config: EffectiveRuntimeConfig,
+        config: RuntimeConfig,
         host: RuntimeHostClient,
     ) -> AgentRuntime: ...
     async def stop_runtime(self, runtime: AgentRuntime) -> None: ...
 ```
+
+`get_config_schema()` is for live UI/CLI form rendering. `validate_config()` is the authoritative startup-time validation and normalization step; schema validation may be part of it, but provider code must still perform runtime-specific checks such as executable presence, SDK availability, socket availability, and OS-specific support.
 
 The supervisor owns:
 
@@ -244,6 +259,13 @@ app entrypoint
   -> build server client
   -> build runtime providers
   -> build runtime supervisor
+  -> for each provider:
+       discover()
+       get_config_schema()
+       load raw runtime config values
+       validate_config(raw values) -> RuntimeConfig
+       create_runtime(RuntimeConfig, RuntimeHostClient)
+       AgentRuntime.start()
   -> connect server websocket
   -> discover runtimes
   -> publish runtime inventory/status

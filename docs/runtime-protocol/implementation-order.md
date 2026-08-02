@@ -45,7 +45,7 @@ connector/connector/
 The main gaps are:
 
 - `runtime.py` mixes config, auth, HTTP, WebSocket, RPC dispatch, notification batching, runtime supervision, local ops, attachments, and terminal bridging.
-- `runtime_lifecycle.py` mixes generic provider/supervisor concepts with concrete Codex and Claude provider construction.
+- `runtime_lifecycle.py` must not mix generic provider/supervisor concepts with concrete Codex and Claude provider construction. Pre-protocol Codex/Claude code belongs under `_reference/` until rewritten.
 - `adapter.py` is still a dict-shaped legacy adapter protocol.
 - Runtime adapters still return `backendNotifications` or use `notification_sink`.
 - Runtime adapters and Connector runtime code still know server notification method names.
@@ -207,6 +207,7 @@ ClaudeRuntimeProvider -> runtimes/claude/provider.py
 Rules:
 
 - Prefer import shims for old paths during the transition.
+- Pre-protocol Codex/Claude modules are reference-only under `_reference/` and must not be imported by active Connector code.
 - Remove the old `Adapter` protocol from the active dispatch path.
 - Do not add `legacy_adapter.py`, `host_legacy.py`, or a compatibility wrapper around the old adapter API.
 - Runtime adapters must not return `backendNotifications`.

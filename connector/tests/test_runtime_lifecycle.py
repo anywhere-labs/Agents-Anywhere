@@ -7,33 +7,23 @@ from typing import Any
 import pytest
 
 from connector.adapter import Adapter
-from connector.launch import launch_target
+from connector.runtime import BackendRpcClient, ConnectorConfig
 from connector.runtime_lifecycle import (
-    CodexRuntimeProvider,
     EffectiveRuntimeConfig,
     RuntimeBindings,
     RuntimeConfigError,
     RuntimeInactiveError,
     RuntimeSupervisor,
+    default_runtime_providers,
 )
-from connector.runtime import BackendRpcClient, ConnectorConfig
 
 
 class FakeAdapter:
-    notification_sink = None
-    attachment_downloader = None
-
     def __init__(self) -> None:
         self.stopped = False
 
     async def stop(self) -> None:
         self.stopped = True
-
-    async def model_catalog(self, *, revision: int) -> dict[str, Any]:
-        return {"runtime": "fake", "revision": revision, "models": []}
-
-    async def permission_catalog(self, *, revision: int) -> dict[str, Any]:
-        return {"runtime": "fake", "revision": revision, "permissions": []}
 
 
 class FakeProvider:
@@ -46,7 +36,7 @@ class FakeProvider:
         self.stopped: list[Adapter] = []
         self.discoveries = 0
 
-    async def discover(self, *, status: str) -> dict[str, Any]:
+    async def discover(self, status: str) -> dict[str, Any]:
         self.discoveries += 1
         return {
             "runtimeId": self.runtime_id,
@@ -58,16 +48,13 @@ class FakeProvider:
             "status": status,
         }
 
-    def unavailable_inventory(self, *, status: str, error: BaseException) -> dict[str, Any]:
+    def unavailable_inventory(self, status: str, error: BaseException) -> dict[str, Any]:
         raise AssertionError(f"unexpected discovery error: {error}")
 
     async def validate_config(self, config: dict[str, Any]) -> EffectiveRuntimeConfig:
         if config.get("invalid"):
             raise RuntimeConfigError("invalid fake config")
-        return EffectiveRuntimeConfig(
-            target=launch_target("configured", "/tmp/fake"),
-            environment={"FAKE_VALUE": str(config.get("value", "default"))},
-        )
+        return EffectiveRuntimeConfig(values=dict(config))
 
     async def create_adapter(self, effective: EffectiveRuntimeConfig) -> Adapter:
         self.created.append(effective)
@@ -87,6 +74,16 @@ class FakeWebSocket:
 
     async def send(self, payload: str) -> None:
         self.messages.append(json.loads(payload))
+
+
+def test_default_runtime_providers_are_empty_until_native_runtimes_exist() -> None:
+    bindings = RuntimeBindings(
+        notification_sink=lambda _method, _params: _append([], None),
+        attachment_downloader=_download,
+        sync_state_store=None,
+    )
+
+    assert default_runtime_providers(bindings) == []
 
 
 def test_supervisor_discovers_without_starting_runtime() -> None:
@@ -202,155 +199,9 @@ async def _test_backend_dispatches_runtime_lifecycle_protocol() -> None:
     assert status_events == ["starting", "running", "stopping", "stopped"]
 
 
-def test_codex_provider_uses_dynamic_default_and_environment_overrides(monkeypatch) -> None:
-    asyncio.run(_test_codex_provider_uses_dynamic_default_and_environment_overrides(monkeypatch))
-
-
-async def _test_codex_provider_uses_dynamic_default_and_environment_overrides(monkeypatch) -> None:
-    target = launch_target("cli", "/opt/codex")
-
-    async def discover():
-        return (
-            {
-                "execution": "ok",
-                "selected": {"source": "cli", "path": target.path, "version": "codex 1"},
-                "checked": [],
-            },
-            target,
-        )
-
-    checked: list[tuple[str, dict[str, str]]] = []
-
-    async def check(candidate, *, environment=None):  # type: ignore[no-untyped-def]
-        checked.append((candidate.path, dict(environment or {})))
-        return {"status": "ok", "path": candidate.path}
-
-    monkeypatch.setattr("connector.runtime_lifecycle.discover_codex_capability", discover)
-    monkeypatch.setattr("connector.runtime_lifecycle.check_codex_target", check)
-    monkeypatch.setenv("INHERITED_VALUE", "keep")
-    monkeypatch.setenv("REMOVE_VALUE", "remove")
-
-    provider = CodexRuntimeProvider(_bindings())
-    inventory = await provider.discover(status="stopped")
-    assert inventory["schema"]["properties"]["executablePath"]["default"] == "/opt/codex"
-    ipc_schema = inventory["schema"]["properties"]["ipcEnabled"]
-    assert ipc_schema["default"] is True
-    assert ipc_schema["title"] == "Codex IPC (Beta)"
-    assert "macOS only" in ipc_schema["description"]
-    assert "Windows and Linux have not yet been tested" in ipc_schema["description"]
-    assert "runtime instability" in ipc_schema["description"]
-    assert inventory["uiSchema"]["order"] == [
-        "executablePath",
-        "ipcEnabled",
-        "environment",
-    ]
-    assert "required" not in inventory["schema"]
-
-    effective = await provider.validate_config(
-        {
-            "environment": {
-                "NEW_VALUE": "new",
-                "REMOVE_VALUE": None,
-            }
-        }
-    )
-
-    assert effective.target.path == "/opt/codex"
-    assert effective.environment["INHERITED_VALUE"] == "keep"
-    assert effective.environment["NEW_VALUE"] == "new"
-    assert "REMOVE_VALUE" not in effective.environment
-    assert effective.ipc_enabled is True
-    assert checked[-1][0] == "/opt/codex"
-
-    ipc_disabled = await provider.validate_config({"ipcEnabled": False})
-    assert ipc_disabled.ipc_enabled is False
-
-
-def test_runtime_environment_rejects_connector_credentials(monkeypatch) -> None:
-    asyncio.run(_test_runtime_environment_rejects_connector_credentials(monkeypatch))
-
-
-async def _test_runtime_environment_rejects_connector_credentials(monkeypatch) -> None:
-    target = launch_target("cli", "/opt/codex")
-
-    async def discover():
-        return ({"execution": "ok", "selected": {"path": target.path}}, target)
-
-    monkeypatch.setattr("connector.runtime_lifecycle.discover_codex_capability", discover)
-    provider = CodexRuntimeProvider(_bindings())
-    await provider.discover(status="stopped")
-
-    with pytest.raises(RuntimeConfigError, match="managed by the connector"):
-        await provider.validate_config(
-            {"environment": {"AGENT_CONNECTOR_TOKEN": "do-not-forward"}}
-        )
-
-
-def test_codex_provider_only_creates_ipc_client_when_enabled(monkeypatch) -> None:
-    asyncio.run(_test_codex_provider_only_creates_ipc_client_when_enabled(monkeypatch))
-
-
-async def _test_codex_provider_only_creates_ipc_client_when_enabled(monkeypatch) -> None:
-    created_ipc_environments: list[dict[str, str]] = []
-    created_adapters: list[Any] = []
-
-    class FakeRpc:
-        def __init__(self, **_kwargs: Any) -> None:
-            return None
-
-    class FakeIpcClient:
-        def __init__(self, *, environment: dict[str, str]) -> None:
-            created_ipc_environments.append(environment)
-
-    class FakeCodexAdapter:
-        def __init__(self, **kwargs: Any) -> None:
-            self.ipc_client = kwargs["ipc_client"]
-            created_adapters.append(self)
-
-        async def start(self) -> None:
-            return None
-
-        async def stop(self) -> None:
-            return None
-
-    monkeypatch.setattr("connector.runtime_lifecycle.JsonRpcStdioClient", FakeRpc)
-    monkeypatch.setattr("connector.runtime_lifecycle.CodexIpcClient", FakeIpcClient)
-    monkeypatch.setattr("connector.runtime_lifecycle.CodexAdapter", FakeCodexAdapter)
-
-    provider = CodexRuntimeProvider(_bindings())
-    target = launch_target("configured", "/opt/codex")
-    disabled = EffectiveRuntimeConfig(
-        target=target,
-        environment={"IPC_TEST": "disabled"},
-        ipc_enabled=False,
-    )
-    await provider.create_adapter(disabled)
-    assert created_adapters[-1].ipc_client is None
-    assert created_ipc_environments == []
-
-    enabled = EffectiveRuntimeConfig(
-        target=target,
-        environment={"IPC_TEST": "enabled"},
-        ipc_enabled=True,
-    )
-    await provider.create_adapter(enabled)
-    assert created_adapters[-1].ipc_client is not None
-    assert created_ipc_environments == [{"IPC_TEST": "enabled"}]
-
-
-def _bindings() -> RuntimeBindings:
-    async def notify(_method: str, _params: dict[str, Any]) -> None:
-        return None
-
-    async def download(_session_id: str, _file_id: str) -> tuple[bytes, str, str]:
-        return b"", "", ""
-
-    return RuntimeBindings(
-        notification_sink=notify,
-        attachment_downloader=download,
-        sync_state_store=None,
-    )
-
-
 async def _append(target: list[Any], value: Any) -> None:
     target.append(value)
+
+
+async def _download(_runtime: str, _file_id: str) -> tuple[bytes, str, str]:
+    return b"", "application/octet-stream", "empty"

@@ -10,10 +10,13 @@ from connector.runtime_protocol import (
     AgentRuntime,
     RuntimeCommandResult,
     RuntimeConfig,
+    RuntimeConfigSchema,
     RuntimeHostClient,
     RuntimeIdentity,
+    RuntimeInventoryItem,
     RuntimeModelItem,
     RuntimeOperationResult,
+    RuntimeProvider,
     RuntimeReasoningItem,
     RuntimeUnsupportedError,
     SessionMeta,
@@ -25,6 +28,20 @@ class MinimalRuntime(AgentRuntime):
     @property
     def identity(self) -> RuntimeIdentity:
         return RuntimeIdentity(runtime="test", adapter_version="0")
+
+
+class MinimalProvider(RuntimeProvider):
+    @property
+    def runtime(self) -> str:
+        return "test"
+
+    @property
+    def runtime_type(self) -> str:
+        return "test"
+
+    @property
+    def display_name(self) -> str:
+        return "Test Runtime"
 
 
 def _public_async_methods(cls: type) -> list[tuple[str, inspect.Signature]]:
@@ -39,7 +56,7 @@ def _public_async_methods(cls: type) -> list[tuple[str, inspect.Signature]]:
 
 def test_runtime_protocol_methods_do_not_use_keyword_only_parameters() -> None:
     offenders = []
-    for cls in (AgentRuntime, RuntimeHostClient):
+    for cls in (AgentRuntime, RuntimeHostClient, RuntimeProvider):
         for method_name, signature in _public_async_methods(cls):
             for parameter in signature.parameters.values():
                 if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
@@ -61,6 +78,21 @@ def test_runtime_protocol_default_unsupported_behavior() -> None:
         asyncio.run(runtime.get_config())
 
     assert config_exc_info.value.method == "get_config"
+
+
+def test_runtime_provider_default_unsupported_behavior() -> None:
+    provider = MinimalProvider()
+
+    with pytest.raises(RuntimeUnsupportedError) as discover_exc_info:
+        asyncio.run(provider.discover())
+    with pytest.raises(RuntimeUnsupportedError) as schema_exc_info:
+        asyncio.run(provider.get_config_schema())
+    with pytest.raises(RuntimeUnsupportedError) as validate_exc_info:
+        asyncio.run(provider.validate_config({}))
+
+    assert discover_exc_info.value.method == "discover"
+    assert schema_exc_info.value.method == "get_config_schema"
+    assert validate_exc_info.value.method == "validate_config"
 
 
 def test_runtime_protocol_default_optional_reads_are_empty() -> None:
@@ -86,13 +118,9 @@ def test_runtime_protocol_ordering_time_belongs_only_to_session_meta() -> None:
 
 
 def test_runtime_config_is_representable_without_connector_config() -> None:
-    config = RuntimeConfig(
+    schema = RuntimeConfigSchema(
         runtime="codex",
         revision=7,
-        values={
-            "ipcEnabled": True,
-            "sdkMode": "auto",
-        },
         schema={
             "type": "object",
             "properties": {
@@ -100,12 +128,32 @@ def test_runtime_config_is_representable_without_connector_config() -> None:
                 "sdkMode": {"type": "string"},
             },
         },
+        defaults={"sdkMode": "auto"},
+    )
+    config = RuntimeConfig(
+        runtime="codex",
+        revision=7,
+        values={
+            "ipcEnabled": True,
+            "sdkMode": "auto",
+        },
+        schema=schema.schema,
+    )
+    inventory = RuntimeInventoryItem(
+        runtime="codex",
+        runtime_type="codex",
+        display_name="Codex",
+        available=True,
+        configured=True,
+        config_schema=schema,
     )
 
     assert config.runtime == "codex"
     assert config.revision == 7
     assert config.values["ipcEnabled"] is True
     assert config.schema is not None
+    assert inventory.configured is True
+    assert inventory.config_schema == schema
 
 
 def test_runtime_model_selection_id_rules_are_representable() -> None:

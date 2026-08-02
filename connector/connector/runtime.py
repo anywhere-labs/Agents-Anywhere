@@ -15,8 +15,8 @@ from websockets.asyncio.client import ClientConnection
 from websockets.exceptions import ConnectionClosed
 
 from connector.adapter import Adapter
-from connector.claude.preferences import read_local_preferences
 from connector.core.config import ConnectorConfig
+from connector.core.preferences import read_local_preferences
 from connector.local_ops import create_local_ops
 from connector.logging import logger
 from connector.protocol_revision import ProtocolRevisionClock

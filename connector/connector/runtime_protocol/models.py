@@ -38,6 +38,28 @@ class RuntimeConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class RuntimeConfigSchema:
+    runtime: str
+    revision: int
+    schema: Mapping[str, Any]
+    ui_schema: Mapping[str, Any] | None = None
+    defaults: Mapping[str, Any] = field(default_factory=dict)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeInventoryItem:
+    runtime: str
+    runtime_type: str
+    display_name: str
+    available: bool
+    configured: bool = False
+    reason: str | None = None
+    config_schema: RuntimeConfigSchema | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeReasoningItem:
     id: str
     title: str
