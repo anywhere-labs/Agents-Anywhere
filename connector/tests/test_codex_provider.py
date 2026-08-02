@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from connector.launch import LaunchTarget, launch_target
-from connector.runtime_protocol import RuntimeInvalidRequestError
+from connector.runtime_protocol import RuntimeConfig, RuntimeInvalidRequestError
 from connector.runtimes.codex.provider import CodexProvider
 from connector.runtimes.codex.runtime import CodexRuntime
 
@@ -205,6 +205,22 @@ async def _test_codex_provider_creates_native_runtime() -> None:
 
     assert isinstance(runtime, CodexRuntime)
     assert await runtime.get_config() == config
+
+
+def test_codex_provider_rejects_runtime_without_app_server_mode() -> None:
+    asyncio.run(_test_codex_provider_rejects_runtime_without_app_server_mode())
+
+
+async def _test_codex_provider_rejects_runtime_without_app_server_mode() -> None:
+    provider = CodexProvider(
+        sdk_checker=_missing_sdk, command_checker=_available_command
+    )
+
+    with pytest.raises(RuntimeInvalidRequestError, match="requires sdkMode=app-server"):
+        await provider.create_runtime(
+            RuntimeConfig(runtime="codex", revision=1, values={"sdkMode": "auto"}),
+            _NoHost(),
+        )
 
 
 async def _available_command(

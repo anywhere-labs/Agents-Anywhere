@@ -21,10 +21,7 @@ from connector.runtime_protocol import (
     RuntimeProvider,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
-from connector.runtimes.codex.client import (
-    EmptyCodexClient,
-    app_server_client_from_config,
-)
+from connector.runtimes.codex.client import app_server_client_from_config
 from connector.runtimes.codex.runtime import CodexRuntime
 
 SdkMode = Literal["auto", "sdk", "app-server"]
@@ -193,17 +190,12 @@ class CodexProvider(RuntimeProvider):
         config: RuntimeConfig,
         host: RuntimeHostClient,
     ) -> AgentRuntime:
-        _ = host
         mode = config.values.get("sdkMode")
-        if mode == "sdk":
+        if mode != "app-server":
             raise RuntimeInvalidRequestError(
-                "Codex SDK runtime client is not implemented"
+                "Codex runtime currently requires sdkMode=app-server"
             )
-        client = (
-            app_server_client_from_config(config)
-            if mode == "app-server"
-            else EmptyCodexClient()
-        )
+        client = app_server_client_from_config(config)
         return CodexRuntime(config=config, host=host, client=client)
 
     async def _discover_app_server_target(

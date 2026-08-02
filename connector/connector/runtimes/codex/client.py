@@ -62,8 +62,12 @@ class CodexAppServerClient:
                     limit=APP_SERVER_STREAM_LIMIT,
                     env=self.environment,
                 )
-                self._track_reader(asyncio.create_task(self._read_stdout(self.process)), "stdout")
-                self._track_reader(asyncio.create_task(self._read_stderr(self.process)), "stderr")
+                self._track_reader(
+                    asyncio.create_task(self._read_stdout(self.process)), "stdout"
+                )
+                self._track_reader(
+                    asyncio.create_task(self._read_stderr(self.process)), "stderr"
+                )
 
             await self.request(
                 "initialize",
@@ -119,7 +123,9 @@ class CodexAppServerClient:
             "method": method,
             "params": dict(params or {}),
         }
-        self.process.stdin.write((json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
+        self.process.stdin.write(
+            (json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8")
+        )
         await self.process.stdin.drain()
         return await future
 
@@ -135,7 +141,9 @@ class CodexAppServerClient:
             "method": method,
             "params": dict(params or {}),
         }
-        self.process.stdin.write((json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
+        self.process.stdin.write(
+            (json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8")
+        )
         await self.process.stdin.drain()
 
     async def respond(
@@ -150,7 +158,9 @@ class CodexAppServerClient:
             "id": self._response_id_for(request_id),
             "result": dict(result or {}),
         }
-        self.process.stdin.write((json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
+        self.process.stdin.write(
+            (json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8")
+        )
         await self.process.stdin.drain()
 
     async def _read_stdout(self, process: asyncio.subprocess.Process) -> None:
@@ -166,7 +176,9 @@ class CodexAppServerClient:
                 continue
 
             request_id = payload.get("id")
-            if request_id in self._pending and ("result" in payload or "error" in payload):
+            if request_id in self._pending and (
+                "result" in payload or "error" in payload
+            ):
                 future = self._pending.pop(request_id)
                 self._settle_pending_future(future, payload)
                 continue
@@ -180,7 +192,9 @@ class CodexAppServerClient:
     async def _read_stderr(self, process: asyncio.subprocess.Process) -> None:
         assert process.stderr
         while line := await process.stderr.readline():
-            logger.trace("codex app-server stderr: {}", line.decode(errors="replace").rstrip())
+            logger.trace(
+                "codex app-server stderr: {}", line.decode(errors="replace").rstrip()
+            )
 
     def _track_reader(self, task: asyncio.Task[None], name: str) -> None:
         def done(completed: asyncio.Task[None]) -> None:
@@ -189,7 +203,9 @@ class CodexAppServerClient:
             except asyncio.CancelledError:
                 return
             except Exception:  # noqa: BLE001
-                logger.exception("codex app-server {} reader stopped unexpectedly", name)
+                logger.exception(
+                    "codex app-server {} reader stopped unexpectedly", name
+                )
 
         task.add_done_callback(done)
 
@@ -202,10 +218,15 @@ class CodexAppServerClient:
                 numeric_request_id = int(request_id)
             except ValueError:
                 numeric_request_id = None
-            if numeric_request_id is not None and numeric_request_id in self._server_request_ids:
+            if (
+                numeric_request_id is not None
+                and numeric_request_id in self._server_request_ids
+            ):
                 self._server_request_ids.remove(numeric_request_id)
                 return numeric_request_id
-        logger.warning("codex app-server responding to unknown server request id={}", request_id)
+        logger.warning(
+            "codex app-server responding to unknown server request id={}", request_id
+        )
         return request_id
 
     @staticmethod
@@ -216,35 +237,12 @@ class CodexAppServerClient:
         if future.done():
             return
         if "error" in payload:
-            future.set_exception(RuntimeError(json.dumps(payload["error"], ensure_ascii=False)))
+            future.set_exception(
+                RuntimeError(json.dumps(payload["error"], ensure_ascii=False))
+            )
             return
         result = payload.get("result")
         future.set_result(result if isinstance(result, dict) else {})
-
-
-class EmptyCodexClient:
-    async def start(self, handler: NotificationHandler) -> None:
-        _ = handler
-
-    async def stop(self) -> None:
-        pass
-
-    async def request(
-        self,
-        method: str,
-        params: Mapping[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        _ = method
-        _ = params
-        return {}
-
-    async def respond(
-        self,
-        request_id: str | int,
-        result: Mapping[str, Any] | None = None,
-    ) -> None:
-        _ = request_id
-        _ = result
 
 
 def app_server_client_from_config(config: RuntimeConfig) -> CodexAppServerClient:
@@ -254,7 +252,9 @@ def app_server_client_from_config(config: RuntimeConfig) -> CodexAppServerClient
     target = LaunchTarget(
         source="configured",
         path=executable,
-        launcher=str(config.metadata.get("launchTarget", {}).get("launcher") or "direct"),  # type: ignore[arg-type]
+        launcher=str(
+            config.metadata.get("launchTarget", {}).get("launcher") or "direct"
+        ),  # type: ignore[arg-type]
     )
     environment = _runtime_environment(config.values.get("environment"))
     return CodexAppServerClient(
