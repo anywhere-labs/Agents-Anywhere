@@ -82,6 +82,16 @@ class FakeCodexClient:
                     "id": "turn_new",
                 }
             },
+            "turn/steer": {
+                "turn": {
+                    "id": "turn_new",
+                }
+            },
+            "turn/interrupt": {
+                "turn": {
+                    "id": "turn_new",
+                }
+            },
         }
 
     async def start(self, handler) -> None:  # type: ignore[no-untyped-def]
@@ -97,7 +107,10 @@ class FakeCodexClient:
         params: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         self.requests.append((method, dict(params or {})))
-        return self.results.get(method, {})
+        result = self.results.get(method, {})
+        if isinstance(result, Exception):
+            raise result
+        return result
 
 
 class FakeHost(RuntimeHostClient):
@@ -411,6 +424,99 @@ async def _test_codex_runtime_turn_completed_notification_sets_idle() -> None:
     state = await runtime.get_session_state("sess_1")
     assert state is not None
     assert state.status == "idle"
+
+
+def test_codex_runtime_steers_active_turn() -> None:
+    asyncio.run(_test_codex_runtime_steers_active_turn())
+
+
+async def _test_codex_runtime_steers_active_turn() -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    await runtime.start_turn("sess_1", "thread_1", "hello")
+    result = await runtime.steer_turn(
+        "sess_1",
+        "thread_1",
+        "more context",
+        client_message_id="cm_steer",
+    )
+
+    assert result.ok is True
+    assert result.result["steered"] is True
+    assert result.result["turnId"] == "turn_new"
+    assert client.requests[-1] == (
+        "turn/steer",
+        {
+            "threadId": "thread_1",
+            "input": [{"type": "text", "text": "more context", "text_elements": []}],
+            "expectedTurnId": "turn_new",
+            "clientUserMessageId": "cm_steer",
+        },
+    )
+    assert host.state_updates[-1]["status"] == "running"
+
+
+def test_codex_runtime_steer_without_active_turn_returns_conflict() -> None:
+    asyncio.run(_test_codex_runtime_steer_without_active_turn_returns_conflict())
+
+
+async def _test_codex_runtime_steer_without_active_turn_returns_conflict() -> None:
+    client = FakeCodexClient()
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=client)
+
+    result = await runtime.steer_turn("sess_1", "thread_1", "late")
+
+    assert result.ok is False
+    assert result.code == "codex_no_active_turn"
+    assert all(request[0] != "turn/steer" for request in client.requests)
+
+
+def test_codex_runtime_interrupts_active_turn_and_sets_idle() -> None:
+    asyncio.run(_test_codex_runtime_interrupts_active_turn_and_sets_idle())
+
+
+async def _test_codex_runtime_interrupts_active_turn_and_sets_idle() -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    await runtime.start_turn("sess_1", "thread_1", "hello")
+    result = await runtime.interrupt_turn("sess_1", "thread_1")
+    second = await runtime.interrupt_turn("sess_1", "thread_1")
+
+    assert result.ok is True
+    assert result.result["interrupted"] is True
+    assert client.requests[-1] == (
+        "turn/interrupt",
+        {
+            "threadId": "thread_1",
+            "turnId": "turn_new",
+        },
+    )
+    assert host.state_updates[-1]["status"] == "idle"
+    assert second.ok is False
+    assert second.code == "codex_no_active_turn"
+
+
+def test_codex_runtime_interrupt_soft_failure_sets_idle() -> None:
+    asyncio.run(_test_codex_runtime_interrupt_soft_failure_sets_idle())
+
+
+async def _test_codex_runtime_interrupt_soft_failure_sets_idle() -> None:
+    client = FakeCodexClient()
+    client.results["turn/interrupt"] = RuntimeError('{"message": "turn not found"}')
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    await runtime.start_turn("sess_1", "thread_1", "hello")
+    result = await runtime.interrupt_turn("sess_1", "thread_1")
+
+    assert result.ok is False
+    assert result.code == "turn_not_found"
+    assert result.result["interrupted"] is False
+    assert host.state_updates[-1]["status"] == "idle"
 
 
 def test_codex_catalog_helpers_ignore_unrecognized_items() -> None:

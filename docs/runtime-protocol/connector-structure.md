@@ -187,7 +187,7 @@ runtimes/codex/provider.py
 runtimes/codex/runtime.py
 ```
 
-The first native `CodexRuntime` slices support startup, config readback, model catalog reads, static permission catalog reads, existing session metadata reads through `thread/list`, session snapshots through `thread/read`, text-only `create_and_start_session()`, text-only `start_turn()`, and basic `waiting`/`running`/`idle` state updates. Attachments, steer, interrupt, notices, live timeline sync, and IPC co-presence remain later Codex runtime slices.
+The first native `CodexRuntime` slices support startup, config readback, model catalog reads, static permission catalog reads, existing session metadata reads through `thread/list`, session snapshots through `thread/read`, text-only `create_and_start_session()`, text-only `start_turn()`, text-only `steer_turn()`, local `interrupt_turn()`, and basic `waiting`/`running`/`idle` state updates. Attachments, notices, live timeline sync, and IPC co-presence remain later Codex runtime slices.
 
 ### `local/`
 

@@ -55,6 +55,7 @@ class CodexRuntime(AgentRuntime):
         self._started = False
         self._model_list_result: dict[str, Any] | None = None
         self._session_states: dict[str, SessionState] = {}
+        self._active_turn_ids: dict[str, str] = {}
 
     @property
     def identity(self) -> RuntimeIdentity:
@@ -337,6 +338,8 @@ class CodexRuntime(AgentRuntime):
             )
             raise
         turn_id = _turn_id_from_result(result)
+        if turn_id is not None:
+            self._active_turn_ids[session_id] = turn_id
         await self._set_session_state(
             session_id=session_id,
             external_session_id=external_session_id,
@@ -352,6 +355,115 @@ class CodexRuntime(AgentRuntime):
                 "turnId": turn_id,
                 "turn": result.get("turn") or result,
                 "externalSessionId": external_session_id,
+            },
+        )
+
+    async def steer_turn(
+        self,
+        session_id: str,
+        external_session_id: str | None,
+        content: str,
+        attachments: tuple[RuntimeAttachment, ...] = (),
+        client_message_id: str | None = None,
+    ) -> RuntimeOperationResult:
+        _ensure_text_only_attachments(attachments)
+        if self.client is None or external_session_id is None:
+            raise RuntimeUnsupportedError("steer_turn")
+        turn_id = self._active_turn_ids.get(session_id)
+        if turn_id is None:
+            return RuntimeOperationResult(
+                ok=False,
+                code="codex_no_active_turn",
+                message="Codex runtime has no active turn to steer",
+                result={"externalSessionId": external_session_id},
+            )
+        await self.start()
+        result = await self.client.request(
+            "turn/steer",
+            {
+                "threadId": external_session_id,
+                "input": [{"type": "text", "text": content, "text_elements": []}],
+                "expectedTurnId": turn_id,
+                "clientUserMessageId": client_message_id,
+            },
+        )
+        await self._set_session_state(
+            session_id=session_id,
+            external_session_id=external_session_id,
+            status="running",
+            metadata={"source": "codex.turn/steer", "turn_id": turn_id},
+        )
+        return RuntimeOperationResult(
+            ok=True,
+            result={
+                "steered": True,
+                "turnId": turn_id,
+                "externalSessionId": external_session_id,
+                "turn": result.get("turn") or result,
+            },
+        )
+
+    async def interrupt_turn(
+        self,
+        session_id: str,
+        external_session_id: str | None = None,
+        reason: str | None = None,
+    ) -> RuntimeOperationResult:
+        _ = reason
+        if self.client is None or external_session_id is None:
+            raise RuntimeUnsupportedError("interrupt_turn")
+        turn_id = self._active_turn_ids.get(session_id)
+        if turn_id is None:
+            return RuntimeOperationResult(
+                ok=False,
+                code="codex_no_active_turn",
+                message="Codex runtime has no active turn to interrupt",
+                result={"externalSessionId": external_session_id},
+            )
+        await self.start()
+        try:
+            result = await self.client.request(
+                "turn/interrupt",
+                {
+                    "threadId": external_session_id,
+                    "turnId": turn_id,
+                },
+            )
+        except RuntimeError as exc:
+            soft_reason = _soft_interrupt_failure_reason(str(exc))
+            if soft_reason is None:
+                raise
+            self._active_turn_ids.pop(session_id, None)
+            await self._set_session_state(
+                session_id=session_id,
+                external_session_id=external_session_id,
+                status="idle",
+                metadata={
+                    "source": "codex.turn/interrupt.soft-failed",
+                    "reason": soft_reason,
+                    "turn_id": turn_id,
+                },
+            )
+            return RuntimeOperationResult(
+                ok=False,
+                code=soft_reason,
+                message="Codex turn was already unavailable to interrupt",
+                result={"interrupted": False, "turnId": turn_id},
+            )
+        self._active_turn_ids.pop(session_id, None)
+        await self._set_session_state(
+            session_id=session_id,
+            external_session_id=external_session_id,
+            status="idle",
+            metadata={"source": "codex.turn/interrupt", "turn_id": turn_id},
+        )
+        return RuntimeOperationResult(
+            ok=True,
+            result={
+                "interrupted": True,
+                "turnId": turn_id,
+                "externalSessionId": external_session_id,
+                "turn": result.get("turn") or result,
             },
         )
 
@@ -377,13 +489,20 @@ class CodexRuntime(AgentRuntime):
         if session_id is None or thread_id is None:
             return
         if method == "turn/started":
+            turn_id = _turn_id_from_result(params)
+            if turn_id is not None:
+                self._active_turn_ids[session_id] = turn_id
             await self._set_session_state(
                 session_id=session_id,
                 external_session_id=thread_id,
                 status="running",
-                metadata={"source": "codex.turn/started"},
+                metadata={
+                    "source": "codex.turn/started",
+                    **({"turn_id": turn_id} if turn_id else {}),
+                },
             )
         elif method == "turn/completed":
+            self._active_turn_ids.pop(session_id, None)
             await self._set_session_state(
                 session_id=session_id,
                 external_session_id=thread_id,
@@ -907,6 +1026,24 @@ def _session_id_from_notification(params: Mapping[str, Any]) -> str | None:
 def _ensure_text_only_attachments(attachments: tuple[RuntimeAttachment, ...]) -> None:
     if attachments:
         raise RuntimeUnsupportedError("codex.attachments")
+
+
+def _soft_interrupt_failure_reason(error_text: str) -> str | None:
+    message = error_text
+    try:
+        parsed = json.loads(error_text)
+        if isinstance(parsed, dict):
+            raw = parsed.get("message")
+            if isinstance(raw, str):
+                message = raw
+    except json.JSONDecodeError:
+        pass
+    normalized = message.lower()
+    if "thread not found" in normalized:
+        return "thread_not_found"
+    if "turn not found" in normalized:
+        return "turn_not_found"
+    return None
 
 
 def _timeline_item_revision(raw: dict[str, Any]) -> int:
