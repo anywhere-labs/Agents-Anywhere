@@ -9,7 +9,6 @@ from typing import Any
 
 import httpx
 import websockets
-from websockets.asyncio.client import ClientConnection
 from websockets.exceptions import ConnectionClosed
 
 from connector.core.config import ConnectorConfig
@@ -38,6 +37,7 @@ from connector.server.auth import (
     ConnectorAuthenticationError,
 )
 from connector.server.ingest import ConnectorIngestClient
+from connector.server.rpc import ConnectorRpcChannel
 from connector.server.runtime_host import ConnectorRuntimeHost
 from connector.server.urls import (
     api_v2_path,
@@ -85,12 +85,11 @@ class BackendRpcClient:
         self._preferences_reader = preferences_reader or read_local_preferences
         self._last_preferences: dict[str, Any] | None = None
         self.local_ops = create_local_ops(notify=self.send_backend_notification)
-        self._ws: ClientConnection | None = None
         self._access_token: str | None = None
         self._access_token_expires_at: float = 0
         self._auth_lock = asyncio.Lock()
-        self._send_lock = asyncio.Lock()
         self._background_tasks: set[asyncio.Task[Any]] = set()
+        self._rpc = ConnectorRpcChannel()
         # Persistent HTTP client: a long-lived connection pool eliminates the
         # 5–10ms TCP/TLS setup that the old `async with AsyncClient(...)`
         # per-call pattern paid on every notification.
@@ -156,7 +155,7 @@ class BackendRpcClient:
             },
             proxy=None if is_loopback_url(self.config.server_url) else True,
         ) as ws:
-            self._ws = ws
+            self._rpc.set_connection(ws)
             inventory = await self._discover_runtimes()
             await self.send_notification("runtime.inventoryUpdated", inventory)
             heartbeat_task = asyncio.create_task(self._heartbeat_loop())
@@ -168,7 +167,7 @@ class BackendRpcClient:
             finally:
                 heartbeat_task.cancel()
                 sync_task.cancel()
-                self._ws = None
+                self._rpc.clear_connection()
 
     async def authenticate(self) -> str:
         client = self._http_client
@@ -212,26 +211,7 @@ class BackendRpcClient:
         return await self.ensure_access_token(force=force)
 
     async def handle_message(self, message: dict[str, Any]) -> None:
-        if message.get("type") != "request":
-            return
-        request_id = message.get("id")
-        method = message.get("method")
-        params = message.get("params") if isinstance(message.get("params"), dict) else {}
-        if not isinstance(request_id, str) or not isinstance(method, str):
-            return
-        try:
-            result = await self.dispatch(method, params)
-            await self.send_response(request_id, ok=True, result=result)
-        except Exception as exc:
-            logger.exception("connector request failed method={} id={}", method, request_id)
-            # If the exception declares a `code` (e.g. StaleFileError → "stale"),
-            # surface that so the backend can translate it into a 412 etc.
-            code = getattr(exc, "code", None) or exc.__class__.__name__
-            await self.send_response(
-                request_id,
-                ok=False,
-                error={"code": code, "message": str(exc)},
-            )
+        await self._rpc.handle_message(message, self.dispatch)
 
     async def dispatch(self, method: str, params: dict[str, Any]) -> Any:
         if method == "runtime.discover":
@@ -455,7 +435,7 @@ class BackendRpcClient:
         return _operation_result_payload(result)
 
     async def send_notification(self, method: str, params: dict[str, Any]) -> None:
-        await self._send_json({"type": "notification", "method": method, "params": params})
+        await self._rpc.send_notification(method, params)
 
     async def send_backend_notification(self, method: str, params: dict[str, Any]) -> None:
         await self._ingest.enqueue(method, params)
@@ -468,18 +448,7 @@ class BackendRpcClient:
         result: Any = None,
         error: dict[str, str] | None = None,
     ) -> None:
-        payload: dict[str, Any] = {"id": request_id, "type": "response", "ok": ok}
-        if ok:
-            payload["result"] = result
-        else:
-            payload["error"] = error or {"code": "error", "message": "connector request failed"}
-        await self._send_json(payload)
-
-    async def _send_json(self, payload: dict[str, Any]) -> None:
-        if self._ws is None:
-            raise RuntimeError("backend websocket is not connected")
-        async with self._send_lock:
-            await self._ws.send(json.dumps(payload, ensure_ascii=False))
+        await self._rpc.send_response(request_id, ok=ok, result=result, error=error)
 
     async def _heartbeat_loop(self) -> None:
         while True:

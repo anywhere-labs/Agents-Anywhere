@@ -453,7 +453,7 @@ async def _exercise_runtime() -> None:
     runtime = FakeAgentRuntime()
     client = _client(runtime)
     ws = FakeWebSocket()
-    client._ws = ws  # type: ignore[assignment]
+    client._rpc.set_connection(ws)  # type: ignore[arg-type]
     notifications: list[dict[str, Any]] = []
 
     async def notify(method: str, params: dict[str, Any]) -> None:
@@ -878,7 +878,7 @@ async def _exercise_runtime_protocol_routing() -> None:
             FakeAgentProvider(claude, "claude"),
         )
     )
-    client._ws = FakeWebSocket()  # type: ignore[assignment]
+    client._rpc.set_connection(FakeWebSocket())  # type: ignore[arg-type]
     await client.dispatch("runtime.start", {"runtimeId": "codex", "config": {}})
     await client.dispatch("runtime.start", {"runtimeId": "claude", "config": {}})
 
@@ -903,7 +903,7 @@ async def _exercise_agent_runtime_turn_rpc(tmp_path) -> None:
         runtime=agent_runtime,
         runtime_config_store=JsonRuntimeConfigStore(tmp_path / "runtime-configs.json"),
     )
-    client._ws = FakeWebSocket()  # type: ignore[assignment]
+    client._rpc.set_connection(FakeWebSocket())  # type: ignore[arg-type]
     await client.dispatch("runtime.start", {"runtimeId": "codex", "config": {}})
 
     started = await client.dispatch(
@@ -953,7 +953,7 @@ async def _exercise_agent_runtime_turn_rpc(tmp_path) -> None:
 async def _exercise_agent_runtime_discovery() -> None:
     agent_runtime = FakeAgentRuntime()
     client = _client(runtime=agent_runtime)
-    client._ws = FakeWebSocket()  # type: ignore[assignment]
+    client._rpc.set_connection(FakeWebSocket())  # type: ignore[arg-type]
 
     inventory = await client.dispatch("runtime.discover", {})
 
