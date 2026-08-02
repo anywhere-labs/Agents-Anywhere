@@ -5,11 +5,35 @@ from typing import Any
 from connector.runtime_protocol import (
     RuntimeCommand,
     RuntimeCommandResult,
+    RuntimeConfig,
+    RuntimeConfigSchema,
     RuntimeInventoryItem,
     RuntimeModelCatalog,
     RuntimeOperationResult,
     RuntimePermissionCatalog,
 )
+
+
+def runtime_config_schema_payload(schema: RuntimeConfigSchema) -> dict[str, Any]:
+    return {
+        "runtime": schema.runtime,
+        "revision": schema.revision,
+        "schema": dict(schema.schema),
+        "uiSchema": dict(schema.ui_schema) if schema.ui_schema is not None else None,
+        "defaults": dict(schema.defaults),
+        "metadata": dict(schema.metadata),
+    }
+
+
+def runtime_config_payload(config: RuntimeConfig) -> dict[str, Any]:
+    return {
+        "runtime": config.runtime,
+        "revision": config.revision,
+        "values": dict(config.values),
+        "schema": dict(config.schema) if config.schema is not None else None,
+        "uiSchema": dict(config.ui_schema) if config.ui_schema is not None else None,
+        "metadata": dict(config.metadata),
+    }
 
 
 def operation_result_payload(result: RuntimeOperationResult) -> dict[str, Any]:

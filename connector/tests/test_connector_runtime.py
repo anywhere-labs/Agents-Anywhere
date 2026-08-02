@@ -18,6 +18,7 @@ from connector.runtime_protocol import (
     RuntimeCommand,
     RuntimeCommandResult,
     RuntimeConfig,
+    RuntimeConfigSchema,
     RuntimeIdentity,
     RuntimeInventoryItem,
     RuntimeModelCatalog,
@@ -46,6 +47,7 @@ class FakeAgentRuntime(AgentRuntime):
         self.started = False
         self.stopped = False
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.config: RuntimeConfig | None = None
 
     @property
     def identity(self) -> RuntimeIdentity:
@@ -56,6 +58,11 @@ class FakeAgentRuntime(AgentRuntime):
 
     async def stop(self) -> None:
         self.stopped = True
+
+    async def get_config(self) -> RuntimeConfig:
+        if self.config is None:
+            return RuntimeConfig(runtime=self.runtime_id, revision=0, values={})
+        return self.config
 
     async def list_sessions(
         self,
@@ -398,16 +405,37 @@ class FakeAgentProvider(RuntimeProvider):
             configured=True,
         )
 
+    async def get_config_schema(self) -> RuntimeConfigSchema:
+        return RuntimeConfigSchema(
+            runtime=self._runtime_id,
+            revision=2,
+            schema={
+                "type": "object",
+                "properties": {
+                    "executablePath": {"type": "string"},
+                },
+            },
+            ui_schema={"executablePath": {"ui:widget": "file"}},
+            defaults={"sdkMode": "auto"},
+        )
+
     async def validate_config(self, values) -> RuntimeConfig:  # type: ignore[no-untyped-def]
-        return RuntimeConfig(runtime=self._runtime_id, revision=1, values=dict(values))
+        return RuntimeConfig(
+            runtime=self._runtime_id,
+            revision=1,
+            values=dict(values),
+            schema=(await self.get_config_schema()).schema,
+            ui_schema=(await self.get_config_schema()).ui_schema,
+            metadata={"validated": True},
+        )
 
     async def create_runtime(
         self,
         config: RuntimeConfig,
         host: RuntimeHostClient,
     ) -> AgentRuntime:
-        _ = config
         _ = host
+        self._runtime.config = config
         return self._runtime
 
     async def stop_runtime(self, runtime: AgentRuntime) -> None:
@@ -579,6 +607,14 @@ def test_default_runtime_providers_use_new_protocol_providers() -> None:
     assert isinstance(providers[0], CodexProvider)
     assert isinstance(providers[1], ClaudeProvider)
     assert all(provider.__class__.__module__.startswith("connector.runtimes.") for provider in providers)
+
+
+def test_connector_runtime_reads_config_schema() -> None:
+    asyncio.run(_exercise_runtime_config_schema_read())
+
+
+def test_connector_runtime_reads_saved_and_running_config(tmp_path) -> None:
+    asyncio.run(_exercise_runtime_config_read(tmp_path))
 
 
 def test_connector_runtime_starts_saved_runtime_configs(tmp_path) -> None:
@@ -1316,6 +1352,69 @@ async def _exercise_agent_runtime_discovery() -> None:
             "metadata": {},
         }
     ]
+
+
+async def _exercise_runtime_config_schema_read() -> None:
+    client = _client(runtime=FakeAgentRuntime("codex"))
+
+    result = await client.dispatch("runtime.configSchema", {"runtimeId": "codex"})
+
+    assert result["configSchema"] == {
+        "runtime": "codex",
+        "revision": 2,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "executablePath": {"type": "string"},
+            },
+        },
+        "uiSchema": {"executablePath": {"ui:widget": "file"}},
+        "defaults": {"sdkMode": "auto"},
+        "metadata": {},
+    }
+
+
+async def _exercise_runtime_config_read(tmp_path) -> None:
+    runtime = FakeAgentRuntime("codex")
+    store = JsonRuntimeConfigStore(tmp_path / "runtime-configs.json")
+    store.save("codex", {"sdkMode": "auto"})
+    client = _client(runtime=runtime, runtime_config_store=store)
+    client._rpc.set_connection(FakeWebSocket())  # type: ignore[arg-type]
+
+    stopped = await client.dispatch("runtime.config", {"runtimeId": "codex"})
+    await client.dispatch(
+        "runtime.start",
+        {
+            "runtimeId": "codex",
+            "config": {"sdkMode": "app-server", "executablePath": "/opt/codex"},
+        },
+    )
+    running = await client.dispatch("runtime.config", {"runtimeId": "codex"})
+
+    assert stopped == {
+        "runtimeId": "codex",
+        "running": False,
+        "config": None,
+        "savedValues": {"sdkMode": "auto"},
+    }
+    assert running == {
+        "runtimeId": "codex",
+        "running": True,
+        "config": {
+            "runtime": "codex",
+            "revision": 1,
+            "values": {"sdkMode": "app-server", "executablePath": "/opt/codex"},
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "executablePath": {"type": "string"},
+                },
+            },
+            "uiSchema": {"executablePath": {"ui:widget": "file"}},
+            "metadata": {"validated": True},
+        },
+        "savedValues": {"sdkMode": "app-server", "executablePath": "/opt/codex"},
+    }
 
 
 async def _exercise_saved_runtime_config_startup(tmp_path) -> None:

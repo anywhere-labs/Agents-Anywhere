@@ -136,6 +136,41 @@ POST /api/v2/connector/ingest
 
 These endpoint names should not change as part of the runtime protocol refactor.
 
+### Connector runtime RPC methods
+
+The runtime protocol refactor evolves payload semantics behind
+`WS /api/v2/connector/ws`. Runtime configuration is provider-managed and
+read-only once a runtime instance is running:
+
+```text
+runtime.discover
+runtime.configSchema
+runtime.config
+runtime.validateConfig
+runtime.start
+runtime.stop
+runtime.modelCatalog
+runtime.permissionCatalog
+session.discover
+session.create
+session.sync
+session.state
+session.selections.update
+session.commands
+session.command.execute
+interaction.respond
+turn.start
+turn.steer
+turn.interrupt
+```
+
+`runtime.configSchema` performs a live provider read for UI/CLI configuration
+forms. `runtime.config` returns saved raw values when the runtime is stopped,
+and the running runtime's read-only effective `RuntimeConfig` projection when
+it is running. Config mutation still flows through `runtime.validateConfig` and
+`runtime.start`; running `AgentRuntime` instances do not accept direct config
+updates.
+
 The payload semantics may evolve behind the channel. During migration, Connector may continue sending old notification names. The target semantic ingest methods are:
 
 ```text

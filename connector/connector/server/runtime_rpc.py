@@ -29,6 +29,8 @@ from connector.server.runtime_rpc_payloads import (
     operation_result_payload,
     permission_catalog_payload,
     runtime_command_payload,
+    runtime_config_payload,
+    runtime_config_schema_payload,
     session_meta_payload,
     session_state_payload,
 )
@@ -39,6 +41,8 @@ class RuntimeRpcHandler:
 
     METHODS: ClassVar[set[str]] = {
         "runtime.discover",
+        "runtime.configSchema",
+        "runtime.config",
         "runtime.validateConfig",
         "runtime.start",
         "runtime.stop",
@@ -73,6 +77,28 @@ class RuntimeRpcHandler:
     async def dispatch(self, method: str, params: dict[str, Any]) -> Any:
         if method == "runtime.discover":
             return await self.discover_runtimes()
+        if method == "runtime.configSchema":
+            runtime_id = required_runtime_id(params)
+            schema = await self.agent_runtime_supervisor.entry(runtime_id).provider.get_config_schema()
+            return {"configSchema": runtime_config_schema_payload(schema)}
+        if method == "runtime.config":
+            runtime_id = required_runtime_id(params)
+            entry = self.agent_runtime_supervisor.entry(runtime_id)
+            saved_values = self.runtime_config_store.load(runtime_id)
+            if entry.runtime is None:
+                return {
+                    "runtimeId": runtime_id,
+                    "running": False,
+                    "config": None,
+                    "savedValues": saved_values,
+                }
+            config = await entry.runtime.get_config()
+            return {
+                "runtimeId": runtime_id,
+                "running": True,
+                "config": runtime_config_payload(config),
+                "savedValues": saved_values,
+            }
         if method == "runtime.validateConfig":
             runtime_id = required_runtime_id(params)
             config = runtime_config(params)
@@ -364,4 +390,3 @@ class RuntimeRpcHandler:
             input_data=optional_mapping(params.get("inputData")),
         )
         return operation_result_payload(result)
-
