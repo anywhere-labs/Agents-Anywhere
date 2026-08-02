@@ -15,6 +15,7 @@ from connector.runtime_protocol import (
     RuntimeModelCatalog,
     RuntimeOperationResult,
     RuntimePermissionCatalog,
+    RuntimeSessionStateCache,
     RuntimeTimelineSnapshot,
     RuntimeUnsupportedError,
     SessionMeta,
@@ -54,7 +55,7 @@ class ClaudeRuntime(AgentRuntime):
         self._started = False
         self._sdk: Any | None = None
         self._sessions: dict[str, ClaudeSession] = {}
-        self._session_states: dict[str, SessionState] = {}
+        self._session_states = RuntimeSessionStateCache("claude", self.host)
         self._ordering = RuntimeOrderAllocator(start=1)
 
     @property
@@ -678,29 +679,11 @@ class ClaudeRuntime(AgentRuntime):
         error: Mapping[str, Any] | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
-        previous = self._session_states.get(session_id)
-        state = SessionState(
+        await self._session_states.update(
             session_id=session_id,
             external_session_id=external_session_id,
-            runtime="claude",
             status=status,  # type: ignore[arg-type]
-            selections={
-                **dict(previous.selections if previous is not None else {}),
-                **dict(selections or {}),
-            },
+            selections=selections,
             error=error,
-            metadata={
-                **dict(previous.metadata if previous is not None else {}),
-                **dict(metadata or {}),
-            },
-        )
-        self._session_states[session_id] = state
-        await self.host.session_state_update(
-            session_id=session_id,
-            runtime="claude",
-            external_session_id=external_session_id,
-            status=state.status,
-            selections=state.selections,
-            error=state.error,
-            metadata=state.metadata,
+            metadata=metadata,
         )

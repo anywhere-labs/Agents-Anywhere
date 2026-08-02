@@ -15,6 +15,7 @@ from connector.runtime_protocol import (
     RuntimeModelCatalog,
     RuntimeOperationResult,
     RuntimePermissionCatalog,
+    RuntimeSessionStateCache,
     RuntimeTimelineSnapshot,
     RuntimeUnsupportedError,
     SessionMeta,
@@ -56,7 +57,7 @@ class CodexRuntime(AgentRuntime):
     def __post_init__(self) -> None:
         self._started = False
         self._model_list_result: dict[str, Any] | None = None
-        self._session_states: dict[str, SessionState] = {}
+        self._session_states = RuntimeSessionStateCache("codex", self.host)
         self._active_turn_ids: dict[str, str] = {}
         self._timeline = CodexTimelineAccumulator()
 
@@ -690,29 +691,11 @@ class CodexRuntime(AgentRuntime):
         error: Mapping[str, Any] | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
-        previous = self._session_states.get(session_id)
-        state = SessionState(
+        await self._session_states.update(
             session_id=session_id,
             external_session_id=external_session_id,
-            runtime="codex",
             status=status,  # type: ignore[arg-type]
-            selections={
-                **dict(previous.selections if previous is not None else {}),
-                **dict(selections or {}),
-            },
+            selections=selections,
             error=error,
-            metadata={
-                **dict(previous.metadata if previous is not None else {}),
-                **dict(metadata or {}),
-            },
-        )
-        self._session_states[session_id] = state
-        await self.host.session_state_update(
-            session_id=session_id,
-            runtime="codex",
-            external_session_id=external_session_id,
-            status=state.status,
-            selections=state.selections,
-            error=state.error,
-            metadata=state.metadata,
+            metadata=metadata,
         )
