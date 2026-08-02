@@ -5,7 +5,7 @@ from typing import Any
 
 from connector.control import ConnectorController, config_to_payload
 from connector.core.config import ConnectorConfig
-from connector.json_rpc import JsonRpcStdioServer
+from connector.core.json_rpc import JsonRpcStdioServer
 from connector.server.auth import ConnectorAuthenticationError
 
 

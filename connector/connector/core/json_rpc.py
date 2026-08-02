@@ -8,7 +8,6 @@ import threading
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-
 JsonRpcHandler = Callable[[Any], Any | Awaitable[Any]]
 
 

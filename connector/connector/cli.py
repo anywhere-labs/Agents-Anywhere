@@ -12,13 +12,13 @@ import httpx
 
 from connector.control import ConnectorController
 from connector.core.config import ConnectorConfig
+from connector.core.json_rpc import JsonRpcStdioServer, open_stdio_server
 from connector.core.runtime_owner import (
     assert_can_start,
     clear_runtime,
     runtime_path,
     write_runtime,
 )
-from connector.json_rpc import JsonRpcStdioServer, open_stdio_server
 from connector.logging import install_rpc_log_sink
 from connector.server.client import BackendRpcClient
 from connector.server.urls import api_v2_url
