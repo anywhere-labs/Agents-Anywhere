@@ -38,6 +38,8 @@ FORBIDDEN_ACTIVE_TOKENS = {
     "backendNotifications",
     "notification_sink",
     "approval.requested",
+    "protocol.modelCatalogUpdated",
+    "protocol.permissionCatalogUpdated",
     "CodexAdapter",
     "ClaudeSdkAdapter",
     "EmptyCodexClient",
