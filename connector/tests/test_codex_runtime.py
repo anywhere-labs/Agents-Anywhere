@@ -6,12 +6,12 @@ from typing import Any
 
 from connector.runtime_protocol import RuntimeConfig, SessionNotice
 from connector.runtime_protocol.host import RuntimeHostClient
-from connector.runtimes.codex.runtime import (
-    CodexRuntime,
+from connector.runtimes.codex.catalogs import (
     model_catalog_from_codex_items,
     permission_catalog_from_codex_items,
-    stable_session_id,
 )
+from connector.runtimes.codex.runtime import CodexRuntime
+from connector.runtimes.codex.sessions import stable_session_id
 
 
 class FakeCodexClient:
@@ -265,7 +265,10 @@ async def _test_codex_runtime_permission_catalog() -> None:
 
     assert [item.id for item in catalog.permissions] == ["never_danger_full_access"]
     assert catalog.permissions[0].selection_id.startswith("sel_permission_")
-    assert catalog.permissions[0].metadata["nativeSettings"]["sandbox"] == "danger-full-access"
+    assert (
+        catalog.permissions[0].metadata["nativeSettings"]["sandbox"]
+        == "danger-full-access"
+    )
 
 
 def test_codex_runtime_lists_sessions_from_thread_list() -> None:
@@ -285,11 +288,17 @@ async def _test_codex_runtime_lists_sessions_from_thread_list() -> None:
     assert sessions[0].ordering_time == "2026-08-02T00:00:00Z"
 
 
-def test_codex_runtime_session_state_defaults_to_idle_for_known_external_session() -> None:
-    asyncio.run(_test_codex_runtime_session_state_defaults_to_idle_for_known_external_session())
+def test_codex_runtime_session_state_defaults_to_idle_for_known_external_session() -> (
+    None
+):
+    asyncio.run(
+        _test_codex_runtime_session_state_defaults_to_idle_for_known_external_session()
+    )
 
 
-async def _test_codex_runtime_session_state_defaults_to_idle_for_known_external_session() -> None:
+async def _test_codex_runtime_session_state_defaults_to_idle_for_known_external_session() -> (
+    None
+):
     runtime = CodexRuntime(config=_config(), host=FakeHost(), client=FakeCodexClient())
 
     state = await runtime.get_session_state("sess_1", external_session_id="thread_1")
@@ -393,7 +402,10 @@ async def _test_codex_runtime_starts_existing_turn_and_reports_running_state() -
             "clientUserMessageId": "cm_1",
         },
     )
-    assert [update["status"] for update in host.state_updates[-2:]] == ["waiting", "running"]
+    assert [update["status"] for update in host.state_updates[-2:]] == [
+        "waiting",
+        "running",
+    ]
     state = await runtime.get_session_state("sess_1")
     assert state is not None
     assert state.status == "running"
@@ -407,8 +419,14 @@ async def _test_codex_runtime_create_and_start_session_reports_meta_and_state() 
     client = FakeCodexClient()
     host = FakeHost()
     runtime = CodexRuntime(config=_config(), host=host, client=client)
-    model_selection = (await runtime.list_model_catalog()).models[0].reasoning_items[0].selection_id
-    permission_selection = (await runtime.list_permission_catalog(query="read only")).permissions[0].selection_id
+    model_selection = (
+        (await runtime.list_model_catalog()).models[0].reasoning_items[0].selection_id
+    )
+    permission_selection = (
+        (await runtime.list_permission_catalog(query="read only"))
+        .permissions[0]
+        .selection_id
+    )
 
     result = await runtime.create_and_start_session(
         session_id="sess_new",
@@ -424,14 +442,20 @@ async def _test_codex_runtime_create_and_start_session_reports_meta_and_state() 
 
     assert result.ok is True
     assert result.result["externalSessionId"] == "thread_new"
-    thread_start = next(request for request in client.requests if request[0] == "thread/start")
+    thread_start = next(
+        request for request in client.requests if request[0] == "thread/start"
+    )
     assert thread_start[1]["cwd"] == "/repo"
     assert thread_start[1]["model"] == "gpt-example"
     assert thread_start[1]["approvalPolicy"] == "on-request"
     assert thread_start[1]["sandbox"] == "read-only"
     assert host.meta_upserts[0]["session_id"] == "sess_new"
     assert host.meta_upserts[0]["external_session_id"] == "thread_new"
-    assert [update["status"] for update in host.state_updates] == ["idle", "waiting", "running"]
+    assert [update["status"] for update in host.state_updates] == [
+        "idle",
+        "waiting",
+        "running",
+    ]
     assert host.state_updates[0]["selections"] == {
         "model": model_selection,
         "permission": permission_selection,
@@ -485,7 +509,9 @@ def test_codex_runtime_rejects_unknown_command_without_transport_error() -> None
 async def _test_codex_runtime_rejects_unknown_command_without_transport_error() -> None:
     runtime = CodexRuntime(config=_config(), host=FakeHost(), client=FakeCodexClient())
 
-    result = await runtime.execute_command("sess_1", "nope", external_session_id="thread_1")
+    result = await runtime.execute_command(
+        "sess_1", "nope", external_session_id="thread_1"
+    )
 
     assert result.ok is False
     assert result.code == "unknown_command"
@@ -791,7 +817,9 @@ async def _test_codex_runtime_responds_to_approval_interaction() -> None:
 
 def test_codex_catalog_helpers_ignore_unrecognized_items() -> None:
     models = model_catalog_from_codex_items([{}, {"id": "gpt"}], revision=3)
-    permissions = permission_catalog_from_codex_items([{}, {"id": "perm", "label": "Perm"}], revision=3)
+    permissions = permission_catalog_from_codex_items(
+        [{}, {"id": "perm", "label": "Perm"}], revision=3
+    )
 
     assert [model.id for model in models.models] == ["gpt"]
     assert [permission.id for permission in permissions.permissions] == ["perm"]

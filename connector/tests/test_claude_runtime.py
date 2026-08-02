@@ -7,7 +7,8 @@ from typing import Any
 
 from connector.runtime_protocol import RuntimeAttachmentContent, RuntimeConfig
 from connector.runtime_protocol.host import RuntimeHostClient
-from connector.runtimes.claude.runtime import ClaudeRuntime, stable_session_id
+from connector.runtimes.claude.runtime import ClaudeRuntime
+from connector.runtimes.claude.utils import stable_session_id
 
 
 class SimpleNamespaceOptions:
@@ -50,7 +51,9 @@ class FakeClaudeSdk:
         )
 
     @staticmethod
-    def get_session_messages(session_id: str, directory: str | None = None) -> list[Any]:
+    def get_session_messages(
+        session_id: str, directory: str | None = None
+    ) -> list[Any]:
         _ = directory
         return [
             SimpleNamespace(
@@ -208,7 +211,10 @@ async def _test_claude_runtime_permission_catalog() -> None:
 
     assert [item.id for item in catalog.permissions] == ["bypassPermissions"]
     assert catalog.permissions[0].selection_id.startswith("sel_permission_")
-    assert catalog.permissions[0].metadata["nativeSettings"]["permissionMode"] == "bypassPermissions"
+    assert (
+        catalog.permissions[0].metadata["nativeSettings"]["permissionMode"]
+        == "bypassPermissions"
+    )
 
 
 def test_claude_runtime_lists_sessions_from_sdk() -> None:
@@ -252,11 +258,17 @@ async def _test_claude_runtime_start_turn_emits_state_and_timeline() -> None:
     client = FakeClaudeClient()
     runtime = _runtime(host=host, client=client)
 
-    result = await runtime.start_turn("sess_1", "claude_session_1", "hello", client_message_id="cm_1")
+    result = await runtime.start_turn(
+        "sess_1", "claude_session_1", "hello", client_message_id="cm_1"
+    )
     await runtime._sessions["sess_1"].active_task
 
     assert result.ok is True
-    assert [update["status"] for update in host.state_updates] == ["waiting", "running", "idle"]
+    assert [update["status"] for update in host.state_updates] == [
+        "waiting",
+        "running",
+        "idle",
+    ]
     assert client.connected is True
     assert client.disconnected is True
     assert client.queries[0][0]["message"]["content"] == "hello"
@@ -306,12 +318,16 @@ async def _test_claude_runtime_projects_sdk_approval_to_notice() -> None:
         client_factory=client_factory,
     )
 
-    result = await runtime.start_turn("sess_approval", "claude_session_approval", "hello")
+    result = await runtime.start_turn(
+        "sess_approval", "claude_session_approval", "hello"
+    )
     await asyncio.sleep(0)
 
     can_use_tool = captured_options[0].kwargs["can_use_tool"]
     approval_task = asyncio.create_task(
-        can_use_tool("Bash", {"command": "ls"}, {"session_id": "claude_session_approval"})
+        can_use_tool(
+            "Bash", {"command": "ls"}, {"session_id": "claude_session_approval"}
+        )
     )
     await asyncio.sleep(0)
 
@@ -357,7 +373,7 @@ async def _test_claude_runtime_interrupt_rejects_pending_approval() -> None:
         config=_config(),
         host=host,
         sdk_loader=lambda: FakeClaudeSdk,
-        client_factory=lambda _sdk, options: (captured_options.append(options) or client),
+        client_factory=lambda _sdk, options: captured_options.append(options) or client,
     )
 
     await runtime.start_turn("sess_approval", "claude_session_approval", "hello")
@@ -371,7 +387,9 @@ async def _test_claude_runtime_interrupt_rejects_pending_approval() -> None:
     )
     await asyncio.sleep(0)
 
-    result = await runtime.interrupt_turn("sess_approval", "claude_session_approval", "user")
+    result = await runtime.interrupt_turn(
+        "sess_approval", "claude_session_approval", "user"
+    )
     permission = await approval_task
 
     assert result.ok is True

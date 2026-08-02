@@ -32,6 +32,7 @@ CommandChecker = Callable[[LaunchTarget, Mapping[str, str]], Awaitable[dict[str,
 SdkChecker = Callable[[], dict[str, Any]]
 
 _COMMAND_CHECK_TIMEOUT_S = 8.0
+_CODEX_SDK_RUNTIME_SUPPORTED = False
 _PROTECTED_ENV_PREFIXES = ("AGENT_CONNECTOR_", "AGENT_SERVER_")
 _PROTECTED_ENV_NAMES = {
     "AGENT_CONNECTOR_ID",
@@ -71,10 +72,17 @@ class CodexProvider(RuntimeProvider):
         report, target = await self._discover_app_server_target()
         self._discovered_sdk = sdk
         self._discovered_target = target
-        available = bool(sdk.get("available")) or target is not None
+        sdk_runtime_available = (
+            bool(sdk.get("available")) and _CODEX_SDK_RUNTIME_SUPPORTED
+        )
+        available = sdk_runtime_available or target is not None
         reason = None
         if not available:
-            reason = "Codex SDK and Codex app-server executable are unavailable"
+            reason = (
+                "Codex app-server executable is unavailable"
+                if sdk.get("available")
+                else "Codex SDK and Codex app-server executable are unavailable"
+            )
         return RuntimeInventoryItem(
             runtime=self.runtime,
             runtime_type=self.runtime_type,
@@ -136,17 +144,27 @@ class CodexProvider(RuntimeProvider):
         if requested_mode == "sdk":
             if not sdk.get("available"):
                 raise RuntimeInvalidRequestError("Codex SDK is not available")
+            if not _CODEX_SDK_RUNTIME_SUPPORTED:
+                raise RuntimeInvalidRequestError(
+                    "Codex SDK runtime client is not implemented"
+                )
             effective_mode = "sdk"
         elif requested_mode == "app-server":
             if target is None:
-                raise RuntimeInvalidRequestError("Codex app-server executable is not available")
+                raise RuntimeInvalidRequestError(
+                    "Codex app-server executable is not available"
+                )
             effective_mode = "app-server"
-        elif sdk.get("available"):
-            effective_mode = "sdk"
         elif target is not None:
             effective_mode = "app-server"
+        elif sdk.get("available") and not _CODEX_SDK_RUNTIME_SUPPORTED:
+            raise RuntimeInvalidRequestError(
+                "Codex app-server executable is unavailable and Codex SDK runtime client is not implemented"
+            )
         else:
-            raise RuntimeInvalidRequestError("Codex SDK and Codex app-server executable are unavailable")
+            raise RuntimeInvalidRequestError(
+                "Codex SDK and Codex app-server executable are unavailable"
+            )
 
         normalized_values: dict[str, Any] = {
             "sdkMode": effective_mode,
@@ -177,10 +195,20 @@ class CodexProvider(RuntimeProvider):
     ) -> AgentRuntime:
         _ = host
         mode = config.values.get("sdkMode")
-        client = app_server_client_from_config(config) if mode == "app-server" else EmptyCodexClient()
+        if mode == "sdk":
+            raise RuntimeInvalidRequestError(
+                "Codex SDK runtime client is not implemented"
+            )
+        client = (
+            app_server_client_from_config(config)
+            if mode == "app-server"
+            else EmptyCodexClient()
+        )
         return CodexRuntime(config=config, host=host, client=client)
 
-    async def _discover_app_server_target(self) -> tuple[dict[str, Any], LaunchTarget | None]:
+    async def _discover_app_server_target(
+        self,
+    ) -> tuple[dict[str, Any], LaunchTarget | None]:
         checked: list[dict[str, Any]] = []
         for target in _codex_candidate_targets():
             result = await self._command_checker(target, {})
@@ -209,7 +237,9 @@ class CodexProvider(RuntimeProvider):
     ) -> LaunchTarget | None:
         raw_path = raw_values.get("executablePath")
         if isinstance(raw_path, str) and raw_path:
-            target = launch_target("configured", os.path.expandvars(os.path.expanduser(raw_path)))
+            target = launch_target(
+                "configured", os.path.expandvars(os.path.expanduser(raw_path))
+            )
             result = await self._command_checker(target, environment)
             if result.get("status") != "ok":
                 raise RuntimeInvalidRequestError(
@@ -324,7 +354,14 @@ def _codex_candidate_targets() -> tuple[LaunchTarget, ...]:
             ("app", "/Applications/Codex.app/Contents/Resources/codex"),
             (
                 "app",
-                str(Path.home() / "Applications" / "Codex.app" / "Contents" / "Resources" / "codex"),
+                str(
+                    Path.home()
+                    / "Applications"
+                    / "Codex.app"
+                    / "Contents"
+                    / "Resources"
+                    / "codex"
+                ),
             ),
             ("cli", shutil.which("codex") or ""),
             ("cli", "/opt/homebrew/bin/codex"),
@@ -367,7 +404,11 @@ async def _check_codex_target(
             timeout=_COMMAND_CHECK_TIMEOUT_S,
         )
     except Exception as exc:  # noqa: BLE001
-        return {**base, "status": "failed", "reason": str(exc) or exc.__class__.__name__}
+        return {
+            **base,
+            "status": "failed",
+            "reason": str(exc) or exc.__class__.__name__,
+        }
     out = stdout.decode(errors="replace").strip()
     err = stderr.decode(errors="replace").strip()
     if proc.returncode != 0:
@@ -408,14 +449,20 @@ def _merge_environment(raw: Any) -> dict[str, str]:
     environment = dict(os.environ)
     for key, value in overrides.items():
         if not isinstance(key, str) or not key or "=" in key or "\x00" in key:
-            raise RuntimeInvalidRequestError("environment contains an invalid variable name")
+            raise RuntimeInvalidRequestError(
+                "environment contains an invalid variable name"
+            )
         if key in _PROTECTED_ENV_NAMES or key.startswith(_PROTECTED_ENV_PREFIXES):
-            raise RuntimeInvalidRequestError(f"environment variable {key!r} is managed by the connector")
+            raise RuntimeInvalidRequestError(
+                f"environment variable {key!r} is managed by the connector"
+            )
         if value is None:
             environment.pop(key, None)
             continue
         if not isinstance(value, str) or "\x00" in value:
-            raise RuntimeInvalidRequestError(f"environment variable {key!r} must be a string or null")
+            raise RuntimeInvalidRequestError(
+                f"environment variable {key!r} must be a string or null"
+            )
         environment[key] = value
     return environment
 

@@ -12,24 +12,29 @@ from connector.runtimes.codex.provider import CodexProvider
 from connector.runtimes.codex.runtime import CodexRuntime
 
 
-def test_codex_provider_discovers_sdk_without_executable() -> None:
-    asyncio.run(_test_codex_provider_discovers_sdk_without_executable())
+def test_codex_provider_does_not_treat_unimplemented_sdk_as_runnable() -> None:
+    asyncio.run(_test_codex_provider_does_not_treat_unimplemented_sdk_as_runnable())
 
 
-async def _test_codex_provider_discovers_sdk_without_executable() -> None:
+async def _test_codex_provider_does_not_treat_unimplemented_sdk_as_runnable() -> None:
     provider = CodexProvider(
-        sdk_checker=lambda: {"available": True, "package": "openai-codex", "version": "1.0"},
+        sdk_checker=lambda: {
+            "available": True,
+            "package": "openai-codex",
+            "version": "1.0",
+        },
         command_checker=_missing_command,
     )
 
     item = await provider.discover()
 
-    assert item.available is True
-    assert item.configured is True
+    assert item.available is False
+    assert item.configured is False
     assert item.capabilities["commands"] is True
     assert item.capabilities["ipc"] is True
     assert item.metadata["sdk"]["available"] is True
     assert item.metadata["appServer"]["available"] is False
+    assert "app-server executable is unavailable" in str(item.reason)
 
 
 def test_codex_provider_schema_marks_ipc_beta_and_platform_scope() -> None:
@@ -58,13 +63,21 @@ async def _test_codex_provider_schema_marks_ipc_beta_and_platform_scope() -> Non
     assert "runtime instability" in ipc["description"]
 
 
-def test_codex_provider_auto_prefers_sdk_when_available() -> None:
-    asyncio.run(_test_codex_provider_auto_prefers_sdk_when_available())
+def test_codex_provider_auto_uses_app_server_until_sdk_runtime_is_implemented() -> None:
+    asyncio.run(
+        _test_codex_provider_auto_uses_app_server_until_sdk_runtime_is_implemented()
+    )
 
 
-async def _test_codex_provider_auto_prefers_sdk_when_available() -> None:
+async def _test_codex_provider_auto_uses_app_server_until_sdk_runtime_is_implemented() -> (
+    None
+):
     provider = CodexProvider(
-        sdk_checker=lambda: {"available": True, "package": "openai-codex", "version": "1.0"},
+        sdk_checker=lambda: {
+            "available": True,
+            "package": "openai-codex",
+            "version": "1.0",
+        },
         command_checker=_available_command,
     )
     await provider.discover()
@@ -72,7 +85,7 @@ async def _test_codex_provider_auto_prefers_sdk_when_available() -> None:
     config = await provider.validate_config({"sdkMode": "auto", "ipcEnabled": False})
 
     assert config.runtime == "codex"
-    assert config.values["sdkMode"] == "sdk"
+    assert config.values["sdkMode"] == "app-server"
     assert config.values["requestedSdkMode"] == "auto"
     assert config.values["ipcEnabled"] is False
 
@@ -113,6 +126,26 @@ async def _test_codex_provider_rejects_missing_forced_sdk() -> None:
         await provider.validate_config({"sdkMode": "sdk"})
 
 
+def test_codex_provider_rejects_forced_sdk_until_runtime_client_exists() -> None:
+    asyncio.run(_test_codex_provider_rejects_forced_sdk_until_runtime_client_exists())
+
+
+async def _test_codex_provider_rejects_forced_sdk_until_runtime_client_exists() -> None:
+    provider = CodexProvider(
+        sdk_checker=lambda: {
+            "available": True,
+            "package": "openai-codex",
+            "version": "1.0",
+        },
+        command_checker=_available_command,
+    )
+
+    with pytest.raises(
+        RuntimeInvalidRequestError, match="runtime client is not implemented"
+    ):
+        await provider.validate_config({"sdkMode": "sdk"})
+
+
 def test_codex_provider_validates_configured_executable() -> None:
     asyncio.run(_test_codex_provider_validates_configured_executable())
 
@@ -120,7 +153,9 @@ def test_codex_provider_validates_configured_executable() -> None:
 async def _test_codex_provider_validates_configured_executable() -> None:
     seen: list[str] = []
 
-    async def check(target: LaunchTarget, environment: Mapping[str, str]) -> dict[str, Any]:
+    async def check(
+        target: LaunchTarget, environment: Mapping[str, str]
+    ) -> dict[str, Any]:
         seen.append(target.path)
         assert environment["EXAMPLE"] == "1"
         return {"status": "ok", "source": target.source, "path": target.path}
@@ -146,10 +181,14 @@ def test_codex_provider_rejects_protected_environment() -> None:
 
 
 async def _test_codex_provider_rejects_protected_environment() -> None:
-    provider = CodexProvider(sdk_checker=_missing_sdk, command_checker=_available_command)
+    provider = CodexProvider(
+        sdk_checker=_missing_sdk, command_checker=_available_command
+    )
 
     with pytest.raises(RuntimeInvalidRequestError, match="managed by the connector"):
-        await provider.validate_config({"environment": {"AGENT_SERVER_URL": "http://x"}})
+        await provider.validate_config(
+            {"environment": {"AGENT_SERVER_URL": "http://x"}}
+        )
 
 
 def test_codex_provider_creates_native_runtime() -> None:
@@ -157,7 +196,9 @@ def test_codex_provider_creates_native_runtime() -> None:
 
 
 async def _test_codex_provider_creates_native_runtime() -> None:
-    provider = CodexProvider(sdk_checker=_missing_sdk, command_checker=_available_command)
+    provider = CodexProvider(
+        sdk_checker=_missing_sdk, command_checker=_available_command
+    )
     config = await provider.validate_config({"sdkMode": "app-server"})
 
     runtime = await provider.create_runtime(config, _NoHost())
