@@ -5,7 +5,7 @@ from typing import Any
 
 from connector.runtime_protocol import RuntimeTimelineItem
 from connector.server.runtime_host import ConnectorRuntimeHost
-from connector.sync_state import JsonSyncStateStore
+from connector.server.sync_state import JsonSyncStateStore
 
 
 def test_connector_runtime_host_maps_timeline_item_to_backend_notification() -> None:

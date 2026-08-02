@@ -10,7 +10,7 @@ from connector.runtime_protocol import (
     SessionNotice,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
-from connector.sync_state import RuntimeSyncState, SyncStateStore
+from connector.server.sync_state import RuntimeSyncState, SyncStateStore
 
 BackendNotifier = Callable[[str, dict[str, Any]], Awaitable[None]]
 AttachmentDownloader = Callable[[str, str], Awaitable[tuple[bytes, str, str]]]

@@ -6,7 +6,8 @@ from typing import Any
 
 from connector.claude.history_adapter import ClaudeHistoryAdapter
 from connector.claude.path_utils import stable_claude_session_id
-from connector.sync_state import JsonSyncStateStore
+
+from connector.server.sync_state import JsonSyncStateStore
 
 
 @dataclass

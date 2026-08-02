@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from connector.sync_state import JsonSyncStateStore
+from connector.server.sync_state import JsonSyncStateStore
 
 
 def test_json_sync_state_round_trip_and_delete(tmp_path) -> None:

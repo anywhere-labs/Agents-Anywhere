@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from connector._reference.legacy.adapter import Adapter
-from connector.sync_state import SyncStateStore
+from connector.server.sync_state import SyncStateStore
 
 RuntimeStatusSink = Callable[[str, str, dict[str, Any] | None], Awaitable[None]]
 RuntimeChangedSink = Callable[[str, Adapter | None], Awaitable[None]]

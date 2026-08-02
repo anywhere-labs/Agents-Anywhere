@@ -11,7 +11,7 @@ from connector.claude.path_utils import stable_claude_session_id
 from connector.claude.timeline_identity import item_content_hash
 from connector.claude.timeline_reducer import ClaudeTimelineReducer
 from connector.logging import logger
-from connector.sync_state import SyncStateStore
+from connector.server.sync_state import SyncStateStore
 from connector.time import utc_now
 
 

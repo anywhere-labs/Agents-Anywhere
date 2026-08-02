@@ -48,7 +48,7 @@ from connector.protocol_catalogs import (
     model_catalog_from_runtime_items,
     permission_catalog_from_items,
 )
-from connector.sync_state import SyncStateStore
+from connector.server.sync_state import SyncStateStore
 from connector.time import utc_now
 
 AttachmentDownloader = Callable[[str, str], Awaitable[tuple[bytes, str, str]]]

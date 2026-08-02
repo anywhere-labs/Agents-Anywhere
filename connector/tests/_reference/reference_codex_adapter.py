@@ -6,7 +6,6 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 import pytest
-
 from connector.codex.adapter import (
     EXISTING_SYNC_CHANGED_THREAD_TIMEOUT_SECONDS,
     EXISTING_SYNC_SCAN_TIMEOUT_SECONDS,
@@ -22,8 +21,9 @@ from connector.codex.ipc_protocol import (
 )
 from connector.codex.reducer import TimelineReducer
 from connector.codex.rpc import APP_SERVER_STREAM_LIMIT, JsonRpcStdioClient
+
 from connector.protocol import protocol_selection_id
-from connector.sync_state import JsonSyncStateStore
+from connector.server.sync_state import JsonSyncStateStore
 
 
 class FakeCodexRpc:

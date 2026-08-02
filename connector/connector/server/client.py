@@ -31,6 +31,7 @@ from connector.server.dispatch import ConnectorRequestDispatcher
 from connector.server.ingest import ConnectorIngestClient
 from connector.server.rpc import ConnectorRpcChannel
 from connector.server.runtime_host import ConnectorRuntimeHost
+from connector.server.sync_state import JsonSyncStateStore, SyncStateStore
 from connector.server.urls import (
     api_v2_path,
     api_v2_url,
@@ -40,7 +41,6 @@ from connector.server.urls import (
 from connector.server.urls import (
     ws_url as build_ws_url,
 )
-from connector.sync_state import JsonSyncStateStore, SyncStateStore
 
 
 class BackendRpcClient:
