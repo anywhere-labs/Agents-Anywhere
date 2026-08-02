@@ -755,6 +755,25 @@ class SessionCommandRequest(BaseModel):
     raw: str | None = Field(default=None, max_length=4096)
 
 
+class RuntimeCommandView(BaseModel):
+    id: str
+    title: str
+    description: str | None = None
+    aliases: list[str] = Field(default_factory=list)
+    category: str | None = None
+    scope: str = "session"
+    enabled: bool = True
+    disabledReason: str | None = None
+    acceptsArgs: bool = False
+    argsSchema: dict[str, Any] | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class SessionCommandListResponse(BaseModel):
+    commands: list[RuntimeCommandView] = Field(default_factory=list)
+    serverTime: str
+
+
 class SessionCommandResponse(BaseModel):
     command: str
     ok: bool = True

@@ -661,6 +661,7 @@ class FakeLocalRpc:
         self.interrupt_result: dict[str, Any] = {"interrupted": True}
         self.terminal_relay_broker: Any | None = None
         self.terminal_relay_sockets: dict[str, FakeWebSocket] = {}
+        self.fail = False
 
     async def is_online(self, connector_id: str) -> bool:
         return True
@@ -674,6 +675,8 @@ class FakeLocalRpc:
         timeout: float = 30,
     ) -> Any:
         self.requests.append((connector_id, method, params, timeout))
+        if self.fail:
+            raise ConnectorRpcError("codex_error", "request gone")
         if method == "terminal.create":
             terminal_id = params["terminalId"]
             self.terminals[terminal_id] = {
@@ -745,6 +748,31 @@ class FakeLocalRpc:
             }
         if method == "turn.interrupt":
             return self.interrupt_result
+        if method == "session.commands":
+            return {
+                "commands": [
+                    {
+                        "id": "resume",
+                        "title": "Resume",
+                        "description": "Resume the current turn.",
+                        "aliases": ["continue"],
+                        "category": "session",
+                        "scope": "session",
+                        "enabled": True,
+                        "disabledReason": None,
+                        "acceptsArgs": False,
+                        "argsSchema": None,
+                        "metadata": {},
+                    }
+                ]
+            }
+        if method == "session.command.execute":
+            return {
+                "command": params["command"],
+                "ok": True,
+                "message": "Command executed.",
+                "result": {"echo": params},
+            }
         return {"method": method, "params": params}
 
 
@@ -942,54 +970,74 @@ def test_ws_ticket_scope_must_select_exactly_one_target(tmp_path):
     assert ambiguous.status_code == 422
 
 
-def test_session_command_help_is_not_a_message(tmp_path):
+def test_session_command_list_reads_runtime_commands(tmp_path):
     client = make_client(tmp_path)
-    _connector_id, _access_token, session_id, headers = create_connector_and_session(client)
+    connector_id, _access_token, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
 
-    response = client.post(
-        f"/sessions/{session_id}/commands",
+    response = client.get(
+        f"/sessions/{session_id}/commands?query=res&limit=10",
         headers=headers,
-        json={"command": "help", "raw": "/help"},
     )
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["command"] == "help"
-    assert body["ok"] is True
-    assert [item["command"] for item in body["result"]["commands"]] == [
-        "help",
-        "interrupt",
-        "takeover",
-        "release",
-    ]
+    assert [item["id"] for item in body["commands"]] == ["resume"]
+    assert fake_rpc.requests[-1] == (
+        connector_id,
+        "session.commands",
+        {
+            "sessionId": session_id,
+            "runtime": "codex",
+            "limit": 10,
+            "externalSessionId": f"thr_{connector_id}_demo",
+            "query": "res",
+        },
+        30,
+    )
     state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
     assert state["items"] == []
 
 
-def test_session_command_toggles_takeover(tmp_path):
+def test_session_command_execute_calls_runtime(tmp_path):
     client = make_client(tmp_path)
-    _connector_id, _access_token, session_id, headers = create_connector_and_session(client)
+    connector_id, _access_token, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
 
-    enabled = client.post(
+    response = client.post(
         f"/sessions/{session_id}/commands",
         headers=headers,
-        json={"command": "takeover", "raw": "/takeover"},
+        json={"command": "resume", "raw": "/resume now", "args": ["now"]},
     )
-    assert enabled.status_code == 200, enabled.text
-    assert enabled.json()["session"]["takeover"] is True
 
-    disabled = client.post(
-        f"/sessions/{session_id}/commands",
-        headers=headers,
-        json={"command": "release", "raw": "/release"},
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["command"] == "resume"
+    assert body["ok"] is True
+    assert body["message"] == "Command executed."
+    assert fake_rpc.requests[-1] == (
+        connector_id,
+        "session.command.execute",
+        {
+            "sessionId": session_id,
+            "runtime": "codex",
+            "command": "resume",
+            "args": ["now"],
+            "externalSessionId": f"thr_{connector_id}_demo",
+            "raw": "/resume now",
+        },
+        30,
     )
-    assert disabled.status_code == 200, disabled.text
-    assert disabled.json()["session"]["takeover"] is False
 
 
-def test_session_command_rejects_unknown_command(tmp_path):
+def test_session_command_returns_runtime_rpc_error(tmp_path):
     client = make_client(tmp_path)
     _connector_id, _access_token, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    fake_rpc.fail = True  # type: ignore[attr-defined]
+    client.app.state.rpc = fake_rpc
 
     response = client.post(
         f"/sessions/{session_id}/commands",
@@ -997,8 +1045,8 @@ def test_session_command_rejects_unknown_command(tmp_path):
         json={"command": "does-not-exist", "raw": "/does-not-exist"},
     )
 
-    assert response.status_code == 422
-    assert response.json()["detail"]["code"] == "unsupported_session_command"
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "codex_error"
 
 
 def test_connector_status_response_uses_live_ws_not_stale_db(tmp_path):

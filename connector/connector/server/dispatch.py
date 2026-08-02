@@ -6,6 +6,8 @@ from typing import Any
 from connector.runtime_protocol import (
     AgentRuntime,
     RuntimeAttachment,
+    RuntimeCommand,
+    RuntimeCommandResult,
     RuntimeHostClient,
     RuntimeInventoryItem,
     RuntimeOperationResult,
@@ -68,6 +70,16 @@ class ConnectorRequestDispatcher:
             )
         if method == "session.sync":
             return await self._dispatch_agent_runtime_session_sync(
+                self._resolve_agent_runtime(params),
+                params,
+            )
+        if method == "session.commands":
+            return await self._dispatch_agent_runtime_session_commands(
+                self._resolve_agent_runtime(params),
+                params,
+            )
+        if method == "session.command.execute":
+            return await self._dispatch_agent_runtime_session_command_execute(
                 self._resolve_agent_runtime(params),
                 params,
             )
@@ -255,6 +267,33 @@ class ConnectorRequestDispatcher:
         )
         return _operation_result_payload(result)
 
+    async def _dispatch_agent_runtime_session_commands(
+        self,
+        runtime: AgentRuntime,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        commands = await runtime.list_commands(
+            session_id=_required_session_id(params),
+            external_session_id=_optional_string(params.get("externalSessionId")),
+            query=_optional_string(params.get("query")),
+            limit=_int_param(params, "limit", 50),
+        )
+        return {"commands": [_runtime_command_payload(command) for command in commands]}
+
+    async def _dispatch_agent_runtime_session_command_execute(
+        self,
+        runtime: AgentRuntime,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        result = await runtime.execute_command(
+            session_id=_required_session_id(params),
+            command=_required_command(params),
+            external_session_id=_optional_string(params.get("externalSessionId")),
+            raw=_optional_string(params.get("raw")),
+            args=_string_tuple(params.get("args") or ()),
+        )
+        return _command_result_payload(result)
+
 
 def _required_runtime_id(params: dict[str, Any]) -> str:
     runtime_id = params.get("runtimeId")
@@ -282,6 +321,13 @@ def _required_content(params: dict[str, Any]) -> str:
     if not isinstance(content, str):
         raise ValueError("content is required")
     return content
+
+
+def _required_command(params: dict[str, Any]) -> str:
+    command = params.get("command")
+    if not isinstance(command, str) or not command:
+        raise ValueError("command is required")
+    return command
 
 
 def _optional_string(value: Any) -> str | None:
@@ -334,6 +380,17 @@ def _int_param(params: dict[str, Any], key: str, default: int) -> int:
     raise ValueError(f"{key} must be an integer")
 
 
+def _string_tuple(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, list | tuple):
+        raise ValueError("args must be a list")
+    args: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise ValueError("args must contain only strings")
+        args.append(item)
+    return tuple(args)
+
+
 def _operation_result_payload(result: RuntimeOperationResult) -> dict[str, Any]:
     payload = dict(result.result)
     if result.ok and result.code is None and result.message is None:
@@ -343,6 +400,32 @@ def _operation_result_payload(result: RuntimeOperationResult) -> dict[str, Any]:
         **({"code": result.code} if result.code is not None else {}),
         **({"message": result.message} if result.message is not None else {}),
         **payload,
+    }
+
+
+def _command_result_payload(result: RuntimeCommandResult) -> dict[str, Any]:
+    return {
+        "command": result.command,
+        "ok": result.ok,
+        "code": result.code,
+        "message": result.message,
+        "result": dict(result.result),
+    }
+
+
+def _runtime_command_payload(command: RuntimeCommand) -> dict[str, Any]:
+    return {
+        "id": command.id,
+        "title": command.title,
+        "description": command.description,
+        "aliases": list(command.aliases),
+        "category": command.category,
+        "scope": command.scope,
+        "enabled": command.enabled,
+        "disabledReason": command.disabled_reason,
+        "acceptsArgs": command.accepts_args,
+        "argsSchema": dict(command.args_schema) if command.args_schema is not None else None,
+        "metadata": dict(command.metadata),
     }
 
 

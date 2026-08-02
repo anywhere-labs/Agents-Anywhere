@@ -29,6 +29,7 @@ import type {
   ProtocolModelCatalogResponse,
   ProtocolPermissionCatalogResponse,
   RpcResponse,
+  SessionCommandListResponse,
   SessionCreateRequest,
   SessionCreateResponse,
   SessionCommandResponse,
@@ -593,6 +594,21 @@ export class DashboardApi {
     return this.client.post<RpcResponse<unknown>>(
       `/sessions/${encodeURIComponent(sessionId)}/interrupt`,
       {},
+      { token },
+    );
+  }
+
+  getSessionCommands(
+    token: string,
+    sessionId: string,
+    options: { query?: string; limit?: number } = {},
+  ): Promise<SessionCommandListResponse> {
+    const params = new URLSearchParams();
+    if (options.query) params.set("query", options.query);
+    if (options.limit) params.set("limit", String(options.limit));
+    const suffix = params.toString();
+    return this.client.get<SessionCommandListResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/commands${suffix ? `?${suffix}` : ""}`,
       { token },
     );
   }

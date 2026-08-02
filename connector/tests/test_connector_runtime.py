@@ -19,6 +19,8 @@ from connector.runtime import (
 )
 from connector.runtime_protocol import (
     AgentRuntime,
+    RuntimeCommand,
+    RuntimeCommandResult,
     RuntimeConfig,
     RuntimeIdentity,
     RuntimeInventoryItem,
@@ -109,6 +111,62 @@ class FakeAgentRuntime(AgentRuntime):
                     source={"runtime": self.runtime_id, "event": "test"},
                 ),
             ),
+        )
+
+    async def list_commands(
+        self,
+        session_id: str,
+        external_session_id: str | None = None,
+        query: str | None = None,
+        limit: int = 50,
+    ) -> tuple[RuntimeCommand, ...]:
+        self.calls.append(
+            (
+                "session.commands",
+                {
+                    "sessionId": session_id,
+                    "externalSessionId": external_session_id,
+                    "query": query,
+                    "limit": limit,
+                },
+            )
+        )
+        return (
+            RuntimeCommand(
+                id="resume",
+                title="Resume",
+                description="Resume the current turn.",
+                aliases=("continue",),
+                category="session",
+                accepts_args=False,
+            ),
+        )
+
+    async def execute_command(
+        self,
+        session_id: str,
+        command: str,
+        external_session_id: str | None = None,
+        raw: str | None = None,
+        args: tuple[str, ...] = (),
+    ) -> RuntimeCommandResult:
+        self.calls.append(
+            (
+                "session.command.execute",
+                {
+                    "sessionId": session_id,
+                    "externalSessionId": external_session_id,
+                    "command": command,
+                    "raw": raw,
+                    "args": list(args),
+                },
+            )
+        )
+        return RuntimeCommandResult(
+            command=command,
+            ok=True,
+            message="Command executed.",
+            result={"sessionId": session_id},
         )
 
     async def create_and_start_session(
@@ -552,6 +610,78 @@ async def _exercise_runtime() -> None:
         "externalSessionId": "thr_1",
         "items": 1,
         "complete": True,
+    }
+
+    await client.handle_message(
+        {
+            "id": "rpc_5",
+            "type": "request",
+            "method": "session.commands",
+            "params": {
+                "runtime": "codex",
+                "sessionId": "sess_1",
+                "externalSessionId": "thr_1",
+                "query": "res",
+                "limit": 10,
+            },
+        }
+    )
+    assert runtime.calls[-1] == (
+        "session.commands",
+        {
+            "sessionId": "sess_1",
+            "externalSessionId": "thr_1",
+            "query": "res",
+            "limit": 10,
+        },
+    )
+    assert ws.messages[-1]["result"]["commands"] == [
+        {
+            "id": "resume",
+            "title": "Resume",
+            "description": "Resume the current turn.",
+            "aliases": ["continue"],
+            "category": "session",
+            "scope": "session",
+            "enabled": True,
+            "disabledReason": None,
+            "acceptsArgs": False,
+            "argsSchema": None,
+            "metadata": {},
+        }
+    ]
+
+    await client.handle_message(
+        {
+            "id": "rpc_6",
+            "type": "request",
+            "method": "session.command.execute",
+            "params": {
+                "runtime": "codex",
+                "sessionId": "sess_1",
+                "externalSessionId": "thr_1",
+                "command": "resume",
+                "raw": "/resume",
+                "args": ["now"],
+            },
+        }
+    )
+    assert runtime.calls[-1] == (
+        "session.command.execute",
+        {
+            "sessionId": "sess_1",
+            "externalSessionId": "thr_1",
+            "command": "resume",
+            "raw": "/resume",
+            "args": ["now"],
+        },
+    )
+    assert ws.messages[-1]["result"] == {
+        "command": "resume",
+        "ok": True,
+        "code": None,
+        "message": "Command executed.",
+        "result": {"sessionId": "sess_1"},
     }
 
 

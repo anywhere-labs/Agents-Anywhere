@@ -168,6 +168,25 @@ export type SessionCommandResponse = {
   serverTime: string;
 };
 
+export type RuntimeCommand = {
+  id: string;
+  title: string;
+  description: string | null;
+  aliases: string[];
+  category: string | null;
+  scope: "runtime" | "session" | "turn" | string;
+  enabled: boolean;
+  disabledReason: string | null;
+  acceptsArgs: boolean;
+  argsSchema: Record<string, unknown> | null;
+  metadata: Record<string, unknown>;
+};
+
+export type SessionCommandListResponse = {
+  commands: RuntimeCommand[];
+  serverTime: string;
+};
+
 export type DashboardSnapshotMessage = {
   type: "dashboard.snapshot";
   connectors: ConnectorView[];

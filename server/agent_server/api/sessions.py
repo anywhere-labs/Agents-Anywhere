@@ -28,6 +28,7 @@ from agent_server.core.models import (
     InteractionRespondRequest,
     MessageCreateRequest,
     RpcResponsePayload,
+    SessionCommandListResponse,
     SessionCommandRequest,
     SessionCommandResponse,
     SessionCreateRequest,
@@ -571,80 +572,104 @@ async def disable_takeover(
         raise HTTPException(status_code=404, detail="session not found") from None
 
 
+@router.get("/{session_id}/commands", response_model=SessionCommandListResponse)
+async def list_session_commands(
+    session_id: str,
+    query: str | None = Query(default=None, max_length=128),
+    limit: int = Query(default=50, ge=1, le=100),
+    user_id: str = Depends(current_user_id),
+    db: Store = Depends(get_store),
+    manager: ConnectorRpcManager = Depends(get_rpc),
+) -> SessionCommandListResponse:
+    try:
+        session = await db.get_session(session_id, user_id=user_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="session not found") from None
+    params: dict[str, Any] = {
+        "sessionId": session.id,
+        "runtime": session.runtime,
+        "limit": limit,
+    }
+    if session.externalSessionId:
+        params["externalSessionId"] = session.externalSessionId
+    if query:
+        params["query"] = query
+    try:
+        result = await manager.request(
+            session.connectorId,
+            "session.commands",
+            params,
+            timeout=30,
+        )
+    except ConnectorOfflineError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ConnectorRpcError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={"code": exc.code, "message": exc.message or exc.code},
+        ) from exc
+    commands = result.get("commands") if isinstance(result, dict) else None
+    if not isinstance(commands, list):
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "invalid_command_catalog",
+                "message": "connector did not return a command list",
+            },
+        )
+    return SessionCommandListResponse(commands=commands, serverTime=utc_now())
+
+
 @router.post("/{session_id}/commands", response_model=SessionCommandResponse)
 async def execute_session_command(
     session_id: str,
     payload: SessionCommandRequest,
     user_id: str = Depends(current_user_id),
-    run_service: SessionRunService = Depends(get_session_run_service),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
-    broker: TimelineBroker = Depends(get_timeline_broker),
 ) -> SessionCommandResponse:
-    command = payload.command.lower()
     try:
-        await db.get_session(session_id, user_id=user_id)
+        session = await db.get_session(session_id, user_id=user_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
-
-    if command == "help":
-        return SessionCommandResponse(
-            command=command,
-            message="Available commands: /help, /interrupt, /takeover, /release",
-            result={
-                "commands": [
-                    {"command": "help", "description": "Show available session commands."},
-                    {"command": "interrupt", "description": "Interrupt the active turn."},
-                    {"command": "takeover", "description": "Enable web takeover."},
-                    {"command": "release", "description": "Disable web takeover."},
-                ]
+    params: dict[str, Any] = {
+        "sessionId": session.id,
+        "runtime": session.runtime,
+        "command": payload.command,
+        "args": payload.args,
+    }
+    if session.externalSessionId:
+        params["externalSessionId"] = session.externalSessionId
+    if payload.raw:
+        params["raw"] = payload.raw
+    try:
+        result = await manager.request(
+            session.connectorId,
+            "session.command.execute",
+            params,
+            timeout=30,
+        )
+    except ConnectorOfflineError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ConnectorRpcError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={"code": exc.code, "message": exc.message or exc.code},
+        ) from exc
+    if not isinstance(result, dict):
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "invalid_command_result",
+                "message": "connector did not return a command result",
             },
-            serverTime=utc_now(),
         )
-
-    if command in {"takeover", "release"}:
-        session = await db.set_takeover(session_id, command == "takeover")
-        await _publish_session_protocol_update(db, broker, manager, session_id)
-        return SessionCommandResponse(
-            command=command,
-            message="Takeover enabled." if command == "takeover" else "Takeover disabled.",
-            session=await with_effective_session_connector_status(manager, session),
-            serverTime=utc_now(),
-        )
-
-    if command == "interrupt":
-        try:
-            before_seq = await db.get_session_seq(session_id)
-            result = await run_service.interrupt_session(session_id, user_id=user_id)
-        except SessionRunError as exc:
-            await _best_effort_publish_session_protocol_update(
-                db,
-                broker,
-                manager,
-                session_id,
-                user_id=user_id,
-            )
-            _raise_session_run_error(exc)
-        await _publish_session_protocol_changes_since(
-            db,
-            broker,
-            manager,
-            session_id,
-            before_seq,
-        )
-        return SessionCommandResponse(
-            command=command,
-            message="Interrupt requested.",
-            result=result.model_dump(mode="json"),
-            serverTime=utc_now(),
-        )
-
-    raise HTTPException(
-        status_code=422,
-        detail={
-            "code": "unsupported_session_command",
-            "message": f"unsupported session command: /{payload.command}",
-        },
+    return SessionCommandResponse(
+        command=str(result.get("command") or payload.command),
+        ok=bool(result.get("ok", True)),
+        message=result.get("message") if isinstance(result.get("message"), str) else None,
+        result=result.get("result"),
+        serverTime=utc_now(),
     )
 
 
