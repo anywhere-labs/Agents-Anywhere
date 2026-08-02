@@ -2530,12 +2530,7 @@ def test_session_snapshot_includes_effective_capabilities(tmp_path):
     assert idle_caps["session.interrupt"]["unavailableReason"] == "session_not_interruptible"
     assert idle_caps["session.steer"]["available"] is False
     assert idle_caps["catalog.model"]["available"] is True
-    model_catalog = idle_body["catalogs"]["model"]
-    assert model_catalog["runtime"] == "codex"
-    assert model_catalog["models"][0]["reasoningItems"][0]["selectionId"].startswith("sel_model_")
-    permission_catalog = idle_body["catalogs"]["permission"]
-    assert permission_catalog["runtime"] == "codex"
-    assert permission_catalog["permissions"][0]["selectionId"].startswith("sel_permission_")
+    assert idle_body["catalogs"] == {}
     assert idle_body["eventCursor"].startswith("seq:")
 
     asyncio.run(
@@ -2563,6 +2558,18 @@ def test_session_snapshot_includes_effective_capabilities(tmp_path):
     assert running_caps["session.send_message"]["unavailableReason"] == "session_not_idle"
     assert running_caps["session.interrupt"]["available"] is True
     assert running_caps["session.steer"]["available"] is True
+
+
+def test_session_snapshot_does_not_return_persisted_runtime_catalogs(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _access_token, session_id, headers = create_connector_and_session(client)
+    seed_codex_model_catalog(client.app, connector_id)
+    seed_codex_permission_catalog(client.app, connector_id)
+
+    response = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["catalogs"] == {}
 
 
 def test_running_tool_item_keeps_session_interruptible(tmp_path):

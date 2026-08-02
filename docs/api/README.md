@@ -79,9 +79,13 @@ GET  /api/v2/sessions/{sessionId}/state with timeline query params
 POST /api/v2/sessions/{sessionId}/sync
 POST /api/v2/sessions/{sessionId}/interactions/{noticeId}/respond
 message/create modelSelectionId and permissionSelectionId fields
-snapshot.catalogs
+snapshot.catalogs as a primary catalog source
 hardcoded session commands
 ```
+
+`snapshot.catalogs` is now a compatibility shell and should be empty in the
+target flow. Model and permission catalogs are read from live runtime catalog
+endpoints when the selector is opened.
 
 `POST /api/v2/sessions` is bind-only during the migration: callers must provide
 an existing `externalSessionId` and pass selections through `selections`.

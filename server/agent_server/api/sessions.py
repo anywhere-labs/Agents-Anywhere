@@ -44,8 +44,6 @@ from agent_server.core.models import (
 )
 from agent_server.core.protocol import (
     ProtocolEventRecoveryResponse,
-    ProtocolModelCatalog,
-    ProtocolPermissionCatalog,
     ProtocolSessionSnapshotResponse,
     ProtocolTimelineSnapshot,
 )
@@ -472,18 +470,6 @@ async def session_snapshot(
         approvals = pending_approvals_from_notices(notices)
         runtime_state = await db.get_session_runtime_state(session_id, user_id=user_id)
         next_seq = await db.get_session_seq(session_id)
-        model_catalog = await db.get_protocol_catalog(
-            session.connectorId,
-            runtime=session.runtime,
-            catalog_type="model",
-            user_id=user_id,
-        )
-        permission_catalog = await db.get_protocol_catalog(
-            session.connectorId,
-            runtime=session.runtime,
-            catalog_type="permission",
-            user_id=user_id,
-        )
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
     return ProtocolSessionSnapshotResponse(
@@ -494,14 +480,7 @@ async def session_snapshot(
         notices=notices,
         effectiveCapabilities=effective_capabilities,
         runtimeCapabilities=runtime_capabilities,
-        catalogs={
-            "model": ProtocolModelCatalog.model_validate(model_catalog)
-            if model_catalog is not None
-            else ProtocolModelCatalog(runtime=session.runtime, revision=0, models=[]),
-            "permission": ProtocolPermissionCatalog.model_validate(permission_catalog)
-            if permission_catalog is not None
-            else ProtocolPermissionCatalog(runtime=session.runtime, revision=0, permissions=[]),
-        },
+        catalogs={},
         eventCursor=event_cursor(next_seq),
         serverTime=utc_now(),
     )
