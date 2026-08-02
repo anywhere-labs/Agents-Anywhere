@@ -1,5 +1,10 @@
 # Web Session v2 migration
 
+> Superseded: this migration note describes an earlier session-page plan. The
+> current target splits runtime catalogs, session selections, runtime session
+> state, commands, and timeline; see
+> [Agent Runtime Protocol v1](../runtime-protocol/README.md).
+
 This document describes the Web migration target for the v2 session page. It is intentionally written before the Server and Connector WS work so the implementation can be tested end to end instead of by isolated transport changes.
 
 Compatibility with the old v1/SSE session flow is not required.

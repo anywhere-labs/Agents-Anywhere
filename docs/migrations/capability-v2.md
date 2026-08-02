@@ -1,5 +1,9 @@
 # Capability v2 migration
 
+> Superseded: this migration note describes an earlier capability/catalog plan.
+> The current target is the breaking Agent Runtime Protocol refactor; see
+> [Agent Runtime Protocol v1](../runtime-protocol/README.md).
+
 This migration introduces the first protocol-driven v2 slice: runtime capability discovery.
 
 Compatibility with pre-v2 clients is not a design constraint for this slice. New clients should consume the v2 protocol endpoint directly and stop deriving feature availability from runtime names.

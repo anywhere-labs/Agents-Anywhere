@@ -1,5 +1,9 @@
 # Runtime discovery, configuration, and lifecycle migration
 
+> Superseded in part: runtime discovery/configuration remains useful historical
+> context, but model/permission catalog and selection flow has been replaced by
+> [Agent Runtime Protocol v1](../runtime-protocol/README.md).
+
 This document covers the v2 device-runtime feature as one end-to-end migration. It applies to Web and to any other client that configures a Connector device.
 
 There is no compatibility layer for the former Agent settings and runtime-capability APIs. Clients must migrate the complete feature.
