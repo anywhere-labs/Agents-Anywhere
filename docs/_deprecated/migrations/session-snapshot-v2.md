@@ -3,7 +3,7 @@
 > Superseded: this migration note describes an earlier snapshot shape. The
 > current target removes model/permission catalogs as the primary snapshot
 > source and adds separate runtime state and selection projections; see
-> [Agent Runtime Protocol v1](../runtime-protocol/README.md).
+> [Agent Runtime Protocol v1](../../runtime-protocol/README.md).
 
 This slice adds a session-level snapshot endpoint for the session detail page.
 

@@ -2,7 +2,7 @@
 
 > Superseded: this migration note describes an earlier catalog plan. The current
 > target treats permission catalogs as runtime-level live reads; see
-> [Agent Runtime Protocol v1](../runtime-protocol/README.md).
+> [Agent Runtime Protocol v1](../../runtime-protocol/README.md).
 
 This slice replaces the old runtime mode / permissionMode selector with one runtime-scoped permission catalog.
 

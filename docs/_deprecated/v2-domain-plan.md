@@ -1,7 +1,7 @@
 # v2 Domain Contract Plan
 
 > Superseded: this plan is retained for historical context only. New Connector
-> runtime work must follow [Agent Runtime Protocol v1](./runtime-protocol/README.md).
+> runtime work must follow [Agent Runtime Protocol v1](../runtime-protocol/README.md).
 
 This plan starts from schema revision `v2_2` and the distributed infrastructure
 merged into `v2` at commit `632d2d5`. It keeps PostgreSQL as the durable source

@@ -2,7 +2,7 @@
 
 > Superseded: this migration note describes an earlier catalog plan. The current
 > target treats model catalogs as runtime-level live reads; see
-> [Agent Runtime Protocol v1](../runtime-protocol/README.md).
+> [Agent Runtime Protocol v1](../../runtime-protocol/README.md).
 
 This slice replaces separate model and effort reads with one runtime-scoped nested model catalog.
 
