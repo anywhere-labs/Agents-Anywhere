@@ -110,18 +110,12 @@ private struct RootTabsView: View {
                 .transition(tabTransition)
             }
 
-            if #available(iOS 27.0, *) {
-                Tab("New", systemImage: "plus", value: RootTab.newSession, role: .prominent) {
-                    mirroredActionTabRoot
-                        .allowsHitTesting(false)
-                        .accessibilityHidden(true)
-                }
-            } else {
-                Tab("New", systemImage: "plus", value: RootTab.newSession) {
-                    mirroredActionTabRoot
-                        .allowsHitTesting(false)
-                        .accessibilityHidden(true)
-                }
+            // The currently supported SwiftUI SDK only exposes `TabRole.search`.
+            // Keep New as the same selection-driven action tab on every SDK.
+            Tab("New", systemImage: "plus", value: RootTab.newSession) {
+                mirroredActionTabRoot
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
             }
         }
         .animation(rootTabAnimation, value: selectedTab)
