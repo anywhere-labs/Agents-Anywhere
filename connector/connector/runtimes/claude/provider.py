@@ -180,7 +180,7 @@ def _claude_config_schema(target: LaunchTarget | None) -> dict[str, Any]:
 
 def _claude_capabilities() -> dict[str, bool]:
     return {
-        "modelCatalog": True,
+        "modelCatalog": False,
         "permissionCatalog": True,
         "sessionDiscovery": True,
         "sessionSnapshot": True,

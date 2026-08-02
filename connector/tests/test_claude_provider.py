@@ -27,6 +27,8 @@ async def _test_claude_provider_discovers_sdk() -> None:
 
     assert item.available is True
     assert item.configured is True
+    assert item.capabilities["modelCatalog"] is False
+    assert item.capabilities["permissionCatalog"] is True
     assert item.capabilities["commands"] is False
     assert item.capabilities["interactions"] is True
     assert item.metadata["sdk"]["available"] is True
