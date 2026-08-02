@@ -324,6 +324,7 @@ struct SessionDetailView: View {
         filterRuntimeEffortField(
             runtime: session.runtime,
             field: runtimeFields.first { $0.key == "effort" },
+            modelField: modelField,
             model: runtimeSettingsObject["model"],
         )
     }
@@ -627,7 +628,7 @@ struct SessionDetailView: View {
             async let settingsResponse = api.getSessionRuntimeSettings(token: token, sessionId: initialSession.id)
             let loadedSchema = try await schemaResponse
             let loadedSettings = try await settingsResponse
-            runtimeSchema = loadedSchema.schema
+            runtimeSchema = loadedSettings.schema ?? loadedSchema.schema
             runtimeSettings = loadedSettings
         } catch {
             errorMessage = error.localizedDescription
@@ -645,6 +646,7 @@ struct SessionDetailView: View {
                 settings: [key: value],
             )
             runtimeSettings = response
+            runtimeSchema = response.schema ?? runtimeSchema
             session = session.updatingRuntimeSettings(from: response)
         } catch {
             errorMessage = error.localizedDescription
@@ -2668,16 +2670,64 @@ func runtimeConfigFieldIsVisible(_ field: RuntimeConfigField, settings: [String:
 func filterRuntimeEffortField(
     runtime: String,
     field: RuntimeConfigField?,
+    modelField: RuntimeConfigField? = nil,
     model: JSONValue?
 ) -> RuntimeConfigField? {
     guard let field else { return nil }
-    guard runtime == "claude", field.key == "effort" else { return field }
+    guard field.key == "effort" else { return field }
+
+    if let modelValue = model?.stringValue,
+       let modelOption = modelField.flatMap({ fieldForModelOption(modelValue, in: $0) }),
+       let constrainedEfforts = modelOption.efforts
+    {
+        // An explicit empty nested list means this model does not expose an
+        // effort selector. A missing nested list is legacy/unknown and falls
+        // through to the global field below.
+        return constrainedEfforts.isEmpty ? nil : field.withOptions(constrainedEfforts)
+    }
+
+    // Older server schemas do not carry nested constraints. Keep the legacy
+    // Claude behavior as a compatibility fallback only; all modern runtimes
+    // use the server-provided model option contract above.
+    guard runtime == "claude" else { return field }
     let allowed = claudeEffortValues(for: model?.stringValue)
     guard !allowed.isEmpty else { return nil }
     return field.withOptions(field.options?.filter { option in
         guard let value = option.value.stringValue else { return false }
         return allowed.contains(value)
     } ?? [])
+}
+
+private func fieldForModelOption(_ model: String, in field: RuntimeConfigField) -> RuntimeConfigOption? {
+    field.options?.first { $0.value.stringValue == model }
+}
+
+func runtimeSettingsSelectingModel(
+    _ settings: [String: JSONValue],
+    model: JSONValue,
+    modelField: RuntimeConfigField?
+) -> [String: JSONValue] {
+    var result = settings
+    result["model"] = model
+    guard let modelValue = model.stringValue,
+          let option = modelField.flatMap({ fieldForModelOption(modelValue, in: $0) }),
+          let efforts = option.efforts
+    else { return result }
+
+    guard !efforts.isEmpty else {
+        result.removeValue(forKey: "effort")
+        return result
+    }
+    let allowed = Set(efforts.compactMap { $0.value.stringValue })
+    if let current = result["effort"]?.stringValue, allowed.contains(current) {
+        return result
+    }
+    if let fallback = efforts.first(where: { $0.isDefault == true }) ?? efforts.first {
+        result["effort"] = fallback.value
+    } else {
+        result.removeValue(forKey: "effort")
+    }
+    return result
 }
 
 private func claudeEffortValues(for model: String?) -> Set<String> {

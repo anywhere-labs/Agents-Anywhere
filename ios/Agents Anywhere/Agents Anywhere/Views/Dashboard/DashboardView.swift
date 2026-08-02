@@ -1026,6 +1026,7 @@ private struct NewSessionSheet: View {
         filterRuntimeEffortField(
             runtime: selectedRuntimeValue,
             field: runtimeFields.first { $0.key == "effort" },
+            modelField: modelField,
             model: runtimeSettings["model"],
         )
     }
@@ -1071,7 +1072,15 @@ private struct NewSessionSheet: View {
             systemImage: systemImage,
             isDisabled: field?.options?.isEmpty ?? true,
             children: menuActions(for: field, selected: runtimeSettings[key]) { value in
-                runtimeSettings[key] = value
+                if key == "model" {
+                    runtimeSettings = runtimeSettingsSelectingModel(
+                        runtimeSettings,
+                        model: value,
+                        modelField: modelField
+                    )
+                } else {
+                    runtimeSettings[key] = value
+                }
             },
         )
     }
@@ -1415,7 +1424,7 @@ private struct NewSessionSheet: View {
                 let loadedSettings = try await settingsResponse
                 await MainActor.run {
                     guard selectedConnector?.id == connectorId, selectedRuntimeValue == runtime else { return }
-                    runtimeSchema = loadedSchema.schema
+                    runtimeSchema = loadedSettings.schema ?? loadedSchema.schema
                     if case let .object(object) = loadedSettings.runtimeSettings ?? loadedSettings.settings {
                         runtimeSettings = object
                     } else {
