@@ -74,6 +74,7 @@ export type DeviceRuntimeListResponse = {
 
 export type SessionStatusValue =
   | "idle"
+  | "waiting"
   | "pending"
   | "running"
   | "stopping"
@@ -374,6 +375,7 @@ export type WsTicketResponse = ProtocolWsTicketResponse;
 
 export type SessionStateResponse = {
   session: SessionView;
+  state?: SessionRuntimeState | null;
   items: TimelineItem[];
   approvals: Approval[];
   notices?: Notice[];
@@ -514,8 +516,32 @@ export type AttachmentRef = {
 export type MessageSendOptions = {
   attachments?: AttachmentRef[];
   clientMessageId?: string;
-  modelSelectionId?: string | null;
-  permissionSelectionId?: string | null;
+};
+
+export type SessionRuntimeState = {
+  sessionId: string;
+  runtime: string;
+  externalSessionId?: string | null;
+  status: SessionStatusValue;
+  selections: Record<string, string | null>;
+  statusReason?: string | null;
+  error?: Record<string, unknown> | null;
+  metadata: Record<string, unknown>;
+  updatedSeq: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type SessionRuntimeStateResponse = {
+  state: SessionRuntimeState;
+  serverTime: string;
+};
+
+export type SessionSelectionPatchResponse = {
+  ok: boolean;
+  state?: SessionRuntimeState | null;
+  connectorResult?: Record<string, unknown> | null;
+  serverTime: string;
 };
 
 export type UploadedAttachment = {

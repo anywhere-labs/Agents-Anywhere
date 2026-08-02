@@ -18,8 +18,9 @@ from agent_server.infra.db.schema import (
     oauth_clients,
     pairing_codes,
     platform_user_activity,
-    sessions,
     session_active_runs,
+    session_states,
+    sessions,
     timeline_items,
     users,
 )
@@ -44,8 +45,9 @@ __all__ = [
     "oauth_clients",
     "pairing_codes",
     "platform_user_activity",
-    "sessions",
     "session_active_runs",
+    "session_states",
+    "sessions",
     "timeline_items",
     "users",
 ]

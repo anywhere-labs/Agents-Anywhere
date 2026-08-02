@@ -480,6 +480,7 @@ def _create_legacy_v1_database(path) -> None:
         connection.execute(text("DROP TABLE connector_protocol_capabilities"))
         connection.execute(text("DROP TABLE connector_runtime_catalogs"))
         connection.execute(text("DROP TABLE device_runtimes"))
+        connection.execute(text("DROP TABLE session_states"))
         connection.execute(
             text("ALTER TABLE connectors ADD COLUMN runtime_capabilities TEXT")
         )

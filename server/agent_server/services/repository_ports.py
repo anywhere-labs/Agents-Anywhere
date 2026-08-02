@@ -7,6 +7,7 @@ from agent_server.core.models import (
     ConnectorView,
     Notice,
     NoticeIn,
+    SessionRuntimeState,
     SessionStatus,
     SessionView,
     TimelineItem,
@@ -79,6 +80,26 @@ class SessionStateRepository(SessionLookupRepository, NoticeRepository, Protocol
         *,
         expected_status: SessionStatus | None = None,
     ) -> SessionView: ...
+
+    async def get_session_runtime_state(
+        self,
+        session_id: str,
+        *,
+        user_id: str | None = None,
+    ) -> SessionRuntimeState: ...
+
+    async def upsert_session_runtime_state(
+        self,
+        *,
+        session_id: str,
+        runtime: str,
+        external_session_id: str | None = None,
+        status: str | None = None,
+        selections: dict[str, str | None] | None = None,
+        status_reason: str | None = None,
+        error: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> SessionRuntimeState: ...
 
 
 class TimelineReader(Protocol):

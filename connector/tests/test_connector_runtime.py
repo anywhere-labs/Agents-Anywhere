@@ -33,6 +33,7 @@ from connector.runtime_protocol import (
     RuntimeTimelineItem,
     RuntimeTimelineSnapshot,
     SessionMeta,
+    SessionState,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.server.ingest import coalesce_timeline_item_upserts
@@ -152,6 +153,29 @@ class FakeAgentRuntime(AgentRuntime):
                     source={"runtime": self.runtime_id, "event": "test"},
                 ),
             ),
+        )
+
+    async def get_session_state(
+        self,
+        session_id: str,
+        external_session_id: str | None = None,
+    ) -> SessionState:
+        self.calls.append(
+            (
+                "session.state",
+                {
+                    "sessionId": session_id,
+                    "externalSessionId": external_session_id,
+                },
+            )
+        )
+        return SessionState(
+            session_id=session_id,
+            runtime=self.runtime_id,
+            external_session_id=external_session_id,
+            status="running",
+            selections={"model": "sel_model_state"},
+            metadata={"source": "fake"},
         )
 
     async def list_commands(
@@ -327,6 +351,24 @@ class FakeAgentRuntime(AgentRuntime):
             )
         )
         return RuntimeOperationResult(ok=True, result={"interrupted": True, "turnId": "turn_agent"})
+
+    async def update_session_selections(
+        self,
+        session_id: str,
+        external_session_id: str | None,
+        selections: dict[str, str | None],
+    ) -> RuntimeOperationResult:
+        self.calls.append(
+            (
+                "session.selections.update",
+                {
+                    "sessionId": session_id,
+                    "externalSessionId": external_session_id,
+                    "selections": dict(selections),
+                },
+            )
+        )
+        return RuntimeOperationResult(ok=True, result={"updated": True})
 
 
 class FakeAgentProvider(RuntimeProvider):
@@ -652,7 +694,7 @@ async def _exercise_runtime() -> None:
         "session.discover",
         {"limit": 5, "cursor": None, "force": True},
     )
-    assert notifications[-1]["method"] == "session.updated"
+    assert notifications[-1]["method"] == "session.meta.upsert"
     assert ws.messages[-1]["result"]["sessions"][0]["sessionId"] == "sess_existing"
 
     await client.handle_message(
@@ -667,8 +709,12 @@ async def _exercise_runtime() -> None:
             },
         }
     )
-    assert runtime.calls[-1][0] == "session.sync"
-    assert notifications[-1]["method"] == "timeline.sync"
+    assert runtime.calls[-2][0] == "session.sync"
+    assert runtime.calls[-1][0] == "session.state"
+    assert [item["method"] for item in notifications[-2:]] == [
+        "timeline.sync",
+        "session.state.updated",
+    ]
     assert ws.messages[-1]["result"] == {
         "sessionId": "sess_1",
         "externalSessionId": "thr_1",
@@ -679,6 +725,47 @@ async def _exercise_runtime() -> None:
     await client.handle_message(
         {
             "id": "rpc_5",
+            "type": "request",
+            "method": "session.state",
+            "params": {
+                "runtime": "codex",
+                "sessionId": "sess_1",
+                "externalSessionId": "thr_1",
+            },
+        }
+    )
+    assert runtime.calls[-1] == (
+        "session.state",
+        {"sessionId": "sess_1", "externalSessionId": "thr_1"},
+    )
+    assert ws.messages[-1]["result"]["state"]["selections"] == {"model": "sel_model_state"}
+
+    await client.handle_message(
+        {
+            "id": "rpc_6",
+            "type": "request",
+            "method": "session.selections.update",
+            "params": {
+                "runtime": "codex",
+                "sessionId": "sess_1",
+                "externalSessionId": "thr_1",
+                "selections": {"permission": "sel_permission"},
+            },
+        }
+    )
+    assert runtime.calls[-1] == (
+        "session.selections.update",
+        {
+            "sessionId": "sess_1",
+            "externalSessionId": "thr_1",
+            "selections": {"permission": "sel_permission"},
+        },
+    )
+    assert ws.messages[-1]["result"] == {"updated": True}
+
+    await client.handle_message(
+        {
+            "id": "rpc_7",
             "type": "request",
             "method": "session.commands",
             "params": {
@@ -717,7 +804,7 @@ async def _exercise_runtime() -> None:
 
     await client.handle_message(
         {
-            "id": "rpc_6",
+            "id": "rpc_8",
             "type": "request",
             "method": "session.command.execute",
             "params": {
@@ -750,7 +837,7 @@ async def _exercise_runtime() -> None:
 
     await client.handle_message(
         {
-            "id": "rpc_7",
+            "id": "rpc_9",
             "type": "request",
             "method": "interaction.respond",
             "params": {
@@ -775,7 +862,7 @@ async def _exercise_runtime() -> None:
 
     await client.handle_message(
         {
-            "id": "rpc_8",
+            "id": "rpc_10",
             "type": "request",
             "method": "runtime.modelCatalog",
             "params": {"runtime": "codex", "query": "gpt", "limit": 20},
@@ -786,7 +873,7 @@ async def _exercise_runtime() -> None:
 
     await client.handle_message(
         {
-            "id": "rpc_9",
+            "id": "rpc_11",
             "type": "request",
             "method": "runtime.permissionCatalog",
             "params": {"runtime": "codex", "query": "read", "limit": 20},

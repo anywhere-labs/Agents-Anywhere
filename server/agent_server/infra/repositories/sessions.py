@@ -1,3 +1,5 @@
+# ruff: noqa: F403, F405, I001
+
 from __future__ import annotations
 
 from agent_server.infra.repositories.store_support import *
@@ -5,6 +7,37 @@ from agent_server.infra.repositories.store_support import *
 
 def _normalize_session_origin(value: str | None) -> str:
     return "platform" if value == "platform" else "connector_import"
+
+
+def _selection_map(
+    model_selection_id: str | None,
+    permission_selection_id: str | None,
+) -> dict[str, str]:
+    selections: dict[str, str] = {}
+    if model_selection_id:
+        selections["model"] = model_selection_id
+    if permission_selection_id:
+        selections["permission"] = permission_selection_id
+    return selections
+
+
+def _session_runtime_state_from_row(row: Any) -> SessionRuntimeState:
+    selections = _json_loads(row["selections_json"])
+    metadata = _json_loads(row["metadata_json"])
+    error = _json_loads(row["error_json"])
+    return SessionRuntimeState(
+        sessionId=row["session_id"],
+        runtime=row["runtime"],
+        externalSessionId=row["external_session_id"],
+        status=row["status"],
+        selections=selections if isinstance(selections, dict) else {},
+        statusReason=row["status_reason"],
+        error=error if isinstance(error, dict) else None,
+        metadata=metadata if isinstance(metadata, dict) else {},
+        updatedSeq=int(row["updated_seq"] or 0),
+        createdAt=row["created_at"],
+        updatedAt=row["updated_at"],
+    )
 
 
 class SessionRepositoryMixin:
@@ -54,6 +87,23 @@ class SessionRepositoryMixin:
                     status="idle",
                     takeover=0,
                     seq=0,
+                    updated_seq=0,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            await conn.execute(
+                insert(session_states_t).values(
+                    session_id=session_id,
+                    runtime=runtime,
+                    external_session_id=external_session_id,
+                    status="idle",
+                    selections_json=_json_dumps(
+                        _selection_map(model_selection_id, permission_selection_id)
+                    ),
+                    status_reason=None,
+                    error_json=None,
+                    metadata_json=_json_dumps({}),
                     updated_seq=0,
                     created_at=now,
                     updated_at=now,
@@ -128,6 +178,23 @@ class SessionRepositoryMixin:
                         source_observed_at=source_observed_at,
                         last_activity_at=last_activity_at,
                         seq=1,
+                        updated_seq=1,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+                await conn.execute(
+                    insert(session_states_t).values(
+                        session_id=session_id,
+                        runtime=runtime,
+                        external_session_id=external_session_id,
+                        status=status or "idle",
+                        selections_json=_json_dumps(
+                            _selection_map(model_selection_id, permission_selection_id)
+                        ),
+                        status_reason=None,
+                        error_json=None,
+                        metadata_json=_json_dumps({}),
                         updated_seq=1,
                         created_at=now,
                         updated_at=now,
@@ -260,7 +327,7 @@ class SessionRepositoryMixin:
             .where(
                 sessions_t.c.connector_id == connector_id,
                 sessions_t.c.runtime == runtime,
-                sessions_t.c.status.in_(("pending", "running", "blocked", "stopping")),
+                sessions_t.c.status.in_(("waiting", "pending", "running", "blocked", "stopping")),
                 connectors_t.c.revoked == 0,
             )
             .order_by(sessions_t.c.updated_at.asc())
@@ -302,6 +369,151 @@ class SessionRepositoryMixin:
         if row is None:
             raise KeyError(session_id)
         return await self._session_from_row(row)
+
+
+    async def get_session_runtime_state(
+        self,
+        session_id: str,
+        *,
+        user_id: str | None = None,
+    ) -> SessionRuntimeState:
+        query = (
+            select(
+                session_states_t,
+                sessions_t.c.status.label("session_status"),
+                sessions_t.c.model_selection_id,
+                sessions_t.c.permission_selection_id,
+                sessions_t.c.created_at.label("session_created_at"),
+                sessions_t.c.updated_at.label("session_updated_at"),
+            )
+            .join(sessions_t, sessions_t.c.id == session_states_t.c.session_id)
+            .join(connectors_t, connectors_t.c.id == sessions_t.c.connector_id)
+            .where(sessions_t.c.id == session_id, connectors_t.c.revoked == 0)
+        )
+        if user_id is not None:
+            query = query.where(connectors_t.c.user_id == user_id)
+        async with self._engine.connect() as conn:
+            row = (await conn.execute(query)).mappings().first()
+        if row is not None:
+            return _session_runtime_state_from_row(row)
+        session = await self.get_session(session_id, user_id=user_id)
+        return SessionRuntimeState(
+            sessionId=session.id,
+            runtime=session.runtime,
+            externalSessionId=session.externalSessionId,
+            status=session.status,
+            selections=_selection_map(
+                session.modelSelectionId,
+                session.permissionSelectionId,
+            ),
+            updatedSeq=session.updatedSeq,
+            createdAt=session.lastSyncedAt or session.sortAt or utc_now(),
+            updatedAt=session.lastSyncedAt or session.sortAt or utc_now(),
+        )
+
+
+    async def upsert_session_runtime_state(
+        self,
+        *,
+        session_id: str,
+        runtime: str,
+        external_session_id: str | None = None,
+        status: str | None = None,
+        selections: dict[str, str | None] | None = None,
+        status_reason: str | None = None,
+        error: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> SessionRuntimeState:
+        now = utc_now()
+        async with self._engine.begin() as conn:
+            session = (
+                await conn.execute(
+                    select(
+                        sessions_t.c.id,
+                        sessions_t.c.runtime,
+                        sessions_t.c.external_session_id,
+                        sessions_t.c.status,
+                        sessions_t.c.model_selection_id,
+                        sessions_t.c.permission_selection_id,
+                    ).where(sessions_t.c.id == session_id)
+                )
+            ).mappings().first()
+            if session is None:
+                raise KeyError(session_id)
+            current = (
+                await conn.execute(
+                    select(session_states_t).where(session_states_t.c.session_id == session_id)
+                )
+            ).mappings().first()
+            if current is None:
+                current_values = {
+                    "runtime": session["runtime"],
+                    "external_session_id": session["external_session_id"],
+                    "status": session["status"],
+                    "selections_json": _json_dumps(
+                        _selection_map(
+                            session["model_selection_id"],
+                            session["permission_selection_id"],
+                        )
+                    ),
+                    "status_reason": None,
+                    "error_json": None,
+                    "metadata_json": _json_dumps({}),
+                    "updated_seq": 0,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            else:
+                current_values = dict(current)
+            next_selections = _json_loads(current_values.get("selections_json"))
+            if not isinstance(next_selections, dict):
+                next_selections = {}
+            if selections is not None:
+                next_selections = {**next_selections, **selections}
+            next_metadata = _json_loads(current_values.get("metadata_json"))
+            if not isinstance(next_metadata, dict):
+                next_metadata = {}
+            if metadata is not None:
+                next_metadata = {**next_metadata, **metadata}
+            values = {
+                "runtime": runtime or current_values["runtime"],
+                "external_session_id": external_session_id
+                if external_session_id is not None
+                else current_values.get("external_session_id"),
+                "status": status or current_values["status"],
+                "selections_json": _json_dumps(next_selections),
+                "status_reason": status_reason
+                if status_reason is not None
+                else current_values.get("status_reason"),
+                "error_json": _json_dumps(error) if error is not None else current_values.get("error_json"),
+                "metadata_json": _json_dumps(next_metadata),
+            }
+            changed = any(values[key] != current_values.get(key) for key in values)
+            if changed:
+                updated_seq = await self._bump_session(conn, session_id)
+                values["updated_seq"] = updated_seq
+                values["updated_at"] = now
+                if current is None:
+                    values["session_id"] = session_id
+                    values["created_at"] = now
+                    await conn.execute(insert(session_states_t).values(**values))
+                else:
+                    await conn.execute(
+                        update(session_states_t)
+                        .where(session_states_t.c.session_id == session_id)
+                        .values(**values)
+                    )
+                if status is not None:
+                    await conn.execute(
+                        update(sessions_t).where(sessions_t.c.id == session_id).values(status=status)
+                    )
+            elif current is None:
+                values["session_id"] = session_id
+                values["updated_seq"] = 0
+                values["created_at"] = now
+                values["updated_at"] = now
+                await conn.execute(insert(session_states_t).values(**values))
+        return await self.get_session_runtime_state(session_id)
 
 
     async def session_owned_by_connector(self, session_id: str, connector_id: str) -> bool:

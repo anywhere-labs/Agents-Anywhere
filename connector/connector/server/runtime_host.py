@@ -56,7 +56,7 @@ class ConnectorRuntimeHost(RuntimeHostClient):
             "sourceObservedAt": ordering_time,
             "metadata": dict(metadata or {}),
         }
-        await self._notifier("session.updated", _drop_none(payload))
+        await self._notifier("session.meta.upsert", _drop_none(payload))
 
     async def session_state_update(
         self,
@@ -77,12 +77,10 @@ class ConnectorRuntimeHost(RuntimeHostClient):
             "status": status,
             "statusReason": status_reason,
             "error": dict(error) if error is not None else None,
-            "modelSelectionId": selection_values.get("model"),
-            "permissionSelectionId": selection_values.get("permission"),
             "selections": selection_values,
             "metadata": dict(metadata or {}),
         }
-        await self._notifier("session.updated", _drop_none(payload))
+        await self._notifier("session.state.updated", _drop_none(payload))
 
     async def timeline_sync(
         self,

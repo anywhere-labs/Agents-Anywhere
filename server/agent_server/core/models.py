@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 RuntimeName = Literal["codex", "claude", "opencode", "acp"]
 ConnectorStatus = Literal["offline", "online"]
 ConnectorDeviceOs = Literal["macos", "windows", "linux"]
-SessionStatus = Literal["idle", "pending", "running", "stopping", "blocked"]
+SessionStatus = Literal["idle", "waiting", "pending", "running", "stopping", "blocked"]
 TimelineType = Literal["turn.start", "turn.end", "message", "tool", "artifact", "system"]
 TimelineStatus = Literal[
     "pending",
@@ -542,6 +542,38 @@ class SessionView(BaseModel):
     permissionSelectionId: str | None = None
 
 
+class SessionRuntimeState(BaseModel):
+    sessionId: str
+    runtime: RuntimeName
+    externalSessionId: str | None = None
+    status: SessionStatus = "idle"
+    selections: dict[str, str | None] = Field(default_factory=dict)
+    statusReason: str | None = None
+    error: dict[str, Any] | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    updatedSeq: int
+    createdAt: str
+    updatedAt: str
+
+
+class SessionRuntimeStateResponse(BaseModel):
+    state: SessionRuntimeState
+    serverTime: str
+
+
+class SessionSelectionPatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    selections: dict[str, str | None] = Field(min_length=1, max_length=32)
+
+
+class SessionSelectionPatchResponse(BaseModel):
+    ok: bool
+    state: SessionRuntimeState | None = None
+    connectorResult: dict[str, Any] | None = None
+    serverTime: str
+
+
 class SessionPatchRequest(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=255)
     pinned: bool | None = None
@@ -723,6 +755,7 @@ class InteractionRespondRequest(BaseModel):
 
 class SessionStateResponse(BaseModel):
     session: SessionView
+    state: SessionRuntimeState | None = None
     items: list[TimelineItem]
     approvals: list[Approval]
     nextSeq: int
@@ -739,8 +772,6 @@ class MessageCreateRequest(BaseModel):
 
     content: str
     attachments: list[AttachmentRef] = Field(default_factory=list, max_length=10)
-    modelSelectionId: str | None = None
-    permissionSelectionId: str | None = None
     # Client-generated id (e.g. optimistic temp id). Forwarded to the connector;
     # the connector tags the resulting timeline item so the frontend can
     # dedupe its optimistic placeholder against the real server item.

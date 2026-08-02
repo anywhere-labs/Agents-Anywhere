@@ -89,6 +89,16 @@ class ConnectorRequestDispatcher:
                 self._resolve_agent_runtime(params),
                 params,
             )
+        if method == "session.state":
+            return await self._dispatch_agent_runtime_session_state(
+                self._resolve_agent_runtime(params),
+                params,
+            )
+        if method == "session.selections.update":
+            return await self._dispatch_agent_runtime_session_selections_update(
+                self._resolve_agent_runtime(params),
+                params,
+            )
         if method == "session.commands":
             return await self._dispatch_agent_runtime_session_commands(
                 self._resolve_agent_runtime(params),
@@ -247,6 +257,40 @@ class ConnectorRequestDispatcher:
             "items": len(snapshot.items),
             "complete": snapshot.complete,
         }
+
+    async def _dispatch_agent_runtime_session_state(
+        self,
+        runtime: AgentRuntime,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        session_id = _required_session_id(params)
+        external_session_id = _optional_string(params.get("externalSessionId"))
+        state = await runtime.get_session_state(session_id, external_session_id)
+        if state is None:
+            return {"state": None}
+        await self.agent_runtime_host.session_state_update(
+            session_id=state.session_id,
+            runtime=state.runtime,
+            external_session_id=state.external_session_id,
+            status=state.status,
+            selections=state.selections,
+            status_reason=state.status_reason,
+            error=state.error,
+            metadata=state.metadata,
+        )
+        return {"state": _session_state_payload(state)}
+
+    async def _dispatch_agent_runtime_session_selections_update(
+        self,
+        runtime: AgentRuntime,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        result = await runtime.update_session_selections(
+            _required_session_id(params),
+            _optional_string(params.get("externalSessionId")),
+            _runtime_selections(params),
+        )
+        return _operation_result_payload(result)
 
     async def _dispatch_agent_runtime_turn_start(
         self,
@@ -482,6 +526,19 @@ def _runtime_command_payload(command: RuntimeCommand) -> dict[str, Any]:
         "acceptsArgs": command.accepts_args,
         "argsSchema": dict(command.args_schema) if command.args_schema is not None else None,
         "metadata": dict(command.metadata),
+    }
+
+
+def _session_state_payload(state: Any) -> dict[str, Any]:
+    return {
+        "sessionId": state.session_id,
+        "runtime": state.runtime,
+        "externalSessionId": state.external_session_id,
+        "status": state.status,
+        "selections": dict(state.selections),
+        "statusReason": state.status_reason,
+        "error": dict(state.error) if state.error is not None else None,
+        "metadata": dict(state.metadata),
     }
 
 

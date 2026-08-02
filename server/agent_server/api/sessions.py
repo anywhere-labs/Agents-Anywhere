@@ -34,6 +34,9 @@ from agent_server.core.models import (
     SessionCreateRequest,
     SessionPatchRequest,
     SessionResponse,
+    SessionRuntimeStateResponse,
+    SessionSelectionPatchRequest,
+    SessionSelectionPatchResponse,
     SessionStateResponse,
     SteerTurnRequest,
     TakeoverResponse,
@@ -126,6 +129,7 @@ async def _publish_session_protocol_update(
         "sessionId": session_id,
         "nextSeq": next_seq,
         "session": session.model_dump(mode="json"),
+        "state": (await db.get_session_runtime_state(session_id)).model_dump(mode="json"),
         "effectiveCapabilities": effective_capabilities.model_dump(mode="json"),
         "notices": list(notices_by_id.values()),
     }
@@ -322,6 +326,52 @@ async def mark_session_read(
     )
 
 
+@router.get("/{session_id}/runtime-state", response_model=SessionRuntimeStateResponse)
+async def session_runtime_state(
+    session_id: str,
+    user_id: str = Depends(current_user_id),
+    db: Store = Depends(get_store),
+) -> SessionRuntimeStateResponse:
+    try:
+        state = await db.get_session_runtime_state(session_id, user_id=user_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="session not found") from None
+    return SessionRuntimeStateResponse(state=state, serverTime=utc_now())
+
+
+@router.patch("/{session_id}/state/selections", response_model=SessionSelectionPatchResponse)
+async def patch_session_selections(
+    session_id: str,
+    payload: SessionSelectionPatchRequest,
+    user_id: str = Depends(current_user_id),
+    run_service: SessionRunService = Depends(get_session_run_service),
+    db: Store = Depends(get_store),
+    manager: ConnectorRpcManager = Depends(get_rpc),
+    broker: TimelineBroker = Depends(get_timeline_broker),
+) -> SessionSelectionPatchResponse:
+    try:
+        state, connector_result = await run_service.update_session_selections(
+            session_id,
+            payload,
+            user_id=user_id,
+        )
+    except SessionRunError as exc:
+        _raise_session_run_error(exc)
+    await _best_effort_publish_session_protocol_update(
+        db,
+        broker,
+        manager,
+        session_id,
+        user_id=user_id,
+    )
+    return SessionSelectionPatchResponse(
+        ok=True,
+        state=state,
+        connectorResult=connector_result,
+        serverTime=utc_now(),
+    )
+
+
 @router.get("/{session_id}/state", response_model=SessionStateResponse)
 async def session_state(
     session_id: str,
@@ -352,11 +402,13 @@ async def session_state(
         approvals = pending_approvals_from_notices(
             await db.list_open_notices(session_id)
         )
+        runtime_state = await db.get_session_runtime_state(session_id, user_id=user_id)
         next_seq = await db.get_session_seq(session_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
     return SessionStateResponse(
         session=await with_effective_session_connector_status(manager, session),
+        state=runtime_state,
         items=items,
         approvals=approvals,
         nextSeq=next_seq,

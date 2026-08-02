@@ -36,6 +36,8 @@ import type {
   SessionListResponse,
   SessionPatchRequest,
   SessionResponse,
+  SessionRuntimeStateResponse,
+  SessionSelectionPatchResponse,
   SessionSnapshotResponse,
   SessionStateResponse,
   TakeoverResponse,
@@ -650,16 +652,36 @@ export class DashboardApi {
     content: string,
     options: MessageSendOptions = {},
   ): Promise<RpcResponse<unknown>> {
-    const { attachments, clientMessageId, modelSelectionId, permissionSelectionId } = options;
+    const { attachments, clientMessageId } = options;
     return this.client.post<RpcResponse<unknown>>(
       `/sessions/${encodeURIComponent(sessionId)}/messages`,
       {
         content,
         ...(attachments && attachments.length > 0 ? { attachments } : {}),
         ...(clientMessageId ? { clientMessageId } : {}),
-        ...(modelSelectionId ? { modelSelectionId } : {}),
-        ...(permissionSelectionId ? { permissionSelectionId } : {}),
       },
+      { token },
+    );
+  }
+
+  getSessionRuntimeState(
+    token: string,
+    sessionId: string,
+  ): Promise<SessionRuntimeStateResponse> {
+    return this.client.get<SessionRuntimeStateResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/runtime-state`,
+      { token },
+    );
+  }
+
+  updateSessionSelections(
+    token: string,
+    sessionId: string,
+    selections: Record<string, string | null>,
+  ): Promise<SessionSelectionPatchResponse> {
+    return this.client.patch<SessionSelectionPatchResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/state/selections`,
+      { selections },
       { token },
     );
   }

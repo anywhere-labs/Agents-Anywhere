@@ -44,6 +44,7 @@ class ConnectorNotificationService:
         self._realtime = realtime
         self._handlers = (
             ConnectorProtocolNotificationHandler(store),
+            SessionStateNotificationHandler(store),
             SessionNotificationHandler(store),
             TimelineNotificationHandler(store),
             InteractionNotificationHandler(
@@ -181,7 +182,6 @@ class ConnectorProtocolNotificationHandler:
 class SessionNotificationHandler:
     def __init__(self, store: ConnectorNotificationRepository) -> None:
         self._store = store
-        self._session_states = SessionStateService(store)
 
     async def apply(
         self,
@@ -190,10 +190,9 @@ class SessionNotificationHandler:
         method: str,
         params: dict[str, Any],
     ) -> IngestEffect | None:
-        if method != "session.updated":
+        if method not in {"session.meta.upsert", "session.updated"}:
             return None
         local_state = _local_session_state(params)
-        observed_status = _v2_session_status(params.get("status"))
         session_id = params["sessionId"]
         external_session_id = params.get("externalSessionId")
         try:
@@ -211,14 +210,15 @@ class SessionNotificationHandler:
                 last_synced_at=params.get("lastSyncedAt"),
                 source_observed_at=params.get("sourceObservedAt"),
                 last_activity_at=params.get("lastActivityAt"),
-                model_selection_id=_string_or_none(params.get("modelSelectionId")),
-                permission_selection_id=_string_or_none(params.get("permissionSelectionId")),
             )
-            await self._session_states.reconcile(
-                session_id,
-                observed_status=observed_status,
-                settle_stopping=observed_status not in {None, "stopping"},
-            )
+            if method == "session.updated" and _has_runtime_state_fields(params):
+                await self._store.upsert_session_runtime_state(
+                    session_id=session_id,
+                    runtime=params.get("runtime") or "codex",
+                    external_session_id=_string_or_none(external_session_id),
+                    status=_v2_session_status(params.get("status")),
+                    selections=_legacy_selections_param(params),
+                )
             return IngestEffect(session_id=session_id, session_changed=True)
         except KeyError:
             if local_state in {"archived", "deleted", "unresumable"}:
@@ -240,15 +240,74 @@ class SessionNotificationHandler:
                 last_synced_at=params.get("lastSyncedAt"),
                 source_observed_at=params.get("sourceObservedAt"),
                 last_activity_at=params.get("lastActivityAt"),
-                model_selection_id=_string_or_none(params.get("modelSelectionId")),
-                permission_selection_id=_string_or_none(params.get("permissionSelectionId")),
             )
-            await self._session_states.reconcile(
-                session.id,
-                observed_status=observed_status,
-                settle_stopping=observed_status not in {None, "stopping"},
-            )
+            if method == "session.updated" and _has_runtime_state_fields(params):
+                await self._store.upsert_session_runtime_state(
+                    session_id=session.id,
+                    runtime=params.get("runtime") or "codex",
+                    external_session_id=_string_or_none(external_session_id),
+                    status=_v2_session_status(params.get("status")),
+                    selections=_legacy_selections_param(params),
+                )
             return IngestEffect(session_id=session.id, session_changed=True)
+
+
+class SessionStateNotificationHandler:
+    def __init__(self, store: ConnectorNotificationRepository) -> None:
+        self._store = store
+
+    async def apply(
+        self,
+        *,
+        connector_id: str,
+        method: str,
+        params: dict[str, Any],
+    ) -> IngestEffect | None:
+        if method != "session.state.updated":
+            return None
+        session_id = params["sessionId"]
+        runtime = params.get("runtime") or "codex"
+        external_session_id = _string_or_none(params.get("externalSessionId"))
+        if external_session_id is not None:
+            try:
+                session_id = await self._store.resolve_connector_session_id(
+                    connector_id=connector_id,
+                    session_id=session_id,
+                    external_session_id=external_session_id,
+                )
+            except KeyError:
+                pass
+        try:
+            await self._store.upsert_session_runtime_state(
+                session_id=session_id,
+                runtime=runtime,
+                external_session_id=external_session_id,
+                status=_v2_session_status(params.get("status")),
+                selections=_selections_param(params),
+                status_reason=_string_or_none(params.get("statusReason")),
+                error=_object_or_none(params.get("error")),
+                metadata=_object_or_none(params.get("metadata")),
+            )
+        except KeyError:
+            session = await self._store.upsert_connector_session(
+                connector_id=connector_id,
+                session_id=session_id,
+                runtime=runtime,
+                external_session_id=external_session_id,
+                status=_v2_session_status(params.get("status")),
+            )
+            await self._store.upsert_session_runtime_state(
+                session_id=session.id,
+                runtime=runtime,
+                external_session_id=external_session_id,
+                status=_v2_session_status(params.get("status")),
+                selections=_selections_param(params),
+                status_reason=_string_or_none(params.get("statusReason")),
+                error=_object_or_none(params.get("error")),
+                metadata=_object_or_none(params.get("metadata")),
+            )
+            session_id = session.id
+        return IngestEffect(session_id=session_id, session_changed=True)
 
 
 class TimelineNotificationHandler:
@@ -541,7 +600,7 @@ def _local_session_state(params: dict[str, Any]) -> str:
 def _v2_session_status(value: Any) -> SessionStatus | None:
     if value is None:
         return None
-    if value in {"idle", "pending", "running", "stopping", "blocked"}:
+    if value in {"idle", "waiting", "pending", "running", "stopping", "blocked"}:
         return str(value)
     if value in {"waiting_approval", "error"}:
         return "blocked"
@@ -550,6 +609,48 @@ def _v2_session_status(value: Any) -> SessionStatus | None:
 
 def _string_or_none(value: Any) -> str | None:
     return value if isinstance(value, str) else None
+
+
+def _object_or_none(value: Any) -> dict[str, Any] | None:
+    return dict(value) if isinstance(value, dict) else None
+
+
+def _selections_param(params: dict[str, Any]) -> dict[str, str | None] | None:
+    raw = params.get("selections")
+    if not isinstance(raw, dict):
+        return None
+    selections: dict[str, str | None] = {}
+    for scope, selection_id in raw.items():
+        if not isinstance(scope, str) or not scope:
+            continue
+        if selection_id is not None and not isinstance(selection_id, str):
+            continue
+        selections[scope] = selection_id
+    return selections
+
+
+def _legacy_selections_param(params: dict[str, Any]) -> dict[str, str | None] | None:
+    selections = _selections_param(params)
+    if selections is not None:
+        return selections
+    out: dict[str, str | None] = {}
+    if "modelSelectionId" in params:
+        out["model"] = _string_or_none(params.get("modelSelectionId"))
+    if "permissionSelectionId" in params:
+        out["permission"] = _string_or_none(params.get("permissionSelectionId"))
+    return out or None
+
+
+def _has_runtime_state_fields(params: dict[str, Any]) -> bool:
+    return any(
+        key in params
+        for key in (
+            "status",
+            "selections",
+            "modelSelectionId",
+            "permissionSelectionId",
+        )
+    )
 
 
 def _timeline_item_for_session(

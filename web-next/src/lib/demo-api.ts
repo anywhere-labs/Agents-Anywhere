@@ -40,7 +40,7 @@ export type ConnectorView = {
   lastSeenAt?: string | null
 }
 
-export type SessionStatus = "idle" | "pending" | "running" | "stopping" | "blocked"
+export type SessionStatus = "idle" | "waiting" | "pending" | "running" | "stopping" | "blocked"
 
 export type SessionView = {
   id: string

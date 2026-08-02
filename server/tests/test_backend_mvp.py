@@ -357,7 +357,8 @@ def test_session_create_passes_model_selection_id(tmp_path):
 
     assert response.status_code == 200, response.text
     params = fake_rpc.requests[-1][1]
-    assert params["modelSelectionId"] == model_selection_id
+    assert params["selections"] == {"model": model_selection_id}
+    assert "modelSelectionId" not in params
     assert "model" not in params
     assert "effort" not in params
 
@@ -408,7 +409,8 @@ def test_session_create_passes_permission_selection_id(tmp_path):
 
     assert response.status_code == 200, response.text
     params = fake_rpc.requests[-1][1]
-    assert params["permissionSelectionId"] == permission_selection_id
+    assert params["selections"] == {"permission": permission_selection_id}
+    assert "permissionSelectionId" not in params
     assert "approvalPolicy" not in params
     assert "sandbox" not in params
 
@@ -608,6 +610,40 @@ def test_session_updated_without_external_id_does_not_clear_existing_external_id
     assert state["session"]["connectorId"] == connector_id
     assert state["session"]["externalSessionId"] == f"thr_{connector_id}_demo"
     assert state["session"]["title"] == "Updated without external id"
+
+
+def test_session_state_updated_upserts_runtime_state(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, access_token, session_id, headers = create_connector_and_session(client)
+
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "session.state.updated",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "codex",
+                        "status": "running",
+                        "selections": {"model": "sel_model_runtime"},
+                        "statusReason": "tool_call",
+                        "metadata": {"phase": "tool"},
+                    },
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    state = client.get(f"/sessions/{session_id}/runtime-state", headers=headers)
+    assert state.status_code == 200, state.text
+    body = state.json()["state"]
+    assert body["status"] == "running"
+    assert body["selections"] == {"model": "sel_model_runtime"}
+    assert body["statusReason"] == "tool_call"
+    assert body["metadata"] == {"phase": "tool"}
 
 
 def wait_for_state_items(client: TestClient, session_id: str, headers: dict[str, str], predicate):
@@ -2538,10 +2574,9 @@ def test_running_tool_item_keeps_session_interruptible(tmp_path):
 
 
 
-def test_send_message_passes_model_selection_id(tmp_path):
+def test_send_message_rejects_model_selection_id(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, session_id, headers = create_connector_and_session(client)
-    model_selection_id = seed_codex_model_catalog(client.app, connector_id)
     fake_rpc = FakeLocalRpc()
     client.app.state.rpc = fake_rpc
     asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
@@ -2552,20 +2587,46 @@ def test_send_message_passes_model_selection_id(tmp_path):
         headers=headers,
         json={
             "content": "hi",
-            "modelSelectionId": model_selection_id,
+            "modelSelectionId": "sel_model",
         },
     )
 
+    assert response.status_code == 422
+    assert not any(method == "turn.start" for _, method, _, _ in fake_rpc.requests)
+
+
+def test_patch_session_selections_routes_to_runtime_and_persists_state(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+
+    response = client.patch(
+        f"/sessions/{session_id}/state/selections",
+        headers=headers,
+        json={"selections": {"model": "sel_model_live", "permission": "sel_permission_live"}},
+    )
+
     assert response.status_code == 200, response.text
-    assert fake_rpc.requests[-1][1] == "turn.start"
-    params = fake_rpc.requests[-1][2]
-    assert params["content"] == "hi"
-    assert params["modelSelectionId"] == model_selection_id
-    assert "permissionMode" not in params
-    assert "approvalPolicy" not in params
-    assert "sandboxPolicy" not in params
-    assert "model" not in params
-    assert "effort" not in params
+    assert fake_rpc.requests[-1] == (
+        connector_id,
+        "session.selections.update",
+        {
+            "sessionId": session_id,
+            "runtime": "codex",
+            "selections": {"model": "sel_model_live", "permission": "sel_permission_live"},
+            "externalSessionId": f"thr_{connector_id}_demo",
+        },
+        30,
+    )
+    state = client.get(f"/sessions/{session_id}/runtime-state", headers=headers)
+    assert state.status_code == 200, state.text
+    assert state.json()["state"]["selections"] == {
+        "model": "sel_model_live",
+        "permission": "sel_permission_live",
+    }
 
 
 def test_send_message_rejects_legacy_model_fields(tmp_path):
@@ -2651,7 +2712,7 @@ def test_blocking_error_interaction_must_be_resolved_before_send(tmp_path):
             user_id=ADMIN_USER,
         ),
     )
-    assert session.status == "pending"
+    assert session.status == "waiting"
 
 
 def test_send_message_forwards_uploaded_attachment_metadata_to_connector(tmp_path):

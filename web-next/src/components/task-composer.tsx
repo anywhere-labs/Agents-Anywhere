@@ -484,7 +484,7 @@ export function TaskComposer() {
       externalSessionId: null,
       title: prompt.trim() || null,
       cwd: workspace?.path || null,
-      status: "pending",
+      status: "waiting",
       takeover: true,
       pinned: false,
       pinnedAt: null,
@@ -557,8 +557,6 @@ export function TaskComposer() {
         {
           attachments: attachmentRefs,
           clientMessageId,
-          modelSelectionId,
-          permissionSelectionId,
         },
       )
       upsertSession(takeover.session)

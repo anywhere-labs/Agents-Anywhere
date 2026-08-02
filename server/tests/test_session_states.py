@@ -24,7 +24,7 @@ from agent_server.services.session_states import SessionStateService
         (SessionStateFacts(current_status="idle"), "idle"),
         (
             SessionStateFacts(current_status="idle", has_active_run=True),
-            "pending",
+            "waiting",
         ),
         (
             SessionStateFacts(current_status="pending", has_active_turn=True),
@@ -36,7 +36,7 @@ from agent_server.services.session_states import SessionStateService
         ),
         (
             SessionStateFacts(current_status="idle", observed_status="pending"),
-            "pending",
+            "waiting",
         ),
         (
             SessionStateFacts(current_status="running", observed_status="blocked"),
@@ -116,8 +116,8 @@ def test_session_state_service_reconciles_with_compare_and_set() -> None:
 
     session = asyncio.run(service.reconcile("session-1"))
 
-    assert session.status == "pending"
-    assert repository.writes == [("pending", "idle")]
+    assert session.status == "waiting"
+    assert repository.writes == [("waiting", "idle")]
 
 
 def test_session_state_service_treats_active_timeline_item_as_running() -> None:
@@ -137,8 +137,8 @@ def test_session_state_service_retries_concurrent_equivalent_update() -> None:
 
     session = asyncio.run(service.reconcile("session-1"))
 
-    assert session.status == "pending"
-    assert repository.writes == [("pending", "idle")]
+    assert session.status == "waiting"
+    assert repository.writes == [("waiting", "idle")]
 
 
 def test_session_reconciliation_can_correct_idle_to_observed_stopping() -> None:
