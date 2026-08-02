@@ -210,7 +210,7 @@ ClaudeRuntimeProvider -> runtimes/claude/provider.py
 
 Rules:
 
-- Prefer import shims for old paths during the transition.
+- Do not add import shims for old runtime paths in the active Connector package.
 - Pre-protocol Codex/Claude modules are reference-only under `_reference/` and must not be imported by active Connector code.
 - Remove the old `Adapter` protocol from the active dispatch path.
 - Do not add `legacy_adapter.py`, `host_legacy.py`, or a compatibility wrapper around the old adapter API.
@@ -276,8 +276,8 @@ Acceptance:
 
 - Codex/Claude runtime implementations can report meta/state/timeline/notice through `RuntimeHostClient`.
 - `BackendRpcClient` can route migrated runtime calls through `RuntimeSupervisor -> AgentRuntime`.
-- Migrated `turn.start`, `turn.steer`, and `turn.interrupt` dispatch paths prefer `AgentRuntime` and fall back to legacy adapters only during migration.
-- `backendNotifications` is no longer needed for newly migrated runtime code.
+- `turn.start`, `turn.steer`, and `turn.interrupt` dispatch paths resolve only through `RuntimeSupervisor -> AgentRuntime`.
+- `backendNotifications` is not part of the active runtime path.
 
 ## Phase 4: migrate Codex provider/runtime directly
 

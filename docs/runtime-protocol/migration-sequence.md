@@ -40,7 +40,7 @@ documented in [Connector structure target](./connector-structure.md).
 
 ## 3. Connector application host client
 
-Implement a host client adapter that maps runtime host calls to current server notifications:
+Implement a host client transport mapper that maps runtime host calls to server notifications:
 
 ```text
 RuntimeHostClient -> current ingest notifications

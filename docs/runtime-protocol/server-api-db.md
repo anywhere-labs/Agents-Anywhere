@@ -175,7 +175,7 @@ notice.upsert
 runtime.error
 ```
 
-Server ingress should validate each payload and upsert projections. Older names may be supported temporarily during migration, but runtime adapters should target host client methods rather than notification names.
+Server ingress should validate each payload and upsert projections. Runtime implementations target host client methods rather than notification names; old runtime notification names should not be reintroduced into the active Connector path.
 
 ## Snapshot target
 
