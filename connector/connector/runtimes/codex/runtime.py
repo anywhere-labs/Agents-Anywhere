@@ -28,6 +28,7 @@ from connector.runtime_protocol import (
     RuntimeTimelineSnapshot,
     RuntimeUnsupportedError,
     SessionMeta,
+    SessionNotice,
     SessionState,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
@@ -611,6 +612,16 @@ class CodexRuntime(AgentRuntime):
         if session_id is None and thread_id is not None:
             session_id = stable_session_id(self.host.connector_id, thread_id)
         if session_id is None or thread_id is None:
+            return
+        if _is_approval_request(method):
+            notice = _approval_notice_from_request(
+                session_id=session_id,
+                thread_id=thread_id,
+                method=str(method),
+                params=params,
+                request_id=message.get("id"),
+            )
+            await self.host.notice_upsert(notice)
             return
         if method == "turn/started":
             turn_id = _turn_id_from_result(params)
@@ -1346,6 +1357,100 @@ def _session_id_from_notification(params: Mapping[str, Any]) -> str | None:
         if isinstance(value, str) and value:
             return value
     return None
+
+
+CODEX_APPROVAL_REQUEST_METHODS = {
+    "item/commandExecution/requestApproval",
+    "item/fileChange/requestApproval",
+    "item/permissions/requestApproval",
+}
+
+
+def _is_approval_request(method: object) -> bool:
+    return isinstance(method, str) and method in CODEX_APPROVAL_REQUEST_METHODS
+
+
+def _approval_notice_from_request(
+    session_id: str,
+    thread_id: str,
+    method: str,
+    params: Mapping[str, Any],
+    request_id: object,
+) -> SessionNotice:
+    approval_id = _first_string_from_mapping(params, "approvalId", "approval_id")
+    if approval_id is None:
+        approval_id = _stable_codex_notice_component(
+            "approval",
+            session_id,
+            thread_id,
+            method,
+            str(request_id),
+            _first_string_from_mapping(params, "itemId", "item_id") or "",
+        )
+    item_id = _first_string_from_mapping(params, "itemId", "item_id")
+    command = _first_string_from_mapping(params, "command", "cmd")
+    title = _approval_notice_title(method)
+    message = command or _first_string_from_mapping(params, "description", "summary")
+    notice_id = f"notice_approval_{approval_id}"
+    return SessionNotice(
+        notice_id=notice_id,
+        session_id=session_id,
+        runtime="codex",
+        type="interaction",
+        title=title,
+        message=message,
+        severity="warning",
+        interaction_type="approval",
+        blocking={"scope": "session", "targetId": session_id},
+        response_required=True,
+        source={
+            "approvalId": approval_id,
+            **({"timelineItemId": item_id} if item_id else {}),
+        },
+        actions=(
+            {"actionId": "approve", "label": "Approve", "style": "primary"},
+            {"actionId": "approve_for_session", "label": "Approve for session", "style": "secondary"},
+            {"actionId": "reject", "label": "Reject", "style": "danger"},
+        ),
+        context={
+            "approvalId": approval_id,
+            "approvalStatus": "pending",
+            "approvalSource": {
+                "requestId": request_id,
+                "method": method,
+                "threadId": thread_id,
+                **({"itemId": item_id} if item_id else {}),
+            },
+            "kind": _approval_kind(method),
+            **({"command": command} if command else {}),
+        },
+        metadata={"source": method},
+    )
+
+
+def _approval_notice_title(method: str) -> str:
+    if method == "item/commandExecution/requestApproval":
+        return "Codex wants to run a command"
+    if method == "item/fileChange/requestApproval":
+        return "Codex wants to edit files"
+    if method == "item/permissions/requestApproval":
+        return "Codex requests additional permissions"
+    return "Codex requires approval"
+
+
+def _approval_kind(method: str) -> str:
+    if method == "item/commandExecution/requestApproval":
+        return "command"
+    if method == "item/fileChange/requestApproval":
+        return "file_change"
+    if method == "item/permissions/requestApproval":
+        return "permissions"
+    return "approval"
+
+
+def _stable_codex_notice_component(*parts: str) -> str:
+    digest = hashlib.sha256(":".join(parts).encode()).hexdigest()[:24]
+    return f"codex_{digest}"
 
 
 def _ensure_text_only_attachments(attachments: tuple[RuntimeAttachment, ...]) -> None:

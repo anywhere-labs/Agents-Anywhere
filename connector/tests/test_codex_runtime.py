@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import Mapping
 from typing import Any
 
-from connector.runtime_protocol import RuntimeConfig
+from connector.runtime_protocol import RuntimeConfig, SessionNotice
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex.runtime import (
     CodexRuntime,
@@ -128,6 +128,7 @@ class FakeHost(RuntimeHostClient):
         self.state_updates: list[dict[str, Any]] = []
         self.timeline_syncs: list[dict[str, Any]] = []
         self.timeline_item_upserts: list[Any] = []
+        self.notice_upserts: list[SessionNotice] = []
 
     @property
     def connector_id(self) -> str:
@@ -201,6 +202,9 @@ class FakeHost(RuntimeHostClient):
 
     async def timeline_item_upsert(self, item: Any) -> None:
         self.timeline_item_upserts.append(item)
+
+    async def notice_upsert(self, notice: SessionNotice) -> None:
+        self.notice_upserts.append(notice)
 
 
 def test_codex_runtime_lifecycle_and_config() -> None:
@@ -607,6 +611,55 @@ async def _test_codex_runtime_completed_turn_syncs_timeline_snapshot() -> None:
     assert [item.type for item in sync["items"]] == ["message", "message"]
     assert [item.status for item in sync["items"]] == ["done", "done"]
     assert host.state_updates[-1]["status"] == "idle"
+
+
+def test_codex_runtime_approval_request_upserts_session_notice() -> None:
+    asyncio.run(_test_codex_runtime_approval_request_upserts_session_notice())
+
+
+async def _test_codex_runtime_approval_request_upserts_session_notice() -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    await runtime.start()
+    await runtime._handle_notification(
+        {
+            "jsonrpc": "2.0",
+            "id": 42,
+            "method": "item/commandExecution/requestApproval",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "itemId": "item_cmd",
+                "approvalId": "appr_cmd",
+                "command": "ls -la",
+            },
+        }
+    )
+
+    assert len(host.notice_upserts) == 1
+    notice = host.notice_upserts[0]
+    assert notice.notice_id == "notice_approval_appr_cmd"
+    assert notice.type == "interaction"
+    assert notice.interaction_type == "approval"
+    assert notice.blocking == {"scope": "session", "targetId": "sess_1"}
+    assert notice.response_required is True
+    assert notice.source == {"approvalId": "appr_cmd", "timelineItemId": "item_cmd"}
+    assert notice.context["approvalId"] == "appr_cmd"
+    assert notice.context["approvalStatus"] == "pending"
+    assert notice.context["approvalSource"] == {
+        "requestId": 42,
+        "method": "item/commandExecution/requestApproval",
+        "threadId": "thread_1",
+        "itemId": "item_cmd",
+    }
+    assert notice.context["command"] == "ls -la"
+    assert [action["actionId"] for action in notice.actions] == [
+        "approve",
+        "approve_for_session",
+        "reject",
+    ]
 
 
 def test_codex_runtime_steers_active_turn() -> None:

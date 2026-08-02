@@ -123,14 +123,17 @@ class ConnectorRuntimeHost(RuntimeHostClient):
                 {
                     "noticeId": notice.notice_id,
                     "sessionId": notice.session_id,
-                    "source": {"runtime": notice.runtime},
+                    "source": {"runtime": notice.runtime, **dict(notice.source)},
                     "type": notice.type,
                     "title": notice.title,
                     "message": notice.message,
                     "severity": notice.severity,
                     "status": notice.status,
+                    "interactionType": notice.interaction_type,
+                    "blocking": dict(notice.blocking) if notice.blocking is not None else None,
                     "responseRequired": notice.response_required,
                     "actions": [dict(action) for action in notice.actions],
+                    "context": dict(notice.context),
                     "metadata": dict(notice.metadata),
                 }
             ),

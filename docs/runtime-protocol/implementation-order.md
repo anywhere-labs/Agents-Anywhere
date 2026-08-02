@@ -402,8 +402,10 @@ Acceptance:
 
 ## Phase 6: add `SessionNotice` native path
 
-Status: partial. Keep notices separate from timeline while migrating approval
-and interaction behavior.
+Status: partial. Notices stay separate from timeline. Server ingest/respond and
+Connector dispatch paths exist; Codex app-server approval requests now project
+to `SessionNotice` through `RuntimeHostClient`. Claude approval parity and
+additional notice kinds remain.
 
 Goal: make notices/interactions separate from timeline and aligned with runtime protocol.
 

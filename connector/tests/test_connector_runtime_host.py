@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from connector.runtime_protocol import RuntimeTimelineItem
+from connector.runtime_protocol import RuntimeTimelineItem, SessionNotice
 from connector.server.runtime_host import ConnectorRuntimeHost
 from connector.server.sync_state import JsonSyncStateStore
 
@@ -14,6 +14,10 @@ def test_connector_runtime_host_maps_timeline_item_to_backend_notification() -> 
 
 def test_connector_runtime_host_persists_sync_state(tmp_path) -> None:
     asyncio.run(_exercise_persistent_sync_state(tmp_path))
+
+
+def test_connector_runtime_host_maps_notice_context_to_backend_notification() -> None:
+    asyncio.run(_exercise_notice_notification())
 
 
 async def _exercise_timeline_item_notification() -> None:
@@ -78,6 +82,79 @@ async def _exercise_timeline_item_notification() -> None:
                     "revision": 3,
                     "contentHash": "sha256:abc",
                 },
+            },
+        )
+    ]
+
+
+async def _exercise_notice_notification() -> None:
+    notifications: list[tuple[str, dict[str, Any]]] = []
+
+    async def notify(method: str, params: dict[str, Any]) -> None:
+        notifications.append((method, params))
+
+    async def download(session_id: str, file_id: str) -> tuple[bytes, str, str]:
+        _ = session_id
+        return b"data", f"{file_id}.txt", "text/plain"
+
+    host = ConnectorRuntimeHost(
+        connector_id="conn_1",
+        notifier=notify,
+        attachment_downloader=download,
+    )
+
+    await host.notice_upsert(
+        SessionNotice(
+            notice_id="notice_1",
+            session_id="sess_1",
+            runtime="codex",
+            type="interaction",
+            title="Approve command",
+            message="Run ls?",
+            severity="warning",
+            interaction_type="approval",
+            blocking={"scope": "session", "targetId": "sess_1"},
+            response_required=True,
+            source={"approvalId": "appr_1", "timelineItemId": "item_1"},
+            actions=(
+                {"actionId": "approve", "label": "Approve", "style": "primary"},
+                {"actionId": "reject", "label": "Reject", "style": "danger"},
+            ),
+            context={
+                "approvalId": "appr_1",
+                "approvalSource": {"requestId": 42},
+            },
+        )
+    )
+
+    assert notifications == [
+        (
+            "notice.upsert",
+            {
+                "noticeId": "notice_1",
+                "sessionId": "sess_1",
+                "source": {
+                    "runtime": "codex",
+                    "approvalId": "appr_1",
+                    "timelineItemId": "item_1",
+                },
+                "type": "interaction",
+                "title": "Approve command",
+                "message": "Run ls?",
+                "severity": "warning",
+                "status": "open",
+                "interactionType": "approval",
+                "blocking": {"scope": "session", "targetId": "sess_1"},
+                "responseRequired": True,
+                "actions": [
+                    {"actionId": "approve", "label": "Approve", "style": "primary"},
+                    {"actionId": "reject", "label": "Reject", "style": "danger"},
+                ],
+                "context": {
+                    "approvalId": "appr_1",
+                    "approvalSource": {"requestId": 42},
+                },
+                "metadata": {},
             },
         )
     ]

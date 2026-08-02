@@ -322,8 +322,12 @@ class SessionNotice:
     message: str | None = None
     severity: Literal["info", "success", "warning", "error"] = "info"
     status: str = "open"
+    interaction_type: str | None = None
+    blocking: Mapping[str, Any] | None = None
     response_required: bool = False
     actions: tuple[Mapping[str, Any], ...] = ()
+    source: Mapping[str, Any] = field(default_factory=dict)
+    context: Mapping[str, Any] = field(default_factory=dict)
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
