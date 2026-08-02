@@ -117,6 +117,8 @@ class FakeHost(RuntimeHostClient):
     def __init__(self) -> None:
         self.meta_upserts: list[dict[str, Any]] = []
         self.state_updates: list[dict[str, Any]] = []
+        self.timeline_syncs: list[dict[str, Any]] = []
+        self.timeline_item_upserts: list[Any] = []
 
     @property
     def connector_id(self) -> str:
@@ -167,6 +169,29 @@ class FakeHost(RuntimeHostClient):
                 "metadata": dict(metadata or {}),
             }
         )
+
+    async def timeline_sync(
+        self,
+        session_id: str,
+        runtime: str,
+        items: tuple[Any, ...],
+        external_session_id: str | None = None,
+        complete: bool = True,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        self.timeline_syncs.append(
+            {
+                "session_id": session_id,
+                "runtime": runtime,
+                "external_session_id": external_session_id,
+                "items": items,
+                "complete": complete,
+                "metadata": dict(metadata or {}),
+            }
+        )
+
+    async def timeline_item_upsert(self, item: Any) -> None:
+        self.timeline_item_upserts.append(item)
 
 
 def test_codex_runtime_lifecycle_and_config() -> None:
@@ -424,6 +449,102 @@ async def _test_codex_runtime_turn_completed_notification_sets_idle() -> None:
     state = await runtime.get_session_state("sess_1")
     assert state is not None
     assert state.status == "idle"
+
+
+def test_codex_runtime_agent_message_delta_upserts_timeline_item() -> None:
+    asyncio.run(_test_codex_runtime_agent_message_delta_upserts_timeline_item())
+
+
+async def _test_codex_runtime_agent_message_delta_upserts_timeline_item() -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    await runtime.start()
+    await runtime._handle_notification(
+        {
+            "method": "item/agentMessage/delta",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_1",
+                "itemId": "item_agent",
+                "delta": "hel",
+            },
+        }
+    )
+    await runtime._handle_notification(
+        {
+            "method": "item/agentMessage/delta",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_1",
+                "itemId": "item_agent",
+                "delta": "lo",
+            },
+        }
+    )
+
+    assert len(host.timeline_item_upserts) == 2
+    first, second = host.timeline_item_upserts
+    assert first.id == "item_agent"
+    assert first.order_seq == second.order_seq
+    assert second.type == "message"
+    assert second.role == "assistant"
+    assert second.status == "running"
+    assert second.turn_id == "turn_1"
+    assert second.content == {"text": "hello", "format": "markdown"}
+    assert second.source["event"] == "item/agentMessage/delta"
+
+
+def test_codex_runtime_completed_turn_syncs_timeline_snapshot() -> None:
+    asyncio.run(_test_codex_runtime_completed_turn_syncs_timeline_snapshot())
+
+
+async def _test_codex_runtime_completed_turn_syncs_timeline_snapshot() -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    await runtime.start()
+    await runtime._handle_notification(
+        {
+            "method": "turn/completed",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turn": {
+                    "id": "turn_done",
+                    "items": [
+                        {
+                            "id": "item_user",
+                            "type": "userMessage",
+                            "text": "hi",
+                            "status": "completed",
+                        },
+                        {
+                            "id": "item_agent",
+                            "type": "agentMessage",
+                            "text": "hello",
+                            "status": "completed",
+                        },
+                    ],
+                },
+            },
+        }
+    )
+
+    assert len(host.timeline_syncs) == 1
+    sync = host.timeline_syncs[0]
+    assert sync["session_id"] == "sess_1"
+    assert sync["external_session_id"] == "thread_1"
+    assert sync["complete"] is False
+    assert [item.id for item in sync["items"]] == ["item_user", "item_agent"]
+    assert [item.role for item in sync["items"]] == ["user", "assistant"]
+    assert [item.type for item in sync["items"]] == ["message", "message"]
+    assert [item.status for item in sync["items"]] == ["done", "done"]
+    assert host.state_updates[-1]["status"] == "idle"
 
 
 def test_codex_runtime_steers_active_turn() -> None:

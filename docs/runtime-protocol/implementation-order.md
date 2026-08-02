@@ -326,7 +326,7 @@ Acceptance:
 - `CodexProvider` does not import `_reference.codex`.
 - `CodexProvider` supports `sdkMode: auto | sdk | app-server`.
 - `CodexProvider` keeps `ipcEnabled` as a beta config field and notes macOS-only test coverage.
-- Basic `CodexRuntime` supports `identity`, `start`, `stop`, `get_config`, model catalog, permission catalog, session list, session snapshot, session state reads, text-only turn start, text-only steer, and local interrupt.
+- Basic `CodexRuntime` supports `identity`, `start`, `stop`, `get_config`, model catalog, permission catalog, session list, session snapshot, session state reads, text-only turn start, text-only steer, local interrupt, and minimal live timeline item upserts.
 - Basic `CodexRuntime` keeps app-server JSON-RPC inside `runtimes/codex`, not in the Connector application layer.
 - Codex text-only `create_and_start_session()` and `start_turn()` call app-server `thread/start` and `turn/start`.
 - Codex turn start updates `SessionState.status` through `waiting` then `running`, and `turn/completed` maps back to `idle`.

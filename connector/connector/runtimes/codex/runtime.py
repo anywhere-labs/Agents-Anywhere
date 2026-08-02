@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import json
 import os
@@ -56,6 +57,9 @@ class CodexRuntime(AgentRuntime):
         self._model_list_result: dict[str, Any] | None = None
         self._session_states: dict[str, SessionState] = {}
         self._active_turn_ids: dict[str, str] = {}
+        self._timeline_order_by_id: dict[str, int] = {}
+        self._timeline_raw_by_id: dict[str, dict[str, Any]] = {}
+        self._next_timeline_order = 0
 
     @property
     def identity(self) -> RuntimeIdentity:
@@ -503,12 +507,35 @@ class CodexRuntime(AgentRuntime):
             )
         elif method == "turn/completed":
             self._active_turn_ids.pop(session_id, None)
+            turn_items = self._timeline_items_from_turn_notification(
+                session_id=session_id,
+                external_session_id=thread_id,
+                params=params,
+                method=method,
+            )
+            if turn_items:
+                await self.host.timeline_sync(
+                    session_id=session_id,
+                    runtime="codex",
+                    external_session_id=thread_id,
+                    items=turn_items,
+                    complete=False,
+                    metadata={"source": "codex.turn/completed"},
+                )
             await self._set_session_state(
                 session_id=session_id,
                 external_session_id=thread_id,
                 status="idle",
                 metadata={"source": "codex.turn/completed"},
             )
+        item = self._timeline_item_from_notification(
+            session_id=session_id,
+            external_session_id=thread_id,
+            method=str(method),
+            params=params,
+        )
+        if item is not None:
+            await self.host.timeline_item_upsert(item)
 
     async def _set_session_state(
         self,
@@ -567,6 +594,125 @@ class CodexRuntime(AgentRuntime):
                 native = permission.metadata.get("nativeSettings")
                 return dict(native) if isinstance(native, dict) else {}
         return {}
+
+    def _timeline_item_from_notification(
+        self,
+        session_id: str,
+        external_session_id: str,
+        method: str,
+        params: Mapping[str, Any],
+    ) -> RuntimeTimelineItem | None:
+        raw = _raw_item_from_notification(method, params)
+        if raw is None:
+            return None
+        item_id = _timeline_item_id(raw, external_session_id, 0)
+        previous = self._timeline_raw_by_id.get(item_id)
+        merged = {**copy.deepcopy(previous or {}), **copy.deepcopy(raw)}
+        if method == "item/agentMessage/delta":
+            merged["type"] = merged.get("type") or "agentMessage"
+            merged["status"] = merged.get("status") or "inProgress"
+            previous_text = previous.get("text") if previous else ""
+            merged["text"] = f"{previous_text if isinstance(previous_text, str) else ''}{_notification_delta(params)}"
+        elif method == "item/commandExecution/outputDelta":
+            merged["type"] = merged.get("type") or "commandExecution"
+            merged["status"] = merged.get("status") or "inProgress"
+            previous_output = previous.get("aggregatedOutput") if previous else ""
+            merged["aggregatedOutput"] = (
+                f"{previous_output if isinstance(previous_output, str) else ''}{_notification_delta(params)}"
+            )
+        elif method == "item/started":
+            merged.setdefault("status", "inProgress")
+        elif method == "item/completed":
+            merged["status"] = merged.get("status") or "completed"
+        merged["id"] = item_id
+        if _timeline_item_turn_id(merged) is None:
+            turn_id = _turn_id_from_result(dict(params))
+            if turn_id is not None:
+                merged["turnId"] = turn_id
+        self._timeline_raw_by_id[item_id] = merged
+        return self._runtime_timeline_item(
+            session_id=session_id,
+            external_session_id=external_session_id,
+            raw=merged,
+            event=method,
+        )
+
+    def _timeline_items_from_turn_notification(
+        self,
+        session_id: str,
+        external_session_id: str,
+        params: Mapping[str, Any],
+        method: str,
+    ) -> tuple[RuntimeTimelineItem, ...]:
+        turn = params.get("turn") if isinstance(params.get("turn"), dict) else params
+        if not isinstance(turn, dict):
+            return ()
+        turn_id = _turn_id_from_result(turn) or _turn_id_from_result(dict(params))
+        items: list[RuntimeTimelineItem] = []
+        for index, raw_item in enumerate(_raw_timeline_items(turn)):
+            raw = copy.deepcopy(raw_item)
+            if turn_id is not None and _timeline_item_turn_id(raw) is None:
+                raw["turnId"] = turn_id
+            item_id = _timeline_item_id(raw, external_session_id, index)
+            raw["id"] = item_id
+            self._timeline_raw_by_id[item_id] = raw
+            items.append(
+                self._runtime_timeline_item(
+                    session_id=session_id,
+                    external_session_id=external_session_id,
+                    raw=raw,
+                    event=method,
+                    fallback_index=index,
+                )
+            )
+        return tuple(items)
+
+    def _runtime_timeline_item(
+        self,
+        session_id: str,
+        external_session_id: str,
+        raw: Mapping[str, Any],
+        event: str,
+        fallback_index: int = 0,
+    ) -> RuntimeTimelineItem:
+        raw_dict = dict(raw)
+        item_id = _timeline_item_id(raw_dict, external_session_id, fallback_index)
+        order_seq = self._timeline_order_by_id.get(item_id)
+        if order_seq is None:
+            order_seq = self._next_timeline_order
+            self._next_timeline_order += 1
+            self._timeline_order_by_id[item_id] = order_seq
+        content = _timeline_item_content(raw_dict)
+        item_type = _timeline_item_type(raw_dict)
+        status = _timeline_item_status(raw_dict)
+        role = _timeline_item_role(raw_dict)
+        return RuntimeTimelineItem(
+            id=item_id,
+            session_id=session_id,
+            type=item_type,
+            status=status,
+            order_seq=order_seq,
+            content_hash=_content_hash(
+                {
+                    "type": item_type,
+                    "status": status,
+                    "role": role,
+                    "content": content,
+                }
+            ),
+            role=role,
+            turn_id=_timeline_item_turn_id(raw_dict),
+            content=content,
+            source={
+                "runtime": "codex",
+                "event": event,
+                "threadId": external_session_id,
+                "rawType": raw_dict.get("type"),
+                "itemId": raw_dict.get("id") or raw_dict.get("itemId"),
+            },
+            revision=_timeline_item_revision(raw_dict),
+            metadata={"raw": raw_dict},
+        )
 
 
 class CodexAppServerClient:
@@ -980,17 +1126,38 @@ def _timeline_item_id(raw: dict[str, Any], external_session_id: str, index: int)
 
 def _timeline_item_type(raw: dict[str, Any]) -> str:
     value = raw.get("type") or raw.get("kind")
-    return value if isinstance(value, str) and value else "message"
+    if not isinstance(value, str) or not value:
+        return "message"
+    if value in {"agentMessage", "userMessage", "steeringUserMessage"}:
+        return "message"
+    if value == "commandExecution":
+        return "command"
+    if value == "fileChange":
+        return "file_change"
+    return value
 
 
 def _timeline_item_status(raw: dict[str, Any]) -> str:
     value = raw.get("status")
-    return value if isinstance(value, str) and value else "done"
+    if not isinstance(value, str) or not value:
+        return "done"
+    if value in {"inProgress", "in_progress"}:
+        return "running"
+    if value == "completed":
+        return "done"
+    return value
 
 
 def _timeline_item_role(raw: dict[str, Any]) -> str | None:
     value = raw.get("role")
-    return value if isinstance(value, str) and value else None
+    if isinstance(value, str) and value:
+        return value
+    item_type = raw.get("type")
+    if item_type in {"userMessage", "steeringUserMessage"}:
+        return "user"
+    if item_type == "agentMessage":
+        return "assistant"
+    return None
 
 
 def _timeline_item_turn_id(raw: dict[str, Any]) -> str | None:
@@ -1060,6 +1227,19 @@ def _timeline_item_content(raw: dict[str, Any]) -> Mapping[str, Any]:
         return {"text": text, "format": "markdown"}
     if isinstance(content, str):
         return {"text": content, "format": "markdown"}
+    aggregated_output = raw.get("aggregatedOutput")
+    if isinstance(aggregated_output, str):
+        return {
+            "command": raw.get("command") or raw.get("cmd") or "",
+            "output": aggregated_output,
+            "format": "text",
+        }
+    if raw.get("type") == "commandExecution":
+        return {
+            "command": raw.get("command") or raw.get("cmd") or "",
+            "output": raw.get("output") or raw.get("outputText") or "",
+            "format": "text",
+        }
     return {}
 
 
@@ -1074,6 +1254,51 @@ def _thread_id_from_result(value: dict[str, Any]) -> str | None:
     nested = thread.get("thread")
     if isinstance(nested, dict) and isinstance(nested.get("id"), str):
         return nested["id"]
+    return None
+
+
+def _raw_item_from_notification(
+    method: str,
+    params: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    if method not in {
+        "item/started",
+        "item/completed",
+        "item/agentMessage/delta",
+        "item/commandExecution/outputDelta",
+    }:
+        return None
+    item = params.get("item")
+    raw: dict[str, Any] = copy.deepcopy(item) if isinstance(item, dict) else {}
+    item_id = _first_string_from_mapping(params, "itemId", "item_id")
+    if item_id is not None:
+        raw["id"] = item_id
+    if not isinstance(raw.get("id"), str) or not raw["id"]:
+        return None
+    if not isinstance(raw.get("type"), str) or not raw["type"]:
+        if method == "item/agentMessage/delta":
+            raw["type"] = "agentMessage"
+        elif method == "item/commandExecution/outputDelta":
+            raw["type"] = "commandExecution"
+    turn_id = _turn_id_from_result(dict(params))
+    if turn_id is not None and _timeline_item_turn_id(raw) is None:
+        raw["turnId"] = turn_id
+    return raw
+
+
+def _notification_delta(params: Mapping[str, Any]) -> str:
+    for key in ("delta", "text", "outputDelta", "output_delta"):
+        value = params.get(key)
+        if isinstance(value, str):
+            return value
+    return ""
+
+
+def _first_string_from_mapping(mapping: Mapping[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        value = mapping.get(key)
+        if isinstance(value, str) and value:
+            return value
     return None
 
 
