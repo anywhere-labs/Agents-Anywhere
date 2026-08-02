@@ -281,6 +281,19 @@ Acceptance:
 
 Goal: replace `connector.codex.adapter.CodexAdapter` with a native `AgentRuntime` implementation.
 
+Start with `CodexProvider` only:
+
+```text
+connector/connector/runtimes/codex/provider.py
+```
+
+First provider slice:
+
+- `discover()`
+- `get_config_schema()`
+- `validate_config()`
+- `create_runtime()` remains unsupported until `CodexRuntime` exists.
+
 Evaluate the official Codex SDK first:
 
 - Python SDK package: `openai-codex`
@@ -310,6 +323,9 @@ Rules:
 
 Acceptance:
 
+- `CodexProvider` does not import `_reference.codex`.
+- `CodexProvider` supports `sdkMode: auto | sdk | app-server`.
+- `CodexProvider` keeps `ipcEnabled` as a beta config field and notes macOS-only test coverage.
 - Codex no longer returns `backendNotifications`.
 - Codex runtime events produce `SessionMeta`, `SessionState`, `SessionTimeline`, and `SessionNotice`.
 - Codex message, steer, interrupt, and selection update paths use `AgentRuntime`.
