@@ -22,7 +22,6 @@ from connector.runtime_protocol import (
     SessionState,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
-from connector.runtimes.codex.commands import list_codex_commands
 from connector.runtimes.codex import sessions as codex_sessions
 from connector.runtimes.codex import timeline as codex_timeline
 from connector.runtimes.codex.approvals import (
@@ -35,6 +34,7 @@ from connector.runtimes.codex.catalogs import (
     model_catalog_from_codex_items,
     permission_catalog_from_codex_items,
 )
+from connector.runtimes.codex.commands import list_codex_commands
 from connector.runtimes.codex.runtime_client import CodexRuntimeClient
 from connector.runtimes.codex.runtime_helpers import (
     ensure_text_only_attachments,
@@ -557,7 +557,7 @@ class CodexRuntime(AgentRuntime):
             if isinstance(approval_source, dict):
                 request_id = approval_source.get("requestId")
         if not isinstance(request_id, str | int):
-            raise ValueError("requestId is required to respond to a Codex interaction")
+            raise TypeError("requestId is required to respond to a Codex interaction")
         status = data.get("approvalStatus")
         decision = approval_decision(status if isinstance(status, str) else action_id)
         await self.start()

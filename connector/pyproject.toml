@@ -9,6 +9,7 @@ dependencies = [
     "httpx[socks]>=0.28.1",
     "jsonschema>=4.26.0",
     "loguru>=0.7.3",
+    "openai-codex>=0.144.4",
     "pexpect>=4.9.0; sys_platform != 'win32'",
     "ptyprocess>=0.7.0; sys_platform != 'win32'",
     "pydantic>=2.0.0",
@@ -31,6 +32,10 @@ dev = [
     "pytest>=9.0.3",
     "ruff>=0.15.13",
 ]
+
+[[tool.uv.index]]
+url = "https://mirrors.aliyun.com/pypi/simple/"
+default = true
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
