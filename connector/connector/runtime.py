@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -32,10 +31,7 @@ from connector.runtime_protocol import (
 )
 from connector.runtimes.claude.provider import ClaudeProvider
 from connector.runtimes.codex.provider import CodexProvider
-from connector.server.auth import (
-    ACCESS_TOKEN_REFRESH_SKEW_SECONDS,
-    ConnectorAuthenticationError,
-)
+from connector.server.auth import ConnectorAuthenticationError, ConnectorAuthenticator
 from connector.server.ingest import ConnectorIngestClient
 from connector.server.rpc import ConnectorRpcChannel
 from connector.server.runtime_host import ConnectorRuntimeHost
@@ -85,20 +81,22 @@ class BackendRpcClient:
         self._preferences_reader = preferences_reader or read_local_preferences
         self._last_preferences: dict[str, Any] | None = None
         self.local_ops = create_local_ops(notify=self.send_backend_notification)
-        self._access_token: str | None = None
-        self._access_token_expires_at: float = 0
-        self._auth_lock = asyncio.Lock()
         self._background_tasks: set[asyncio.Task[Any]] = set()
         self._rpc = ConnectorRpcChannel()
         # Persistent HTTP client: a long-lived connection pool eliminates the
         # 5–10ms TCP/TLS setup that the old `async with AsyncClient(...)`
         # per-call pattern paid on every notification.
         self._http_client: httpx.AsyncClient | None = None
+        self._auth = ConnectorAuthenticator(
+            config=config,
+            http_client_getter=self._get_http_client,
+            http_client_factory=lambda timeout: self._new_http_client(timeout=timeout),
+        )
         self._ingest = ConnectorIngestClient(
             server_url=config.server_url,
-            access_token_provider=self._ensure_access_token_for_ingest,
+            access_token_provider=self._auth.ensure_access_token,
             http_client_getter=self._get_http_client,
-            http_client_factory=self._new_http_client,
+            http_client_factory=lambda timeout: self._new_http_client(timeout=timeout),
         )
 
     async def run_forever(self) -> None:
@@ -170,45 +168,10 @@ class BackendRpcClient:
                 self._rpc.clear_connection()
 
     async def authenticate(self) -> str:
-        client = self._http_client
-        # `authenticate()` may be called before `run_forever` initialized the
-        # shared client (e.g. tests that drive the client directly). Fall
-        # back to a one-shot client in that case.
-        owned = client is None
-        if client is None:
-            client = self._new_http_client(timeout=30)
-        try:
-            response = await client.post(
-                api_v2_url(self.config.server_url, "/connector/auth"),
-                headers={
-                    "Authorization": f"Connector {self.config.connector_id}:{self.config.connector_token}",
-                },
-            )
-            if response.status_code == 401:
-                raise ConnectorAuthenticationError("invalid connector credential")
-            response.raise_for_status()
-            body = response.json()
-            access_token = body["accessToken"]
-            if not isinstance(access_token, str):
-                raise RuntimeError("backend returned invalid connector accessToken")
-            expires_in = body.get("expiresIn")
-            if not isinstance(expires_in, int | float):
-                raise RuntimeError("backend returned invalid connector expiresIn")
-            self._access_token = access_token
-            self._access_token_expires_at = time.monotonic() + float(expires_in)
-            return access_token
-        finally:
-            if owned:
-                await client.aclose()
+        return await self._auth.authenticate()
 
     async def ensure_access_token(self, *, force: bool = False) -> str:
-        async with self._auth_lock:
-            if not force and self._access_token and time.monotonic() < self._access_token_expires_at - ACCESS_TOKEN_REFRESH_SKEW_SECONDS:
-                return self._access_token
-            return await self.authenticate()
-
-    async def _ensure_access_token_for_ingest(self, force: bool) -> str:
-        return await self.ensure_access_token(force=force)
+        return await self._auth.ensure_access_token(force)
 
     async def handle_message(self, message: dict[str, Any]) -> None:
         await self._rpc.handle_message(message, self.dispatch)

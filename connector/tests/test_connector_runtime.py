@@ -621,7 +621,7 @@ async def _exercise_auth_401_is_terminal(monkeypatch) -> None:
         async def aclose(self) -> None:
             return None
 
-    monkeypatch.setattr(client, "_new_http_client", lambda **kwargs: FakeHttpClient())
+    client._auth._http_client_factory = lambda _timeout: FakeHttpClient()  # type: ignore[attr-defined]
 
     try:
         await client.authenticate()
@@ -638,11 +638,11 @@ async def _exercise_access_token_refresh() -> None:
 
     async def authenticate() -> str:
         token = tokens.pop(0)
-        client._access_token = token
-        client._access_token_expires_at = 0 if token == "old" else 10_000_000_000
+        client._auth._access_token = token  # type: ignore[attr-defined]
+        client._auth._access_token_expires_at = 0 if token == "old" else 10_000_000_000  # type: ignore[attr-defined]
         return token
 
-    client.authenticate = authenticate  # type: ignore[method-assign]
+    client._auth.authenticate = authenticate  # type: ignore[method-assign]
 
     await client.ensure_access_token(force=True)
 
@@ -686,11 +686,11 @@ async def _exercise_ingest_reauth_on_401() -> None:
 
     async def authenticate() -> str:
         token = tokens.pop(0)
-        client._access_token = token
-        client._access_token_expires_at = 10_000_000_000
+        client._auth._access_token = token  # type: ignore[attr-defined]
+        client._auth._access_token_expires_at = 10_000_000_000  # type: ignore[attr-defined]
         return token
 
-    client.authenticate = authenticate  # type: ignore[method-assign]
+    client._auth.authenticate = authenticate  # type: ignore[method-assign]
 
     class FakeResponse:
         def __init__(self, status_code: int) -> None:
