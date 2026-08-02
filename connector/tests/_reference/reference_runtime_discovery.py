@@ -4,9 +4,9 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-from connector import runtime_discovery
 from connector import launch
-from connector.codex import rpc as codex_rpc
+from connector._reference import runtime_discovery
+from connector._reference.codex import rpc as codex_rpc
 
 
 def _write_executable(path: Path, content: str) -> None:
@@ -341,4 +341,3 @@ def test_windows_claude_candidates_include_local_bin_and_shims(monkeypatch) -> N
 
 def _win_norm(path: str) -> str:
     return path.replace("/", "\\")
-
