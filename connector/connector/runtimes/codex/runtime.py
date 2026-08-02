@@ -13,15 +13,18 @@ from connector.logging import logger
 from connector.protocol import protocol_selection_id
 from connector.runtime_protocol import (
     AgentRuntime,
+    RuntimeAttachment,
     RuntimeConfig,
     RuntimeIdentity,
     RuntimeModelCatalog,
     RuntimeModelItem,
+    RuntimeOperationResult,
     RuntimePermissionCatalog,
     RuntimePermissionItem,
     RuntimeReasoningItem,
     RuntimeTimelineItem,
     RuntimeTimelineSnapshot,
+    RuntimeUnsupportedError,
     SessionMeta,
     SessionState,
 )
@@ -222,6 +225,136 @@ class CodexRuntime(AgentRuntime):
             metadata={"source": "codex.thread/read"},
         )
 
+    async def create_and_start_session(
+        self,
+        session_id: str,
+        content: str,
+        title: str | None = None,
+        cwd: str | None = None,
+        selections: Mapping[str, str | None] | None = None,
+        attachments: tuple[RuntimeAttachment, ...] = (),
+        client_message_id: str | None = None,
+    ) -> RuntimeOperationResult:
+        _ensure_text_only_attachments(attachments)
+        if self.client is None:
+            raise RuntimeUnsupportedError("create_and_start_session")
+        await self.start()
+        selected_model = await self._model_settings_from_selection(
+            (selections or {}).get("model")
+        )
+        native_permission = await self._permission_settings_from_selection(
+            (selections or {}).get("permission")
+        )
+        result = await self.client.request(
+            "thread/start",
+            {
+                "cwd": cwd,
+                "model": selected_model.get("model"),
+                "approvalPolicy": native_permission.get("approvalPolicy"),
+                "sandbox": native_permission.get("sandbox"),
+                "ephemeral": False,
+            },
+        )
+        thread_id = _thread_id_from_result(result)
+        if thread_id is None:
+            return RuntimeOperationResult(
+                ok=False,
+                code="codex_thread_start_failed",
+                message="Codex thread/start did not return a thread id",
+                result={"raw": result},
+            )
+        await self.host.session_meta_upsert(
+            session_id=session_id,
+            runtime="codex",
+            external_session_id=thread_id,
+            title=title,
+            cwd=cwd,
+            metadata={"source": "codex.thread/start"},
+        )
+        await self._set_session_state(
+            session_id=session_id,
+            external_session_id=thread_id,
+            status="idle",
+            selections=selections,
+            metadata={"source": "codex.thread/start"},
+        )
+        turn_result = await self.start_turn(
+            session_id=session_id,
+            external_session_id=thread_id,
+            content=content,
+            attachments=attachments,
+            client_message_id=client_message_id,
+        )
+        return RuntimeOperationResult(
+            ok=turn_result.ok,
+            code=turn_result.code,
+            message=turn_result.message,
+            result={
+                "sessionId": session_id,
+                "externalSessionId": thread_id,
+                "thread": result.get("thread") or result,
+                **turn_result.result,
+            },
+        )
+
+    async def start_turn(
+        self,
+        session_id: str,
+        external_session_id: str | None,
+        content: str,
+        attachments: tuple[RuntimeAttachment, ...] = (),
+        client_message_id: str | None = None,
+    ) -> RuntimeOperationResult:
+        _ensure_text_only_attachments(attachments)
+        if self.client is None or external_session_id is None:
+            raise RuntimeUnsupportedError("start_turn")
+        await self.start()
+        await self._set_session_state(
+            session_id=session_id,
+            external_session_id=external_session_id,
+            status="waiting",
+            metadata={"source": "codex.turn/start.requested"},
+        )
+        try:
+            result = await self.client.request(
+                "turn/start",
+                {
+                    "threadId": external_session_id,
+                    "input": [{"type": "text", "text": content, "text_elements": []}],
+                    "clientUserMessageId": client_message_id,
+                },
+            )
+        except Exception as exc:
+            await self._set_session_state(
+                session_id=session_id,
+                external_session_id=external_session_id,
+                status="error",
+                error={
+                    "code": getattr(exc, "code", None) or exc.__class__.__name__,
+                    "message": str(exc) or exc.__class__.__name__,
+                },
+                metadata={"source": "codex.turn/start.failed"},
+            )
+            raise
+        turn_id = _turn_id_from_result(result)
+        await self._set_session_state(
+            session_id=session_id,
+            external_session_id=external_session_id,
+            status="running",
+            metadata={
+                "source": "codex.turn/start",
+                **({"turn_id": turn_id} if turn_id else {}),
+            },
+        )
+        return RuntimeOperationResult(
+            ok=True,
+            result={
+                "turnId": turn_id,
+                "turn": result.get("turn") or result,
+                "externalSessionId": external_session_id,
+            },
+        )
+
     async def _best_effort_bootstrap_reads(self) -> None:
         if self.client is None:
             return
@@ -235,7 +368,86 @@ class CodexRuntime(AgentRuntime):
                 self._model_list_result = result
 
     async def _handle_notification(self, message: dict[str, Any]) -> None:
-        _ = message
+        method = message.get("method")
+        params = message.get("params") if isinstance(message.get("params"), dict) else {}
+        thread_id = _thread_id_from_result(params)
+        session_id = _session_id_from_notification(params)
+        if session_id is None and thread_id is not None:
+            session_id = stable_session_id(self.host.connector_id, thread_id)
+        if session_id is None or thread_id is None:
+            return
+        if method == "turn/started":
+            await self._set_session_state(
+                session_id=session_id,
+                external_session_id=thread_id,
+                status="running",
+                metadata={"source": "codex.turn/started"},
+            )
+        elif method == "turn/completed":
+            await self._set_session_state(
+                session_id=session_id,
+                external_session_id=thread_id,
+                status="idle",
+                metadata={"source": "codex.turn/completed"},
+            )
+
+    async def _set_session_state(
+        self,
+        session_id: str,
+        external_session_id: str | None,
+        status: str,
+        selections: Mapping[str, str | None] | None = None,
+        error: Mapping[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        previous = self._session_states.get(session_id)
+        state = SessionState(
+            session_id=session_id,
+            external_session_id=external_session_id,
+            runtime="codex",
+            status=status,  # type: ignore[arg-type]
+            selections={
+                **dict(previous.selections if previous is not None else {}),
+                **dict(selections or {}),
+            },
+            error=error,
+            metadata={
+                **dict(previous.metadata if previous is not None else {}),
+                **dict(metadata or {}),
+            },
+        )
+        self._session_states[session_id] = state
+        await self.host.session_state_update(
+            session_id=session_id,
+            runtime="codex",
+            external_session_id=external_session_id,
+            status=state.status,
+            selections=state.selections,
+            error=state.error,
+            metadata=state.metadata,
+        )
+
+    async def _model_settings_from_selection(self, selection_id: str | None) -> dict[str, str]:
+        if selection_id is None:
+            return {}
+        catalog = await self.list_model_catalog()
+        for model in catalog.models:
+            if model.selection_id == selection_id:
+                return {"model": model.id}
+            for reasoning in model.reasoning_items:
+                if reasoning.selection_id == selection_id:
+                    return {"model": model.id, "effort": reasoning.id}
+        return {}
+
+    async def _permission_settings_from_selection(self, selection_id: str | None) -> dict[str, Any]:
+        if selection_id is None:
+            return {}
+        catalog = await self.list_permission_catalog()
+        for permission in catalog.permissions:
+            if permission.selection_id == selection_id:
+                native = permission.metadata.get("nativeSettings")
+                return dict(native) if isinstance(native, dict) else {}
+        return {}
 
 
 class CodexAppServerClient:
@@ -668,6 +880,33 @@ def _timeline_item_turn_id(raw: dict[str, Any]) -> str | None:
         if isinstance(value, str) and value:
             return value
     return None
+
+
+def _turn_id_from_result(value: dict[str, Any]) -> str | None:
+    turn = value.get("turn") if isinstance(value.get("turn"), dict) else value
+    if not isinstance(turn, dict):
+        return None
+    for key in ("id", "turn_id", "turnId"):
+        value = turn.get(key)
+        if isinstance(value, str) and value:
+            return value
+    nested = turn.get("turn")
+    if isinstance(nested, dict) and isinstance(nested.get("id"), str):
+        return nested["id"]
+    return None
+
+
+def _session_id_from_notification(params: Mapping[str, Any]) -> str | None:
+    for key in ("platformSessionId", "sessionId", "session_id"):
+        value = params.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _ensure_text_only_attachments(attachments: tuple[RuntimeAttachment, ...]) -> None:
+    if attachments:
+        raise RuntimeUnsupportedError("codex.attachments")
 
 
 def _timeline_item_revision(raw: dict[str, Any]) -> int:

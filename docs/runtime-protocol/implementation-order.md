@@ -328,6 +328,8 @@ Acceptance:
 - `CodexProvider` keeps `ipcEnabled` as a beta config field and notes macOS-only test coverage.
 - Basic `CodexRuntime` supports `identity`, `start`, `stop`, `get_config`, model catalog, permission catalog, session list, session snapshot, and session state reads.
 - Basic `CodexRuntime` keeps app-server JSON-RPC inside `runtimes/codex`, not in the Connector application layer.
+- Codex text-only `create_and_start_session()` and `start_turn()` call app-server `thread/start` and `turn/start`.
+- Codex turn start updates `SessionState.status` through `waiting` then `running`, and `turn/completed` maps back to `idle`.
 - Codex no longer returns `backendNotifications`.
 - Codex runtime events produce `SessionMeta`, `SessionState`, `SessionTimeline`, and `SessionNotice`.
 - Codex message, steer, interrupt, and selection update paths use `AgentRuntime`.
