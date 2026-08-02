@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from connector.adapter import Adapter
+from connector._reference.legacy.adapter import Adapter
 from connector.sync_state import SyncStateStore
 
 RuntimeStatusSink = Callable[[str, str, dict[str, Any] | None], Awaitable[None]]

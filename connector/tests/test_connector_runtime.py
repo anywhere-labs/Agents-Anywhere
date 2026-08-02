@@ -25,90 +25,124 @@ from connector.runtime_protocol import (
     RuntimeInventoryItem,
     RuntimeOperationResult,
     RuntimeProvider,
+    RuntimeTimelineItem,
+    RuntimeTimelineSnapshot,
+    SessionMeta,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 
 
-class FakeAdapter:
-    def __init__(self) -> None:
-        self.notification_sink = None
-        self.calls: list[tuple[str, dict[str, Any]]] = []
-        self.turn_notifications: list[dict[str, Any]] = []
-
-    async def create_session(self, params: dict[str, Any]) -> dict[str, Any]:
-        self.calls.append(("session.create", params))
-        session_id = params.get("sessionId") or "sess_created"
-        return {
-            "sessionId": session_id,
-            "externalSessionId": "thr_1",
-            "backendNotifications": [
-                {
-                    "method": "session.updated",
-                    "params": {
-                        "sessionId": session_id,
-                        "externalSessionId": "thr_1",
-                        "status": "idle",
-                    },
-                }
-            ],
-        }
-
-    async def sync_session(self, params: dict[str, Any]) -> dict[str, Any]:
-        self.calls.append(("session.sync", params))
-        return {"backendNotifications": []}
-
-    async def sync_existing_sessions(self, connector_id: str, *, limit: int = 100, force: bool = False, notification_sink=None) -> dict[str, Any]:
-        self.calls.append(("session.discover", {"connectorId": connector_id, "limit": limit, "force": force}))
-        notifications = [
-            {
-                "method": "session.updated",
-                "params": {
-                    "sessionId": "sess_existing",
-                    "externalSessionId": "thr_existing",
-                    "status": "idle",
-                },
-            }
-        ]
-        if notification_sink is not None:
-            await notification_sink(notifications)
-            notifications = []
-        return {"threads": ["thr_existing"], "backendNotifications": notifications}
-
-    async def start_turn(self, params: dict[str, Any]) -> dict[str, Any]:
-        self.calls.append(("turn.start", params))
-        return {
-            "turnId": "turn_1",
-            "backendNotifications": self.turn_notifications,
-        }
-
-    async def steer_turn(self, params: dict[str, Any]) -> dict[str, Any]:
-        self.calls.append(("turn.steer", params))
-        return {"steered": True, "turnId": params.get("turnId")}
-
-    async def interrupt_turn(self, params: dict[str, Any]) -> dict[str, Any]:
-        self.calls.append(("turn.interrupt", params))
-        return {"interrupted": True}
-
-    async def resolve_approval(self, params: dict[str, Any]) -> dict[str, Any]:
-        self.calls.append(("approval.resolve", params))
-        return {"resolved": True}
-
-
 class FakeAgentRuntime(AgentRuntime):
-    def __init__(self) -> None:
+    def __init__(self, runtime_id: str = "codex") -> None:
+        self.runtime_id = runtime_id
         self.started = False
         self.stopped = False
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
     @property
     def identity(self) -> RuntimeIdentity:
-        return RuntimeIdentity(runtime="codex", adapter_version="test")
+        return RuntimeIdentity(runtime=self.runtime_id, adapter_version="test")
 
     async def start(self) -> None:
         self.started = True
 
     async def stop(self) -> None:
         self.stopped = True
+
+    async def list_sessions(
+        self,
+        limit: int = 100,
+        cursor: str | None = None,
+        force: bool = False,
+    ) -> tuple[SessionMeta, ...]:
+        self.calls.append(
+            (
+                "session.discover",
+                {
+                    "limit": limit,
+                    "cursor": cursor,
+                    "force": force,
+                },
+            )
+        )
+        return (
+            SessionMeta(
+                session_id="sess_existing",
+                external_session_id="thr_existing",
+                runtime=self.runtime_id,
+                title="Existing",
+                cwd="/repo",
+                ordering_time="2026-08-02T00:00:00Z",
+            ),
+        )
+
+    async def get_session_snapshot(
+        self,
+        session_id: str,
+        external_session_id: str | None = None,
+        limit: int = 100,
+    ) -> RuntimeTimelineSnapshot:
+        self.calls.append(
+            (
+                "session.sync",
+                {
+                    "sessionId": session_id,
+                    "externalSessionId": external_session_id,
+                    "limit": limit,
+                },
+            )
+        )
+        return RuntimeTimelineSnapshot(
+            session_id=session_id,
+            external_session_id=external_session_id,
+            runtime=self.runtime_id,
+            items=(
+                RuntimeTimelineItem(
+                    id="item_1",
+                    session_id=session_id,
+                    type="message",
+                    status="done",
+                    order_seq=1,
+                    content_hash="sha256:item",
+                    role="assistant",
+                    content={"text": "hello", "format": "markdown"},
+                    source={"runtime": self.runtime_id, "event": "test"},
+                ),
+            ),
+        )
+
+    async def create_and_start_session(
+        self,
+        session_id: str,
+        content: str,
+        title: str | None = None,
+        cwd: str | None = None,
+        selections=None,  # type: ignore[no-untyped-def]
+        attachments=(),  # type: ignore[no-untyped-def]
+        client_message_id: str | None = None,
+    ) -> RuntimeOperationResult:
+        self.calls.append(
+            (
+                "session.create",
+                {
+                    "sessionId": session_id,
+                    "content": content,
+                    "title": title,
+                    "cwd": cwd,
+                    "selections": dict(selections or {}),
+                    "attachments": attachments,
+                    "clientMessageId": client_message_id,
+                },
+            )
+        )
+        return RuntimeOperationResult(
+            ok=True,
+            result={
+                "sessionId": session_id,
+                "externalSessionId": "thr_created",
+                "turnId": "turn_agent",
+            },
+        )
 
     async def start_turn(
         self,
@@ -174,32 +208,33 @@ class FakeAgentRuntime(AgentRuntime):
 
 
 class FakeAgentProvider(RuntimeProvider):
-    def __init__(self, runtime: FakeAgentRuntime) -> None:
+    def __init__(self, runtime: FakeAgentRuntime, runtime_id: str = "codex") -> None:
         self._runtime = runtime
+        self._runtime_id = runtime_id
 
     @property
     def runtime(self) -> str:
-        return "codex"
+        return self._runtime_id
 
     @property
     def runtime_type(self) -> str:
-        return "codex"
+        return self._runtime_id
 
     @property
     def display_name(self) -> str:
-        return "Codex"
+        return self._runtime_id.title()
 
     async def discover(self) -> RuntimeInventoryItem:
         return RuntimeInventoryItem(
-            runtime="codex",
-            runtime_type="codex",
-            display_name="Codex",
+            runtime=self._runtime_id,
+            runtime_type=self._runtime_id,
+            display_name=self.display_name,
             available=True,
             configured=True,
         )
 
     async def validate_config(self, values) -> RuntimeConfig:  # type: ignore[no-untyped-def]
-        return RuntimeConfig(runtime="codex", revision=1, values=dict(values))
+        return RuntimeConfig(runtime=self._runtime_id, revision=1, values=dict(values))
 
     async def create_runtime(
         self,
@@ -222,6 +257,29 @@ class FakeWebSocket:
 
     async def send(self, payload: str) -> None:
         self.messages.append(json.loads(payload))
+
+
+def _client(
+    runtime: FakeAgentRuntime | None = None,
+    providers: tuple[RuntimeProvider, ...] | None = None,
+    runtime_config_store: JsonRuntimeConfigStore | None = None,
+    preferences_reader=None,  # type: ignore[no-untyped-def]
+    **config_overrides: Any,
+) -> BackendRpcClient:
+    if providers is None:
+        providers = (FakeAgentProvider(runtime or FakeAgentRuntime()),)
+    return BackendRpcClient(
+        ConnectorConfig(
+            server_url="http://127.0.0.1:8000",
+            connector_id="conn_1",
+            connector_token="token",
+            sync_existing_on_connect=False,
+            **config_overrides,
+        ),
+        agent_runtime_providers=providers,
+        runtime_config_store=runtime_config_store,
+        preferences_reader=preferences_reader,
+    )
 
 
 class FakeTerminalBackend(TerminalBackend):
@@ -338,10 +396,10 @@ def test_connector_runtime_dispatches_async_shell_tasks(tmp_path) -> None:
 
 
 def test_connector_runtime_routes_by_runtime_param() -> None:
-    asyncio.run(_exercise_multi_adapter_routing())
+    asyncio.run(_exercise_runtime_protocol_routing())
 
 
-def test_connector_runtime_prefers_agent_runtime_for_turn_rpc(tmp_path) -> None:
+def test_connector_runtime_uses_agent_runtime_for_turn_rpc(tmp_path) -> None:
     asyncio.run(_exercise_agent_runtime_turn_rpc(tmp_path))
 
 
@@ -392,68 +450,63 @@ def test_connector_auth_401_is_terminal(monkeypatch) -> None:
 
 
 async def _exercise_runtime() -> None:
-    adapter = FakeAdapter()
-    client = BackendRpcClient(
-        ConnectorConfig(
-            server_url="http://127.0.0.1:8000",
-            connector_id="conn_1",
-            connector_token="token",
-            sync_existing_on_connect=False,
-        ),
-        adapters={"codex": adapter},
-    )
+    runtime = FakeAgentRuntime()
+    client = _client(runtime)
     ws = FakeWebSocket()
     client._ws = ws  # type: ignore[assignment]
-    ingested: list[list[dict[str, Any]]] = []
+    notifications: list[dict[str, Any]] = []
 
-    async def ingest(notifications: list[dict[str, Any]]) -> None:
-        ingested.append(notifications)
+    async def notify(method: str, params: dict[str, Any]) -> None:
+        notifications.append({"method": method, "params": params})
 
-    client.ingest_notifications = ingest  # type: ignore[method-assign]
+    client.send_backend_notification = notify  # type: ignore[method-assign]
+    client.agent_runtime_host._notifier = notify  # type: ignore[attr-defined]
+    await client.dispatch("runtime.start", {"runtimeId": "codex", "config": {}})
 
     await client.handle_message(
         {
             "id": "rpc_1",
             "type": "request",
             "method": "session.create",
-            "params": {"runtime": "codex", "sessionId": "sess_1", "cwd": "/repo"},
-        }
-    )
-
-    assert adapter.calls == [
-        (
-            "session.create",
-            {
+            "params": {
                 "runtime": "codex",
                 "sessionId": "sess_1",
                 "cwd": "/repo",
-                "connectorId": "conn_1",
-            },
-        )
-    ]
-    assert ingested[0] == [
-        {
-            "method": "session.updated",
-            "params": {
-                "sessionId": "sess_1",
-                "externalSessionId": "thr_1",
-                "status": "idle",
+                "content": "start",
+                "selections": {"model": "sel_model"},
+                "clientMessageId": "cm_1",
             },
         }
-    ]
+    )
+
+    assert runtime.calls[-1] == (
+        "session.create",
+        {
+            "sessionId": "sess_1",
+            "content": "start",
+            "title": None,
+            "cwd": "/repo",
+            "selections": {"model": "sel_model"},
+            "attachments": (),
+            "clientMessageId": "cm_1",
+        },
+    )
     assert ws.messages[0] == {
+        "type": "notification",
+        "method": "runtime.statusChanged",
+        "params": {"runtimeId": "codex", "status": "validating"},
+    }
+    assert ws.messages[-1] == {
         "id": "rpc_1",
         "type": "response",
         "ok": True,
-        "result": {"sessionId": "sess_1", "externalSessionId": "thr_1"},
+        "result": {
+            "sessionId": "sess_1",
+            "externalSessionId": "thr_created",
+            "turnId": "turn_agent",
+        },
     }
 
-    adapter.turn_notifications = [
-        {
-            "method": "session.updated",
-            "params": {"sessionId": "sess_1", "status": "running"},
-        }
-    ]
     await client.handle_message(
         {
             "id": "rpc_2",
@@ -462,8 +515,8 @@ async def _exercise_runtime() -> None:
             "params": {"runtime": "codex", "sessionId": "sess_1", "externalSessionId": "thr_1", "content": "hi"},
         }
     )
-    assert ingested[-1] == adapter.turn_notifications
-    assert ws.messages[-1]["result"] == {"turnId": "turn_1"}
+    assert runtime.calls[-1][0] == "turn.start"
+    assert ws.messages[-1]["result"] == {"turnId": "turn_agent"}
 
     await client.handle_message(
         {
@@ -473,22 +526,37 @@ async def _exercise_runtime() -> None:
             "params": {"runtime": "codex", "limit": 5},
         }
     )
-    assert adapter.calls[-1] == ("session.discover", {"connectorId": "conn_1", "limit": 5, "force": True})
-    assert ingested[-1][0]["method"] == "session.updated"
-    assert ws.messages[-1]["result"] == {"threads": ["thr_existing"]}
+    assert runtime.calls[-1] == (
+        "session.discover",
+        {"limit": 5, "cursor": None, "force": True},
+    )
+    assert notifications[-1]["method"] == "session.updated"
+    assert ws.messages[-1]["result"]["sessions"][0]["sessionId"] == "sess_existing"
+
+    await client.handle_message(
+        {
+            "id": "rpc_4",
+            "type": "request",
+            "method": "session.sync",
+            "params": {
+                "runtime": "codex",
+                "sessionId": "sess_1",
+                "externalSessionId": "thr_1",
+            },
+        }
+    )
+    assert runtime.calls[-1][0] == "session.sync"
+    assert notifications[-1]["method"] == "timeline.sync"
+    assert ws.messages[-1]["result"] == {
+        "sessionId": "sess_1",
+        "externalSessionId": "thr_1",
+        "items": 1,
+        "complete": True,
+    }
 
 
 async def _exercise_websocket_close_reconnect(monkeypatch) -> None:
-    client = BackendRpcClient(
-        ConnectorConfig(
-            server_url="http://127.0.0.1:8000",
-            connector_id="conn_1",
-            connector_token="token",
-            reconnect_seconds=0,
-            sync_existing_on_connect=False,
-        ),
-        adapters={"codex": FakeAdapter()},
-    )
+    client = _client(reconnect_seconds=0)
     calls = 0
     sleeps: list[float] = []
 
@@ -516,16 +584,7 @@ async def _exercise_websocket_close_reconnect(monkeypatch) -> None:
 
 
 async def _exercise_websocket_auth_close_stops(monkeypatch) -> None:
-    client = BackendRpcClient(
-        ConnectorConfig(
-            server_url="http://127.0.0.1:8000",
-            connector_id="conn_1",
-            connector_token="token",
-            reconnect_seconds=0,
-            sync_existing_on_connect=False,
-        ),
-        adapters={"codex": FakeAdapter()},
-    )
+    client = _client(reconnect_seconds=0)
     calls = 0
 
     async def fake_run_once() -> None:
@@ -547,15 +606,7 @@ async def _exercise_websocket_auth_close_stops(monkeypatch) -> None:
 
 
 async def _exercise_auth_401_is_terminal(monkeypatch) -> None:
-    client = BackendRpcClient(
-        ConnectorConfig(
-            server_url="http://127.0.0.1:8000",
-            connector_id="conn_1",
-            connector_token="token",
-            sync_existing_on_connect=False,
-        ),
-        adapters={"codex": FakeAdapter()},
-    )
+    client = _client()
 
     class FakeResponse:
         status_code = 401
@@ -581,15 +632,7 @@ async def _exercise_auth_401_is_terminal(monkeypatch) -> None:
 
 
 async def _exercise_access_token_refresh() -> None:
-    client = BackendRpcClient(
-        ConnectorConfig(
-            server_url="http://127.0.0.1:8000",
-            connector_id="conn_1",
-            connector_token="token",
-            sync_existing_on_connect=False,
-        ),
-        adapters={"codex": FakeAdapter()},
-    )
+    client = _client()
     tokens = ["old", "new"]
     used_tokens: list[str] = []
 
@@ -637,15 +680,7 @@ async def _exercise_access_token_refresh() -> None:
 
 
 async def _exercise_ingest_reauth_on_401() -> None:
-    client = BackendRpcClient(
-        ConnectorConfig(
-            server_url="http://127.0.0.1:8000",
-            connector_id="conn_1",
-            connector_token="token",
-            sync_existing_on_connect=False,
-        ),
-        adapters={"codex": FakeAdapter()},
-    )
+    client = _client()
     tokens = ["expired", "fresh"]
     used_tokens: list[str] = []
 
@@ -688,15 +723,7 @@ async def _exercise_local_ops(tmp_path) -> None:
     outside = tmp_path / "outside.txt"
     outside.write_text("outside\n", encoding="utf-8")
 
-    client = BackendRpcClient(
-        ConnectorConfig(
-            server_url="http://127.0.0.1:8000",
-            connector_id="conn_1",
-            connector_token="token",
-            sync_existing_on_connect=False,
-        ),
-        adapters={"codex": FakeAdapter()},
-    )
+    client = _client()
     prepared = await client.dispatch(
         "fs.prepareDownload",
         {"root": str(workspace), "sessionId": "sess_1", "path": "hello.txt"},
@@ -842,47 +869,38 @@ async def _exercise_terminal_release_snapshot(tmp_path) -> None:
     assert listing["terminals"] == []
 
 
-async def _exercise_multi_adapter_routing() -> None:
-    codex = FakeAdapter()
-    claude = FakeAdapter()
-    client = BackendRpcClient(
-        ConnectorConfig(
-            server_url="http://127.0.0.1:8000",
-            connector_id="conn_1",
-            connector_token="token",
-            sync_existing_on_connect=False,
-        ),
-        adapters={"codex": codex, "claude": claude},
+async def _exercise_runtime_protocol_routing() -> None:
+    codex = FakeAgentRuntime("codex")
+    claude = FakeAgentRuntime("claude")
+    client = _client(
+        providers=(
+            FakeAgentProvider(codex, "codex"),
+            FakeAgentProvider(claude, "claude"),
+        )
     )
+    client._ws = FakeWebSocket()  # type: ignore[assignment]
+    await client.dispatch("runtime.start", {"runtimeId": "codex", "config": {}})
+    await client.dispatch("runtime.start", {"runtimeId": "claude", "config": {}})
 
     await client.dispatch("turn.start", {"runtime": "codex", "sessionId": "s1", "content": "hi"})
     await client.dispatch("turn.start", {"runtime": "claude", "sessionId": "s2", "content": "hi"})
     await client.dispatch(
         "turn.steer",
-        {"runtime": "claude", "sessionId": "s2", "turnId": "t1", "content": "focus"},
+        {"runtime": "claude", "sessionId": "s2", "content": "focus"},
     )
-    await client.dispatch("turn.interrupt", {"runtime": "claude", "sessionId": "s2", "turnId": "t1"})
+    await client.dispatch("turn.interrupt", {"runtime": "claude", "sessionId": "s2", "reason": "user"})
 
     assert [c[0] for c in codex.calls] == ["turn.start"]
     assert [c[0] for c in claude.calls] == ["turn.start", "turn.steer", "turn.interrupt"]
     assert codex.calls[0][1]["sessionId"] == "s1"
-    assert codex.calls[0][1]["connectorId"] == "conn_1"
     assert claude.calls[0][1]["sessionId"] == "s2"
-    assert claude.calls[0][1]["connectorId"] == "conn_1"
+    assert claude.calls[2][1]["reason"] == "user"
 
 
 async def _exercise_agent_runtime_turn_rpc(tmp_path) -> None:
-    legacy = FakeAdapter()
     agent_runtime = FakeAgentRuntime()
-    client = BackendRpcClient(
-        ConnectorConfig(
-            server_url="http://127.0.0.1:8000",
-            connector_id="conn_1",
-            connector_token="token",
-            sync_existing_on_connect=False,
-        ),
-        adapters={"codex": legacy},
-        agent_runtime_providers=(FakeAgentProvider(agent_runtime),),
+    client = _client(
+        runtime=agent_runtime,
         runtime_config_store=JsonRuntimeConfigStore(tmp_path / "runtime-configs.json"),
     )
     client._ws = FakeWebSocket()  # type: ignore[assignment]
@@ -920,7 +938,6 @@ async def _exercise_agent_runtime_turn_rpc(tmp_path) -> None:
     )
 
     assert agent_runtime.started is True
-    assert legacy.calls == []
     assert started == {"turnId": "turn_agent"}
     assert steered == {"steered": True, "turnId": "turn_agent"}
     assert interrupted == {"interrupted": True, "turnId": "turn_agent"}
@@ -935,16 +952,7 @@ async def _exercise_agent_runtime_turn_rpc(tmp_path) -> None:
 
 async def _exercise_agent_runtime_discovery() -> None:
     agent_runtime = FakeAgentRuntime()
-    client = BackendRpcClient(
-        ConnectorConfig(
-            server_url="http://127.0.0.1:8000",
-            connector_id="conn_1",
-            connector_token="token",
-            sync_existing_on_connect=False,
-        ),
-        adapters={},
-        agent_runtime_providers=(FakeAgentProvider(agent_runtime),),
-    )
+    client = _client(runtime=agent_runtime)
     client._ws = FakeWebSocket()  # type: ignore[assignment]
 
     inventory = await client.dispatch("runtime.discover", {})
@@ -967,15 +975,7 @@ async def _exercise_agent_runtime_discovery() -> None:
 
 
 async def _exercise_unknown_runtime() -> None:
-    client = BackendRpcClient(
-        ConnectorConfig(
-            server_url="http://127.0.0.1:8000",
-            connector_id="conn_1",
-            connector_token="token",
-            sync_existing_on_connect=False,
-        ),
-        adapters={"codex": FakeAdapter()},
-    )
+    client = _client()
     try:
         await client.dispatch("turn.start", {"runtime": "opencode", "sessionId": "s1", "content": "hi"})
     except RuntimeError as exc:
@@ -995,16 +995,7 @@ async def _exercise_preferences_push() -> None:
     def reader() -> dict[str, Any]:
         return next(cursor)
 
-    client = BackendRpcClient(
-        ConnectorConfig(
-            server_url="http://127.0.0.1:8000",
-            connector_id="conn_1",
-            connector_token="token",
-            sync_existing_on_connect=False,
-        ),
-        adapters={"codex": FakeAdapter()},
-        preferences_reader=reader,
-    )
+    client = _client(preferences_reader=reader)
     pushed: list[tuple[str, dict[str, Any]]] = []
 
     async def fake_notify(method: str, params: dict[str, Any]) -> None:
@@ -1028,15 +1019,7 @@ async def _exercise_preferences_push() -> None:
 async def _exercise_async_shell_tasks(tmp_path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    client = BackendRpcClient(
-        ConnectorConfig(
-            server_url="http://127.0.0.1:8000",
-            connector_id="conn_1",
-            connector_token="token",
-            sync_existing_on_connect=False,
-        ),
-        adapters={"codex": FakeAdapter()},
-    )
+    client = _client()
     notifications: list[tuple[str, dict[str, Any]]] = []
 
     async def notify(method: str, params: dict[str, Any]) -> None:

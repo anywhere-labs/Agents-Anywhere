@@ -14,19 +14,11 @@ import websockets
 from websockets.asyncio.client import ClientConnection
 from websockets.exceptions import ConnectionClosed
 
-from connector.adapter import Adapter
 from connector.core.config import ConnectorConfig
 from connector.core.preferences import read_local_preferences
 from connector.core.runtime_config_store import JsonRuntimeConfigStore
 from connector.local_ops import create_local_ops
 from connector.logging import logger
-from connector.protocol_revision import ProtocolRevisionClock
-from connector.runtime_lifecycle import (
-    RuntimeBindings,
-    RuntimeProvider,
-    RuntimeSupervisor,
-    default_runtime_providers,
-)
 from connector.runtime_protocol import (
     AgentRuntime,
     RuntimeAttachment,
@@ -46,10 +38,7 @@ from connector.server.runtime_host import ConnectorRuntimeHost
 from connector.sync_state import JsonSyncStateStore, SyncStateStore
 
 ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 60.0
-RUNTIME_SYNC_TIMEOUT_SECONDS = 15.0
-RUNTIME_CHANGED_SYNC_TIMEOUT_SECONDS = 60.0
-
-# Notifications from the adapter are funneled through an in-memory queue and
+# Notifications from the runtime host are funneled through an in-memory queue and
 # flushed in batches of up to FLUSH_MAX or after FLUSH_WINDOW_SECONDS,
 # whichever comes first. This collapses N back-to-back Codex deltas (one
 # token per delta) into 1 HTTP POST, while bounding the worst-case latency
@@ -67,8 +56,6 @@ class BackendRpcClient:
         self,
         config: ConnectorConfig,
         *,
-        adapters: dict[str, Adapter] | None = None,
-        runtime_providers: list[RuntimeProvider] | None = None,
         agent_runtime_providers: tuple[AgentRuntimeProvider, ...] | None = None,
         agent_runtime_host: RuntimeHostClient | None = None,
         runtime_config_store: JsonRuntimeConfigStore | None = None,
@@ -77,23 +64,10 @@ class BackendRpcClient:
     ) -> None:
         self.config = config
         self.sync_state_store = sync_state_store
-        if adapters is None and self.sync_state_store is None:
+        if self.sync_state_store is None:
             self.sync_state_store = JsonSyncStateStore(
                 config.state_path or JsonSyncStateStore.default_path()
             )
-        bindings = RuntimeBindings(
-            notification_sink=self.send_backend_notification,
-            attachment_downloader=self.download_attachment,
-            sync_state_store=self.sync_state_store,
-        )
-        providers = runtime_providers or default_runtime_providers(bindings)
-        self.runtime_supervisor = RuntimeSupervisor(
-            providers,
-            status_sink=self._publish_runtime_status,
-            changed_sink=self._runtime_changed,
-            running_adapters=adapters,
-        )
-        self.adapters = self.runtime_supervisor.adapters
         self.runtime_config_store = runtime_config_store or JsonRuntimeConfigStore()
         self.agent_runtime_host = agent_runtime_host or ConnectorRuntimeHost(
             connector_id=config.connector_id,
@@ -102,20 +76,13 @@ class BackendRpcClient:
             sync_state_store=self.sync_state_store,
         )
         if agent_runtime_providers is None:
-            agent_runtime_providers = (
-                (CodexProvider(),)
-                if adapters is None and runtime_providers is None
-                else ()
-            )
+            agent_runtime_providers = (CodexProvider(),)
         self.agent_runtime_supervisor = AgentRuntimeSupervisor(
             providers=agent_runtime_providers,
             host=self.agent_runtime_host,
             status_sink=self._publish_agent_runtime_status,
         )
-        for runtime_adapter in self.adapters.values():
-            self._wire_adapter(runtime_adapter)
         self._preferences_reader = preferences_reader or read_local_preferences
-        self._protocol_revisions = ProtocolRevisionClock()
         self._last_preferences: dict[str, Any] | None = None
         self.local_ops = create_local_ops(notify=self.send_backend_notification)
         self._ws: ClientConnection | None = None
@@ -187,9 +154,8 @@ class BackendRpcClient:
             proxy=None if _is_loopback_url(self.config.server_url) else True,
         ) as ws:
             self._ws = ws
-            inventory = await self.runtime_supervisor.discover()
+            inventory = await self._discover_runtimes()
             await self.send_notification("runtime.inventoryUpdated", inventory)
-            await self._publish_protocol_state()
             heartbeat_task = asyncio.create_task(self._heartbeat_loop())
             sync_task = asyncio.create_task(self._sync_existing_loop())
             try:
@@ -267,68 +233,50 @@ class BackendRpcClient:
         if method == "runtime.validateConfig":
             runtime_id = _required_runtime_id(params)
             config = _runtime_config(params)
-            if self._has_agent_runtime(runtime_id):
-                await self.agent_runtime_supervisor.validate_config(runtime_id, config)
-                return {"runtimeId": runtime_id, "valid": True}
-            await self.runtime_supervisor.validate_config(runtime_id, config)
+            await self.agent_runtime_supervisor.validate_config(runtime_id, config)
             return {"runtimeId": runtime_id, "valid": True}
         if method == "runtime.start":
             runtime_id = _required_runtime_id(params)
-            if self._has_agent_runtime(runtime_id):
-                values = _runtime_config(params)
-                await self.agent_runtime_supervisor.start(runtime_id, values)
-                self.runtime_config_store.save(runtime_id, values)
-                return {"runtimeId": runtime_id, "status": "running"}
-            return await self.runtime_supervisor.start(
-                runtime_id,
-                _runtime_config(params),
-            )
+            values = _runtime_config(params)
+            await self.agent_runtime_supervisor.start(runtime_id, values)
+            self.runtime_config_store.save(runtime_id, values)
+            return {"runtimeId": runtime_id, "status": "running"}
         if method == "runtime.stop":
             runtime_id = _required_runtime_id(params)
-            if self._has_agent_runtime(runtime_id):
-                await self.agent_runtime_supervisor.stop(runtime_id)
-                return {"runtimeId": runtime_id, "status": "stopped"}
-            return await self.runtime_supervisor.stop(runtime_id)
+            await self.agent_runtime_supervisor.stop(runtime_id)
+            return {"runtimeId": runtime_id, "status": "stopped"}
         if method == "session.discover":
-            adapter = self._resolve_adapter(params)
-            result = await adapter.sync_existing_sessions(
-                self.config.connector_id,
-                limit=int(params.get("limit", 100)),
-                force=bool(params.get("force", True)),
-                notification_sink=self.enqueue_backend_notifications,
+            return await self._dispatch_agent_runtime_session_discover(
+                self._resolve_agent_runtime(params),
+                params,
             )
-            return _strip_backend_notifications(result)
         if method == "session.create":
-            adapter = self._resolve_adapter(params)
-            result = await adapter.create_session({**params, "connectorId": self.config.connector_id})
-            await self._send_backend_notifications(result)
-            return _strip_backend_notifications(result)
-        if method == "session.sync":
-            adapter = self._resolve_adapter(params)
-            result = await adapter.sync_session(params)
-            await self._send_backend_notifications(result)
-            return _strip_backend_notifications(result)
-        if method == "turn.start":
-            runtime = self._try_resolve_agent_runtime(params)
-            if runtime is not None:
-                return await self._dispatch_agent_runtime_turn_start(runtime, params)
-            result = await self._resolve_adapter(params).start_turn(
-                {**params, "connectorId": self.config.connector_id}
+            return await self._dispatch_agent_runtime_session_create(
+                self._resolve_agent_runtime(params),
+                params,
             )
-            await self._send_backend_notifications(result)
-            return _strip_backend_notifications(result)
+        if method == "session.sync":
+            return await self._dispatch_agent_runtime_session_sync(
+                self._resolve_agent_runtime(params),
+                params,
+            )
+        if method == "turn.start":
+            return await self._dispatch_agent_runtime_turn_start(
+                self._resolve_agent_runtime(params),
+                params,
+            )
         if method == "turn.steer":
-            runtime = self._try_resolve_agent_runtime(params)
-            if runtime is not None:
-                return await self._dispatch_agent_runtime_turn_steer(runtime, params)
-            return await self._resolve_adapter(params).steer_turn(params)
+            return await self._dispatch_agent_runtime_turn_steer(
+                self._resolve_agent_runtime(params),
+                params,
+            )
         if method == "turn.interrupt":
-            runtime = self._try_resolve_agent_runtime(params)
-            if runtime is not None:
-                return await self._dispatch_agent_runtime_interrupt(runtime, params)
-            return await self._resolve_adapter(params).interrupt_turn(params)
+            return await self._dispatch_agent_runtime_interrupt(
+                self._resolve_agent_runtime(params),
+                params,
+            )
         if method == "approval.resolve":
-            return await self._resolve_adapter(params).resolve_approval(params)
+            raise ValueError("approval.resolve is not part of Agent Runtime Protocol v1; use interactions")
         if method == "fs.prepareDownload":
             return await self.local_ops.prepare_download(params)
         if method == "fs.uploadPreparedDownload":
@@ -369,27 +317,96 @@ class BackendRpcClient:
         raise ValueError(f"unsupported connector method: {method}")
 
     async def _discover_runtimes(self) -> dict[str, Any]:
-        legacy_inventory = await self.runtime_supervisor.discover()
-        runtimes = list(legacy_inventory.get("runtimes", []))
         agent_items = await self.agent_runtime_supervisor.discover()
-        runtimes.extend(_agent_inventory_payload(item) for item in agent_items)
-        return {"runtimes": runtimes}
+        return {"runtimes": [_agent_inventory_payload(item) for item in agent_items]}
 
-    def _has_agent_runtime(self, runtime_id: str) -> bool:
-        return runtime_id in self.agent_runtime_supervisor.runtimes
-
-    def _try_resolve_agent_runtime(self, params: dict[str, Any]) -> AgentRuntime | None:
+    def _resolve_agent_runtime(self, params: dict[str, Any]) -> AgentRuntime:
         runtime_id = params.get("runtime") if isinstance(params, dict) else None
         if not isinstance(runtime_id, str) or not runtime_id:
             raise ValueError("runtime is required")
-        if not self._has_agent_runtime(runtime_id):
-            return None
-        try:
-            return self.agent_runtime_supervisor.resolve_runtime(runtime_id)
-        except RuntimeUnavailableError:
-            if runtime_id in self.adapters:
-                return None
-            raise
+        return self.agent_runtime_supervisor.resolve_runtime(runtime_id)
+
+    async def _dispatch_agent_runtime_session_discover(
+        self,
+        runtime: AgentRuntime,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        sessions = await runtime.list_sessions(
+            limit=_int_param(params, "limit", 100),
+            cursor=_optional_string(params.get("cursor")),
+            force=bool(params.get("force", True)),
+        )
+        for session in sessions:
+            await self.agent_runtime_host.session_meta_upsert(
+                session_id=session.session_id,
+                runtime=session.runtime,
+                external_session_id=session.external_session_id,
+                title=session.title,
+                cwd=session.cwd,
+                ordering_time=session.ordering_time,
+                metadata=session.metadata,
+            )
+        return {
+            "sessions": [_session_meta_payload(session) for session in sessions],
+            "nextCursor": None,
+        }
+
+    async def _dispatch_agent_runtime_session_create(
+        self,
+        runtime: AgentRuntime,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        result = await runtime.create_and_start_session(
+            _required_session_id(params),
+            _required_content(params),
+            _optional_string(params.get("title")),
+            _optional_string(params.get("cwd")),
+            _runtime_selections(params),
+            _runtime_attachments(params),
+            _optional_string(params.get("clientMessageId")),
+        )
+        return _operation_result_payload(result)
+
+    async def _dispatch_agent_runtime_session_sync(
+        self,
+        runtime: AgentRuntime,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        session_id = _required_session_id(params)
+        external_session_id = _optional_string(params.get("externalSessionId"))
+        snapshot = await runtime.get_session_snapshot(
+            session_id,
+            external_session_id,
+            _int_param(params, "limit", 100),
+        )
+        await self.agent_runtime_host.timeline_sync(
+            session_id=snapshot.session_id,
+            runtime=snapshot.runtime,
+            external_session_id=snapshot.external_session_id,
+            items=snapshot.items,
+            complete=snapshot.complete,
+            metadata=snapshot.metadata,
+        )
+        state = await runtime.get_session_state(session_id, external_session_id)
+        if state is not None:
+            await self.agent_runtime_host.session_state_update(
+                session_id=state.session_id,
+                runtime=state.runtime,
+                external_session_id=state.external_session_id,
+                status=state.status,
+                selections=state.selections,
+                status_reason=state.status_reason,
+                error=state.error,
+                metadata=state.metadata,
+            )
+        for notice in await runtime.get_session_notices(session_id, external_session_id):
+            await self.agent_runtime_host.notice_upsert(notice)
+        return {
+            "sessionId": snapshot.session_id,
+            "externalSessionId": snapshot.external_session_id,
+            "items": len(snapshot.items),
+            "complete": snapshot.complete,
+        }
 
     async def _dispatch_agent_runtime_turn_start(
         self,
@@ -512,28 +529,26 @@ class BackendRpcClient:
         if not self.config.sync_existing_on_connect:
             return
         while True:
-            for runtime, adapter in list(self.adapters.items()):
+            for runtime_id in self.agent_runtime_supervisor.runtimes:
                 try:
-                    sync_timeout = (
-                        RUNTIME_CHANGED_SYNC_TIMEOUT_SECONDS
-                        if runtime == "codex"
-                        else RUNTIME_SYNC_TIMEOUT_SECONDS
-                    )
-                    await asyncio.wait_for(
-                        adapter.sync_existing_sessions(
-                            self.config.connector_id,
-                            notification_sink=self.enqueue_backend_notifications,
-                        ),
-                        timeout=sync_timeout,
-                    )
-                except NotImplementedError:
-                    # Stub adapters (e.g. Claude until Task 3) opt out by
-                    # raising NotImplementedError — that's fine.
-                    pass
+                    runtime = self.agent_runtime_supervisor.resolve_runtime(runtime_id)
+                    sessions = await runtime.list_sessions(limit=100, force=False)
+                    for session in sessions:
+                        await self.agent_runtime_host.session_meta_upsert(
+                            session_id=session.session_id,
+                            runtime=session.runtime,
+                            external_session_id=session.external_session_id,
+                            title=session.title,
+                            cwd=session.cwd,
+                            ordering_time=session.ordering_time,
+                            metadata=session.metadata,
+                        )
+                except RuntimeUnavailableError:
+                    continue
                 except TimeoutError:
-                    logger.warning("existing {} session sync timed out", runtime)
+                    logger.warning("existing {} session sync timed out", runtime_id)
                 except Exception:
-                    logger.exception("existing {} session sync failed", runtime)
+                    logger.exception("existing {} session sync failed", runtime_id)
             await self._push_preferences_if_changed()
             await asyncio.sleep(self.config.sync_interval_seconds)
 
@@ -570,79 +585,6 @@ class BackendRpcClient:
         error: dict[str, Any] | None,
     ) -> None:
         await self._publish_runtime_status(runtime_id, status, error)
-
-    async def _runtime_changed(self, runtime_id: str, adapter: Adapter | None) -> None:
-        if adapter is not None:
-            self._wire_adapter(adapter)
-        await self._publish_protocol_capabilities()
-        if adapter is not None:
-            await self._publish_runtime_catalogs(runtime_id, adapter)
-
-    async def _publish_protocol_state(self) -> None:
-        await self._publish_protocol_capabilities()
-        for runtime_id, adapter in list(self.adapters.items()):
-            await self._publish_runtime_catalogs(runtime_id, adapter)
-
-    async def _publish_protocol_capabilities(self) -> None:
-        revision = self._protocol_revisions.next()
-        await self.send_notification(
-            "protocol.capabilitiesUpdated",
-            self.runtime_supervisor.active_capabilities(revision=revision),
-        )
-
-    async def _publish_runtime_catalogs(self, runtime: str, adapter: Adapter) -> None:
-        revision = self._protocol_revisions.next()
-        model_catalog_method = getattr(adapter, "model_catalog", None)
-        if callable(model_catalog_method):
-            try:
-                model_catalog = await model_catalog_method(revision=revision)
-            except Exception:
-                logger.exception("runtime model catalog read failed runtime={}", runtime)
-                model_catalog = None
-            if isinstance(model_catalog, dict):
-                await self.send_notification("protocol.modelCatalogUpdated", model_catalog)
-        permission_catalog_method = getattr(adapter, "permission_catalog", None)
-        if callable(permission_catalog_method):
-            try:
-                permission_catalog = await permission_catalog_method(revision=revision)
-            except Exception:
-                logger.exception("runtime permission catalog read failed runtime={}", runtime)
-                permission_catalog = None
-            if isinstance(permission_catalog, dict):
-                await self.send_notification("protocol.permissionCatalogUpdated", permission_catalog)
-
-    def _resolve_adapter(self, params: dict[str, Any]) -> Adapter:
-        runtime = params.get("runtime") if isinstance(params, dict) else None
-        if not isinstance(runtime, str) or not runtime:
-            raise ValueError("runtime is required")
-        return self.runtime_supervisor.resolve_adapter(runtime)
-
-    def _wire_adapter(self, adapter: Adapter) -> None:
-        if getattr(adapter, "notification_sink", None) is None:
-            adapter.notification_sink = self.send_backend_notification
-        if getattr(adapter, "attachment_downloader", None) is None:
-            try:
-                adapter.attachment_downloader = self.download_attachment
-            except AttributeError:
-                pass
-
-    async def _send_backend_notifications(self, result: dict[str, Any]) -> None:
-        for notification in result.get("backendNotifications", []):
-            if not isinstance(notification, dict):
-                continue
-            method = notification.get("method")
-            params = notification.get("params")
-            if isinstance(method, str) and isinstance(params, dict):
-                await self.ingest_notifications([{"method": method, "params": params}])
-
-    async def enqueue_backend_notifications(self, notifications: list[dict[str, Any]]) -> None:
-        for notification in notifications:
-            if not isinstance(notification, dict):
-                continue
-            method = notification.get("method")
-            params = notification.get("params")
-            if isinstance(method, str) and isinstance(params, dict):
-                await self.send_backend_notification(method, params)
 
     async def ingest_notifications(self, notifications: list[dict[str, Any]]) -> None:
         """Send a batch synchronously, bypassing the flush queue.
@@ -859,10 +801,6 @@ class BackendRpcClient:
         return httpx.AsyncClient(timeout=timeout, trust_env=not _is_loopback_url(self.config.server_url))
 
 
-def _strip_backend_notifications(result: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in result.items() if key != "backendNotifications"}
-
-
 def _required_runtime_id(params: dict[str, Any]) -> str:
     runtime_id = params.get("runtimeId")
     if not isinstance(runtime_id, str) or not runtime_id:
@@ -918,6 +856,29 @@ def _runtime_attachments(params: dict[str, Any]) -> tuple[RuntimeAttachment, ...
     return tuple(attachments)
 
 
+def _runtime_selections(params: dict[str, Any]) -> dict[str, str | None]:
+    raw = params.get("selections") or {}
+    if not isinstance(raw, dict):
+        raise ValueError("selections must be an object")
+    selections: dict[str, str | None] = {}
+    for scope, selection_id in raw.items():
+        if not isinstance(scope, str) or not scope:
+            raise ValueError("selection scope must be a non-empty string")
+        if selection_id is not None and not isinstance(selection_id, str):
+            raise ValueError("selection id must be a string or null")
+        selections[scope] = selection_id
+    return selections
+
+
+def _int_param(params: dict[str, Any], key: str, default: int) -> int:
+    value = params.get(key, default)
+    if isinstance(value, bool):
+        raise ValueError(f"{key} must be an integer")
+    if isinstance(value, int):
+        return value
+    raise ValueError(f"{key} must be an integer")
+
+
 def _operation_result_payload(result: RuntimeOperationResult) -> dict[str, Any]:
     payload = dict(result.result)
     if result.ok and result.code is None and result.message is None:
@@ -927,6 +888,18 @@ def _operation_result_payload(result: RuntimeOperationResult) -> dict[str, Any]:
         **({"code": result.code} if result.code is not None else {}),
         **({"message": result.message} if result.message is not None else {}),
         **payload,
+    }
+
+
+def _session_meta_payload(session: Any) -> dict[str, Any]:
+    return {
+        "sessionId": session.session_id,
+        "externalSessionId": session.external_session_id,
+        "runtime": session.runtime,
+        "title": session.title,
+        "cwd": session.cwd,
+        "orderingTime": session.ordering_time,
+        "metadata": dict(session.metadata),
     }
 
 
