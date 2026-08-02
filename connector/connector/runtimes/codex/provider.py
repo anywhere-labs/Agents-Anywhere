@@ -316,7 +316,7 @@ def _codex_capabilities() -> dict[str, bool]:
         "commands": True,
         "interactions": True,
         "attachments": False,
-        "ipc": True,
+        "ipc": False,
     }
 
 

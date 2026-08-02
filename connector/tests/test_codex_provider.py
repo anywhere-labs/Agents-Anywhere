@@ -31,7 +31,7 @@ async def _test_codex_provider_does_not_treat_unimplemented_sdk_as_runnable() ->
     assert item.available is False
     assert item.configured is False
     assert item.capabilities["commands"] is True
-    assert item.capabilities["ipc"] is True
+    assert item.capabilities["ipc"] is False
     assert item.metadata["sdk"]["available"] is True
     assert item.metadata["appServer"]["available"] is False
     assert "app-server executable is unavailable" in str(item.reason)
