@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from connector.protocol import (
+from connector.server.protocol import (
     PROTOCOL_VERSION_1,
     ProtocolCapability,
     ProtocolCapabilitySet,

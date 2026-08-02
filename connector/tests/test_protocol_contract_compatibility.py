@@ -6,14 +6,14 @@ from pathlib import Path
 import pytest
 from jsonschema import Draft202012Validator
 
-from connector.protocol import (
+from connector.server.catalogs import (
+    model_catalog_from_runtime_items,
+    permission_catalog_from_items,
+)
+from connector.server.protocol import (
     ProtocolCapabilitySet,
     ProtocolModelCatalog,
     ProtocolPermissionCatalog,
-)
-from connector.protocol_catalogs import (
-    model_catalog_from_runtime_items,
-    permission_catalog_from_items,
 )
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]

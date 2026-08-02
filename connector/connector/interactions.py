@@ -4,7 +4,7 @@ import hashlib
 import json
 from typing import Any
 
-from connector.protocol import ProtocolNotice
+from connector.server.protocol import ProtocolNotice
 
 
 def approval_notice(approval: dict[str, Any]) -> dict[str, Any]:

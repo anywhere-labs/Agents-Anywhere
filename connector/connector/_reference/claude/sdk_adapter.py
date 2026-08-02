@@ -22,8 +22,8 @@ from connector.attachments import attachment_target
 from connector.interactions import approval_notice
 from connector.launch import LaunchTarget, launch_target
 from connector.logging import logger
-from connector.protocol import protocol_selection_id
-from connector.protocol_catalogs import (
+from connector.server.protocol import protocol_selection_id
+from connector.server.catalogs import (
     empty_model_catalog,
     permission_catalog_from_items,
 )

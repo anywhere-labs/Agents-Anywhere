@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from connector.protocol import (
+from connector.server.protocol import (
     ProtocolModelCatalog,
     ProtocolModelItem,
     ProtocolPermissionCatalog,

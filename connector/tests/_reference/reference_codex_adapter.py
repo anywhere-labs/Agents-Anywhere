@@ -22,7 +22,7 @@ from connector._reference.codex.ipc_protocol import (
 )
 from connector._reference.codex.reducer import TimelineReducer
 from connector._reference.codex.rpc import APP_SERVER_STREAM_LIMIT, JsonRpcStdioClient
-from connector.protocol import protocol_selection_id
+from connector.server.protocol import protocol_selection_id
 from connector.server.sync_state import JsonSyncStateStore
 
 

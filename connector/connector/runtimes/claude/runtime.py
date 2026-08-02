@@ -12,7 +12,6 @@ from typing import Any
 
 from connector.attachments import attachment_target
 from connector.logging import logger
-from connector.protocol import protocol_selection_id
 from connector.runtime_protocol import (
     AgentRuntime,
     RuntimeAttachment,
@@ -29,6 +28,7 @@ from connector.runtime_protocol import (
     SessionState,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
+from connector.server.protocol import protocol_selection_id
 from connector.time import utc_now
 
 SdkLoader = Callable[[], Any]

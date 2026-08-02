@@ -43,8 +43,8 @@ from connector._reference.codex.rpc import JsonRpcStdioClient
 from connector.attachments import attachment_target
 from connector.interactions import approval_notice
 from connector.logging import logger
-from connector.protocol import protocol_selection_id
-from connector.protocol_catalogs import (
+from connector.server.protocol import protocol_selection_id
+from connector.server.catalogs import (
     model_catalog_from_runtime_items,
     permission_catalog_from_items,
 )

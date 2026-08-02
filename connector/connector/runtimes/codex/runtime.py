@@ -11,7 +11,6 @@ from typing import Any, Protocol
 
 from connector.launch import LaunchTarget
 from connector.logging import logger
-from connector.protocol import protocol_selection_id
 from connector.runtime_protocol import (
     AgentRuntime,
     RuntimeAttachment,
@@ -30,6 +29,7 @@ from connector.runtime_protocol import (
     SessionState,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
+from connector.server.protocol import protocol_selection_id
 
 NotificationHandler = Callable[[dict[str, Any]], Awaitable[None]]
 APP_SERVER_STREAM_LIMIT = 64 * 1024 * 1024
