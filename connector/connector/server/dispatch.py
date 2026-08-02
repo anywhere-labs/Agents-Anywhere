@@ -10,7 +10,9 @@ from connector.runtime_protocol import (
     RuntimeCommandResult,
     RuntimeHostClient,
     RuntimeInventoryItem,
+    RuntimeModelCatalog,
     RuntimeOperationResult,
+    RuntimePermissionCatalog,
     RuntimeSupervisor,
 )
 
@@ -58,6 +60,20 @@ class ConnectorRequestDispatcher:
             runtime_id = _required_runtime_id(params)
             await self.agent_runtime_supervisor.stop(runtime_id)
             return {"runtimeId": runtime_id, "status": "stopped"}
+        if method == "runtime.modelCatalog":
+            runtime = self._resolve_agent_runtime(params)
+            catalog = await runtime.list_model_catalog(
+                query=_optional_string(params.get("query")),
+                limit=_int_param(params, "limit", 100),
+            )
+            return {"catalog": _model_catalog_payload(catalog)}
+        if method == "runtime.permissionCatalog":
+            runtime = self._resolve_agent_runtime(params)
+            catalog = await runtime.list_permission_catalog(
+                query=_optional_string(params.get("query")),
+                limit=_int_param(params, "limit", 100),
+            )
+            return {"catalog": _permission_catalog_payload(catalog)}
         if method == "session.discover":
             return await self._dispatch_agent_runtime_session_discover(
                 self._resolve_agent_runtime(params),
@@ -466,6 +482,77 @@ def _runtime_command_payload(command: RuntimeCommand) -> dict[str, Any]:
         "acceptsArgs": command.accepts_args,
         "argsSchema": dict(command.args_schema) if command.args_schema is not None else None,
         "metadata": dict(command.metadata),
+    }
+
+
+def _model_catalog_payload(catalog: RuntimeModelCatalog) -> dict[str, Any]:
+    return {
+        "runtime": catalog.runtime,
+        "revision": catalog.revision,
+        "models": [
+            {
+                "id": model.id,
+                "displayName": model.title,
+                "selectionId": model.selection_id,
+                "description": model.description,
+                "default": False,
+                "reasoningItems": [
+                    {
+                        "id": reasoning.id,
+                        "displayName": reasoning.title,
+                        "selectionId": reasoning.selection_id,
+                        "description": reasoning.description,
+                        "default": False,
+                        "metadata": {
+                            **dict(reasoning.metadata),
+                            "enabled": reasoning.enabled,
+                            **(
+                                {"disabledReason": reasoning.disabled_reason}
+                                if reasoning.disabled_reason is not None
+                                else {}
+                            ),
+                        },
+                    }
+                    for reasoning in model.reasoning_items
+                ],
+                "metadata": {
+                    **dict(model.metadata),
+                    "enabled": model.enabled,
+                    **(
+                        {"disabledReason": model.disabled_reason}
+                        if model.disabled_reason is not None
+                        else {}
+                    ),
+                },
+            }
+            for model in catalog.models
+        ],
+    }
+
+
+def _permission_catalog_payload(catalog: RuntimePermissionCatalog) -> dict[str, Any]:
+    return {
+        "runtime": catalog.runtime,
+        "revision": catalog.revision,
+        "permissions": [
+            {
+                "id": permission.id,
+                "displayName": permission.title,
+                "selectionId": permission.selection_id,
+                "description": permission.description,
+                "default": False,
+                "metadata": {
+                    **dict(permission.metadata),
+                    "enabled": permission.enabled,
+                    **(
+                        {"disabledReason": permission.disabled_reason}
+                        if permission.disabled_reason is not None
+                        else {}
+                    ),
+                },
+            }
+            for permission in catalog.permissions
+        ],
     }
 
 

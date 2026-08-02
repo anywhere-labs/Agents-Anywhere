@@ -24,7 +24,11 @@ from connector.runtime_protocol import (
     RuntimeConfig,
     RuntimeIdentity,
     RuntimeInventoryItem,
+    RuntimeModelCatalog,
+    RuntimeModelItem,
     RuntimeOperationResult,
+    RuntimePermissionCatalog,
+    RuntimePermissionItem,
     RuntimeProvider,
     RuntimeTimelineItem,
     RuntimeTimelineSnapshot,
@@ -75,6 +79,43 @@ class FakeAgentRuntime(AgentRuntime):
                 title="Existing",
                 cwd="/repo",
                 ordering_time="2026-08-02T00:00:00Z",
+            ),
+        )
+
+    async def list_model_catalog(
+        self,
+        query: str | None = None,
+        limit: int = 100,
+    ) -> RuntimeModelCatalog:
+        self.calls.append(("runtime.modelCatalog", {"query": query, "limit": limit}))
+        return RuntimeModelCatalog(
+            runtime=self.runtime_id,
+            revision=7,
+            models=(
+                RuntimeModelItem(
+                    id="gpt-test",
+                    title="GPT Test",
+                    selection_id="sel_model_test",
+                    description="Test model",
+                ),
+            ),
+        )
+
+    async def list_permission_catalog(
+        self,
+        query: str | None = None,
+        limit: int = 100,
+    ) -> RuntimePermissionCatalog:
+        self.calls.append(("runtime.permissionCatalog", {"query": query, "limit": limit}))
+        return RuntimePermissionCatalog(
+            runtime=self.runtime_id,
+            revision=8,
+            permissions=(
+                RuntimePermissionItem(
+                    id="read-only",
+                    title="Read only",
+                    selection_id="sel_permission_readonly",
+                ),
             ),
         )
 
@@ -731,6 +772,28 @@ async def _exercise_runtime() -> None:
         },
     )
     assert ws.messages[-1]["result"] == {"resolved": True, "noticeId": "notice_1"}
+
+    await client.handle_message(
+        {
+            "id": "rpc_8",
+            "type": "request",
+            "method": "runtime.modelCatalog",
+            "params": {"runtime": "codex", "query": "gpt", "limit": 20},
+        }
+    )
+    assert runtime.calls[-1] == ("runtime.modelCatalog", {"query": "gpt", "limit": 20})
+    assert ws.messages[-1]["result"]["catalog"]["models"][0]["displayName"] == "GPT Test"
+
+    await client.handle_message(
+        {
+            "id": "rpc_9",
+            "type": "request",
+            "method": "runtime.permissionCatalog",
+            "params": {"runtime": "codex", "query": "read", "limit": 20},
+        }
+    )
+    assert runtime.calls[-1] == ("runtime.permissionCatalog", {"query": "read", "limit": 20})
+    assert ws.messages[-1]["result"]["catalog"]["permissions"][0]["selectionId"] == "sel_permission_readonly"
 
 
 async def _exercise_websocket_close_reconnect(monkeypatch) -> None:

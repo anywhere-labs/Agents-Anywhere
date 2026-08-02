@@ -773,6 +773,39 @@ class FakeLocalRpc:
                 "message": "Command executed.",
                 "result": {"echo": params},
             }
+        if method == "runtime.modelCatalog":
+            return {
+                "catalog": {
+                    "runtime": params["runtime"],
+                    "revision": 90,
+                    "models": [
+                        {
+                            "id": "gpt-live",
+                            "displayName": "GPT Live",
+                            "selectionId": "sel_model_live",
+                            "default": True,
+                            "reasoningItems": [],
+                            "metadata": {"source": "runtime"},
+                        }
+                    ],
+                }
+            }
+        if method == "runtime.permissionCatalog":
+            return {
+                "catalog": {
+                    "runtime": params["runtime"],
+                    "revision": 91,
+                    "permissions": [
+                        {
+                            "id": "read-only",
+                            "displayName": "Read only",
+                            "selectionId": "sel_permission_live",
+                            "default": True,
+                            "metadata": {"source": "runtime"},
+                        }
+                    ],
+                }
+            }
         return {"method": method, "params": params}
 
 
@@ -2017,6 +2050,43 @@ def test_agent_catalog_rejects_unknown_runtime(tmp_path):
     assert client.get("/agents/python/permission-catalog", headers=headers).status_code == 422
 
 
+def test_agent_catalog_reads_live_runtime_catalog(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _access_token, _session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+
+    model = client.get(
+        "/agents/codex/model-catalog",
+        headers=headers,
+        params={"connectorId": connector_id, "query": "gpt", "limit": 12},
+    )
+    permission = client.get(
+        "/agents/codex/permission-catalog",
+        headers=headers,
+        params={"connectorId": connector_id, "query": "read", "limit": 13},
+    )
+
+    assert model.status_code == 200, model.text
+    assert model.json()["catalog"]["models"][0]["displayName"] == "GPT Live"
+    assert permission.status_code == 200, permission.text
+    assert permission.json()["catalog"]["permissions"][0]["displayName"] == "Read only"
+    assert fake_rpc.requests[-2:] == [
+        (
+            connector_id,
+            "runtime.modelCatalog",
+            {"runtime": "codex", "limit": 12, "query": "gpt"},
+            30,
+        ),
+        (
+            connector_id,
+            "runtime.permissionCatalog",
+            {"runtime": "codex", "limit": 13, "query": "read"},
+            30,
+        ),
+    ]
+
+
 def test_connector_preferences_round_trip_via_daemon_notification(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, _, headers = create_connector_and_session(client)
@@ -2175,22 +2245,7 @@ def test_catalog_revision_prevents_stale_and_conflicting_updates(tmp_path):
     assert conflict.status_code == 400, conflict.text
     assert conflict.json()["detail"]["code"] == "catalog_revision_conflict"
 
-    current = client.get(
-        "/agents/codex/model-catalog",
-        headers=headers,
-        params={"connectorId": connector_id},
-    ).json()["catalog"]
-    assert current["revision"] == revision
-    assert current["models"][0]["displayName"] == "Current"
-
     assert ingest(payload(revision + 1, "Next")).status_code == 200
-    updated = client.get(
-        "/agents/codex/model-catalog",
-        headers=headers,
-        params={"connectorId": connector_id},
-    ).json()["catalog"]
-    assert updated["revision"] == revision + 1
-    assert updated["models"][0]["displayName"] == "Next"
 
 
 def test_catalog_ingest_rejects_duplicate_selection_ids(tmp_path):
