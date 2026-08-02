@@ -23,13 +23,14 @@ from connector.runtime_protocol import (
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex.client import app_server_client_from_config
 from connector.runtimes.codex.runtime import CodexRuntime
+from connector.runtimes.codex.sdk_client import sdk_client_from_config
 
 SdkMode = Literal["auto", "sdk", "app-server"]
 CommandChecker = Callable[[LaunchTarget, Mapping[str, str]], Awaitable[dict[str, Any]]]
 SdkChecker = Callable[[], dict[str, Any]]
+SdkClientFactory = Callable[[RuntimeConfig], Any]
 
 _COMMAND_CHECK_TIMEOUT_S = 8.0
-_CODEX_SDK_RUNTIME_SUPPORTED = False
 _PROTECTED_ENV_PREFIXES = ("AGENT_CONNECTOR_", "AGENT_SERVER_")
 _PROTECTED_ENV_NAMES = {
     "AGENT_CONNECTOR_ID",
@@ -58,9 +59,11 @@ class CodexProvider(RuntimeProvider):
         self,
         sdk_checker: SdkChecker | None = None,
         command_checker: CommandChecker | None = None,
+        sdk_client_factory: SdkClientFactory | None = None,
     ) -> None:
         self._sdk_checker = sdk_checker or _check_codex_sdk
         self._command_checker = command_checker or _check_codex_target
+        self._sdk_client_factory = sdk_client_factory or sdk_client_from_config
         self._discovered_target: LaunchTarget | None = None
         self._discovered_sdk: dict[str, Any] | None = None
 
@@ -69,17 +72,10 @@ class CodexProvider(RuntimeProvider):
         report, target = await self._discover_app_server_target()
         self._discovered_sdk = sdk
         self._discovered_target = target
-        sdk_runtime_available = (
-            bool(sdk.get("available")) and _CODEX_SDK_RUNTIME_SUPPORTED
-        )
-        available = sdk_runtime_available or target is not None
+        available = bool(sdk.get("available")) or target is not None
         reason = None
         if not available:
-            reason = (
-                "Codex app-server executable is unavailable"
-                if sdk.get("available")
-                else "Codex SDK and Codex app-server executable are unavailable"
-            )
+            reason = "Codex SDK and Codex app-server executable are unavailable"
         return RuntimeInventoryItem(
             runtime=self.runtime,
             runtime_type=self.runtime_type,
@@ -141,10 +137,6 @@ class CodexProvider(RuntimeProvider):
         if requested_mode == "sdk":
             if not sdk.get("available"):
                 raise RuntimeInvalidRequestError("Codex SDK is not available")
-            if not _CODEX_SDK_RUNTIME_SUPPORTED:
-                raise RuntimeInvalidRequestError(
-                    "Codex SDK runtime client is not implemented"
-                )
             effective_mode = "sdk"
         elif requested_mode == "app-server":
             if target is None:
@@ -152,12 +144,10 @@ class CodexProvider(RuntimeProvider):
                     "Codex app-server executable is not available"
                 )
             effective_mode = "app-server"
+        elif sdk.get("available"):
+            effective_mode = "sdk"
         elif target is not None:
             effective_mode = "app-server"
-        elif sdk.get("available") and not _CODEX_SDK_RUNTIME_SUPPORTED:
-            raise RuntimeInvalidRequestError(
-                "Codex app-server executable is unavailable and Codex SDK runtime client is not implemented"
-            )
         else:
             raise RuntimeInvalidRequestError(
                 "Codex SDK and Codex app-server executable are unavailable"
@@ -191,9 +181,12 @@ class CodexProvider(RuntimeProvider):
         host: RuntimeHostClient,
     ) -> AgentRuntime:
         mode = config.values.get("sdkMode")
+        if mode == "sdk":
+            client = self._sdk_client_factory(config)
+            return CodexRuntime(config=config, host=host, client=client)
         if mode != "app-server":
             raise RuntimeInvalidRequestError(
-                "Codex runtime currently requires sdkMode=app-server"
+                "Codex runtime requires sdkMode=sdk or sdkMode=app-server"
             )
         client = app_server_client_from_config(config)
         return CodexRuntime(config=config, host=host, client=client)

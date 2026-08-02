@@ -12,11 +12,11 @@ from connector.runtimes.codex.provider import CodexProvider
 from connector.runtimes.codex.runtime import CodexRuntime
 
 
-def test_codex_provider_does_not_treat_unimplemented_sdk_as_runnable() -> None:
-    asyncio.run(_test_codex_provider_does_not_treat_unimplemented_sdk_as_runnable())
+def test_codex_provider_treats_sdk_as_primary_runnable_surface() -> None:
+    asyncio.run(_test_codex_provider_treats_sdk_as_primary_runnable_surface())
 
 
-async def _test_codex_provider_does_not_treat_unimplemented_sdk_as_runnable() -> None:
+async def _test_codex_provider_treats_sdk_as_primary_runnable_surface() -> None:
     provider = CodexProvider(
         sdk_checker=lambda: {
             "available": True,
@@ -28,13 +28,13 @@ async def _test_codex_provider_does_not_treat_unimplemented_sdk_as_runnable() ->
 
     item = await provider.discover()
 
-    assert item.available is False
-    assert item.configured is False
+    assert item.available is True
+    assert item.configured is True
     assert item.capabilities["commands"] is True
     assert item.capabilities["ipc"] is False
     assert item.metadata["sdk"]["available"] is True
     assert item.metadata["appServer"]["available"] is False
-    assert "app-server executable is unavailable" in str(item.reason)
+    assert item.reason is None
 
 
 def test_codex_provider_schema_marks_ipc_beta_and_platform_scope() -> None:
@@ -63,15 +63,11 @@ async def _test_codex_provider_schema_marks_ipc_beta_and_platform_scope() -> Non
     assert "runtime instability" in ipc["description"]
 
 
-def test_codex_provider_auto_uses_app_server_until_sdk_runtime_is_implemented() -> None:
-    asyncio.run(
-        _test_codex_provider_auto_uses_app_server_until_sdk_runtime_is_implemented()
-    )
+def test_codex_provider_auto_prefers_sdk() -> None:
+    asyncio.run(_test_codex_provider_auto_prefers_sdk())
 
 
-async def _test_codex_provider_auto_uses_app_server_until_sdk_runtime_is_implemented() -> (
-    None
-):
+async def _test_codex_provider_auto_prefers_sdk() -> None:
     provider = CodexProvider(
         sdk_checker=lambda: {
             "available": True,
@@ -85,7 +81,7 @@ async def _test_codex_provider_auto_uses_app_server_until_sdk_runtime_is_impleme
     config = await provider.validate_config({"sdkMode": "auto", "ipcEnabled": False})
 
     assert config.runtime == "codex"
-    assert config.values["sdkMode"] == "app-server"
+    assert config.values["sdkMode"] == "sdk"
     assert config.values["requestedSdkMode"] == "auto"
     assert config.values["ipcEnabled"] is False
 
@@ -126,11 +122,11 @@ async def _test_codex_provider_rejects_missing_forced_sdk() -> None:
         await provider.validate_config({"sdkMode": "sdk"})
 
 
-def test_codex_provider_rejects_forced_sdk_until_runtime_client_exists() -> None:
-    asyncio.run(_test_codex_provider_rejects_forced_sdk_until_runtime_client_exists())
+def test_codex_provider_accepts_forced_sdk() -> None:
+    asyncio.run(_test_codex_provider_accepts_forced_sdk())
 
 
-async def _test_codex_provider_rejects_forced_sdk_until_runtime_client_exists() -> None:
+async def _test_codex_provider_accepts_forced_sdk() -> None:
     provider = CodexProvider(
         sdk_checker=lambda: {
             "available": True,
@@ -140,10 +136,9 @@ async def _test_codex_provider_rejects_forced_sdk_until_runtime_client_exists() 
         command_checker=_available_command,
     )
 
-    with pytest.raises(
-        RuntimeInvalidRequestError, match="runtime client is not implemented"
-    ):
-        await provider.validate_config({"sdkMode": "sdk"})
+    config = await provider.validate_config({"sdkMode": "sdk"})
+
+    assert config.values["sdkMode"] == "sdk"
 
 
 def test_codex_provider_validates_configured_executable() -> None:
@@ -207,16 +202,44 @@ async def _test_codex_provider_creates_native_runtime() -> None:
     assert await runtime.get_config() == config
 
 
-def test_codex_provider_rejects_runtime_without_app_server_mode() -> None:
-    asyncio.run(_test_codex_provider_rejects_runtime_without_app_server_mode())
+def test_codex_provider_creates_sdk_runtime() -> None:
+    asyncio.run(_test_codex_provider_creates_sdk_runtime())
 
 
-async def _test_codex_provider_rejects_runtime_without_app_server_mode() -> None:
+async def _test_codex_provider_creates_sdk_runtime() -> None:
+    created: list[RuntimeConfig] = []
+
+    def factory(config: RuntimeConfig) -> _FakeSdkClient:
+        created.append(config)
+        return _FakeSdkClient()
+
+    provider = CodexProvider(
+        sdk_checker=lambda: {
+            "available": True,
+            "package": "openai-codex",
+            "version": "1.0",
+        },
+        command_checker=_missing_command,
+        sdk_client_factory=factory,
+    )
+    config = await provider.validate_config({"sdkMode": "sdk"})
+
+    runtime = await provider.create_runtime(config, _NoHost())
+
+    assert isinstance(runtime, CodexRuntime)
+    assert created == [config]
+
+
+def test_codex_provider_rejects_runtime_without_resolved_mode() -> None:
+    asyncio.run(_test_codex_provider_rejects_runtime_without_resolved_mode())
+
+
+async def _test_codex_provider_rejects_runtime_without_resolved_mode() -> None:
     provider = CodexProvider(
         sdk_checker=_missing_sdk, command_checker=_available_command
     )
 
-    with pytest.raises(RuntimeInvalidRequestError, match="requires sdkMode=app-server"):
+    with pytest.raises(RuntimeInvalidRequestError, match="sdkMode=sdk"):
         await provider.create_runtime(
             RuntimeConfig(runtime="codex", revision=1, values={"sdkMode": "auto"}),
             _NoHost(),
@@ -262,3 +285,24 @@ class _NoHost:
     @property
     def connector_id(self) -> str:
         return "conn_test"
+
+
+class _FakeSdkClient:
+    async def start(self, handler: Any) -> None:
+        _ = handler
+
+    async def stop(self) -> None:
+        return None
+
+    async def request(
+        self, method: str, params: Mapping[str, Any] | None = None
+    ) -> dict[str, Any]:
+        _ = method
+        _ = params
+        return {}
+
+    async def respond(
+        self, request_id: str | int, result: Mapping[str, Any] | None = None
+    ) -> None:
+        _ = request_id
+        _ = result

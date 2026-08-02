@@ -348,17 +348,21 @@ Rules:
 Acceptance:
 
 - `CodexProvider` does not import `_reference.codex`.
-- `CodexProvider` exposes `sdkMode: auto | sdk | app-server`, but must not
-  report or start a runnable SDK mode until a real SDK-backed
-  `CodexRuntimeClient` exists. `auto` should choose the implemented
-  app-server path until then.
+- `CodexProvider` exposes `sdkMode: auto | sdk | app-server`.
+- `auto` prefers the SDK when the `openai-codex` package is available.
+- SDK mode is backed by an active `CodexRuntimeClient` adapter boundary, so
+  future SDK API changes stay inside `runtimes/codex/sdk_client.py`.
+- The app-server JSON-RPC client remains only as a fallback/reference path while
+  Codex migrates fully to SDK-backed integration.
 - `CodexProvider` keeps `ipcEnabled` as a beta config field and notes macOS-only
   test coverage. The `ipc` capability should remain false until active
   `runtimes/codex` code projects IPC state/timeline/notice events through
   `RuntimeHostClient`.
 - Basic `CodexRuntime` supports `identity`, `start`, `stop`, `get_config`, model catalog, permission catalog, session list, session snapshot, session state reads, text-only turn start, text-only steer, local interrupt, and minimal live timeline item upserts.
-- Basic `CodexRuntime` keeps app-server JSON-RPC inside `runtimes/codex`, not in the Connector application layer.
-- Codex text-only `create_and_start_session()` and `start_turn()` call app-server `thread/start` and `turn/start`.
+- Basic `CodexRuntime` depends only on the narrow `CodexRuntimeClient`
+  protocol; SDK/app-server transport details stay outside the runtime reducer.
+- Codex text-only `create_and_start_session()` and `start_turn()` call the
+  active Codex runtime client, not connector-layer IPC/app-server code.
 - Codex turn start updates `SessionState.status` through `waiting` then `running`, and `turn/completed` maps back to `idle`.
 - Codex no longer returns `backendNotifications`.
 - Codex runtime events produce `SessionMeta`, `SessionState`, `SessionTimeline`, and `SessionNotice`.
