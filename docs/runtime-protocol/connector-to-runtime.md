@@ -41,7 +41,23 @@ class RuntimeIdentity:
     adapter_version: str
     display_name: str | None = None
     protocol_version: str = "1.0"
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeConfig:
+    runtime: str
+    revision: int
+    values: Mapping[str, Any] = field(default_factory=dict)
+    schema: Mapping[str, Any] | None = None
+    ui_schema: Mapping[str, Any] | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 ```
+
+`RuntimeConfig` is runtime-owned configuration, not Connector app configuration. `ConnectorConfig` answers how this Connector talks to the Server. `RuntimeConfig` answers how one local runtime is configured: executable path, IPC/socket mode, SDK mode, environment profile, feature flags, and other runtime-specific options.
+
+Runtime config is a live runtime read/write surface. The Server may persist the latest accepted projection for UI continuity, but the runtime/provider remains the validator and source of truth. Config `revision` is scoped to the runtime config payload and exists to ignore stale UI updates or stale projections; it does not make the Server authoritative.
+
+`schema` and `ui_schema` are optional because some runtimes may expose a fixed form in Web/CLI while others need runtime-provided fields. The protocol carries them as data so the upper Connector layer does not need Codex- or Claude-specific config conditionals.
 
 ## Runtime-level catalogs
 
@@ -255,6 +271,16 @@ class AgentRuntime(ABC):
 
     async def stop(self) -> None:
         pass
+
+    async def get_config(self) -> RuntimeConfig:
+        raise RuntimeUnsupportedError("get_config")
+
+    async def update_config(
+        self,
+        values: Mapping[str, Any],
+        replace: bool = False,
+    ) -> RuntimeOperationResult:
+        raise RuntimeUnsupportedError("update_config")
 
     async def list_model_catalog(
         self,

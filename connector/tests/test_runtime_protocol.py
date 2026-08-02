@@ -9,6 +9,7 @@ import pytest
 from connector.runtime_protocol import (
     AgentRuntime,
     RuntimeCommandResult,
+    RuntimeConfig,
     RuntimeHostClient,
     RuntimeIdentity,
     RuntimeModelItem,
@@ -56,6 +57,11 @@ def test_runtime_protocol_default_unsupported_behavior() -> None:
     assert exc_info.value.method == "start_turn"
     assert exc_info.value.code == "runtime_unsupported"
 
+    with pytest.raises(RuntimeUnsupportedError) as config_exc_info:
+        asyncio.run(runtime.get_config())
+
+    assert config_exc_info.value.method == "get_config"
+
 
 def test_runtime_protocol_default_optional_reads_are_empty() -> None:
     runtime = MinimalRuntime()
@@ -77,6 +83,29 @@ def test_runtime_protocol_operation_results_include_code() -> None:
 def test_runtime_protocol_ordering_time_belongs_only_to_session_meta() -> None:
     assert "ordering_time" in {field.name for field in fields(SessionMeta)}
     assert "ordering_time" not in {field.name for field in fields(SessionState)}
+
+
+def test_runtime_config_is_representable_without_connector_config() -> None:
+    config = RuntimeConfig(
+        runtime="codex",
+        revision=7,
+        values={
+            "ipcEnabled": True,
+            "sdkMode": "auto",
+        },
+        schema={
+            "type": "object",
+            "properties": {
+                "ipcEnabled": {"type": "boolean"},
+                "sdkMode": {"type": "string"},
+            },
+        },
+    )
+
+    assert config.runtime == "codex"
+    assert config.revision == 7
+    assert config.values["ipcEnabled"] is True
+    assert config.schema is not None
 
 
 def test_runtime_model_selection_id_rules_are_representable() -> None:

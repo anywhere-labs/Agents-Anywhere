@@ -28,6 +28,16 @@ class RuntimeIdentity:
 
 
 @dataclass(frozen=True, slots=True)
+class RuntimeConfig:
+    runtime: str
+    revision: int
+    values: Mapping[str, Any] = field(default_factory=dict)
+    schema: Mapping[str, Any] | None = None
+    ui_schema: Mapping[str, Any] | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeReasoningItem:
     id: str
     title: str

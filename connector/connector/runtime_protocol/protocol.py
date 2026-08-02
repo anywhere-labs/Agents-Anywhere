@@ -9,6 +9,7 @@ from connector.runtime_protocol.models import (
     RuntimeAttachment,
     RuntimeCommand,
     RuntimeCommandResult,
+    RuntimeConfig,
     RuntimeIdentity,
     RuntimeModelCatalog,
     RuntimeOperationResult,
@@ -33,6 +34,16 @@ class AgentRuntime(ABC):
 
     async def stop(self) -> None:
         pass
+
+    async def get_config(self) -> RuntimeConfig:
+        raise RuntimeUnsupportedError("get_config")
+
+    async def update_config(
+        self,
+        values: Mapping[str, Any],
+        replace: bool = False,
+    ) -> RuntimeOperationResult:
+        raise RuntimeUnsupportedError("update_config")
 
     async def list_model_catalog(
         self,
