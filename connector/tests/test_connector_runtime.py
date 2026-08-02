@@ -16,7 +16,6 @@ from connector.runtime import (
     BackendRpcClient,
     ConnectorAuthenticationError,
     ConnectorConfig,
-    _coalesce_timeline_item_upserts,
 )
 from connector.runtime_protocol import (
     AgentRuntime,
@@ -30,6 +29,7 @@ from connector.runtime_protocol import (
     SessionMeta,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
+from connector.server.ingest import coalesce_timeline_item_upserts
 
 
 class FakeAgentRuntime(AgentRuntime):
@@ -355,7 +355,7 @@ def test_connector_coalesces_duplicate_timeline_upserts_within_batch() -> None:
         {"method": "notice.upsert", "params": {"sessionId": "sess_1"}},
     ]
 
-    coalesced = _coalesce_timeline_item_upserts(notifications)
+    coalesced = coalesce_timeline_item_upserts(notifications)
 
     assert [item["method"] for item in coalesced] == [
         "session.updated",
@@ -409,23 +409,23 @@ def test_connector_runtime_discovers_agent_runtime_inventory() -> None:
 
 
 def test_connector_runtime_disables_http_proxy_for_loopback_backend() -> None:
-    from connector.runtime import _is_loopback_url
+    from connector.server.urls import is_loopback_url
 
-    assert _is_loopback_url("http://127.0.0.1:8000") is True
-    assert _is_loopback_url("http://localhost:8000") is True
-    assert _is_loopback_url("http://[::1]:8000") is True
-    assert _is_loopback_url("https://agents.example.com") is False
+    assert is_loopback_url("http://127.0.0.1:8000") is True
+    assert is_loopback_url("http://localhost:8000") is True
+    assert is_loopback_url("http://[::1]:8000") is True
+    assert is_loopback_url("https://agents.example.com") is False
 
 
 def test_connector_runtime_maps_device_os(monkeypatch) -> None:
-    import connector.runtime as runtime
+    import connector.server.urls as urls
 
-    monkeypatch.setattr(runtime.sys, "platform", "darwin")
-    assert runtime._device_os() == "macos"
-    monkeypatch.setattr(runtime.sys, "platform", "win32")
-    assert runtime._device_os() == "windows"
-    monkeypatch.setattr(runtime.sys, "platform", "linux")
-    assert runtime._device_os() == "linux"
+    monkeypatch.setattr(urls.sys, "platform", "darwin")
+    assert urls.device_os() == "macos"
+    monkeypatch.setattr(urls.sys, "platform", "win32")
+    assert urls.device_os() == "windows"
+    monkeypatch.setattr(urls.sys, "platform", "linux")
+    assert urls.device_os() == "linux"
 
 
 def test_connector_runtime_rejects_unknown_runtime() -> None:

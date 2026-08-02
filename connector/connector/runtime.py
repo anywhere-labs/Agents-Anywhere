@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin, urlparse, urlunparse
 
 import httpx
 import websockets
@@ -35,21 +33,22 @@ from connector.runtime_protocol import (
 )
 from connector.runtimes.claude.provider import ClaudeProvider
 from connector.runtimes.codex.provider import CodexProvider
+from connector.server.auth import (
+    ACCESS_TOKEN_REFRESH_SKEW_SECONDS,
+    ConnectorAuthenticationError,
+)
+from connector.server.ingest import ConnectorIngestClient
 from connector.server.runtime_host import ConnectorRuntimeHost
+from connector.server.urls import (
+    api_v2_path,
+    api_v2_url,
+    device_os,
+    is_loopback_url,
+)
+from connector.server.urls import (
+    ws_url as build_ws_url,
+)
 from connector.sync_state import JsonSyncStateStore, SyncStateStore
-
-ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 60.0
-# Notifications from the runtime host are funneled through an in-memory queue and
-# flushed in batches of up to FLUSH_MAX or after FLUSH_WINDOW_SECONDS,
-# whichever comes first. This collapses N back-to-back Codex deltas (one
-# token per delta) into 1 HTTP POST, while bounding the worst-case latency
-# added at ~20ms.
-FLUSH_WINDOW_SECONDS = 0.02
-FLUSH_MAX = 64
-
-
-class ConnectorAuthenticationError(RuntimeError):
-    """Connector credentials are invalid or revoked; do not retry."""
 
 
 class BackendRpcClient:
@@ -96,13 +95,16 @@ class BackendRpcClient:
         # 5–10ms TCP/TLS setup that the old `async with AsyncClient(...)`
         # per-call pattern paid on every notification.
         self._http_client: httpx.AsyncClient | None = None
-        # Notifications are funneled here and drained by `_flush_loop`. See
-        # FLUSH_WINDOW_SECONDS comment.
-        self._notify_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self._ingest = ConnectorIngestClient(
+            server_url=config.server_url,
+            access_token_provider=self._ensure_access_token_for_ingest,
+            http_client_getter=self._get_http_client,
+            http_client_factory=self._new_http_client,
+        )
 
     async def run_forever(self) -> None:
         self._http_client = self._new_http_client(timeout=60)
-        flush_task = asyncio.create_task(self._flush_loop())
+        flush_task = asyncio.create_task(self._ingest.flush_loop())
         try:
             while True:
                 try:
@@ -144,15 +146,15 @@ class BackendRpcClient:
 
     async def run_once(self) -> None:
         access_token = await self.ensure_access_token(force=True)
-        ws_url = _ws_url(self.config.server_url, _api_v2_path("/connector/ws"))
-        logger.info("connecting backend websocket {}", ws_url)
+        websocket_url = build_ws_url(self.config.server_url, api_v2_path("/connector/ws"))
+        logger.info("connecting backend websocket {}", websocket_url)
         async with websockets.connect(
-            ws_url,
+            websocket_url,
             additional_headers={
                 "Authorization": f"Bearer {access_token}",
-                "X-Device-OS": _device_os(),
+                "X-Device-OS": device_os(),
             },
-            proxy=None if _is_loopback_url(self.config.server_url) else True,
+            proxy=None if is_loopback_url(self.config.server_url) else True,
         ) as ws:
             self._ws = ws
             inventory = await self._discover_runtimes()
@@ -178,7 +180,7 @@ class BackendRpcClient:
             client = self._new_http_client(timeout=30)
         try:
             response = await client.post(
-                _api_v2_url(self.config.server_url, "/connector/auth"),
+                api_v2_url(self.config.server_url, "/connector/auth"),
                 headers={
                     "Authorization": f"Connector {self.config.connector_id}:{self.config.connector_token}",
                 },
@@ -205,6 +207,9 @@ class BackendRpcClient:
             if not force and self._access_token and time.monotonic() < self._access_token_expires_at - ACCESS_TOKEN_REFRESH_SKEW_SECONDS:
                 return self._access_token
             return await self.authenticate()
+
+    async def _ensure_access_token_for_ingest(self, force: bool) -> str:
+        return await self.ensure_access_token(force=force)
 
     async def handle_message(self, message: dict[str, Any]) -> None:
         if message.get("type") != "request":
@@ -453,15 +458,7 @@ class BackendRpcClient:
         await self._send_json({"type": "notification", "method": method, "params": params})
 
     async def send_backend_notification(self, method: str, params: dict[str, Any]) -> None:
-        """Enqueue a notification for the next flush window.
-
-        Background: Codex emits one stdout line per token chunk during
-        streaming. The old code POSTed each one synchronously, so the next
-        chunk's POST waited for the prior round-trip. Now we hand the
-        notification to `_flush_loop`, which batches and sends one POST per
-        ~20ms window.
-        """
-        await self._notify_queue.put({"method": method, "params": params})
+        await self._ingest.enqueue(method, params)
 
     async def send_response(
         self,
@@ -488,43 +485,6 @@ class BackendRpcClient:
         while True:
             await self.send_notification("connector.heartbeat", {})
             await asyncio.sleep(self.config.heartbeat_seconds)
-
-    async def _flush_loop(self) -> None:
-        """Drain `_notify_queue` and POST in batches.
-
-        Pulls items via blocking `get()`. Once an item arrives, opens a
-        short FLUSH_WINDOW_SECONDS window during which additional items get
-        coalesced into the same POST. Flushes early when the batch hits
-        FLUSH_MAX. Errors are logged and the loop continues — losing a
-        notification is preferable to hanging the connector.
-        """
-        while True:
-            try:
-                first = await self._notify_queue.get()
-            except asyncio.CancelledError:
-                return
-            batch: list[dict[str, Any]] = [first]
-            deadline = asyncio.get_event_loop().time() + FLUSH_WINDOW_SECONDS
-            while len(batch) < FLUSH_MAX:
-                remaining = deadline - asyncio.get_event_loop().time()
-                if remaining <= 0:
-                    break
-                try:
-                    item = await asyncio.wait_for(self._notify_queue.get(), timeout=remaining)
-                except asyncio.TimeoutError:
-                    break
-                except asyncio.CancelledError:
-                    # Best-effort: flush what we have, then exit.
-                    try:
-                        await self._post_batch(batch)
-                    except Exception:
-                        pass
-                    return
-                batch.append(item)
-            try:
-                await self._post_batch(batch)
-            except Exception:
-                logger.exception("connector ingest flush failed (dropped {} notifications)", len(batch))
 
     async def _sync_existing_loop(self) -> None:
         if not self.config.sync_existing_on_connect:
@@ -588,52 +548,7 @@ class BackendRpcClient:
         await self._publish_runtime_status(runtime_id, status, error)
 
     async def ingest_notifications(self, notifications: list[dict[str, Any]]) -> None:
-        """Send a batch synchronously, bypassing the flush queue.
-
-        Used by `sync_existing_sessions` which already builds a large
-        notification list. Going through the flush queue would force a
-        FLUSH_WINDOW_SECONDS delay on each batch with no upside.
-        """
-        if not notifications:
-            return
-        await self._post_batch(list(notifications))
-
-    async def _post_batch(self, notifications: list[dict[str, Any]]) -> None:
-        if not notifications:
-            return
-        notifications = _coalesce_timeline_item_upserts(notifications)
-        if not notifications:
-            return
-        access_token = await self.ensure_access_token()
-        client = self._http_client
-        owned = client is None
-        if client is None:
-            client = self._new_http_client(timeout=60)
-        try:
-            response = await self._post_ingest_batch(client, access_token, notifications)
-            if getattr(response, "status_code", None) == 401:
-                logger.warning("connector ingest token rejected; refreshing access token and retrying")
-                access_token = await self.ensure_access_token(force=True)
-                response = await self._post_ingest_batch(client, access_token, notifications)
-                if getattr(response, "status_code", None) == 401:
-                    raise ConnectorAuthenticationError("connector credential no longer valid")
-            response.raise_for_status()
-        finally:
-            if owned:
-                await client.aclose()
-
-    async def _post_ingest_batch(
-        self,
-        client: httpx.AsyncClient,
-        access_token: str,
-        notifications: list[dict[str, Any]],
-    ) -> httpx.Response:
-        return await client.post(
-            _api_v2_url(self.config.server_url, "/connector/ingest"),
-            headers={"Authorization": f"Bearer {access_token}"},
-            json={"notifications": notifications},
-            timeout=60,
-        )
+        await self._ingest.ingest_notifications(notifications)
 
     async def download_attachment(self, session_id: str, file_id: str) -> tuple[bytes, str, str]:
         """Pull a user-uploaded attachment by session_id and file_id.
@@ -646,18 +561,18 @@ class BackendRpcClient:
         timeout = httpx.Timeout(300.0, connect=30.0)
         async with self._new_http_client(timeout=timeout) as client:
             response = await client.get(
-                urljoin(
-                    self.config.server_url + "/",
-                    _api_v2_path(f"/connector/sessions/{session_id}/attachments/{file_id}/content").lstrip("/"),
+                api_v2_url(
+                    self.config.server_url,
+                    f"/connector/sessions/{session_id}/attachments/{file_id}/content",
                 ),
                 headers={"Authorization": f"Bearer {access_token}"},
             )
             if getattr(response, "status_code", None) == 401:
                 access_token = await self.ensure_access_token(force=True)
                 response = await client.get(
-                    urljoin(
-                        self.config.server_url + "/",
-                        _api_v2_path(f"/connector/sessions/{session_id}/attachments/{file_id}/content").lstrip("/"),
+                    api_v2_url(
+                        self.config.server_url,
+                        f"/connector/sessions/{session_id}/attachments/{file_id}/content",
                     ),
                     headers={"Authorization": f"Bearer {access_token}"},
                 )
@@ -689,7 +604,7 @@ class BackendRpcClient:
             raise FileNotFoundError(f"file not found: {path}")
         access_token = await self.ensure_access_token()
         timeout = httpx.Timeout(300.0, connect=30.0)
-        target = _api_v2_url(self.config.server_url, upload_url)
+        target = api_v2_url(self.config.server_url, upload_url)
         headers = {"Authorization": f"Bearer {access_token}"}
         params_query = {"token": token}
         async with self._new_http_client(timeout=timeout) as client:
@@ -726,13 +641,13 @@ class BackendRpcClient:
         return {"terminalId": terminal_id, "connecting": True}
 
     async def _run_terminal_relay(self, terminal_id: str, token: str) -> None:
-        relay_url = _ws_url(self.config.server_url, _api_v2_path(f"/connector/terminals/{terminal_id}/relay"))
+        relay_url = build_ws_url(self.config.server_url, api_v2_path(f"/connector/terminals/{terminal_id}/relay"))
         relay_url = f"{relay_url}?token={token}"
         logger.info("connecting terminal relay terminal_id={}", terminal_id)
         send_lock = asyncio.Lock()
         async with websockets.connect(
             relay_url,
-            proxy=None if _is_loopback_url(self.config.server_url) else True,
+            proxy=None if is_loopback_url(self.config.server_url) else True,
         ) as ws:
             start_raw = await ws.recv()
             start = json.loads(start_raw)
@@ -798,8 +713,11 @@ class BackendRpcClient:
         except Exception:
             logger.exception("fs prepared download upload failed")
 
-    def _new_http_client(self, *, timeout: httpx.Timeout | float) -> httpx.AsyncClient:
-        return httpx.AsyncClient(timeout=timeout, trust_env=not _is_loopback_url(self.config.server_url))
+    def _get_http_client(self) -> httpx.AsyncClient | None:
+        return self._http_client
+
+    def _new_http_client(self, timeout: httpx.Timeout | float) -> httpx.AsyncClient:
+        return httpx.AsyncClient(timeout=timeout, trust_env=not is_loopback_url(self.config.server_url))
 
 
 def _required_runtime_id(params: dict[str, Any]) -> str:
@@ -945,73 +863,6 @@ def _close_reason(exc: ConnectionClosed) -> str:
     close = getattr(exc, "rcvd", None) or getattr(exc, "sent", None)
     reason = getattr(close, "reason", "")
     return reason if isinstance(reason, str) else ""
-
-
-def _coalesce_timeline_item_upserts(notifications: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Keep only the newest upsert per timeline item inside one outbound batch."""
-    latest_index_by_key: dict[tuple[str, str], int] = {}
-    dropped: set[int] = set()
-    for index, notification in enumerate(notifications):
-        if notification.get("method") != "timeline.itemUpsert":
-            continue
-        params = notification.get("params")
-        if not isinstance(params, dict):
-            continue
-        session_id = params.get("sessionId")
-        item = params.get("item")
-        item_id = item.get("id") if isinstance(item, dict) else None
-        if not isinstance(session_id, str) or not isinstance(item_id, str):
-            continue
-        key = (session_id, item_id)
-        previous = latest_index_by_key.get(key)
-        if previous is not None:
-            dropped.add(previous)
-        latest_index_by_key[key] = index
-    if not dropped:
-        return notifications
-    return [
-        notification
-        for index, notification in enumerate(notifications)
-        if index not in dropped
-    ]
-
-
-API_V2_PREFIX = "/api/v2"
-
-
-def _api_v2_path(path: str) -> str:
-    if path.startswith("http://") or path.startswith("https://"):
-        return path
-    normalized = path if path.startswith("/") else f"/{path}"
-    if normalized == API_V2_PREFIX or normalized.startswith(f"{API_V2_PREFIX}/"):
-        return normalized
-    return f"{API_V2_PREFIX}{normalized}"
-
-
-def _api_v2_url(server_url: str, path: str) -> str:
-    if path.startswith("http://") or path.startswith("https://"):
-        return path
-    return urljoin(server_url + "/", _api_v2_path(path).lstrip("/"))
-
-
-def _ws_url(server_url: str, path: str) -> str:
-    parsed = urlparse(server_url)
-    scheme = "wss" if parsed.scheme == "https" else "ws"
-    return urlunparse((scheme, parsed.netloc, path, "", "", ""))
-
-
-def _is_loopback_url(url: str) -> bool:
-    parsed = urlparse(url)
-    host = (parsed.hostname or "").lower()
-    return host in {"127.0.0.1", "localhost", "::1"}
-
-
-def _device_os() -> str:
-    if sys.platform == "darwin":
-        return "macos"
-    if sys.platform == "win32":
-        return "windows"
-    return "linux"
 
 
 def _preferences_signature(prefs: dict[str, Any]) -> tuple[tuple[str, Any], ...]:

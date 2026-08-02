@@ -15,8 +15,12 @@ from connector.local_runtime import (
     write_runtime,
 )
 from connector.logging import logger
-from connector.runtime import BackendRpcClient, ConnectorAuthenticationError, ConnectorConfig
-
+from connector.runtime import (
+    BackendRpcClient,
+    ConnectorAuthenticationError,
+    ConnectorConfig,
+)
+from connector.server.urls import api_v2_url
 
 ControlNotifier = Callable[[str, Any], Awaitable[None]]
 
@@ -156,7 +160,7 @@ class ConnectorController:
         try:
             async with httpx.AsyncClient(timeout=30) as client:
                 start_response = await client.post(
-                    _api_v2_url(server_url, "/pairing/start"),
+                    api_v2_url(server_url, "/pairing/start"),
                     json={"serverUrl": server_url, "ttlSeconds": int(timeout)},
                 )
                 start_response.raise_for_status()
@@ -174,7 +178,7 @@ class ConnectorController:
 
                 deadline = asyncio.get_running_loop().time() + timeout
                 while asyncio.get_running_loop().time() < deadline:
-                    poll_response = await client.post(_api_v2_url(server_url, "/pairing/poll"), json={"pairingId": pairing_id})
+                    poll_response = await client.post(api_v2_url(server_url, "/pairing/poll"), json={"pairingId": pairing_id})
                     poll_response.raise_for_status()
                     payload = poll_response.json()
                     if payload["status"] == "claimed" and payload.get("config"):
@@ -240,12 +244,6 @@ def config_to_payload(config: ConnectorConfig) -> dict[str, Any]:
         "syncIntervalSeconds": config.sync_interval_seconds,
         "statePath": config.state_path,
     }
-
-
-def _api_v2_url(server_url: str, path: str) -> str:
-    normalized_path = path if path.startswith("/") else f"/{path}"
-    return f"{server_url.rstrip('/')}/api/v2{normalized_path}"
-
 
 def config_from_params(params: Any) -> ConnectorConfig:
     if not isinstance(params, dict):
