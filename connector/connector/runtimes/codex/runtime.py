@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-import hashlib
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -25,6 +24,8 @@ from connector.runtime_protocol import (
     SessionState,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
+from connector.runtimes.codex import sessions as codex_sessions
+from connector.runtimes.codex import timeline as codex_timeline
 from connector.runtimes.codex.approvals import (
     approval_decision,
     approval_notice_from_request,
@@ -85,7 +86,7 @@ class CodexRuntime(AgentRuntime):
     ) -> RuntimeModelCatalog:
         await self.start()
         catalog = model_catalog_from_codex_items(
-            _model_list_items(self._model_list_result),
+            codex_sessions.model_list_items(self._model_list_result),
             revision=self.config.revision,
         )
         if query:
@@ -144,22 +145,28 @@ class CodexRuntime(AgentRuntime):
             },
         )
         sessions: list[SessionMeta] = []
-        for thread_ref in _thread_refs_from_list_result(result):
-            if _local_thread_state(thread_ref) in {"archived", "deleted", "unresumable"}:
+        for thread_ref in codex_sessions.thread_refs_from_list_result(result):
+            if codex_sessions.local_thread_state(thread_ref) in {
+                "archived",
+                "deleted",
+                "unresumable",
+            }:
                 continue
-            thread_id = _thread_id_from_result(thread_ref)
+            thread_id = codex_sessions.thread_id_from_result(thread_ref)
             if thread_id is None:
                 continue
             sessions.append(
                 SessionMeta(
-                    session_id=stable_session_id(self.host.connector_id, thread_id),
+                    session_id=codex_sessions.stable_session_id(
+                        self.host.connector_id, thread_id
+                    ),
                     external_session_id=thread_id,
                     runtime="codex",
-                    title=_thread_title(thread_ref),
-                    cwd=_thread_cwd(thread_ref),
-                    ordering_time=_thread_ordering_time(thread_ref),
+                    title=codex_sessions.thread_title(thread_ref),
+                    cwd=codex_sessions.thread_cwd(thread_ref),
+                    ordering_time=codex_sessions.thread_ordering_time(thread_ref),
                     metadata={
-                        "local_state": _local_thread_state(thread_ref),
+                        "local_state": codex_sessions.local_thread_state(thread_ref),
                         "source": "codex.thread/list",
                     },
                 )
@@ -207,8 +214,10 @@ class CodexRuntime(AgentRuntime):
                 "includeTurns": True,
             },
         )
-        thread = result.get("thread") if isinstance(result.get("thread"), dict) else result
-        items = _timeline_items_from_thread(
+        thread = (
+            result.get("thread") if isinstance(result.get("thread"), dict) else result
+        )
+        items = codex_timeline.timeline_items_from_thread(
             session_id=session_id,
             external_session_id=external_session_id,
             thread=thread if isinstance(thread, dict) else {},
@@ -253,7 +262,7 @@ class CodexRuntime(AgentRuntime):
                 "ephemeral": False,
             },
         )
-        thread_id = _thread_id_from_result(result)
+        thread_id = codex_sessions.thread_id_from_result(result)
         if thread_id is None:
             return RuntimeOperationResult(
                 ok=False,
@@ -334,7 +343,7 @@ class CodexRuntime(AgentRuntime):
                 metadata={"source": "codex.turn/start.failed"},
             )
             raise
-        turn_id = _turn_id_from_result(result)
+        turn_id = codex_sessions.turn_id_from_result(result)
         if turn_id is not None:
             self._active_turn_ids[session_id] = turn_id
         await self._set_session_state(
@@ -596,22 +605,30 @@ class CodexRuntime(AgentRuntime):
             try:
                 result = await self.client.request(method)
             except Exception as exc:  # noqa: BLE001
-                logger.debug("codex bootstrap read failed method={} error={}", method, exc)
+                logger.debug(
+                    "codex bootstrap read failed method={} error={}", method, exc
+                )
                 continue
             if method == "model/list":
                 self._model_list_result = result
 
     async def _handle_notification(self, message: dict[str, Any]) -> None:
         method = message.get("method")
-        params = message.get("params") if isinstance(message.get("params"), dict) else {}
-        thread_id = _thread_id_from_result(params)
-        session_id = _session_id_from_notification(params)
+        params = (
+            message.get("params") if isinstance(message.get("params"), dict) else {}
+        )
+        thread_id = codex_sessions.thread_id_from_result(params)
+        session_id = codex_sessions.session_id_from_notification(params)
         if session_id is None and thread_id is not None:
-            session_id = stable_session_id(self.host.connector_id, thread_id)
+            session_id = codex_sessions.stable_session_id(
+                self.host.connector_id, thread_id
+            )
         if session_id is None or thread_id is None:
             return
         if is_approval_request(method):
-            turn_id = _turn_id_from_result(params) or self._active_turn_ids.get(session_id)
+            turn_id = codex_sessions.turn_id_from_result(
+                params
+            ) or self._active_turn_ids.get(session_id)
             if turn_id is not None:
                 self._active_turn_ids[session_id] = turn_id
             notice = approval_notice_from_request(
@@ -635,7 +652,7 @@ class CodexRuntime(AgentRuntime):
             )
             return
         if method == "turn/started":
-            turn_id = _turn_id_from_result(params)
+            turn_id = codex_sessions.turn_id_from_result(params)
             if turn_id is not None:
                 self._active_turn_ids[session_id] = turn_id
             await self._set_session_state(
@@ -715,7 +732,9 @@ class CodexRuntime(AgentRuntime):
             metadata=state.metadata,
         )
 
-    async def _model_settings_from_selection(self, selection_id: str | None) -> dict[str, str]:
+    async def _model_settings_from_selection(
+        self, selection_id: str | None
+    ) -> dict[str, str]:
         if selection_id is None:
             return {}
         catalog = await self.list_model_catalog()
@@ -727,7 +746,9 @@ class CodexRuntime(AgentRuntime):
                     return {"model": model.id, "effort": reasoning.id}
         return {}
 
-    async def _permission_settings_from_selection(self, selection_id: str | None) -> dict[str, Any]:
+    async def _permission_settings_from_selection(
+        self, selection_id: str | None
+    ) -> dict[str, Any]:
         if selection_id is None:
             return {}
         catalog = await self.list_permission_catalog()
@@ -744,31 +765,33 @@ class CodexRuntime(AgentRuntime):
         method: str,
         params: Mapping[str, Any],
     ) -> RuntimeTimelineItem | None:
-        raw = _raw_item_from_notification(method, params)
+        raw = codex_timeline.raw_item_from_notification(method, params)
         if raw is None:
             return None
-        item_id = _timeline_item_id(raw, external_session_id, 0)
+        item_id = codex_timeline.timeline_item_id(raw, external_session_id, 0)
         previous = self._timeline_raw_by_id.get(item_id)
         merged = {**copy.deepcopy(previous or {}), **copy.deepcopy(raw)}
         if method == "item/agentMessage/delta":
             merged["type"] = merged.get("type") or "agentMessage"
             merged["status"] = merged.get("status") or "inProgress"
             previous_text = previous.get("text") if previous else ""
-            merged["text"] = f"{previous_text if isinstance(previous_text, str) else ''}{_notification_delta(params)}"
+            merged["text"] = (
+                f"{previous_text if isinstance(previous_text, str) else ''}{codex_timeline.notification_delta(params)}"
+            )
         elif method == "item/commandExecution/outputDelta":
             merged["type"] = merged.get("type") or "commandExecution"
             merged["status"] = merged.get("status") or "inProgress"
             previous_output = previous.get("aggregatedOutput") if previous else ""
             merged["aggregatedOutput"] = (
-                f"{previous_output if isinstance(previous_output, str) else ''}{_notification_delta(params)}"
+                f"{previous_output if isinstance(previous_output, str) else ''}{codex_timeline.notification_delta(params)}"
             )
         elif method == "item/started":
             merged.setdefault("status", "inProgress")
         elif method == "item/completed":
             merged["status"] = merged.get("status") or "completed"
         merged["id"] = item_id
-        if _timeline_item_turn_id(merged) is None:
-            turn_id = _turn_id_from_result(dict(params))
+        if codex_timeline.timeline_item_turn_id(merged) is None:
+            turn_id = codex_sessions.turn_id_from_result(dict(params))
             if turn_id is not None:
                 merged["turnId"] = turn_id
         self._timeline_raw_by_id[item_id] = merged
@@ -789,13 +812,18 @@ class CodexRuntime(AgentRuntime):
         turn = params.get("turn") if isinstance(params.get("turn"), dict) else params
         if not isinstance(turn, dict):
             return ()
-        turn_id = _turn_id_from_result(turn) or _turn_id_from_result(dict(params))
+        turn_id = codex_sessions.turn_id_from_result(
+            turn
+        ) or codex_sessions.turn_id_from_result(dict(params))
         items: list[RuntimeTimelineItem] = []
-        for index, raw_item in enumerate(_raw_timeline_items(turn)):
+        for index, raw_item in enumerate(codex_timeline.raw_timeline_items(turn)):
             raw = copy.deepcopy(raw_item)
-            if turn_id is not None and _timeline_item_turn_id(raw) is None:
+            if (
+                turn_id is not None
+                and codex_timeline.timeline_item_turn_id(raw) is None
+            ):
                 raw["turnId"] = turn_id
-            item_id = _timeline_item_id(raw, external_session_id, index)
+            item_id = codex_timeline.timeline_item_id(raw, external_session_id, index)
             raw["id"] = item_id
             self._timeline_raw_by_id[item_id] = raw
             items.append(
@@ -818,23 +846,25 @@ class CodexRuntime(AgentRuntime):
         fallback_index: int = 0,
     ) -> RuntimeTimelineItem:
         raw_dict = dict(raw)
-        item_id = _timeline_item_id(raw_dict, external_session_id, fallback_index)
+        item_id = codex_timeline.timeline_item_id(
+            raw_dict, external_session_id, fallback_index
+        )
         order_seq = self._timeline_order_by_id.get(item_id)
         if order_seq is None:
             order_seq = self._next_timeline_order
             self._next_timeline_order += 1
             self._timeline_order_by_id[item_id] = order_seq
-        content = _timeline_item_content(raw_dict)
-        item_type = _timeline_item_type(raw_dict)
-        status = _timeline_item_status(raw_dict)
-        role = _timeline_item_role(raw_dict)
+        content = codex_timeline.timeline_item_content(raw_dict)
+        item_type = codex_timeline.timeline_item_type(raw_dict)
+        status = codex_timeline.timeline_item_status(raw_dict)
+        role = codex_timeline.timeline_item_role(raw_dict)
         return RuntimeTimelineItem(
             id=item_id,
             session_id=session_id,
             type=item_type,
             status=status,
             order_seq=order_seq,
-            content_hash=_content_hash(
+            content_hash=codex_timeline.content_hash(
                 {
                     "type": item_type,
                     "status": status,
@@ -843,7 +873,7 @@ class CodexRuntime(AgentRuntime):
                 }
             ),
             role=role,
-            turn_id=_timeline_item_turn_id(raw_dict),
+            turn_id=codex_timeline.timeline_item_turn_id(raw_dict),
             content=content,
             source={
                 "runtime": "codex",
@@ -852,179 +882,9 @@ class CodexRuntime(AgentRuntime):
                 "rawType": raw_dict.get("type"),
                 "itemId": raw_dict.get("id") or raw_dict.get("itemId"),
             },
-            revision=_timeline_item_revision(raw_dict),
+            revision=codex_timeline.timeline_item_revision(raw_dict),
             metadata={"raw": raw_dict},
         )
-
-
-def stable_session_id(connector_id: str, thread_id: str) -> str:
-    digest = hashlib.sha256(f"{connector_id}:codex:{thread_id}".encode()).hexdigest()[:24]
-    return f"sess_codex_{digest}"
-
-
-def _model_list_items(result: dict[str, Any] | None) -> list[dict[str, Any]]:
-    if not isinstance(result, dict):
-        return []
-    for key in ("models", "items", "data"):
-        value = result.get(key)
-        if isinstance(value, list):
-            return [item for item in value if isinstance(item, dict)]
-    nested = result.get("modelCatalog") or result.get("catalog")
-    if isinstance(nested, dict):
-        return _model_list_items(nested)
-    return []
-
-
-def _thread_refs_from_list_result(result: dict[str, Any]) -> list[dict[str, Any]]:
-    for key in ("threads", "data", "items"):
-        value = result.get(key)
-        if isinstance(value, list):
-            return [item for item in value if isinstance(item, dict)]
-    nested = result.get("thread")
-    if isinstance(nested, dict):
-        return [nested]
-    if _thread_id_from_result(result):
-        return [result]
-    return []
-
-
-def _timeline_items_from_thread(
-    session_id: str,
-    external_session_id: str,
-    thread: dict[str, Any],
-    limit: int,
-) -> tuple[RuntimeTimelineItem, ...]:
-    raw_items = _raw_timeline_items(thread)
-    items: list[RuntimeTimelineItem] = []
-    for index, raw in enumerate(raw_items[:limit]):
-        item_id = _timeline_item_id(raw, external_session_id, index)
-        content = _timeline_item_content(raw)
-        source = {
-            "runtime": "codex",
-            "event": "thread/read",
-            "threadId": external_session_id,
-            "rawType": raw.get("type"),
-        }
-        items.append(
-            RuntimeTimelineItem(
-                id=item_id,
-                session_id=session_id,
-                type=_timeline_item_type(raw),
-                status=_timeline_item_status(raw),
-                order_seq=index,
-                content_hash=_content_hash(
-                    {
-                        "type": _timeline_item_type(raw),
-                        "status": _timeline_item_status(raw),
-                        "role": _timeline_item_role(raw),
-                        "content": content,
-                    }
-                ),
-                role=_timeline_item_role(raw),
-                turn_id=_timeline_item_turn_id(raw),
-                content=content,
-                source=source,
-                revision=_timeline_item_revision(raw),
-                metadata={"raw": raw},
-            )
-        )
-    return tuple(items)
-
-
-def _raw_timeline_items(thread: dict[str, Any]) -> list[dict[str, Any]]:
-    for key in ("items", "timeline", "timelineItems", "timeline_items"):
-        value = thread.get(key)
-        if isinstance(value, list):
-            return [item for item in value if isinstance(item, dict)]
-    turns = thread.get("turns")
-    if isinstance(turns, list):
-        result: list[dict[str, Any]] = []
-        for turn in turns:
-            if not isinstance(turn, dict):
-                continue
-            for key in ("items", "timeline", "timelineItems", "messages"):
-                value = turn.get(key)
-                if isinstance(value, list):
-                    result.extend(item for item in value if isinstance(item, dict))
-        return result
-    messages = thread.get("messages")
-    if isinstance(messages, list):
-        return [item for item in messages if isinstance(item, dict)]
-    return []
-
-
-def _timeline_item_id(raw: dict[str, Any], external_session_id: str, index: int) -> str:
-    for key in ("id", "itemId", "item_id"):
-        value = raw.get(key)
-        if isinstance(value, str) and value:
-            return value
-    return f"codex_{external_session_id}_{index}_{_content_hash(raw)[:16]}"
-
-
-def _timeline_item_type(raw: dict[str, Any]) -> str:
-    value = raw.get("type") or raw.get("kind")
-    if not isinstance(value, str) or not value:
-        return "message"
-    if value in {"agentMessage", "userMessage", "steeringUserMessage"}:
-        return "message"
-    if value == "commandExecution":
-        return "command"
-    if value == "fileChange":
-        return "file_change"
-    return value
-
-
-def _timeline_item_status(raw: dict[str, Any]) -> str:
-    value = raw.get("status")
-    if not isinstance(value, str) or not value:
-        return "done"
-    if value in {"inProgress", "in_progress"}:
-        return "running"
-    if value == "completed":
-        return "done"
-    return value
-
-
-def _timeline_item_role(raw: dict[str, Any]) -> str | None:
-    value = raw.get("role")
-    if isinstance(value, str) and value:
-        return value
-    item_type = raw.get("type")
-    if item_type in {"userMessage", "steeringUserMessage"}:
-        return "user"
-    if item_type == "agentMessage":
-        return "assistant"
-    return None
-
-
-def _timeline_item_turn_id(raw: dict[str, Any]) -> str | None:
-    for key in ("turnId", "turn_id"):
-        value = raw.get(key)
-        if isinstance(value, str) and value:
-            return value
-    return None
-
-
-def _turn_id_from_result(value: dict[str, Any]) -> str | None:
-    turn = value.get("turn") if isinstance(value.get("turn"), dict) else value
-    if not isinstance(turn, dict):
-        return None
-    for key in ("id", "turn_id", "turnId"):
-        value = turn.get(key)
-        if isinstance(value, str) and value:
-            return value
-    nested = turn.get("turn")
-    if isinstance(nested, dict) and isinstance(nested.get("id"), str):
-        return nested["id"]
-    return None
-
-
-def _session_id_from_notification(params: Mapping[str, Any]) -> str | None:
-    for key in ("platformSessionId", "sessionId", "session_id"):
-        value = params.get(key)
-        if isinstance(value, str) and value:
-            return value
-    return None
 
 
 def _ensure_text_only_attachments(attachments: tuple[RuntimeAttachment, ...]) -> None:
@@ -1048,149 +908,3 @@ def _soft_interrupt_failure_reason(error_text: str) -> str | None:
     if "turn not found" in normalized:
         return "turn_not_found"
     return None
-
-
-def _timeline_item_revision(raw: dict[str, Any]) -> int:
-    value = raw.get("revision")
-    return value if isinstance(value, int) and value > 0 else 1
-
-
-def _timeline_item_content(raw: dict[str, Any]) -> Mapping[str, Any]:
-    content = raw.get("content")
-    if isinstance(content, dict):
-        return content
-    text = raw.get("text")
-    if isinstance(text, str):
-        return {"text": text, "format": "markdown"}
-    if isinstance(content, str):
-        return {"text": content, "format": "markdown"}
-    aggregated_output = raw.get("aggregatedOutput")
-    if isinstance(aggregated_output, str):
-        return {
-            "command": raw.get("command") or raw.get("cmd") or "",
-            "output": aggregated_output,
-            "format": "text",
-        }
-    if raw.get("type") == "commandExecution":
-        return {
-            "command": raw.get("command") or raw.get("cmd") or "",
-            "output": raw.get("output") or raw.get("outputText") or "",
-            "format": "text",
-        }
-    return {}
-
-
-def _thread_id_from_result(value: dict[str, Any]) -> str | None:
-    thread = value.get("thread") if isinstance(value.get("thread"), dict) else value
-    if not isinstance(thread, dict):
-        return None
-    for key in ("id", "thread_id", "threadId"):
-        value = thread.get(key)
-        if isinstance(value, str) and value:
-            return value
-    nested = thread.get("thread")
-    if isinstance(nested, dict) and isinstance(nested.get("id"), str):
-        return nested["id"]
-    return None
-
-
-def _raw_item_from_notification(
-    method: str,
-    params: Mapping[str, Any],
-) -> dict[str, Any] | None:
-    if method not in {
-        "item/started",
-        "item/completed",
-        "item/agentMessage/delta",
-        "item/commandExecution/outputDelta",
-    }:
-        return None
-    item = params.get("item")
-    raw: dict[str, Any] = copy.deepcopy(item) if isinstance(item, dict) else {}
-    item_id = _first_string_from_mapping(params, "itemId", "item_id")
-    if item_id is not None:
-        raw["id"] = item_id
-    if not isinstance(raw.get("id"), str) or not raw["id"]:
-        return None
-    if not isinstance(raw.get("type"), str) or not raw["type"]:
-        if method == "item/agentMessage/delta":
-            raw["type"] = "agentMessage"
-        elif method == "item/commandExecution/outputDelta":
-            raw["type"] = "commandExecution"
-    turn_id = _turn_id_from_result(dict(params))
-    if turn_id is not None and _timeline_item_turn_id(raw) is None:
-        raw["turnId"] = turn_id
-    return raw
-
-
-def _notification_delta(params: Mapping[str, Any]) -> str:
-    for key in ("delta", "text", "outputDelta", "output_delta"):
-        value = params.get(key)
-        if isinstance(value, str):
-            return value
-    return ""
-
-
-def _first_string_from_mapping(mapping: Mapping[str, Any], *keys: str) -> str | None:
-    for key in keys:
-        value = mapping.get(key)
-        if isinstance(value, str) and value:
-            return value
-    return None
-
-
-def _local_thread_state(thread_ref: dict[str, Any]) -> str:
-    for key in ("localState", "local_state", "lifecycleState", "lifecycle_state"):
-        value = thread_ref.get(key)
-        if isinstance(value, str):
-            normalized = value.lower()
-            if normalized in {"active", "archived", "deleted", "unresumable", "unknown"}:
-                return normalized
-    status = thread_ref.get("status")
-    if isinstance(status, dict):
-        status = status.get("type") or status.get("state")
-    if isinstance(status, str):
-        normalized_status = status.lower()
-        if normalized_status in {"archived", "deleted", "unresumable"}:
-            return normalized_status
-    for key in ("archived", "isArchived", "is_archived"):
-        if thread_ref.get(key) is True:
-            return "archived"
-    for key in ("deleted", "isDeleted", "is_deleted"):
-        if thread_ref.get(key) is True:
-            return "deleted"
-    if thread_ref.get("resumeSupported") is False or thread_ref.get("resumable") is False:
-        return "unresumable"
-    return "active"
-
-
-def _thread_title(thread_ref: dict[str, Any]) -> str | None:
-    return _first_string(thread_ref, "name", "title", "summary")
-
-
-def _thread_cwd(thread_ref: dict[str, Any]) -> str | None:
-    value = thread_ref.get("cwd") or thread_ref.get("workingDirectory") or thread_ref.get("working_directory")
-    return value if isinstance(value, str) and value else None
-
-
-def _thread_ordering_time(thread_ref: dict[str, Any]) -> str | None:
-    value = (
-        thread_ref.get("updatedAt")
-        or thread_ref.get("updated_at")
-        or thread_ref.get("createdAt")
-        or thread_ref.get("created_at")
-    )
-    return str(value) if value is not None else None
-
-
-def _first_string(item: dict[str, Any], *keys: str) -> str | None:
-    for key in keys:
-        value = item.get(key)
-        if isinstance(value, str) and value:
-            return value
-    return None
-
-
-def _content_hash(value: Mapping[str, Any]) -> str:
-    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
-    return "sha256:" + hashlib.sha256(encoded.encode()).hexdigest()
