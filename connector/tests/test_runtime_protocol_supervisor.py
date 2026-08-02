@@ -224,6 +224,80 @@ async def _test_runtime_protocol_supervisor_restarts_when_config_changes() -> No
     ]
 
 
+def test_runtime_protocol_supervisor_validate_config_does_not_mark_running_runtime_stopped() -> (
+    None
+):
+    asyncio.run(
+        _test_runtime_protocol_supervisor_validate_config_does_not_mark_running_runtime_stopped()
+    )
+
+
+async def _test_runtime_protocol_supervisor_validate_config_does_not_mark_running_runtime_stopped() -> (
+    None
+):
+    provider = FakeProvider()
+    statuses: list[str] = []
+    supervisor = RuntimeSupervisor(
+        providers=(provider,),
+        host=FakeHost(),
+        status_sink=lambda _runtime, status, _error: _append(statuses, status),
+    )
+
+    runtime = await supervisor.start("fake", {"mode": "auto"})
+    config = await supervisor.validate_config("fake", {"mode": "sdk"})
+
+    assert config.values == {"mode": "sdk"}
+    assert supervisor.resolve_runtime("fake") is runtime
+    assert runtime.stopped is False
+    assert supervisor.entry("fake").config is not None
+    assert supervisor.entry("fake").config.values == {"mode": "auto"}
+    assert statuses == [
+        "validating",
+        "starting",
+        "running",
+        "validating",
+        "running",
+    ]
+
+
+def test_runtime_protocol_supervisor_validate_config_failure_keeps_running_runtime() -> (
+    None
+):
+    asyncio.run(
+        _test_runtime_protocol_supervisor_validate_config_failure_keeps_running_runtime()
+    )
+
+
+async def _test_runtime_protocol_supervisor_validate_config_failure_keeps_running_runtime() -> (
+    None
+):
+    provider = FakeProvider()
+    statuses: list[tuple[str, Mapping[str, Any] | None]] = []
+    supervisor = RuntimeSupervisor(
+        providers=(provider,),
+        host=FakeHost(),
+        status_sink=lambda _runtime, status, error: _append(statuses, (status, error)),
+    )
+
+    runtime = await supervisor.start("fake", {"mode": "auto"})
+    provider.fail_validate = True
+    with pytest.raises(RuntimeInvalidRequestError, match="invalid config"):
+        await supervisor.validate_config("fake", {"mode": "broken"})
+
+    assert supervisor.resolve_runtime("fake") is runtime
+    assert runtime.stopped is False
+    assert provider.stopped == []
+    assert [status for status, _error in statuses] == [
+        "validating",
+        "starting",
+        "running",
+        "validating",
+        "running",
+    ]
+    assert statuses[-1][1] is not None
+    assert statuses[-1][1]["message"] == "invalid config"
+
+
 def test_runtime_protocol_supervisor_reuses_equivalent_normalized_config() -> None:
     asyncio.run(_test_runtime_protocol_supervisor_reuses_equivalent_normalized_config())
 

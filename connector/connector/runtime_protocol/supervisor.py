@@ -115,15 +115,29 @@ class RuntimeSupervisor:
         try:
             config = await entry.provider.validate_config(values)
         except Exception as exc:
-            await self._set_entry(runtime, status="error", error=_error_payload(exc))
+            current = self._entry(runtime)
+            await self._set_entry(
+                runtime,
+                status="running" if current.runtime is not None else "error",
+                error=_error_payload(exc),
+            )
             raise
         if config.runtime != runtime:
             exc = RuntimeInvalidRequestError(
                 f"provider {runtime!r} returned config for {config.runtime!r}"
             )
-            await self._set_entry(runtime, status="error", error=_error_payload(exc))
+            current = self._entry(runtime)
+            await self._set_entry(
+                runtime,
+                status="running" if current.runtime is not None else "error",
+                error=_error_payload(exc),
+            )
             raise exc
-        await self._set_entry(runtime, status="stopped", config=config, error=None)
+        current = self._entry(runtime)
+        if current.runtime is not None:
+            await self._set_entry(runtime, status="running", error=None)
+        else:
+            await self._set_entry(runtime, status="stopped", config=config, error=None)
         return config
 
     async def start(
