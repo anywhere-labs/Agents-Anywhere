@@ -7,6 +7,7 @@ from typing import Any
 
 import httpx
 
+from connector.core.config import ConnectorConfig
 from connector.local_runtime import (
     ConnectorAlreadyRunningError,
     assert_can_start,
@@ -15,11 +16,8 @@ from connector.local_runtime import (
     write_runtime,
 )
 from connector.logging import logger
-from connector.runtime import (
-    BackendRpcClient,
-    ConnectorAuthenticationError,
-    ConnectorConfig,
-)
+from connector.server.auth import ConnectorAuthenticationError
+from connector.server.client import BackendRpcClient
 from connector.server.urls import api_v2_url
 
 ControlNotifier = Callable[[str, Any], Awaitable[None]]

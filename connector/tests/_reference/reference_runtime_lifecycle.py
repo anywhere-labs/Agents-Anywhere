@@ -6,9 +6,8 @@ from typing import Any
 
 import pytest
 
-from connector.adapter import Adapter
-from connector.runtime import BackendRpcClient, ConnectorConfig
-from connector.runtime_lifecycle import (
+from connector._reference.legacy.adapter import Adapter
+from connector._reference.legacy.runtime_lifecycle import (
     EffectiveRuntimeConfig,
     RuntimeBindings,
     RuntimeConfigError,
@@ -16,6 +15,8 @@ from connector.runtime_lifecycle import (
     RuntimeSupervisor,
     default_runtime_providers,
 )
+from connector.core.config import ConnectorConfig
+from connector.server.client import BackendRpcClient
 
 
 class FakeAdapter:

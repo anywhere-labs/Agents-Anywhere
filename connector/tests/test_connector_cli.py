@@ -4,7 +4,7 @@ import asyncio
 from typing import Any
 
 import connector.cli as cli_module
-from connector.runtime import ConnectorConfig
+from connector.core.config import ConnectorConfig
 
 
 class FakeResponse:

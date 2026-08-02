@@ -10,13 +10,9 @@ from typing import Any
 from websockets.exceptions import ConnectionClosedError
 from websockets.frames import Close
 
+from connector.core.config import ConnectorConfig
 from connector.core.runtime_config_store import JsonRuntimeConfigStore
 from connector.local.terminal import TerminalBackend
-from connector.runtime import (
-    BackendRpcClient,
-    ConnectorAuthenticationError,
-    ConnectorConfig,
-)
 from connector.runtime_protocol import (
     AgentRuntime,
     RuntimeCommand,
@@ -36,6 +32,8 @@ from connector.runtime_protocol import (
     SessionState,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
+from connector.server.auth import ConnectorAuthenticationError
+from connector.server.client import BackendRpcClient
 from connector.server.ingest import coalesce_timeline_item_upserts
 
 
@@ -995,7 +993,7 @@ async def _exercise_access_token_refresh() -> None:
             used_tokens.append(str(kwargs["headers"]["Authorization"]))
             return FakeResponse()
 
-    import connector.runtime as runtime_module
+    import connector.server.client as runtime_module
 
     original_client = runtime_module.httpx.AsyncClient
     runtime_module.httpx.AsyncClient = FakeHttpClient  # type: ignore[assignment]

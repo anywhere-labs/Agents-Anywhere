@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 import httpx
 
 from connector.control import ConnectorController
+from connector.core.config import ConnectorConfig
 from connector.json_rpc import JsonRpcStdioServer, open_stdio_server
 from connector.local_runtime import (
     assert_can_start,
@@ -19,7 +20,7 @@ from connector.local_runtime import (
     write_runtime,
 )
 from connector.logging import install_rpc_log_sink
-from connector.runtime import BackendRpcClient, ConnectorConfig
+from connector.server.client import BackendRpcClient
 from connector.server.urls import api_v2_url
 
 SHELL_LIFETIME_WARNING = (

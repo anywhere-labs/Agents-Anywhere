@@ -6,7 +6,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from connector.runtime import ConnectorConfig
+from connector.core.config import ConnectorConfig
 
 
 @dataclass(slots=True)

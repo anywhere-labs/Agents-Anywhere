@@ -4,6 +4,7 @@ import os
 
 import pytest
 
+from connector.core.config import ConnectorConfig
 from connector.local_runtime import (
     ConnectorAlreadyRunningError,
     assert_can_start,
@@ -12,7 +13,6 @@ from connector.local_runtime import (
     runtime_path,
     write_runtime,
 )
-from connector.runtime import ConnectorConfig
 
 
 def _config(connector_id: str = "conn_1") -> ConnectorConfig:
