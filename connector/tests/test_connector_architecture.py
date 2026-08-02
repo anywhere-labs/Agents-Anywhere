@@ -4,6 +4,7 @@ import ast
 from pathlib import Path
 
 CONNECTOR_PACKAGE = Path(__file__).resolve().parents[1] / "connector"
+TESTS_PACKAGE = Path(__file__).resolve().parents[1] / "tests"
 
 ALLOWED_ROOT_MODULES = {
     "__init__.py",
@@ -33,12 +34,28 @@ FORBIDDEN_ACTIVE_IMPORTS = {
     "connector.sync_state",
 }
 
+FORBIDDEN_ACTIVE_TOKENS = {
+    "backendNotifications",
+    "notification_sink",
+    "approval.requested",
+    "CodexAdapter",
+    "ClaudeSdkAdapter",
+}
+
 
 def _active_python_files() -> list[Path]:
     return [
         path
         for path in CONNECTOR_PACKAGE.rglob("*.py")
         if "_reference" not in path.relative_to(CONNECTOR_PACKAGE).parts
+    ]
+
+
+def _active_test_files() -> list[Path]:
+    return [
+        path
+        for path in TESTS_PACKAGE.rglob("*.py")
+        if "_reference" not in path.relative_to(TESTS_PACKAGE).parts
     ]
 
 
@@ -66,6 +83,31 @@ def test_active_connector_code_does_not_import_deprecated_root_modules() -> None
         for module in _imported_modules(path):
             if module in FORBIDDEN_ACTIVE_IMPORTS:
                 relative_path = path.relative_to(CONNECTOR_PACKAGE.parent)
+                violations.append(f"{relative_path}: imports {module}")
+
+    assert violations == []
+
+
+def test_active_connector_code_does_not_use_legacy_adapter_contract_tokens() -> None:
+    violations: list[str] = []
+
+    for path in _active_python_files():
+        source = path.read_text(encoding="utf-8")
+        for token in FORBIDDEN_ACTIVE_TOKENS:
+            if token in source:
+                relative_path = path.relative_to(CONNECTOR_PACKAGE.parent)
+                violations.append(f"{relative_path}: contains {token}")
+
+    assert violations == []
+
+
+def test_active_connector_tests_do_not_import_reference_modules() -> None:
+    violations: list[str] = []
+
+    for path in _active_test_files():
+        for module in _imported_modules(path):
+            if module.startswith("connector._reference"):
+                relative_path = path.relative_to(TESTS_PACKAGE.parent)
                 violations.append(f"{relative_path}: imports {module}")
 
     assert violations == []

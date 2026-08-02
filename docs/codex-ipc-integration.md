@@ -142,31 +142,32 @@ On any failure the mirror is no longer authoritative. It must stop emitting
 derived timeline changes and repeat `following=true` to request a fresh
 snapshot. Silently skipping a patch would corrupt all later path operations.
 
-## Integration with CodexAdapter
+## Integration with CodexRuntime
 
-The integration should preserve the existing app-server adapter boundary while
-also publishing locally owned app-server state to IPC:
+The integration should live inside the Codex Agent Runtime Protocol
+implementation while also publishing locally owned app-server state to IPC:
 
 ```text
-Codex app-server JSON-RPC ----> TimelineReducer ----> backend notifications
-            |                     ^
-            v                     |
-     local IPC publisher     remote IPC mirror
-            |                     ^
-            +------ IPC router ---+
+Codex app-server JSON-RPC ---> CodexRuntime ---> RuntimeHostClient
+            |                      ^
+            v                      |
+     local IPC publisher      remote IPC mirror
+            |                      ^
+            +------- IPC router ---+
 ```
 
 The IPC layer should not post to Server directly and should not introduce a
-second timeline model. Remote IPC state is normalized into the existing
-`TimelineReducer`. Local app-server state is projected into the Codex canonical
-conversation shape and published to IPC for IDE/App followers.
+second timeline model. Remote IPC state is normalized into runtime timeline
+items and reported through `RuntimeHostClient`. Local app-server state is
+projected into the Codex canonical conversation shape and published to IPC for
+IDE/App followers.
 
 Recommended implementation sequence:
 
 1. Add a reconnecting `CodexIpcClient` that handles endpoint discovery,
    length-prefixed framing, initialization, broadcasts, and shutdown. It must
    never create or remove the endpoint.
-2. At the beginning of every `sync_existing_sessions` cycle, verify the IPC
+2. At the beginning of every runtime session sync cycle, verify the IPC
    connection. Connect and initialize if a router has appeared; reconnect and
    restore subscriptions if the prior router disappeared.
 3. Add a state registry keyed by Codex `conversationId` with role, owner id,
