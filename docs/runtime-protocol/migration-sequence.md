@@ -35,6 +35,9 @@ Add tests for:
 - selection id helper compatibility
 - host client fake recording
 
+Do not combine this with large file moves. The target Connector tree is
+documented in [Connector structure target](./connector-structure.md).
+
 ## 3. Connector application host client
 
 Implement a host client adapter that maps runtime host calls to current server notifications:

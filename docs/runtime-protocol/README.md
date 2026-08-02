@@ -128,6 +128,7 @@ Model and permission state must be updated before sending. `start_turn` must not
 
 - [Connector -> Runtime ABC](./connector-to-runtime.md)
 - [Runtime -> Connector host client](./runtime-host-client.md)
+- [Connector structure target](./connector-structure.md)
 - [Server API and database target](./server-api-db.md)
 - [Web behavior](./web-behavior.md)
 - [Migration sequence](./migration-sequence.md)
