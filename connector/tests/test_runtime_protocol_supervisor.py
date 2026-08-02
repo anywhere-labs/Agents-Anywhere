@@ -56,8 +56,11 @@ class FakeProvider:
         self.created: list[RuntimeConfig] = []
         self.stopped: list[AgentRuntime] = []
         self.fail_discover = False
+        self.fail_validate = False
         self.fail_start = False
         self.config_runtime = "fake"
+        self.config_revision = 1
+        self.normalize_modes: dict[str, str] = {}
 
     async def discover(self) -> RuntimeInventoryItem:
         self.discoveries += 1
@@ -85,10 +88,16 @@ class FakeProvider:
 
     async def validate_config(self, values: Mapping[str, Any]) -> RuntimeConfig:
         self.validated.append(dict(values))
+        if self.fail_validate:
+            raise RuntimeInvalidRequestError("invalid config")
+        normalized = dict(values)
+        mode = normalized.get("mode")
+        if isinstance(mode, str) and mode in self.normalize_modes:
+            normalized["mode"] = self.normalize_modes[mode]
         return RuntimeConfig(
             runtime=self.config_runtime,
-            revision=len(self.validated),
-            values=dict(values),
+            revision=self.config_revision,
+            values=normalized,
         )
 
     async def create_runtime(
@@ -115,7 +124,9 @@ async def _test_runtime_protocol_supervisor_discovers_providers() -> None:
     supervisor = RuntimeSupervisor(
         providers=(provider,),
         host=FakeHost(),
-        status_sink=lambda runtime, status, error: _append(statuses, (runtime, status, error)),
+        status_sink=lambda runtime, status, error: _append(
+            statuses, (runtime, status, error)
+        ),
     )
 
     items = await supervisor.discover()
@@ -130,10 +141,14 @@ async def _test_runtime_protocol_supervisor_discovers_providers() -> None:
 
 
 def test_runtime_protocol_supervisor_maps_discovery_failure_to_unavailable() -> None:
-    asyncio.run(_test_runtime_protocol_supervisor_maps_discovery_failure_to_unavailable())
+    asyncio.run(
+        _test_runtime_protocol_supervisor_maps_discovery_failure_to_unavailable()
+    )
 
 
-async def _test_runtime_protocol_supervisor_maps_discovery_failure_to_unavailable() -> None:
+async def _test_runtime_protocol_supervisor_maps_discovery_failure_to_unavailable() -> (
+    None
+):
     provider = FakeProvider()
     provider.fail_discover = True
     statuses: list[str] = []
@@ -201,12 +216,82 @@ async def _test_runtime_protocol_supervisor_restarts_when_config_changes() -> No
         "validating",
         "starting",
         "running",
+        "validating",
         "stopping",
         "stopped",
-        "validating",
         "starting",
         "running",
     ]
+
+
+def test_runtime_protocol_supervisor_reuses_equivalent_normalized_config() -> None:
+    asyncio.run(_test_runtime_protocol_supervisor_reuses_equivalent_normalized_config())
+
+
+async def _test_runtime_protocol_supervisor_reuses_equivalent_normalized_config() -> (
+    None
+):
+    provider = FakeProvider()
+    provider.normalize_modes = {"auto": "app-server"}
+    statuses: list[str] = []
+    supervisor = RuntimeSupervisor(
+        providers=(provider,),
+        host=FakeHost(),
+        status_sink=lambda _runtime, status, _error: _append(statuses, status),
+    )
+
+    first = await supervisor.start("fake", {"mode": "auto"})
+    second = await supervisor.start("fake", {"mode": "app-server"})
+
+    assert second is first
+    assert first.stopped is False
+    assert provider.validated == [{"mode": "auto"}, {"mode": "app-server"}]
+    assert len(provider.created) == 1
+    assert statuses == [
+        "validating",
+        "starting",
+        "running",
+        "validating",
+        "running",
+    ]
+
+
+def test_runtime_protocol_supervisor_keeps_running_runtime_after_invalid_restart_config() -> (
+    None
+):
+    asyncio.run(
+        _test_runtime_protocol_supervisor_keeps_running_runtime_after_invalid_restart_config()
+    )
+
+
+async def _test_runtime_protocol_supervisor_keeps_running_runtime_after_invalid_restart_config() -> (
+    None
+):
+    provider = FakeProvider()
+    statuses: list[tuple[str, Mapping[str, Any] | None]] = []
+    supervisor = RuntimeSupervisor(
+        providers=(provider,),
+        host=FakeHost(),
+        status_sink=lambda _runtime, status, error: _append(statuses, (status, error)),
+    )
+
+    runtime = await supervisor.start("fake", {"mode": "auto"})
+    provider.fail_validate = True
+    with pytest.raises(RuntimeInvalidRequestError, match="invalid config"):
+        await supervisor.start("fake", {"mode": "broken"})
+
+    assert supervisor.resolve_runtime("fake") is runtime
+    assert runtime.stopped is False
+    assert provider.stopped == []
+    assert [status for status, _error in statuses] == [
+        "validating",
+        "starting",
+        "running",
+        "validating",
+        "running",
+    ]
+    assert statuses[-1][1] is not None
+    assert statuses[-1][1]["message"] == "invalid config"
 
 
 def test_runtime_protocol_supervisor_stops_runtime() -> None:
