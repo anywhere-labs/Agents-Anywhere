@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import secrets
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from connector.logging import logger
@@ -19,10 +18,8 @@ from connector.runtime_protocol import (
     RuntimeTimelineSnapshot,
     RuntimeUnsupportedError,
     SessionMeta,
-    SessionNotice,
     SessionState,
 )
-from connector.runtime_protocol.attachments import attachment_target
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.claude import (
     approvals,
@@ -32,30 +29,17 @@ from connector.runtimes.claude import (
 from connector.runtimes.claude import (
     options as claude_options,
 )
+from connector.runtimes.claude.attachments import materialize_claude_content
+from connector.runtimes.claude.ordering import RuntimeOrderAllocator
 from connector.runtimes.claude import permissions as permission_catalogs
+from connector.runtimes.claude.runtime_session import (
+    ClaudeSession,
+    PendingClaudeApproval,
+    maybe_await,
+)
 
 SdkLoader = Callable[[], Any]
 ClaudeClientFactory = Callable[[Any, Mapping[str, Any]], Any]
-
-
-@dataclass(slots=True)
-class _PendingClaudeApproval:
-    approval_id: str
-    future: asyncio.Future[str]
-    input_data: dict[str, Any]
-    notice: SessionNotice
-
-
-@dataclass(slots=True)
-class _ClaudeSession:
-    session_id: str
-    external_session_id: str | None = None
-    cwd: str | None = None
-    active_task: asyncio.Task[None] | None = None
-    active_turn_id: str | None = None
-    client: Any | None = None
-    selections: dict[str, str | None] = field(default_factory=dict)
-    pending_approvals: dict[str, _PendingClaudeApproval] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -69,10 +53,9 @@ class ClaudeRuntime(AgentRuntime):
     def __post_init__(self) -> None:
         self._started = False
         self._sdk: Any | None = None
-        self._sessions: dict[str, _ClaudeSession] = {}
+        self._sessions: dict[str, ClaudeSession] = {}
         self._session_states: dict[str, SessionState] = {}
-        self._timeline_order_by_id: dict[str, int] = {}
-        self._next_timeline_order = 1
+        self._ordering = RuntimeOrderAllocator(start=1)
 
     @property
     def identity(self) -> RuntimeIdentity:
@@ -100,10 +83,10 @@ class ClaudeRuntime(AgentRuntime):
             if client is not None:
                 interrupt = getattr(client, "interrupt", None)
                 if callable(interrupt):
-                    await _maybe_await(interrupt())
+                    await maybe_await(interrupt())
                 disconnect = getattr(client, "disconnect", None)
                 if callable(disconnect):
-                    await _maybe_await(disconnect())
+                    await maybe_await(disconnect())
         for task in tasks:
             task.cancel()
         if tasks:
@@ -345,7 +328,9 @@ class ClaudeRuntime(AgentRuntime):
             )
         await client.query(
             timeline.prompt_stream(
-                await self._materialize_content(session_id, content, attachments)
+                await materialize_claude_content(
+                    self.host, session_id, content, attachments
+                )
             )
         )
         await self._set_session_state(
@@ -387,7 +372,7 @@ class ClaudeRuntime(AgentRuntime):
         if client is not None:
             interrupt = getattr(client, "interrupt", None)
             if callable(interrupt):
-                await _maybe_await(interrupt())
+                await maybe_await(interrupt())
                 interrupted = True
         if session.active_task is not None and not session.active_task.done():
             session.active_task.cancel()
@@ -476,10 +461,10 @@ class ClaudeRuntime(AgentRuntime):
         session_id: str,
         external_session_id: str | None,
         cwd: str | None,
-    ) -> _ClaudeSession:
+    ) -> ClaudeSession:
         session = self._sessions.get(session_id)
         if session is None:
-            session = _ClaudeSession(
+            session = ClaudeSession(
                 session_id=session_id,
                 external_session_id=external_session_id,
                 cwd=cwd,
@@ -493,7 +478,7 @@ class ClaudeRuntime(AgentRuntime):
 
     async def _drive_turn(
         self,
-        session: _ClaudeSession,
+        session: ClaudeSession,
         content: str,
         attachments: tuple[RuntimeAttachment, ...],
         client_message_id: str | None,
@@ -505,7 +490,7 @@ class ClaudeRuntime(AgentRuntime):
             session.client = client
             connect = getattr(client, "connect", None)
             if callable(connect):
-                await _maybe_await(connect())
+                await maybe_await(connect())
             await self._set_session_state(
                 session_id=session.session_id,
                 external_session_id=session.external_session_id,
@@ -517,8 +502,8 @@ class ClaudeRuntime(AgentRuntime):
                 raise RuntimeUnsupportedError("ClaudeSDKClient.query")
             await query(
                 timeline.prompt_stream(
-                    await self._materialize_content(
-                        session.session_id, content, attachments
+                    await materialize_claude_content(
+                        self.host, session.session_id, content, attachments
                     )
                 )
             )
@@ -530,7 +515,7 @@ class ClaudeRuntime(AgentRuntime):
                     role="user",
                     text=content,
                     source_event="claude.turn/start.user",
-                    order_seq=self._order_for(
+                    order_seq=self._ordering.order_for(
                         utils.stable_item_id(
                             "claude_user",
                             session.session_id,
@@ -555,7 +540,7 @@ class ClaudeRuntime(AgentRuntime):
                     external_session_id=session.external_session_id,
                     turn_id=turn_id,
                     message=raw,
-                    next_order=self._order_for,
+                    next_order=self._ordering.order_for,
                 ):
                     await self.host.timeline_item_upsert(item)
                     source_session_id = item.source.get("sessionId")
@@ -593,11 +578,11 @@ class ClaudeRuntime(AgentRuntime):
             disconnect = getattr(session.client, "disconnect", None)
             if callable(disconnect):
                 try:
-                    await _maybe_await(disconnect())
+                    await maybe_await(disconnect())
                 except Exception:  # noqa: BLE001
                     logger.exception("disconnecting Claude SDK client failed")
 
-    def _new_client(self, sdk: Any, session: _ClaudeSession) -> Any:
+    def _new_client(self, sdk: Any, session: ClaudeSession) -> Any:
         options = claude_options.sdk_options(
             sdk=sdk,
             config_values=self.config.values,
@@ -640,7 +625,7 @@ class ClaudeRuntime(AgentRuntime):
             input_data=input_data,
             status="open",
         )
-        session.pending_approvals[approval_id] = _PendingClaudeApproval(
+        session.pending_approvals[approval_id] = PendingClaudeApproval(
             approval_id=approval_id,
             future=future,
             input_data=dict(input_data),
@@ -669,7 +654,7 @@ class ClaudeRuntime(AgentRuntime):
 
     def _session_from_context(
         self, external_session_id: str | None
-    ) -> _ClaudeSession | None:
+    ) -> ClaudeSession | None:
         if external_session_id:
             for session in self._sessions.values():
                 if session.external_session_id == external_session_id:
@@ -679,57 +664,10 @@ class ClaudeRuntime(AgentRuntime):
                 return session
         return None
 
-    def _resolve_pending_approvals(self, session: _ClaudeSession, action: str) -> None:
+    def _resolve_pending_approvals(self, session: ClaudeSession, action: str) -> None:
         for pending in list(session.pending_approvals.values()):
             if not pending.future.done():
                 pending.future.set_result(action)
-
-    async def _materialize_content(
-        self,
-        session_id: str,
-        content: str,
-        attachments: tuple[RuntimeAttachment, ...],
-    ) -> Any:
-        if not attachments:
-            return content
-        blocks: list[dict[str, Any]] = [{"type": "text", "text": content}]
-        for attachment in attachments:
-            try:
-                downloaded = await self.host.attachment_download(
-                    session_id, attachment.file_id
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.exception(
-                    "Claude attachment download failed file_id={}", attachment.file_id
-                )
-                blocks.append(
-                    {
-                        "type": "text",
-                        "text": f"\n\n[Failed to load attachment {attachment.file_id}: {exc}]",
-                    }
-                )
-                continue
-            name = downloaded.name or attachment.name or attachment.file_id
-            target = attachment_target(session_id, attachment.file_id, name)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(downloaded.content)
-            if downloaded.media_type.startswith("image/"):
-                blocks.append(
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": downloaded.media_type,
-                            "data": base64.b64encode(downloaded.content).decode(
-                                "ascii"
-                            ),
-                        },
-                    }
-                )
-            blocks.append(
-                {"type": "text", "text": f"\n\nAttached file: {name} at {target}"}
-            )
-        return blocks
 
     async def _set_session_state(
         self,
@@ -766,17 +704,3 @@ class ClaudeRuntime(AgentRuntime):
             error=state.error,
             metadata=state.metadata,
         )
-
-    def _order_for(self, item_id: str) -> int:
-        order = self._timeline_order_by_id.get(item_id)
-        if order is None:
-            order = self._next_timeline_order
-            self._next_timeline_order += 1
-            self._timeline_order_by_id[item_id] = order
-        return order
-
-
-async def _maybe_await(value: Any) -> Any:
-    if hasattr(value, "__await__"):
-        return await value
-    return value

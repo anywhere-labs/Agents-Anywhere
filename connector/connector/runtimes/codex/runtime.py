@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import copy
-import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -17,13 +15,13 @@ from connector.runtime_protocol import (
     RuntimeModelCatalog,
     RuntimeOperationResult,
     RuntimePermissionCatalog,
-    RuntimeTimelineItem,
     RuntimeTimelineSnapshot,
     RuntimeUnsupportedError,
     SessionMeta,
     SessionState,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
+from connector.runtimes.codex.commands import list_codex_commands
 from connector.runtimes.codex import sessions as codex_sessions
 from connector.runtimes.codex import timeline as codex_timeline
 from connector.runtimes.codex.approvals import (
@@ -37,6 +35,15 @@ from connector.runtimes.codex.catalogs import (
     permission_catalog_from_codex_items,
 )
 from connector.runtimes.codex.client import CodexRuntimeClient
+from connector.runtimes.codex.runtime_helpers import (
+    ensure_text_only_attachments,
+    soft_interrupt_failure_reason,
+)
+from connector.runtimes.codex.selection import (
+    model_settings_from_selection,
+    permission_settings_from_selection,
+)
+from connector.runtimes.codex.timeline_accumulator import CodexTimelineAccumulator
 
 
 @dataclass(slots=True)
@@ -51,9 +58,7 @@ class CodexRuntime(AgentRuntime):
         self._model_list_result: dict[str, Any] | None = None
         self._session_states: dict[str, SessionState] = {}
         self._active_turn_ids: dict[str, str] = {}
-        self._timeline_order_by_id: dict[str, int] = {}
-        self._timeline_raw_by_id: dict[str, dict[str, Any]] = {}
-        self._next_timeline_order = 0
+        self._timeline = CodexTimelineAccumulator()
 
     @property
     def identity(self) -> RuntimeIdentity:
@@ -242,15 +247,15 @@ class CodexRuntime(AgentRuntime):
         attachments: tuple[RuntimeAttachment, ...] = (),
         client_message_id: str | None = None,
     ) -> RuntimeOperationResult:
-        _ensure_text_only_attachments(attachments)
+        ensure_text_only_attachments(attachments)
         if self.client is None:
             raise RuntimeUnsupportedError("create_and_start_session")
         await self.start()
-        selected_model = await self._model_settings_from_selection(
-            (selections or {}).get("model")
+        selected_model = await model_settings_from_selection(
+            (selections or {}).get("model"), self.list_model_catalog
         )
-        native_permission = await self._permission_settings_from_selection(
-            (selections or {}).get("permission")
+        native_permission = await permission_settings_from_selection(
+            (selections or {}).get("permission"), self.list_permission_catalog
         )
         result = await self.client.request(
             "thread/start",
@@ -312,7 +317,7 @@ class CodexRuntime(AgentRuntime):
         attachments: tuple[RuntimeAttachment, ...] = (),
         client_message_id: str | None = None,
     ) -> RuntimeOperationResult:
-        _ensure_text_only_attachments(attachments)
+        ensure_text_only_attachments(attachments)
         if self.client is None or external_session_id is None:
             raise RuntimeUnsupportedError("start_turn")
         await self.start()
@@ -372,7 +377,7 @@ class CodexRuntime(AgentRuntime):
         attachments: tuple[RuntimeAttachment, ...] = (),
         client_message_id: str | None = None,
     ) -> RuntimeOperationResult:
-        _ensure_text_only_attachments(attachments)
+        ensure_text_only_attachments(attachments)
         if self.client is None or external_session_id is None:
             raise RuntimeUnsupportedError("steer_turn")
         turn_id = self._active_turn_ids.get(session_id)
@@ -436,7 +441,7 @@ class CodexRuntime(AgentRuntime):
                 },
             )
         except RuntimeError as exc:
-            soft_reason = _soft_interrupt_failure_reason(str(exc))
+            soft_reason = soft_interrupt_failure_reason(str(exc))
             if soft_reason is None:
                 raise
             self._active_turn_ids.pop(session_id, None)
@@ -481,32 +486,12 @@ class CodexRuntime(AgentRuntime):
         limit: int = 50,
     ) -> tuple[RuntimeCommand, ...]:
         _ = session_id
-        commands = (
-            RuntimeCommand(
-                id="compact",
-                title="Compact conversation",
-                description="Ask Codex to compact this thread's context.",
-                aliases=("summarize",),
-                category="context",
-                scope="session",
-                enabled=external_session_id is not None and self.client is not None,
-                disabled_reason=(
-                    None
-                    if external_session_id is not None and self.client is not None
-                    else "Codex compact requires a loaded local thread."
-                ),
-            ),
+        return list_codex_commands(
+            external_session_id=external_session_id,
+            client_available=self.client is not None,
+            query=query,
+            limit=limit,
         )
-        if query:
-            lowered = query.casefold()
-            commands = tuple(
-                command
-                for command in commands
-                if lowered in command.id.casefold()
-                or lowered in command.title.casefold()
-                or any(lowered in alias.casefold() for alias in command.aliases)
-            )
-        return commands[:limit]
 
     async def execute_command(
         self,
@@ -666,7 +651,7 @@ class CodexRuntime(AgentRuntime):
             )
         elif method == "turn/completed":
             self._active_turn_ids.pop(session_id, None)
-            turn_items = self._timeline_items_from_turn_notification(
+            turn_items = self._timeline.items_from_turn_notification(
                 session_id=session_id,
                 external_session_id=thread_id,
                 params=params,
@@ -687,7 +672,7 @@ class CodexRuntime(AgentRuntime):
                 status="idle",
                 metadata={"source": "codex.turn/completed"},
             )
-        item = self._timeline_item_from_notification(
+        item = self._timeline.item_from_notification(
             session_id=session_id,
             external_session_id=thread_id,
             method=str(method),
@@ -731,180 +716,3 @@ class CodexRuntime(AgentRuntime):
             error=state.error,
             metadata=state.metadata,
         )
-
-    async def _model_settings_from_selection(
-        self, selection_id: str | None
-    ) -> dict[str, str]:
-        if selection_id is None:
-            return {}
-        catalog = await self.list_model_catalog()
-        for model in catalog.models:
-            if model.selection_id == selection_id:
-                return {"model": model.id}
-            for reasoning in model.reasoning_items:
-                if reasoning.selection_id == selection_id:
-                    return {"model": model.id, "effort": reasoning.id}
-        return {}
-
-    async def _permission_settings_from_selection(
-        self, selection_id: str | None
-    ) -> dict[str, Any]:
-        if selection_id is None:
-            return {}
-        catalog = await self.list_permission_catalog()
-        for permission in catalog.permissions:
-            if permission.selection_id == selection_id:
-                native = permission.metadata.get("nativeSettings")
-                return dict(native) if isinstance(native, dict) else {}
-        return {}
-
-    def _timeline_item_from_notification(
-        self,
-        session_id: str,
-        external_session_id: str,
-        method: str,
-        params: Mapping[str, Any],
-    ) -> RuntimeTimelineItem | None:
-        raw = codex_timeline.raw_item_from_notification(method, params)
-        if raw is None:
-            return None
-        item_id = codex_timeline.timeline_item_id(raw, external_session_id, 0)
-        previous = self._timeline_raw_by_id.get(item_id)
-        merged = {**copy.deepcopy(previous or {}), **copy.deepcopy(raw)}
-        if method == "item/agentMessage/delta":
-            merged["type"] = merged.get("type") or "agentMessage"
-            merged["status"] = merged.get("status") or "inProgress"
-            previous_text = previous.get("text") if previous else ""
-            merged["text"] = (
-                f"{previous_text if isinstance(previous_text, str) else ''}{codex_timeline.notification_delta(params)}"
-            )
-        elif method == "item/commandExecution/outputDelta":
-            merged["type"] = merged.get("type") or "commandExecution"
-            merged["status"] = merged.get("status") or "inProgress"
-            previous_output = previous.get("aggregatedOutput") if previous else ""
-            merged["aggregatedOutput"] = (
-                f"{previous_output if isinstance(previous_output, str) else ''}{codex_timeline.notification_delta(params)}"
-            )
-        elif method == "item/started":
-            merged.setdefault("status", "inProgress")
-        elif method == "item/completed":
-            merged["status"] = merged.get("status") or "completed"
-        merged["id"] = item_id
-        if codex_timeline.timeline_item_turn_id(merged) is None:
-            turn_id = codex_sessions.turn_id_from_result(dict(params))
-            if turn_id is not None:
-                merged["turnId"] = turn_id
-        self._timeline_raw_by_id[item_id] = merged
-        return self._runtime_timeline_item(
-            session_id=session_id,
-            external_session_id=external_session_id,
-            raw=merged,
-            event=method,
-        )
-
-    def _timeline_items_from_turn_notification(
-        self,
-        session_id: str,
-        external_session_id: str,
-        params: Mapping[str, Any],
-        method: str,
-    ) -> tuple[RuntimeTimelineItem, ...]:
-        turn = params.get("turn") if isinstance(params.get("turn"), dict) else params
-        if not isinstance(turn, dict):
-            return ()
-        turn_id = codex_sessions.turn_id_from_result(
-            turn
-        ) or codex_sessions.turn_id_from_result(dict(params))
-        items: list[RuntimeTimelineItem] = []
-        for index, raw_item in enumerate(codex_timeline.raw_timeline_items(turn)):
-            raw = copy.deepcopy(raw_item)
-            if (
-                turn_id is not None
-                and codex_timeline.timeline_item_turn_id(raw) is None
-            ):
-                raw["turnId"] = turn_id
-            item_id = codex_timeline.timeline_item_id(raw, external_session_id, index)
-            raw["id"] = item_id
-            self._timeline_raw_by_id[item_id] = raw
-            items.append(
-                self._runtime_timeline_item(
-                    session_id=session_id,
-                    external_session_id=external_session_id,
-                    raw=raw,
-                    event=method,
-                    fallback_index=index,
-                )
-            )
-        return tuple(items)
-
-    def _runtime_timeline_item(
-        self,
-        session_id: str,
-        external_session_id: str,
-        raw: Mapping[str, Any],
-        event: str,
-        fallback_index: int = 0,
-    ) -> RuntimeTimelineItem:
-        raw_dict = dict(raw)
-        item_id = codex_timeline.timeline_item_id(
-            raw_dict, external_session_id, fallback_index
-        )
-        order_seq = self._timeline_order_by_id.get(item_id)
-        if order_seq is None:
-            order_seq = self._next_timeline_order
-            self._next_timeline_order += 1
-            self._timeline_order_by_id[item_id] = order_seq
-        content = codex_timeline.timeline_item_content(raw_dict)
-        item_type = codex_timeline.timeline_item_type(raw_dict)
-        status = codex_timeline.timeline_item_status(raw_dict)
-        role = codex_timeline.timeline_item_role(raw_dict)
-        return RuntimeTimelineItem(
-            id=item_id,
-            session_id=session_id,
-            type=item_type,
-            status=status,
-            order_seq=order_seq,
-            content_hash=codex_timeline.content_hash(
-                {
-                    "type": item_type,
-                    "status": status,
-                    "role": role,
-                    "content": content,
-                }
-            ),
-            role=role,
-            turn_id=codex_timeline.timeline_item_turn_id(raw_dict),
-            content=content,
-            source={
-                "runtime": "codex",
-                "event": event,
-                "threadId": external_session_id,
-                "rawType": raw_dict.get("type"),
-                "itemId": raw_dict.get("id") or raw_dict.get("itemId"),
-            },
-            revision=codex_timeline.timeline_item_revision(raw_dict),
-            metadata={"raw": raw_dict},
-        )
-
-
-def _ensure_text_only_attachments(attachments: tuple[RuntimeAttachment, ...]) -> None:
-    if attachments:
-        raise RuntimeUnsupportedError("codex.attachments")
-
-
-def _soft_interrupt_failure_reason(error_text: str) -> str | None:
-    message = error_text
-    try:
-        parsed = json.loads(error_text)
-        if isinstance(parsed, dict):
-            raw = parsed.get("message")
-            if isinstance(raw, str):
-                message = raw
-    except json.JSONDecodeError:
-        pass
-    normalized = message.lower()
-    if "thread not found" in normalized:
-        return "thread_not_found"
-    if "turn not found" in normalized:
-        return "turn_not_found"
-    return None
