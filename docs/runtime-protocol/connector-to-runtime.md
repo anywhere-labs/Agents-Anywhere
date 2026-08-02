@@ -158,6 +158,7 @@ class RuntimeCommand:
 class RuntimeCommandResult:
     command: str
     ok: bool = True
+    code: str | None = None
     message: str | None = None
     result: Mapping[str, Any] = field(default_factory=dict)
 ```
@@ -231,6 +232,7 @@ class SessionNotice:
 @dataclass(frozen=True, slots=True)
 class RuntimeOperationResult:
     ok: bool = True
+    code: str | None = None
     message: str | None = None
     result: Mapping[str, Any] = field(default_factory=dict)
 ```

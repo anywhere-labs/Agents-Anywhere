@@ -106,7 +106,18 @@ Acceptance:
 
 Goal: introduce the new abstractions without changing behavior.
 
-Add:
+Add the first implementation under a transitional package name:
+
+```text
+connector/connector/runtime_protocol/
+  __init__.py
+  errors.py
+  models.py
+  protocol.py
+  host.py
+```
+
+The final target package is still:
 
 ```text
 connector/connector/runtime/
@@ -116,6 +127,8 @@ connector/connector/runtime/
   protocol.py
   host.py
 ```
+
+Use `runtime_protocol` first because the current Connector already has a root `connector/runtime.py` module. The package can be renamed to `connector.runtime` after the old module is split into `core/`, `server/`, and application assembly modules.
 
 Define:
 
