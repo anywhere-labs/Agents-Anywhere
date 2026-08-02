@@ -49,6 +49,28 @@ class FakeCodexClient:
                     },
                 ]
             },
+            "thread/read": {
+                "thread": {
+                    "id": "thread_1",
+                    "items": [
+                        {
+                            "id": "item_user",
+                            "type": "message",
+                            "role": "user",
+                            "status": "done",
+                            "content": {"text": "hello", "format": "markdown"},
+                            "turnId": "turn_1",
+                        },
+                        {
+                            "id": "item_assistant",
+                            "type": "message",
+                            "role": "assistant",
+                            "text": "hi",
+                            "status": "done",
+                        },
+                    ],
+                }
+            },
         }
 
     async def start(self, handler) -> None:  # type: ignore[no-untyped-def]
@@ -163,6 +185,74 @@ async def _test_codex_runtime_session_state_defaults_to_idle_for_known_external_
     assert state is not None
     assert state.status == "idle"
     assert state.runtime == "codex"
+
+
+def test_codex_runtime_reads_session_snapshot() -> None:
+    asyncio.run(_test_codex_runtime_reads_session_snapshot())
+
+
+async def _test_codex_runtime_reads_session_snapshot() -> None:
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=FakeCodexClient())
+
+    snapshot = await runtime.get_session_snapshot(
+        "sess_1",
+        external_session_id="thread_1",
+    )
+
+    assert snapshot.runtime == "codex"
+    assert snapshot.external_session_id == "thread_1"
+    assert [item.id for item in snapshot.items] == ["item_user", "item_assistant"]
+    assert snapshot.items[0].content_hash.startswith("sha256:")
+    assert snapshot.items[0].role == "user"
+    assert snapshot.items[0].turn_id == "turn_1"
+    assert snapshot.items[1].content == {"text": "hi", "format": "markdown"}
+
+
+def test_codex_runtime_reads_nested_turn_snapshot() -> None:
+    asyncio.run(_test_codex_runtime_reads_nested_turn_snapshot())
+
+
+async def _test_codex_runtime_reads_nested_turn_snapshot() -> None:
+    client = FakeCodexClient()
+    client.results["thread/read"] = {
+        "thread": {
+            "id": "thread_1",
+            "turns": [
+                {
+                    "items": [
+                        {
+                            "type": "message",
+                            "role": "user",
+                            "text": "nested",
+                        }
+                    ]
+                }
+            ],
+        }
+    }
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=client)
+
+    snapshot = await runtime.get_session_snapshot(
+        "sess_1",
+        external_session_id="thread_1",
+    )
+
+    assert len(snapshot.items) == 1
+    assert snapshot.items[0].id.startswith("codex_thread_1_0_")
+    assert snapshot.items[0].content == {"text": "nested", "format": "markdown"}
+
+
+def test_codex_runtime_returns_empty_snapshot_without_external_session() -> None:
+    asyncio.run(_test_codex_runtime_returns_empty_snapshot_without_external_session())
+
+
+async def _test_codex_runtime_returns_empty_snapshot_without_external_session() -> None:
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=FakeCodexClient())
+
+    snapshot = await runtime.get_session_snapshot("sess_1")
+
+    assert snapshot.items == ()
+    assert snapshot.complete is True
 
 
 def test_codex_catalog_helpers_ignore_unrecognized_items() -> None:

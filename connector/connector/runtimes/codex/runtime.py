@@ -20,6 +20,8 @@ from connector.runtime_protocol import (
     RuntimePermissionCatalog,
     RuntimePermissionItem,
     RuntimeReasoningItem,
+    RuntimeTimelineItem,
+    RuntimeTimelineSnapshot,
     SessionMeta,
     SessionState,
 )
@@ -179,6 +181,45 @@ class CodexRuntime(AgentRuntime):
             runtime="codex",
             status="idle",
             metadata={"source": "codex.runtime.basic"},
+        )
+
+    async def get_session_snapshot(
+        self,
+        session_id: str,
+        external_session_id: str | None = None,
+        limit: int = 100,
+    ) -> RuntimeTimelineSnapshot:
+        if self.client is None or external_session_id is None:
+            return RuntimeTimelineSnapshot(
+                session_id=session_id,
+                external_session_id=external_session_id,
+                runtime="codex",
+                items=(),
+                complete=True,
+                metadata={"source": "codex.runtime.basic"},
+            )
+        await self.start()
+        result = await self.client.request(
+            "thread/read",
+            {
+                "threadId": external_session_id,
+                "includeTurns": True,
+            },
+        )
+        thread = result.get("thread") if isinstance(result.get("thread"), dict) else result
+        items = _timeline_items_from_thread(
+            session_id=session_id,
+            external_session_id=external_session_id,
+            thread=thread if isinstance(thread, dict) else {},
+            limit=limit,
+        )
+        return RuntimeTimelineSnapshot(
+            session_id=session_id,
+            external_session_id=external_session_id,
+            runtime="codex",
+            items=items,
+            complete=True,
+            metadata={"source": "codex.thread/read"},
         )
 
     async def _best_effort_bootstrap_reads(self) -> None:
@@ -533,6 +574,119 @@ def _thread_refs_from_list_result(result: dict[str, Any]) -> list[dict[str, Any]
     return []
 
 
+def _timeline_items_from_thread(
+    session_id: str,
+    external_session_id: str,
+    thread: dict[str, Any],
+    limit: int,
+) -> tuple[RuntimeTimelineItem, ...]:
+    raw_items = _raw_timeline_items(thread)
+    items: list[RuntimeTimelineItem] = []
+    for index, raw in enumerate(raw_items[:limit]):
+        item_id = _timeline_item_id(raw, external_session_id, index)
+        content = _timeline_item_content(raw)
+        source = {
+            "runtime": "codex",
+            "event": "thread/read",
+            "threadId": external_session_id,
+            "rawType": raw.get("type"),
+        }
+        items.append(
+            RuntimeTimelineItem(
+                id=item_id,
+                session_id=session_id,
+                type=_timeline_item_type(raw),
+                status=_timeline_item_status(raw),
+                order_seq=index,
+                content_hash=_content_hash(
+                    {
+                        "type": _timeline_item_type(raw),
+                        "status": _timeline_item_status(raw),
+                        "role": _timeline_item_role(raw),
+                        "content": content,
+                    }
+                ),
+                role=_timeline_item_role(raw),
+                turn_id=_timeline_item_turn_id(raw),
+                content=content,
+                source=source,
+                revision=_timeline_item_revision(raw),
+                metadata={"raw": raw},
+            )
+        )
+    return tuple(items)
+
+
+def _raw_timeline_items(thread: dict[str, Any]) -> list[dict[str, Any]]:
+    for key in ("items", "timeline", "timelineItems", "timeline_items"):
+        value = thread.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+    turns = thread.get("turns")
+    if isinstance(turns, list):
+        result: list[dict[str, Any]] = []
+        for turn in turns:
+            if not isinstance(turn, dict):
+                continue
+            for key in ("items", "timeline", "timelineItems", "messages"):
+                value = turn.get(key)
+                if isinstance(value, list):
+                    result.extend(item for item in value if isinstance(item, dict))
+        return result
+    messages = thread.get("messages")
+    if isinstance(messages, list):
+        return [item for item in messages if isinstance(item, dict)]
+    return []
+
+
+def _timeline_item_id(raw: dict[str, Any], external_session_id: str, index: int) -> str:
+    for key in ("id", "itemId", "item_id"):
+        value = raw.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return f"codex_{external_session_id}_{index}_{_content_hash(raw)[:16]}"
+
+
+def _timeline_item_type(raw: dict[str, Any]) -> str:
+    value = raw.get("type") or raw.get("kind")
+    return value if isinstance(value, str) and value else "message"
+
+
+def _timeline_item_status(raw: dict[str, Any]) -> str:
+    value = raw.get("status")
+    return value if isinstance(value, str) and value else "done"
+
+
+def _timeline_item_role(raw: dict[str, Any]) -> str | None:
+    value = raw.get("role")
+    return value if isinstance(value, str) and value else None
+
+
+def _timeline_item_turn_id(raw: dict[str, Any]) -> str | None:
+    for key in ("turnId", "turn_id"):
+        value = raw.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _timeline_item_revision(raw: dict[str, Any]) -> int:
+    value = raw.get("revision")
+    return value if isinstance(value, int) and value > 0 else 1
+
+
+def _timeline_item_content(raw: dict[str, Any]) -> Mapping[str, Any]:
+    content = raw.get("content")
+    if isinstance(content, dict):
+        return content
+    text = raw.get("text")
+    if isinstance(text, str):
+        return {"text": text, "format": "markdown"}
+    if isinstance(content, str):
+        return {"text": content, "format": "markdown"}
+    return {}
+
+
 def _thread_id_from_result(value: dict[str, Any]) -> str | None:
     thread = value.get("thread") if isinstance(value.get("thread"), dict) else value
     if not isinstance(thread, dict):
@@ -707,3 +861,8 @@ def _reasoning_label(reasoning_id: str) -> str:
         "max": "Max",
         "ultra": "Ultra",
     }.get(reasoning_id, reasoning_id)
+
+
+def _content_hash(value: Mapping[str, Any]) -> str:
+    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    return "sha256:" + hashlib.sha256(encoded.encode()).hexdigest()
