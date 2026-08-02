@@ -103,7 +103,7 @@ Claude may implement a smaller feature subset. Unsupported behavior must be expl
 Update Web:
 
 - read model/permission catalogs on selector open
-- read SessionMeta/SessionState/SessionTimeline on session load
+- read SessionMeta/SessionState/SessionTimeline/SessionNotice on session load
 - update selection before message send
 - remove model/permission from message send payload
 - list commands with live RPC on `/`
@@ -126,7 +126,7 @@ Before accepting the migration:
 - existing session sends messages without selection fields
 - model/permission selectors read live runtime catalogs
 - session selections survive refresh through persisted SessionState
-- runtime busy/blocked/stopping state survives refresh through persisted SessionState
+- runtime running/waiting/blocked/error/disconnected state survives refresh through persisted SessionState
 - command list is runtime-driven and fuzzy-matched by frontend
 - command execution does not create a user message
-- Codex IPC state updates map to SessionState/SessionTimeline projections without leaking IPC methods upward
+- Codex IPC state updates map to SessionState/SessionTimeline/SessionNotice projections without leaking IPC methods upward

@@ -24,24 +24,15 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, Mapping
 
 RuntimeStatus = Literal[
-    "unknown",
     "idle",
-    "pending",
     "running",
-    "stopping",
+    "waiting",
     "blocked",
     "error",
+    "disconnected",
 ]
 
 SelectionScope = Literal["model", "permission"]
-LocalSessionState = Literal[
-    "active",
-    "archived",
-    "hidden",
-    "deleted",
-    "unresumable",
-    "unknown",
-]
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,9 +98,11 @@ class RuntimePermissionCatalog:
 
 `revision` is a runtime-supplied version for the live read result. It must not make the server catalog cache authoritative.
 
+Model selection ids must uniquely identify a concrete model choice. If a model has reasoning/effort variants, the model item itself has no `selection_id`; each reasoning item carries the concrete `selection_id`. If a model has no reasoning variants, the model item carries the concrete `selection_id`.
+
 ## Session domain objects
 
-Session data is split into `SessionMeta`, `SessionState`, and `SessionTimeline`.
+Session data is split into `SessionMeta`, `SessionState`, `SessionTimeline`, and `SessionNotice`.
 
 ```py
 @dataclass(frozen=True, slots=True)
@@ -119,7 +112,6 @@ class SessionMeta:
     runtime: str
     title: str | None = None
     cwd: str | None = None
-    local_state: LocalSessionState = "active"
     ordering_time: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
@@ -131,13 +123,16 @@ class SessionState:
     runtime: str
     status: RuntimeStatus
     selections: Mapping[str, str | None] = field(default_factory=dict)
-    ordering_time: str | None = None
     status_reason: str | None = None
     error: Mapping[str, Any] | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 ```
 
-`SessionState` deliberately does not include active turn id, runtime catalog data, command lists, or timeline items. Model and permission selections belong here because they are current session state, not session metadata.
+`SessionMeta.ordering_time` is the session ordering/display time. `SessionState` deliberately does not include ordering time, active turn id, runtime catalog data, command lists, notices, or timeline items. Model and permission selections belong in `SessionState` because they are current session state, not session metadata.
+
+`SessionState.status` is the sole UI running-state source. Legacy `sessions.status` fields should become migration projections only. Tool calls keep status as `running`; tool details belong in timeline items or state metadata.
+
+Runtime state updates are partial updates. A runtime may update only status, only selections, only error, or only metadata. The host/server merges non-empty fields and rejects completely empty updates. Selection updates merge by scope, so future scopes can be added without replacing unrelated selections.
 
 ## Commands
 
@@ -151,9 +146,11 @@ class RuntimeCommand:
     description: str | None = None
     aliases: tuple[str, ...] = ()
     category: str | None = None
+    scope: Literal["runtime", "session", "turn"] = "session"
     enabled: bool = True
     disabled_reason: str | None = None
     accepts_args: bool = False
+    args_schema: Mapping[str, Any] | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
@@ -166,6 +163,8 @@ class RuntimeCommandResult:
 ```
 
 The protocol does not include `autocomplete`, command source, platform commands, or command namespace rules in v1. Fuzzy matching and completion are frontend behavior.
+
+Commands may accept arguments, but most commands should not. If command catalog lookup or command execution fails, `/xxx` input must not fall back to a normal user message.
 
 ## Attachments, timeline, and operation result
 
@@ -201,7 +200,6 @@ class RuntimeTimelineItem:
     content: Mapping[str, Any] = field(default_factory=dict)
     source: Mapping[str, Any] = field(default_factory=dict)
     revision: int = 1
-    ordering_time: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
@@ -211,8 +209,22 @@ class RuntimeTimelineSnapshot:
     external_session_id: str | None
     runtime: str
     items: tuple[RuntimeTimelineItem, ...]
-    ordering_time: str | None = None
     complete: bool = True
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class SessionNotice:
+    notice_id: str
+    session_id: str
+    runtime: str
+    type: Literal["notification", "interaction"]
+    title: str
+    message: str | None = None
+    severity: Literal["info", "success", "warning", "error"] = "info"
+    status: str = "open"
+    response_required: bool = False
+    actions: tuple[Mapping[str, Any], ...] = ()
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
@@ -278,6 +290,13 @@ class AgentRuntime(ABC):
         external_session_id: str | None = None,
     ) -> SessionState | None:
         return None
+
+    async def get_session_notices(
+        self,
+        session_id: str,
+        external_session_id: str | None = None,
+    ) -> tuple[SessionNotice, ...]:
+        return ()
 
     async def create_and_start_session(
         self,

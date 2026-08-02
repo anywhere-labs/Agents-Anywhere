@@ -13,7 +13,7 @@ The Server remains the durable platform source of truth for:
 - session meta
 - session state
 - session timeline
-- notices/interactions
+- session notices/interactions
 - active WebSocket/SSE recovery cursors
 
 The Server is not the source of truth for runtime model/permission catalogs. Catalog reads are live Connector RPC calls to the active runtime.
@@ -32,6 +32,7 @@ Platform session metadata only:
 - cwd
 - pin/archive/read metadata
 - platform ordering/read metadata
+- ordering_time
 
 Do not store runtime selections or running state in `sessions`.
 
@@ -44,7 +45,6 @@ session_id primary key
 runtime
 status
 selections_json
-ordering_time
 status_reason
 error_json
 metadata_json
@@ -68,15 +68,28 @@ Example:
 
 Selection and status changes should be applied from runtime projection events, not by the server guessing runtime-native state.
 
-### `timeline_items` and `notices` -> `SessionTimeline`
+`SessionState.status` is the final UI running-state source. Legacy `sessions.status` should be kept only as a migration compatibility projection. State updates are partial and merge non-empty fields. Selection updates merge by scope, and `selections_json` may contain future scopes beyond the built-in `model` and `permission` keys.
+
+### `timeline_items` -> `SessionTimeline`
 
 Persisted chronological session record:
 
 - timeline items
-- notices/interactions
 - event/recovery cursor state
 
 Timeline remains upsert-only. Hiding replaces deletion.
+
+### `notices` -> `SessionNotice`
+
+Persisted user-attention and interaction records:
+
+- notifications
+- approvals
+- input requests
+- confirmations
+- runtime/platform errors that should be shown to the user
+
+Notices are separate from `SessionTimeline` so future notice/interaction extensions do not force timeline schema changes.
 
 ## API target
 
@@ -101,6 +114,17 @@ PATCH /api/v2/sessions/{sessionId}/state/selections
 `GET` returns the latest persisted runtime projection, and may refresh from Connector when online.
 
 `PATCH` asks the runtime to update selections in `SessionState`. The runtime may accept or reject based on current state. The durable UI update should arrive as `session.state.updated`.
+
+Request shape should mirror the state map and allow one or more scopes:
+
+```json
+{
+  "selections": {
+    "model": "sel_model_...",
+    "permission": "sel_permission_..."
+  }
+}
+```
 
 ### Commands
 

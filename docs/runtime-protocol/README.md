@@ -46,19 +46,21 @@ The Connector application layer must not know Codex IPC, Claude SDK, or runtime-
 
 ## Domain model
 
-The protocol separates session data into three domain objects:
+The protocol separates session data into four domain objects:
 
 - `SessionMeta`: what this session is.
 - `SessionState`: what this session is currently doing and which runtime options it currently selected.
 - `SessionTimeline`: what happened in this session.
+- `SessionNotice`: what currently needs user attention or records notification/interaction state.
 
 Runtime-level catalogs and command lists are live reads, not session state.
 
 | Concept | Scope | Source of truth | Durable on Server | Notes |
 | --- | --- | --- | --- | --- |
 | Session meta | Session | Platform and runtime metadata projection | Yes | Identity, connector/runtime binding, title, cwd, archive/pin/read metadata. |
-| Session state | Session | Runtime projection | Yes | Status, selections, ordering time, status reason, error, metadata. |
-| Session timeline | Session | Runtime normalized projection | Yes | Timeline items, notices, interactions, and recovery cursor. |
+| Session state | Session | Runtime projection | Yes | Status, selections, status reason, error, metadata. |
+| Session timeline | Session | Runtime normalized projection | Yes | Timeline items and recovery cursor. |
+| Session notice | Session | Runtime/platform projection | Yes | Notifications, interactions, approvals, input requests, and errors needing user attention. |
 | Model catalog | Runtime | Runtime local read | No, except transitional code | Read on demand when the UI opens the selector. |
 | Permission catalog | Runtime | Runtime local read | No, except transitional code | Read on demand when the UI opens the selector. |
 | Command list | Session | Runtime local read | No | Read on demand when the user types `/`. |
@@ -101,12 +103,13 @@ Selections are part of `SessionState`, not `SessionMeta` and not message payload
   "selections": {
     "model": "sel_model_...",
     "permission": "sel_permission_..."
-  },
-  "orderingTime": "2026-08-02T..."
+  }
 }
 ```
 
 Runtime can update selections at any time. User-initiated selection changes may be limited by runtime/session state.
+
+For model catalogs, a `selectionId` must identify one concrete executable choice. If a model exposes reasoning or effort variants, the model item itself must not have a `selectionId`; each reasoning item carries the concrete `selectionId`. If a model has no reasoning variants, the model item carries the concrete `selectionId`.
 
 ## New session semantics
 

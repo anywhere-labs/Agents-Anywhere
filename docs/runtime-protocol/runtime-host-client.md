@@ -26,7 +26,8 @@ Runtime adapters must not emit server notification method names directly. They c
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Mapping
+from dataclasses import dataclass, field
+from typing import Any, Literal, Mapping
 
 
 class RuntimeHostClient(ABC):
@@ -44,7 +45,6 @@ class RuntimeHostClient(ABC):
         external_session_id: str | None = None,
         title: str | None = None,
         cwd: str | None = None,
-        local_state: str = "active",
         ordering_time: str | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
@@ -57,7 +57,6 @@ class RuntimeHostClient(ABC):
         status: RuntimeStatus | None = None,
         selections: Mapping[str, str | None] | None = None,
         external_session_id: str | None = None,
-        ordering_time: str | None = None,
         status_reason: str | None = None,
         error: Mapping[str, Any] | None = None,
         metadata: Mapping[str, Any] | None = None,
@@ -70,7 +69,6 @@ class RuntimeHostClient(ABC):
         runtime: str,
         items: tuple[RuntimeTimelineItem, ...],
         external_session_id: str | None = None,
-        ordering_time: str | None = None,
         complete: bool = True,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
@@ -84,7 +82,7 @@ class RuntimeHostClient(ABC):
 
     async def notice_upsert(
         self,
-        notice: RuntimeNotice,
+        notice: SessionNotice,
     ) -> None:
         raise NotImplementedError
 
@@ -95,7 +93,6 @@ class RuntimeHostClient(ABC):
         message: str,
         session_id: str | None = None,
         external_session_id: str | None = None,
-        ordering_time: str | None = None,
         details: Mapping[str, Any] | None = None,
     ) -> None:
         raise NotImplementedError
@@ -129,11 +126,11 @@ class RuntimeHostClient(ABC):
 
 ## Notice entity
 
-`notice_upsert` accepts a dataclass because notice/action/interactions are complex and should stay close to the server Notice model.
+`notice_upsert` accepts a dataclass because notice/action/interactions are complex and should stay close to the server `SessionNotice` model.
 
 ```py
 @dataclass(frozen=True, slots=True)
-class RuntimeNotice:
+class SessionNotice:
     notice_id: str
     session_id: str
     runtime: str
@@ -144,7 +141,6 @@ class RuntimeNotice:
     status: str = "open"
     response_required: bool = False
     actions: tuple[Mapping[str, Any], ...] = ()
-    ordering_time: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 ```
 
@@ -152,11 +148,13 @@ class RuntimeNotice:
 
 ### `session_meta_upsert`
 
-Reports the existence and metadata of a runtime session. This is `SessionMeta`, not current running state and not `SessionState` selections.
+Reports the existence and metadata of a runtime session. This is `SessionMeta`, not current running state and not `SessionState` selections. `ordering_time` belongs here and controls session ordering/display time.
 
 ### `session_state_update`
 
-Reports persisted `SessionState`: status, selections, reason, error, metadata, and ordering time. Runtime may call this at any time. User-triggered selection changes are only one source of state updates.
+Reports persisted `SessionState`: status, selections, reason, error, and metadata. Runtime may call this at any time. User-triggered selection changes are only one source of state updates.
+
+Updates are partial. The host/server merges provided fields and rejects completely empty updates. Selection updates merge by scope.
 
 ### `timeline_sync`
 
@@ -170,7 +168,7 @@ Reports one durable timeline item state. Timeline is upsert-only. If a runtime n
 
 ### `notice_upsert`
 
-Reports notifications and interactions, including approval/input/confirmation prompts. User responses flow back through `AgentRuntime.respond_interaction`.
+Reports session-level `SessionNotice` data: notifications and interactions, including approval/input/confirmation prompts. User responses flow back through `AgentRuntime.respond_interaction`.
 
 ### `runtime_error`
 

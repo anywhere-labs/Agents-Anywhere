@@ -38,6 +38,7 @@ Load session snapshot
   -> read SessionMeta
   -> read SessionState
   -> read SessionTimeline
+  -> read SessionNotice
   -> render timeline/notices
 ```
 
@@ -57,7 +58,8 @@ Changing selectors:
 User chooses selection
   -> PATCH session selection
   -> runtime accepts or rejects
-  -> Web updates from returned result and/or session.state.updated event
+  -> Web may update optimistically
+  -> Web reconciles from session.state.updated event or GET /state
 ```
 
 The runtime may also update selections without direct user action. Web must treat `session.state.updated` as authoritative.
@@ -107,15 +109,16 @@ POST /sessions/{id}/commands
 
 Command execution returns a normal RPC result. If the runtime changes timeline, state, selection, or notices, those changes arrive through normal runtime events.
 
+If command catalog lookup or execution fails, Web must show an error and must not send the `/xxx` input as a normal message.
+
 ## Session state UI
 
-Web should render busy/interrupt/blocking UI from session state and timeline/notices.
+Web should render busy/interrupt/blocking UI from session state, timeline, and notices. `SessionState.status` is the sole source for whether the session is running/interruption-capable; timeline and notices explain what is happening but must not replace the running-state projection.
 
 `SessionState` includes:
 
 - status
 - selections
-- ordering time
 - status reason
 - error
 - metadata
