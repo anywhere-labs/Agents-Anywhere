@@ -582,6 +582,18 @@ class CodexRuntime(AgentRuntime):
         decision = _approval_decision(status if isinstance(status, str) else action_id)
         await self.start()
         await self.client.respond(request_id, {"decision": decision})
+        cached_state = self._session_states.get(session_id)
+        if cached_state is not None:
+            await self._set_session_state(
+                session_id=session_id,
+                external_session_id=cached_state.external_session_id,
+                status="running",
+                metadata={
+                    "source": "codex.approval/responded",
+                    "notice_id": notice_id,
+                    "decision": decision,
+                },
+            )
         return RuntimeOperationResult(
             ok=True,
             result={
@@ -614,14 +626,28 @@ class CodexRuntime(AgentRuntime):
         if session_id is None or thread_id is None:
             return
         if _is_approval_request(method):
+            turn_id = _turn_id_from_result(params) or self._active_turn_ids.get(session_id)
+            if turn_id is not None:
+                self._active_turn_ids[session_id] = turn_id
             notice = _approval_notice_from_request(
                 session_id=session_id,
                 thread_id=thread_id,
                 method=str(method),
                 params=params,
                 request_id=message.get("id"),
+                turn_id=turn_id,
             )
             await self.host.notice_upsert(notice)
+            await self._set_session_state(
+                session_id=session_id,
+                external_session_id=thread_id,
+                status="blocked",
+                metadata={
+                    "source": str(method),
+                    "notice_id": notice.notice_id,
+                    **({"turn_id": turn_id} if turn_id else {}),
+                },
+            )
             return
         if method == "turn/started":
             turn_id = _turn_id_from_result(params)
@@ -1376,6 +1402,7 @@ def _approval_notice_from_request(
     method: str,
     params: Mapping[str, Any],
     request_id: object,
+    turn_id: str | None = None,
 ) -> SessionNotice:
     approval_id = _first_string_from_mapping(params, "approvalId", "approval_id")
     if approval_id is None:
@@ -1415,10 +1442,12 @@ def _approval_notice_from_request(
         context={
             "approvalId": approval_id,
             "approvalStatus": "pending",
+            **({"turnId": turn_id} if turn_id else {}),
             "approvalSource": {
                 "requestId": request_id,
                 "method": method,
                 "threadId": thread_id,
+                **({"turnId": turn_id} if turn_id else {}),
                 **({"itemId": item_id} if item_id else {}),
             },
             "kind": _approval_kind(method),

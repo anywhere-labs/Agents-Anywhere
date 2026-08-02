@@ -631,6 +631,7 @@ async def _test_codex_runtime_approval_request_upserts_session_notice() -> None:
             "params": {
                 "platformSessionId": "sess_1",
                 "threadId": "thread_1",
+                "turnId": "turn_1",
                 "itemId": "item_cmd",
                 "approvalId": "appr_cmd",
                 "command": "ls -la",
@@ -652,9 +653,13 @@ async def _test_codex_runtime_approval_request_upserts_session_notice() -> None:
         "requestId": 42,
         "method": "item/commandExecution/requestApproval",
         "threadId": "thread_1",
+        "turnId": "turn_1",
         "itemId": "item_cmd",
     }
+    assert notice.context["turnId"] == "turn_1"
     assert notice.context["command"] == "ls -la"
+    assert host.state_updates[-1]["status"] == "blocked"
+    assert host.state_updates[-1]["metadata"]["notice_id"] == "notice_approval_appr_cmd"
     assert [action["actionId"] for action in notice.actions] == [
         "approve",
         "approve_for_session",
@@ -761,7 +766,14 @@ def test_codex_runtime_responds_to_approval_interaction() -> None:
 
 async def _test_codex_runtime_responds_to_approval_interaction() -> None:
     client = FakeCodexClient()
-    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=client)
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+    await runtime._set_session_state(
+        session_id="sess_1",
+        external_session_id="thread_1",
+        status="blocked",
+        metadata={"source": "test"},
+    )
 
     result = await runtime.respond_interaction(
         "sess_1",
@@ -773,6 +785,8 @@ async def _test_codex_runtime_responds_to_approval_interaction() -> None:
     assert result.ok is True
     assert result.result["decision"] == "acceptForSession"
     assert client.responses == [("42", {"decision": "acceptForSession"})]
+    assert host.state_updates[-1]["status"] == "running"
+    assert host.state_updates[-1]["metadata"]["notice_id"] == "notice_1"
 
 
 def test_codex_catalog_helpers_ignore_unrecognized_items() -> None:
