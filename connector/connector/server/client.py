@@ -16,7 +16,6 @@ from connector.local import create_local_ops
 from connector.logging import logger
 from connector.runtime_protocol import (
     RuntimeHostClient,
-    RuntimeUnavailableError,
 )
 from connector.runtime_protocol import (
     RuntimeProvider as AgentRuntimeProvider,
@@ -30,6 +29,7 @@ from connector.server.dispatch import ConnectorRequestDispatcher
 from connector.server.ingest import ConnectorIngestClient
 from connector.server.rpc import ConnectorRpcChannel
 from connector.server.runtime_host import ConnectorRuntimeHost
+from connector.server.runtime_sync import RuntimeSyncRunner
 from connector.server.sync_state import JsonSyncStateStore, SyncStateStore
 from connector.server.terminal_relay import TerminalRelayRunner
 from connector.server.transfers import (
@@ -76,7 +76,6 @@ class BackendRpcClient:
             status_sink=self._publish_agent_runtime_status,
         )
         self._preferences_reader = preferences_reader or read_local_preferences
-        self._last_preferences: dict[str, Any] | None = None
         self.local_ops = create_local_ops(notify=self.send_backend_notification)
         self._terminal_relay = TerminalRelayRunner(config.server_url, self.local_ops)
         self._background_tasks: set[asyncio.Task[Any]] = set()
@@ -104,6 +103,14 @@ class BackendRpcClient:
             upload_prepared_download=self.upload_prepared_download,
             start_terminal_relay=self.start_terminal_relay,
             schedule_background=self._schedule_background,
+        )
+        self._runtime_sync = RuntimeSyncRunner(
+            config=config,
+            supervisor=self.agent_runtime_supervisor,
+            host=self.agent_runtime_host,
+            runtime_config_store=self.runtime_config_store,
+            preferences_reader=self._preferences_reader,
+            send_notification=self.send_notification,
         )
 
     async def run_forever(self) -> None:
@@ -170,9 +177,9 @@ class BackendRpcClient:
             self._rpc.set_connection(ws)
             inventory = await self._dispatcher.discover_runtimes()
             await self.send_notification("runtime.inventoryUpdated", inventory)
-            await self._start_saved_agent_runtimes()
+            await self._runtime_sync.start_saved_runtimes()
             heartbeat_task = asyncio.create_task(self._heartbeat_loop())
-            sync_task = asyncio.create_task(self._sync_existing_loop())
+            sync_task = asyncio.create_task(self._runtime_sync.sync_existing_loop())
             try:
                 async for raw_message in ws:
                     message = json.loads(raw_message)
@@ -216,66 +223,6 @@ class BackendRpcClient:
         while True:
             await self.send_notification("connector.heartbeat", {})
             await asyncio.sleep(self.config.heartbeat_seconds)
-
-    async def _start_saved_agent_runtimes(self) -> None:
-        try:
-            saved_configs = self.runtime_config_store.load_all()
-        except Exception:
-            logger.exception("loading saved runtime configs failed")
-            return
-        for runtime_id in self.agent_runtime_supervisor.runtimes:
-            if runtime_id not in saved_configs:
-                continue
-            try:
-                await self.agent_runtime_supervisor.start(
-                    runtime_id, saved_configs[runtime_id]
-                )
-            except Exception:
-                logger.exception("starting saved {} runtime config failed", runtime_id)
-
-    async def _sync_existing_loop(self) -> None:
-        if not self.config.sync_existing_on_connect:
-            return
-        while True:
-            for runtime_id in self.agent_runtime_supervisor.runtimes:
-                try:
-                    runtime = self.agent_runtime_supervisor.resolve_runtime(runtime_id)
-                    sessions = await runtime.list_sessions(limit=100, force=False)
-                    for session in sessions:
-                        await self.agent_runtime_host.session_meta_upsert(
-                            session_id=session.session_id,
-                            runtime=session.runtime,
-                            external_session_id=session.external_session_id,
-                            title=session.title,
-                            cwd=session.cwd,
-                            ordering_time=session.ordering_time,
-                            metadata=session.metadata,
-                        )
-                except RuntimeUnavailableError:
-                    continue
-                except TimeoutError:
-                    logger.warning("existing {} session sync timed out", runtime_id)
-                except Exception:
-                    logger.exception("existing {} session sync failed", runtime_id)
-            await self._push_preferences_if_changed()
-            await asyncio.sleep(self.config.sync_interval_seconds)
-
-    async def _push_preferences_if_changed(self) -> None:
-        try:
-            current = self._preferences_reader()
-        except Exception:
-            logger.exception("reading local preferences failed")
-            return
-        if not isinstance(current, dict):
-            return
-        # readAt is a per-call timestamp — strip it before diffing so we don't
-        # push an "update" every cycle when nothing actually changed.
-        if _preferences_signature(current) == _preferences_signature(
-            self._last_preferences or {}
-        ):
-            return
-        self._last_preferences = current
-        await self.send_notification("connector.preferencesUpdated", current)
 
     async def _publish_runtime_status(
         self,
@@ -373,12 +320,6 @@ def _close_reason(exc: ConnectionClosed) -> str:
     close = getattr(exc, "rcvd", None) or getattr(exc, "sent", None)
     reason = getattr(close, "reason", "")
     return reason if isinstance(reason, str) else ""
-
-
-def _preferences_signature(prefs: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
-    """Stable signature ignoring volatile `readAt`. Lets us detect real
-    user-driven changes instead of re-pushing every poll cycle."""
-    return tuple(sorted((k, v) for k, v in prefs.items() if k != "readAt"))
 
 
 def main() -> None:

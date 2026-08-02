@@ -1435,7 +1435,7 @@ async def _exercise_saved_runtime_config_startup(tmp_path) -> None:
     ws = FakeWebSocket()
     client._rpc.set_connection(ws)  # type: ignore[arg-type]
 
-    await client._start_saved_agent_runtimes()
+    await client._runtime_sync.start_saved_runtimes()
 
     assert codex.started is True
     assert claude.started is True
@@ -1457,7 +1457,7 @@ async def _exercise_invalid_saved_runtime_config_startup(tmp_path) -> None:
     )
     client._rpc.set_connection(FakeWebSocket())  # type: ignore[arg-type]
 
-    await client._start_saved_agent_runtimes()
+    await client._runtime_sync.start_saved_runtimes()
 
     assert runtime.started is False
 
@@ -1489,11 +1489,11 @@ async def _exercise_preferences_push() -> None:
     async def fake_notify(method: str, params: dict[str, Any]) -> None:
         pushed.append((method, params))
 
-    client.send_notification = fake_notify  # type: ignore[method-assign]
+    client._runtime_sync.send_notification = fake_notify
 
-    await client._push_preferences_if_changed()  # t0 — first read, push
-    await client._push_preferences_if_changed()  # t1 — only readAt changed, no push
-    await client._push_preferences_if_changed()  # t2 — mode changed, push
+    await client._runtime_sync.push_preferences_if_changed()  # t0 — first read, push
+    await client._runtime_sync.push_preferences_if_changed()  # t1 — only readAt changed, no push
+    await client._runtime_sync.push_preferences_if_changed()  # t2 — mode changed, push
 
     assert [p[0] for p in pushed] == [
         "connector.preferencesUpdated",

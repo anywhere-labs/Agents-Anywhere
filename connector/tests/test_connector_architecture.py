@@ -151,3 +151,18 @@ def test_runtime_rpc_handler_keeps_session_sync_in_session_coordinator() -> None
     assert "timeline_sync(" in session_rpc_source
     assert "session_state_update(" in session_rpc_source
     assert "notice_upsert(" in session_rpc_source
+
+
+def test_backend_rpc_client_delegates_runtime_sync_to_runner() -> None:
+    client_source = (CONNECTOR_PACKAGE / "server" / "client.py").read_text(
+        encoding="utf-8"
+    )
+    runtime_sync_source = (CONNECTOR_PACKAGE / "server" / "runtime_sync.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "RuntimeSyncRunner(" in client_source
+    assert "session_meta_upsert(" not in client_source
+    assert "_preferences_signature" not in client_source
+    assert "session_meta_upsert(" in runtime_sync_source
+    assert "_preferences_signature" in runtime_sync_source
