@@ -334,6 +334,11 @@ are intentionally distinct: providers may normalize `auto` or aliases into a
 stable effective config, and equivalent effective configs should not force a
 restart.
 
+`validate_config(runtime, raw_values)` is a validation-only call. If the runtime
+is already running, it must not mark the runtime stopped and must not replace
+the active effective config. Validation failures should be returned to the
+caller while preserving the currently running runtime.
+
 ## Connector application flow
 
 Startup:
