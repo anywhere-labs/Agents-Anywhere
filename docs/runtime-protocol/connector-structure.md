@@ -249,6 +249,28 @@ The supervisor owns:
 
 The supervisor should not know Codex/Claude construction details beyond the provider interface.
 
+Current protocol implementation:
+
+```text
+runtime_protocol/supervisor.py
+  RuntimeSupervisor
+  RuntimeSupervisorEntry
+```
+
+The protocol supervisor is intentionally not a config store. It accepts raw config values for `validate_config()` and `start()`, delegates validation to `RuntimeProvider`, and keeps only the effective `RuntimeConfig` associated with an active runtime. Durable runtime config storage belongs in `core/runtime_config_store.py`.
+
+Supervisor start flow:
+
+```text
+start(runtime, raw_values)
+  -> provider.validate_config(raw_values)
+  -> provider.create_runtime(RuntimeConfig, RuntimeHostClient)
+  -> AgentRuntime.start()
+  -> status = running
+```
+
+If the same runtime is already running with the same effective config values, `start()` returns the existing `AgentRuntime`. If config values differ, the supervisor stops the old runtime before creating a new one.
+
 ## Connector application flow
 
 Startup:

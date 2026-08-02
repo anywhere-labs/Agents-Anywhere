@@ -135,6 +135,7 @@ Define:
 - `AgentRuntime`
 - `RuntimeHostClient`
 - `RuntimeProvider`
+- `RuntimeSupervisor`
 - `RuntimeOperationResult`
 - `RuntimeCommandResult`
 - `SessionMeta`
@@ -166,6 +167,9 @@ Tests:
 
 - ABC default unsupported behavior.
 - Public ABC methods do not use keyword-only parameters.
+- Supervisor discover/start/stop/resolve behavior.
+- Supervisor maps discovery failure to unavailable inventory.
+- Supervisor rejects provider config for the wrong runtime.
 - `RuntimeOperationResult` and `RuntimeCommandResult` include `ok`, `code`, `message`, and result payload fields.
 - Model selection id rules:
   - reasoning variants carry selection ids;

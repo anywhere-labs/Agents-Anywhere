@@ -32,6 +32,10 @@ from connector.runtime_protocol.models import (
 )
 from connector.runtime_protocol.protocol import AgentRuntime
 from connector.runtime_protocol.provider import RuntimeProvider
+from connector.runtime_protocol.supervisor import (
+    RuntimeSupervisor,
+    RuntimeSupervisorEntry,
+)
 
 __all__ = [
     "AgentRuntime",
@@ -55,6 +59,8 @@ __all__ = [
     "RuntimeProvider",
     "RuntimeReasoningItem",
     "RuntimeStatus",
+    "RuntimeSupervisor",
+    "RuntimeSupervisorEntry",
     "RuntimeTimelineItem",
     "RuntimeTimelineSnapshot",
     "RuntimeUnavailableError",
