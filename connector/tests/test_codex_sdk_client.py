@@ -37,7 +37,7 @@ async def _test_codex_sdk_client_delegates_runtime_protocol_methods() -> None:
 
 
 def test_create_sdk_client_prefers_explicit_runtime_factory() -> None:
-    config = RuntimeConfig(runtime="codex", revision=1, values={"sdkMode": "sdk"})
+    config = RuntimeConfig(runtime="codex", revision=1, values={"environment": {}})
     sdk = _FakeSdkModule()
 
     client = _create_sdk_client(sdk, config)
@@ -51,8 +51,6 @@ def test_create_sdk_client_prefers_async_codex_sdk_entrypoint() -> None:
         runtime="codex",
         revision=1,
         values={
-            "sdkMode": "sdk",
-            "executablePath": "/opt/codex",
             "environment": {"EXAMPLE": "1"},
         },
     )
@@ -62,7 +60,7 @@ def test_create_sdk_client_prefers_async_codex_sdk_entrypoint() -> None:
 
     assert isinstance(client, _FakeAsyncCodex)
     assert isinstance(client.config, _FakeCodexConfig)
-    assert client.config.codex_bin == "/opt/codex"
+    assert client.config.codex_bin is None
     assert client.config.env == {"EXAMPLE": "1"}
 
 
@@ -170,7 +168,7 @@ def _sdk_config_values() -> RuntimeConfig:
     return RuntimeConfig(
         runtime="codex",
         revision=1,
-        values={"sdkMode": "sdk", "executablePath": "/opt/codex"},
+        values={"environment": {}},
     )
 
 

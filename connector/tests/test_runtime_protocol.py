@@ -119,39 +119,39 @@ def test_runtime_protocol_ordering_time_belongs_only_to_session_meta() -> None:
 
 def test_runtime_config_is_representable_without_connector_config() -> None:
     schema = RuntimeConfigSchema(
-        runtime="codex",
+        runtime="fake",
         revision=7,
         schema={
             "type": "object",
             "properties": {
-                "ipcEnabled": {"type": "boolean"},
-                "sdkMode": {"type": "string"},
+                "enabled": {"type": "boolean"},
+                "mode": {"type": "string"},
             },
         },
-        defaults={"sdkMode": "auto"},
+        defaults={"mode": "auto"},
     )
     config = RuntimeConfig(
-        runtime="codex",
+        runtime="fake",
         revision=7,
         values={
-            "ipcEnabled": True,
-            "sdkMode": "auto",
+            "enabled": True,
+            "mode": "auto",
         },
         schema=schema.schema,
     )
     inventory = RuntimeInventoryItem(
-        runtime="codex",
-        runtime_type="codex",
-        display_name="Codex",
+        runtime="fake",
+        runtime_type="fake",
+        display_name="Fake",
         available=True,
         configured=True,
         capabilities={"commands": True},
         config_schema=schema,
     )
 
-    assert config.runtime == "codex"
+    assert config.runtime == "fake"
     assert config.revision == 7
-    assert config.values["ipcEnabled"] is True
+    assert config.values["enabled"] is True
     assert config.schema is not None
     assert inventory.configured is True
     assert inventory.capabilities["commands"] is True

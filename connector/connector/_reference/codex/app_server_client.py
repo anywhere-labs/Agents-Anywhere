@@ -15,11 +15,10 @@ APP_SERVER_STREAM_LIMIT = 64 * 1024 * 1024
 
 
 class CodexAppServerClient:
-    """Fallback Codex app-server stdio client.
+    """Reference Codex app-server stdio client.
 
-    The primary Codex integration should go through the SDK adapter. This class
-    remains available for explicit `sdkMode=app-server` configurations and for
-    diagnosing SDK coverage gaps.
+    Active Codex integration goes through the official SDK. This class is kept
+    only as readable reference material for diagnosing SDK coverage gaps.
     """
 
     def __init__(

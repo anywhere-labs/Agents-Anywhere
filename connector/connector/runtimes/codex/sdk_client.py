@@ -16,8 +16,7 @@ class CodexSdkClient:
     """Adapter from the Codex SDK client shape to the runtime client protocol.
 
     The connector runtime wants a tiny async JSON-RPC-like surface. Keeping the
-    SDK-specific discovery here lets `CodexRuntime` stay protocol-oriented while
-    Codex moves away from the hand-written app-server process client.
+    SDK-specific discovery here lets `CodexRuntime` stay protocol-oriented.
     """
 
     def __init__(self, client: Any, sdk: Any | None = None) -> None:
@@ -261,10 +260,9 @@ def _sdk_config(sdk: Any, config: RuntimeConfig) -> Any:
     if not callable(config_cls):
         return None
     values = config.values
-    executable = values.get("executablePath")
     environment = values.get("environment")
     return config_cls(
-        codex_bin=executable if isinstance(executable, str) and executable else None,
+        codex_bin=None,
         env=dict(environment) if isinstance(environment, dict) else None,
         client_name="agents_anywhere_connector",
         client_title="Agents Anywhere Connector",

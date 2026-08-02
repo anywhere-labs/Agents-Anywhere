@@ -166,3 +166,42 @@ def test_backend_rpc_client_delegates_runtime_sync_to_runner() -> None:
     assert "_preferences_signature" not in client_source
     assert "session_meta_upsert(" in runtime_sync_source
     assert "_preferences_signature" in runtime_sync_source
+
+
+def test_active_codex_provider_is_sdk_only() -> None:
+    provider_source = (
+        CONNECTOR_PACKAGE / "runtimes" / "codex" / "provider.py"
+    ).read_text(encoding="utf-8")
+
+    assert "sdk_client_from_config" in provider_source
+    assert "app_server_client" not in provider_source
+    assert "sdkMode" not in provider_source
+    assert "ipcEnabled" not in provider_source
+    assert "executablePath" not in provider_source
+
+
+def test_codex_runtime_depends_on_transport_protocol_not_transports() -> None:
+    runtime_source = (
+        CONNECTOR_PACKAGE / "runtimes" / "codex" / "runtime.py"
+    ).read_text(encoding="utf-8")
+    sdk_source = (
+        CONNECTOR_PACKAGE / "runtimes" / "codex" / "sdk_client.py"
+    ).read_text(encoding="utf-8")
+
+    assert "CodexRuntimeClient" in runtime_source
+    assert "sdk_client" not in runtime_source
+    assert "app_server_client" not in runtime_source
+    assert "openai_codex" not in runtime_source
+    assert "openai_codex" in sdk_source
+
+
+def test_active_codex_code_does_not_import_app_server_reference() -> None:
+    violations: list[str] = []
+
+    for path in (CONNECTOR_PACKAGE / "runtimes" / "codex").rglob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        if "app_server_client" in source:
+            relative_path = path.relative_to(CONNECTOR_PACKAGE.parent)
+            violations.append(f"{relative_path}: references app_server_client")
+
+    assert violations == []

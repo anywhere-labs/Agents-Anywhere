@@ -59,8 +59,8 @@ Completed Connector migration pieces:
 Remaining Connector gaps:
 
 - Runtime command catalog/execution is still not the primary active UI path.
-- Codex IPC parity is not yet complete enough to treat IPC state/timeline/notice
-  as fully projected protocol events.
+- Codex SDK parity is not yet complete enough to treat all native
+  state/timeline/notice changes as fully projected protocol events.
 - Some runtime behavior is feature-incomplete compared with the old reference
   adapters and must be migrated by reimplementing protocol behavior, not by
   restoring the old adapter contract.
@@ -336,15 +336,14 @@ Use the SDK if it exposes enough surface for:
 - command/slash-command support or enough primitives to implement it;
 - session state and notice projection.
 
-If the SDK hides required streaming or catalog details, keep any fallback
-app-server JSON-RPC client inside `runtimes/codex/app_server_client.py` and
-route it through `CodexRuntimeClient`. Do not let app-server or IPC details leak
-into `CodexRuntime`.
+The active Codex integration is SDK-only. Historical app-server and IPC code may
+remain under `_reference/codex` for comparison while SDK coverage is completed,
+but it must not be imported by active provider/runtime code.
 
 Rules:
 
-- Do not continue expanding hand-written Codex IPC as the primary integration path.
-- Codex IPC may remain only for app/IDE token-level co-presence if the SDK/app-server cannot represent that surface.
+- Do not continue expanding hand-written Codex IPC as an active integration path.
+- Do not expose app-server or IPC switches in active Codex runtime config.
 - `CodexRuntime` implements `AgentRuntime`.
 - `CodexRuntime` calls `RuntimeHostClient`.
 - `steer_turn` and `interrupt_turn` do not require `turn_id`.
@@ -353,25 +352,22 @@ Rules:
 Acceptance:
 
 - `CodexProvider` does not import `_reference.codex`.
-- `CodexProvider` exposes `sdkMode: auto | sdk | app-server`.
-- `auto` prefers the SDK when the `openai-codex` package is available.
+- `CodexProvider` treats the `openai-codex` SDK as the only active runnable surface.
+- `CodexProvider` exposes only SDK runtime config fields, currently environment overrides.
 - SDK mode is backed by an active `CodexRuntimeClient` adapter boundary, so
   future SDK API changes stay inside `runtimes/codex/sdk_client.py`.
 - `CodexRuntimeClient` lives in `runtimes/codex/runtime_client.py`; native
   transports should implement that protocol instead of leaking SDK or
   app-server details into `CodexRuntime`.
-- The app-server JSON-RPC client remains only as a fallback/reference path while
-  Codex migrates fully to SDK-backed integration, and its implementation lives
-  in `runtimes/codex/app_server_client.py`.
-- `CodexProvider` keeps `ipcEnabled` as a beta config field and notes macOS-only
-  test coverage. The `ipc` capability should remain false until active
-  `runtimes/codex` code projects IPC state/timeline/notice events through
-  `RuntimeHostClient`.
+- The app-server JSON-RPC client remains only as reference material under
+  `_reference/codex/app_server_client.py`.
+- `CodexProvider` must not expose `sdkMode`, `executablePath`, or `ipcEnabled`.
+  The `ipc` capability remains false in the active SDK runtime.
 - Basic `CodexRuntime` supports `identity`, `start`, `stop`, `get_config`, model catalog, permission catalog, session list, session snapshot, session state reads, text-only turn start, text-only steer, local interrupt, and minimal live timeline item upserts.
 - Basic `CodexRuntime` depends only on the narrow `CodexRuntimeClient`
   protocol; SDK/app-server transport details stay outside the runtime reducer.
-- Codex text-only `create_and_start_session()` and `start_turn()` call the
-  active Codex runtime client, not connector-layer IPC/app-server code.
+- Codex text-only `create_and_start_session()` and `start_turn()` call the SDK
+  runtime client, not connector-layer IPC/app-server code.
 - Codex turn start updates `SessionState.status` through `waiting` then `running`, and `turn/completed` maps back to `idle`.
 - Codex no longer returns `backendNotifications`.
 - Codex runtime events produce `SessionMeta`, `SessionState`, `SessionTimeline`, and `SessionNotice`.
@@ -611,7 +607,7 @@ Continue with:
 2. `make runtime command APIs server-routed`
 3. `make Web slash command menu runtime-driven`
 4. `finish SessionNotice interaction response path`
-5. `finish Codex IPC event projection into SessionState/Timeline/Notice`
+5. `finish Codex SDK event projection into SessionState/Timeline/Notice`
 6. `remove remaining server-persisted catalog primary paths`
 
 Do not restart the old first stack. The protocol skeleton and active Connector

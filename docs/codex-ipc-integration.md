@@ -2,13 +2,13 @@
 
 ## Status and source
 
-This document describes an internal Codex IPC contract recovered from the
-installed Codex IDE extension version `26.721.41059`. It is not a documented
-OpenAI public API. The Connector must therefore isolate this contract behind
-Pydantic validation and method-version checks.
+Historical reference only. The active Connector v2 Codex runtime is SDK-only and
+must not implement or extend hand-written IPC as an active path. This document
+describes an internal Codex IPC contract recovered from the installed Codex IDE
+extension version `26.721.41059`. It is not a documented OpenAI public API.
 
 The corresponding models live in
-`connector/connector/codex/ipc_protocol.py`.
+`connector/connector/_reference/codex/ipc_protocol.py`.
 
 ## Transport and router
 

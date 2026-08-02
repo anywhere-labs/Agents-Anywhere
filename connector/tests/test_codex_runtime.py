@@ -829,5 +829,5 @@ def _config() -> RuntimeConfig:
     return RuntimeConfig(
         runtime="codex",
         revision=3,
-        values={"sdkMode": "app-server", "executablePath": "/opt/codex"},
+        values={"environment": {}},
     )

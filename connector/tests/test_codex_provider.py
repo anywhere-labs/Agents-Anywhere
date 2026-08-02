@@ -6,169 +6,101 @@ from typing import Any
 
 import pytest
 
-from connector.launch import LaunchTarget, launch_target
 from connector.runtime_protocol import RuntimeConfig, RuntimeInvalidRequestError
 from connector.runtimes.codex.provider import CodexProvider
 from connector.runtimes.codex.runtime import CodexRuntime
 
 
-def test_codex_provider_treats_sdk_as_primary_runnable_surface() -> None:
-    asyncio.run(_test_codex_provider_treats_sdk_as_primary_runnable_surface())
+def test_codex_provider_requires_sdk_for_runnable_surface() -> None:
+    asyncio.run(_test_codex_provider_requires_sdk_for_runnable_surface())
 
 
-async def _test_codex_provider_treats_sdk_as_primary_runnable_surface() -> None:
-    provider = CodexProvider(
-        sdk_checker=lambda: {
-            "available": True,
-            "package": "openai-codex",
-            "version": "1.0",
-        },
-        command_checker=_missing_command,
-    )
+async def _test_codex_provider_requires_sdk_for_runnable_surface() -> None:
+    provider = CodexProvider(sdk_checker=_missing_sdk)
+
+    item = await provider.discover()
+
+    assert item.available is False
+    assert item.configured is False
+    assert item.capabilities["commands"] is True
+    assert item.capabilities["ipc"] is False
+    assert item.metadata["sdk"]["available"] is False
+    assert "appServer" not in item.metadata
+    assert item.reason == "Codex SDK is unavailable"
+
+
+def test_codex_provider_treats_sdk_as_only_active_surface() -> None:
+    asyncio.run(_test_codex_provider_treats_sdk_as_only_active_surface())
+
+
+async def _test_codex_provider_treats_sdk_as_only_active_surface() -> None:
+    provider = CodexProvider(sdk_checker=_available_sdk)
 
     item = await provider.discover()
 
     assert item.available is True
     assert item.configured is True
-    assert item.capabilities["commands"] is True
-    assert item.capabilities["ipc"] is False
     assert item.metadata["sdk"]["available"] is True
-    assert item.metadata["appServer"]["available"] is False
+    assert "appServer" not in item.metadata
     assert item.reason is None
 
 
-def test_codex_provider_schema_marks_ipc_beta_and_platform_scope() -> None:
-    asyncio.run(_test_codex_provider_schema_marks_ipc_beta_and_platform_scope())
+def test_codex_provider_schema_exposes_no_ipc_or_app_server_switches() -> None:
+    asyncio.run(_test_codex_provider_schema_exposes_no_ipc_or_app_server_switches())
 
 
-async def _test_codex_provider_schema_marks_ipc_beta_and_platform_scope() -> None:
-    provider = CodexProvider(
-        sdk_checker=_missing_sdk,
-        command_checker=_missing_command,
-    )
+async def _test_codex_provider_schema_exposes_no_ipc_or_app_server_switches() -> None:
+    provider = CodexProvider(sdk_checker=_available_sdk)
 
     schema = await provider.get_config_schema()
-    ipc = schema.schema["properties"]["ipcEnabled"]
 
-    assert schema.defaults["sdkMode"] == "auto"
-    assert schema.ui_schema["order"] == [
-        "sdkMode",
-        "executablePath",
-        "ipcEnabled",
-        "environment",
-    ]
-    assert ipc["title"] == "Codex IPC (Beta)"
-    assert "Tested on macOS only" in ipc["description"]
-    assert "Windows and Linux have not yet been tested" in ipc["description"]
-    assert "runtime instability" in ipc["description"]
+    assert schema.defaults == {"environment": {}}
+    assert schema.ui_schema["order"] == ["environment"]
+    assert set(schema.schema["properties"]) == {"environment"}
+    assert "sdkMode" not in schema.schema["properties"]
+    assert "ipcEnabled" not in schema.schema["properties"]
+    assert "executablePath" not in schema.schema["properties"]
 
 
-def test_codex_provider_auto_prefers_sdk() -> None:
-    asyncio.run(_test_codex_provider_auto_prefers_sdk())
+def test_codex_provider_validates_sdk_config() -> None:
+    asyncio.run(_test_codex_provider_validates_sdk_config())
 
 
-async def _test_codex_provider_auto_prefers_sdk() -> None:
-    provider = CodexProvider(
-        sdk_checker=lambda: {
-            "available": True,
-            "package": "openai-codex",
-            "version": "1.0",
-        },
-        command_checker=_available_command,
-    )
-    await provider.discover()
+async def _test_codex_provider_validates_sdk_config() -> None:
+    provider = CodexProvider(sdk_checker=_available_sdk)
 
-    config = await provider.validate_config({"sdkMode": "auto", "ipcEnabled": False})
+    config = await provider.validate_config({"environment": {"EXAMPLE": "1"}})
 
     assert config.runtime == "codex"
-    assert config.values["sdkMode"] == "sdk"
-    assert config.values["requestedSdkMode"] == "auto"
-    assert config.values["ipcEnabled"] is False
+    assert config.values == {"environment": {"EXAMPLE": "1"}}
+    assert config.metadata["sdk"]["available"] is True
+    assert "launchTarget" not in config.metadata
 
 
-def test_codex_provider_auto_falls_back_to_app_server() -> None:
-    asyncio.run(_test_codex_provider_auto_falls_back_to_app_server())
+def test_codex_provider_rejects_missing_sdk() -> None:
+    asyncio.run(_test_codex_provider_rejects_missing_sdk())
 
 
-async def _test_codex_provider_auto_falls_back_to_app_server() -> None:
-    provider = CodexProvider(
-        sdk_checker=_missing_sdk,
-        command_checker=_available_command,
-    )
-
-    config = await provider.validate_config(
-        {
-            "sdkMode": "auto",
-            "executablePath": "/opt/codex",
-        }
-    )
-
-    assert config.values["sdkMode"] == "app-server"
-    assert config.values["executablePath"] == "/opt/codex"
-    assert config.metadata["launchTarget"]["path"] == "/opt/codex"
-
-
-def test_codex_provider_rejects_missing_forced_sdk() -> None:
-    asyncio.run(_test_codex_provider_rejects_missing_forced_sdk())
-
-
-async def _test_codex_provider_rejects_missing_forced_sdk() -> None:
-    provider = CodexProvider(
-        sdk_checker=_missing_sdk,
-        command_checker=_available_command,
-    )
+async def _test_codex_provider_rejects_missing_sdk() -> None:
+    provider = CodexProvider(sdk_checker=_missing_sdk)
 
     with pytest.raises(RuntimeInvalidRequestError, match="SDK is not available"):
-        await provider.validate_config({"sdkMode": "sdk"})
+        await provider.validate_config({})
 
 
-def test_codex_provider_accepts_forced_sdk() -> None:
-    asyncio.run(_test_codex_provider_accepts_forced_sdk())
+def test_codex_provider_rejects_legacy_config_fields() -> None:
+    asyncio.run(_test_codex_provider_rejects_legacy_config_fields())
 
 
-async def _test_codex_provider_accepts_forced_sdk() -> None:
-    provider = CodexProvider(
-        sdk_checker=lambda: {
-            "available": True,
-            "package": "openai-codex",
-            "version": "1.0",
-        },
-        command_checker=_available_command,
-    )
+async def _test_codex_provider_rejects_legacy_config_fields() -> None:
+    provider = CodexProvider(sdk_checker=_available_sdk)
 
-    config = await provider.validate_config({"sdkMode": "sdk"})
-
-    assert config.values["sdkMode"] == "sdk"
-
-
-def test_codex_provider_validates_configured_executable() -> None:
-    asyncio.run(_test_codex_provider_validates_configured_executable())
-
-
-async def _test_codex_provider_validates_configured_executable() -> None:
-    seen: list[str] = []
-
-    async def check(
-        target: LaunchTarget, environment: Mapping[str, str]
-    ) -> dict[str, Any]:
-        seen.append(target.path)
-        assert environment["EXAMPLE"] == "1"
-        return {"status": "ok", "source": target.source, "path": target.path}
-
-    provider = CodexProvider(sdk_checker=_missing_sdk, command_checker=check)
-
-    config = await provider.validate_config(
-        {
-            "sdkMode": "app-server",
-            "executablePath": "/custom/codex",
-            "environment": {"EXAMPLE": "1"},
-        }
-    )
-
-    assert seen == ["/custom/codex"]
-    assert config.values["sdkMode"] == "app-server"
-    assert config.values["executablePath"] == "/custom/codex"
-    assert config.values["environment"] == {"EXAMPLE": "1"}
+    with pytest.raises(RuntimeInvalidRequestError, match="Additional properties"):
+        await provider.validate_config({"sdkMode": "app-server"})
+    with pytest.raises(RuntimeInvalidRequestError, match="Additional properties"):
+        await provider.validate_config({"ipcEnabled": True})
+    with pytest.raises(RuntimeInvalidRequestError, match="Additional properties"):
+        await provider.validate_config({"executablePath": "/opt/codex"})
 
 
 def test_codex_provider_rejects_protected_environment() -> None:
@@ -176,30 +108,12 @@ def test_codex_provider_rejects_protected_environment() -> None:
 
 
 async def _test_codex_provider_rejects_protected_environment() -> None:
-    provider = CodexProvider(
-        sdk_checker=_missing_sdk, command_checker=_available_command
-    )
+    provider = CodexProvider(sdk_checker=_available_sdk)
 
     with pytest.raises(RuntimeInvalidRequestError, match="managed by the connector"):
         await provider.validate_config(
             {"environment": {"AGENT_SERVER_URL": "http://x"}}
         )
-
-
-def test_codex_provider_creates_native_runtime() -> None:
-    asyncio.run(_test_codex_provider_creates_native_runtime())
-
-
-async def _test_codex_provider_creates_native_runtime() -> None:
-    provider = CodexProvider(
-        sdk_checker=_missing_sdk, command_checker=_available_command
-    )
-    config = await provider.validate_config({"sdkMode": "app-server"})
-
-    runtime = await provider.create_runtime(config, _NoHost())
-
-    assert isinstance(runtime, CodexRuntime)
-    assert await runtime.get_config() == config
 
 
 def test_codex_provider_creates_sdk_runtime() -> None:
@@ -214,15 +128,10 @@ async def _test_codex_provider_creates_sdk_runtime() -> None:
         return _FakeSdkClient()
 
     provider = CodexProvider(
-        sdk_checker=lambda: {
-            "available": True,
-            "package": "openai-codex",
-            "version": "1.0",
-        },
-        command_checker=_missing_command,
+        sdk_checker=_available_sdk,
         sdk_client_factory=factory,
     )
-    config = await provider.validate_config({"sdkMode": "sdk"})
+    config = await provider.validate_config({})
 
     runtime = await provider.create_runtime(config, _NoHost())
 
@@ -230,46 +139,30 @@ async def _test_codex_provider_creates_sdk_runtime() -> None:
     assert created == [config]
 
 
-def test_codex_provider_rejects_runtime_without_resolved_mode() -> None:
-    asyncio.run(_test_codex_provider_rejects_runtime_without_resolved_mode())
+def test_codex_provider_rejects_runtime_with_unavailable_sdk_metadata() -> None:
+    asyncio.run(_test_codex_provider_rejects_runtime_with_unavailable_sdk_metadata())
 
 
-async def _test_codex_provider_rejects_runtime_without_resolved_mode() -> None:
-    provider = CodexProvider(
-        sdk_checker=_missing_sdk, command_checker=_available_command
-    )
+async def _test_codex_provider_rejects_runtime_with_unavailable_sdk_metadata() -> None:
+    provider = CodexProvider(sdk_checker=_available_sdk)
 
-    with pytest.raises(RuntimeInvalidRequestError, match="sdkMode=sdk"):
+    with pytest.raises(RuntimeInvalidRequestError, match="SDK is not available"):
         await provider.create_runtime(
-            RuntimeConfig(runtime="codex", revision=1, values={"sdkMode": "auto"}),
+            RuntimeConfig(
+                runtime="codex",
+                revision=1,
+                values={"environment": {}},
+                metadata={"sdk": _missing_sdk()},
+            ),
             _NoHost(),
         )
 
 
-async def _available_command(
-    target: LaunchTarget,
-    environment: Mapping[str, str],
-) -> dict[str, Any]:
-    _ = environment
-    selected = launch_target("cli", "/opt/codex")
+def _available_sdk() -> dict[str, Any]:
     return {
-        "status": "ok",
-        "source": selected.source,
-        "path": selected.path,
-        "version": "codex 1.0",
-    }
-
-
-async def _missing_command(
-    target: LaunchTarget,
-    environment: Mapping[str, str],
-) -> dict[str, Any]:
-    _ = environment
-    return {
-        "status": "missing",
-        "source": target.source,
-        "path": target.path,
-        "reason": "file not found",
+        "available": True,
+        "package": "openai-codex",
+        "version": "1.0",
     }
 
 

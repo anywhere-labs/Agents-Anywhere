@@ -207,9 +207,11 @@ Each runtime package owns:
 - native event reduction into protocol timeline/state/selection projections
 - runtime-specific sync state keys
 
-For example, Codex owns the official SDK adapter, fallback app-server transport,
-local rollout history, and Codex reducer logic. Claude owns SDK integration,
-transcript/history normalization, and trust handling.
+For example, active Codex owns the official SDK adapter, local rollout history,
+and Codex reducer logic. Historical Codex app-server and IPC implementations
+live under `_reference/codex` and are not imported by active provider/runtime
+code. Claude owns SDK integration, transcript/history normalization, and trust
+handling.
 
 Runtime packages implement `AgentRuntime` and call `RuntimeHostClient`.
 
@@ -262,7 +264,13 @@ AgentRuntime
 
 `AgentRuntime` answers: once started, how do we interact with this runtime, including reading its effective runtime-owned config.
 
-This separation keeps discovery/bootstrap details out of session operations, while still making runtime config visible through the generic runtime protocol. For example, Codex SDK mode, Codex IPC enablement, executable path, and local feature flags belong to runtime config, not to `ConnectorConfig`. Config mutation flows through `RuntimeProvider` and the supervisor, not through a running `AgentRuntime`.
+This separation keeps discovery/bootstrap details out of session operations,
+while still making runtime config visible through the generic runtime protocol.
+For example, Codex active runtime config currently contains only SDK runtime
+environment overrides; Claude owns its executable discovery path; future local
+feature flags belong to runtime config, not to `ConnectorConfig`. Config
+mutation flows through `RuntimeProvider` and the supervisor, not through a
+running `AgentRuntime`.
 
 ## Provider and supervisor
 
@@ -429,10 +437,10 @@ core -> server/runtime_protocol/runtimes/local
    - command execution must not create a normal user message.
 2. Finish live state fidelity:
    - `SessionState.status` is the UI running-state source;
-   - tool calls and IPC events keep status interruptible while work is active.
-3. Finish Codex IPC parity:
-   - map IPC state/timeline/notice changes into host-client calls;
-   - keep IPC-specific method names inside the Codex runtime package.
+   - tool calls and SDK events keep status interruptible while work is active.
+3. Finish Codex SDK parity:
+   - map SDK state/timeline/notice changes into host-client calls;
+   - keep SDK-specific method names inside the Codex runtime package.
 4. Finish create-and-start attachment design:
    - current create-and-start path is text-first;
    - new-session attachment upload needs a draft/preallocation flow before it

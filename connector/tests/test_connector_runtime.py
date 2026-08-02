@@ -412,11 +412,11 @@ class FakeAgentProvider(RuntimeProvider):
             schema={
                 "type": "object",
                 "properties": {
-                    "executablePath": {"type": "string"},
+                    "environment": {"type": "object"},
                 },
             },
-            ui_schema={"executablePath": {"ui:widget": "file"}},
-            defaults={"sdkMode": "auto"},
+            ui_schema={"environment": {"component": "keyValue"}},
+            defaults={"environment": {}},
         )
 
     async def validate_config(self, values) -> RuntimeConfig:  # type: ignore[no-untyped-def]
@@ -1366,11 +1366,11 @@ async def _exercise_runtime_config_schema_read() -> None:
         "schema": {
             "type": "object",
             "properties": {
-                "executablePath": {"type": "string"},
+                "environment": {"type": "object"},
             },
         },
-        "uiSchema": {"executablePath": {"ui:widget": "file"}},
-        "defaults": {"sdkMode": "auto"},
+        "uiSchema": {"environment": {"component": "keyValue"}},
+        "defaults": {"environment": {}},
         "metadata": {},
     }
 
@@ -1378,7 +1378,7 @@ async def _exercise_runtime_config_schema_read() -> None:
 async def _exercise_runtime_config_read(tmp_path) -> None:
     runtime = FakeAgentRuntime("codex")
     store = JsonRuntimeConfigStore(tmp_path / "runtime-configs.json")
-    store.save("codex", {"sdkMode": "auto"})
+    store.save("codex", {"environment": {}})
     client = _client(runtime=runtime, runtime_config_store=store)
     client._rpc.set_connection(FakeWebSocket())  # type: ignore[arg-type]
 
@@ -1387,7 +1387,7 @@ async def _exercise_runtime_config_read(tmp_path) -> None:
         "runtime.start",
         {
             "runtimeId": "codex",
-            "config": {"sdkMode": "app-server", "executablePath": "/opt/codex"},
+            "config": {"environment": {"EXAMPLE": "1"}},
         },
     )
     running = await client.dispatch("runtime.config", {"runtimeId": "codex"})
@@ -1396,7 +1396,7 @@ async def _exercise_runtime_config_read(tmp_path) -> None:
         "runtimeId": "codex",
         "running": False,
         "config": None,
-        "savedValues": {"sdkMode": "auto"},
+        "savedValues": {"environment": {}},
     }
     assert running == {
         "runtimeId": "codex",
@@ -1404,17 +1404,17 @@ async def _exercise_runtime_config_read(tmp_path) -> None:
         "config": {
             "runtime": "codex",
             "revision": 1,
-            "values": {"sdkMode": "app-server", "executablePath": "/opt/codex"},
+            "values": {"environment": {"EXAMPLE": "1"}},
             "schema": {
                 "type": "object",
                 "properties": {
-                    "executablePath": {"type": "string"},
+                    "environment": {"type": "object"},
                 },
             },
-            "uiSchema": {"executablePath": {"ui:widget": "file"}},
+            "uiSchema": {"environment": {"component": "keyValue"}},
             "metadata": {"validated": True},
         },
-        "savedValues": {"sdkMode": "app-server", "executablePath": "/opt/codex"},
+        "savedValues": {"environment": {"EXAMPLE": "1"}},
     }
 
 
@@ -1422,7 +1422,7 @@ async def _exercise_saved_runtime_config_startup(tmp_path) -> None:
     codex = FakeAgentRuntime("codex")
     claude = FakeAgentRuntime("claude")
     store = JsonRuntimeConfigStore(tmp_path / "runtime-configs.json")
-    store.save("codex", {"sdkMode": "auto"})
+    store.save("codex", {"environment": {}})
     store.save("claude", {"executablePath": "/opt/claude"})
     store.save("unknown", {"ignored": True})
     client = _client(
@@ -1439,7 +1439,7 @@ async def _exercise_saved_runtime_config_startup(tmp_path) -> None:
 
     assert codex.started is True
     assert claude.started is True
-    assert client.agent_runtime_supervisor.entry("codex").config.values == {"sdkMode": "auto"}
+    assert client.agent_runtime_supervisor.entry("codex").config.values == {"environment": {}}
     assert client.agent_runtime_supervisor.entry("claude").config.values == {"executablePath": "/opt/claude"}
     assert [message["params"] for message in ws.messages if message["method"] == "runtime.statusChanged"][-2:] == [
         {"runtimeId": "claude", "status": "starting"},

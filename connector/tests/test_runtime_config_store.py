@@ -15,36 +15,36 @@ def test_runtime_config_store_saves_loads_and_deletes_runtime_values(tmp_path) -
     path = tmp_path / "runtime-configs.json"
     store = JsonRuntimeConfigStore(path)
 
-    assert store.load("codex") == {}
+    assert store.load("fake") == {}
 
     store.save(
-        "codex",
+        "fake",
         {
-            "sdkMode": "auto",
-            "ipcEnabled": True,
+            "mode": "auto",
+            "enabled": True,
             "environment": {"EXAMPLE": "1"},
         },
     )
     store.save("claude", {"executablePath": "/opt/claude"})
 
-    assert store.load("codex") == {
-        "sdkMode": "auto",
-        "ipcEnabled": True,
+    assert store.load("fake") == {
+        "mode": "auto",
+        "enabled": True,
         "environment": {"EXAMPLE": "1"},
     }
     assert store.load_all() == {
         "claude": {"executablePath": "/opt/claude"},
-        "codex": {
-            "sdkMode": "auto",
-            "ipcEnabled": True,
+        "fake": {
+            "mode": "auto",
+            "enabled": True,
             "environment": {"EXAMPLE": "1"},
         },
     }
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
-    store.delete("codex")
+    store.delete("fake")
 
-    assert store.load("codex") == {}
+    assert store.load("fake") == {}
     assert store.load("claude") == {"executablePath": "/opt/claude"}
 
 
