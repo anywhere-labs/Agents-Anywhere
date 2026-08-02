@@ -33,9 +33,9 @@ import type {
 import { useTranslations } from "next-intl"
 import {
   modelIdsForSelectionId,
-  modelSelectionIdForCatalog,
   permissionIdForSelectionId,
-  permissionSelectionIdForCatalog,
+  selectionIdForModelCatalog,
+  selectionIdForPermissionCatalog,
 } from "@/components/session/catalog-selection"
 import { SelectionSettingsDrawer } from "@/components/session/selection-settings-drawer"
 import { CAPABILITY, capabilityIsUsable, findCapability } from "@/components/session/capabilities"
@@ -78,7 +78,7 @@ export function SessionComposer({
   onSend: (
     content: string,
     attachments: AttachedFile[],
-    selections: { modelSelectionId?: string; permissionSelectionId?: string },
+    selections: { model?: string; permission?: string },
   ) => Promise<boolean>
   onInterrupt: () => void
   onCommand: (command: SessionCommandId, options: { args: string[]; raw: string }) => void
@@ -177,8 +177,8 @@ export function SessionComposer({
       : effortItems.find((item) => item.default)?.id ?? effortItems[0]?.id ?? ""
     setSelectedReasoning((current) => current && effortItems.some((item) => item.id === current) ? current : nextEffort)
   }, [effortItems, effortValue])
-  const modelSelectionId = modelSelectionIdForCatalog(modelCatalog, selectedModel, selectedReasoning)
-  const permissionSelectionId = permissionSelectionIdForCatalog(permissionCatalog, selectedPermissionMode)
+  const selectedModelSelection = selectionIdForModelCatalog(modelCatalog, selectedModel, selectedReasoning)
+  const selectedPermissionSelection = selectionIdForPermissionCatalog(permissionCatalog, selectedPermissionMode)
   const placeholder = creatingSession
     ? tSession("creatingPlaceholder")
     : !session.takeover
@@ -239,8 +239,8 @@ export function SessionComposer({
     onValueChange("")
     clear()
     await onSend(text, files, {
-      ...(modelSelectionId ? { modelSelectionId } : {}),
-      ...(permissionSelectionId ? { permissionSelectionId } : {}),
+      ...(selectedModelSelection ? { model: selectedModelSelection } : {}),
+      ...(selectedPermissionSelection ? { permission: selectedPermissionSelection } : {}),
     })
   }
 

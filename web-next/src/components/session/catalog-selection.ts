@@ -2,7 +2,7 @@
 
 import type { ProtocolModelCatalog, ProtocolPermissionCatalog } from "@/features/dashboard/types"
 
-export function modelSelectionIdForCatalog(
+export function selectionIdForModelCatalog(
   catalog: ProtocolModelCatalog | null,
   modelId: string,
   reasoningId: string,
@@ -29,7 +29,7 @@ export function modelIdsForSelectionId(
   return null
 }
 
-export function permissionSelectionIdForCatalog(
+export function selectionIdForPermissionCatalog(
   catalog: ProtocolPermissionCatalog | null,
   permissionId: string,
 ): string | null {

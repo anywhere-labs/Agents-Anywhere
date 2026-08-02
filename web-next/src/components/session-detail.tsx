@@ -207,17 +207,14 @@ function nextOptimisticRuntimeState(
 
 function selectionPatchFromComposerSelections(
   current: Record<string, string | null>,
-  selections: { modelSelectionId?: string; permissionSelectionId?: string },
+  selections: { model?: string; permission?: string },
 ): Record<string, string | null> {
   const patch: Record<string, string | null> = {}
-  if (selections.modelSelectionId && selections.modelSelectionId !== current.model) {
-    patch.model = selections.modelSelectionId
+  if (selections.model && selections.model !== current.model) {
+    patch.model = selections.model
   }
-  if (
-    selections.permissionSelectionId &&
-    selections.permissionSelectionId !== current.permission
-  ) {
-    patch.permission = selections.permissionSelectionId
+  if (selections.permission && selections.permission !== current.permission) {
+    patch.permission = selections.permission
   }
   return patch
 }
@@ -692,7 +689,7 @@ export function SessionDetail({
   const handleSend = async (
     content: string,
     attachments: AttachedFile[],
-    selections: { modelSelectionId?: string; permissionSelectionId?: string },
+    selections: { model?: string; permission?: string },
   ): Promise<boolean> => {
     if (!session || (!content.trim() && attachments.length === 0)) return false
     const clientMessageId = createClientId("msg")

@@ -46,9 +46,9 @@ import type {
 import { useTranslations } from "next-intl"
 import {
   modelIdsForSelectionId,
-  modelSelectionIdForCatalog,
   permissionIdForSelectionId,
-  permissionSelectionIdForCatalog,
+  selectionIdForModelCatalog,
+  selectionIdForPermissionCatalog,
 } from "@/components/session/catalog-selection"
 import { CAPABILITY, capabilityIsUsable } from "@/components/session/capabilities"
 
@@ -446,8 +446,8 @@ export function TaskComposer() {
   const effortLabel = selectedReasoningOption?.label ?? t("defaultReasoning")
   const permissionLabel = selectedPermissionOption?.label ?? t("permissionMode")
   const permissionDrawerItems = permissionOptions
-  const modelSelectionId = modelSelectionIdForCatalog(modelCatalog, selectedModel, selectedReasoning)
-  const permissionSelectionId = permissionSelectionIdForCatalog(permissionCatalog, selectedPermissionMode)
+  const selectedModelSelection = selectionIdForModelCatalog(modelCatalog, selectedModel, selectedReasoning)
+  const selectedPermissionSelection = selectionIdForPermissionCatalog(permissionCatalog, selectedPermissionMode)
   const requiresModelSelection = canUseModelCatalog && models.length > 0
   const requiresPermissionSelection = canUsePermissionCatalog && permissionOptions.length > 0
   const hasSelectionSettings = models.length > 0 || permissionOptions.length > 0
@@ -455,8 +455,8 @@ export function TaskComposer() {
     Boolean(authSession?.accessToken && selectedConnector && selectedAgent) &&
     !creating &&
     !catalogsLoading &&
-    (!requiresModelSelection || Boolean(modelSelectionId)) &&
-    (!requiresPermissionSelection || Boolean(permissionSelectionId)) &&
+    (!requiresModelSelection || Boolean(selectedModelSelection)) &&
+    (!requiresPermissionSelection || Boolean(selectedPermissionSelection)) &&
     (prompt.trim().length > 0 || attachments.length > 0)
   const selectorsLoading =
     runtimeInventoryLoading || (
@@ -469,8 +469,8 @@ export function TaskComposer() {
     if (!authSession?.accessToken || !selectedConnector || !selectedAgent || creating) return
     if (!prompt.trim() && attachments.length === 0) return
     if (catalogsLoading) return
-    if (requiresModelSelection && !modelSelectionId) return
-    if (requiresPermissionSelection && !permissionSelectionId) return
+    if (requiresModelSelection && !selectedModelSelection) return
+    if (requiresPermissionSelection && !selectedPermissionSelection) return
     if (attachments.length > 0) {
       toast.error(t("newSessionAttachmentsUnsupported"))
       return
@@ -511,8 +511,8 @@ export function TaskComposer() {
       externalSessionId: null,
       status: "waiting" as const,
       selections: {
-        ...(modelSelectionId ? { model: modelSelectionId } : {}),
-        ...(permissionSelectionId ? { permission: permissionSelectionId } : {}),
+        ...(selectedModelSelection ? { model: selectedModelSelection } : {}),
+        ...(selectedPermissionSelection ? { permission: selectedPermissionSelection } : {}),
       },
       statusReason: null,
       error: null,
@@ -542,8 +542,8 @@ export function TaskComposer() {
     setCreating(true)
     try {
       const selections = {
-        ...(modelSelectionId ? { model: modelSelectionId } : {}),
-        ...(permissionSelectionId ? { permission: permissionSelectionId } : {}),
+        ...(selectedModelSelection ? { model: selectedModelSelection } : {}),
+        ...(selectedPermissionSelection ? { permission: selectedPermissionSelection } : {}),
       }
       const createBody = {
         connectorId: selectedConnector.id,
@@ -556,8 +556,8 @@ export function TaskComposer() {
         selectedConnector.id,
         selectedAgent,
         {
-          model: modelSelectionId,
-          permission: permissionSelectionId,
+          model: selectedModelSelection,
+          permission: selectedPermissionSelection,
         },
       )
       writeNewSessionPreference(nextPreference)
@@ -901,20 +901,13 @@ function readNewSessionSelectionPreferences(value: unknown): Record<string, NewS
   const result: Record<string, NewSessionSelectionPreference> = {}
   for (const [scope, rawSelection] of Object.entries(value)) {
     if (!scope || !rawSelection || typeof rawSelection !== "object" || Array.isArray(rawSelection)) continue
-    const selection = rawSelection as Partial<NewSessionSelectionPreference> & {
-      modelSelectionId?: unknown
-      permissionSelectionId?: unknown
-    }
+    const selection = rawSelection as Partial<NewSessionSelectionPreference>
     const model = typeof selection.model === "string" && selection.model
       ? selection.model
-      : typeof selection.modelSelectionId === "string" && selection.modelSelectionId
-        ? selection.modelSelectionId
-        : null
+      : null
     const permission = typeof selection.permission === "string" && selection.permission
       ? selection.permission
-      : typeof selection.permissionSelectionId === "string" && selection.permissionSelectionId
-        ? selection.permissionSelectionId
-        : null
+      : null
     if (!model && !permission) continue
     result[scope] = {
       model,
