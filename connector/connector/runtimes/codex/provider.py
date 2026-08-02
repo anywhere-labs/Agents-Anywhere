@@ -21,11 +21,11 @@ from connector.runtime_protocol import (
     RuntimeProvider,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
-from connector.runtimes.codex.runtime import (
-    CodexRuntime,
+from connector.runtimes.codex.client import (
     EmptyCodexClient,
     app_server_client_from_config,
 )
+from connector.runtimes.codex.runtime import CodexRuntime
 
 SdkMode = Literal["auto", "sdk", "app-server"]
 CommandChecker = Callable[[LaunchTarget, Mapping[str, str]], Awaitable[dict[str, Any]]]
