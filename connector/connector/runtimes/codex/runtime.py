@@ -23,18 +23,14 @@ from connector.runtime_protocol import (
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex import sessions as codex_sessions
-from connector.runtimes.codex import timeline as codex_timeline
-from connector.runtimes.codex.approvals import (
-    approval_decision,
-    approval_notice_from_request,
-    is_approval_request,
-)
+from connector.runtimes.codex.approvals import approval_decision
 from connector.runtimes.codex.catalogs import (
     codex_permission_catalog_items,
     model_catalog_from_codex_items,
     permission_catalog_from_codex_items,
 )
 from connector.runtimes.codex.commands import list_codex_commands
+from connector.runtimes.codex.notifications import CodexNotificationProjector
 from connector.runtimes.codex.runtime_client import CodexRuntimeClient
 from connector.runtimes.codex.runtime_helpers import (
     ensure_text_only_attachments,
@@ -44,6 +40,7 @@ from connector.runtimes.codex.selection import (
     model_settings_from_selection,
     permission_settings_from_selection,
 )
+from connector.runtimes.codex.session_reader import CodexSessionReader
 from connector.runtimes.codex.timeline_accumulator import CodexTimelineAccumulator
 
 
@@ -60,6 +57,18 @@ class CodexRuntime(AgentRuntime):
         self._session_states = RuntimeSessionStateCache("codex", self.host)
         self._active_turn_ids: dict[str, str] = {}
         self._timeline = CodexTimelineAccumulator()
+        self._notifications = CodexNotificationProjector(
+            host=self.host,
+            session_states=self._session_states,
+            active_turn_ids=self._active_turn_ids,
+            timeline=self._timeline,
+        )
+        self._session_reader = CodexSessionReader(
+            host=self.host,
+            client=self.client,
+            session_states=self._session_states,
+            ensure_started=self.start,
+        )
 
     @property
     def identity(self) -> RuntimeIdentity:
@@ -138,63 +147,16 @@ class CodexRuntime(AgentRuntime):
         cursor: str | None = None,
         force: bool = False,
     ) -> tuple[SessionMeta, ...]:
-        _ = cursor
-        _ = force
-        if self.client is None:
-            return ()
-        await self.start()
-        result = await self.client.request(
-            "thread/list",
-            {
-                "limit": limit,
-                "sortKey": "updated_at",
-            },
-        )
-        sessions: list[SessionMeta] = []
-        for thread_ref in codex_sessions.thread_refs_from_list_result(result):
-            if codex_sessions.local_thread_state(thread_ref) in {
-                "archived",
-                "deleted",
-                "unresumable",
-            }:
-                continue
-            thread_id = codex_sessions.thread_id_from_result(thread_ref)
-            if thread_id is None:
-                continue
-            sessions.append(
-                SessionMeta(
-                    session_id=codex_sessions.stable_session_id(
-                        self.host.connector_id, thread_id
-                    ),
-                    external_session_id=thread_id,
-                    runtime="codex",
-                    title=codex_sessions.thread_title(thread_ref),
-                    cwd=codex_sessions.thread_cwd(thread_ref),
-                    ordering_time=codex_sessions.thread_ordering_time(thread_ref),
-                    metadata={
-                        "local_state": codex_sessions.local_thread_state(thread_ref),
-                        "source": "codex.thread/list",
-                    },
-                )
-            )
-        return tuple(sessions[:limit])
+        return await self._session_reader.list_sessions(limit, cursor, force)
 
     async def get_session_state(
         self,
         session_id: str,
         external_session_id: str | None = None,
     ) -> SessionState | None:
-        cached = self._session_states.get(session_id)
-        if cached is not None:
-            return cached
-        if external_session_id is None:
-            return None
-        return SessionState(
-            session_id=session_id,
-            external_session_id=external_session_id,
-            runtime="codex",
-            status="idle",
-            metadata={"source": "codex.runtime.basic"},
+        return await self._session_reader.get_session_state(
+            session_id,
+            external_session_id,
         )
 
     async def get_session_snapshot(
@@ -203,39 +165,10 @@ class CodexRuntime(AgentRuntime):
         external_session_id: str | None = None,
         limit: int = 100,
     ) -> RuntimeTimelineSnapshot:
-        if self.client is None or external_session_id is None:
-            return RuntimeTimelineSnapshot(
-                session_id=session_id,
-                external_session_id=external_session_id,
-                runtime="codex",
-                items=(),
-                complete=True,
-                metadata={"source": "codex.runtime.basic"},
-            )
-        await self.start()
-        result = await self.client.request(
-            "thread/read",
-            {
-                "threadId": external_session_id,
-                "includeTurns": True,
-            },
-        )
-        thread = (
-            result.get("thread") if isinstance(result.get("thread"), dict) else result
-        )
-        items = codex_timeline.timeline_items_from_thread(
-            session_id=session_id,
-            external_session_id=external_session_id,
-            thread=thread if isinstance(thread, dict) else {},
-            limit=limit,
-        )
-        return RuntimeTimelineSnapshot(
-            session_id=session_id,
-            external_session_id=external_session_id,
-            runtime="codex",
-            items=items,
-            complete=True,
-            metadata={"source": "codex.thread/read"},
+        return await self._session_reader.get_session_snapshot(
+            session_id,
+            external_session_id,
+            limit,
         )
 
     async def create_and_start_session(
@@ -599,88 +532,7 @@ class CodexRuntime(AgentRuntime):
                 self._model_list_result = result
 
     async def _handle_notification(self, message: dict[str, Any]) -> None:
-        method = message.get("method")
-        params = (
-            message.get("params") if isinstance(message.get("params"), dict) else {}
-        )
-        thread_id = codex_sessions.thread_id_from_result(params)
-        session_id = codex_sessions.session_id_from_notification(params)
-        if session_id is None and thread_id is not None:
-            session_id = codex_sessions.stable_session_id(
-                self.host.connector_id, thread_id
-            )
-        if session_id is None or thread_id is None:
-            return
-        if is_approval_request(method):
-            turn_id = codex_sessions.turn_id_from_result(
-                params
-            ) or self._active_turn_ids.get(session_id)
-            if turn_id is not None:
-                self._active_turn_ids[session_id] = turn_id
-            notice = approval_notice_from_request(
-                session_id=session_id,
-                thread_id=thread_id,
-                method=str(method),
-                params=params,
-                request_id=message.get("id"),
-                turn_id=turn_id,
-            )
-            await self.host.notice_upsert(notice)
-            await self._set_session_state(
-                session_id=session_id,
-                external_session_id=thread_id,
-                status="blocked",
-                metadata={
-                    "source": str(method),
-                    "notice_id": notice.notice_id,
-                    **({"turn_id": turn_id} if turn_id else {}),
-                },
-            )
-            return
-        if method == "turn/started":
-            turn_id = codex_sessions.turn_id_from_result(params)
-            if turn_id is not None:
-                self._active_turn_ids[session_id] = turn_id
-            await self._set_session_state(
-                session_id=session_id,
-                external_session_id=thread_id,
-                status="running",
-                metadata={
-                    "source": "codex.turn/started",
-                    **({"turn_id": turn_id} if turn_id else {}),
-                },
-            )
-        elif method == "turn/completed":
-            self._active_turn_ids.pop(session_id, None)
-            turn_items = self._timeline.items_from_turn_notification(
-                session_id=session_id,
-                external_session_id=thread_id,
-                params=params,
-                method=method,
-            )
-            if turn_items:
-                await self.host.timeline_sync(
-                    session_id=session_id,
-                    runtime="codex",
-                    external_session_id=thread_id,
-                    items=turn_items,
-                    complete=False,
-                    metadata={"source": "codex.turn/completed"},
-                )
-            await self._set_session_state(
-                session_id=session_id,
-                external_session_id=thread_id,
-                status="idle",
-                metadata={"source": "codex.turn/completed"},
-            )
-        item = self._timeline.item_from_notification(
-            session_id=session_id,
-            external_session_id=thread_id,
-            method=str(method),
-            params=params,
-        )
-        if item is not None:
-            await self.host.timeline_item_upsert(item)
+        await self._notifications.handle(message)
 
     async def _set_session_state(
         self,
