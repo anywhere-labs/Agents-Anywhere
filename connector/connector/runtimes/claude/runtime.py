@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import hashlib
-import json
 import secrets
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -26,8 +24,15 @@ from connector.runtime_protocol import (
 )
 from connector.runtime_protocol.attachments import attachment_target
 from connector.runtime_protocol.host import RuntimeHostClient
+from connector.runtimes.claude import (
+    approvals,
+    timeline,
+    utils,
+)
+from connector.runtimes.claude import (
+    options as claude_options,
+)
 from connector.runtimes.claude import permissions as permission_catalogs
-from connector.runtimes.claude import timeline, utils
 
 SdkLoader = Callable[[], Any]
 ClaudeClientFactory = Callable[[Any, Mapping[str, Any]], Any]
@@ -126,7 +131,9 @@ class ClaudeRuntime(AgentRuntime):
         query: str | None = None,
         limit: int = 100,
     ) -> RuntimePermissionCatalog:
-        permissions = permission_catalogs.claude_permissions(self.config.revision).permissions
+        permissions = permission_catalogs.claude_permissions(
+            self.config.revision
+        ).permissions
         if query:
             lowered = query.casefold()
             permissions = tuple(
@@ -160,12 +167,17 @@ class ClaudeRuntime(AgentRuntime):
                 continue
             sessions.append(
                 SessionMeta(
-                    session_id=stable_session_id(self.host.connector_id, external_session_id),
+                    session_id=utils.stable_session_id(
+                        self.host.connector_id, external_session_id
+                    ),
                     external_session_id=external_session_id,
                     runtime="claude",
-                    title=utils.string_attr(item, "custom_title") or utils.string_attr(item, "summary"),
+                    title=utils.string_attr(item, "custom_title")
+                    or utils.string_attr(item, "summary"),
                     cwd=utils.string_attr(item, "cwd"),
-                    ordering_time=utils.timestamp_from_ms(utils.int_attr(item, "last_modified")),
+                    ordering_time=utils.timestamp_from_ms(
+                        utils.int_attr(item, "last_modified")
+                    ),
                     metadata={
                         "local_state": "active",
                         "source": "claude-agent-sdk.list_sessions",
@@ -207,8 +219,12 @@ class ClaudeRuntime(AgentRuntime):
             )
         await self.start()
         sdk = self._require_sdk()
-        session_info = timeline.get_session_info(sdk, external_session_id, directory=None)
-        messages = timeline.get_session_messages(sdk, external_session_id, directory=utils.string_attr(session_info, "cwd"))
+        session_info = timeline.get_session_info(
+            sdk, external_session_id, directory=None
+        )
+        messages = timeline.get_session_messages(
+            sdk, external_session_id, directory=utils.string_attr(session_info, "cwd")
+        )
         items = timeline.timeline_items_from_messages(
             session_id=session_id,
             external_session_id=external_session_id,
@@ -327,14 +343,22 @@ class ClaudeRuntime(AgentRuntime):
                 code="claude_steer_unavailable",
                 message="Claude SDK client is not ready to receive steering input",
             )
-        await client.query(timeline.prompt_stream(await self._materialize_content(session_id, content, attachments)))
+        await client.query(
+            timeline.prompt_stream(
+                await self._materialize_content(session_id, content, attachments)
+            )
+        )
         await self._set_session_state(
             session_id=session.session_id,
             external_session_id=session.external_session_id,
             status="running",
             metadata={
                 "source": "claude.turn/steer",
-                **({"turn_id": session.active_turn_id} if session.active_turn_id else {}),
+                **(
+                    {"turn_id": session.active_turn_id}
+                    if session.active_turn_id
+                    else {}
+                ),
                 **({"clientMessageId": client_message_id} if client_message_id else {}),
             },
         )
@@ -375,7 +399,11 @@ class ClaudeRuntime(AgentRuntime):
             metadata={
                 "source": "claude.turn/interrupt",
                 **({"reason": reason} if reason else {}),
-                **({"turn_id": session.active_turn_id} if session.active_turn_id else {}),
+                **(
+                    {"turn_id": session.active_turn_id}
+                    if session.active_turn_id
+                    else {}
+                ),
             },
         )
         turn_id = session.active_turn_id
@@ -383,7 +411,9 @@ class ClaudeRuntime(AgentRuntime):
         return RuntimeOperationResult(
             ok=interrupted,
             code=None if interrupted else "claude_interrupt_unavailable",
-            message=None if interrupted else "Claude SDK client did not expose interrupt",
+            message=None
+            if interrupted
+            else "Claude SDK client did not expose interrupt",
             result={"interrupted": interrupted, "turnId": turn_id},
         )
 
@@ -409,7 +439,7 @@ class ClaudeRuntime(AgentRuntime):
                 code="claude_interaction_not_pending",
                 message="Claude interaction is not pending",
             )
-        normalized_action = _normalize_approval_action(action_id)
+        normalized_action = approvals.normalize_approval_action(action_id)
         if normalized_action is None:
             return RuntimeOperationResult(
                 ok=False,
@@ -485,7 +515,13 @@ class ClaudeRuntime(AgentRuntime):
             query = getattr(client, "query", None)
             if not callable(query):
                 raise RuntimeUnsupportedError("ClaudeSDKClient.query")
-            await query(timeline.prompt_stream(await self._materialize_content(session.session_id, content, attachments)))
+            await query(
+                timeline.prompt_stream(
+                    await self._materialize_content(
+                        session.session_id, content, attachments
+                    )
+                )
+            )
             await self.host.timeline_item_upsert(
                 timeline.message_item(
                     session_id=session.session_id,
@@ -494,8 +530,22 @@ class ClaudeRuntime(AgentRuntime):
                     role="user",
                     text=content,
                     source_event="claude.turn/start.user",
-                    order_seq=self._order_for(utils.stable_item_id("claude_user", session.session_id, turn_id, client_message_id, content)),
-                    item_id=utils.stable_item_id("claude_user", session.session_id, turn_id, client_message_id, content),
+                    order_seq=self._order_for(
+                        utils.stable_item_id(
+                            "claude_user",
+                            session.session_id,
+                            turn_id,
+                            client_message_id,
+                            content,
+                        )
+                    ),
+                    item_id=utils.stable_item_id(
+                        "claude_user",
+                        session.session_id,
+                        turn_id,
+                        client_message_id,
+                        content,
+                    ),
                     client_message_id=client_message_id,
                 )
             )
@@ -525,7 +575,9 @@ class ClaudeRuntime(AgentRuntime):
                 metadata={"source": "claude.turn/cancelled", "turn_id": turn_id},
             )
         except Exception as exc:  # noqa: BLE001
-            logger.exception("claude runtime turn failed session_id={}", session.session_id)
+            logger.exception(
+                "claude runtime turn failed session_id={}", session.session_id
+            )
             await self._set_session_state(
                 session_id=session.session_id,
                 external_session_id=session.external_session_id,
@@ -546,7 +598,14 @@ class ClaudeRuntime(AgentRuntime):
                     logger.exception("disconnecting Claude SDK client failed")
 
     def _new_client(self, sdk: Any, session: _ClaudeSession) -> Any:
-        options = _sdk_options(sdk, self.config, session, self._can_use_tool)
+        options = claude_options.sdk_options(
+            sdk=sdk,
+            config_values=self.config.values,
+            cwd=session.cwd,
+            external_session_id=session.external_session_id,
+            permission_selection=session.selections.get("permission"),
+            can_use_tool=self._can_use_tool,
+        )
         if self.client_factory is not None:
             return self.client_factory(sdk, options)
         client_cls = getattr(sdk, "ClaudeSDKClient", None)
@@ -557,18 +616,26 @@ class ClaudeRuntime(AgentRuntime):
         except TypeError:
             return client_cls(options)
 
-    async def _can_use_tool(self, tool_name: str, input_data: dict[str, Any], context: Any = None) -> Any:
+    async def _can_use_tool(
+        self, tool_name: str, input_data: dict[str, Any], context: Any = None
+    ) -> Any:
         sdk = self._require_sdk()
-        context_session_id = utils.string(utils.extract_attr(context, "session_id", "sessionId"))
+        context_session_id = utils.string(
+            utils.extract_attr(context, "session_id", "sessionId")
+        )
         session = self._session_from_context(context_session_id)
         if session is None:
-            return _permission_deny(sdk, "Session is not registered")
-        approval_id = _approval_id(session.session_id, session.active_turn_id, tool_name, input_data)
+            return approvals.permission_deny(sdk, "Session is not registered")
+        approval_id = approvals.approval_id(
+            session.session_id, session.active_turn_id, tool_name, input_data
+        )
         loop = asyncio.get_running_loop()
         future: asyncio.Future[str] = loop.create_future()
-        notice = _approval_notice(
+        notice = approvals.approval_notice(
             approval_id=approval_id,
-            session=session,
+            session_id=session.session_id,
+            external_session_id=session.external_session_id,
+            active_turn_id=session.active_turn_id,
             tool_name=tool_name,
             input_data=input_data,
             status="open",
@@ -586,17 +653,23 @@ class ClaudeRuntime(AgentRuntime):
             metadata={
                 "source": "claude.approval/requested",
                 "approval_id": approval_id,
-                **({"turn_id": session.active_turn_id} if session.active_turn_id else {}),
+                **(
+                    {"turn_id": session.active_turn_id}
+                    if session.active_turn_id
+                    else {}
+                ),
             },
         )
         await self.host.notice_upsert(notice)
         action = await future
         session.pending_approvals.pop(approval_id, None)
         if action in {"approve", "approve_for_session"}:
-            return _permission_allow(sdk, input_data)
-        return _permission_deny(sdk, "User denied or interrupted this action")
+            return approvals.permission_allow(sdk, input_data)
+        return approvals.permission_deny(sdk, "User denied or interrupted this action")
 
-    def _session_from_context(self, external_session_id: str | None) -> _ClaudeSession | None:
+    def _session_from_context(
+        self, external_session_id: str | None
+    ) -> _ClaudeSession | None:
         if external_session_id:
             for session in self._sessions.values():
                 if session.external_session_id == external_session_id:
@@ -622,10 +695,19 @@ class ClaudeRuntime(AgentRuntime):
         blocks: list[dict[str, Any]] = [{"type": "text", "text": content}]
         for attachment in attachments:
             try:
-                downloaded = await self.host.attachment_download(session_id, attachment.file_id)
+                downloaded = await self.host.attachment_download(
+                    session_id, attachment.file_id
+                )
             except Exception as exc:  # noqa: BLE001
-                logger.exception("Claude attachment download failed file_id={}", attachment.file_id)
-                blocks.append({"type": "text", "text": f"\n\n[Failed to load attachment {attachment.file_id}: {exc}]"})
+                logger.exception(
+                    "Claude attachment download failed file_id={}", attachment.file_id
+                )
+                blocks.append(
+                    {
+                        "type": "text",
+                        "text": f"\n\n[Failed to load attachment {attachment.file_id}: {exc}]",
+                    }
+                )
                 continue
             name = downloaded.name or attachment.name or attachment.file_id
             target = attachment_target(session_id, attachment.file_id, name)
@@ -638,11 +720,15 @@ class ClaudeRuntime(AgentRuntime):
                         "source": {
                             "type": "base64",
                             "media_type": downloaded.media_type,
-                            "data": base64.b64encode(downloaded.content).decode("ascii"),
+                            "data": base64.b64encode(downloaded.content).decode(
+                                "ascii"
+                            ),
                         },
                     }
                 )
-            blocks.append({"type": "text", "text": f"\n\nAttached file: {name} at {target}"})
+            blocks.append(
+                {"type": "text", "text": f"\n\nAttached file: {name} at {target}"}
+            )
         return blocks
 
     async def _set_session_state(
@@ -688,161 +774,6 @@ class ClaudeRuntime(AgentRuntime):
             self._next_timeline_order += 1
             self._timeline_order_by_id[item_id] = order
         return order
-
-
-def stable_session_id(connector_id: str, external_session_id: str) -> str:
-    digest = hashlib.sha256(f"{connector_id}:claude:{external_session_id}".encode()).hexdigest()[:24]
-    return f"sess_claude_{digest}"
-
-
-def _sdk_options(
-    sdk: Any,
-    config: RuntimeConfig,
-    session: _ClaudeSession,
-    can_use_tool: Callable[[str, dict[str, Any], Any], Any] | None = None,
-) -> Any:
-    kwargs: dict[str, Any] = {
-        "include_partial_messages": True,
-    }
-    if can_use_tool is not None:
-        kwargs["can_use_tool"] = can_use_tool
-    if session.cwd:
-        kwargs["cwd"] = session.cwd
-    if session.external_session_id:
-        kwargs["resume"] = session.external_session_id
-    executable_path = config.values.get("executablePath")
-    if isinstance(executable_path, str) and executable_path:
-        kwargs["cli_path"] = executable_path
-    environment = config.values.get("environment")
-    if isinstance(environment, Mapping):
-        kwargs["env"] = dict(environment)
-    permission_selection = session.selections.get("permission")
-    permission_mode = permission_catalogs.permission_mode_from_selection(permission_selection)
-    if permission_mode:
-        kwargs["permission_mode"] = permission_mode
-    hook_matcher = utils.optional_attr(sdk, "HookMatcher", "types.HookMatcher")
-    if hook_matcher is not None:
-        async def _keep_permission_stream_open(
-            _input_data: Any,
-            _tool_use_id: Any = None,
-            _context: Any = None,
-        ) -> dict[str, bool]:
-            return {"continue_": True}
-
-        kwargs["hooks"] = {"PreToolUse": [hook_matcher(matcher=None, hooks=[_keep_permission_stream_open])]}
-    options_cls = getattr(sdk, "ClaudeAgentOptions", None) or getattr(sdk, "ClaudeCodeOptions", None)
-    if options_cls is None:
-        return kwargs
-    return options_cls(**kwargs)
-
-
-def _approval_notice(
-    approval_id: str,
-    session: _ClaudeSession,
-    tool_name: str,
-    input_data: Mapping[str, Any],
-    status: str,
-    metadata: Mapping[str, Any] | None = None,
-) -> SessionNotice:
-    return SessionNotice(
-        notice_id=approval_id,
-        session_id=session.session_id,
-        runtime="claude",
-        type="interaction",
-        title=f"Claude requests {tool_name}",
-        message=_approval_description(tool_name, input_data),
-        severity="warning",
-        status=status,
-        interaction_type="approval",
-        blocking={
-            "turnId": session.active_turn_id,
-            "reason": "permission_required",
-        },
-        response_required=status == "open",
-        actions=(
-            {"id": "approve", "title": "Approve", "style": "primary"},
-            {"id": "reject", "title": "Reject", "style": "danger"},
-        )
-        if status == "open"
-        else (),
-        source={
-            "runtime": "claude",
-            "sessionId": session.external_session_id,
-            "turnId": session.active_turn_id,
-            "requestId": approval_id,
-            "method": "can_use_tool",
-        },
-        context={
-            "approvalId": approval_id,
-            "turnId": session.active_turn_id,
-            "toolName": tool_name,
-            "kind": _approval_kind(tool_name),
-            "payload": {"toolName": tool_name, "input": dict(input_data)},
-            "approvalSource": {
-                "runtime": "claude",
-                "requestId": approval_id,
-                "sessionId": session.external_session_id,
-                "turnId": session.active_turn_id,
-                "method": "can_use_tool",
-            },
-        },
-        metadata=dict(metadata or {}),
-    )
-
-
-def _approval_kind(tool_name: str) -> str:
-    if tool_name == "Bash":
-        return "command"
-    if tool_name in {"Edit", "Write", "NotebookEdit"}:
-        return "file_change"
-    return "tool_call"
-
-
-def _approval_description(tool_name: str, input_data: Mapping[str, Any]) -> str:
-    if tool_name == "Bash":
-        return utils.string(input_data.get("command")) or "Run command"
-    if tool_name in {"Edit", "Write", "NotebookEdit"}:
-        return utils.string(input_data.get("file_path")) or "Modify file"
-    return json.dumps(dict(input_data), ensure_ascii=False, sort_keys=True)
-
-
-def _approval_id(
-    session_id: str,
-    turn_id: str | None,
-    tool_name: str,
-    input_data: Mapping[str, Any],
-) -> str:
-    payload = json.dumps(
-        [session_id, turn_id, tool_name, dict(input_data)],
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return "appr_" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
-
-
-def _normalize_approval_action(action_id: str) -> str | None:
-    if action_id in {"approve", "approved", "allow"}:
-        return "approve"
-    if action_id in {"approve_for_session", "approved_for_session"}:
-        return "approve_for_session"
-    if action_id in {"reject", "rejected", "deny", "denied", "cancel", "cancelled"}:
-        return "reject"
-    return None
-
-
-def _permission_allow(sdk: Any, input_data: Mapping[str, Any]) -> Any:
-    cls = utils.optional_attr(sdk, "PermissionResultAllow", "types.PermissionResultAllow")
-    if cls is not None:
-        return cls(updated_input=dict(input_data))
-    return {"behavior": "allow", "updatedInput": dict(input_data)}
-
-
-def _permission_deny(sdk: Any, message: str) -> Any:
-    cls = utils.optional_attr(sdk, "PermissionResultDeny", "types.PermissionResultDeny")
-    if cls is not None:
-        return cls(message=message)
-    return {"behavior": "deny", "message": message}
 
 
 async def _maybe_await(value: Any) -> Any:
