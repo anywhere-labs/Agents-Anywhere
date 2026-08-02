@@ -12,10 +12,11 @@ connector/
   runtime_protocol/  AgentRuntime, RuntimeProvider, RuntimeHostClient contracts
   runtimes/          Native Codex and Claude RuntimeProvider/AgentRuntime packages
   server/            Backend auth, ingest, RPC channel, request dispatch, host mapping
-  core/              Connector config and runtime config storage
-  local/        Local filesystem, shell, and terminal backends
-  cli.py        anywhere-cli CLI
-  runtime.py    Connector application coordinator and WebSocket lifecycle
+  core/              Connector config, JSON-RPC, runtime owner, runtime config storage
+  local/             Local filesystem, shell, and terminal backends
+  _reference/        Old adapter implementations retained only as migration references
+  cli.py             anywhere-cli CLI
+  control.py         Local desktop/control JSON-RPC entrypoint
 tests/          Connector tests
 pyproject.toml  Connector dependencies and console script
 run.sh          Local helper for saved-config startup

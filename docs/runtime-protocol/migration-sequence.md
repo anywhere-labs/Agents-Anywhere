@@ -1,8 +1,12 @@
 # Migration Sequence
 
-Status: draft.
+Status: migration sequence and acceptance checklist.
 
-This refactor is breaking. Prefer independently verifiable commits. Do not combine the protocol skeleton, database migration, Codex adapter rewrite, and Web rewrite into one change.
+This refactor is breaking. Prefer independently verifiable commits. Do not
+combine the protocol skeleton, database migration, Codex adapter rewrite, and
+Web rewrite into one change. Several early Connector phases are already landed;
+use [Implementation order](./implementation-order.md) for the current next
+commit stack.
 
 ## 1. Documentation and deprecation markers
 
@@ -14,7 +18,7 @@ This refactor is breaking. Prefer independently verifiable commits. Do not combi
 Add new connector modules without changing behavior:
 
 ```text
-connector/connector/runtime/
+connector/connector/runtime_protocol/
   protocol.py
   host.py
   models.py

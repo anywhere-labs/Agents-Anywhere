@@ -1,6 +1,6 @@
 # Runtime Protocol Implementation Order
 
-Status: draft, current execution plan.
+Status: active migration plan, updated after the first Connector rewrite stack.
 
 This document is the practical order for refactoring Server and Connector toward Agent Runtime Protocol v1. It is more concrete than [Migration sequence](./migration-sequence.md): each phase should be independently reviewable and should avoid mixing protocol design, file moves, database migrations, and runtime behavior changes in one commit.
 
@@ -29,27 +29,41 @@ The main gaps are:
 
 ### Connector
 
-Connector has the larger gap. It is still mostly root-level modules plus concrete runtime packages:
+Connector has crossed the first large rewrite boundary. The active root package
+is now thin and old pre-protocol code is reference-only:
 
 ```text
 connector/connector/
-  runtime.py
-  runtime_lifecycle.py
-  adapter.py
-  protocol.py
-  codex/
-  claude/
+  core/
+  server/
+  runtime_protocol/
+  runtimes/
   local/
+  _reference/
 ```
 
-The main gaps are:
+Completed Connector migration pieces:
 
-- `runtime.py` mixes config, auth, HTTP, WebSocket, RPC dispatch, notification batching, runtime supervision, local ops, attachments, and terminal bridging.
-- `runtime_lifecycle.py` must not mix generic provider/supervisor concepts with concrete Codex and Claude provider construction. Pre-protocol Codex/Claude code belongs under `_reference/` until rewritten.
-- `adapter.py` is still a dict-shaped legacy adapter protocol.
-- Runtime adapters still return `backendNotifications` or use `notification_sink`.
-- Runtime adapters and Connector runtime code still know server notification method names.
-- Codex and Claude adapters are still large orchestration modules instead of thin implementations of `AgentRuntime`.
+- `RuntimeProvider`, `AgentRuntime`, `RuntimeHostClient`, and
+  `RuntimeSupervisor` exist under `runtime_protocol/`.
+- JSON runtime config storage exists under `core/runtime_config_store.py`.
+- `BackendRpcClient` is now a server-layer coordinator around auth, ingest,
+  dispatch, runtime supervisor, local ops, and runtime host mapping.
+- Native `runtimes/codex` and `runtimes/claude` provider/runtime packages exist.
+- Old Codex/Claude/adapter code lives under `_reference/`.
+- Architecture tests forbid active imports of deprecated root modules.
+
+Remaining Connector gaps:
+
+- Runtime command catalog/execution is still not the primary active UI path.
+- Codex IPC parity is not yet complete enough to treat IPC state/timeline/notice
+  as fully projected protocol events.
+- Some runtime behavior is feature-incomplete compared with the old reference
+  adapters and must be migrated by reimplementing protocol behavior, not by
+  restoring the old adapter contract.
+- The root package still contains a few cross-layer utility files
+  (`launch.py`, `logging.py`, `paths.py`, `time.py`). They are acceptable while
+  thin, but should move only if it improves boundaries without churn.
 
 ## Target dependency direction
 
@@ -75,6 +89,9 @@ runtimes/* -> runtime protocol + native runtime details
 Generic Connector code must not import Codex or Claude internals. Concrete runtime packages register providers by composition.
 
 ## Phase 0: freeze current behavior with narrow tests
+
+Status: completed for the first rewrite stack. Keep adding narrow tests before
+new behavior changes.
 
 Goal: create a safety net before introducing the new protocol layer.
 
@@ -104,6 +121,8 @@ Acceptance:
 
 ## Phase 1: add Connector runtime protocol skeleton
 
+Status: completed as `connector/connector/runtime_protocol/`.
+
 Goal: introduce the new abstractions without changing behavior.
 
 Add the first implementation under a transitional package name:
@@ -117,18 +136,11 @@ connector/connector/runtime_protocol/
   host.py
 ```
 
-The final target package is still:
-
-```text
-connector/connector/runtime/
-  __init__.py
-  errors.py
-  models.py
-  protocol.py
-  host.py
-```
-
-Use `runtime_protocol` first because the current Connector already has a root `connector/runtime.py` module. The package can be renamed to `connector.runtime` after the old module is split into `core/`, `server/`, and application assembly modules.
+The package is intentionally still named `runtime_protocol`. It started as a
+transitional name because the old `connector/runtime.py` root
+module existed. That old root module is gone, but the rename to
+`connector.runtime` is not required for this migration and should only happen as
+a dedicated breaking cleanup if it clearly improves readability.
 
 Define:
 
@@ -182,23 +194,24 @@ Acceptance:
 
 ## Phase 2: split Connector root modules and replace adapter dispatch
 
+Status: mostly completed for active Connector paths.
+
 Goal: make Connector application code depend on `AgentRuntime` directly, not on the old dict-shaped `Adapter` protocol. This is a rewrite, not a legacy compatibility wrapper.
 
-Extract the root `runtime.py` responsibilities first:
-
-Move or extract incrementally:
+The current extraction result is:
 
 ```text
 ConnectorConfig           -> core/config.py
-ProtocolRevisionClock     -> core/revision.py
-JsonSyncStateStore        -> core/sync_state.py
+ProtocolRevisionClock     -> server/protocol_revision.py
+JsonSyncStateStore        -> server/sync_state.py
 HTTP/token helpers        -> server/auth.py and server/client.py
 notification queue/flush  -> server/ingest.py
 server RPC dispatch       -> server/dispatch.py
 server method mapping     -> server/rpc.py
-JSON-RPC frame helpers    -> transport/json_rpc.py
-launch helpers            -> transport/launch.py
-generic provider classes  -> runtime/provider.py and runtime/supervisor.py
+JSON-RPC frame helpers    -> core/json_rpc.py
+runtime owner helpers     -> core/runtime_owner.py
+generic provider classes  -> runtime_protocol/provider.py and runtime_protocol/supervisor.py
+attachment helpers        -> runtime_protocol/attachments.py
 ```
 
 Move concrete provider code out of `runtime_lifecycle.py` and make providers create `AgentRuntime` instances:
@@ -234,7 +247,7 @@ Rules:
 
 Acceptance:
 
-- Root `runtime.py` becomes an application assembly/coordinator, not a 900-line networking/runtime/local-ops module.
+- Root `runtime.py` is removed from the active package.
 - Runtime config values survive process restart through JSON.
 - Missing runtime config loads as `{}`.
 - Invalid JSON or invalid root shape fails explicitly.
@@ -243,6 +256,9 @@ Acceptance:
 - New runtime code emits through `RuntimeHostClient`, not raw notification result dictionaries.
 
 ## Phase 3: implement Connector-native `RuntimeHostClient`
+
+Status: completed for the active transport boundary. Continue extending the
+host client only with semantic protocol calls, not raw adapter notifications.
 
 Goal: replace adapter-side server notification construction with a Connector-owned host client.
 
@@ -280,6 +296,9 @@ Acceptance:
 - `backendNotifications` is not part of the active runtime path.
 
 ## Phase 4: migrate Codex provider/runtime directly
+
+Status: first native slice completed. Continue parity migration inside
+`runtimes/codex`; do not import `_reference.codex` from active code.
 
 Goal: replace `connector.codex.adapter.CodexAdapter` with a native `AgentRuntime` implementation.
 
@@ -338,6 +357,10 @@ Acceptance:
 
 ## Phase 5: add Server `SessionState` as durable projection
 
+Status: implemented for the current state/selections path. Remaining work is to
+make all UI running-state decisions and all runtime event sources converge on
+this projection.
+
 Goal: make `SessionState` a first-class durable model and migrate old session
 projection data into it.
 
@@ -379,6 +402,9 @@ Acceptance:
 
 ## Phase 6: add `SessionNotice` native path
 
+Status: partial. Keep notices separate from timeline while migrating approval
+and interaction behavior.
+
 Goal: make notices/interactions separate from timeline and aligned with runtime protocol.
 
 Server already has a notices table concept. Align it with `SessionNotice` semantics:
@@ -409,6 +435,9 @@ Acceptance:
 
 ## Phase 7: add live runtime catalog and command APIs
 
+Status: next major protocol feature. Model/permission live catalog paths exist
+in part; runtime-driven commands are the main missing piece.
+
 Goal: move model/permission/command reads to Connector RPC.
 
 Add or switch primary paths:
@@ -433,6 +462,9 @@ Acceptance:
 - Typing `/` reads commands from runtime.
 
 ## Phase 8: replace message/create selection flow
+
+Status: mostly completed for active message/create-and-start payloads. Legacy
+selection fields are rejected on active Server notification and message paths.
 
 Goal: remove one-off model/permission fields from message send and existing session create flow.
 
@@ -474,6 +506,9 @@ Acceptance:
 
 ## Phase 9: migrate Claude to native `AgentRuntime`
 
+Status: first native slice completed. Continue parity migration inside
+`runtimes/claude`; do not import `_reference.claude` from active code.
+
 Goal: make Claude follow the same protocol with explicit unsupported behavior.
 
 Refactor Claude so:
@@ -488,6 +523,9 @@ Acceptance:
 - Capability differences are declared, not inferred from runtime name.
 
 ## Phase 10: Web protocol-driven UI
+
+Status: partial. Message selection payload cleanup is done; command mode,
+dashboard lifecycle updates, and snapshot-poll elimination remain.
 
 Goal: make UI read the new protocol projections and live catalogs.
 
@@ -510,6 +548,10 @@ Acceptance:
 
 ## Phase 11: remove compatibility paths
 
+Status: in progress. Active Connector root adapter paths are guarded by tests.
+Server/Web compatibility remnants should be removed only when their replacement
+path is the active source of truth.
+
 Goal: delete old behavior after all clients and runtimes are migrated.
 
 Remove or hard-deprecate:
@@ -531,15 +573,16 @@ Acceptance:
 - Runtime adapters only call `RuntimeHostClient`.
 - Server durable truth is `SessionMeta`, `SessionState`, `SessionTimeline`, and `SessionNotice`.
 
-## Recommended first commit stack
+## Next commit stack
 
-Start with this small stack:
+Continue with:
 
-1. `connector runtime protocol skeleton`
-2. `extract connector config/client/ingest from runtime.py`
-3. `replace connector runtime dispatch with AgentRuntime`
-4. `implement connector RuntimeHostClient`
-5. `migrate Codex provider/runtime, evaluating Codex SDK first`
-6. `server session state projection`
+1. `document current connector structure and enforce migration boundary`
+2. `make runtime command APIs server-routed`
+3. `make Web slash command menu runtime-driven`
+4. `finish SessionNotice interaction response path`
+5. `finish Codex IPC event projection into SessionState/Timeline/Notice`
+6. `remove remaining server-persisted catalog primary paths`
 
-Do not start with broad file moves. The protocol skeleton gives us the seam; after that, rewrite the active Connector runtime path instead of wrapping legacy adapters.
+Do not restart the old first stack. The protocol skeleton and active Connector
+rewrite already exist; future work should extend the new protocol path.

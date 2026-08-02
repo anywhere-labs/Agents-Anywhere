@@ -300,8 +300,9 @@ Rules:
 - If a selection must change, call `PATCH /state/selections` before message send.
 - Server may set state to `waiting` after accepting a message request and before runtime confirms turn start.
 - Runtime confirms active processing by emitting `session.state.updated` with `status = running`.
-- `session.state.updated` accepts `selections`; legacy `modelSelectionId` and
-  `permissionSelectionId` are rejected there.
+- Runtime/session state notifications accept `selections`; legacy
+  `modelSelectionId` and `permissionSelectionId` are rejected on active
+  notification paths.
 - `interrupt` does not carry `turnId`; runtime finds its current active turn or returns conflict.
 
 ## Commands
