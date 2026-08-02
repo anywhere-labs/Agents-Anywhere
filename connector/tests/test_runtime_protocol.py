@@ -145,6 +145,7 @@ def test_runtime_config_is_representable_without_connector_config() -> None:
         display_name="Codex",
         available=True,
         configured=True,
+        capabilities={"commands": True},
         config_schema=schema,
     )
 
@@ -153,6 +154,7 @@ def test_runtime_config_is_representable_without_connector_config() -> None:
     assert config.values["ipcEnabled"] is True
     assert config.schema is not None
     assert inventory.configured is True
+    assert inventory.capabilities["commands"] is True
     assert inventory.config_schema == schema
 
 

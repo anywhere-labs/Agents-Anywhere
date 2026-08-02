@@ -171,6 +171,11 @@ it is running. Config mutation still flows through `runtime.validateConfig` and
 `runtime.start`; running `AgentRuntime` instances do not accept direct config
 updates.
 
+`runtime.discover` includes a `capabilities` map for each runtime. Clients
+should use it to decide whether to show runtime features such as command mode,
+attachments, interactions, or IPC controls instead of hardcoding Codex/Claude
+conditionals.
+
 The payload semantics may evolve behind the channel. During migration, Connector may continue sending old notification names. The target semantic ingest methods are:
 
 ```text

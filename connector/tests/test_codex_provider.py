@@ -26,6 +26,8 @@ async def _test_codex_provider_discovers_sdk_without_executable() -> None:
 
     assert item.available is True
     assert item.configured is True
+    assert item.capabilities["commands"] is True
+    assert item.capabilities["ipc"] is True
     assert item.metadata["sdk"]["available"] is True
     assert item.metadata["appServer"]["available"] is False
 

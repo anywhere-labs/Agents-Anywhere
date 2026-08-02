@@ -70,6 +70,7 @@ class RuntimeInventoryItem:
     display_name: str
     available: bool
     configured: bool = False
+    capabilities: Mapping[str, bool] = field(default_factory=dict)
     reason: str | None = None
     config_schema: RuntimeConfigSchema | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
@@ -84,6 +85,14 @@ A running `AgentRuntime` must not accept config mutation directly. Runtime confi
 `schema` and `ui_schema` are optional because some runtimes may expose a fixed form in Web/CLI while others need runtime-provided fields. The protocol carries them as data so the upper Connector layer does not need Codex- or Claude-specific config conditionals.
 
 `RuntimeConfigSchema` is the provider's live configuration form contract. `RuntimeInventoryItem` is the provider's discovery result. A runtime may be available but not configured, unavailable because an executable or SDK is missing, or configured but currently stopped.
+
+`RuntimeInventoryItem.capabilities` declares runtime capability differences as
+data. Upper Connector and UI layers should use this map instead of inferring
+behavior from runtime names. Capability keys are intentionally extensible; the
+current connector providers use keys such as `modelCatalog`,
+`permissionCatalog`, `sessionState`, `sessionNotices`, `createAndStartSession`,
+`startTurn`, `steerTurn`, `interruptTurn`, `commands`, `interactions`,
+`attachments`, and `ipc`.
 
 ## Runtime providers
 

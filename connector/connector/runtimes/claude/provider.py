@@ -72,6 +72,7 @@ class ClaudeProvider(RuntimeProvider):
             display_name=self.display_name,
             available=available,
             configured=available,
+            capabilities=_claude_capabilities(),
             reason=reason,
             config_schema=await self.get_config_schema(),
             metadata={
@@ -174,6 +175,25 @@ def _claude_config_schema(target: LaunchTarget | None) -> dict[str, Any]:
             },
         },
         "additionalProperties": False,
+    }
+
+
+def _claude_capabilities() -> dict[str, bool]:
+    return {
+        "modelCatalog": True,
+        "permissionCatalog": True,
+        "sessionDiscovery": True,
+        "sessionSnapshot": True,
+        "sessionState": True,
+        "sessionNotices": True,
+        "createAndStartSession": True,
+        "startTurn": True,
+        "steerTurn": True,
+        "interruptTurn": True,
+        "commands": False,
+        "interactions": True,
+        "attachments": True,
+        "ipc": False,
     }
 
 

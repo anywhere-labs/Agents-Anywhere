@@ -1349,6 +1349,7 @@ async def _exercise_agent_runtime_discovery() -> None:
             "defaults": {},
             "status": "available",
             "configured": True,
+            "capabilities": {},
             "metadata": {},
         }
     ]

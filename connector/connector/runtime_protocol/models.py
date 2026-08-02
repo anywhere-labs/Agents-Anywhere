@@ -54,6 +54,7 @@ class RuntimeInventoryItem:
     display_name: str
     available: bool
     configured: bool = False
+    capabilities: Mapping[str, bool] = field(default_factory=dict)
     reason: str | None = None
     config_schema: RuntimeConfigSchema | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)

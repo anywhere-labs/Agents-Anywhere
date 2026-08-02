@@ -184,5 +184,6 @@ def agent_inventory_payload(item: RuntimeInventoryItem) -> dict[str, Any]:
         "defaults": item.config_schema.defaults if item.config_schema is not None else {},
         "status": "available" if item.available else "unavailable",
         "configured": item.configured,
+        "capabilities": dict(item.capabilities),
         "metadata": dict(item.metadata),
     }

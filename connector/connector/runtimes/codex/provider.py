@@ -81,6 +81,7 @@ class CodexProvider(RuntimeProvider):
             display_name=self.display_name,
             available=available,
             configured=available,
+            capabilities=_codex_capabilities(),
             reason=reason,
             config_schema=await self.get_config_schema(),
             metadata={
@@ -267,6 +268,25 @@ def _codex_config_schema(target: LaunchTarget | None) -> dict[str, Any]:
             },
         },
         "additionalProperties": False,
+    }
+
+
+def _codex_capabilities() -> dict[str, bool]:
+    return {
+        "modelCatalog": True,
+        "permissionCatalog": True,
+        "sessionDiscovery": True,
+        "sessionSnapshot": True,
+        "sessionState": True,
+        "sessionNotices": True,
+        "createAndStartSession": True,
+        "startTurn": True,
+        "steerTurn": True,
+        "interruptTurn": True,
+        "commands": True,
+        "interactions": True,
+        "attachments": False,
+        "ipc": True,
     }
 
 
