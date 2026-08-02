@@ -191,7 +191,6 @@ RuntimeProvider
 
 AgentRuntime
   get_config()
-  update_config()
   list_model_catalog()
   list_sessions()
   start_turn()
@@ -201,9 +200,9 @@ AgentRuntime
 
 `RuntimeProvider` answers: how do we find, configure, start, and stop this runtime?
 
-`AgentRuntime` answers: once started, how do we interact with this runtime, including reading and updating its effective runtime-owned config.
+`AgentRuntime` answers: once started, how do we interact with this runtime, including reading its effective runtime-owned config.
 
-This separation keeps discovery/bootstrap details out of session operations, while still making runtime config visible through the generic runtime protocol. For example, Codex SDK mode, Codex IPC enablement, executable path, and local feature flags belong to runtime config, not to `ConnectorConfig`.
+This separation keeps discovery/bootstrap details out of session operations, while still making runtime config visible through the generic runtime protocol. For example, Codex SDK mode, Codex IPC enablement, executable path, and local feature flags belong to runtime config, not to `ConnectorConfig`. Config mutation flows through `RuntimeProvider` and the supervisor, not through a running `AgentRuntime`.
 
 ## Provider and supervisor
 

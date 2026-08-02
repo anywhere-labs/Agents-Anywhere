@@ -38,13 +38,6 @@ class AgentRuntime(ABC):
     async def get_config(self) -> RuntimeConfig:
         raise RuntimeUnsupportedError("get_config")
 
-    async def update_config(
-        self,
-        values: Mapping[str, Any],
-        replace: bool = False,
-    ) -> RuntimeOperationResult:
-        raise RuntimeUnsupportedError("update_config")
-
     async def list_model_catalog(
         self,
         query: str | None = None,

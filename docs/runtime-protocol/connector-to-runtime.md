@@ -55,7 +55,9 @@ class RuntimeConfig:
 
 `RuntimeConfig` is runtime-owned configuration, not Connector app configuration. `ConnectorConfig` answers how this Connector talks to the Server. `RuntimeConfig` answers how one local runtime is configured: executable path, IPC/socket mode, SDK mode, environment profile, feature flags, and other runtime-specific options.
 
-Runtime config is a live runtime read/write surface. The Server may persist the latest accepted projection for UI continuity, but the runtime/provider remains the validator and source of truth. Config `revision` is scoped to the runtime config payload and exists to ignore stale UI updates or stale projections; it does not make the Server authoritative.
+Runtime config is a provider-managed startup surface, plus a runtime read-only effective projection after startup. The Server may persist the latest accepted projection for UI continuity, but the provider remains the validator and source of truth. Config `revision` is scoped to the runtime config payload and exists to ignore stale UI updates or stale projections; it does not make the Server authoritative.
+
+A running `AgentRuntime` must not accept config mutation directly. Runtime config changes flow through the provider/supervisor path: validate the new raw values, persist the accepted effective config, then restart or recreate the runtime if necessary. This avoids hidden in-place reconfiguration semantics and keeps runtime instances stable.
 
 `schema` and `ui_schema` are optional because some runtimes may expose a fixed form in Web/CLI while others need runtime-provided fields. The protocol carries them as data so the upper Connector layer does not need Codex- or Claude-specific config conditionals.
 
@@ -274,13 +276,6 @@ class AgentRuntime(ABC):
 
     async def get_config(self) -> RuntimeConfig:
         raise RuntimeUnsupportedError("get_config")
-
-    async def update_config(
-        self,
-        values: Mapping[str, Any],
-        replace: bool = False,
-    ) -> RuntimeOperationResult:
-        raise RuntimeUnsupportedError("update_config")
 
     async def list_model_catalog(
         self,
