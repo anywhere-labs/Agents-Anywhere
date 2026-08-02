@@ -8,7 +8,7 @@ from typing import Any
 import httpx
 
 from connector.core.config import ConnectorConfig
-from connector.local_runtime import (
+from connector.core.runtime_owner import (
     ConnectorAlreadyRunningError,
     assert_can_start,
     clear_runtime,

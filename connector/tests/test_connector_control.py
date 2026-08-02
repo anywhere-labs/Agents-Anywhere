@@ -154,7 +154,7 @@ def test_config_to_payload_keeps_optional_state_path() -> None:
 
 
 def test_connector_controller_rejects_existing_runtime_owner(tmp_path) -> None:
-    from connector.local_runtime import write_runtime
+    from connector.core.runtime_owner import write_runtime
 
     async def exercise() -> dict[str, Any]:
         controller = ConnectorController(
