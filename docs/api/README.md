@@ -82,3 +82,7 @@ message/create modelSelectionId and permissionSelectionId fields
 snapshot.catalogs
 hardcoded session commands
 ```
+
+`POST /api/v2/sessions` is bind-only during the migration: callers must provide
+an existing `externalSessionId`. New user tasks must use
+`POST /api/v2/sessions/create-and-start`.

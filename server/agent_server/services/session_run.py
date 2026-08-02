@@ -87,61 +87,9 @@ class SessionRunService:
             )
             return {"session": session, "connectorResult": connector_result}
 
-        if not await self._manager.is_online(payload.connectorId):
-            raise SessionRunConflictError("connector is offline")
-        connector_params = {
-            "runtime": payload.runtime,
-            "title": payload.title,
-            "cwd": payload.cwd,
-        }
-        selections = _payload_selections(payload)
-        if selections:
-            connector_params["selections"] = selections
-        try:
-            connector_result = await self._manager.request(
-                payload.connectorId,
-                "session.create",
-                connector_params,
-                timeout=60,
-            )
-        except ConnectorOfflineError as exc:
-            raise SessionRunConflictError(str(exc)) from exc
-        except ConnectorRpcError as exc:
-            raise SessionRunUpstreamError(exc.message or exc.code) from exc
-
-        session_id = connector_result.get("sessionId") if isinstance(connector_result, dict) else None
-        external_session_id = connector_result.get("externalSessionId") if isinstance(connector_result, dict) else None
-        if not isinstance(session_id, str):
-            raise SessionRunUpstreamError("connector did not return a session id")
-        if payload.runtime != "claude" and not isinstance(external_session_id, str):
-            raise SessionRunUpstreamError("connector did not return an external session id")
-        if isinstance(external_session_id, str):
-            try:
-                session_id = await self._store.resolve_connector_session_id(
-                    connector_id=payload.connectorId,
-                    session_id=session_id,
-                    external_session_id=external_session_id,
-                )
-            except KeyError:
-                pass
-        session = await self._store.upsert_connector_session(
-            connector_id=payload.connectorId,
-            session_id=session_id,
-            runtime=payload.runtime,
-            external_session_id=external_session_id,
-            title=payload.title,
-            cwd=payload.cwd,
-            status="idle",
-            last_synced_at=utc_now(),
-            origin="platform",
+        raise SessionRunInvalidConfigError(
+            "new sessions must use /sessions/create-and-start"
         )
-        await self._store.upsert_session_runtime_state(
-            session_id=session.id,
-            runtime=payload.runtime,
-            external_session_id=external_session_id,
-            selections=_payload_selections(payload),
-        )
-        return {"session": session, "connectorResult": connector_result}
 
     async def create_and_start_session(
         self,

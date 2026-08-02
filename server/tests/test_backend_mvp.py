@@ -257,7 +257,7 @@ def wait_for_sessions_order(
     return wait_for(read_sessions)
 
 
-def test_platform_session_create_uses_connector_returned_session_id(tmp_path):
+def test_platform_session_create_without_external_session_is_rejected(tmp_path):
     app = create_app(tmp_path / "test.sqlite3")
     client = TestClient(app)
     headers = auth_headers(client)
@@ -265,28 +265,7 @@ def test_platform_session_create_uses_connector_returned_session_id(tmp_path):
     connector_body = connector_response.json()
     connector_id = connector_body["connector"]["id"]
 
-    class FakeCreateRpc:
-        def __init__(self) -> None:
-            self.requests: list[tuple[str, dict[str, Any]]] = []
-
-        async def is_online(self, requested_connector_id: str) -> bool:
-            return requested_connector_id == connector_id
-
-        async def request(self, requested_connector_id: str, method: str, params: dict[str, Any], *, timeout: float = 30) -> dict[str, str]:
-            self.requests.append((method, params))
-            assert requested_connector_id == connector_id
-            await app.state.store.upsert_connector_session(
-                connector_id=connector_id,
-                session_id="sess_codex_created",
-                runtime="codex",
-                external_session_id="thr_created",
-                title=None,
-                cwd="/repo",
-                status="idle",
-            )
-            return {"sessionId": "sess_codex_created", "externalSessionId": "thr_created"}
-
-    fake_rpc = FakeCreateRpc()
+    fake_rpc = FakeLocalRpc()
     app.state.rpc = fake_rpc
 
     response = client.post(
@@ -294,53 +273,19 @@ def test_platform_session_create_uses_connector_returned_session_id(tmp_path):
         headers=headers,
         json={"connectorId": connector_id, "runtime": "codex", "title": "New Codex session", "cwd": "/repo"},
     )
-    assert response.status_code == 200
-    assert fake_rpc.requests == [
-        (
-            "session.create",
-            {
-                "runtime": "codex",
-                "title": "New Codex session",
-                "cwd": "/repo",
-            },
-        )
-    ]
-    assert response.json()["session"]["id"] == "sess_codex_created"
-    assert response.json()["session"]["title"] == "New Codex session"
-    listed = client.get("/sessions", headers=headers).json()["sessions"]
-    assert [session["id"] for session in listed if session["externalSessionId"] == "thr_created"] == ["sess_codex_created"]
+    assert response.status_code == 422
+    assert response.json()["detail"] == "new sessions must use /sessions/create-and-start"
+    assert fake_rpc.requests == []
 
 
-def test_session_create_passes_model_selection_id(tmp_path):
+def test_session_create_binds_external_session_model_selection_to_state(tmp_path):
     app = create_app(tmp_path / "test.sqlite3")
     client = TestClient(app)
     headers = auth_headers(client)
     connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
     connector_id = connector_response.json()["connector"]["id"]
     model_selection_id = seed_codex_model_catalog(app, connector_id)
-
-    class FakeCreateRpc:
-        def __init__(self) -> None:
-            self.requests: list[tuple[str, dict[str, Any]]] = []
-
-        async def is_online(self, requested_connector_id: str) -> bool:
-            return requested_connector_id == connector_id
-
-        async def request(self, requested_connector_id: str, method: str, params: dict[str, Any], *, timeout: float = 30) -> dict[str, str]:
-            self.requests.append((method, params))
-            assert requested_connector_id == connector_id
-            await app.state.store.upsert_connector_session(
-                connector_id=connector_id,
-                session_id="sess_codex_selected_model",
-                runtime="codex",
-                external_session_id="thr_selected_model",
-                title=None,
-                cwd="/repo",
-                status="idle",
-            )
-            return {"sessionId": "sess_codex_selected_model", "externalSessionId": "thr_selected_model"}
-
-    fake_rpc = FakeCreateRpc()
+    fake_rpc = FakeLocalRpc()
     app.state.rpc = fake_rpc
 
     response = client.post(
@@ -351,48 +296,27 @@ def test_session_create_passes_model_selection_id(tmp_path):
             "runtime": "codex",
             "title": "Selected model",
             "cwd": "/repo",
+            "externalSessionId": "thr_selected_model",
             "modelSelectionId": model_selection_id,
         },
     )
 
     assert response.status_code == 200, response.text
-    params = fake_rpc.requests[-1][1]
-    assert params["selections"] == {"model": model_selection_id}
-    assert "modelSelectionId" not in params
-    assert "model" not in params
-    assert "effort" not in params
+    assert fake_rpc.requests == []
+    session_id = response.json()["session"]["id"]
+    state = client.get(f"/sessions/{session_id}/runtime-state", headers=headers)
+    assert state.status_code == 200
+    assert state.json()["state"]["selections"] == {"model": model_selection_id}
 
 
-def test_session_create_passes_permission_selection_id(tmp_path):
+def test_session_create_binds_external_session_permission_selection_to_state(tmp_path):
     app = create_app(tmp_path / "test.sqlite3")
     client = TestClient(app)
     headers = auth_headers(client)
     connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
     connector_id = connector_response.json()["connector"]["id"]
     permission_selection_id = seed_codex_permission_catalog(app, connector_id)
-
-    class FakeCreateRpc:
-        def __init__(self) -> None:
-            self.requests: list[tuple[str, dict[str, Any]]] = []
-
-        async def is_online(self, requested_connector_id: str) -> bool:
-            return requested_connector_id == connector_id
-
-        async def request(self, requested_connector_id: str, method: str, params: dict[str, Any], *, timeout: float = 30) -> dict[str, str]:
-            self.requests.append((method, params))
-            assert requested_connector_id == connector_id
-            await app.state.store.upsert_connector_session(
-                connector_id=connector_id,
-                session_id="sess_codex_selected_permission",
-                runtime="codex",
-                external_session_id="thr_selected_permission",
-                title=None,
-                cwd="/repo",
-                status="idle",
-            )
-            return {"sessionId": "sess_codex_selected_permission", "externalSessionId": "thr_selected_permission"}
-
-    fake_rpc = FakeCreateRpc()
+    fake_rpc = FakeLocalRpc()
     app.state.rpc = fake_rpc
 
     response = client.post(
@@ -403,16 +327,17 @@ def test_session_create_passes_permission_selection_id(tmp_path):
             "runtime": "codex",
             "title": "Selected permission",
             "cwd": "/repo",
+            "externalSessionId": "thr_selected_permission",
             "permissionSelectionId": permission_selection_id,
         },
     )
 
     assert response.status_code == 200, response.text
-    params = fake_rpc.requests[-1][1]
-    assert params["selections"] == {"permission": permission_selection_id}
-    assert "permissionSelectionId" not in params
-    assert "approvalPolicy" not in params
-    assert "sandbox" not in params
+    assert fake_rpc.requests == []
+    session_id = response.json()["session"]["id"]
+    state = client.get(f"/sessions/{session_id}/runtime-state", headers=headers)
+    assert state.status_code == 200
+    assert state.json()["state"]["selections"] == {"permission": permission_selection_id}
 
 
 def test_session_create_and_start_preallocates_session_and_runtime_state(tmp_path):

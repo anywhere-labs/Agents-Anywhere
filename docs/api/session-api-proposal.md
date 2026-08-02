@@ -63,11 +63,15 @@ It must not update selections or runtime running status.
 
 ## Create and start
 
-Deprecated:
+Migration/bind-only:
 
 ```text
 POST /api/v2/sessions
 ```
+
+This route must not create a new runtime session or start a turn. It is limited
+to binding an already-known `externalSessionId` during migration/discovery.
+New user tasks use create-and-start.
 
 Target:
 
@@ -339,7 +343,7 @@ Rules:
 
 | Current route | Target | Status |
 | --- | --- | --- |
-| `POST /api/v2/sessions` | `POST /api/v2/sessions/create-and-start` | Deprecated target; migrate callers to create-and-start; do not treat as the new active path. |
+| `POST /api/v2/sessions` | `POST /api/v2/sessions/create-and-start` | Bind-only migration route when `externalSessionId` is present; reject new task creation. |
 | `GET /api/v2/sessions/{id}/state?afterSeq=...` | `GET /api/v2/sessions/{id}/timeline` plus `GET /state` | Current route mixes state and timeline. |
 | `GET /api/v2/sessions/{id}/snapshot` | Same path, new response shape | Remove `catalogs`; split `meta/state/timeline/notices`. |
 | `POST /api/v2/sessions/{id}/messages` with selections | Same path without selections | Selection fields deprecated. |
