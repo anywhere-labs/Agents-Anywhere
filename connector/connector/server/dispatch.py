@@ -86,8 +86,6 @@ class ConnectorRequestDispatcher:
                 self._resolve_agent_runtime(params),
                 params,
             )
-        if method == "approval.resolve":
-            raise ValueError("approval.resolve is not part of Agent Runtime Protocol v1; use interactions")
         if method == "fs.prepareDownload":
             return await self.local_ops.prepare_download(params)
         if method == "fs.uploadPreparedDownload":
