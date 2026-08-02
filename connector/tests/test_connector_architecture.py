@@ -71,9 +71,14 @@ def test_active_connector_code_does_not_import_deprecated_root_modules() -> None
     assert violations == []
 
 
-def test_connector_dispatcher_keeps_runtime_rpc_in_runtime_handler() -> None:
+def test_connector_dispatcher_keeps_runtime_and_local_rpc_in_handlers() -> None:
     dispatcher_source = (CONNECTOR_PACKAGE / "server" / "dispatch.py").read_text(encoding="utf-8")
     runtime_rpc_source = (CONNECTOR_PACKAGE / "server" / "runtime_rpc.py").read_text(encoding="utf-8")
+    local_rpc_source = (CONNECTOR_PACKAGE / "server" / "local_rpc.py").read_text(encoding="utf-8")
 
     assert "_dispatch_agent_runtime" not in dispatcher_source
+    assert '"fs.prepareDownload"' not in dispatcher_source
+    assert '"shell.exec"' not in dispatcher_source
+    assert '"terminal.create"' not in dispatcher_source
     assert "class RuntimeRpcHandler" in runtime_rpc_source
+    assert "class LocalRpcHandler" in local_rpc_source
