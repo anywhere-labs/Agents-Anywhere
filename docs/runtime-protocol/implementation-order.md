@@ -322,7 +322,9 @@ Evaluate the official Codex SDK first:
 
 - Python SDK package: `openai-codex`
 - Async entry point: `AsyncCodex`
-- It controls the local Codex app-server over JSON-RPC.
+- The active Connector adapter uses the SDK surface (`AsyncCodex`,
+  `AsyncThread`, `AsyncTurnHandle`) through
+  `runtimes/codex/sdk_client.py`.
 - Published builds include a pinned Codex CLI runtime dependency.
 
 Use the SDK if it exposes enough surface for:
@@ -334,7 +336,10 @@ Use the SDK if it exposes enough surface for:
 - command/slash-command support or enough primitives to implement it;
 - session state and notice projection.
 
-If the SDK hides required streaming or catalog details, use app-server JSON-RPC directly through a typed client generated from `codex app-server generate-json-schema`, but keep that implementation inside `runtimes/codex`.
+If the SDK hides required streaming or catalog details, keep any fallback
+app-server JSON-RPC client inside `runtimes/codex/app_server_client.py` and
+route it through `CodexRuntimeClient`. Do not let app-server or IPC details leak
+into `CodexRuntime`.
 
 Rules:
 
@@ -534,7 +539,7 @@ Goal: make Claude follow the same protocol with explicit unsupported behavior.
 
 Refactor Claude so:
 
-- `ClaudeSdkAdapter` implements `AgentRuntime`.
+- `ClaudeRuntime` implements `AgentRuntime`.
 - Claude calls `RuntimeHostClient`.
 - unsupported methods return standardized unsupported errors/results.
 
