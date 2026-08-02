@@ -292,7 +292,7 @@ First provider slice:
 - `discover()`
 - `get_config_schema()`
 - `validate_config()`
-- `create_runtime()` remains unsupported until `CodexRuntime` exists.
+- `create_runtime()` returns native `CodexRuntime`.
 
 Evaluate the official Codex SDK first:
 
@@ -326,6 +326,8 @@ Acceptance:
 - `CodexProvider` does not import `_reference.codex`.
 - `CodexProvider` supports `sdkMode: auto | sdk | app-server`.
 - `CodexProvider` keeps `ipcEnabled` as a beta config field and notes macOS-only test coverage.
+- Basic `CodexRuntime` supports `identity`, `start`, `stop`, `get_config`, model catalog, permission catalog, session list, and session state reads.
+- Basic `CodexRuntime` keeps app-server JSON-RPC inside `runtimes/codex`, not in the Connector application layer.
 - Codex no longer returns `backendNotifications`.
 - Codex runtime events produce `SessionMeta`, `SessionState`, `SessionTimeline`, and `SessionNotice`.
 - Codex message, steer, interrupt, and selection update paths use `AgentRuntime`.

@@ -180,6 +180,15 @@ For example, Codex owns app-server stdio, Codex IPC, local rollout history, and 
 
 Runtime packages implement `AgentRuntime` and call `RuntimeHostClient`.
 
+Current Codex native package:
+
+```text
+runtimes/codex/provider.py
+runtimes/codex/runtime.py
+```
+
+The first native `CodexRuntime` slice supports startup, config readback, model catalog reads, static permission catalog reads, existing session metadata reads through `thread/list`, and default idle session state projection. Timeline sync, turns, steer, interrupt, notices, and IPC co-presence remain the next Codex runtime slice.
+
 ### `local/`
 
 Local machine operations that are not agent-runtime-specific:

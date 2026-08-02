@@ -7,11 +7,9 @@ from typing import Any
 import pytest
 
 from connector.launch import LaunchTarget, launch_target
-from connector.runtime_protocol import (
-    RuntimeInvalidRequestError,
-    RuntimeUnsupportedError,
-)
+from connector.runtime_protocol import RuntimeInvalidRequestError
 from connector.runtimes.codex.provider import CodexProvider
+from connector.runtimes.codex.runtime import CodexRuntime
 
 
 def test_codex_provider_discovers_sdk_without_executable() -> None:
@@ -152,16 +150,18 @@ async def _test_codex_provider_rejects_protected_environment() -> None:
         await provider.validate_config({"environment": {"AGENT_SERVER_URL": "http://x"}})
 
 
-def test_codex_provider_create_runtime_is_not_implemented_yet() -> None:
-    asyncio.run(_test_codex_provider_create_runtime_is_not_implemented_yet())
+def test_codex_provider_creates_native_runtime() -> None:
+    asyncio.run(_test_codex_provider_creates_native_runtime())
 
 
-async def _test_codex_provider_create_runtime_is_not_implemented_yet() -> None:
+async def _test_codex_provider_creates_native_runtime() -> None:
     provider = CodexProvider(sdk_checker=_missing_sdk, command_checker=_available_command)
     config = await provider.validate_config({"sdkMode": "app-server"})
 
-    with pytest.raises(RuntimeUnsupportedError):
-        await provider.create_runtime(config, _NoHost())
+    runtime = await provider.create_runtime(config, _NoHost())
+
+    assert isinstance(runtime, CodexRuntime)
+    assert await runtime.get_config() == config
 
 
 async def _available_command(

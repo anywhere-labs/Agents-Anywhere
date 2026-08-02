@@ -19,9 +19,13 @@ from connector.runtime_protocol import (
     RuntimeInvalidRequestError,
     RuntimeInventoryItem,
     RuntimeProvider,
-    RuntimeUnsupportedError,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
+from connector.runtimes.codex.runtime import (
+    CodexRuntime,
+    EmptyCodexClient,
+    app_server_client_from_config,
+)
 
 SdkMode = Literal["auto", "sdk", "app-server"]
 CommandChecker = Callable[[LaunchTarget, Mapping[str, str]], Awaitable[dict[str, Any]]]
@@ -170,9 +174,10 @@ class CodexProvider(RuntimeProvider):
         config: RuntimeConfig,
         host: RuntimeHostClient,
     ) -> AgentRuntime:
-        _ = config
         _ = host
-        raise RuntimeUnsupportedError("codex.create_runtime")
+        mode = config.values.get("sdkMode")
+        client = app_server_client_from_config(config) if mode == "app-server" else EmptyCodexClient()
+        return CodexRuntime(config=config, host=host, client=client)
 
     async def _discover_app_server_target(self) -> tuple[dict[str, Any], LaunchTarget | None]:
         checked: list[dict[str, Any]] = []
