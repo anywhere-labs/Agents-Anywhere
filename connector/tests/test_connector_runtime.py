@@ -569,6 +569,13 @@ def test_connector_runtime_discovers_agent_runtime_inventory() -> None:
     asyncio.run(_exercise_agent_runtime_discovery())
 
 
+def test_connector_runtime_starts_saved_runtime_configs(tmp_path) -> None:
+    asyncio.run(_exercise_saved_runtime_config_startup(tmp_path))
+
+
+def test_connector_runtime_ignores_invalid_saved_runtime_configs(tmp_path) -> None:
+    asyncio.run(_exercise_invalid_saved_runtime_config_startup(tmp_path))
+
 
 def test_connector_runtime_disables_http_proxy_for_loopback_backend() -> None:
     from connector.server.urls import is_loopback_url
@@ -1298,6 +1305,49 @@ async def _exercise_agent_runtime_discovery() -> None:
         }
     ]
 
+
+async def _exercise_saved_runtime_config_startup(tmp_path) -> None:
+    codex = FakeAgentRuntime("codex")
+    claude = FakeAgentRuntime("claude")
+    store = JsonRuntimeConfigStore(tmp_path / "runtime-configs.json")
+    store.save("codex", {"sdkMode": "auto"})
+    store.save("claude", {"executablePath": "/opt/claude"})
+    store.save("unknown", {"ignored": True})
+    client = _client(
+        providers=(
+            FakeAgentProvider(codex, "codex"),
+            FakeAgentProvider(claude, "claude"),
+        ),
+        runtime_config_store=store,
+    )
+    ws = FakeWebSocket()
+    client._rpc.set_connection(ws)  # type: ignore[arg-type]
+
+    await client._start_saved_agent_runtimes()
+
+    assert codex.started is True
+    assert claude.started is True
+    assert client.agent_runtime_supervisor.entry("codex").config.values == {"sdkMode": "auto"}
+    assert client.agent_runtime_supervisor.entry("claude").config.values == {"executablePath": "/opt/claude"}
+    assert [message["params"] for message in ws.messages if message["method"] == "runtime.statusChanged"][-2:] == [
+        {"runtimeId": "claude", "status": "starting"},
+        {"runtimeId": "claude", "status": "running"},
+    ]
+
+
+async def _exercise_invalid_saved_runtime_config_startup(tmp_path) -> None:
+    runtime = FakeAgentRuntime("codex")
+    path = tmp_path / "runtime-configs.json"
+    path.write_text("{", encoding="utf-8")
+    client = _client(
+        runtime=runtime,
+        runtime_config_store=JsonRuntimeConfigStore(path),
+    )
+    client._rpc.set_connection(FakeWebSocket())  # type: ignore[arg-type]
+
+    await client._start_saved_agent_runtimes()
+
+    assert runtime.started is False
 
 
 async def _exercise_unknown_runtime() -> None:

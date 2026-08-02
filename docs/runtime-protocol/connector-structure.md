@@ -390,6 +390,7 @@ core -> server/runtime_protocol/runtimes/local
 
 - Added `runtime_protocol` ABCs and dataclasses.
 - Added `RuntimeProvider`, `RuntimeSupervisor`, and JSON runtime config store.
+- Connector startup restores saved JSON runtime configs through the supervisor.
 - Added native `runtimes/codex` provider/runtime.
 - Added native `runtimes/claude` provider/runtime.
 - Moved server transport/client/dispatch/ingest/sync/protocol helpers under

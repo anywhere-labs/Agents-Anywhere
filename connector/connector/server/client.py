@@ -161,6 +161,7 @@ class BackendRpcClient:
             self._rpc.set_connection(ws)
             inventory = await self._dispatcher.discover_runtimes()
             await self.send_notification("runtime.inventoryUpdated", inventory)
+            await self._start_saved_agent_runtimes()
             heartbeat_task = asyncio.create_task(self._heartbeat_loop())
             sync_task = asyncio.create_task(self._sync_existing_loop())
             try:
@@ -204,6 +205,20 @@ class BackendRpcClient:
         while True:
             await self.send_notification("connector.heartbeat", {})
             await asyncio.sleep(self.config.heartbeat_seconds)
+
+    async def _start_saved_agent_runtimes(self) -> None:
+        try:
+            saved_configs = self.runtime_config_store.load_all()
+        except Exception:
+            logger.exception("loading saved runtime configs failed")
+            return
+        for runtime_id in self.agent_runtime_supervisor.runtimes:
+            if runtime_id not in saved_configs:
+                continue
+            try:
+                await self.agent_runtime_supervisor.start(runtime_id, saved_configs[runtime_id])
+            except Exception:
+                logger.exception("starting saved {} runtime config failed", runtime_id)
 
     async def _sync_existing_loop(self) -> None:
         if not self.config.sync_existing_on_connect:
