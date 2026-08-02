@@ -13,7 +13,7 @@ from websockets.exceptions import ConnectionClosed
 from connector.core.config import ConnectorConfig
 from connector.core.preferences import read_local_preferences
 from connector.core.runtime_config_store import JsonRuntimeConfigStore
-from connector.local_ops import create_local_ops
+from connector.local import create_local_ops
 from connector.logging import logger
 from connector.runtime_protocol import (
     RuntimeHostClient,
