@@ -4,16 +4,20 @@ import asyncio
 import base64
 import errno
 import os
-import signal
-import sys
 import time
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from collections.abc import Awaitable, Callable
 from typing import Any
 
-from connector.local.common import Notify, nearest_existing_dir, required_string, resolve_path, workspace_root
-
+from connector.local.common import (
+    Notify,
+    nearest_existing_dir,
+    required_string,
+    resolve_path,
+    workspace_root,
+)
+from connector.local.terminal_records import append_scrollback, terminal_view
 
 TerminalOutput = Callable[[str, dict[str, Any]], Awaitable[None]]
 TERMINAL_SCROLLBACK_MAX_BYTES = 512 * 1024
@@ -219,23 +223,7 @@ class TerminalBackend:
         for record in self._terminals.values():
             if session_id is not None and record["sessionId"] != session_id:
                 continue
-            items.append({
-                "terminalId": record["id"],
-                "sessionId": record["sessionId"],
-                "label": record["label"],
-                "purpose": "user",
-                "pid": self._pid(record["pty"]) if not record["closed"] else None,
-                "cols": record["cols"],
-                "rows": record["rows"],
-                "cwd": record["cwd"],
-                "shell": record["shell"],
-                "closed": record["closed"],
-                "status": record["status"],
-                "exitCode": record["exitCode"],
-                "scrollbackBytes": len(record["scrollback"]),
-                "scrollbackSeq": record["seq"],
-                "createdAt": record["createdAt"],
-            })
+            items.append(self._terminal_view(record))
         return {"terminals": items}
 
     async def snapshot(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -273,7 +261,7 @@ class TerminalBackend:
                     break
                 self._touch(record)
                 record["seq"] += 1
-                self._append_scrollback(record, data)
+                append_scrollback(record, data, TERMINAL_SCROLLBACK_MAX_BYTES)
                 await self._notify(
                     "terminal.output",
                     {
@@ -396,38 +384,7 @@ class TerminalBackend:
             await self.notify(method, params)
 
     def _terminal_view(self, record: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "terminalId": record["id"],
-            "sessionId": record["sessionId"],
-            "label": record["label"],
-            "purpose": "user",
-            "pid": self._pid(record["pty"]) if not record["closed"] else None,
-            "cols": record["cols"],
-            "rows": record["rows"],
-            "cwd": record["cwd"],
-            "shell": record["shell"],
-            "closed": record["closed"],
-            "status": record["status"],
-            "exitCode": record["exitCode"],
-            "scrollbackBytes": len(record["scrollback"]),
-            "scrollbackSeq": record["seq"],
-            "createdAt": record["createdAt"],
-        }
-
-    def _append_scrollback(self, record: dict[str, Any], data: bytes) -> None:
-        data_base64 = base64.b64encode(data).decode("ascii")
-        record["chunks"].append({"seq": record["seq"], "dataBase64": data_base64, "bytes": len(data)})
-        record["chunksBytes"] += len(data)
-        while record["chunks"] and record["chunksBytes"] > TERMINAL_SCROLLBACK_MAX_BYTES:
-            removed = record["chunks"].pop(0)
-            record["chunksBytes"] -= removed["bytes"]
-        scrollback = record["scrollback"]
-        scrollback.extend(data)
-        overflow = len(scrollback) - TERMINAL_SCROLLBACK_MAX_BYTES
-        if overflow <= 0:
-            return
-        del scrollback[:overflow]
-        record["scrollbackBaseSeq"] = (record["chunks"][0]["seq"] - 1) if record["chunks"] else record["seq"]
+        return terminal_view(record, self._pid(record["pty"]))
 
     def _gc(self) -> None:
         now = time.monotonic()
@@ -508,135 +465,9 @@ def _env_float(name: str, default: float, override: float | None) -> float:
         return float(default)
 
 
-class UnixPtyTerminalBackend(TerminalBackend):
-    def _spawn(self, argv: list[str], *, cwd: Path, env: dict[str, str], rows: int, cols: int) -> Any:
-        import ptyprocess
-
-        try:
-            return ptyprocess.PtyProcess.spawn(
-                argv,
-                cwd=str(cwd),
-                env=env,
-                dimensions=(rows, cols),
-            )
-        except FileNotFoundError as exc:
-            raise FileNotFoundError(f"terminal command not found: {argv[0]}") from exc
-
-    def _read(self, pty: Any) -> bytes:
-        try:
-            chunk = os.read(pty.fd, 4096)
-        except OSError as exc:
-            if exc.errno in (errno.EIO,):
-                return b""
-            raise
-        return chunk
-
-    def _write_all(self, pty: Any, data: bytes) -> None:
-        written = 0
-        while written < len(data):
-            try:
-                n = os.write(pty.fd, data[written:])
-            except OSError as exc:
-                if exc.errno in (errno.EIO, errno.EPIPE):
-                    return
-                raise
-            if not n:
-                return
-            written += n
-
-    def _setwinsize(self, pty: Any, rows: int, cols: int) -> None:
-        pty.setwinsize(rows, cols)
-
-    def _terminate(self, pty: Any) -> None:
-        try:
-            pty.terminate(force=True)
-        except Exception:
-            try:
-                pty.kill(signal.SIGKILL)
-            except Exception:
-                pass
-
-    def _close(self, pty: Any) -> None:
-        try:
-            pty.close(force=True)
-        except Exception:
-            pass
-
-    def _wait_exit_code(self, pty: Any) -> int | None:
-        try:
-            pty.wait()
-            return pty.exitstatus
-        except Exception:
-            return None
-
-
-class WinPtyTerminalBackend(TerminalBackend):
-    def _default_shell(self, requested: Any) -> str:
-        if isinstance(requested, str) and requested.strip():
-            return requested
-        return "powershell.exe"
-
-    def _default_argv(self, shell_cmd: str) -> list[str]:
-        if shell_cmd.lower().endswith("powershell.exe") or shell_cmd.lower() == "powershell":
-            return [shell_cmd, "-NoLogo"]
-        return [shell_cmd]
-
-    def _spawn(self, argv: list[str], *, cwd: Path, env: dict[str, str], rows: int, cols: int) -> Any:
-        try:
-            from winpty import PtyProcess
-        except ImportError as exc:
-            raise RuntimeError("pywinpty is required for Windows terminal support") from exc
-        try:
-            return PtyProcess.spawn(
-                argv,
-                cwd=str(cwd),
-                env=env,
-                dimensions=(rows, cols),
-            )
-        except Exception as exc:
-            raise RuntimeError(
-                "failed to create Windows ConPTY terminal; run the connector in an interactive user session"
-            ) from exc
-
-    def _read(self, pty: Any) -> bytes:
-        try:
-            data = pty.read(4096)
-        except EOFError:
-            return b""
-        if isinstance(data, str):
-            return data.encode("utf-8", errors="replace")
-        return data or b""
-
-    def _write_all(self, pty: Any, data: bytes) -> None:
-        pty.write(data.decode("utf-8", errors="replace"))
-
-    def _setwinsize(self, pty: Any, rows: int, cols: int) -> None:
-        pty.setwinsize(rows, cols)
-
-    def _terminate(self, pty: Any) -> None:
-        try:
-            pty.terminate(force=True)
-        except Exception:
-            try:
-                pty.kill()
-            except Exception:
-                pass
-
-    def _close(self, pty: Any) -> None:
-        try:
-            pty.close()
-        except Exception:
-            pass
-
-    def _wait_exit_code(self, pty: Any) -> int | None:
-        try:
-            pty.wait()
-            return pty.exitstatus
-        except Exception:
-            return None
-
-
 def default_terminal_backend(notify: Notify | None = None) -> TerminalBackend:
-    if sys.platform == "win32":
-        return WinPtyTerminalBackend(notify=notify)
-    return UnixPtyTerminalBackend(notify=notify)
+    from connector.local.terminal_platforms import (
+        default_terminal_backend as platform_default_terminal_backend,
+    )
+
+    return platform_default_terminal_backend(notify)
