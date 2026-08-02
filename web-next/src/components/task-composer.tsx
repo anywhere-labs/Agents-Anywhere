@@ -84,8 +84,8 @@ type NewSessionPreference = {
 }
 
 type NewSessionSelectionPreference = {
-  modelSelectionId?: string | null
-  permissionSelectionId?: string | null
+  model?: string | null
+  permission?: string | null
 }
 
 type NewSessionTitleKey = (typeof NEW_SESSION_TITLE_KEYS)[number]
@@ -415,7 +415,7 @@ export function TaskComposer() {
     selectionPreferenceAppliedForScopeRef.current = scope
     if (!selectionPreference) return
 
-    const modelSelection = modelIdsForSelectionId(modelCatalog, selectionPreference.modelSelectionId)
+    const modelSelection = modelIdsForSelectionId(modelCatalog, selectionPreference.model)
     if (modelSelection && models.some((option) => option.id === modelSelection.modelId)) {
       setSelectedModel(modelSelection.modelId)
       setSelectedReasoning(modelSelection.reasoningId)
@@ -423,7 +423,7 @@ export function TaskComposer() {
 
     const permissionSelection = permissionIdForSelectionId(
       permissionCatalog,
-      selectionPreference.permissionSelectionId,
+      selectionPreference.permission,
     )
     if (permissionSelection && permissionOptions.some((option) => option.id === permissionSelection)) {
       setSelectedPermissionMode(permissionSelection)
@@ -556,8 +556,8 @@ export function TaskComposer() {
         selectedConnector.id,
         selectedAgent,
         {
-          modelSelectionId,
-          permissionSelectionId,
+          model: modelSelectionId,
+          permission: permissionSelectionId,
         },
       )
       writeNewSessionPreference(nextPreference)
@@ -901,17 +901,24 @@ function readNewSessionSelectionPreferences(value: unknown): Record<string, NewS
   const result: Record<string, NewSessionSelectionPreference> = {}
   for (const [scope, rawSelection] of Object.entries(value)) {
     if (!scope || !rawSelection || typeof rawSelection !== "object" || Array.isArray(rawSelection)) continue
-    const selection = rawSelection as Partial<NewSessionSelectionPreference>
-    const modelSelectionId = typeof selection.modelSelectionId === "string" && selection.modelSelectionId
-      ? selection.modelSelectionId
-      : null
-    const permissionSelectionId = typeof selection.permissionSelectionId === "string" && selection.permissionSelectionId
-      ? selection.permissionSelectionId
-      : null
-    if (!modelSelectionId && !permissionSelectionId) continue
+    const selection = rawSelection as Partial<NewSessionSelectionPreference> & {
+      modelSelectionId?: unknown
+      permissionSelectionId?: unknown
+    }
+    const model = typeof selection.model === "string" && selection.model
+      ? selection.model
+      : typeof selection.modelSelectionId === "string" && selection.modelSelectionId
+        ? selection.modelSelectionId
+        : null
+    const permission = typeof selection.permission === "string" && selection.permission
+      ? selection.permission
+      : typeof selection.permissionSelectionId === "string" && selection.permissionSelectionId
+        ? selection.permissionSelectionId
+        : null
+    if (!model && !permission) continue
     result[scope] = {
-      modelSelectionId,
-      permissionSelectionId,
+      model,
+      permission,
     }
   }
   return Object.keys(result).length > 0 ? result : undefined
@@ -930,8 +937,8 @@ function withNewSessionSelectionPreference(
     selections: {
       ...(current?.selections ?? {}),
       [scope]: {
-        modelSelectionId: selection.modelSelectionId ?? null,
-        permissionSelectionId: selection.permissionSelectionId ?? null,
+        model: selection.model ?? null,
+        permission: selection.permission ?? null,
       },
     },
   }
