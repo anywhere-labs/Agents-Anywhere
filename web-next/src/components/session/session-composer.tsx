@@ -27,6 +27,7 @@ import type {
   ProtocolCapabilitySet,
   ProtocolModelCatalog,
   ProtocolPermissionCatalog,
+  SessionRuntimeState,
   SessionView,
 } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
@@ -46,6 +47,7 @@ export type SessionCommandId = "help" | "interrupt" | "release" | "takeover"
 
 export function SessionComposer({
   session,
+  runtimeState,
   pendingInteractionCount,
   creatingSession = false,
   sending,
@@ -62,6 +64,7 @@ export function SessionComposer({
   onToggleTakeover,
 }: {
   session: SessionView
+  runtimeState?: SessionRuntimeState | null
   pendingInteractionCount: number
   creatingSession?: boolean
   sending: boolean
@@ -87,9 +90,11 @@ export function SessionComposer({
     useAttachments()
   const composerRef = React.useRef<HTMLDivElement | null>(null)
   const composerWidth = useElementWidth(composerRef)
-  const isBusy = session.status === "running" || session.status === "blocked"
-  const isStopping = session.status === "stopping"
-  const isPending = session.status === "pending"
+  const runtimeStatus = runtimeState?.status ?? session.status
+  const runtimeSelections = runtimeState?.selections ?? {}
+  const isBusy = runtimeStatus === "running" || runtimeStatus === "blocked"
+  const isStopping = runtimeStatus === "stopping"
+  const isWaiting = runtimeStatus === "waiting" || runtimeStatus === "pending"
   const connectorOnline = session.connectorStatus === "online"
   const canUseSendMessage = capabilityIsUsable(effectiveCapabilities, CAPABILITY.sendMessage)
   const canUseInterrupt = capabilityIsUsable(effectiveCapabilities, CAPABILITY.interrupt)
@@ -108,7 +113,7 @@ export function SessionComposer({
     connectorOnline &&
     interruptCapability?.supported &&
     interruptCapability.allowed &&
-    (isPending || isBusy),
+    (isWaiting || isBusy),
   )
   const showInterrupt = !creatingSession && (canUseInterrupt || activeSessionCanInterrupt)
   const [selectedPermissionMode, setSelectedPermissionMode] = React.useState("")
@@ -134,8 +139,8 @@ export function SessionComposer({
   })) ?? []
   const selectedModelItem = modelItems.find((item) => item.id === selectedModel)
   const effortItems = selectedModelItem?.reasoningItems ?? []
-  const modelSelectionValue = modelIdsForSelectionId(modelCatalog, session.modelSelectionId)
-  const permissionSelectionValue = permissionIdForSelectionId(permissionCatalog, session.permissionSelectionId)
+  const modelSelectionValue = modelIdsForSelectionId(modelCatalog, runtimeSelections.model ?? null)
+  const permissionSelectionValue = permissionIdForSelectionId(permissionCatalog, runtimeSelections.permission ?? null)
   const permissionValue = permissionSelectionValue
   const modelValue = modelSelectionValue?.modelId ?? ""
   const effortValue = modelSelectionValue?.reasoningId ?? ""
@@ -182,7 +187,7 @@ export function SessionComposer({
       ? tSession("deviceOfflinePlaceholder")
       : pendingInteractionCount > 0
         ? tSession("waitingApprovalPlaceholder")
-        : isPending
+        : isWaiting
           ? tSession("pendingPlaceholder")
           : isStopping || isBusy
             ? tSession("busyPlaceholder")

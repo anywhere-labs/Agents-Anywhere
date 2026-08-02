@@ -219,7 +219,7 @@ function SessionMetaBadge({
   const rows = [
     [t("device"), connectorName ?? session.connectorId],
     [t("runtime"), session.runtime],
-    [t("status"), `${memorySnapshot?.session.status ?? session.status} · ${session.connectorStatus}`],
+    [t("status"), `${memorySnapshot?.state?.status ?? memorySnapshot?.session.status ?? session.status} · ${session.connectorStatus}`],
     [t("workspace"), memorySnapshot?.session.cwd ?? session.cwd ?? t("none")],
     [t("sessionId"), session.id],
     [t("externalId"), memorySnapshot?.session.externalSessionId ?? t("none")],

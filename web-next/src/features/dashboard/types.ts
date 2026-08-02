@@ -360,6 +360,7 @@ export type SessionSnapshotResponse = Pick<
   "eventCursor" | "serverTime"
 > & {
   session: SessionView;
+  state?: SessionRuntimeState | null;
   timeline: SessionTimelineSnapshot;
   notices: Notice[];
   effectiveCapabilities: ProtocolCapabilitySet;

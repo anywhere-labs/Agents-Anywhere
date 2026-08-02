@@ -686,6 +686,114 @@
       "title": "ProtocolTimelineSnapshot",
       "type": "object"
     },
+    "SessionRuntimeState": {
+      "properties": {
+        "createdAt": {
+          "title": "Createdat",
+          "type": "string"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "externalSessionId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Externalsessionid"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        },
+        "runtime": {
+          "enum": [
+            "codex",
+            "claude",
+            "opencode",
+            "acp"
+          ],
+          "title": "Runtime",
+          "type": "string"
+        },
+        "selections": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": "Selections",
+          "type": "object"
+        },
+        "sessionId": {
+          "title": "Sessionid",
+          "type": "string"
+        },
+        "status": {
+          "default": "idle",
+          "enum": [
+            "idle",
+            "waiting",
+            "pending",
+            "running",
+            "stopping",
+            "blocked"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "statusReason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Statusreason"
+        },
+        "updatedAt": {
+          "title": "Updatedat",
+          "type": "string"
+        },
+        "updatedSeq": {
+          "title": "Updatedseq",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "sessionId",
+        "runtime",
+        "updatedSeq",
+        "createdAt",
+        "updatedAt"
+      ],
+      "title": "SessionRuntimeState",
+      "type": "object"
+    },
     "SessionView": {
       "properties": {
         "archived": {
@@ -876,6 +984,7 @@
         "status": {
           "enum": [
             "idle",
+            "waiting",
             "pending",
             "running",
             "stopping",
@@ -1198,12 +1307,24 @@
     "session": {
       "$ref": "#/$defs/SessionView"
     },
+    "state": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SessionRuntimeState"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "timeline": {
       "$ref": "#/$defs/ProtocolTimelineSnapshot"
     }
   },
   "required": [
     "session",
+    "state",
     "timeline",
     "approvals",
     "notices",

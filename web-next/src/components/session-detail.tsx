@@ -27,6 +27,7 @@ import type {
   ProtocolModelCatalog,
   ProtocolPermissionCatalog,
   SessionSnapshotResponse,
+  SessionRuntimeState,
   SessionStateResponse,
   SessionView,
   TimelineItem,
@@ -58,6 +59,7 @@ type SessionDetailProps = {
 
 export type SessionMemorySnapshot = {
   session: SessionView
+  state?: SessionRuntimeState | null
   items: TimelineItem[]
   notices: Notice[]
   nextSeq: number
@@ -170,6 +172,7 @@ async function loadInitialSessionState(
 function sessionStateFromSnapshot(snapshot: SessionSnapshotResponse): SessionRemoteState {
   return {
     session: snapshot.session,
+    state: snapshot.state ?? null,
     items: sortTimelineItems(snapshot.timeline.items),
     notices: snapshot.notices,
     nextSeq: snapshot.timeline.nextSeq,
@@ -179,6 +182,44 @@ function sessionStateFromSnapshot(snapshot: SessionSnapshotResponse): SessionRem
     effectiveCapabilities: snapshot.effectiveCapabilities,
     catalogs: snapshot.catalogs,
   }
+}
+
+function nextOptimisticRuntimeState(
+  state: SessionRuntimeState | null | undefined,
+  session: SessionView,
+  status: SessionRuntimeState["status"],
+): SessionRuntimeState {
+  const now = new Date().toISOString()
+  return {
+    sessionId: session.id,
+    runtime: session.runtime,
+    externalSessionId: session.externalSessionId,
+    status,
+    selections: state?.selections ?? {},
+    statusReason: state?.statusReason ?? null,
+    error: state?.error ?? null,
+    metadata: state?.metadata ?? {},
+    updatedSeq: state?.updatedSeq ?? session.updatedSeq,
+    createdAt: state?.createdAt ?? now,
+    updatedAt: now,
+  }
+}
+
+function selectionPatchFromComposerSelections(
+  current: Record<string, string | null>,
+  selections: { modelSelectionId?: string; permissionSelectionId?: string },
+): Record<string, string | null> {
+  const patch: Record<string, string | null> = {}
+  if (selections.modelSelectionId && selections.modelSelectionId !== current.model) {
+    patch.model = selections.modelSelectionId
+  }
+  if (
+    selections.permissionSelectionId &&
+    selections.permissionSelectionId !== current.permission
+  ) {
+    patch.permission = selections.permissionSelectionId
+  }
+  return patch
 }
 
 function composerDraftStorageKey(sessionId: string): string {
@@ -250,6 +291,8 @@ export function SessionDetail({
   const streamConnectedRef = React.useRef(false)
 
   const session = state?.session ?? fallbackSession
+  const runtimeState = state?.state ?? null
+  const runtimeStatus = runtimeState?.status ?? session?.status ?? "idle"
   const composerDraft = composerDraftState.sessionId === sessionId ? composerDraftState.value : ""
   const isLocalOptimisticSession = isOptimisticSession(sessionId)
 
@@ -322,6 +365,7 @@ export function SessionDetail({
     }
     onMemorySnapshotUpdated?.({
       session: state.session,
+      state: state.state ?? null,
       items: state.items,
       notices: state.notices,
       nextSeq: state.nextSeq,
@@ -667,18 +711,35 @@ export function SessionDetail({
       sessionId: session.id,
       item: optimisticMessage,
     })
-    const previousSessionStatus = session.status
-    const previousSessionUpdatedSeq = session.updatedSeq
+    const previousRuntimeState = state?.state ?? null
     setState((current) => {
       if (!current) return current
       return {
         ...current,
-        session: { ...current.session, status: "pending" },
+        state: nextOptimisticRuntimeState(current.state, current.session, "waiting"),
         items: mergeTimelineItems(current.items, [optimisticMessage]),
       }
     })
     setSending(true)
     try {
+      const selectionPatch = selectionPatchFromComposerSelections(runtimeState?.selections ?? {}, selections)
+      if (Object.keys(selectionPatch).length > 0) {
+        const selectionResult = await dashboardApi.updateSessionSelections(token, session.id, selectionPatch)
+        setState((current) =>
+          current
+            ? {
+                ...current,
+                state: selectionResult.state ?? {
+                  ...nextOptimisticRuntimeState(current.state, current.session, current.state?.status ?? runtimeStatus),
+                  selections: {
+                    ...(current.state?.selections ?? {}),
+                    ...selectionPatch,
+                  },
+                },
+              }
+            : current,
+        )
+      }
       const files = attachments.map((attachment) => attachment.file)
       const upload = files.length > 0
         ? await dashboardApi.uploadSessionAttachments(token, session.id, files)
@@ -686,7 +747,6 @@ export function SessionDetail({
       await dashboardApi.sendSessionMessage(token, session.id, messageText, {
         attachments: upload?.attachments.map((attachment) => ({ fileId: attachment.fileId })) ?? [],
         clientMessageId,
-        ...selections,
       })
       if (!streamConnectedRef.current) {
         try {
@@ -707,11 +767,10 @@ export function SessionDetail({
         if (!current) return current
         return {
           ...current,
-          session:
-            current.session.status === "pending" &&
-            current.session.updatedSeq === previousSessionUpdatedSeq
-              ? { ...current.session, status: previousSessionStatus }
-              : current.session,
+          state:
+            current.state?.status === "waiting"
+              ? previousRuntimeState
+              : current.state,
           items: current.items.map((item) =>
             timelineClientMessageId(item) === clientMessageId && isOptimisticTimelineItem(item)
               ? markOptimisticItemFailed(item, message)
@@ -985,7 +1044,7 @@ export function SessionDetail({
           viewportProps={{ onScroll: handleTimelineScroll }}
         >
           <div
-            aria-busy={session.status === "pending" || session.status === "running"}
+            aria-busy={runtimeStatus === "waiting" || runtimeStatus === "running"}
             className={cn(
               "mx-auto flex w-full min-w-0 max-w-4xl flex-col gap-3 overflow-hidden px-5 pb-44 pt-20",
               blockingInteractionCount > 0 && "pb-[30rem]",
@@ -1043,11 +1102,11 @@ export function SessionDetail({
             {detachedNotifications.map((notice) => (
               <NotificationCard key={notice.noticeId} notice={notice} />
             ))}
-            {session.status === "pending" || session.status === "running" ? (
+            {runtimeStatus === "waiting" || runtimeStatus === "running" ? (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Loader2 className="size-4 animate-spin" />
                 <span>
-                  {session.status === "pending"
+                  {runtimeStatus === "waiting"
                     ? tSession("runtimePending", { runtime: runtimeLabel(session.runtime) })
                     : tSession("runtimeWorking", { runtime: runtimeLabel(session.runtime) })}
                 </span>
@@ -1086,6 +1145,7 @@ export function SessionDetail({
         <div className="pointer-events-auto relative">
           <SessionComposer
             session={session}
+            runtimeState={runtimeState}
             pendingInteractionCount={blockingInteractionCount}
             creatingSession={isLocalOptimisticSession}
             sending={sending}
@@ -1424,6 +1484,7 @@ function mergeSessionEvent(
   if (!current) return current
 
   const session = readPayloadValue<SessionView>(event.payload.session)
+  const runtimeState = readPayloadValue<SessionRuntimeState>(event.payload.state)
   const item = readPayloadValue<TimelineItem>(event.payload.item)
   const timelineSnapshot = Array.isArray(event.payload.items)
     ? event.payload.items.filter(isTimelineItem)
@@ -1446,6 +1507,12 @@ function mergeSessionEvent(
       : current.items
   const acceptsSession = Boolean(session && session.updatedSeq >= current.session.updatedSeq)
   const nextSession = acceptsSession && session ? session : current.session
+  const acceptsRuntimeState = Boolean(
+    runtimeState &&
+      runtimeState.sessionId === current.session.id &&
+      runtimeState.updatedSeq >= (current.state?.updatedSeq ?? 0),
+  )
+  const nextRuntimeState = acceptsRuntimeState && runtimeState ? runtimeState : current.state
   const nextEffectiveCapabilities =
     effectiveCapabilities && (!session || acceptsSession)
       ? effectiveCapabilities
@@ -1455,6 +1522,7 @@ function mergeSessionEvent(
   return {
     ...current,
     session: nextSession,
+    state: nextRuntimeState,
     items: nextItems,
     notices: nextNotices,
     nextSeq,

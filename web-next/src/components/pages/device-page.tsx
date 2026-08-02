@@ -170,7 +170,7 @@ function SessionRow({
             ? "border-emerald-500 bg-emerald-500"
             : session.status === "blocked"
               ? "border-amber-400/70"
-              : session.status === "pending" || session.status === "stopping"
+              : session.status === "waiting" || session.status === "pending" || session.status === "stopping"
                 ? "border-blue-400/70"
                 : "border-muted-foreground/40",
         )}

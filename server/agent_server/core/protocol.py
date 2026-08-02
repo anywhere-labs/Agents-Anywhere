@@ -11,6 +11,7 @@ from agent_server.core.models import (
     Approval,
     Notice,
     RuntimeName,
+    SessionRuntimeState,
     SessionView,
     TimelineItem,
 )
@@ -126,6 +127,7 @@ class ProtocolTimelineSnapshot(ProtocolWireModel):
 
 class ProtocolSessionSnapshotResponse(ProtocolWireModel):
     session: SessionView
+    state: SessionRuntimeState | None = None
     timeline: ProtocolTimelineSnapshot
     approvals: list[Approval] = Field(default_factory=list)
     notices: list[Notice] = Field(default_factory=list)

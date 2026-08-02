@@ -2463,6 +2463,8 @@ def test_session_snapshot_includes_effective_capabilities(tmp_path):
     assert idle_snapshot.status_code == 200, idle_snapshot.text
     idle_body = idle_snapshot.json()
     assert idle_body["runtimeCapabilities"]["revision"] == 3
+    assert idle_body["state"]["status"] == "idle"
+    assert idle_body["state"]["selections"] == {}
     idle_caps = {
         item["capabilityId"]: item for item in idle_body["effectiveCapabilities"]["capabilities"]
     }
@@ -2478,6 +2480,20 @@ def test_session_snapshot_includes_effective_capabilities(tmp_path):
     assert permission_catalog["runtime"] == "codex"
     assert permission_catalog["permissions"][0]["selectionId"].startswith("sel_permission_")
     assert idle_body["eventCursor"].startswith("seq:")
+
+    asyncio.run(
+        client.app.state.store.upsert_session_runtime_state(
+            session_id=session_id,
+            runtime="codex",
+            status="running",
+            selections={"model": "sel_model_runtime"},
+        )
+    )
+    state_snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
+    assert state_snapshot.status_code == 200, state_snapshot.text
+    state_body = state_snapshot.json()["state"]
+    assert state_body["status"] == "running"
+    assert state_body["selections"] == {"model": "sel_model_runtime"}
 
     asyncio.run(client.app.state.store.set_session_status(session_id, "running"))
     running_snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)

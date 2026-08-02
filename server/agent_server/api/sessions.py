@@ -438,6 +438,7 @@ async def session_snapshot(
         items, has_more = await db.list_timeline_latest(session_id=session_id, limit=limit)
         notices = await db.list_open_notices(session_id)
         approvals = pending_approvals_from_notices(notices)
+        runtime_state = await db.get_session_runtime_state(session_id, user_id=user_id)
         next_seq = await db.get_session_seq(session_id)
         model_catalog = await db.get_protocol_catalog(
             session.connectorId,
@@ -455,6 +456,7 @@ async def session_snapshot(
         raise HTTPException(status_code=404, detail="session not found") from None
     return ProtocolSessionSnapshotResponse(
         session=session,
+        state=runtime_state,
         timeline=ProtocolTimelineSnapshot(items=items, nextSeq=next_seq, hasMore=has_more),
         approvals=approvals,
         notices=notices,
