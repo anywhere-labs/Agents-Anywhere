@@ -675,6 +675,32 @@ def test_session_state_updated_rejects_legacy_selection_fields(tmp_path):
     assert response.json()["detail"]["code"] == "unsupported_legacy_selection_fields"
 
 
+def test_session_updated_rejects_legacy_selection_fields(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, access_token, session_id, _headers = create_connector_and_session(client)
+
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "session.updated",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "codex",
+                        "status": "running",
+                        "permissionSelectionId": "sel_permission_legacy",
+                    },
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "unsupported_legacy_selection_fields"
+
+
 def wait_for_state_items(client: TestClient, session_id: str, headers: dict[str, str], predicate):
     def read_state():
         body = client.get(f"/sessions/{session_id}/state", headers=headers, params={"afterSeq": 0}).json()

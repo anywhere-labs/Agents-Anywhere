@@ -192,6 +192,8 @@ class SessionNotificationHandler:
     ) -> IngestEffect | None:
         if method not in {"session.meta.upsert", "session.updated"}:
             return None
+        if method == "session.updated":
+            _reject_legacy_selection_fields(params, notification=method)
         local_state = _local_session_state(params)
         session_id = params["sessionId"]
         external_session_id = params.get("externalSessionId")
@@ -217,7 +219,7 @@ class SessionNotificationHandler:
                     runtime=params.get("runtime") or "codex",
                     external_session_id=_string_or_none(external_session_id),
                     status=_v2_session_status(params.get("status")),
-                    selections=_session_updated_migration_selections(params),
+                    selections=_selections_param(params),
                 )
             return IngestEffect(session_id=session_id, session_changed=True)
         except KeyError:
@@ -247,7 +249,7 @@ class SessionNotificationHandler:
                     runtime=params.get("runtime") or "codex",
                     external_session_id=_string_or_none(external_session_id),
                     status=_v2_session_status(params.get("status")),
-                    selections=_session_updated_migration_selections(params),
+                    selections=_selections_param(params),
                 )
             return IngestEffect(session_id=session.id, session_changed=True)
 
@@ -630,24 +632,12 @@ def _selections_param(params: dict[str, Any]) -> dict[str, str | None] | None:
     return selections
 
 
-def _session_updated_migration_selections(params: dict[str, Any]) -> dict[str, str | None] | None:
-    selections = _selections_param(params)
-    if selections is not None:
-        return selections
-    out: dict[str, str | None] = {}
-    if "modelSelectionId" in params:
-        out["model"] = _string_or_none(params.get("modelSelectionId"))
-    if "permissionSelectionId" in params:
-        out["permission"] = _string_or_none(params.get("permissionSelectionId"))
-    return out or None
-
-
 def _reject_legacy_selection_fields(params: dict[str, Any], *, notification: str) -> None:
     if "modelSelectionId" not in params and "permissionSelectionId" not in params:
         return
     raise NotificationValidationError(
         "unsupported_legacy_selection_fields",
-        f"{notification} accepts selections; modelSelectionId and permissionSelectionId are migration-only session.updated fields",
+        f"{notification} accepts selections; modelSelectionId and permissionSelectionId are not supported",
     )
 
 
@@ -657,8 +647,6 @@ def _has_runtime_state_fields(params: dict[str, Any]) -> bool:
         for key in (
             "status",
             "selections",
-            "modelSelectionId",
-            "permissionSelectionId",
         )
     )
 
