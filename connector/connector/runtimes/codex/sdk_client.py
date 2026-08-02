@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from connector.runtime_protocol import RuntimeConfig, RuntimeInvalidRequestError
-from connector.runtimes.codex.client import CodexRuntimeClient, NotificationHandler
+from connector.runtimes.codex.runtime_client import CodexRuntimeClient, NotificationHandler
 
 
 class CodexSdkClient:

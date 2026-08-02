@@ -352,8 +352,12 @@ Acceptance:
 - `auto` prefers the SDK when the `openai-codex` package is available.
 - SDK mode is backed by an active `CodexRuntimeClient` adapter boundary, so
   future SDK API changes stay inside `runtimes/codex/sdk_client.py`.
+- `CodexRuntimeClient` lives in `runtimes/codex/runtime_client.py`; native
+  transports should implement that protocol instead of leaking SDK or
+  app-server details into `CodexRuntime`.
 - The app-server JSON-RPC client remains only as a fallback/reference path while
-  Codex migrates fully to SDK-backed integration.
+  Codex migrates fully to SDK-backed integration, and its implementation lives
+  in `runtimes/codex/app_server_client.py`.
 - `CodexProvider` keeps `ipcEnabled` as a beta config field and notes macOS-only
   test coverage. The `ipc` capability should remain false until active
   `runtimes/codex` code projects IPC state/timeline/notice events through

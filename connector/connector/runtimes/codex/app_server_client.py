@@ -3,33 +3,25 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from collections.abc import Awaitable, Callable, Mapping
-from typing import Any, Protocol
+from collections.abc import Mapping
+from typing import Any
 
 from connector.launch import LaunchTarget
 from connector.logging import logger
 from connector.runtime_protocol import RuntimeConfig
+from connector.runtimes.codex.runtime_client import NotificationHandler
 
-NotificationHandler = Callable[[dict[str, Any]], Awaitable[None]]
 APP_SERVER_STREAM_LIMIT = 64 * 1024 * 1024
 
 
-class CodexRuntimeClient(Protocol):
-    async def start(self, handler: NotificationHandler) -> None: ...
-    async def stop(self) -> None: ...
-    async def request(
-        self,
-        method: str,
-        params: Mapping[str, Any] | None = None,
-    ) -> dict[str, Any]: ...
-    async def respond(
-        self,
-        request_id: str | int,
-        result: Mapping[str, Any] | None = None,
-    ) -> None: ...
-
-
 class CodexAppServerClient:
+    """Fallback Codex app-server stdio client.
+
+    The primary Codex integration should go through the SDK adapter. This class
+    remains available for explicit `sdkMode=app-server` configurations and for
+    diagnosing SDK coverage gaps.
+    """
+
     def __init__(
         self,
         command: list[str],
@@ -53,7 +45,7 @@ class CodexAppServerClient:
 
             self._notification_handler = handler
             if self.process is None:
-                logger.info("starting codex app-server command={}", self.command)
+                logger.info("starting fallback codex app-server command={}", self.command)
                 self.process = await asyncio.create_subprocess_exec(
                     *self.command,
                     stdin=asyncio.subprocess.PIPE,

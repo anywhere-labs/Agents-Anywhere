@@ -35,7 +35,7 @@ from connector.runtimes.codex.catalogs import (
     model_catalog_from_codex_items,
     permission_catalog_from_codex_items,
 )
-from connector.runtimes.codex.client import CodexRuntimeClient
+from connector.runtimes.codex.runtime_client import CodexRuntimeClient
 from connector.runtimes.codex.runtime_helpers import (
     ensure_text_only_attachments,
     soft_interrupt_failure_reason,

@@ -21,7 +21,7 @@ from connector.runtime_protocol import (
     RuntimeProvider,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
-from connector.runtimes.codex.client import app_server_client_from_config
+from connector.runtimes.codex.app_server_client import app_server_client_from_config
 from connector.runtimes.codex.runtime import CodexRuntime
 from connector.runtimes.codex.sdk_client import sdk_client_from_config
 
