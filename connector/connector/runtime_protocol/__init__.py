@@ -1,3 +1,8 @@
+from connector.runtime_protocol.attachments import (
+    attachment_target,
+    attachments_root,
+    session_attachments_dir,
+)
 from connector.runtime_protocol.errors import (
     RuntimeConflictError,
     RuntimeInvalidRequestError,
@@ -39,6 +44,8 @@ from connector.runtime_protocol.supervisor import (
 
 __all__ = [
     "AgentRuntime",
+    "attachment_target",
+    "attachments_root",
     "RuntimeAttachment",
     "RuntimeAttachmentContent",
     "RuntimeCommand",
@@ -67,6 +74,7 @@ __all__ = [
     "RuntimeUnsupportedError",
     "RuntimeUpstreamError",
     "SelectionScope",
+    "session_attachments_dir",
     "SessionMeta",
     "SessionNotice",
     "SessionState",

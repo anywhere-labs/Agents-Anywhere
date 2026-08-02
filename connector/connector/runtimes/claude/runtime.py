@@ -10,7 +10,6 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from connector.attachments import attachment_target
 from connector.logging import logger
 from connector.runtime_protocol import (
     AgentRuntime,
@@ -27,6 +26,7 @@ from connector.runtime_protocol import (
     SessionMeta,
     SessionState,
 )
+from connector.runtime_protocol.attachments import attachment_target
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.server.protocol import protocol_selection_id
 from connector.time import utc_now

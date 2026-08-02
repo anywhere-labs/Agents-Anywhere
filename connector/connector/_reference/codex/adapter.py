@@ -41,8 +41,8 @@ from connector._reference.codex.reducer import (
 )
 from connector._reference.codex.rpc import JsonRpcStdioClient
 from connector._reference.legacy.interactions import approval_notice
-from connector.attachments import attachment_target
 from connector.logging import logger
+from connector.runtime_protocol.attachments import attachment_target
 from connector.server.catalogs import (
     model_catalog_from_runtime_items,
     permission_catalog_from_items,

@@ -19,9 +19,9 @@ from connector._reference.claude.timeline_reducer import (
 )
 from connector._reference.legacy.adapter import NotificationSink
 from connector._reference.legacy.interactions import approval_notice
-from connector.attachments import attachment_target
 from connector.launch import LaunchTarget, launch_target
 from connector.logging import logger
+from connector.runtime_protocol.attachments import attachment_target
 from connector.server.catalogs import (
     empty_model_catalog,
     permission_catalog_from_items,
