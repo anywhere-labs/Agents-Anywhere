@@ -5,9 +5,8 @@ import base64
 import hashlib
 import json
 import secrets
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from typing import Any
 
 from connector.logging import logger
@@ -19,8 +18,6 @@ from connector.runtime_protocol import (
     RuntimeModelCatalog,
     RuntimeOperationResult,
     RuntimePermissionCatalog,
-    RuntimePermissionItem,
-    RuntimeTimelineItem,
     RuntimeTimelineSnapshot,
     RuntimeUnsupportedError,
     SessionMeta,
@@ -29,8 +26,8 @@ from connector.runtime_protocol import (
 )
 from connector.runtime_protocol.attachments import attachment_target
 from connector.runtime_protocol.host import RuntimeHostClient
-from connector.server.protocol import protocol_selection_id
-from connector.time import utc_now
+from connector.runtimes.claude import permissions as permission_catalogs
+from connector.runtimes.claude import timeline, utils
 
 SdkLoader = Callable[[], Any]
 ClaudeClientFactory = Callable[[Any, Mapping[str, Any]], Any]
@@ -129,7 +126,7 @@ class ClaudeRuntime(AgentRuntime):
         query: str | None = None,
         limit: int = 100,
     ) -> RuntimePermissionCatalog:
-        permissions = _claude_permissions(self.config.revision).permissions
+        permissions = permission_catalogs.claude_permissions(self.config.revision).permissions
         if query:
             lowered = query.casefold()
             permissions = tuple(
@@ -158,7 +155,7 @@ class ClaudeRuntime(AgentRuntime):
             raise RuntimeUnsupportedError("list_sessions")
         sessions: list[SessionMeta] = []
         for item in list(list_sessions(limit=limit)):
-            external_session_id = _string_attr(item, "session_id")
+            external_session_id = utils.string_attr(item, "session_id")
             if external_session_id is None:
                 continue
             sessions.append(
@@ -166,9 +163,9 @@ class ClaudeRuntime(AgentRuntime):
                     session_id=stable_session_id(self.host.connector_id, external_session_id),
                     external_session_id=external_session_id,
                     runtime="claude",
-                    title=_string_attr(item, "custom_title") or _string_attr(item, "summary"),
-                    cwd=_string_attr(item, "cwd"),
-                    ordering_time=_timestamp_from_ms(_int_attr(item, "last_modified")),
+                    title=utils.string_attr(item, "custom_title") or utils.string_attr(item, "summary"),
+                    cwd=utils.string_attr(item, "cwd"),
+                    ordering_time=utils.timestamp_from_ms(utils.int_attr(item, "last_modified")),
                     metadata={
                         "local_state": "active",
                         "source": "claude-agent-sdk.list_sessions",
@@ -210,9 +207,9 @@ class ClaudeRuntime(AgentRuntime):
             )
         await self.start()
         sdk = self._require_sdk()
-        session_info = _get_session_info(sdk, external_session_id, directory=None)
-        messages = _get_session_messages(sdk, external_session_id, directory=_string_attr(session_info, "cwd"))
-        items = _timeline_items_from_messages(
+        session_info = timeline.get_session_info(sdk, external_session_id, directory=None)
+        messages = timeline.get_session_messages(sdk, external_session_id, directory=utils.string_attr(session_info, "cwd"))
+        items = timeline.timeline_items_from_messages(
             session_id=session_id,
             external_session_id=external_session_id,
             session_info=session_info,
@@ -330,7 +327,7 @@ class ClaudeRuntime(AgentRuntime):
                 code="claude_steer_unavailable",
                 message="Claude SDK client is not ready to receive steering input",
             )
-        await client.query(_prompt_stream(await self._materialize_content(session_id, content, attachments)))
+        await client.query(timeline.prompt_stream(await self._materialize_content(session_id, content, attachments)))
         await self._set_session_state(
             session_id=session.session_id,
             external_session_id=session.external_session_id,
@@ -488,22 +485,22 @@ class ClaudeRuntime(AgentRuntime):
             query = getattr(client, "query", None)
             if not callable(query):
                 raise RuntimeUnsupportedError("ClaudeSDKClient.query")
-            await query(_prompt_stream(await self._materialize_content(session.session_id, content, attachments)))
+            await query(timeline.prompt_stream(await self._materialize_content(session.session_id, content, attachments)))
             await self.host.timeline_item_upsert(
-                _message_item(
+                timeline.message_item(
                     session_id=session.session_id,
                     external_session_id=session.external_session_id,
                     turn_id=turn_id,
                     role="user",
                     text=content,
                     source_event="claude.turn/start.user",
-                    order_seq=self._order_for(_stable_item_id("claude_user", session.session_id, turn_id, client_message_id, content)),
-                    item_id=_stable_item_id("claude_user", session.session_id, turn_id, client_message_id, content),
+                    order_seq=self._order_for(utils.stable_item_id("claude_user", session.session_id, turn_id, client_message_id, content)),
+                    item_id=utils.stable_item_id("claude_user", session.session_id, turn_id, client_message_id, content),
                     client_message_id=client_message_id,
                 )
             )
-            async for raw in _receive_response(client):
-                for item in _timeline_items_from_live_message(
+            async for raw in timeline.receive_response(client):
+                for item in timeline.timeline_items_from_live_message(
                     session_id=session.session_id,
                     external_session_id=session.external_session_id,
                     turn_id=turn_id,
@@ -562,7 +559,7 @@ class ClaudeRuntime(AgentRuntime):
 
     async def _can_use_tool(self, tool_name: str, input_data: dict[str, Any], context: Any = None) -> Any:
         sdk = self._require_sdk()
-        context_session_id = _string(_extract_attr(context, "session_id", "sessionId"))
+        context_session_id = utils.string(utils.extract_attr(context, "session_id", "sessionId"))
         session = self._session_from_context(context_session_id)
         if session is None:
             return _permission_deny(sdk, "Session is not registered")
@@ -698,37 +695,6 @@ def stable_session_id(connector_id: str, external_session_id: str) -> str:
     return f"sess_claude_{digest}"
 
 
-def _claude_permissions(revision: int) -> RuntimePermissionCatalog:
-    items = [
-        ("default", "Ask permissions", "Prompt before destructive actions. Read-only commands run automatically.", True),
-        ("acceptEdits", "Accept edits", "Auto-approve file edits; still ask for shell commands.", False),
-        ("plan", "Plan mode", "Read-only planning. No writes, no commands.", False),
-        ("auto", "Auto mode", "Run everything; background classifier flags risky actions.", False),
-        ("bypassPermissions", "Bypass permissions", "Skip every prompt. Use with care.", False),
-    ]
-    return RuntimePermissionCatalog(
-        runtime="claude",
-        revision=revision,
-        permissions=tuple(
-            RuntimePermissionItem(
-                id=item_id,
-                title=title,
-                description=description,
-                selection_id=protocol_selection_id(
-                    "claude",
-                    "permission",
-                    {"permission_mode": item_id},
-                ),
-                metadata={
-                    "default": is_default,
-                    "nativeSettings": {"permissionMode": item_id},
-                },
-            )
-            for item_id, title, description, is_default in items
-        ),
-    )
-
-
 def _sdk_options(
     sdk: Any,
     config: RuntimeConfig,
@@ -751,10 +717,10 @@ def _sdk_options(
     if isinstance(environment, Mapping):
         kwargs["env"] = dict(environment)
     permission_selection = session.selections.get("permission")
-    permission_mode = _permission_mode_from_selection(permission_selection)
+    permission_mode = permission_catalogs.permission_mode_from_selection(permission_selection)
     if permission_mode:
         kwargs["permission_mode"] = permission_mode
-    hook_matcher = _optional_attr(sdk, "HookMatcher", "types.HookMatcher")
+    hook_matcher = utils.optional_attr(sdk, "HookMatcher", "types.HookMatcher")
     if hook_matcher is not None:
         async def _keep_permission_stream_open(
             _input_data: Any,
@@ -768,18 +734,6 @@ def _sdk_options(
     if options_cls is None:
         return kwargs
     return options_cls(**kwargs)
-
-
-def _permission_mode_from_selection(selection_id: str | None) -> str | None:
-    if selection_id is None:
-        return None
-    for permission in _claude_permissions(1).permissions:
-        if permission.selection_id == selection_id:
-            native = permission.metadata.get("nativeSettings")
-            if isinstance(native, Mapping):
-                mode = native.get("permissionMode")
-                return mode if isinstance(mode, str) else None
-    return None
 
 
 def _approval_notice(
@@ -846,9 +800,9 @@ def _approval_kind(tool_name: str) -> str:
 
 def _approval_description(tool_name: str, input_data: Mapping[str, Any]) -> str:
     if tool_name == "Bash":
-        return _string(input_data.get("command")) or "Run command"
+        return utils.string(input_data.get("command")) or "Run command"
     if tool_name in {"Edit", "Write", "NotebookEdit"}:
-        return _string(input_data.get("file_path")) or "Modify file"
+        return utils.string(input_data.get("file_path")) or "Modify file"
     return json.dumps(dict(input_data), ensure_ascii=False, sort_keys=True)
 
 
@@ -878,304 +832,20 @@ def _normalize_approval_action(action_id: str) -> str | None:
 
 
 def _permission_allow(sdk: Any, input_data: Mapping[str, Any]) -> Any:
-    cls = _optional_attr(sdk, "PermissionResultAllow", "types.PermissionResultAllow")
+    cls = utils.optional_attr(sdk, "PermissionResultAllow", "types.PermissionResultAllow")
     if cls is not None:
         return cls(updated_input=dict(input_data))
     return {"behavior": "allow", "updatedInput": dict(input_data)}
 
 
 def _permission_deny(sdk: Any, message: str) -> Any:
-    cls = _optional_attr(sdk, "PermissionResultDeny", "types.PermissionResultDeny")
+    cls = utils.optional_attr(sdk, "PermissionResultDeny", "types.PermissionResultDeny")
     if cls is not None:
         return cls(message=message)
     return {"behavior": "deny", "message": message}
-
-
-def _get_session_info(sdk: Any, session_id: str, directory: str | None) -> Any:
-    get_session_info = getattr(sdk, "get_session_info", None)
-    if not callable(get_session_info):
-        return None
-    try:
-        return get_session_info(session_id, directory=directory)
-    except TypeError:
-        return get_session_info(session_id)
-
-
-def _get_session_messages(sdk: Any, session_id: str, directory: str | None) -> list[Any]:
-    get_session_messages = getattr(sdk, "get_session_messages", None)
-    if not callable(get_session_messages):
-        raise RuntimeUnsupportedError("get_session_messages")
-    try:
-        return list(get_session_messages(session_id, directory=directory))
-    except TypeError:
-        return list(get_session_messages(session_id))
-
-
-def _timeline_items_from_messages(
-    session_id: str,
-    external_session_id: str,
-    session_info: Any,
-    messages: list[Any],
-    limit: int,
-) -> tuple[RuntimeTimelineItem, ...]:
-    items: list[RuntimeTimelineItem] = []
-    for index, message in enumerate(messages[:limit]):
-        item = _timeline_item_from_history_message(
-            session_id=session_id,
-            external_session_id=external_session_id,
-            session_info=session_info,
-            message=message,
-            order_seq=index + 1,
-        )
-        if item is not None:
-            items.append(item)
-    return tuple(items)
-
-
-def _timeline_item_from_history_message(
-    session_id: str,
-    external_session_id: str,
-    session_info: Any,
-    message: Any,
-    order_seq: int,
-) -> RuntimeTimelineItem | None:
-    raw = _raw_message(message)
-    role = _message_role(raw, message)
-    text = _message_text(raw, message)
-    if role is None or text is None:
-        return None
-    message_id = _string_attr(message, "uuid") or _string(raw.get("id")) or _stable_item_id(
-        "claude_history",
-        external_session_id,
-        order_seq,
-        role,
-        text,
-    )
-    timestamp = _timestamp_from_ms(_int_attr(session_info, "last_modified")) or utc_now()
-    return _message_item(
-        session_id=session_id,
-        external_session_id=external_session_id,
-        turn_id=message_id,
-        role=role,
-        text=text,
-        source_event="claude-agent-sdk.history",
-        order_seq=order_seq,
-        item_id=_stable_item_id("claude_msg", external_session_id, message_id),
-        timestamp=timestamp,
-    )
-
-
-def _timeline_items_from_live_message(
-    session_id: str,
-    external_session_id: str | None,
-    turn_id: str,
-    message: Any,
-    next_order: Callable[[str], int],
-) -> tuple[RuntimeTimelineItem, ...]:
-    raw = _raw_message(message)
-    session_from_message = _string_attr(message, "session_id") or _string(raw.get("session_id")) or external_session_id
-    role = _message_role(raw, message)
-    text = _message_text(raw, message)
-    if role is None or text is None:
-        return ()
-    item_id = _stable_item_id(
-        "claude_live",
-        session_from_message,
-        _string_attr(message, "uuid") or _string(raw.get("id")) or text,
-        role,
-    )
-    return (
-        _message_item(
-            session_id=session_id,
-            external_session_id=session_from_message,
-            turn_id=turn_id,
-            role=role,
-            text=text,
-            source_event="claude-agent-sdk.live",
-            order_seq=next_order(item_id),
-            item_id=item_id,
-            timestamp=_string_attr(message, "timestamp") or utc_now(),
-        ),
-    )
-
-
-def _message_item(
-    session_id: str,
-    external_session_id: str | None,
-    turn_id: str,
-    role: str,
-    text: str,
-    source_event: str,
-    order_seq: int,
-    item_id: str,
-    timestamp: str | None = None,
-    client_message_id: str | None = None,
-) -> RuntimeTimelineItem:
-    content = {"text": text, "format": "markdown"}
-    source: dict[str, Any] = {
-        "runtime": "claude",
-        "sessionId": external_session_id,
-        "turnId": turn_id,
-        "itemId": item_id,
-        "itemType": "message",
-        "event": source_event,
-    }
-    if client_message_id:
-        source["clientMessageId"] = client_message_id
-    return RuntimeTimelineItem(
-        id=item_id,
-        session_id=session_id,
-        type="message",
-        status="done",
-        order_seq=order_seq,
-        content_hash=_content_hash("message", "done", role, content),
-        role=role,
-        turn_id=turn_id,
-        content=content,
-        source=source,
-        revision=1,
-        metadata={
-            **({"createdAt": timestamp} if timestamp else {}),
-        },
-    )
-
-
-async def _receive_response(client: Any) -> AsyncIterator[Any]:
-    receive = getattr(client, "receive_response", None)
-    if not callable(receive):
-        return
-    result = receive()
-    if hasattr(result, "__aiter__"):
-        async for item in result:
-            yield item
-        return
-    if hasattr(result, "__await__"):
-        result = await result
-    if hasattr(result, "__aiter__"):
-        async for item in result:
-            yield item
-        return
-    if isinstance(result, list | tuple):
-        for item in result:
-            yield item
-        return
-    if result is not None:
-        yield result
-
-
-async def _prompt_stream(content: Any) -> AsyncIterator[dict[str, Any]]:
-    yield {
-        "type": "user",
-        "message": {
-            "role": "user",
-            "content": content,
-        },
-    }
 
 
 async def _maybe_await(value: Any) -> Any:
     if hasattr(value, "__await__"):
         return await value
     return value
-
-
-def _raw_message(message: Any) -> dict[str, Any]:
-    raw = getattr(message, "message", None)
-    if isinstance(raw, dict):
-        return raw
-    if isinstance(message, dict):
-        nested = message.get("message")
-        return nested if isinstance(nested, dict) else message
-    return {}
-
-
-def _message_role(raw: Mapping[str, Any], message: Any) -> str | None:
-    role = _string(raw.get("role")) or _string_attr(message, "type") or _string_attr(message, "role")
-    return role if role in {"user", "assistant", "system"} else None
-
-
-def _message_text(raw: Mapping[str, Any], message: Any) -> str | None:
-    result = _string_attr(message, "result")
-    if result:
-        return result
-    content = raw.get("content")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts: list[str] = []
-        for block in content:
-            if isinstance(block, str):
-                parts.append(block)
-            elif isinstance(block, Mapping):
-                text = _string(block.get("text"))
-                if text:
-                    parts.append(text)
-        text = "\n".join(parts).strip()
-        return text or None
-    text = _string(raw.get("text")) or _string_attr(message, "text")
-    return text if text else None
-
-
-def _string_attr(value: Any, attr: str) -> str | None:
-    candidate = getattr(value, attr, None)
-    return candidate if isinstance(candidate, str) and candidate else None
-
-
-def _int_attr(value: Any, attr: str) -> int | None:
-    candidate = getattr(value, attr, None)
-    return candidate if isinstance(candidate, int) else None
-
-
-def _string(value: Any) -> str | None:
-    return value if isinstance(value, str) and value else None
-
-
-def _extract_attr(value: Any, *names: str) -> Any:
-    if isinstance(value, Mapping):
-        for name in names:
-            if name in value:
-                return value[name]
-        return None
-    for name in names:
-        candidate = getattr(value, name, None)
-        if candidate is not None:
-            return candidate
-    return None
-
-
-def _optional_attr(root: Any, *paths: str) -> Any:
-    for path in paths:
-        current = root
-        for part in path.split("."):
-            current = getattr(current, part, None)
-            if current is None:
-                break
-        if current is not None:
-            return current
-    return None
-
-
-def _timestamp_from_ms(value: int | None) -> str | None:
-    if value is None:
-        return None
-    return datetime.fromtimestamp(value / 1000, tz=UTC).isoformat().replace("+00:00", "Z")
-
-
-def _stable_item_id(*values: Any) -> str:
-    payload = json.dumps(values, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return "claude_" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
-
-
-def _content_hash(item_type: str, status: str, role: str | None, content: Any) -> str:
-    payload = json.dumps(
-        {
-            "type": item_type,
-            "status": status,
-            "role": role,
-            "content": content,
-        },
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
