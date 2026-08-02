@@ -204,5 +204,8 @@ Remove or deprecate:
 - `MessageCreateRequest.permissionSelectionId`
 - `SessionCreateRequest.modelSelectionId`
 - `SessionCreateRequest.permissionSelectionId`
+
+Bind-only `POST /sessions` accepts `selections`; new user tasks use
+`POST /sessions/create-and-start`.
 - snapshot `catalogs.model` and `catalogs.permission` as primary UI source
 - server catalog validation as the primary runtime option check

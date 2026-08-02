@@ -79,6 +79,7 @@ GET  /api/v2/sessions/{sessionId}/state with timeline query params
 POST /api/v2/sessions/{sessionId}/sync
 POST /api/v2/sessions/{sessionId}/interactions/{noticeId}/respond
 message/create modelSelectionId and permissionSelectionId fields
+session/create modelSelectionId and permissionSelectionId fields
 snapshot.catalogs
 hardcoded session commands
 ```

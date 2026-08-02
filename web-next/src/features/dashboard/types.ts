@@ -209,10 +209,10 @@ export type SessionResponse = {
 export type SessionCreateRequest = {
   connectorId: string;
   runtime: string;
+  externalSessionId?: string | null;
   title?: string;
   cwd?: string;
-  modelSelectionId?: string | null;
-  permissionSelectionId?: string | null;
+  selections?: Record<string, string | null>;
 };
 
 export type SessionCreateAndStartRequest = {

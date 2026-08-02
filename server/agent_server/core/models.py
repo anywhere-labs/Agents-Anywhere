@@ -511,8 +511,7 @@ class SessionCreateRequest(BaseModel):
     externalSessionId: str | None = None
     title: str | None = None
     cwd: str | None = None
-    modelSelectionId: str | None = None
-    permissionSelectionId: str | None = None
+    selections: dict[str, str | None] = Field(default_factory=dict)
 
 
 class SessionCreateAndStartRequest(BaseModel):

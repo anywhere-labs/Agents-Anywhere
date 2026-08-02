@@ -83,7 +83,7 @@ class SessionRunService:
                 session_id=session.id,
                 runtime=payload.runtime,
                 external_session_id=payload.externalSessionId,
-                selections=_payload_selections(payload),
+                selections=_selections_from_mapping(payload.selections),
             )
             return {"session": session, "connectorResult": connector_result}
 
@@ -532,15 +532,6 @@ def _interrupt_target_not_found(result: object) -> bool:
         return False
     reason = result.get("reason")
     return reason in {"thread_not_found", "turn_not_found"}
-
-
-def _payload_selections(payload: SessionCreateRequest) -> dict[str, str]:
-    selections: dict[str, str] = {}
-    if payload.modelSelectionId:
-        selections["model"] = payload.modelSelectionId
-    if payload.permissionSelectionId:
-        selections["permission"] = payload.permissionSelectionId
-    return selections
 
 
 def _selections_from_mapping(value: dict[str, str | None]) -> dict[str, str]:

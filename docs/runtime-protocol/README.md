@@ -78,6 +78,9 @@ Remove or deprecate these as protocol truth:
 - `MessageCreateRequest.permissionSelectionId`
 - `SessionCreateRequest.modelSelectionId`
 - `SessionCreateRequest.permissionSelectionId`
+
+Bind-only session creation uses `SessionCreateRequest.selections`; new user
+tasks use `SessionCreateAndStartRequest.selections`.
 - Server-persisted model/permission catalogs as the primary read path
 - frontend-built command lists
 

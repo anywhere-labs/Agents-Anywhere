@@ -297,7 +297,7 @@ def test_session_create_binds_external_session_model_selection_to_state(tmp_path
             "title": "Selected model",
             "cwd": "/repo",
             "externalSessionId": "thr_selected_model",
-            "modelSelectionId": model_selection_id,
+            "selections": {"model": model_selection_id},
         },
     )
 
@@ -328,7 +328,7 @@ def test_session_create_binds_external_session_permission_selection_to_state(tmp
             "title": "Selected permission",
             "cwd": "/repo",
             "externalSessionId": "thr_selected_permission",
-            "permissionSelectionId": permission_selection_id,
+            "selections": {"permission": permission_selection_id},
         },
     )
 
