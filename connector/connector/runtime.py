@@ -33,6 +33,7 @@ from connector.runtime_protocol import (
 from connector.runtime_protocol import (
     RuntimeSupervisor as AgentRuntimeSupervisor,
 )
+from connector.runtimes.claude.provider import ClaudeProvider
 from connector.runtimes.codex.provider import CodexProvider
 from connector.server.runtime_host import ConnectorRuntimeHost
 from connector.sync_state import JsonSyncStateStore, SyncStateStore
@@ -76,7 +77,7 @@ class BackendRpcClient:
             sync_state_store=self.sync_state_store,
         )
         if agent_runtime_providers is None:
-            agent_runtime_providers = (CodexProvider(),)
+            agent_runtime_providers = (CodexProvider(), ClaudeProvider())
         self.agent_runtime_supervisor = AgentRuntimeSupervisor(
             providers=agent_runtime_providers,
             host=self.agent_runtime_host,
