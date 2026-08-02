@@ -18,15 +18,15 @@ from connector._reference.claude.timeline_reducer import (
     is_task_event_tool_name,
 )
 from connector._reference.legacy.adapter import NotificationSink
+from connector._reference.legacy.interactions import approval_notice
 from connector.attachments import attachment_target
-from connector.interactions import approval_notice
 from connector.launch import LaunchTarget, launch_target
 from connector.logging import logger
-from connector.server.protocol import protocol_selection_id
 from connector.server.catalogs import (
     empty_model_catalog,
     permission_catalog_from_items,
 )
+from connector.server.protocol import protocol_selection_id
 from connector.time import utc_now
 
 AttachmentDownloader = Callable[[str, str], Awaitable[tuple[bytes, str, str]]]

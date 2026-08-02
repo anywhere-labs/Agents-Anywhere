@@ -40,14 +40,14 @@ from connector._reference.codex.reducer import (
     TimelineReducer,
 )
 from connector._reference.codex.rpc import JsonRpcStdioClient
+from connector._reference.legacy.interactions import approval_notice
 from connector.attachments import attachment_target
-from connector.interactions import approval_notice
 from connector.logging import logger
-from connector.server.protocol import protocol_selection_id
 from connector.server.catalogs import (
     model_catalog_from_runtime_items,
     permission_catalog_from_items,
 )
+from connector.server.protocol import protocol_selection_id
 from connector.server.sync_state import SyncStateStore
 from connector.time import utc_now
 
