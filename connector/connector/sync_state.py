@@ -42,6 +42,9 @@ class SyncStateStore:
     def delete_runtime(self, runtime: str, connector_id: str) -> None:
         raise NotImplementedError
 
+    def delete(self, runtime: str, connector_id: str, external_session_id: str) -> None:
+        raise NotImplementedError
+
 
 class JsonSyncStateStore(SyncStateStore):
     def __init__(self, path: str | Path) -> None:
@@ -109,6 +112,22 @@ class JsonSyncStateStore(SyncStateStore):
             ):
                 return
             del runtime_states[connector_id]
+            if not runtime_states:
+                del document["states"][runtime]
+            self._write(document)
+
+    def delete(self, runtime: str, connector_id: str, external_session_id: str) -> None:
+        with self._lock:
+            document = self._read()
+            runtime_states = document["states"].get(runtime)
+            if not isinstance(runtime_states, dict):
+                return
+            connector_states = runtime_states.get(connector_id)
+            if not isinstance(connector_states, dict) or external_session_id not in connector_states:
+                return
+            del connector_states[external_session_id]
+            if not connector_states:
+                del runtime_states[connector_id]
             if not runtime_states:
                 del document["states"][runtime]
             self._write(document)

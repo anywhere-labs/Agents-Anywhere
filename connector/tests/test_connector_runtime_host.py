@@ -5,10 +5,15 @@ from typing import Any
 
 from connector.runtime_protocol import RuntimeTimelineItem
 from connector.server.runtime_host import ConnectorRuntimeHost
+from connector.sync_state import JsonSyncStateStore
 
 
 def test_connector_runtime_host_maps_timeline_item_to_backend_notification() -> None:
     asyncio.run(_exercise_timeline_item_notification())
+
+
+def test_connector_runtime_host_persists_sync_state(tmp_path) -> None:
+    asyncio.run(_exercise_persistent_sync_state(tmp_path))
 
 
 async def _exercise_timeline_item_notification() -> None:
@@ -76,6 +81,36 @@ async def _exercise_timeline_item_notification() -> None:
             },
         )
     ]
+
+
+async def _exercise_persistent_sync_state(tmp_path) -> None:
+    async def notify(method: str, params: dict[str, Any]) -> None:
+        _ = method, params
+
+    async def download(session_id: str, file_id: str) -> tuple[bytes, str, str]:
+        _ = session_id
+        return b"data", f"{file_id}.txt", "text/plain"
+
+    state_path = tmp_path / "connector-state.json"
+    first = ConnectorRuntimeHost(
+        connector_id="conn_1",
+        notifier=notify,
+        attachment_downloader=download,
+        sync_state_store=JsonSyncStateStore(state_path),
+    )
+
+    await first.sync_state_write("codex/history/cursor/thread_1", {"position": 7})
+
+    second = ConnectorRuntimeHost(
+        connector_id="conn_1",
+        notifier=notify,
+        attachment_downloader=download,
+        sync_state_store=JsonSyncStateStore(state_path),
+    )
+
+    assert await second.sync_state_read("codex/history/cursor/thread_1") == {"position": 7}
+    await second.sync_state_delete("codex/history/cursor/thread_1")
+    assert await first.sync_state_read("codex/history/cursor/thread_1") is None
 
 
 def test_connector_runtime_host_maps_attachment_download() -> None:

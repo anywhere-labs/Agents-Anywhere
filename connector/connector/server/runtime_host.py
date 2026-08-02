@@ -10,7 +10,7 @@ from connector.runtime_protocol import (
     SessionNotice,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
-from connector.sync_state import SyncStateStore
+from connector.sync_state import RuntimeSyncState, SyncStateStore
 
 BackendNotifier = Callable[[str, dict[str, Any]], Awaitable[None]]
 AttachmentDownloader = Callable[[str, str], Awaitable[tuple[bytes, str, str]]]
@@ -178,23 +178,42 @@ class ConnectorRuntimeHost(RuntimeHostClient):
         self,
         key: str,
     ) -> Mapping[str, Any] | None:
-        _ = self._sync_state_store
-        return self._memory_sync_state.get(key)
+        if self._sync_state_store is None:
+            return self._memory_sync_state.get(key)
+        state = self._sync_state_store.get(*self._sync_state_key(key))
+        return _sync_state_value(state)
 
     async def sync_state_write(
         self,
         key: str,
         value: Mapping[str, Any],
     ) -> None:
-        _ = self._sync_state_store
-        self._memory_sync_state[key] = dict(value)
+        if self._sync_state_store is None:
+            self._memory_sync_state[key] = dict(value)
+            return
+        runtime, connector_id, state_key = self._sync_state_key(key)
+        self._sync_state_store.set(
+            runtime,
+            connector_id,
+            state_key,
+            cursor=dict(value),
+            metadata={"key": key},
+        )
 
     async def sync_state_delete(
         self,
         key: str,
     ) -> None:
-        _ = self._sync_state_store
-        self._memory_sync_state.pop(key, None)
+        if self._sync_state_store is None:
+            self._memory_sync_state.pop(key, None)
+            return
+        self._sync_state_store.delete(*self._sync_state_key(key))
+
+    def _sync_state_key(self, key: str) -> tuple[str, str, str]:
+        runtime, separator, _rest = key.partition("/")
+        if not separator or not runtime:
+            raise ValueError("sync state key must be runtime-namespaced, e.g. codex/history/cursor/{id}")
+        return runtime, self._connector_id, key
 
 
 def _timeline_item_payload(item: RuntimeTimelineItem) -> dict[str, Any]:
@@ -233,3 +252,9 @@ def _timeline_source_payload(item: RuntimeTimelineItem) -> dict[str, Any]:
 
 def _drop_none(payload: Mapping[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in payload.items() if value is not None}
+
+
+def _sync_state_value(state: RuntimeSyncState | None) -> Mapping[str, Any] | None:
+    if state is None:
+        return None
+    return state.cursor
