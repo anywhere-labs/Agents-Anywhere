@@ -4,20 +4,21 @@ from agent_server.infra.repositories.store_support import *
 from agent_server.core.runtime_config import (
     DEFAULT_RUNTIME_CONFIG_SCHEMAS,
     claude_efforts_for_model,
+    codex_efforts_for_model,
 )
 
 
 class AgentCatalogRepositoryMixin:
     async def seed_agent_catalog(self) -> None:
         """Insert any catalog rows declared in SEED_AGENT_CATALOG that are
-        missing. Idempotent: re-running is a no-op once a row is present.
-        Existing rows are NOT updated, so operators can safely edit labels in
-        the DB without seeding overwriting them on next boot.
+        missing. Existing labels and descriptions remain operator-editable;
+        Codex defaults and seed ordering are migrated idempotently on startup.
         """
         await self._seed_table(agent_modes_t, SEED_AGENT_MODES)
         await self._seed_table(agent_models_t, SEED_AGENT_MODELS)
         await self._seed_table(agent_efforts_t, SEED_AGENT_EFFORTS)
-
+        async with self._engine.begin() as conn:
+            await _migrate_codex_catalog_async(conn)
 
     async def _seed_table(self, table: Any, rows: list[dict[str, Any]]) -> None:
         if not rows:
@@ -183,23 +184,33 @@ class AgentCatalogRepositoryMixin:
             )
         ).mappings().first()
         if row is not None:
-            return {
-                "runtime": runtime,
-                "enabled": bool(row["enabled"]),
-                "settings": _json_loads(row["settings_json"]) or {},
-                "models": _catalog_entries_from_json(runtime, row["models_json"]),
-            }
-        models = await self._list_agent_catalog_on_conn(conn, agent_models_t, runtime)
-        efforts = await self._list_agent_catalog_on_conn(conn, agent_efforts_t, runtime)
+            enabled = bool(row["enabled"])
+            settings = _json_loads(row["settings_json"]) or {}
+            # Read exact legacy built-in snapshots through the current global
+            # catalog without rewriting them, so a server rollback stays safe.
+            models = (
+                []
+                if runtime == "codex"
+                and _is_legacy_builtin_codex_models_json(row["models_json"])
+                else _catalog_entries_from_json(runtime, row["models_json"])
+            )
+        else:
+            enabled = True
+            settings = default_agent_settings(runtime)
+            models = []
         if not models:
-            models = _default_catalog_from_runtime_schema(runtime, "model")
-        if not efforts:
-            efforts = _default_catalog_from_runtime_schema(runtime, "effort")
+            models = await self._list_agent_catalog_on_conn(conn, agent_models_t, runtime)
+            efforts = await self._list_agent_catalog_on_conn(conn, agent_efforts_t, runtime)
+            if not models:
+                models = _default_catalog_from_runtime_schema(runtime, "model")
+            if not efforts:
+                efforts = _default_catalog_from_runtime_schema(runtime, "effort")
+            models = _models_with_default_efforts(runtime, models, efforts)
         return {
             "runtime": runtime,
-            "enabled": True,
-            "settings": default_agent_settings(runtime),
-            "models": _models_with_default_efforts(runtime, models, efforts),
+            "enabled": enabled,
+            "settings": settings,
+            "models": models,
         }
 
 
@@ -385,9 +396,12 @@ def _default_efforts_for_model(
     model: str,
     efforts: list[AgentCatalogEntry],
 ) -> list[AgentCatalogEntry]:
-    if runtime != "claude":
+    if runtime == "claude":
+        allowed = claude_efforts_for_model(model)
+    elif runtime == "codex":
+        allowed = codex_efforts_for_model(model)
+    else:
         return [entry.model_copy(update={"efforts": []}) for entry in efforts]
-    allowed = claude_efforts_for_model(model)
     return [
         entry.model_copy(update={"efforts": []})
         for entry in efforts
