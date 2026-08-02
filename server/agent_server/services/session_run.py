@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import time
 from typing import Any
 
 from agent_server.infra.connector_rpc import ConnectorOfflineError, ConnectorRpcError, ConnectorRpcManager
 from agent_server.core.models import MessageCreateRequest, RpcResponsePayload, SessionCreateRequest
+from agent_server.core.runtime_config import PersistedRuntimeConfigError
 from agent_server.infra.perf import elapsed_ms, log_stage
 from agent_server.infra.runtimes.serializers import serializer_for_runtime
 from agent_server.infra.repositories.facade import Store
@@ -32,7 +34,7 @@ class SessionRunUpstreamError(SessionRunError):
 
 
 class SessionRunInvalidConfigError(SessionRunError):
-    status_code = 500
+    status_code = 422
 
 
 class SessionRunService:
@@ -56,12 +58,16 @@ class SessionRunService:
         connector_result = None
         if payload.externalSessionId is not None:
             try:
-                runtime_settings_override = await self._store.get_initial_runtime_settings_for_connector_agent(
+                settings_bundle = await self._store.get_initial_runtime_settings_bundle(
                     payload.connectorId,
                     payload.runtime,
                     user_id=user_id,
+                    cwd=payload.cwd,
                     patch=payload.runtimeSettings,
                 )
+                durable_runtime_settings = settings_bundle["durable"]
+            except (json.JSONDecodeError, PersistedRuntimeConfigError) as exc:
+                raise SessionRunError("invalid persisted runtime settings") from exc
             except ValueError as exc:
                 raise SessionRunInvalidConfigError(str(exc)) from exc
             session = await self._store.create_session(
@@ -71,7 +77,7 @@ class SessionRunService:
                 external_session_id=payload.externalSessionId,
                 title=payload.title,
                 cwd=payload.cwd,
-                runtime_settings_override=runtime_settings_override,
+                runtime_settings_override=durable_runtime_settings,
             )
             return {"session": session, "connectorResult": connector_result}
 
@@ -81,19 +87,18 @@ class SessionRunService:
         if auth_blocked is not None:
             raise SessionRunUpstreamError(auth_blocked)
         try:
-            runtime_settings_override = await self._store.get_initial_runtime_settings_for_connector_agent(
-                payload.connectorId,
-                payload.runtime,
-                user_id=user_id,
-                patch=payload.runtimeSettings,
-            )
-            connector_settings = await self._store.serialize_initial_settings_for_connector_agent(
+            settings_bundle = await self._store.get_initial_runtime_settings_bundle(
                 payload.connectorId,
                 payload.runtime,
                 user_id=user_id,
                 cwd=payload.cwd,
                 patch=payload.runtimeSettings,
             )
+            runtime_settings = settings_bundle["effective"]
+            durable_runtime_settings = settings_bundle["durable"]
+            connector_settings = settings_bundle["connector"]
+        except (json.JSONDecodeError, PersistedRuntimeConfigError) as exc:
+            raise SessionRunError("invalid persisted runtime settings") from exc
         except ValueError as exc:
             raise SessionRunInvalidConfigError(str(exc)) from exc
 
@@ -148,14 +153,14 @@ class SessionRunService:
             cwd=payload.cwd,
             status="idle",
             last_synced_at=utc_now(),
-            runtime_settings_override=runtime_settings_override,
+            runtime_settings_override=durable_runtime_settings,
             origin="platform",
         )
-        if session.runtimeSettings != runtime_settings_override:
+        if session.runtimeSettings != runtime_settings:
             session = session.model_copy(
                 update={
-                    "runtimeSettings": runtime_settings_override,
-                    "runtimeSettingsOverride": runtime_settings_override,
+                    "runtimeSettings": runtime_settings,
+                    "runtimeSettingsOverride": runtime_settings,
                 }
             )
         return {"session": session, "connectorResult": connector_result}
@@ -170,6 +175,8 @@ class SessionRunService:
         prep_started = time.perf_counter()
         try:
             session = await self._store.get_session(session_id, user_id=user_id)
+        except (json.JSONDecodeError, PersistedRuntimeConfigError) as exc:
+            raise SessionRunError("invalid persisted runtime settings") from exc
         except KeyError:
             raise SessionRunNotFoundError("session not found") from None
 
@@ -179,15 +186,29 @@ class SessionRunService:
             raise SessionRunConflictError("connector is offline")
         if session.status not in {"idle", "error"}:
             raise SessionRunConflictError(f"session is {session.status}")
+        message_settings: dict[str, Any] = {}
+        if session.runtime == "claude" and payload.mode is not None:
+            message_settings["permissionMode"] = payload.mode
+        if payload.model is not None:
+            message_settings["model"] = payload.model
+        if payload.effort is not None:
+            message_settings["effort"] = payload.effort
         try:
-            effective_settings = await self._store.get_effective_runtime_settings(
+            # Apply message overrides before status/active-run mutation.  The
+            # service reads the same device-live schema used by the settings
+            # endpoints, so an unsupported model/effort pair cannot bypass the
+            # contract through post-serialization parameter replacement.
+            effective_settings = await self._store.runtime_config.get_effective_runtime_settings_for_message(
                 session_id,
+                message_settings,
                 user_id=user_id,
             )
             runtime_params = serializer_for_runtime(session.runtime).serialize(
                 settings=effective_settings,
                 cwd=session.cwd,
             )
+        except (json.JSONDecodeError, PersistedRuntimeConfigError) as exc:
+            raise SessionRunError("invalid persisted runtime settings") from exc
         except ValueError as exc:
             raise SessionRunInvalidConfigError(str(exc)) from exc
 
@@ -202,12 +223,6 @@ class SessionRunService:
             params["cwd"] = session.cwd
         if session.externalSessionId:
             params["externalSessionId"] = session.externalSessionId
-        if session.runtime == "claude" and payload.mode is not None:
-            params["permissionMode"] = payload.mode
-        if payload.model is not None:
-            params["model"] = payload.model
-        if payload.effort is not None:
-            params["effort"] = payload.effort
         if payload.clientMessageId:
             params["clientMessageId"] = payload.clientMessageId
         if payload.attachments:

@@ -31,7 +31,7 @@ class SessionRepositoryMixin:
             if connector is None:
                 raise KeyError(connector_id)
             if runtime_settings_override is None and runtime in {"codex", "claude"}:
-                runtime_settings_override = await self.get_initial_runtime_settings_for_connector_agent(
+                runtime_settings_override = await self.get_durable_initial_runtime_settings_for_connector_agent(
                     connector_id,
                     runtime,
                     user_id=user_id,
@@ -109,7 +109,7 @@ class SessionRepositoryMixin:
                     session_id = existing.id
             if existing is None:
                 if runtime_settings_override is None and runtime in {"codex", "claude"}:
-                    runtime_settings_override = await self.get_initial_runtime_settings_for_connector_agent(
+                    runtime_settings_override = await self.get_durable_initial_runtime_settings_for_connector_agent(
                         connector_id,
                         runtime,
                     )
@@ -721,6 +721,11 @@ class SessionRepositoryMixin:
             runtime_settings = await self.get_effective_runtime_settings(session_id)
         except (KeyError, ValueError):
             runtime_settings = None
+        runtime_override_view = (
+            runtime_settings
+            if runtime == "codex" and runtime_override and runtime_settings is not None
+            else runtime_override
+        )
         title = row["title"]
         if not (isinstance(title, str) and title.strip()):
             derived = await self._derive_title_from_first_user_message(session_id)
@@ -755,5 +760,5 @@ class SessionRepositoryMixin:
             sortAt=sort_at,
             updatedSeq=updated_seq,
             runtimeSettings=runtime_settings,
-            runtimeSettingsOverride=runtime_override or None,
+            runtimeSettingsOverride=runtime_override_view or None,
         )

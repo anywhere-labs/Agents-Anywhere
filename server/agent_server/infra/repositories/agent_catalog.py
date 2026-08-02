@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import json
+
 from agent_server.infra.repositories.store_support import *
 from agent_server.core.runtime_config import (
     DEFAULT_RUNTIME_CONFIG_SCHEMAS,
+    ROLLBACK_SAFE_RUNTIME_CONFIG_SCHEMAS,
+    PersistedRuntimeConfigError,
     claude_efforts_for_model,
     codex_efforts_for_model,
+    inherited_runtime_setting_keys,
+    merge_settings,
+    rollback_safe_inherited_runtime_settings,
 )
 
 
@@ -24,18 +31,7 @@ class AgentCatalogRepositoryMixin:
         if not rows:
             return
         async with self._engine.begin() as conn:
-            existing = (
-                await conn.execute(
-                    select(table.c.runtime, table.c.key).where(
-                        table.c.runtime.in_({row["runtime"] for row in rows})
-                    )
-                )
-            ).all()
-            present = {(r.runtime, r.key) for r in existing}
-            missing = [row for row in rows if (row["runtime"], row["key"]) not in present]
-            if not missing:
-                return
-            await conn.execute(insert(table), missing)
+            await conn.execute(_seed_insert_statement(conn, table, rows))
 
     # --- runtime config schema / settings ------------------------------------
 
@@ -113,6 +109,11 @@ class AgentCatalogRepositoryMixin:
                     raise ValueError(f"unsupported runtime: {runtime}")
                 if not isinstance(raw_update, dict):
                     raise ValueError(f"{runtime} must be an object")
+                # An empty runtime object is intentionally a no-op.  In
+                # particular, do not materialize the current global catalog
+                # into models_json merely because a client PATCHed `{}`.
+                if "models" not in raw_update:
+                    continue
                 current = await self._get_user_agent_default_runtime_on_conn(
                     conn,
                     user_id,
@@ -120,9 +121,7 @@ class AgentCatalogRepositoryMixin:
                 )
                 enabled = bool(current["enabled"])
                 settings = current["settings"]
-                models = current["models"]
-                if "models" in raw_update and raw_update["models"] is not None:
-                    models = _normalize_model_catalog_entries(runtime, raw_update["models"])
+                models = _normalize_model_catalog_entries(runtime, raw_update["models"])
                 await self._upsert_user_agent_default_on_conn(
                     conn,
                     user_id=user_id,
@@ -130,6 +129,7 @@ class AgentCatalogRepositoryMixin:
                     enabled=enabled,
                     settings=settings,
                     models=models,
+                    inherited_settings_keys=current["_inheritedSettingsKeys"],
                     updated_at=now,
                 )
         return await self.get_user_agent_defaults(user_id)
@@ -141,20 +141,28 @@ class AgentCatalogRepositoryMixin:
         user_id: str,
         connector_id: str,
     ) -> None:
-        defaults = await self.get_user_agent_defaults(user_id)
         now = utc_now()
         async with self._engine.begin() as conn:
-            for runtime, item in defaults.items():
+            for runtime in SUPPORTED_DEFAULT_AGENT_RUNTIMES:
+                item = await self._get_user_agent_default_runtime_on_conn(conn, user_id, runtime)
                 settings = item["settings"]
                 schema = DEFAULT_RUNTIME_CONFIG_SCHEMAS.get(runtime)
                 if schema is None:
                     continue
+                durable_settings = rollback_safe_inherited_runtime_settings(
+                    runtime,
+                    settings,
+                    inherited_keys=item["_inheritedSettingsKeys"],
+                )
+                schema_version = schema.schemaVersion
+                if runtime == "codex" and item["_inheritedSettingsKeys"] == {"model", "effort"}:
+                    schema_version = ROLLBACK_SAFE_RUNTIME_CONFIG_SCHEMAS["codex"].schemaVersion
                 await conn.execute(
                     insert(device_agent_settings_t).values(
                         connector_id=connector_id,
                         runtime=runtime,
-                        settings_json=_json_dumps(settings),
-                        schema_version=schema.schemaVersion,
+                        settings_json=_json_dumps(durable_settings),
+                        schema_version=schema_version,
                         updated_at=now,
                     )
                 )
@@ -185,7 +193,8 @@ class AgentCatalogRepositoryMixin:
         ).mappings().first()
         if row is not None:
             enabled = bool(row["enabled"])
-            settings = _json_loads(row["settings_json"]) or {}
+            stored_settings = _json_loads(row["settings_json"]) or {}
+            settings = _project_user_default_settings(runtime, stored_settings)
             # Read exact legacy built-in snapshots through the current global
             # catalog without rewriting them, so a server rollback stays safe.
             models = (
@@ -196,7 +205,8 @@ class AgentCatalogRepositoryMixin:
             )
         else:
             enabled = True
-            settings = default_agent_settings(runtime)
+            stored_settings = {}
+            settings = _project_user_default_settings(runtime, stored_settings)
             models = []
         if not models:
             models = await self._list_agent_catalog_on_conn(conn, agent_models_t, runtime)
@@ -205,12 +215,21 @@ class AgentCatalogRepositoryMixin:
                 models = _default_catalog_from_runtime_schema(runtime, "model")
             if not efforts:
                 efforts = _default_catalog_from_runtime_schema(runtime, "effort")
+            if runtime == "codex" and _is_rollback_safe_codex_catalog(models, efforts):
+                # Catalog persistence remains readable by the preceding
+                # server; GPT-5.6 is projected only while the new server is
+                # serving this exact built-in baseline.
+                models = _default_catalog_from_runtime_schema(runtime, "model")
+                efforts = _default_catalog_from_runtime_schema(runtime, "effort")
             models = _models_with_default_efforts(runtime, models, efforts)
         return {
             "runtime": runtime,
             "enabled": enabled,
             "settings": settings,
             "models": models,
+            # Private provenance used only while applying/updating defaults.
+            # API response builders copy the public fields explicitly.
+            "_inheritedSettingsKeys": inherited_runtime_setting_keys(runtime, stored_settings),
         }
 
 
@@ -249,13 +268,19 @@ class AgentCatalogRepositoryMixin:
         enabled: bool,
         settings: dict[str, Any],
         models: list[AgentCatalogEntry],
+        inherited_settings_keys: set[str],
         updated_at: str,
     ) -> None:
+        durable_settings = rollback_safe_inherited_runtime_settings(
+            runtime,
+            settings,
+            inherited_keys=inherited_settings_keys,
+        )
         values = {
             "user_id": user_id,
             "runtime": runtime,
             "enabled": 1 if enabled else 0,
-            "settings_json": _json_dumps(settings),
+            "settings_json": _json_dumps(durable_settings),
             "models_json": _json_dumps([entry.model_dump() for entry in models]),
             "updated_at": updated_at,
         }
@@ -280,10 +305,23 @@ class AgentCatalogRepositoryMixin:
             )
 
 
+def _project_user_default_settings(runtime: str, stored: Any) -> dict[str, Any]:
+    """Project nullable durable defaults through this server's defaults."""
+    persisted = stored if isinstance(stored, dict) else {}
+    return merge_settings(default_agent_settings(runtime), persisted)
+
+
 def _catalog_entries_from_json(runtime: str, raw: str | None) -> list[AgentCatalogEntry]:
-    data = _json_loads(raw)
-    if not isinstance(data, list):
+    if raw is None:
         return []
+    try:
+        data = _json_loads(raw)
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise PersistedRuntimeConfigError(f"invalid persisted {runtime} models_json") from exc
+    if not isinstance(data, list):
+        raise PersistedRuntimeConfigError(
+            f"invalid persisted {runtime} models_json: expected a list"
+        )
     return _normalize_model_catalog_entries(runtime, data)
 
 
@@ -362,17 +400,19 @@ def _default_catalog_from_runtime_schema(runtime: str, field_key: str) -> list[A
     for field in schema.fields:
         if field.key != field_key:
             continue
+        options = field.options or []
+        has_default = any(option.isDefault for option in options)
         return [
             AgentCatalogEntry(
                 runtime=runtime,
                 key=str(option.value),
                 displayLabel=option.label,
                 description=option.description,
-                isDefault=index == 0,
+                isDefault=option.isDefault if has_default else index == 0,
                 sortOrder=index + 1,
                 efforts=[],
             )
-            for index, option in enumerate(field.options or [])
+            for index, option in enumerate(options)
             if isinstance(option.value, str)
         ]
     return []
@@ -389,6 +429,45 @@ def _models_with_default_efforts(
         )
         for model in models
     ]
+
+
+def _is_rollback_safe_codex_catalog(
+    models: list[AgentCatalogEntry],
+    efforts: list[AgentCatalogEntry],
+) -> bool:
+    return (
+        _catalog_entry_rows_signature(models) == _seed_rows_signature(SEED_AGENT_MODELS, "codex")
+        and _catalog_entry_rows_signature(efforts) == _seed_rows_signature(SEED_AGENT_EFFORTS, "codex")
+    )
+
+
+def _catalog_entry_rows_signature(entries: list[AgentCatalogEntry]) -> tuple[tuple[str, str, str, int, bool], ...]:
+    return tuple(
+        (
+            entry.key,
+            entry.displayLabel,
+            entry.description or "",
+            entry.sortOrder,
+            entry.isDefault,
+        )
+        for entry in entries
+    )
+
+
+def _seed_rows_signature(
+    rows: list[dict[str, Any]], runtime: str
+) -> tuple[tuple[str, str, str, int, bool], ...]:
+    return tuple(
+        (
+            str(row["key"]),
+            str(row["display_label"]),
+            str(row.get("description") or ""),
+            int(row["sort_order"]),
+            bool(row["is_default"]),
+        )
+        for row in rows
+        if row["runtime"] == runtime
+    )
 
 
 def _default_efforts_for_model(

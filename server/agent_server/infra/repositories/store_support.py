@@ -14,6 +14,8 @@ from typing import Any, AsyncIterator
 
 from loguru import logger
 from sqlalchemy import create_engine, delete, func, insert, select, text, update
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 
@@ -573,35 +575,11 @@ SEED_AGENT_MODELS: list[dict[str, Any]] = [
     },
     {
         "runtime": "codex",
-        "key": "gpt-5.6-sol",
-        "display_label": "GPT-5.6-Sol",
-        "description": None,
-        "is_default": 1,
-        "sort_order": 1,
-    },
-    {
-        "runtime": "codex",
-        "key": "gpt-5.6-terra",
-        "display_label": "GPT-5.6-Terra",
-        "description": None,
-        "is_default": 0,
-        "sort_order": 2,
-    },
-    {
-        "runtime": "codex",
-        "key": "gpt-5.6-luna",
-        "display_label": "GPT-5.6-Luna",
-        "description": None,
-        "is_default": 0,
-        "sort_order": 3,
-    },
-    {
-        "runtime": "codex",
         "key": "gpt-5.5",
         "display_label": "GPT-5.5",
         "description": None,
-        "is_default": 0,
-        "sort_order": 4,
+        "is_default": 1,
+        "sort_order": 1,
     },
     {
         "runtime": "codex",
@@ -609,7 +587,7 @@ SEED_AGENT_MODELS: list[dict[str, Any]] = [
         "display_label": "GPT-5.4",
         "description": None,
         "is_default": 0,
-        "sort_order": 5,
+        "sort_order": 2,
     },
     {
         "runtime": "codex",
@@ -617,7 +595,7 @@ SEED_AGENT_MODELS: list[dict[str, Any]] = [
         "display_label": "GPT-5.4 Mini",
         "description": None,
         "is_default": 0,
-        "sort_order": 6,
+        "sort_order": 3,
     },
     {
         "runtime": "codex",
@@ -625,7 +603,7 @@ SEED_AGENT_MODELS: list[dict[str, Any]] = [
         "display_label": "GPT-5.3 Codex",
         "description": None,
         "is_default": 0,
-        "sort_order": 7,
+        "sort_order": 4,
     },
     {
         "runtime": "codex",
@@ -633,7 +611,7 @@ SEED_AGENT_MODELS: list[dict[str, Any]] = [
         "display_label": "GPT-5.2",
         "description": None,
         "is_default": 0,
-        "sort_order": 8,
+        "sort_order": 5,
     },
 ]
 
@@ -666,15 +644,23 @@ def _seed_agent_catalog_sync(async_url: str) -> None:
 def _seed_table_sync(conn: Any, table: Any, rows: list[dict[str, Any]]) -> None:
     if not rows:
         return
-    existing = conn.execute(
-        select(table.c.runtime, table.c.key).where(
-            table.c.runtime.in_({row["runtime"] for row in rows})
+    conn.execute(_seed_insert_statement(conn, table, rows))
+
+
+def _seed_insert_statement(conn: Any, table: Any, rows: list[dict[str, Any]]) -> Any:
+    """Build an atomic catalog insert for both supported SQL dialects."""
+    dialect = conn.dialect.name
+    if dialect == "sqlite":
+        return sqlite_insert(table).values(rows).on_conflict_do_nothing(
+            index_elements=["runtime", "key"]
         )
-    ).all()
-    present = {(row.runtime, row.key) for row in existing}
-    missing = [row for row in rows if (row["runtime"], row["key"]) not in present]
-    if missing:
-        conn.execute(insert(table), missing)
+    if dialect == "postgresql":
+        return postgresql_insert(table).values(rows).on_conflict_do_nothing(
+            index_elements=["runtime", "key"]
+        )
+    # The production backends are SQLite and Postgres. Preserve a conservative
+    # fallback for downstream test adapters instead of pretending it is safe.
+    return insert(table).values(rows)
 
 
 def _seed_agent_catalog_async_in_thread(async_url: str) -> None:
@@ -689,17 +675,7 @@ def _seed_agent_catalog_async_in_thread(async_url: str) -> None:
                 for table, rows in _CATALOG_SEED_PLAN:
                     if not rows:
                         continue
-                    existing = (
-                        await conn.execute(
-                            select(table.c.runtime, table.c.key).where(
-                                table.c.runtime.in_({row["runtime"] for row in rows})
-                            )
-                        )
-                    ).all()
-                    present = {(row.runtime, row.key) for row in existing}
-                    missing = [row for row in rows if (row["runtime"], row["key"]) not in present]
-                    if missing:
-                        await conn.execute(insert(table), missing)
+                    await conn.execute(_seed_insert_statement(conn, table, rows))
                 await _migrate_codex_catalog_async(conn)
         finally:
             await engine.dispose()
@@ -771,7 +747,7 @@ SEED_AGENT_EFFORTS: list[dict[str, Any]] = [
         "key": "medium",
         "display_label": "Medium",
         "description": None,
-        "is_default": 1,
+        "is_default": 0,
         "sort_order": 2,
     },
     {
@@ -787,24 +763,8 @@ SEED_AGENT_EFFORTS: list[dict[str, Any]] = [
         "key": "xhigh",
         "display_label": "Extra high",
         "description": None,
-        "is_default": 0,
+        "is_default": 1,
         "sort_order": 4,
-    },
-    {
-        "runtime": "codex",
-        "key": "max",
-        "display_label": "Max",
-        "description": None,
-        "is_default": 0,
-        "sort_order": 5,
-    },
-    {
-        "runtime": "codex",
-        "key": "ultra",
-        "display_label": "Ultra",
-        "description": None,
-        "is_default": 0,
-        "sort_order": 6,
     },
 ]
 
@@ -829,30 +789,101 @@ _LEGACY_CODEX_EFFORT_SIGNATURE = (
     ("xhigh", "Extra high", "", 4),
 )
 
+_CURRENT_CODEX_MODEL_SIGNATURE = (
+    ("gpt-5.6-sol", "GPT-5.6-Sol", "", 1, True),
+    ("gpt-5.6-terra", "GPT-5.6-Terra", "", 2, False),
+    ("gpt-5.6-luna", "GPT-5.6-Luna", "", 3, False),
+    ("gpt-5.5", "GPT-5.5", "", 4, False),
+    ("gpt-5.4", "GPT-5.4", "", 5, False),
+    ("gpt-5.4-mini", "GPT-5.4 Mini", "", 6, False),
+    ("gpt-5.3-codex", "GPT-5.3 Codex", "", 7, False),
+    ("gpt-5.2", "GPT-5.2", "", 8, False),
+)
+_CURRENT_CODEX_EFFORT_SIGNATURE = (
+    ("low", "Low", "", 1, False),
+    ("medium", "Medium", "", 2, True),
+    ("high", "High", "", 3, False),
+    ("xhigh", "Extra high", "", 4, False),
+    ("max", "Max", "", 5, False),
+    ("ultra", "Ultra", "", 6, False),
+)
+
 
 def _migrate_codex_catalog_sync(conn: Any) -> None:
-    for statement in _codex_catalog_metadata_updates():
-        conn.execute(statement)
+    models = _catalog_table_signature_sync(conn, agent_models_t)
+    efforts = _catalog_table_signature_sync(conn, agent_efforts_t)
+    if models == _CURRENT_CODEX_MODEL_SIGNATURE and efforts == _CURRENT_CODEX_EFFORT_SIGNATURE:
+        _converge_current_codex_catalog_sync(conn)
+    _converge_current_codex_default_snapshots_sync(conn)
 
 
 async def _migrate_codex_catalog_async(conn: AsyncConnection) -> None:
-    for statement in _codex_catalog_metadata_updates():
+    models = await _catalog_table_signature_async(conn, agent_models_t)
+    efforts = await _catalog_table_signature_async(conn, agent_efforts_t)
+    if models == _CURRENT_CODEX_MODEL_SIGNATURE and efforts == _CURRENT_CODEX_EFFORT_SIGNATURE:
+        await _converge_current_codex_catalog_async(conn)
+    await _converge_current_codex_default_snapshots_async(conn)
+
+
+def _catalog_table_signature_sync(conn: Any, table: Any) -> tuple[tuple[str, str, str, int, bool], ...]:
+    rows = conn.execute(
+        select(table)
+        .where(table.c.runtime == "codex")
+        .order_by(table.c.sort_order.asc(), table.c.key.asc())
+    ).mappings().all()
+    return _catalog_rows_signature(rows)
+
+
+async def _catalog_table_signature_async(
+    conn: AsyncConnection, table: Any
+) -> tuple[tuple[str, str, str, int, bool], ...]:
+    rows = (
+        await conn.execute(
+            select(table)
+            .where(table.c.runtime == "codex")
+            .order_by(table.c.sort_order.asc(), table.c.key.asc())
+        )
+    ).mappings().all()
+    return _catalog_rows_signature(rows)
+
+
+def _catalog_rows_signature(rows: Any) -> tuple[tuple[str, str, str, int, bool], ...]:
+    return tuple(
+        (
+            str(row["key"]),
+            str(row["display_label"]),
+            str(row["description"] or ""),
+            int(row["sort_order"]),
+            bool(row["is_default"]),
+        )
+        for row in rows
+    )
+
+
+def _converge_current_codex_catalog_sync(conn: Any) -> None:
+    for statement in _rollback_safe_codex_catalog_updates():
+        conn.execute(statement)
+
+
+async def _converge_current_codex_catalog_async(conn: AsyncConnection) -> None:
+    for statement in _rollback_safe_codex_catalog_updates():
         await conn.execute(statement)
 
 
-def _codex_catalog_metadata_updates() -> list[Any]:
+def _rollback_safe_codex_catalog_updates() -> list[Any]:
     statements: list[Any] = [
-        update(agent_models_t)
-        .where(agent_models_t.c.runtime == "codex")
-        .values(is_default=0),
-        update(agent_efforts_t)
-        .where(agent_efforts_t.c.runtime == "codex")
-        .values(is_default=0),
+        delete(agent_models_t).where(
+            agent_models_t.c.runtime == "codex",
+            agent_models_t.c.key.in_({"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}),
+        ),
+        delete(agent_efforts_t).where(
+            agent_efforts_t.c.runtime == "codex",
+            agent_efforts_t.c.key.in_({"max", "ultra"}),
+        ),
+        update(agent_models_t).where(agent_models_t.c.runtime == "codex").values(is_default=0),
+        update(agent_efforts_t).where(agent_efforts_t.c.runtime == "codex").values(is_default=0),
     ]
-    for table, rows in (
-        (agent_models_t, SEED_AGENT_MODELS),
-        (agent_efforts_t, SEED_AGENT_EFFORTS),
-    ):
+    for table, rows in ((agent_models_t, SEED_AGENT_MODELS), (agent_efforts_t, SEED_AGENT_EFFORTS)):
         for row in rows:
             if row["runtime"] != "codex":
                 continue
@@ -862,6 +893,85 @@ def _codex_catalog_metadata_updates() -> list[Any]:
                 .values(is_default=row["is_default"], sort_order=row["sort_order"])
             )
     return statements
+
+
+def _converge_current_codex_default_snapshots_sync(conn: Any) -> None:
+    rows = conn.execute(
+        select(user_agent_defaults_t.c.user_id, user_agent_defaults_t.c.models_json).where(
+            user_agent_defaults_t.c.runtime == "codex"
+        )
+    ).mappings().all()
+    for row in rows:
+        if _is_current_builtin_codex_models_json(row["models_json"]):
+            conn.execute(
+                update(user_agent_defaults_t)
+                .where(
+                    user_agent_defaults_t.c.user_id == row["user_id"],
+                    user_agent_defaults_t.c.runtime == "codex",
+                )
+                .values(models_json=_json_dumps(_legacy_builtin_codex_models_payload()), updated_at=utc_now())
+            )
+
+
+async def _converge_current_codex_default_snapshots_async(conn: AsyncConnection) -> None:
+    rows = (
+        await conn.execute(
+            select(user_agent_defaults_t.c.user_id, user_agent_defaults_t.c.models_json).where(
+                user_agent_defaults_t.c.runtime == "codex"
+            )
+        )
+    ).mappings().all()
+    for row in rows:
+        if _is_current_builtin_codex_models_json(row["models_json"]):
+            await conn.execute(
+                update(user_agent_defaults_t)
+                .where(
+                    user_agent_defaults_t.c.user_id == row["user_id"],
+                    user_agent_defaults_t.c.runtime == "codex",
+                )
+                .values(models_json=_json_dumps(_legacy_builtin_codex_models_payload()), updated_at=utc_now())
+            )
+
+
+def _legacy_builtin_codex_models_payload() -> list[dict[str, Any]]:
+    return [
+        {
+            "key": key,
+            "displayLabel": label,
+            "sortOrder": sort_order,
+            "efforts": [
+                {
+                    "key": effort_key,
+                    "displayLabel": effort_label,
+                    "sortOrder": effort_order,
+                }
+                for effort_key, effort_label, _description, effort_order in _LEGACY_CODEX_EFFORT_SIGNATURE
+            ],
+        }
+        for key, label, _description, sort_order in _LEGACY_CODEX_MODEL_SIGNATURE
+    ]
+
+
+def _is_current_builtin_codex_models_json(raw: str | None) -> bool:
+    try:
+        models = _json_loads(raw)
+    except Exception:
+        return False
+    if not isinstance(models, list) or len(models) != len(_CURRENT_CODEX_MODEL_SIGNATURE):
+        return False
+    for model, expected in zip(models, _CURRENT_CODEX_MODEL_SIGNATURE, strict=True):
+        if not isinstance(model, dict) or _catalog_item_signature(model) != expected[:4]:
+            return False
+        efforts = model.get("efforts")
+        if not isinstance(efforts, list) or tuple(
+            _catalog_item_signature(effort)
+            for effort in efforts
+            if isinstance(effort, dict)
+        ) != tuple(item[:4] for item in _CURRENT_CODEX_EFFORT_SIGNATURE):
+            return False
+        if any(not isinstance(effort, dict) for effort in efforts):
+            return False
+    return True
 
 
 def _is_legacy_builtin_codex_models_json(raw: str | None) -> bool:
@@ -895,6 +1005,8 @@ def _catalog_item_signature(item: dict[str, Any]) -> tuple[str, str, str, int] |
         str(item.get("description") or ""),
         sort_order,
     )
+
+
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]

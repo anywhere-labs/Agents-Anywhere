@@ -63,7 +63,11 @@ from agent_server.core.models import (
     TerminalResizeRequest,
     TerminalResponse,
 )
-from agent_server.core.runtime_config import RuntimeSettingsPatchRequest, RuntimeSettingsResponse
+from agent_server.core.runtime_config import (
+    PersistedRuntimeConfigError,
+    RuntimeSettingsPatchRequest,
+    RuntimeSettingsResponse,
+)
 from agent_server.services.runtime_activation import send_active_runtimes
 from agent_server.services.connector_presence import with_effective_connector_status, with_effective_session_connector_status
 from agent_server.services.dashboard_events import publish_dashboard_changed
@@ -1466,6 +1470,8 @@ async def patch_connector_agent_settings(
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="connector not found") from None
+    except PersistedRuntimeConfigError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return RuntimeSettingsResponse(

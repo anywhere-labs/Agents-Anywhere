@@ -14,6 +14,7 @@ from agent_server.core.models import (
     UserAgentDefaultRuntime,
 )
 from agent_server.core.runtime_config import (
+    PersistedRuntimeConfigError,
     RuntimeConfigSchemaResponse,
     schema_with_user_agent_defaults,
 )
@@ -23,6 +24,12 @@ from agent_server.core.utc import utc_now
 
 
 router = APIRouter(prefix="/agents", tags=["agents"])
+_CATALOG_RUNTIMES = {"codex", "claude"}
+
+
+def _require_catalog_runtime(runtime: str) -> None:
+    if runtime not in _CATALOG_RUNTIMES:
+        raise HTTPException(status_code=422, detail=f"unsupported catalog runtime: {runtime}")
 
 
 @router.get("/defaults", response_model=UserAgentDefaultsResponse)
@@ -30,8 +37,12 @@ async def get_agent_defaults(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
 ) -> UserAgentDefaultsResponse:
+    try:
+        defaults = await db.get_user_agent_defaults(user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     return UserAgentDefaultsResponse(
-        runtimes=_agent_defaults_response(await db.get_user_agent_defaults(user_id)),
+        runtimes=_agent_defaults_response(defaults),
         serverTime=utc_now(),
     )
 
@@ -50,6 +61,8 @@ async def update_agent_defaults(
                 for runtime, item in payload.runtimes.items()
             },
         )
+    except PersistedRuntimeConfigError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except KeyError:
@@ -66,6 +79,7 @@ async def list_agent_modes(
     _user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
 ) -> AgentCatalogResponse:
+    _require_catalog_runtime(runtime)
     return AgentCatalogResponse(
         runtime=runtime,
         entries=await db.list_agent_modes(runtime),
@@ -79,7 +93,11 @@ async def list_agent_models(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
 ) -> AgentCatalogResponse:
-    defaults = await db.get_user_agent_defaults(user_id)
+    _require_catalog_runtime(runtime)
+    try:
+        defaults = await db.get_user_agent_defaults(user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     runtime_defaults = defaults.get(runtime)
     if runtime_defaults and runtime_defaults.get("models"):
         return AgentCatalogResponse(
@@ -100,7 +118,11 @@ async def list_agent_efforts(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
 ) -> AgentCatalogResponse:
-    defaults = await db.get_user_agent_defaults(user_id)
+    _require_catalog_runtime(runtime)
+    try:
+        defaults = await db.get_user_agent_defaults(user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     runtime_defaults = defaults.get(runtime)
     if runtime_defaults and runtime_defaults.get("models"):
         return AgentCatalogResponse(

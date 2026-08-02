@@ -2422,7 +2422,7 @@ def test_legacy_v1_capabilities_blob_migrates_to_v3_view_on_read(tmp_path):
     assert state["disabled"] == []
 
 
-def test_send_message_forwards_codex_model_effort_but_ignores_legacy_mode(tmp_path):
+def test_send_message_validates_codex_model_effort_before_mutating_run_state(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, session_id, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
@@ -2436,7 +2436,64 @@ def test_send_message_forwards_codex_model_effort_but_ignores_legacy_mode(tmp_pa
         json={
             "content": "hi",
             "mode": "bypassPermissions",
-            "model": "claude-opus-4-7",
+            "model": "gpt-5.6-luna",
+            "effort": "ultra",
+        },
+    )
+
+    assert response.status_code == 422, response.text
+    assert fake_rpc.requests == []
+    assert asyncio.run(client.app.state.store.get_active_run(session_id)) is None
+    assert asyncio.run(client.app.state.store.get_session(session_id)).status == "idle"
+
+
+def test_send_message_reports_corrupt_persisted_runtime_settings_as_server_error(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+
+    async def corrupt_override() -> None:
+        from sqlalchemy import update
+
+        from agent_server.infra.db import sessions as sessions_t
+
+        async with client.app.state.store.engine.begin() as conn:
+            await conn.execute(
+                update(sessions_t)
+                .where(sessions_t.c.id == session_id)
+                .values(runtime_settings_override="{not-json")
+            )
+
+    asyncio.run(corrupt_override())
+    response = client.post(
+        f"/sessions/{session_id}/messages",
+        headers=headers,
+        json={"content": "hi", "model": "gpt-5.6-sol", "effort": "medium"},
+    )
+
+    assert response.status_code == 500, response.text
+    assert response.json()["detail"] == "invalid persisted runtime settings"
+    assert fake_rpc.requests == []
+
+
+def test_send_message_forwards_valid_codex_model_effort_but_ignores_legacy_mode(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+
+    response = client.post(
+        f"/sessions/{session_id}/messages",
+        headers=headers,
+        json={
+            "content": "hi",
+            "mode": "bypassPermissions",
+            "model": "gpt-5.6-luna",
             "effort": "max",
         },
     )
@@ -2454,7 +2511,7 @@ def test_send_message_forwards_codex_model_effort_but_ignores_legacy_mode(tmp_pa
         "excludeTmpdirEnvVar": True,
         "excludeSlashTmp": True,
     }
-    assert params["model"] == "claude-opus-4-7"
+    assert params["model"] == "gpt-5.6-luna"
     assert params["effort"] == "max"
 
 
@@ -2763,12 +2820,12 @@ def test_send_message_carries_runtime_for_claude_session(tmp_path):
     response = client.post(
         f"/sessions/{session_id}/messages",
         headers=headers,
-        json={"content": "hi", "mode": "auto"},
+        json={"content": "hi", "mode": "acceptEdits"},
     )
     assert response.status_code == 200, response.text
     params = fake_rpc.requests[-1][2]
     assert params["runtime"] == "claude"
-    assert params["permissionMode"] == "auto"
+    assert params["permissionMode"] == "acceptEdits"
     assert params["cwd"] == "/repo"
 
 

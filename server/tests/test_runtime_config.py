@@ -9,10 +9,18 @@ from fastapi.testclient import TestClient
 from sqlalchemy import delete, select, update
 
 from agent_server.app import create_app
-from agent_server.core.runtime_config import DEFAULT_RUNTIME_CONFIG_SCHEMAS
+from agent_server.core.runtime_config import (
+    DEFAULT_RUNTIME_CONFIG_SCHEMAS,
+    is_rollback_safe_codex_schema,
+    runtime_schema_key,
+    validate_runtime_schema,
+)
 from agent_server.infra.db import (
     agent_efforts as agent_efforts_t,
     agent_models as agent_models_t,
+    device_agent_settings as device_agent_settings_t,
+    instance_settings as instance_settings_t,
+    sessions as sessions_t,
     user_agent_defaults as user_agent_defaults_t,
 )
 
@@ -123,6 +131,248 @@ def test_runtime_config_schema_is_seeded_and_readable(tmp_path):
     fields = {field["key"]: field for field in body["schema"]["fields"]}
     assert "runMode" not in fields
     assert fields["permissionMode"]["allowSessionOverride"] is True
+
+
+def test_codex_v4_schema_is_virtual_over_rollback_safe_durable_schema(tmp_path):
+    client = make_client(tmp_path)
+    headers = auth_headers(client)
+    key = runtime_schema_key("codex")
+
+    async def raw_schema() -> str:
+        async with client.app.state.store.engine.connect() as conn:
+            return (
+                await conn.execute(
+                    select(instance_settings_t.c.value).where(instance_settings_t.c.key == key)
+                )
+            ).scalar_one()
+
+    durable_before = asyncio.run(raw_schema())
+    durable = json.loads(durable_before)
+    assert durable["schemaVersion"] == 3
+    assert "gpt-5.6" not in durable_before
+    assert '"max"' not in durable_before
+    assert '"ultra"' not in durable_before
+    assert "isDefault" not in durable_before
+
+    response = client.get("/agents/codex/config-schema", headers=headers)
+    assert response.status_code == 200, response.text
+    projected = response.json()["schema"]
+    assert projected["schemaVersion"] == 4
+    model_field = next(field for field in projected["fields"] if field["key"] == "model")
+    assert model_field["options"][0]["value"] == "gpt-5.6-sol"
+
+    # A read must not materialize v4/GPT-5.6 into the database.
+    assert asyncio.run(raw_schema()) == durable_before
+
+
+def test_runtime_schema_converges_exact_v4_and_heals_empty_but_preserves_custom(tmp_path):
+    client = make_client(tmp_path)
+    store = client.app.state.store
+    key = runtime_schema_key("codex")
+
+    async def read_raw() -> str:
+        async with store.engine.connect() as conn:
+            return (
+                await conn.execute(
+                    select(instance_settings_t.c.value).where(instance_settings_t.c.key == key)
+                )
+            ).scalar_one()
+
+    async def exercise() -> tuple[str, str, str, str]:
+        current = DEFAULT_RUNTIME_CONFIG_SCHEMAS["codex"].model_dump(exclude_none=True)
+        await store.set_runtime_config_schema("codex", current)
+        await store.seed_runtime_config_schemas()
+        converged = await read_raw()
+
+        # Empty same-version payloads are interrupted built-in seed shapes,
+        # and are safe to repair. A non-empty edited schema is operator data.
+        await store.instance_settings.set(
+            key,
+            json.dumps({"runtime": "codex", "schemaVersion": 4, "fields": []}),
+        )
+        await store.seed_runtime_config_schemas()
+        healed = await read_raw()
+
+        custom = deepcopy(current)
+        next(field for field in custom["fields"] if field["key"] == "model")["label"] = "Private model"
+        await store.set_runtime_config_schema("codex", custom)
+        before_custom_reseed = await read_raw()
+        await store.seed_runtime_config_schemas()
+        after_custom_reseed = await read_raw()
+
+        custom_constraints = deepcopy(current)
+        model_options = next(
+            field for field in custom_constraints["fields"] if field["key"] == "model"
+        )["options"]
+        model_options[0]["isDefault"] = False
+        model_options[1]["isDefault"] = True
+        model_options[0]["efforts"] = []
+        await store.set_runtime_config_schema("codex", custom_constraints)
+        before_constraint_reseed = await read_raw()
+        await store.seed_runtime_config_schemas()
+        after_constraint_reseed = await read_raw()
+        return (
+            converged,
+            healed,
+            before_custom_reseed,
+            after_custom_reseed,
+            before_constraint_reseed,
+            after_constraint_reseed,
+        )
+
+    converged, healed, custom_before, custom_after, constraints_before, constraints_after = asyncio.run(exercise())
+    assert is_rollback_safe_codex_schema(
+        validate_runtime_schema("codex", json.loads(converged))
+    )
+    assert is_rollback_safe_codex_schema(
+        validate_runtime_schema("codex", json.loads(healed))
+    )
+    assert "isDefault" not in converged
+    assert "isDefault" not in healed
+    assert custom_after == custom_before
+    assert constraints_after == constraints_before
+
+
+def test_user_defaults_empty_patch_preserves_raw_snapshot_and_explicit_empty_is_global(tmp_path):
+    client = make_client(tmp_path)
+    headers = auth_headers(client)
+    initial = client.patch(
+        "/agents/defaults",
+        headers=headers,
+        json={
+            "runtimes": {
+                "codex": {
+                    "models": [
+                        {
+                            "key": "private-model",
+                            "displayLabel": "Private model",
+                            "sortOrder": 1,
+                            "efforts": [
+                                {"key": "private-effort", "displayLabel": "Private effort", "sortOrder": 1}
+                            ],
+                        }
+                    ]
+                }
+            }
+        },
+    )
+    assert initial.status_code == 200, initial.text
+
+    async def raw_models() -> str:
+        async with client.app.state.store.engine.connect() as conn:
+            return (
+                await conn.execute(
+                    select(user_agent_defaults_t.c.models_json).where(
+                        user_agent_defaults_t.c.user_id == ADMIN_USER,
+                        user_agent_defaults_t.c.runtime == "codex",
+                    )
+                )
+            ).scalar_one()
+
+    before_empty_patch = asyncio.run(raw_models())
+    no_op = client.patch("/agents/defaults", headers=headers, json={"runtimes": {"codex": {}}})
+    assert no_op.status_code == 200, no_op.text
+    assert asyncio.run(raw_models()) == before_empty_patch
+
+    clear = client.patch(
+        "/agents/defaults",
+        headers=headers,
+        json={"runtimes": {"codex": {"models": []}}},
+    )
+    assert clear.status_code == 200, clear.text
+    assert asyncio.run(raw_models()) == "[]"
+    # `[]` is explicit global catalog selection, not a malformed snapshot.
+    assert clear.json()["runtimes"]["codex"]["models"][0]["key"] == "gpt-5.6-sol"
+
+
+def test_malformed_persisted_models_are_observable_and_never_rewritten(tmp_path):
+    client = make_client(tmp_path)
+    headers = auth_headers(client)
+    seeded = client.patch(
+        "/agents/defaults",
+        headers=headers,
+        json={
+            "runtimes": {
+                "codex": {
+                    "models": [
+                        {
+                            "key": "private-model",
+                            "displayLabel": "Private model",
+                            "sortOrder": 1,
+                            "efforts": [],
+                        }
+                    ]
+                }
+            }
+        },
+    )
+    assert seeded.status_code == 200, seeded.text
+    connector_id, _, session_id, _ = create_connector_and_session(client)
+
+    corrupt = "{not-json"
+
+    async def corrupt_and_read() -> str:
+        async with client.app.state.store.engine.begin() as conn:
+            await conn.execute(
+                update(user_agent_defaults_t)
+                .where(
+                    user_agent_defaults_t.c.user_id == ADMIN_USER,
+                    user_agent_defaults_t.c.runtime == "codex",
+                )
+                .values(models_json=corrupt)
+            )
+        async with client.app.state.store.engine.connect() as conn:
+            return (
+                await conn.execute(
+                    select(user_agent_defaults_t.c.models_json).where(
+                        user_agent_defaults_t.c.user_id == ADMIN_USER,
+                        user_agent_defaults_t.c.runtime == "codex",
+                    )
+                )
+            ).scalar_one()
+
+    assert asyncio.run(corrupt_and_read()) == corrupt
+    assert client.get("/agents/defaults", headers=headers).status_code == 500
+    assert client.get("/agents/codex/models", headers=headers).status_code == 500
+    assert client.get("/agents/codex/efforts", headers=headers).status_code == 500
+    assert client.patch(
+        "/agents/defaults",
+        headers=headers,
+        json={"runtimes": {"codex": {"models": []}}},
+    ).status_code == 500
+    assert client.patch(
+        f"/connectors/{connector_id}/agents/codex/settings",
+        headers=headers,
+        json={"settings": {"effort": "medium"}},
+    ).status_code == 500
+    assert client.patch(
+        f"/sessions/{session_id}/runtime-settings",
+        headers=headers,
+        json={"settings": {"effort": "medium"}},
+    ).status_code == 500
+
+    client.app.state.rpc = FakeRpc()
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+    send = client.post(
+        f"/sessions/{session_id}/messages",
+        headers=headers,
+        json={"content": "hi"},
+    )
+    assert send.status_code == 500, send.text
+    assert send.json()["detail"] == "invalid persisted runtime settings"
+
+    async def read_raw() -> str:
+        async with client.app.state.store.engine.connect() as conn:
+            return (
+                await conn.execute(
+                    select(user_agent_defaults_t.c.models_json).where(
+                        user_agent_defaults_t.c.user_id == ADMIN_USER,
+                        user_agent_defaults_t.c.runtime == "codex",
+                    )
+                )
+            ).scalar_one()
+
+    assert asyncio.run(read_raw()) == corrupt
 
 
 def test_user_agent_defaults_customize_schema_and_new_connectors(tmp_path):
@@ -320,6 +570,19 @@ def test_codex_catalog_upgrade_inherits_only_legacy_builtin_snapshots(tmp_path):
     )
     assert cleared.status_code == 200, cleared.text
 
+    async def cleared_schema_version() -> int:
+        async with client.app.state.store.engine.connect() as conn:
+            return (
+                await conn.execute(
+                    select(device_agent_settings_t.c.schema_version).where(
+                        device_agent_settings_t.c.connector_id == null_connector,
+                        device_agent_settings_t.c.runtime == "codex",
+                    )
+                )
+            ).scalar_one()
+
+    assert asyncio.run(cleared_schema_version()) == 3
+
     async def downgrade_and_reseed() -> None:
         legacy_schema = deepcopy(DEFAULT_RUNTIME_CONFIG_SCHEMAS["codex"]).model_dump(
             exclude_none=True
@@ -338,6 +601,8 @@ def test_codex_catalog_upgrade_inherits_only_legacy_builtin_snapshots(tmp_path):
                     for option in field["options"]
                     if option["value"] not in {"max", "ultra"}
                 ]
+            for option in field.get("options") or []:
+                option["isDefault"] = False
         await client.app.state.store.set_runtime_config_schema("codex", legacy_schema)
 
         async with client.app.state.store.engine.begin() as conn:
@@ -451,8 +716,10 @@ def test_codex_catalog_upgrade_inherits_only_legacy_builtin_snapshots(tmp_path):
 
     models = asyncio.run(client.app.state.store.list_agent_models("codex"))
     efforts = asyncio.run(client.app.state.store.list_agent_efforts("codex"))
-    assert [model.key for model in models if model.isDefault] == ["gpt-5.6-sol"]
-    assert [effort.key for effort in efforts if effort.isDefault] == ["medium"]
+    # Durable rows intentionally remain readable by a base-main rollback;
+    # the v4/GPT-5.6 catalog above is an in-memory projection.
+    assert [model.key for model in models if model.isDefault] == ["gpt-5.5"]
+    assert [effort.key for effort in efforts if effort.isDefault] == ["xhigh"]
 
 
 def test_first_discovery_respects_user_agent_default_enabled(tmp_path):
@@ -727,6 +994,132 @@ def test_codex_sol_medium_defaults_are_sent_to_connector(tmp_path):
     assert method == "turn.start"
     assert params["model"] == "gpt-5.6-sol"
     assert params["effort"] == "medium"
+
+
+def test_automatic_codex_defaults_are_durable_but_projected_as_sol_medium(tmp_path):
+    client = make_client(tmp_path)
+    headers = auth_headers(client)
+
+    # Materialize the user-default row through an automatic catalog update.
+    # It must not write the current server's model/effort as a durable choice.
+    defaults = client.patch(
+        "/agents/defaults",
+        headers=headers,
+        json={"runtimes": {"codex": {"models": []}}},
+    )
+    assert defaults.status_code == 200, defaults.text
+    assert defaults.json()["runtimes"]["codex"]["settings"] == {
+        "permissionMode": "ask",
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+    }
+
+    connector = client.post("/connectors", headers=headers, json={"name": "dev"})
+    assert connector.status_code == 200, connector.text
+    connector_id = connector.json()["connector"]["id"]
+
+    # A non-model settings patch still inherits the model and effort.
+    permission = client.patch(
+        f"/connectors/{connector_id}/agents/codex/settings",
+        headers=headers,
+        json={"settings": {"permissionMode": "auto"}},
+    )
+    assert permission.status_code == 200, permission.text
+    assert permission.json()["settings"] == {
+        "permissionMode": "auto",
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+    }
+
+    automatic = client.post(
+        "/sessions",
+        headers=headers,
+        json={
+            "connectorId": connector_id,
+            "runtime": "codex",
+            "externalSessionId": "thr_automatic_defaults",
+            "title": "Automatic defaults",
+            "cwd": "/repo",
+        },
+    )
+    assert automatic.status_code == 200, automatic.text
+    assert automatic.json()["session"]["runtimeSettings"]["model"] == "gpt-5.6-sol"
+    assert automatic.json()["session"]["runtimeSettings"]["effort"] == "medium"
+
+    async def raw_automatic() -> tuple[str, dict[str, Any], str]:
+        async with client.app.state.store.engine.connect() as conn:
+            user_defaults = (
+                await conn.execute(
+                    select(user_agent_defaults_t.c.settings_json).where(
+                        user_agent_defaults_t.c.user_id == ADMIN_USER,
+                        user_agent_defaults_t.c.runtime == "codex",
+                    )
+                )
+            ).scalar_one()
+            device = (
+                await conn.execute(
+                    select(
+                        device_agent_settings_t.c.settings_json,
+                        device_agent_settings_t.c.schema_version,
+                    ).where(
+                        device_agent_settings_t.c.connector_id == connector_id,
+                        device_agent_settings_t.c.runtime == "codex",
+                    )
+                )
+            ).mappings().one()
+            session = (
+                await conn.execute(
+                    select(sessions_t.c.runtime_settings_override).where(
+                        sessions_t.c.id == automatic.json()["session"]["id"]
+                    )
+                )
+            ).scalar_one()
+        return user_defaults, dict(device), session
+
+    durable_defaults, durable_device, durable_session = asyncio.run(raw_automatic())
+    assert json.loads(durable_defaults)["model"] is None
+    assert json.loads(durable_defaults)["effort"] is None
+    assert json.loads(durable_device["settings_json"]) == {
+        "permissionMode": "auto",
+        "model": None,
+        "effort": None,
+    }
+    assert durable_device["schema_version"] == 3
+    assert json.loads(durable_session) == {
+        "permissionMode": "auto",
+        "model": None,
+        "effort": None,
+    }
+    assert all("gpt-5.6" not in raw for raw in (durable_defaults, durable_device["settings_json"], durable_session))
+
+    # An explicit selection equal to the current default is still a user
+    # choice and therefore must not be collapsed to nullable inheritance.
+    explicit = client.patch(
+        f"/connectors/{connector_id}/agents/codex/settings",
+        headers=headers,
+        json={"settings": {"model": "gpt-5.6-sol", "effort": "medium"}},
+    )
+    assert explicit.status_code == 200, explicit.text
+
+    async def raw_explicit() -> tuple[dict[str, Any], str]:
+        async with client.app.state.store.engine.connect() as conn:
+            device = (
+                await conn.execute(
+                    select(
+                        device_agent_settings_t.c.settings_json,
+                        device_agent_settings_t.c.schema_version,
+                    ).where(
+                        device_agent_settings_t.c.connector_id == connector_id,
+                        device_agent_settings_t.c.runtime == "codex",
+                    )
+                )
+            ).mappings().one()
+        return dict(device), device["settings_json"]
+
+    explicit_device, explicit_device_json = asyncio.run(raw_explicit())
+    assert json.loads(explicit_device_json)["model"] == "gpt-5.6-sol"
+    assert json.loads(explicit_device_json)["effort"] == "medium"
+    assert explicit_device["schema_version"] == 4
 
 
 def test_custom_model_efforts_drive_runtime_settings_validation(tmp_path):

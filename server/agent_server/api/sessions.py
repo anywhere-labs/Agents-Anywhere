@@ -29,7 +29,11 @@ from agent_server.core.models import (
     SessionStateResponse,
     TakeoverResponse,
 )
-from agent_server.core.runtime_config import RuntimeSettingsPatchRequest, RuntimeSettingsResponse
+from agent_server.core.runtime_config import (
+    PersistedRuntimeConfigError,
+    RuntimeSettingsPatchRequest,
+    RuntimeSettingsResponse,
+)
 from agent_server.services.runtime_config import RuntimeConfigService
 from agent_server.services.session_run import SessionRunError, SessionRunService
 from agent_server.services.connector_presence import with_effective_session_connector_status
@@ -334,6 +338,8 @@ async def patch_session_runtime_settings(
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
+    except PersistedRuntimeConfigError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
