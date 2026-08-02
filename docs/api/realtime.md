@@ -1,0 +1,165 @@
+# Realtime API
+
+Status: proposal and current-behavior map.
+
+Agents Anywhere uses realtime channels for three different lifecycles:
+
+- session detail updates;
+- dashboard connector/session list updates;
+- connector RPC/ingest presence;
+- terminal streams.
+
+Connector channel endpoint names stay stable. Session and dashboard realtime semantics should be tightened around the new session model.
+
+## Session realtime
+
+Primary realtime channel:
+
+```text
+WS /api/v2/sessions/{sessionId}/ws?ticket=...
+```
+
+Recovery endpoint:
+
+```text
+GET /api/v2/sessions/{sessionId}/events?after=seq:123
+```
+
+Ticket endpoint:
+
+```text
+POST /api/v2/ws-ticket
+```
+
+### Intended lifecycle
+
+```text
+GET /sessions/{sessionId}/snapshot
+  -> receive eventCursor
+POST /ws-ticket
+  -> session scope ticket
+WS /sessions/{sessionId}/ws?ticket=...
+  -> receive session.subscribed
+  -> receive incremental events
+GET /sessions/{sessionId}/events?after=seq:...
+  -> only for reconnect/cursor recovery
+```
+
+`/events` is not snapshot polling. It is a cursor recovery API. If WebSocket is healthy, the client should not call `/events` on a fixed interval.
+
+### Target event types
+
+```text
+session.subscribed
+session.meta.updated
+session.state.updated
+timeline.item.created
+timeline.item.updated
+timeline.snapshot
+notice.created
+notice.updated
+notice.snapshot
+session.refetch_required
+```
+
+Current event types such as `session.status_changed` should migrate to `session.state.updated`.
+
+### Recovery rules
+
+- Event cursor format is `seq:{number}`.
+- Timeline items are upsert-only.
+- A sequence gap does not automatically require snapshot.
+- Server returns `snapshotRequired=true` only when recovery is explicitly impossible.
+- Client pulls snapshot only for initial load or `snapshotRequired=true`.
+
+## Dashboard realtime
+
+Primary realtime channel:
+
+```text
+WS /api/v2/dashboard/ws?ticket=...
+```
+
+Transitional SSE:
+
+```text
+GET /api/v2/sessions/events/dashboard?token=...
+```
+
+The Web client should prefer dashboard WebSocket and stop fixed-interval polling of:
+
+```text
+GET /api/v2/connectors
+GET /api/v2/sessions
+```
+
+### Current dashboard behavior
+
+The current dashboard WebSocket sends:
+
+```text
+dashboard.snapshot
+```
+
+on connect, and sends another full snapshot when a debounced `dashboard.changed` invalidation arrives.
+
+This is acceptable as a near-term replacement for polling. If full snapshots become too heavy, the next step is delta events:
+
+```text
+connector.created
+connector.updated
+connector.deleted
+connector.presence.updated
+runtime.updated
+session.created
+session.meta.updated
+session.state.updated
+session.archived
+```
+
+Do not implement delta dashboard events until the snapshot WebSocket path is stable.
+
+## Connector realtime
+
+Stable connector channel:
+
+```text
+WS /api/v2/connector/ws
+```
+
+Stable connector HTTP endpoints:
+
+```text
+POST /api/v2/connector/auth
+POST /api/v2/connector/ingest
+```
+
+These endpoint names should not change as part of the runtime protocol refactor.
+
+The payload semantics may evolve behind the channel. During migration, Connector may continue sending old notification names. The target semantic ingest methods are:
+
+```text
+session.meta.upsert
+session.state.updated
+timeline.sync
+timeline.item.upsert
+notice.upsert
+runtime.error
+```
+
+The connector application layer can bridge new `RuntimeHostClient` calls to old ingest payloads until Server natively supports the target semantic events.
+
+## Terminal realtime
+
+Current terminal channels include:
+
+```text
+WS /api/v2/sessions/{sessionId}/terminals/{terminalId}/stream
+WS /api/v2/connectors/{connectorId}/terminals/{terminalId}/stream
+WS /api/v2/connectors/{connectorId}/terminals-v2/{terminalId}/stream
+WS /api/v2/connector/terminals/{terminalId}/relay
+```
+
+Terminal APIs are local capability APIs, not Agent Runtime Protocol session APIs. They can be cleaned up later as a separate local-capabilities interface pass.
+
+Do not block the runtime protocol migration on terminal endpoint consolidation.

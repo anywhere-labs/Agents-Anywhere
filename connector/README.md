@@ -75,8 +75,7 @@ Connector configuration stores the server origin, for example
 `http://127.0.0.1:8000`; do not include `/api/v2` in `--server-url`.
 
 The connector adds the v2 namespace internally and talks to `/api/v2/connector/*`
-and `/api/v2/health`. See `../docs/api-v2-migration.md` for the migration
-rules.
+and `/api/v2/health`. See `../docs/api/namespace.md` for the namespace rules.
 
 ## Local Operations
 

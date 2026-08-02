@@ -143,3 +143,4 @@ Model and permission state must be updated before sending. `start_turn` must not
 - [Web behavior](./web-behavior.md)
 - [Migration sequence](./migration-sequence.md)
 - [Implementation order](./implementation-order.md)
+- [API documentation](../api/README.md)

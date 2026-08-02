@@ -133,7 +133,7 @@ All product API, SSE, and WebSocket endpoints are namespaced under `/api/v2`.
   messages, interaction responses, interrupt, sync, filesystem, shell, terminal,
   and uploads.
 
-See `../docs/api-v2-migration.md` for Web and Connector migration notes.
+See `../docs/api/namespace.md` for Web and Connector namespace notes.
 
 ## Web Frontend
 

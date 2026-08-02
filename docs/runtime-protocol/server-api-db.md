@@ -93,7 +93,7 @@ Notices are separate from `SessionTimeline` so future notice/interaction extensi
 
 ## API target
 
-Paths are draft names. Implementation may adjust names, but the semantics should remain.
+Paths are draft names. Implementation may adjust names, but the semantics should remain. The detailed client-facing session API proposal lives in [Session API proposal](../api/session-api-proposal.md).
 
 ### Runtime-level catalog reads
 
