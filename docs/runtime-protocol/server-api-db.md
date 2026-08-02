@@ -200,6 +200,9 @@ Remove or deprecate:
 
 - `sessions.model_selection_id`
 - `sessions.permission_selection_id`
+
+Already removed from active request contracts:
+
 - `MessageCreateRequest.modelSelectionId`
 - `MessageCreateRequest.permissionSelectionId`
 - `SessionCreateRequest.modelSelectionId`
@@ -207,5 +210,8 @@ Remove or deprecate:
 
 Bind-only `POST /sessions` accepts `selections`; new user tasks use
 `POST /sessions/create-and-start`.
+
+Still to remove or deprecate:
+
 - snapshot `catalogs.model` and `catalogs.permission` as primary UI source
 - server catalog validation as the primary runtime option check

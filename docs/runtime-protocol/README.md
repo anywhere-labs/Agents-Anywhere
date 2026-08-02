@@ -70,7 +70,7 @@ Runtime-level catalogs and command lists are live reads, not session state.
 
 This refactor is allowed to be breaking. The target design removes model and permission selections from message/session request payloads and from durable `SessionView` fields.
 
-Remove or deprecate these as protocol truth:
+Already removed from active request/view contracts:
 
 - `SessionView.modelSelectionId`
 - `SessionView.permissionSelectionId`
@@ -81,6 +81,9 @@ Remove or deprecate these as protocol truth:
 
 Bind-only session creation uses `SessionCreateRequest.selections`; new user
 tasks use `SessionCreateAndStartRequest.selections`.
+
+Remove or deprecate these as protocol truth:
+
 - Server-persisted model/permission catalogs as the primary read path
 - frontend-built command lists
 
