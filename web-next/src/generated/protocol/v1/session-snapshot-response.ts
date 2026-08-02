@@ -27,7 +27,7 @@ export type Allowed = boolean
 export type Available = boolean
 export type Capabilityid = string
 export type Runtime1 = ("codex" | "claude" | "opencode" | "acp") | null
-export type Scope = "adapter" | "runtime" | "session"
+export type Scope = "runtime" | "session"
 export type Sessionid2 = string | null
 export type Supported = boolean
 export type Unavailablereason = string | null
@@ -58,8 +58,8 @@ export type Responserequired = boolean
 export type Revision1 = number
 export type Sessionid3 = string
 export type Severity = "info" | "success" | "warning" | "error"
-export type Adapter = string | null
 export type Approvalid = string | null
+export type Component = string | null
 export type Operationid = string | null
 export type Runtime2 = ("codex" | "claude" | "opencode" | "acp") | "platform" | null
 export type Timelineitemid = string | null
@@ -232,8 +232,8 @@ export interface Metadata {
   [k: string]: unknown
 }
 export interface NoticeSource {
-  adapter?: Adapter
   approvalId?: Approvalid
+  component?: Component
   operationId?: Operationid
   runtime?: Runtime2
   timelineItemId?: Timelineitemid

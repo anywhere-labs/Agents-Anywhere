@@ -10,7 +10,7 @@ brokering, and connector RPC dispatch.
 agent_server/
   api/          FastAPI HTTP/WebSocket transport and error mapping
   core/         API-neutral domain values, models, and validation
-  infra/        PostgreSQL/Redis/file adapters and runtime brokers
+  infra/        PostgreSQL/Redis/file repositories and runtime brokers
   services/     Use cases, application errors, and dependency ports
   app.py        FastAPI app factory and local uvicorn entry helper
 tests/          Backend tests

@@ -41,7 +41,7 @@ class FakeAgentRuntime(AgentRuntime):
 
     @property
     def identity(self) -> RuntimeIdentity:
-        return RuntimeIdentity(runtime=self.runtime_id, adapter_version="test")
+        return RuntimeIdentity(runtime=self.runtime_id, runtime_version="test")
 
     async def start(self) -> None:
         self.started = True

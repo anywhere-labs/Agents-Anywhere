@@ -9,11 +9,13 @@ back to the backend.
 
 ```text
 connector/
-  claude/       Claude Code discovery, adapter, reducer, and transcript logic
-  codex/        Codex app-server discovery, RPC, adapter, and reducer logic
+  runtime_protocol/  AgentRuntime, RuntimeProvider, RuntimeHostClient contracts
+  runtimes/          Native Codex and Claude RuntimeProvider/AgentRuntime packages
+  server/            Backend auth, ingest, RPC channel, request dispatch, host mapping
+  core/              Connector config and runtime config storage
   local/        Local filesystem, shell, and terminal backends
   cli.py        anywhere-cli CLI
-  runtime.py    Connector config, auth, WebSocket loop, and RPC dispatch
+  runtime.py    Connector application coordinator and WebSocket lifecycle
 tests/          Connector tests
 pyproject.toml  Connector dependencies and console script
 run.sh          Local helper for saved-config startup
@@ -53,8 +55,9 @@ The default config path is `~/.agents-anywhere/connector.json`. Override it with
 Connector configuration, runtime ownership, sync state, and attachments all
 live under `~/.agents-anywhere` by default. Runtime sync cursors are stored as
 atomic JSON in `connector-state.json`; Connector does not use SQLite. On first
-use, files from the old `~/.agent-server` directory are merged into this
-directory and obsolete SQLite sync state is discarded.
+use, the v2 connector performs a one-time local data migration from the old
+`~/.agent-server` directory into `~/.agents-anywhere` and discards obsolete
+SQLite sync state.
 
 ## Runtime Discovery
 

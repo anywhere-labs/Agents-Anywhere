@@ -95,7 +95,7 @@ def permission_catalog_from_items(
                 item.get("identity") if isinstance(item.get("identity"), dict) else {"permission_id": item["id"]},
             ),
             metadata={
-                "source": "adapter",
+                "source": "runtime",
                 **(
                     {"runtimeSettings": item["runtimeSettings"]}
                     if isinstance(item.get("runtimeSettings"), dict)

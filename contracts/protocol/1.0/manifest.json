@@ -5,7 +5,7 @@
       "model": "ProtocolHandshakeRequest",
       "path": "schemas/handshake-request.schema.json",
       "pydanticMode": "validation",
-      "sha256": "0a165d6ad57b618b663b761794a390479f45fcf28bba559b671487ecf690337c",
+      "sha256": "7ce363ee96280f35e1e9e7055da6a006481498543b8cfe6898f83ee4b593230c",
       "slug": "handshake-request"
     },
     {
@@ -21,7 +21,7 @@
       "model": "ProtocolCapabilitySet",
       "path": "schemas/capability-set.schema.json",
       "pydanticMode": "validation",
-      "sha256": "5caf70cd896a1437dbe57dbba7bc573c6108d5d3022e1e9ec013479826fa2bf8",
+      "sha256": "c43e9b931155d5300647a232f493d9883af424edbdd0249ecad752736d7cc8c1",
       "slug": "capability-set"
     },
     {
@@ -29,7 +29,7 @@
       "model": "ProtocolCapabilitiesResponse",
       "path": "schemas/capabilities-response.schema.json",
       "pydanticMode": "serialization",
-      "sha256": "b46deee0bcc3dd6c2f62b6f6b4b655be1150e7763f22d634d7abe7c7d264c1fa",
+      "sha256": "0e1678b69ff55a30cdfafa6ca2b1d148340757c76fda6b1195dd315efbf93faa",
       "slug": "capabilities-response"
     },
     {
@@ -69,7 +69,7 @@
       "model": "ProtocolSessionSnapshotResponse",
       "path": "schemas/session-snapshot-response.schema.json",
       "pydanticMode": "serialization",
-      "sha256": "b7664a70bf08b63ca609ca60b3cc70985bdd5e856d85360839688e6972e6a5b8",
+      "sha256": "1b35e8afa1d680c514efb1cf04766543909c332d21f5e2c98e2217f6f78f5401",
       "slug": "session-snapshot-response"
     },
     {

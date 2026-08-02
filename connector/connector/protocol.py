@@ -13,7 +13,7 @@ PROTOCOL_MAX_REVISION = 9_007_199_254_740_991
 
 ProtocolVersion = Literal["1.0"]
 RuntimeName = Literal["codex", "claude", "opencode", "acp"]
-ProtocolCapabilityScope = Literal["adapter", "runtime", "session"]
+ProtocolCapabilityScope = Literal["runtime", "session"]
 ProtocolNoticeType = Literal["notification", "interaction"]
 ProtocolNoticeSeverity = Literal["info", "success", "warning", "error"]
 ProtocolInteractionStatus = Literal[
@@ -49,15 +49,15 @@ class RpcNotification(BaseModel):
     params: Any = None
 
 
-class ProtocolAdapterIdentity(BaseModel):
+class ProtocolRuntimeIdentity(BaseModel):
     runtime: RuntimeName
-    adapterVersion: str
+    runtimeVersion: str
 
 
 class ProtocolHandshakeRequest(BaseModel):
     protocolVersions: list[str] = Field(min_length=1)
     connectorVersion: str
-    adapters: list[ProtocolAdapterIdentity] = Field(default_factory=list)
+    runtimes: list[ProtocolRuntimeIdentity] = Field(default_factory=list)
 
 
 class ProtocolCapability(BaseModel):
@@ -121,7 +121,7 @@ class ProtocolPermissionCatalog(BaseModel):
 
 class ProtocolNoticeSource(BaseModel):
     runtime: RuntimeName
-    adapter: str | None = None
+    component: str | None = None
     approvalId: str | None = None
     timelineItemId: str | None = None
     operationId: str | None = None

@@ -50,7 +50,7 @@ class CodexRuntime(AgentRuntime):
     config: RuntimeConfig
     host: RuntimeHostClient
     client: CodexRuntimeClient | None = None
-    adapter_version: str = "native-0"
+    runtime_version: str = "native-0"
 
     def __post_init__(self) -> None:
         self._started = False
@@ -65,7 +65,7 @@ class CodexRuntime(AgentRuntime):
     def identity(self) -> RuntimeIdentity:
         return RuntimeIdentity(
             runtime="codex",
-            adapter_version=self.adapter_version,
+            runtime_version=self.runtime_version,
             display_name="Codex",
         )
 

@@ -24,7 +24,7 @@ def approval_notice(approval: dict[str, Any]) -> dict[str, Any]:
         sessionId=session_id,
         source={
             "runtime": source.get("runtime"),
-            "adapter": source.get("runtime"),
+            "component": source.get("runtime"),
             "approvalId": approval_id,
             "timelineItemId": approval.get("targetItemId"),
         },

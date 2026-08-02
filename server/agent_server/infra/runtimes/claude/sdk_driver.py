@@ -14,7 +14,7 @@ class ClaudeSdkChatDriver:
     The project does not yet depend on `claude-agent-sdk`, so this driver
     imports it lazily. It gives the migration a concrete seam for the future
     SDK stream implementation without replacing the existing connector-side
-    Claude CLI/PTY adapter before we have real SDK fixtures.
+    Claude CLI/PTY runtime path before we have real SDK fixtures.
     """
 
     runtime = "claude"

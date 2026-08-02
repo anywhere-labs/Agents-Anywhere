@@ -683,7 +683,7 @@ class NoticeAction(BaseModel):
 
 class NoticeSource(BaseModel):
     runtime: RuntimeName | Literal["platform"] | None = None
-    adapter: str | None = None
+    component: str | None = None
     approvalId: str | None = None
     timelineItemId: str | None = None
     operationId: str | None = None

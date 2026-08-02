@@ -464,18 +464,6 @@
     },
     "NoticeSource": {
       "properties": {
-        "adapter": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Adapter"
-        },
         "approvalId": {
           "anyOf": [
             {
@@ -487,6 +475,18 @@
           ],
           "default": null,
           "title": "Approvalid"
+        },
+        "component": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Component"
         },
         "operationId": {
           "anyOf": [
@@ -580,7 +580,6 @@
         "scope": {
           "default": "runtime",
           "enum": [
-            "adapter",
             "runtime",
             "session"
           ],

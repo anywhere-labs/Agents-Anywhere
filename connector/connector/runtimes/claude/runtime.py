@@ -52,7 +52,7 @@ class ClaudeRuntime(AgentRuntime):
     host: RuntimeHostClient
     sdk_loader: SdkLoader
     client_factory: ClaudeClientFactory | None = None
-    adapter_version: str = "native-0"
+    runtime_version: str = "native-0"
 
     def __post_init__(self) -> None:
         self._started = False
@@ -66,7 +66,7 @@ class ClaudeRuntime(AgentRuntime):
     def identity(self) -> RuntimeIdentity:
         return RuntimeIdentity(
             runtime="claude",
-            adapter_version=self.adapter_version,
+            runtime_version=self.runtime_version,
             display_name="Claude",
         )
 

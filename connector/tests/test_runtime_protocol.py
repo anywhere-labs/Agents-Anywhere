@@ -27,7 +27,7 @@ from connector.runtime_protocol import (
 class MinimalRuntime(AgentRuntime):
     @property
     def identity(self) -> RuntimeIdentity:
-        return RuntimeIdentity(runtime="test", adapter_version="0")
+        return RuntimeIdentity(runtime="test", runtime_version="0")
 
 
 class MinimalProvider(RuntimeProvider):

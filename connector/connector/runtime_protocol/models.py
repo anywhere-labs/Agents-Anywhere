@@ -22,7 +22,7 @@ NoticeSeverity = Literal["info", "success", "warning", "error"]
 @dataclass(frozen=True, slots=True)
 class RuntimeIdentity:
     runtime: str
-    adapter_version: str
+    runtime_version: str
     display_name: str | None = None
     protocol_version: str = "1.0"
 

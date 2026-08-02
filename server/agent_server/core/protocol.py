@@ -20,22 +20,22 @@ SUPPORTED_PROTOCOL_VERSIONS = [PROTOCOL_VERSION_1]
 PROTOCOL_MAX_REVISION = 9_007_199_254_740_991
 
 ProtocolVersion = Literal["1.0"]
-ProtocolCapabilityScope = Literal["adapter", "runtime", "session"]
+ProtocolCapabilityScope = Literal["runtime", "session"]
 
 
 class ProtocolWireModel(BaseModel):
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
 
-class ProtocolAdapterIdentity(ProtocolWireModel):
+class ProtocolRuntimeIdentity(ProtocolWireModel):
     runtime: RuntimeName
-    adapterVersion: str
+    runtimeVersion: str
 
 
 class ProtocolHandshakeRequest(ProtocolWireModel):
     protocolVersions: list[str] = Field(min_length=1)
     connectorVersion: str
-    adapters: list[ProtocolAdapterIdentity] = Field(default_factory=list)
+    runtimes: list[ProtocolRuntimeIdentity] = Field(default_factory=list)
 
 
 class ProtocolHandshakeResponse(ProtocolWireModel):
