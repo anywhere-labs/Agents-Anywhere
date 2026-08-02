@@ -526,8 +526,10 @@ Acceptance:
 
 ## Phase 10: Web protocol-driven UI
 
-Status: partial. Message selection payload cleanup and runtime-driven command
-mode are done; dashboard lifecycle updates and snapshot-poll elimination remain.
+Status: partial. Message selection payload cleanup, runtime-driven command
+mode, and dashboard WebSocket lifecycle without fixed connector/session polling
+are done. Session snapshot-poll elimination and full meta/state/timeline/notices
+split remain.
 
 Goal: make UI read the new protocol projections and live catalogs.
 

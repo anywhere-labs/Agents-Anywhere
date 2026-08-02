@@ -362,7 +362,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     fetchData()
   }, [fetchData])
 
-  // ── Dashboard WebSocket + disconnected fallback ────────────
+  // ── Dashboard WebSocket ────────────────────────────────────
   const tokenRef = React.useRef(authSession?.accessToken ?? null)
   tokenRef.current = authSession?.accessToken ?? null
   const sessionsRef = React.useRef(sessions)
@@ -373,7 +373,6 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     if (!authSession?.accessToken) return
     let cancelled = false
     let socket: WebSocket | null = null
-    let pollTimer: number | null = null
     let reconnectTimer: number | null = null
 
     const refetch = () => {
@@ -403,6 +402,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         socket.onclose = () => {
           if (cancelled) return
           socket = null
+          refetch()
           reconnectTimer = window.setTimeout(() => {
             reconnectTimer = null
             void connect()
@@ -422,18 +422,9 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
     void connect()
 
-    // Fallback polling only while the dashboard WebSocket is disconnected.
-    pollTimer = window.setInterval(() => {
-      if (cancelled) return
-      if (!socket || socket.readyState !== WebSocket.OPEN) {
-        refetch()
-      }
-    }, 30_000)
-
     return () => {
       cancelled = true
       socket?.close()
-      if (pollTimer !== null) window.clearInterval(pollTimer)
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
     }
   }, [authSession?.accessToken, fetchData])

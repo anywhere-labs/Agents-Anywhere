@@ -341,10 +341,6 @@ export class DashboardApi {
     return url.toString();
   }
 
-  dashboardEventsUrl(token: string): string {
-    return `${apiPath("/sessions/events/dashboard")}?token=${encodeURIComponent(token)}`;
-  }
-
   connectorFsList(
     token: string,
     connectorId: string,
