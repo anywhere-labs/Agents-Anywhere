@@ -25,8 +25,7 @@ from connector.runtime_protocol import (
 from connector.runtime_protocol import (
     RuntimeSupervisor as AgentRuntimeSupervisor,
 )
-from connector.runtimes.claude.provider import ClaudeProvider
-from connector.runtimes.codex.provider import CodexProvider
+from connector.runtimes import default_runtime_providers
 from connector.server.auth import ConnectorAuthenticationError, ConnectorAuthenticator
 from connector.server.dispatch import ConnectorRequestDispatcher
 from connector.server.ingest import ConnectorIngestClient
@@ -69,7 +68,7 @@ class BackendRpcClient:
             sync_state_store=self.sync_state_store,
         )
         if agent_runtime_providers is None:
-            agent_runtime_providers = (CodexProvider(), ClaudeProvider())
+            agent_runtime_providers = default_runtime_providers()
         self.agent_runtime_supervisor = AgentRuntimeSupervisor(
             providers=agent_runtime_providers,
             host=self.agent_runtime_host,

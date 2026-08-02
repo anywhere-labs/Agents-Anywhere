@@ -79,7 +79,6 @@ def _build_parser() -> argparse.ArgumentParser:
 
     pair = subparsers.add_parser(
         "pair",
-        aliases=["login"],
         help="pair with a backend, save credentials, and start the connector",
     )
     _add_pair_args(pair)
@@ -106,7 +105,6 @@ def _add_config_args(parser: argparse.ArgumentParser) -> None:
 def _add_pair_args(parser: argparse.ArgumentParser) -> None:
     _add_config_args(parser)
     parser.add_argument("server", nargs="?", help="backend server URL, for example anywhere.com or https://api.anywhere.com")
-    parser.add_argument("--server-url", help="backend server URL (deprecated; use positional server)")
     parser.add_argument("--poll-interval", type=float, default=2, help="seconds between pairing polls")
     parser.add_argument("--timeout", type=float, default=600, help="pairing timeout in seconds")
     parser.add_argument("--no-start", action="store_true", help="save credentials without starting the connector")
@@ -146,7 +144,7 @@ async def _rpc(args: argparse.Namespace) -> None:
 
 
 async def _pair(args: argparse.Namespace) -> None:
-    server_url = await _resolve_server_url_for_pair(args.server or args.server_url, timeout=10)
+    server_url = await _resolve_server_url_for_pair(args.server, timeout=10)
     async with httpx.AsyncClient(timeout=30) as client:
         start_response = await client.post(
             api_v2_url(server_url, "/pairing/start"),

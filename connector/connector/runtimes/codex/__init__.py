@@ -1,7 +1,4 @@
-"""Native Codex runtime package.
-
-The pre-protocol Codex adapter is retained under connector._reference.codex.
-"""
+"""Native Codex runtime package."""
 
 from connector.runtimes.codex.provider import CodexProvider
 from connector.runtimes.codex.runtime import CodexRuntime

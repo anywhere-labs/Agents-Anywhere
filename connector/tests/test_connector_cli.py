@@ -139,39 +139,6 @@ def test_pair_no_start_only_saves_credentials(monkeypatch, tmp_path) -> None:
     ]
 
 
-def test_pair_accepts_legacy_server_url_flag(monkeypatch, tmp_path) -> None:
-    config_path = tmp_path / "connector.json"
-    FakeBackendRpcClient.started_configs = []
-    FakeHttpClient.calls = []
-    monkeypatch.setattr(cli_module.httpx, "AsyncClient", FakeHttpClient)
-    monkeypatch.setattr(cli_module, "BackendRpcClient", FakeBackendRpcClient)
-
-    args = cli_module._build_parser().parse_args(
-        [
-            "pair",
-            "--server-url",
-            "http://127.0.0.1:8000",
-            "--config",
-            str(config_path),
-            "--poll-interval",
-            "0",
-            "--no-start",
-        ]
-    )
-    asyncio.run(cli_module._pair(args))
-
-    assert ConnectorConfig.load(config_path).connector_id == "conn_1"
-    assert FakeHttpClient.calls[0][0] == "http://127.0.0.1:8000/api/v2/pairing/start"
-
-
-def test_login_alias_is_still_accepted() -> None:
-    args = cli_module._build_parser().parse_args(["login", "http://127.0.0.1:8000", "--no-start"])
-
-    assert args.command == "login"
-    assert args.server == "http://127.0.0.1:8000"
-    assert args.no_start is True
-
-
 def test_rpc_command_uses_config_path(tmp_path) -> None:
     config_path = tmp_path / "connector.json"
 

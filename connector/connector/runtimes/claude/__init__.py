@@ -1,7 +1,4 @@
-"""Native Claude runtime package.
-
-The pre-protocol Claude adapter is retained under connector._reference.claude.
-"""
+"""Native Claude runtime package."""
 
 from connector.runtimes.claude.provider import ClaudeProvider
 from connector.runtimes.claude.runtime import ClaudeRuntime
