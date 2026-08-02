@@ -3858,7 +3858,7 @@ def test_interrupt_does_not_mark_session_idle_before_turn_end(tmp_path):
     assert state["session"]["status"] == "stopping"
 
 
-def test_approval_resolve_carries_runtime(tmp_path):
+def test_interaction_respond_carries_runtime(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, session_id, headers = create_connector_and_session(client)
     ingest_pending_command_approval(client, access_token, session_id)
@@ -3874,6 +3874,8 @@ def test_approval_resolve_carries_runtime(tmp_path):
     assert response.status_code == 200
     params = fake_rpc.requests[-1][2]
     assert params["runtime"] == "codex"
+    assert params["noticeId"] == notice_id
+    assert params["actionId"] == "approve"
 
 
 def test_legacy_approval_api_is_removed(tmp_path):
@@ -5769,7 +5771,7 @@ def test_timeline_sync_deduped_snapshot_message_does_not_rearm_unread(tmp_path):
         assert session["unread"] is False
 
 
-def test_approval_resolve_waits_for_connector_success_and_updates_target_item(tmp_path):
+def test_interaction_respond_waits_for_connector_success_and_updates_target_item(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, session_id, headers = create_connector_and_session(client)
     ingest_pending_command_approval(client, access_token, session_id)
@@ -5784,21 +5786,21 @@ def test_approval_resolve_waits_for_connector_success_and_updates_target_item(tm
     )
 
     assert response.status_code == 200
-    assert fake_rpc.requests == [
-        (
-            connector_id,
-            "approval.resolve",
-            {
-                "approvalId": "appr_1",
-                "status": "approved",
-                "requestId": "42",
-                "sessionId": session_id,
-                "runtime": "codex",
-                "externalSessionId": f"thr_{connector_id}_demo",
-            },
-            30,
-        )
-    ]
+    assert len(fake_rpc.requests) == 1
+    requested_connector_id, method, params, timeout = fake_rpc.requests[0]
+    assert requested_connector_id == connector_id
+    assert method == "interaction.respond"
+    assert timeout == 30
+    assert params["sessionId"] == session_id
+    assert params["runtime"] == "codex"
+    assert params["externalSessionId"] == f"thr_{connector_id}_demo"
+    assert params["noticeId"] == notice_id
+    assert params["actionId"] == "approve"
+    assert params["inputData"]["approvalId"] == "appr_1"
+    assert params["inputData"]["approvalStatus"] == "approved"
+    assert params["inputData"]["requestId"] == "42"
+    assert params["inputData"]["approvalSource"]["requestId"] == "42"
+    assert params["inputData"]["approvalSource"]["method"] == "item/commandExecution/requestApproval"
     state = wait_for_state_items(
         client,
         session_id,
@@ -5846,7 +5848,7 @@ def test_interaction_response_recovery_falls_back_across_legacy_approval_gap(tmp
     assert notice.status == "resolved"
 
 
-def test_approval_resolve_keeps_pending_when_connector_fails(tmp_path):
+def test_interaction_respond_keeps_pending_when_connector_fails(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
     ingest_pending_command_approval(client, access_token, session_id)

@@ -43,6 +43,11 @@ class CodexRuntimeClient(Protocol):
         method: str,
         params: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]: ...
+    async def respond(
+        self,
+        request_id: str | int,
+        result: Mapping[str, Any] | None = None,
+    ) -> None: ...
 
 
 @dataclass(slots=True)
@@ -471,6 +476,37 @@ class CodexRuntime(AgentRuntime):
             },
         )
 
+    async def respond_interaction(
+        self,
+        session_id: str,
+        notice_id: str,
+        action_id: str,
+        input_data: Mapping[str, Any] | None = None,
+    ) -> RuntimeOperationResult:
+        if self.client is None:
+            raise RuntimeUnsupportedError("respond_interaction")
+        data = dict(input_data or {})
+        request_id = data.get("requestId")
+        if not isinstance(request_id, str | int):
+            approval_source = data.get("approvalSource")
+            if isinstance(approval_source, dict):
+                request_id = approval_source.get("requestId")
+        if not isinstance(request_id, str | int):
+            raise ValueError("requestId is required to respond to a Codex interaction")
+        status = data.get("approvalStatus")
+        decision = _approval_decision(status if isinstance(status, str) else action_id)
+        await self.start()
+        await self.client.respond(request_id, {"decision": decision})
+        return RuntimeOperationResult(
+            ok=True,
+            result={
+                "resolved": True,
+                "noticeId": notice_id,
+                "sessionId": session_id,
+                "decision": decision,
+            },
+        )
+
     async def _best_effort_bootstrap_reads(self) -> None:
         if self.client is None:
             return
@@ -824,6 +860,21 @@ class CodexAppServerClient:
         self.process.stdin.write((json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
         await self.process.stdin.drain()
 
+    async def respond(
+        self,
+        request_id: str | int,
+        result: Mapping[str, Any] | None = None,
+    ) -> None:
+        if self.process is None or self.process.stdin is None:
+            raise RuntimeError("Codex app-server is not started")
+        payload: dict[str, Any] = {
+            "jsonrpc": "2.0",
+            "id": self._response_id_for(request_id),
+            "result": dict(result or {}),
+        }
+        self.process.stdin.write((json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
+        await self.process.stdin.drain()
+
     async def _read_stdout(self, process: asyncio.subprocess.Process) -> None:
         assert process.stdout
         while line := await process.stdout.readline():
@@ -864,6 +915,21 @@ class CodexAppServerClient:
 
         task.add_done_callback(done)
 
+    def _response_id_for(self, request_id: str | int) -> str | int:
+        if request_id in self._server_request_ids:
+            self._server_request_ids.remove(request_id)
+            return request_id
+        if isinstance(request_id, str):
+            try:
+                numeric_request_id = int(request_id)
+            except ValueError:
+                numeric_request_id = None
+            if numeric_request_id is not None and numeric_request_id in self._server_request_ids:
+                self._server_request_ids.remove(numeric_request_id)
+                return numeric_request_id
+        logger.warning("codex app-server responding to unknown server request id={}", request_id)
+        return request_id
+
     @staticmethod
     def _settle_pending_future(
         future: asyncio.Future[dict[str, Any]],
@@ -893,6 +959,14 @@ class EmptyCodexClient:
         _ = method
         _ = params
         return {}
+
+    async def respond(
+        self,
+        request_id: str | int,
+        result: Mapping[str, Any] | None = None,
+    ) -> None:
+        _ = request_id
+        _ = result
 
 
 def app_server_client_from_config(config: RuntimeConfig) -> CodexAppServerClient:
@@ -1462,6 +1536,16 @@ def _reasoning_label(reasoning_id: str) -> str:
         "max": "Max",
         "ultra": "Ultra",
     }.get(reasoning_id, reasoning_id)
+
+
+def _approval_decision(status_or_action: str) -> str:
+    if status_or_action in {"approved_for_session", "approve_for_session"}:
+        return "acceptForSession"
+    if status_or_action in {"approved", "approve"}:
+        return "accept"
+    if status_or_action in {"cancelled", "cancel"}:
+        return "cancel"
+    return "decline"
 
 
 def _content_hash(value: Mapping[str, Any]) -> str:

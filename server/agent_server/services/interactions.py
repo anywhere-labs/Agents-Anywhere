@@ -122,14 +122,20 @@ class ApprovalInteractionResolver:
             )
             result = await self._manager.request(
                 session.connectorId,
-                "approval.resolve",
+                "interaction.respond",
                 {
-                    "approvalId": approval_id,
-                    "status": approval_status,
-                    "requestId": request_id,
                     "sessionId": session.id,
                     "runtime": session.runtime,
                     "externalSessionId": session.externalSessionId,
+                    "noticeId": command.interaction_id,
+                    "actionId": command.action_id,
+                    "inputData": {
+                        **command.input,
+                        "approvalId": approval_id,
+                        "approvalStatus": approval_status,
+                        "approvalSource": approval_source,
+                        "requestId": request_id,
+                    },
                 },
             )
             await apply_approval_resolution_to_target_item(

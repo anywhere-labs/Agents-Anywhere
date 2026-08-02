@@ -169,6 +169,29 @@ class FakeAgentRuntime(AgentRuntime):
             result={"sessionId": session_id},
         )
 
+    async def respond_interaction(
+        self,
+        session_id: str,
+        notice_id: str,
+        action_id: str,
+        input_data: dict[str, Any] | None = None,
+    ) -> RuntimeOperationResult:
+        self.calls.append(
+            (
+                "interaction.respond",
+                {
+                    "sessionId": session_id,
+                    "noticeId": notice_id,
+                    "actionId": action_id,
+                    "inputData": dict(input_data or {}),
+                },
+            )
+        )
+        return RuntimeOperationResult(
+            ok=True,
+            result={"resolved": True, "noticeId": notice_id},
+        )
+
     async def create_and_start_session(
         self,
         session_id: str,
@@ -683,6 +706,31 @@ async def _exercise_runtime() -> None:
         "message": "Command executed.",
         "result": {"sessionId": "sess_1"},
     }
+
+    await client.handle_message(
+        {
+            "id": "rpc_7",
+            "type": "request",
+            "method": "interaction.respond",
+            "params": {
+                "runtime": "codex",
+                "sessionId": "sess_1",
+                "noticeId": "notice_1",
+                "actionId": "approve",
+                "inputData": {"requestId": 42},
+            },
+        }
+    )
+    assert runtime.calls[-1] == (
+        "interaction.respond",
+        {
+            "sessionId": "sess_1",
+            "noticeId": "notice_1",
+            "actionId": "approve",
+            "inputData": {"requestId": 42},
+        },
+    )
+    assert ws.messages[-1]["result"] == {"resolved": True, "noticeId": "notice_1"}
 
 
 async def _exercise_websocket_close_reconnect(monkeypatch) -> None:

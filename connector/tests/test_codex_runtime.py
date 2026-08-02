@@ -19,6 +19,7 @@ class FakeCodexClient:
         self.started = False
         self.stopped = False
         self.requests: list[tuple[str, dict[str, Any]]] = []
+        self.responses: list[tuple[str | int, dict[str, Any]]] = []
         self.results: dict[str, dict[str, Any]] = {
             "model/list": {
                 "models": [
@@ -111,6 +112,13 @@ class FakeCodexClient:
         if isinstance(result, Exception):
             raise result
         return result
+
+    async def respond(
+        self,
+        request_id: str | int,
+        result: Mapping[str, Any] | None = None,
+    ) -> None:
+        self.responses.append((request_id, dict(result or {})))
 
 
 class FakeHost(RuntimeHostClient):
@@ -638,6 +646,26 @@ async def _test_codex_runtime_interrupt_soft_failure_sets_idle() -> None:
     assert result.code == "turn_not_found"
     assert result.result["interrupted"] is False
     assert host.state_updates[-1]["status"] == "idle"
+
+
+def test_codex_runtime_responds_to_approval_interaction() -> None:
+    asyncio.run(_test_codex_runtime_responds_to_approval_interaction())
+
+
+async def _test_codex_runtime_responds_to_approval_interaction() -> None:
+    client = FakeCodexClient()
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=client)
+
+    result = await runtime.respond_interaction(
+        "sess_1",
+        "notice_1",
+        "approve_for_session",
+        {"approvalSource": {"requestId": "42"}},
+    )
+
+    assert result.ok is True
+    assert result.result["decision"] == "acceptForSession"
+    assert client.responses == [("42", {"decision": "acceptForSession"})]
 
 
 def test_codex_catalog_helpers_ignore_unrecognized_items() -> None:

@@ -83,6 +83,11 @@ class ConnectorRequestDispatcher:
                 self._resolve_agent_runtime(params),
                 params,
             )
+        if method == "interaction.respond":
+            return await self._dispatch_agent_runtime_interaction_respond(
+                self._resolve_agent_runtime(params),
+                params,
+            )
         if method == "turn.start":
             return await self._dispatch_agent_runtime_turn_start(
                 self._resolve_agent_runtime(params),
@@ -294,6 +299,19 @@ class ConnectorRequestDispatcher:
         )
         return _command_result_payload(result)
 
+    async def _dispatch_agent_runtime_interaction_respond(
+        self,
+        runtime: AgentRuntime,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        result = await runtime.respond_interaction(
+            session_id=_required_session_id(params),
+            notice_id=_required_notice_id(params),
+            action_id=_required_action_id(params),
+            input_data=_optional_mapping(params.get("inputData")),
+        )
+        return _operation_result_payload(result)
+
 
 def _required_runtime_id(params: dict[str, Any]) -> str:
     runtime_id = params.get("runtimeId")
@@ -328,6 +346,20 @@ def _required_command(params: dict[str, Any]) -> str:
     if not isinstance(command, str) or not command:
         raise ValueError("command is required")
     return command
+
+
+def _required_notice_id(params: dict[str, Any]) -> str:
+    notice_id = params.get("noticeId")
+    if not isinstance(notice_id, str) or not notice_id:
+        raise ValueError("noticeId is required")
+    return notice_id
+
+
+def _required_action_id(params: dict[str, Any]) -> str:
+    action_id = params.get("actionId")
+    if not isinstance(action_id, str) or not action_id:
+        raise ValueError("actionId is required")
+    return action_id
 
 
 def _optional_string(value: Any) -> str | None:
@@ -369,6 +401,14 @@ def _runtime_selections(params: dict[str, Any]) -> dict[str, str | None]:
             raise ValueError("selection id must be a string or null")
         selections[scope] = selection_id
     return selections
+
+
+def _optional_mapping(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("inputData must be an object")
+    return dict(value)
 
 
 def _int_param(params: dict[str, Any], key: str, default: int) -> int:
