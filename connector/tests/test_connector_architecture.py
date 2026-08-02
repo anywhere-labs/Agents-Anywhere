@@ -40,6 +40,7 @@ FORBIDDEN_ACTIVE_TOKENS = {
     "approval.requested",
     "CodexAdapter",
     "ClaudeSdkAdapter",
+    "EmptyCodexClient",
 }
 
 
@@ -81,7 +82,9 @@ def test_active_connector_code_does_not_import_deprecated_root_modules() -> None
 
     for path in _active_python_files():
         for module in _imported_modules(path):
-            if module in FORBIDDEN_ACTIVE_IMPORTS or module.startswith("connector._reference"):
+            if module in FORBIDDEN_ACTIVE_IMPORTS or module.startswith(
+                "connector._reference"
+            ):
                 relative_path = path.relative_to(CONNECTOR_PACKAGE.parent)
                 violations.append(f"{relative_path}: imports {module}")
 
@@ -114,9 +117,15 @@ def test_active_connector_tests_do_not_import_reference_modules() -> None:
 
 
 def test_connector_dispatcher_keeps_runtime_and_local_rpc_in_handlers() -> None:
-    dispatcher_source = (CONNECTOR_PACKAGE / "server" / "dispatch.py").read_text(encoding="utf-8")
-    runtime_rpc_source = (CONNECTOR_PACKAGE / "server" / "runtime_rpc.py").read_text(encoding="utf-8")
-    local_rpc_source = (CONNECTOR_PACKAGE / "server" / "local_rpc.py").read_text(encoding="utf-8")
+    dispatcher_source = (CONNECTOR_PACKAGE / "server" / "dispatch.py").read_text(
+        encoding="utf-8"
+    )
+    runtime_rpc_source = (CONNECTOR_PACKAGE / "server" / "runtime_rpc.py").read_text(
+        encoding="utf-8"
+    )
+    local_rpc_source = (CONNECTOR_PACKAGE / "server" / "local_rpc.py").read_text(
+        encoding="utf-8"
+    )
 
     assert "_dispatch_agent_runtime" not in dispatcher_source
     assert '"fs.prepareDownload"' not in dispatcher_source
