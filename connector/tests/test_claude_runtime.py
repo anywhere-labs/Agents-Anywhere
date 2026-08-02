@@ -19,6 +19,14 @@ class FakeClaudeSdk:
     ClaudeAgentOptions = SimpleNamespaceOptions
     ClaudeSDKClient = None
 
+    class PermissionResultAllow:
+        def __init__(self, updated_input: Mapping[str, Any]) -> None:
+            self.updated_input = dict(updated_input)
+
+    class PermissionResultDeny:
+        def __init__(self, message: str) -> None:
+            self.message = message
+
     @staticmethod
     def list_sessions(limit: int = 100) -> list[Any]:
         _ = limit
@@ -102,6 +110,7 @@ class FakeHost(RuntimeHostClient):
         self.meta_upserts: list[dict[str, Any]] = []
         self.state_updates: list[dict[str, Any]] = []
         self.timeline_item_upserts: list[Any] = []
+        self.notice_upserts: list[Any] = []
         self.downloads: list[tuple[str, str]] = []
 
     @property
@@ -156,6 +165,9 @@ class FakeHost(RuntimeHostClient):
 
     async def timeline_item_upsert(self, item: Any) -> None:
         self.timeline_item_upserts.append(item)
+
+    async def notice_upsert(self, notice: Any) -> None:
+        self.notice_upserts.append(notice)
 
     async def attachment_download(
         self,
@@ -270,6 +282,101 @@ async def _test_claude_runtime_interrupts_active_turn() -> None:
     assert result.result["interrupted"] is True
     assert client.interrupted is True
     assert host.state_updates[-1]["status"] == "idle"
+    release.set()
+
+
+def test_claude_runtime_projects_sdk_approval_to_notice() -> None:
+    asyncio.run(_test_claude_runtime_projects_sdk_approval_to_notice())
+
+
+async def _test_claude_runtime_projects_sdk_approval_to_notice() -> None:
+    host = FakeHost()
+    release = asyncio.Event()
+    client = BlockingClaudeClient(release)
+    captured_options: list[Any] = []
+
+    def client_factory(_sdk: Any, options: Any) -> FakeClaudeClient:
+        captured_options.append(options)
+        return client
+
+    runtime = ClaudeRuntime(
+        config=_config(),
+        host=host,
+        sdk_loader=lambda: FakeClaudeSdk,
+        client_factory=client_factory,
+    )
+
+    result = await runtime.start_turn("sess_approval", "claude_session_approval", "hello")
+    await asyncio.sleep(0)
+
+    can_use_tool = captured_options[0].kwargs["can_use_tool"]
+    approval_task = asyncio.create_task(
+        can_use_tool("Bash", {"command": "ls"}, {"session_id": "claude_session_approval"})
+    )
+    await asyncio.sleep(0)
+
+    assert result.ok is True
+    assert host.state_updates[-1]["status"] == "blocked"
+    assert len(host.notice_upserts) == 1
+    notice = host.notice_upserts[0]
+    assert notice.type == "interaction"
+    assert notice.interaction_type == "approval"
+    assert notice.context["kind"] == "command"
+    assert notice.context["toolName"] == "Bash"
+    assert notice.context["turnId"] == result.result["turnId"]
+    assert notice.context["approvalSource"]["requestId"] == notice.notice_id
+
+    response = await runtime.respond_interaction(
+        session_id="sess_approval",
+        notice_id=notice.notice_id,
+        action_id="approve",
+    )
+    permission = await approval_task
+
+    assert response.ok is True
+    assert isinstance(permission, FakeClaudeSdk.PermissionResultAllow)
+    assert permission.updated_input == {"command": "ls"}
+    assert len(host.notice_upserts) == 1
+    assert host.state_updates[-1]["status"] == "running"
+    release.set()
+    await runtime._sessions["sess_approval"].active_task
+    assert host.state_updates[-1]["status"] == "idle"
+
+
+def test_claude_runtime_interrupt_rejects_pending_approval() -> None:
+    asyncio.run(_test_claude_runtime_interrupt_rejects_pending_approval())
+
+
+async def _test_claude_runtime_interrupt_rejects_pending_approval() -> None:
+    host = FakeHost()
+    release = asyncio.Event()
+    client = BlockingClaudeClient(release)
+    captured_options: list[Any] = []
+
+    runtime = ClaudeRuntime(
+        config=_config(),
+        host=host,
+        sdk_loader=lambda: FakeClaudeSdk,
+        client_factory=lambda _sdk, options: (captured_options.append(options) or client),
+    )
+
+    await runtime.start_turn("sess_approval", "claude_session_approval", "hello")
+    await asyncio.sleep(0)
+    approval_task = asyncio.create_task(
+        captured_options[0].kwargs["can_use_tool"](
+            "Bash",
+            {"command": "rm -rf /tmp/x"},
+            {"session_id": "claude_session_approval"},
+        )
+    )
+    await asyncio.sleep(0)
+
+    result = await runtime.interrupt_turn("sess_approval", "claude_session_approval", "user")
+    permission = await approval_task
+
+    assert result.ok is True
+    assert isinstance(permission, FakeClaudeSdk.PermissionResultDeny)
+    assert "denied" in permission.message
     release.set()
 
 

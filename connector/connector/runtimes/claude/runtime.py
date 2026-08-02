@@ -24,6 +24,7 @@ from connector.runtime_protocol import (
     RuntimeTimelineSnapshot,
     RuntimeUnsupportedError,
     SessionMeta,
+    SessionNotice,
     SessionState,
 )
 from connector.runtime_protocol.attachments import attachment_target
@@ -36,6 +37,14 @@ ClaudeClientFactory = Callable[[Any, Mapping[str, Any]], Any]
 
 
 @dataclass(slots=True)
+class _PendingClaudeApproval:
+    approval_id: str
+    future: asyncio.Future[str]
+    input_data: dict[str, Any]
+    notice: SessionNotice
+
+
+@dataclass(slots=True)
 class _ClaudeSession:
     session_id: str
     external_session_id: str | None = None
@@ -44,6 +53,7 @@ class _ClaudeSession:
     active_turn_id: str | None = None
     client: Any | None = None
     selections: dict[str, str | None] = field(default_factory=dict)
+    pending_approvals: dict[str, _PendingClaudeApproval] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -83,6 +93,7 @@ class ClaudeRuntime(AgentRuntime):
             if session.active_task is not None and not session.active_task.done()
         ]
         for session in self._sessions.values():
+            self._resolve_pending_approvals(session, "reject")
             client = session.client
             if client is not None:
                 interrupt = getattr(client, "interrupt", None)
@@ -350,6 +361,7 @@ class ClaudeRuntime(AgentRuntime):
                 message="Claude runtime has no active turn to interrupt",
             )
         interrupted = False
+        self._resolve_pending_approvals(session, "reject")
         client = session.client
         if client is not None:
             interrupt = getattr(client, "interrupt", None)
@@ -376,6 +388,55 @@ class ClaudeRuntime(AgentRuntime):
             code=None if interrupted else "claude_interrupt_unavailable",
             message=None if interrupted else "Claude SDK client did not expose interrupt",
             result={"interrupted": interrupted, "turnId": turn_id},
+        )
+
+    async def respond_interaction(
+        self,
+        session_id: str,
+        notice_id: str,
+        action_id: str,
+        input_data: Mapping[str, Any] | None = None,
+    ) -> RuntimeOperationResult:
+        _ = input_data
+        session = self._sessions.get(session_id)
+        if session is None:
+            return RuntimeOperationResult(
+                ok=False,
+                code="claude_session_not_found",
+                message="Claude session is not active",
+            )
+        pending = session.pending_approvals.get(notice_id)
+        if pending is None:
+            return RuntimeOperationResult(
+                ok=False,
+                code="claude_interaction_not_pending",
+                message="Claude interaction is not pending",
+            )
+        normalized_action = _normalize_approval_action(action_id)
+        if normalized_action is None:
+            return RuntimeOperationResult(
+                ok=False,
+                code="claude_interaction_action_unsupported",
+                message=f"Claude interaction action is not supported: {action_id}",
+            )
+        if not pending.future.done():
+            pending.future.set_result(normalized_action)
+        await self._set_session_state(
+            session_id=session.session_id,
+            external_session_id=session.external_session_id,
+            status="running",
+            metadata={
+                "source": "claude.approval/responded",
+                "approval_id": pending.approval_id,
+                "action": normalized_action,
+            },
+        )
+        return RuntimeOperationResult(
+            ok=True,
+            result={
+                "noticeId": notice_id,
+                "action": normalized_action,
+            },
         )
 
     def _require_sdk(self) -> Any:
@@ -488,7 +549,7 @@ class ClaudeRuntime(AgentRuntime):
                     logger.exception("disconnecting Claude SDK client failed")
 
     def _new_client(self, sdk: Any, session: _ClaudeSession) -> Any:
-        options = _sdk_options(sdk, self.config, session)
+        options = _sdk_options(sdk, self.config, session, self._can_use_tool)
         if self.client_factory is not None:
             return self.client_factory(sdk, options)
         client_cls = getattr(sdk, "ClaudeSDKClient", None)
@@ -498,6 +559,60 @@ class ClaudeRuntime(AgentRuntime):
             return client_cls(options=options)
         except TypeError:
             return client_cls(options)
+
+    async def _can_use_tool(self, tool_name: str, input_data: dict[str, Any], context: Any = None) -> Any:
+        sdk = self._require_sdk()
+        context_session_id = _string(_extract_attr(context, "session_id", "sessionId"))
+        session = self._session_from_context(context_session_id)
+        if session is None:
+            return _permission_deny(sdk, "Session is not registered")
+        approval_id = _approval_id(session.session_id, session.active_turn_id, tool_name, input_data)
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[str] = loop.create_future()
+        notice = _approval_notice(
+            approval_id=approval_id,
+            session=session,
+            tool_name=tool_name,
+            input_data=input_data,
+            status="open",
+        )
+        session.pending_approvals[approval_id] = _PendingClaudeApproval(
+            approval_id=approval_id,
+            future=future,
+            input_data=dict(input_data),
+            notice=notice,
+        )
+        await self._set_session_state(
+            session_id=session.session_id,
+            external_session_id=session.external_session_id,
+            status="blocked",
+            metadata={
+                "source": "claude.approval/requested",
+                "approval_id": approval_id,
+                **({"turn_id": session.active_turn_id} if session.active_turn_id else {}),
+            },
+        )
+        await self.host.notice_upsert(notice)
+        action = await future
+        session.pending_approvals.pop(approval_id, None)
+        if action in {"approve", "approve_for_session"}:
+            return _permission_allow(sdk, input_data)
+        return _permission_deny(sdk, "User denied or interrupted this action")
+
+    def _session_from_context(self, external_session_id: str | None) -> _ClaudeSession | None:
+        if external_session_id:
+            for session in self._sessions.values():
+                if session.external_session_id == external_session_id:
+                    return session
+        for session in self._sessions.values():
+            if session.active_turn_id:
+                return session
+        return None
+
+    def _resolve_pending_approvals(self, session: _ClaudeSession, action: str) -> None:
+        for pending in list(session.pending_approvals.values()):
+            if not pending.future.done():
+                pending.future.set_result(action)
 
     async def _materialize_content(
         self,
@@ -579,7 +694,7 @@ class ClaudeRuntime(AgentRuntime):
 
 
 def stable_session_id(connector_id: str, external_session_id: str) -> str:
-    digest = hashlib.sha256(f"{connector_id}:claude:{external_session_id}".encode("utf-8")).hexdigest()[:24]
+    digest = hashlib.sha256(f"{connector_id}:claude:{external_session_id}".encode()).hexdigest()[:24]
     return f"sess_claude_{digest}"
 
 
@@ -614,10 +729,17 @@ def _claude_permissions(revision: int) -> RuntimePermissionCatalog:
     )
 
 
-def _sdk_options(sdk: Any, config: RuntimeConfig, session: _ClaudeSession) -> Any:
+def _sdk_options(
+    sdk: Any,
+    config: RuntimeConfig,
+    session: _ClaudeSession,
+    can_use_tool: Callable[[str, dict[str, Any], Any], Any] | None = None,
+) -> Any:
     kwargs: dict[str, Any] = {
         "include_partial_messages": True,
     }
+    if can_use_tool is not None:
+        kwargs["can_use_tool"] = can_use_tool
     if session.cwd:
         kwargs["cwd"] = session.cwd
     if session.external_session_id:
@@ -632,6 +754,16 @@ def _sdk_options(sdk: Any, config: RuntimeConfig, session: _ClaudeSession) -> An
     permission_mode = _permission_mode_from_selection(permission_selection)
     if permission_mode:
         kwargs["permission_mode"] = permission_mode
+    hook_matcher = _optional_attr(sdk, "HookMatcher", "types.HookMatcher")
+    if hook_matcher is not None:
+        async def _keep_permission_stream_open(
+            _input_data: Any,
+            _tool_use_id: Any = None,
+            _context: Any = None,
+        ) -> dict[str, bool]:
+            return {"continue_": True}
+
+        kwargs["hooks"] = {"PreToolUse": [hook_matcher(matcher=None, hooks=[_keep_permission_stream_open])]}
     options_cls = getattr(sdk, "ClaudeAgentOptions", None) or getattr(sdk, "ClaudeCodeOptions", None)
     if options_cls is None:
         return kwargs
@@ -648,6 +780,115 @@ def _permission_mode_from_selection(selection_id: str | None) -> str | None:
                 mode = native.get("permissionMode")
                 return mode if isinstance(mode, str) else None
     return None
+
+
+def _approval_notice(
+    approval_id: str,
+    session: _ClaudeSession,
+    tool_name: str,
+    input_data: Mapping[str, Any],
+    status: str,
+    metadata: Mapping[str, Any] | None = None,
+) -> SessionNotice:
+    return SessionNotice(
+        notice_id=approval_id,
+        session_id=session.session_id,
+        runtime="claude",
+        type="interaction",
+        title=f"Claude requests {tool_name}",
+        message=_approval_description(tool_name, input_data),
+        severity="warning",
+        status=status,
+        interaction_type="approval",
+        blocking={
+            "turnId": session.active_turn_id,
+            "reason": "permission_required",
+        },
+        response_required=status == "open",
+        actions=(
+            {"id": "approve", "title": "Approve", "style": "primary"},
+            {"id": "reject", "title": "Reject", "style": "danger"},
+        )
+        if status == "open"
+        else (),
+        source={
+            "runtime": "claude",
+            "sessionId": session.external_session_id,
+            "turnId": session.active_turn_id,
+            "requestId": approval_id,
+            "method": "can_use_tool",
+        },
+        context={
+            "approvalId": approval_id,
+            "turnId": session.active_turn_id,
+            "toolName": tool_name,
+            "kind": _approval_kind(tool_name),
+            "payload": {"toolName": tool_name, "input": dict(input_data)},
+            "approvalSource": {
+                "runtime": "claude",
+                "requestId": approval_id,
+                "sessionId": session.external_session_id,
+                "turnId": session.active_turn_id,
+                "method": "can_use_tool",
+            },
+        },
+        metadata=dict(metadata or {}),
+    )
+
+
+def _approval_kind(tool_name: str) -> str:
+    if tool_name == "Bash":
+        return "command"
+    if tool_name in {"Edit", "Write", "NotebookEdit"}:
+        return "file_change"
+    return "tool_call"
+
+
+def _approval_description(tool_name: str, input_data: Mapping[str, Any]) -> str:
+    if tool_name == "Bash":
+        return _string(input_data.get("command")) or "Run command"
+    if tool_name in {"Edit", "Write", "NotebookEdit"}:
+        return _string(input_data.get("file_path")) or "Modify file"
+    return json.dumps(dict(input_data), ensure_ascii=False, sort_keys=True)
+
+
+def _approval_id(
+    session_id: str,
+    turn_id: str | None,
+    tool_name: str,
+    input_data: Mapping[str, Any],
+) -> str:
+    payload = json.dumps(
+        [session_id, turn_id, tool_name, dict(input_data)],
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return "appr_" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
+
+
+def _normalize_approval_action(action_id: str) -> str | None:
+    if action_id in {"approve", "approved", "allow"}:
+        return "approve"
+    if action_id in {"approve_for_session", "approved_for_session"}:
+        return "approve_for_session"
+    if action_id in {"reject", "rejected", "deny", "denied", "cancel", "cancelled"}:
+        return "reject"
+    return None
+
+
+def _permission_allow(sdk: Any, input_data: Mapping[str, Any]) -> Any:
+    cls = _optional_attr(sdk, "PermissionResultAllow", "types.PermissionResultAllow")
+    if cls is not None:
+        return cls(updated_input=dict(input_data))
+    return {"behavior": "allow", "updatedInput": dict(input_data)}
+
+
+def _permission_deny(sdk: Any, message: str) -> Any:
+    cls = _optional_attr(sdk, "PermissionResultDeny", "types.PermissionResultDeny")
+    if cls is not None:
+        return cls(message=message)
+    return {"behavior": "deny", "message": message}
 
 
 def _get_session_info(sdk: Any, session_id: str, directory: str | None) -> Any:
@@ -887,6 +1128,31 @@ def _int_attr(value: Any, attr: str) -> int | None:
 
 def _string(value: Any) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+def _extract_attr(value: Any, *names: str) -> Any:
+    if isinstance(value, Mapping):
+        for name in names:
+            if name in value:
+                return value[name]
+        return None
+    for name in names:
+        candidate = getattr(value, name, None)
+        if candidate is not None:
+            return candidate
+    return None
+
+
+def _optional_attr(root: Any, *paths: str) -> Any:
+    for path in paths:
+        current = root
+        for part in path.split("."):
+            current = getattr(current, part, None)
+            if current is None:
+                break
+        if current is not None:
+            return current
+    return None
 
 
 def _timestamp_from_ms(value: int | None) -> str | None:
