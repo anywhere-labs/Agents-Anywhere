@@ -31,8 +31,11 @@ from connector.server.runtime_rpc_payloads import (
     runtime_command_payload,
     runtime_config_payload,
     runtime_config_schema_payload,
-    session_meta_payload,
-    session_state_payload,
+)
+from connector.server.runtime_session_rpc import (
+    discover_sessions,
+    read_session_state,
+    sync_session_snapshot,
 )
 
 
@@ -129,8 +132,9 @@ class RuntimeRpcHandler:
             )
             return {"catalog": permission_catalog_payload(catalog)}
         if method == "session.discover":
-            return await self._dispatch_session_discover(
+            return await discover_sessions(
                 self._resolve_agent_runtime(params),
+                self.agent_runtime_host,
                 params,
             )
         if method == "session.create":
@@ -139,13 +143,15 @@ class RuntimeRpcHandler:
                 params,
             )
         if method == "session.sync":
-            return await self._dispatch_session_sync(
+            return await sync_session_snapshot(
                 self._resolve_agent_runtime(params),
+                self.agent_runtime_host,
                 params,
             )
         if method == "session.state":
-            return await self._dispatch_session_state(
+            return await read_session_state(
                 self._resolve_agent_runtime(params),
+                self.agent_runtime_host,
                 params,
             )
         if method == "session.selections.update":
@@ -195,31 +201,6 @@ class RuntimeRpcHandler:
             raise ValueError("runtime is required")
         return self.agent_runtime_supervisor.resolve_runtime(runtime_id)
 
-    async def _dispatch_session_discover(
-        self,
-        runtime: AgentRuntime,
-        params: dict[str, Any],
-    ) -> dict[str, Any]:
-        sessions = await runtime.list_sessions(
-            limit=int_param(params, "limit", 100),
-            cursor=optional_string(params.get("cursor")),
-            force=bool(params.get("force", True)),
-        )
-        for session in sessions:
-            await self.agent_runtime_host.session_meta_upsert(
-                session_id=session.session_id,
-                runtime=session.runtime,
-                external_session_id=session.external_session_id,
-                title=session.title,
-                cwd=session.cwd,
-                ordering_time=session.ordering_time,
-                metadata=session.metadata,
-            )
-        return {
-            "sessions": [session_meta_payload(session) for session in sessions],
-            "nextCursor": None,
-        }
-
     async def _dispatch_session_create(
         self,
         runtime: AgentRuntime,
@@ -235,69 +216,6 @@ class RuntimeRpcHandler:
             optional_string(params.get("clientMessageId")),
         )
         return operation_result_payload(result)
-
-    async def _dispatch_session_sync(
-        self,
-        runtime: AgentRuntime,
-        params: dict[str, Any],
-    ) -> dict[str, Any]:
-        session_id = required_session_id(params)
-        external_session_id = optional_string(params.get("externalSessionId"))
-        snapshot = await runtime.get_session_snapshot(
-            session_id,
-            external_session_id,
-            int_param(params, "limit", 100),
-        )
-        await self.agent_runtime_host.timeline_sync(
-            session_id=snapshot.session_id,
-            runtime=snapshot.runtime,
-            external_session_id=snapshot.external_session_id,
-            items=snapshot.items,
-            complete=snapshot.complete,
-            metadata=snapshot.metadata,
-        )
-        state = await runtime.get_session_state(session_id, external_session_id)
-        if state is not None:
-            await self.agent_runtime_host.session_state_update(
-                session_id=state.session_id,
-                runtime=state.runtime,
-                external_session_id=state.external_session_id,
-                status=state.status,
-                selections=state.selections,
-                status_reason=state.status_reason,
-                error=state.error,
-                metadata=state.metadata,
-            )
-        for notice in await runtime.get_session_notices(session_id, external_session_id):
-            await self.agent_runtime_host.notice_upsert(notice)
-        return {
-            "sessionId": snapshot.session_id,
-            "externalSessionId": snapshot.external_session_id,
-            "items": len(snapshot.items),
-            "complete": snapshot.complete,
-        }
-
-    async def _dispatch_session_state(
-        self,
-        runtime: AgentRuntime,
-        params: dict[str, Any],
-    ) -> dict[str, Any]:
-        session_id = required_session_id(params)
-        external_session_id = optional_string(params.get("externalSessionId"))
-        state = await runtime.get_session_state(session_id, external_session_id)
-        if state is None:
-            return {"state": None}
-        await self.agent_runtime_host.session_state_update(
-            session_id=state.session_id,
-            runtime=state.runtime,
-            external_session_id=state.external_session_id,
-            status=state.status,
-            selections=state.selections,
-            status_reason=state.status_reason,
-            error=state.error,
-            metadata=state.metadata,
-        )
-        return {"state": session_state_payload(state)}
 
     async def _dispatch_session_selections_update(
         self,

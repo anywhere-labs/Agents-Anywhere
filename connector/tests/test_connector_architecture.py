@@ -135,3 +135,19 @@ def test_connector_dispatcher_keeps_runtime_and_local_rpc_in_handlers() -> None:
     assert '"terminal.create"' not in dispatcher_source
     assert "class RuntimeRpcHandler" in runtime_rpc_source
     assert "class LocalRpcHandler" in local_rpc_source
+
+
+def test_runtime_rpc_handler_keeps_session_sync_in_session_coordinator() -> None:
+    runtime_rpc_source = (CONNECTOR_PACKAGE / "server" / "runtime_rpc.py").read_text(
+        encoding="utf-8"
+    )
+    session_rpc_source = (
+        CONNECTOR_PACKAGE / "server" / "runtime_session_rpc.py"
+    ).read_text(encoding="utf-8")
+
+    assert "timeline_sync(" not in runtime_rpc_source
+    assert "session_state_update(" not in runtime_rpc_source
+    assert "notice_upsert(" not in runtime_rpc_source
+    assert "timeline_sync(" in session_rpc_source
+    assert "session_state_update(" in session_rpc_source
+    assert "notice_upsert(" in session_rpc_source
