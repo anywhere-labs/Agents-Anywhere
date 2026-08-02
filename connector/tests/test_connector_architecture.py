@@ -3,7 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-
 CONNECTOR_PACKAGE = Path(__file__).resolve().parents[1] / "connector"
 
 ALLOWED_ROOT_MODULES = {
@@ -70,3 +69,11 @@ def test_active_connector_code_does_not_import_deprecated_root_modules() -> None
                 violations.append(f"{relative_path}: imports {module}")
 
     assert violations == []
+
+
+def test_connector_dispatcher_keeps_runtime_rpc_in_runtime_handler() -> None:
+    dispatcher_source = (CONNECTOR_PACKAGE / "server" / "dispatch.py").read_text(encoding="utf-8")
+    runtime_rpc_source = (CONNECTOR_PACKAGE / "server" / "runtime_rpc.py").read_text(encoding="utf-8")
+
+    assert "_dispatch_agent_runtime" not in dispatcher_source
+    assert "class RuntimeRpcHandler" in runtime_rpc_source
