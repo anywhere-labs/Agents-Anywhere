@@ -2296,85 +2296,28 @@ def test_protocol_capabilities_validation_is_mapped_by_transport(tmp_path):
     assert response.json()["detail"]["code"] == "invalid_protocol_capabilities"
 
 
-def test_catalog_revision_prevents_stale_and_conflicting_updates(tmp_path):
-    client = make_client(tmp_path)
-    connector_id, access_token, _, headers = create_connector_and_session(client)
-    revision = 1_785_489_256_422_611
-
-    def payload(revision: int, display_name: str) -> dict[str, Any]:
-        return {
-            "runtime": "codex",
-            "revision": revision,
-            "models": [
-                {
-                    "id": "gpt-example",
-                    "displayName": display_name,
-                    "selectionId": "sel_model_example",
-                    "default": True,
-                }
-            ],
-        }
-
-    def ingest(catalog: dict[str, Any]):
-        return client.post(
-            "/connector/ingest",
-            headers={"Authorization": f"Bearer {access_token}"},
-            json={
-                "notifications": [
-                    {
-                        "method": "protocol.modelCatalogUpdated",
-                        "params": catalog,
-                    }
-                ]
-            },
-        )
-
-    initial = payload(revision, "Current")
-    assert ingest(initial).status_code == 200
-    assert ingest(initial).status_code == 200
-    assert ingest(payload(revision - 1, "Stale")).status_code == 200
-
-    conflict = ingest(payload(revision, "Conflicting"))
-    assert conflict.status_code == 400, conflict.text
-    assert conflict.json()["detail"]["code"] == "catalog_revision_conflict"
-
-    assert ingest(payload(revision + 1, "Next")).status_code == 200
-
-
-def test_catalog_ingest_rejects_duplicate_selection_ids(tmp_path):
+def test_protocol_catalog_ingest_is_rejected(tmp_path):
     client = make_client(tmp_path)
     _, access_token, _, _ = create_connector_and_session(client)
 
-    response = client.post(
-        "/connector/ingest",
-        headers={"Authorization": f"Bearer {access_token}"},
-        json={
-            "notifications": [
-                {
-                    "method": "protocol.modelCatalogUpdated",
-                    "params": {
-                        "runtime": "codex",
-                        "revision": 1,
-                        "models": [
-                            {
-                                "id": "first",
-                                "displayName": "First",
-                                "selectionId": "sel_duplicate",
-                            },
-                            {
-                                "id": "second",
-                                "displayName": "Second",
-                                "selectionId": "sel_duplicate",
-                            },
-                        ],
-                    },
-                }
-            ]
-        },
-    )
+    for method, params in (
+        (
+            "protocol.modelCatalogUpdated",
+            {"runtime": "codex", "revision": 1, "models": []},
+        ),
+        (
+            "protocol.permissionCatalogUpdated",
+            {"runtime": "codex", "revision": 1, "permissions": []},
+        ),
+    ):
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={"notifications": [{"method": method, "params": params}]},
+        )
 
-    assert response.status_code == 400, response.text
-    assert response.json()["detail"]["code"] == "invalid_protocol_model_catalog"
+        assert response.status_code == 400, response.text
+        assert response.json()["detail"]["code"] == "unsupported_notification"
 
 
 def test_notice_upsert_ingest_projects_notification_to_snapshot(tmp_path):

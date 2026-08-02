@@ -5,13 +5,11 @@ from typing import Any, ClassVar
 from loguru import logger
 from pydantic import ValidationError
 
-from agent_server.core.catalogs import CatalogType
 from agent_server.core.interactions import InteractionDomainError
 from agent_server.core.models import NoticeIn, SessionStatus, TimelineItemIn
 from agent_server.core.protocol import (
     ProtocolCapabilitySet,
 )
-from agent_server.services.catalogs import CatalogService, CatalogServiceError
 from agent_server.services.connector_realtime import ConnectorRealtimeService
 from agent_server.services.ingest_effects import IngestEffect
 from agent_server.services.interactions import InteractionProjectionService
@@ -65,6 +63,14 @@ class ConnectorNotificationService:
                 "unsupported_notification",
                 "approval.requested was replaced by notice.upsert interactions",
             )
+        if method in {
+            "protocol.modelCatalogUpdated",
+            "protocol.permissionCatalogUpdated",
+        }:
+            raise NotificationValidationError(
+                "unsupported_notification",
+                "runtime catalogs are live Connector RPC reads and are no longer ingested",
+            )
         if await self._realtime.apply(
             connector_id=connector_id,
             method=method,
@@ -87,13 +93,10 @@ class ConnectorProtocolNotificationHandler:
         "connector.heartbeat",
         "connector.preferencesUpdated",
         "protocol.capabilitiesUpdated",
-        "protocol.modelCatalogUpdated",
-        "protocol.permissionCatalogUpdated",
     }
 
     def __init__(self, store: ConnectorNotificationRepository) -> None:
         self._store = store
-        self._catalogs = CatalogService(store)
 
     async def apply(
         self,
@@ -110,10 +113,6 @@ class ConnectorProtocolNotificationHandler:
             await self._update_preferences(connector_id, params)
         elif method == "protocol.capabilitiesUpdated":
             await self._update_capabilities(connector_id, params)
-        elif method == "protocol.modelCatalogUpdated":
-            await self._update_catalog(connector_id, params, catalog_type="model")
-        elif method == "protocol.permissionCatalogUpdated":
-            await self._update_catalog(connector_id, params, catalog_type="permission")
         return IngestEffect()
 
     async def _update_preferences(
@@ -151,33 +150,6 @@ class ConnectorProtocolNotificationHandler:
                 "protocol capabilities update for unknown connector connector_id={}",
                 connector_id,
             )
-
-    async def _update_catalog(
-        self,
-        connector_id: str,
-        params: dict[str, Any],
-        *,
-        catalog_type: CatalogType,
-    ) -> None:
-        try:
-            await self._catalogs.ingest(
-                connector_id,
-                catalog_type=catalog_type,
-                payload=params,
-            )
-        except CatalogServiceError as exc:
-            code = f"invalid_protocol_{catalog_type}_catalog" if exc.code == "invalid_catalog" else exc.code
-            raise NotificationValidationError(
-                code,
-                exc.detail,
-            ) from exc
-        except KeyError:
-            logger.warning(
-                "{} catalog update for unknown connector connector_id={}",
-                catalog_type,
-                connector_id,
-            )
-
 
 class SessionNotificationHandler:
     def __init__(self, store: ConnectorNotificationRepository) -> None:

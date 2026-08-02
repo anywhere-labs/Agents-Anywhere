@@ -42,7 +42,6 @@ class ConnectorIngestService:
         await self._store.record_connector_activity(connector_id)
         effects = []
         saw_protocol_capabilities = False
-        saw_protocol_catalog = False
         saw_runtime_inventory = False
         for notification in payload.notifications:
             if notification.method == "runtime.inventoryUpdated":
@@ -56,11 +55,6 @@ class ConnectorIngestService:
                 continue
             if notification.method == "protocol.capabilitiesUpdated":
                 saw_protocol_capabilities = True
-            elif notification.method in {
-                "protocol.modelCatalogUpdated",
-                "protocol.permissionCatalogUpdated",
-            }:
-                saw_protocol_catalog = True
             effects.append(
                 await self._notifications.apply(
                     connector_id=connector_id,
@@ -76,14 +70,12 @@ class ConnectorIngestService:
                 self._timeline_broker,
                 connector_id,
             )
-        if saw_protocol_capabilities or saw_protocol_catalog:
+        if saw_protocol_capabilities:
             await publish_dashboard_changed(
                 self._store,
                 self._timeline_broker,
                 connector_id=connector_id,
-                reason="protocol.catalog"
-                if saw_protocol_catalog
-                else "protocol.capabilities",
+                reason="protocol.capabilities",
             )
         if saw_runtime_inventory:
             import asyncio
@@ -123,21 +115,14 @@ class ConnectorIngestService:
                 self._timeline_broker,
                 connector_id,
             )
-        if method in {
-            "protocol.capabilitiesUpdated",
-            "protocol.modelCatalogUpdated",
-            "protocol.permissionCatalogUpdated",
-        }:
+        if method == "protocol.capabilitiesUpdated":
             import asyncio
 
             await publish_dashboard_changed(
                 self._store,
                 self._timeline_broker,
                 connector_id=connector_id,
-                reason="protocol.catalog"
-                if method
-                in {"protocol.modelCatalogUpdated", "protocol.permissionCatalogUpdated"}
-                else "protocol.capabilities",
+                reason="protocol.capabilities",
             )
 
     async def _publish_effects(self, effects: list[IngestEffect]) -> None:

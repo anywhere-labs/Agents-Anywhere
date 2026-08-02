@@ -23,7 +23,10 @@ The main gaps are:
 - `api/sessions.py` still contains application orchestration, protocol publish helpers, capability projection, and broker fan-out.
 - `services/session_run.py` still uses old message/create selection fields and validates selections against server-persisted catalogs.
 - `sessions.status` is still the effective running-state projection. The new durable `SessionState` model is not yet the source of truth.
-- Server still ingests and stores runtime catalogs through `protocol.modelCatalogUpdated` and `protocol.permissionCatalogUpdated`.
+- Server no longer accepts `protocol.modelCatalogUpdated` or
+  `protocol.permissionCatalogUpdated` on active Connector ingest, and session
+  snapshot no longer returns Server-persisted catalogs. The old catalog table and
+  low-level service remain as migration remnants until a later database cleanup.
 - `repository_ports.py` has the right idea, but many ports are broad composite interfaces that recreate a large Store facade.
 - `core/models.py` is too broad and mixes unrelated API/domain schemas.
 
