@@ -62,6 +62,12 @@ def test_codex_capability_tries_app_before_cli(monkeypatch, tmp_path: Path) -> N
                 "path": str(app),
                 "status": "ok",
                 "version": "codex-cli 0.135.0-alpha.1",
+                "modelOptions": [
+                    {
+                        "model": "gpt-5.6-sol",
+                        "supportedReasoningEfforts": ["low", "medium", "ultra"],
+                    }
+                ],
             }
         return {
             "source": candidate["source"],
@@ -88,6 +94,12 @@ def test_codex_capability_tries_app_before_cli(monkeypatch, tmp_path: Path) -> N
     assert report["history"] == "ok"
     assert report["execution"] == "ok"
     assert report["selected"]["source"] == "app"
+    assert report["modelOptions"] == [
+        {
+            "model": "gpt-5.6-sol",
+            "supportedReasoningEfforts": ["low", "medium", "ultra"],
+        }
+    ]
 
 
 def test_codex_capability_reports_checked_paths_when_unavailable(monkeypatch, tmp_path: Path) -> None:
@@ -109,6 +121,186 @@ def test_codex_capability_reports_checked_paths_when_unavailable(monkeypatch, tm
     assert report["error"]["code"] == "codex_unavailable"
     assert "Plugin-based Codex installations are not supported yet" in report["error"]["message"]
     assert report["checked"][0]["status"] == "missing"
+
+
+def test_codex_capability_reads_all_model_pages_and_normalizes_constraints(monkeypatch, tmp_path: Path) -> None:
+    codex_bin = tmp_path / "codex"
+    _write_executable(codex_bin, "#!/usr/bin/env sh\nexit 0\n")
+
+    class FakeClient:
+        instances: list["FakeClient"] = []
+
+        def __init__(self, *, command: list[str]) -> None:
+            self.command = command
+            self.requests: list[tuple[str, dict[str, Any] | None]] = []
+            self.closed = False
+            self.__class__.instances.append(self)
+
+        async def start(self, _handler) -> None:
+            return None
+
+        async def request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+            self.requests.append((method, params))
+            if method == "thread/list":
+                return {"data": []}
+            if params and params.get("cursor") == "page-2":
+                return {
+                    "models": [
+                        {
+                            "model": "gpt-5.6-luna",
+                            "displayName": "GPT-5.6 Luna",
+                            "supportedReasoningEfforts": ["low", "medium", "max"],
+                            "defaultReasoningEffort": "medium",
+                        }
+                    ]
+                }
+            return {
+                "models": [
+                        {
+                            "model": "gpt-5.6-sol",
+                            "displayName": "GPT-5.6 Sol",
+                            "isDefault": True,
+                            "supportedReasoningEfforts": [
+                                {
+                                    "reasoningEffort": "low",
+                                    "description": "Fast responses with lighter reasoning",
+                                },
+                                {
+                                    "reasoningEffort": "medium",
+                                    "description": "Balances speed and reasoning depth",
+                                },
+                                {
+                                    "reasoningEffort": "ultra",
+                                    "description": "Maximum reasoning",
+                                },
+                            ],
+                        "defaultReasoningEffort": "medium",
+                    }
+                ],
+                "nextCursor": "page-2",
+            }
+
+        async def close(self) -> None:
+            self.closed = True
+
+    async def fake_version(_command: list[str]) -> dict[str, Any]:
+        return {"status": "ok", "stdout": "codex-cli 0.135.0"}
+
+    monkeypatch.setattr(capabilities, "JsonRpcStdioClient", FakeClient)
+    monkeypatch.setattr(capabilities, "_run_version", fake_version)
+
+    result = asyncio.run(capabilities._check_codex_candidate({"source": "cli", "path": str(codex_bin)}))
+
+    assert result["status"] == "ok"
+    assert [item["model"] for item in result["modelOptions"]] == ["gpt-5.6-sol", "gpt-5.6-luna"]
+    assert result["modelOptions"][0]["defaultReasoningEffort"] == "medium"
+    assert result["modelOptions"][1]["supportedReasoningEfforts"] == ["low", "medium", "max"]
+    assert [request for request in FakeClient.instances[0].requests if request[0] == "model/list"] == [
+        ("model/list", {"limit": 100}),
+        ("model/list", {"limit": 100, "cursor": "page-2"}),
+    ]
+
+
+def test_codex_capability_rejects_empty_or_malformed_model_catalog(monkeypatch, tmp_path: Path) -> None:
+    codex_bin = tmp_path / "codex"
+    _write_executable(codex_bin, "#!/usr/bin/env sh\nexit 0\n")
+
+    class EmptyCatalogClient:
+        def __init__(self, *, command: list[str]) -> None:
+            self.command = command
+
+        async def start(self, _handler) -> None:
+            return None
+
+        async def request(self, method: str, _params: dict[str, Any] | None = None) -> dict[str, Any]:
+            return {"models": []} if method == "model/list" else {}
+
+        async def close(self) -> None:
+            return None
+
+    async def fake_version(_command: list[str]) -> dict[str, Any]:
+        return {"status": "ok", "stdout": "codex-cli legacy"}
+
+    monkeypatch.setattr(capabilities, "JsonRpcStdioClient", EmptyCatalogClient)
+    monkeypatch.setattr(capabilities, "_run_version", fake_version)
+
+    result = asyncio.run(capabilities._check_codex_candidate({"source": "cli", "path": str(codex_bin)}))
+
+    assert result["status"] == "failed"
+    assert result["stage"] == "model-list"
+    assert "no usable models" in result["reason"]
+
+
+def test_codex_capability_rejects_hidden_only_model_catalog(monkeypatch, tmp_path: Path) -> None:
+    codex_bin = tmp_path / "codex"
+    _write_executable(codex_bin, "#!/usr/bin/env sh\nexit 0\n")
+
+    class HiddenCatalogClient:
+        def __init__(self, *, command: list[str]) -> None:
+            self.command = command
+
+        async def start(self, _handler) -> None:
+            return None
+
+        async def request(self, method: str, _params: dict[str, Any] | None = None) -> dict[str, Any]:
+            if method == "model/list":
+                return {"models": [{"model": "gpt-hidden", "hidden": True}]}
+            return {}
+
+        async def close(self) -> None:
+            return None
+
+    async def fake_version(_command: list[str]) -> dict[str, Any]:
+        return {"status": "ok", "stdout": "codex-cli restricted"}
+
+    monkeypatch.setattr(capabilities, "JsonRpcStdioClient", HiddenCatalogClient)
+    monkeypatch.setattr(capabilities, "_run_version", fake_version)
+
+    result = asyncio.run(capabilities._check_codex_candidate({"source": "cli", "path": str(codex_bin)}))
+
+    assert result["status"] == "failed"
+    assert result["stage"] == "model-list"
+    assert "no usable models" in result["reason"]
+
+
+def test_codex_capability_accepts_legacy_model_list_without_effort_metadata(monkeypatch, tmp_path: Path) -> None:
+    codex_bin = tmp_path / "codex"
+    _write_executable(codex_bin, "#!/usr/bin/env sh\nexit 0\n")
+
+    class LegacyCatalogClient:
+        def __init__(self, *, command: list[str]) -> None:
+            self.command = command
+
+        async def start(self, _handler) -> None:
+            return None
+
+        async def request(self, method: str, _params: dict[str, Any] | None = None) -> dict[str, Any]:
+            if method == "model/list":
+                return {"models": [{"model": "gpt-5.5", "displayName": "GPT-5.5"}]}
+            return {}
+
+        async def close(self) -> None:
+            return None
+
+    async def fake_version(_command: list[str]) -> dict[str, Any]:
+        return {"status": "ok", "stdout": "codex-cli 0.50.0"}
+
+    monkeypatch.setattr(capabilities, "JsonRpcStdioClient", LegacyCatalogClient)
+    monkeypatch.setattr(capabilities, "_run_version", fake_version)
+
+    result = asyncio.run(capabilities._check_codex_candidate({"source": "cli", "path": str(codex_bin)}))
+
+    assert result["status"] == "ok"
+    assert result["modelOptions"] == [
+        {
+            "model": "gpt-5.5",
+            "displayName": "GPT-5.5",
+            "isDefault": False,
+            "defaultReasoningEffort": None,
+            "supportedReasoningEfforts": None,
+            "hidden": False,
+        }
+    ]
 
 
 def test_codex_capability_extra_candidate_is_tried_first(monkeypatch, tmp_path: Path) -> None:
