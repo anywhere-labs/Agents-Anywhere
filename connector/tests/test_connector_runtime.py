@@ -7,6 +7,7 @@ import json
 import sys
 from typing import Any, Self
 
+import pytest
 from websockets.exceptions import ConnectionClosedError
 from websockets.frames import Close
 
@@ -16,9 +17,15 @@ from connector.runtime_protocol import (
     AgentRuntime,
     ArtifactTimelineContent,
     ArtifactTimelineItem,
+    CommandToolContent,
+    ErrorSystemContent,
+    FileArtifactContent,
+    FileChangeToolContent,
+    MarkdownMessageContent,
     MessageTimelineContent,
     MessageTimelineItem,
     PlatformTimelineItem,
+    ReasoningSystemContent,
     RuntimeCommand,
     RuntimeCommandResult,
     RuntimeConfig,
@@ -113,6 +120,46 @@ def test_tool_timeline_content_serializes_supported_parent_shape() -> None:
         "output": "ok",
         "exitCode": 0,
     }
+
+
+def test_specific_timeline_content_classes_lock_content_kind() -> None:
+    message = MarkdownMessageContent(text="hello")
+    command = CommandToolContent(command="pytest", output="ok")
+    file_change = FileChangeToolContent(metadata={"tool": "apply_patch"})
+    artifact = FileArtifactContent(path="/tmp/example.py")
+    reasoning = ReasoningSystemContent(text="thinking")
+    error = ErrorSystemContent(message="boom", severity="error")
+
+    assert message.to_mapping() == {
+        "kind": "markdown",
+        "text": "hello",
+        "format": "markdown",
+    }
+    assert command.to_mapping() == {
+        "kind": "command",
+        "command": "pytest",
+        "output": "ok",
+    }
+    assert file_change.to_mapping() == {
+        "kind": "file_change",
+        "tool": "apply_patch",
+    }
+    assert artifact.to_mapping() == {
+        "kind": "file",
+        "path": "/tmp/example.py",
+    }
+    assert reasoning.to_mapping() == {
+        "kind": "reasoning",
+        "text": "thinking",
+    }
+    assert error.to_mapping() == {
+        "kind": "error",
+        "message": "boom",
+        "severity": "error",
+    }
+
+    with pytest.raises(ValueError, match="requires kind='command'"):
+        CommandToolContent(kind="tool_call")
 
 
 def test_platform_timeline_item_subclasses_validate_parent_type() -> None:

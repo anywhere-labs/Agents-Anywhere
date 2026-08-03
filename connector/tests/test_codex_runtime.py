@@ -19,6 +19,8 @@ from openai_codex.models import (
 )
 
 from connector.runtime_protocol import (
+    CommandToolContent,
+    MarkdownMessageContent,
     MessageTimelineContent,
     RuntimeConfig,
     SessionNotice,
@@ -58,6 +60,10 @@ from connector.runtimes.codex.timeline.items import (
     CodexUnknownItem,
     CodexUserMessageItem,
     codex_timeline_item_class,
+)
+from connector.runtimes.codex.timeline.projection import (
+    CodexTimelineProjection,
+    timeline_item_from_projection,
 )
 
 
@@ -107,6 +113,54 @@ def test_codex_timeline_native_item_classes_are_explicitly_mapped() -> None:
     assert codex_timeline_item_class("turnStart") is CodexTurnStartItem
     assert codex_timeline_item_class("turnEnd") is CodexTurnEndItem
     assert codex_timeline_item_class("futureNativeType") is CodexUnknownItem
+
+
+def test_codex_projection_maps_message_content_to_specific_platform_content() -> None:
+    projection = CodexTimelineProjection(
+        native_id="item_agent",
+        raw_type="agentMessage",
+        role="assistant",
+        text="hello",
+    )
+
+    item = timeline_item_from_projection(
+        projection=projection,
+        external_session_id="thread_1",
+        fallback_index=0,
+        event="thread/read",
+    )
+
+    assert isinstance(item.content, MarkdownMessageContent)
+    assert item.to_platform_item(session_id="sess_1", order_seq=0).content == {
+        "kind": "markdown",
+        "text": "hello",
+        "format": "markdown",
+    }
+
+
+def test_codex_projection_maps_command_content_to_specific_platform_content() -> None:
+    projection = CodexTimelineProjection(
+        native_id="item_command",
+        raw_type="commandExecution",
+        command="pytest",
+        aggregated_output="ok",
+        exit_code=0,
+    )
+
+    item = timeline_item_from_projection(
+        projection=projection,
+        external_session_id="thread_1",
+        fallback_index=0,
+        event="thread/read",
+    )
+
+    assert isinstance(item.content, CommandToolContent)
+    assert item.to_platform_item(session_id="sess_1", order_seq=0).content == {
+        "kind": "command",
+        "command": "pytest",
+        "output": "ok",
+        "format": "text",
+    }
 
 
 class FakeCodexClient:
@@ -828,8 +882,8 @@ async def _test_codex_runtime_reads_session_snapshot() -> None:
     assert snapshot.items[0].content_hash.startswith("sha256:")
     assert snapshot.items[0].role == "user"
     assert snapshot.items[0].turn_id == "turn_1"
-    assert snapshot.items[0].content == {"text": "hello", "format": "markdown"}
-    assert snapshot.items[1].content == {"text": "hi", "format": "markdown"}
+    assert snapshot.items[0].content == {"kind": "markdown", "text": "hello", "format": "markdown"}
+    assert snapshot.items[1].content == {"kind": "markdown", "text": "hi", "format": "markdown"}
 
 
 def test_codex_runtime_reads_user_message_text_elements_snapshot() -> None:
@@ -865,6 +919,7 @@ async def _test_codex_runtime_reads_user_message_text_elements_snapshot() -> Non
 
     assert snapshot.items[0].role == "user"
     assert snapshot.items[0].content == {
+        "kind": "markdown",
         "text": "first\nsecond",
         "format": "markdown",
     }
@@ -901,7 +956,7 @@ async def _test_codex_runtime_reads_nested_turn_snapshot() -> None:
 
     assert len(snapshot.items) == 1
     assert snapshot.items[0].id == "codex_thread_1_message-user-0"
-    assert snapshot.items[0].content == {"text": "nested", "format": "markdown"}
+    assert snapshot.items[0].content == {"kind": "markdown", "text": "nested", "format": "markdown"}
 
 
 def test_codex_runtime_returns_empty_snapshot_without_external_session() -> None:
@@ -1379,7 +1434,7 @@ async def _test_codex_runtime_agent_message_delta_upserts_timeline_item() -> Non
     assert second.role == "assistant"
     assert second.status == "running"
     assert second.turn_id == "turn_1"
-    assert second.content == {"text": "hello", "format": "markdown"}
+    assert second.content == {"kind": "markdown", "text": "hello", "format": "markdown"}
     assert second.source["event"] == "item/agentMessage/delta"
 
 
@@ -1453,7 +1508,7 @@ async def _test_codex_runtime_reduces_agent_message_snapshot_without_native_type
     assert item.type == "message"
     assert item.role == "assistant"
     assert item.status == "done"
-    assert item.content == {"text": "hello", "format": "markdown"}
+    assert item.content == {"kind": "markdown", "text": "hello", "format": "markdown"}
     assert item.source["rawType"] == "agentMessage"
 
 
@@ -1617,7 +1672,6 @@ async def _test_codex_runtime_reduces_file_change_patch_as_artifact() -> None:
         "path": "app.py",
         "action": "modify",
         "patch": "+print('hi')",
-        "changes": None,
     }
 
 
@@ -1879,7 +1933,7 @@ async def _test_codex_runtime_tags_live_user_echo_with_client_message_id() -> No
     assert item.id == "codex_client_cm_live_1"
     assert item.source["clientMessageId"] == "cm_live_1"
     assert item.role == "user"
-    assert item.content == {"text": "live hello", "format": "markdown"}
+    assert item.content == {"kind": "markdown", "text": "live hello", "format": "markdown"}
 
 
 def test_codex_runtime_tags_live_steer_echo_with_client_message_id() -> None:

@@ -33,15 +33,34 @@ TimelineRole = Literal["user", "assistant", "system", "tool"]
 MessageContentKind = Literal["text", "markdown", "multimodal"]
 ToolContentKind = Literal[
     "command",
+    "mcp",
     "tool_call",
+    "tool_result",
     "file_change",
     "permission",
     "input_request",
     "web_search",
     "unknown",
 ]
-ArtifactContentKind = Literal["file", "diff", "image", "document", "code", "unknown"]
-SystemContentKind = Literal["reasoning", "runtime", "error", "notice", "unknown"]
+ArtifactContentKind = Literal[
+    "file",
+    "file_change",
+    "diff",
+    "image",
+    "document",
+    "code",
+    "unknown",
+]
+SystemContentKind = Literal[
+    "reasoning",
+    "runtime",
+    "system",
+    "turn_start",
+    "turn_end",
+    "error",
+    "notice",
+    "unknown",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,11 +99,21 @@ class TimelineSource:
 
 @dataclass(frozen=True, slots=True)
 class TimelineContent(ABC):
+    expected_kind: ClassVar[str | None] = None
+
     kind: str
 
     @abstractmethod
     def to_mapping(self) -> Mapping[str, Any]:
         """Serialize content for the platform timeline wire item."""
+
+    def __post_init__(self) -> None:
+        expected_kind = self.expected_kind
+        if expected_kind is not None and self.kind != expected_kind:
+            raise ValueError(
+                f"{self.__class__.__name__} requires kind={expected_kind!r}, "
+                f"got {self.kind!r}"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +130,27 @@ class MessageTimelineContent(TimelineContent):
             "format": self.format,
             **self.metadata,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class TextMessageContent(MessageTimelineContent):
+    expected_kind: ClassVar[str | None] = "text"
+    kind: MessageContentKind = "text"
+    format: MessageContentKind = "text"
+
+
+@dataclass(frozen=True, slots=True)
+class MarkdownMessageContent(MessageTimelineContent):
+    expected_kind: ClassVar[str | None] = "markdown"
+    kind: MessageContentKind = "markdown"
+    format: MessageContentKind = "markdown"
+
+
+@dataclass(frozen=True, slots=True)
+class MultimodalMessageContent(MessageTimelineContent):
+    expected_kind: ClassVar[str | None] = "multimodal"
+    kind: MessageContentKind = "multimodal"
+    format: MessageContentKind = "multimodal"
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,6 +180,60 @@ class ToolTimelineContent(TimelineContent):
 
 
 @dataclass(frozen=True, slots=True)
+class CommandToolContent(ToolTimelineContent):
+    expected_kind: ClassVar[str | None] = "command"
+    kind: ToolContentKind = "command"
+
+
+@dataclass(frozen=True, slots=True)
+class McpToolContent(ToolTimelineContent):
+    expected_kind: ClassVar[str | None] = "mcp"
+    kind: ToolContentKind = "mcp"
+
+
+@dataclass(frozen=True, slots=True)
+class ToolCallContent(ToolTimelineContent):
+    expected_kind: ClassVar[str | None] = "tool_call"
+    kind: ToolContentKind = "tool_call"
+
+
+@dataclass(frozen=True, slots=True)
+class ToolResultContent(ToolTimelineContent):
+    expected_kind: ClassVar[str | None] = "tool_result"
+    kind: ToolContentKind = "tool_result"
+
+
+@dataclass(frozen=True, slots=True)
+class FileChangeToolContent(ToolTimelineContent):
+    expected_kind: ClassVar[str | None] = "file_change"
+    kind: ToolContentKind = "file_change"
+
+
+@dataclass(frozen=True, slots=True)
+class PermissionToolContent(ToolTimelineContent):
+    expected_kind: ClassVar[str | None] = "permission"
+    kind: ToolContentKind = "permission"
+
+
+@dataclass(frozen=True, slots=True)
+class InputRequestToolContent(ToolTimelineContent):
+    expected_kind: ClassVar[str | None] = "input_request"
+    kind: ToolContentKind = "input_request"
+
+
+@dataclass(frozen=True, slots=True)
+class WebSearchToolContent(ToolTimelineContent):
+    expected_kind: ClassVar[str | None] = "web_search"
+    kind: ToolContentKind = "web_search"
+
+
+@dataclass(frozen=True, slots=True)
+class UnknownToolContent(ToolTimelineContent):
+    expected_kind: ClassVar[str | None] = "unknown"
+    kind: ToolContentKind = "unknown"
+
+
+@dataclass(frozen=True, slots=True)
 class ArtifactTimelineContent(TimelineContent):
     kind: ArtifactContentKind
     path: str | None = None
@@ -153,6 +257,48 @@ class ArtifactTimelineContent(TimelineContent):
 
 
 @dataclass(frozen=True, slots=True)
+class FileArtifactContent(ArtifactTimelineContent):
+    expected_kind: ClassVar[str | None] = "file"
+    kind: ArtifactContentKind = "file"
+
+
+@dataclass(frozen=True, slots=True)
+class FileChangeArtifactContent(ArtifactTimelineContent):
+    expected_kind: ClassVar[str | None] = "file_change"
+    kind: ArtifactContentKind = "file_change"
+
+
+@dataclass(frozen=True, slots=True)
+class DiffArtifactContent(ArtifactTimelineContent):
+    expected_kind: ClassVar[str | None] = "diff"
+    kind: ArtifactContentKind = "diff"
+
+
+@dataclass(frozen=True, slots=True)
+class ImageArtifactContent(ArtifactTimelineContent):
+    expected_kind: ClassVar[str | None] = "image"
+    kind: ArtifactContentKind = "image"
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentArtifactContent(ArtifactTimelineContent):
+    expected_kind: ClassVar[str | None] = "document"
+    kind: ArtifactContentKind = "document"
+
+
+@dataclass(frozen=True, slots=True)
+class CodeArtifactContent(ArtifactTimelineContent):
+    expected_kind: ClassVar[str | None] = "code"
+    kind: ArtifactContentKind = "code"
+
+
+@dataclass(frozen=True, slots=True)
+class UnknownArtifactContent(ArtifactTimelineContent):
+    expected_kind: ClassVar[str | None] = "unknown"
+    kind: ArtifactContentKind = "unknown"
+
+
+@dataclass(frozen=True, slots=True)
 class SystemTimelineContent(TimelineContent):
     kind: SystemContentKind
     text: str | None = None
@@ -170,6 +316,54 @@ class SystemTimelineContent(TimelineContent):
             payload["severity"] = self.severity
         payload.update(self.metadata)
         return payload
+
+
+@dataclass(frozen=True, slots=True)
+class ReasoningSystemContent(SystemTimelineContent):
+    expected_kind: ClassVar[str | None] = "reasoning"
+    kind: SystemContentKind = "reasoning"
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeSystemContent(SystemTimelineContent):
+    expected_kind: ClassVar[str | None] = "runtime"
+    kind: SystemContentKind = "runtime"
+
+
+@dataclass(frozen=True, slots=True)
+class GenericSystemContent(SystemTimelineContent):
+    expected_kind: ClassVar[str | None] = "system"
+    kind: SystemContentKind = "system"
+
+
+@dataclass(frozen=True, slots=True)
+class TurnStartSystemContent(SystemTimelineContent):
+    expected_kind: ClassVar[str | None] = "turn_start"
+    kind: SystemContentKind = "turn_start"
+
+
+@dataclass(frozen=True, slots=True)
+class TurnEndSystemContent(SystemTimelineContent):
+    expected_kind: ClassVar[str | None] = "turn_end"
+    kind: SystemContentKind = "turn_end"
+
+
+@dataclass(frozen=True, slots=True)
+class ErrorSystemContent(SystemTimelineContent):
+    expected_kind: ClassVar[str | None] = "error"
+    kind: SystemContentKind = "error"
+
+
+@dataclass(frozen=True, slots=True)
+class NoticeSystemContent(SystemTimelineContent):
+    expected_kind: ClassVar[str | None] = "notice"
+    kind: SystemContentKind = "notice"
+
+
+@dataclass(frozen=True, slots=True)
+class UnknownSystemContent(SystemTimelineContent):
+    expected_kind: ClassVar[str | None] = "unknown"
+    kind: SystemContentKind = "unknown"
 
 
 @dataclass(frozen=True, slots=True)

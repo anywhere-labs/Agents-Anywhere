@@ -21,7 +21,7 @@ from connector.runtimes.codex.timeline.identity import (
 )
 from connector.runtimes.codex.timeline.items import (
     CodexTimelineItem,
-    MappingTimelineContent,
+    codex_timeline_content_from_mapping,
     codex_timeline_item_class,
     timeline_item_status_from_string,
     timeline_item_type_from_string,
@@ -80,13 +80,18 @@ class CodexTimelineProjection:
         native_type = timeline_raw_type(raw)
         client_message_id = client_message_id_from_raw(raw)
         item_class = codex_timeline_item_class(native_type)
+        platform_item_type = timeline_item_type_from_string(item_type)
         return item_class(
             id=timeline_item_id(raw, external_session_id, fallback_index),
-            type=timeline_item_type_from_string(item_type),
+            type=platform_item_type,
             status=timeline_item_status_from_string(status),
             role=timeline_role_from_string(role),
             turn_id=timeline_item_turn_id(raw),
-            content=MappingTimelineContent.from_mapping(timeline_item_content(raw)),
+            content=codex_timeline_content_from_mapping(
+                native_item_type=native_type,
+                platform_item_type=platform_item_type,
+                content=timeline_item_content(raw),
+            ),
             source=TimelineSource(runtime="codex"),
             revision=timeline_item_revision(raw),
             native_item_type=native_type,
@@ -238,6 +243,8 @@ def timeline_item_type(raw: dict[str, Any]) -> str:
     value = timeline_raw_type(raw)
     if not isinstance(value, str) or not value:
         return "system"
+    if value in {"turn.start", "turn.end", "message", "tool", "artifact", "system"}:
+        return value
     if value in {"agentMessage", "userMessage", "steeringUserMessage"}:
         return "message"
     if value == "turnStart":
