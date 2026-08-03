@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Mapping
 from typing import Any
 
@@ -129,6 +130,40 @@ def thread_ordering_time(thread_ref: dict[str, Any]) -> str | None:
         or thread_ref.get("created_at")
     )
     return str(value) if value is not None else None
+
+
+def thread_sync_marker(thread_ref: dict[str, Any]) -> str | None:
+    marker: dict[str, Any] = {}
+    for key in (
+        "updatedAt",
+        "updated_at",
+        "revision",
+        "rev",
+        "version",
+        "timelineRevision",
+        "timeline_revision",
+        "lastItemId",
+        "last_item_id",
+        "lastMessageId",
+        "last_message_id",
+        "messageCount",
+        "message_count",
+        "turnCount",
+        "turn_count",
+    ):
+        value = thread_ref.get(key)
+        if value is not None:
+            marker[key] = value
+    if not marker:
+        return None
+    encoded = json.dumps(
+        marker,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return "sha256:" + hashlib.sha256(encoded.encode()).hexdigest()
 
 
 def first_string_from_mapping(mapping: Mapping[str, Any], *keys: str) -> str | None:

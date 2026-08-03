@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Any
 
 from connector.runtime_protocol import (
     RuntimeModelCatalog,
@@ -26,6 +27,10 @@ ListPermissionCatalog = Callable[[str | None, int], Awaitable[RuntimePermissionC
 EnsureStarted = Callable[[], Awaitable[None]]
 
 
+def _session_sync_key(thread_id: str) -> str:
+    return f"codex/session-sync/{thread_id}"
+
+
 @dataclass(slots=True)
 class CodexSessionReader:
     host: RuntimeHostClient
@@ -42,46 +47,77 @@ class CodexSessionReader:
         cursor: str | None = None,
         force: bool = False,
     ) -> tuple[SessionMeta, ...]:
-        _ = cursor
-        _ = force
         if self.client is None:
             return ()
         await self.ensure_started()
-        result = await self.client.request(
-            "thread/list",
-            {
-                "limit": limit,
-                "sortKey": "updated_at",
-            },
-        )
+        params = {
+            "limit": limit,
+            "sortKey": "updated_at",
+            **({"cursor": cursor} if cursor else {}),
+        }
+        result = await self.client.request("thread/list", params)
         sessions: list[SessionMeta] = []
         for thread_ref in codex_sessions.thread_refs_from_list_result(result):
-            if codex_sessions.local_thread_state(thread_ref) in {
-                "archived",
-                "deleted",
-                "unresumable",
-            }:
-                continue
             thread_id = codex_sessions.thread_id_from_result(thread_ref)
             if thread_id is None:
                 continue
-            sessions.append(
-                SessionMeta(
-                    session_id=codex_sessions.stable_session_id(
-                        self.host.connector_id, thread_id
-                    ),
-                    external_session_id=thread_id,
-                    runtime="codex",
-                    title=codex_sessions.thread_title(thread_ref),
-                    cwd=codex_sessions.thread_cwd(thread_ref),
-                    ordering_time=codex_sessions.thread_ordering_time(thread_ref),
-                    metadata={
-                        "local_state": codex_sessions.local_thread_state(thread_ref),
-                        "source": "codex.thread/list",
-                    },
-                )
+            session = await self._session_meta_from_thread_ref(
+                thread_id,
+                thread_ref,
+                force=force,
             )
+            sessions.append(session)
         return tuple(sessions[:limit])
+
+    async def _session_meta_from_thread_ref(
+        self,
+        thread_id: str,
+        thread_ref: dict[str, Any],
+        force: bool,
+    ) -> SessionMeta:
+        local_state = codex_sessions.local_thread_state(thread_ref)
+        sync_marker = codex_sessions.thread_sync_marker(thread_ref)
+        sync_key = _session_sync_key(thread_id)
+        previous_sync = await self.host.sync_state_read(sync_key)
+        previous_marker = (
+            previous_sync.get("marker") if isinstance(previous_sync, dict) else None
+        )
+        changed = force or sync_marker is None or previous_marker != sync_marker
+        hidden = local_state in {"archived", "deleted", "unresumable"}
+        title = codex_sessions.thread_title(thread_ref)
+        cwd = codex_sessions.thread_cwd(thread_ref)
+        ordering_time = codex_sessions.thread_ordering_time(thread_ref)
+        session_id = codex_sessions.stable_session_id(self.host.connector_id, thread_id)
+        sync_state = {
+            "marker": sync_marker,
+            "title": title,
+            "cwd": cwd,
+            "ordering_time": ordering_time,
+            "local_state": local_state,
+            "hidden": hidden,
+            "session_id": session_id,
+        }
+        await self.host.sync_state_write(sync_key, sync_state)
+        return SessionMeta(
+            session_id=session_id,
+            external_session_id=thread_id,
+            runtime="codex",
+            title=title,
+            cwd=cwd,
+            ordering_time=ordering_time,
+            metadata={
+                "local_state": local_state,
+                "hidden": hidden,
+                "source": "codex.thread/list",
+                "sync": {
+                    "key": sync_key,
+                    "marker": sync_marker,
+                    "changed": changed,
+                    "requires_timeline_sync": changed and not hidden,
+                    "previous_marker": previous_marker,
+                },
+            },
+        )
 
     async def get_session_state(
         self,

@@ -36,7 +36,7 @@ Rough completion by behavior area:
 | Tool/reasoning/file reduce | Complete for T04 | SDK/native message, reasoning, tool, file-change, runtime/system, and unknown fallback items reduce to platform-safe timeline shapes. |
 | Selections | Complete for T06 | Catalogs are live runtime reads; Codex session state can read current selections, update selections through runtime state, reject invalid ids, and keep existing sends selection-free. |
 | Commands | Complete for T07 | Codex commands are live runtime reads; `/compact` execution is separated from messages, disabled/invalid/unknown commands fail without fallback, and command side effects publish notice/state updates. |
-| Session discovery/sync | Partial | Basic `thread/list` and snapshot exist; sync markers and rename-only updates remain incomplete. |
+| Session discovery/sync | Complete for T08 | Codex discovery returns SessionMeta for active and hidden local sessions, uses host JSON sync markers, skips timeline sync for unchanged sessions, and allows rename/meta-only updates. |
 | Dashboard realtime | Not started | Polling/SSE replacement with dashboard-level realtime remains server/web work. |
 | Codex IPC side-channel | Deferred | Old IPC behavior is reference-only while the runtime is SDK-first. |
 
@@ -337,7 +337,7 @@ uv run ruff check connector/runtimes/codex tests/test_codex_runtime.py
 
 ### T08. Session discovery and sync markers
 
-Status: not started.
+Status: complete.
 
 Goal:
 
@@ -352,11 +352,32 @@ Required behavior:
 - title/cwd/order changes can upsert meta without timeline sync.
 - sync state uses JSON store through `RuntimeHostClient.sync_state_*`.
 
+Completed:
+
+- `list_sessions` returns `SessionMeta` for every recognizable Codex thread ref.
+- Stable platform session ids continue to derive from connector id + Codex thread
+  id, so the mapping survives runtime object restarts.
+- Archived, deleted, and unresumable local threads are projected as
+  `metadata.local_state` plus `metadata.hidden=true`; Connector does not delete
+  them from server state.
+- Codex thread refs produce a timeline-change sync marker from revision/update
+  style fields while title/cwd/order fields remain meta-only.
+- Runtime reads and writes `codex/session-sync/{thread_id}` through
+  `RuntimeHostClient.sync_state_*`, backed by the existing JSON sync state store.
+- Repeated unchanged discovery returns
+  `metadata.sync.requires_timeline_sync=false` and does not read a timeline
+  snapshot.
+- Rename-only discovery still returns updated `SessionMeta` while keeping
+  `requires_timeline_sync=false`.
+- `force=true` explicitly marks active sessions as requiring timeline sync even
+  when the marker is unchanged.
+
 Verification:
 
 ```bash
 cd connector
 uv run pytest tests/test_codex_runtime.py tests/test_sync_state.py -q
+uv run ruff check connector/runtimes/codex tests/test_codex_runtime.py
 ```
 
 ### T09. Server ingest alignment

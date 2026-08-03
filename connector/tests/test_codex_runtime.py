@@ -137,6 +137,7 @@ class FakeHost(RuntimeHostClient):
         self.timeline_syncs: list[dict[str, Any]] = []
         self.timeline_item_upserts: list[Any] = []
         self.notice_upserts: list[SessionNotice] = []
+        self.sync_states: dict[str, dict[str, Any]] = {}
 
     @property
     def connector_id(self) -> str:
@@ -213,6 +214,19 @@ class FakeHost(RuntimeHostClient):
 
     async def notice_upsert(self, notice: SessionNotice) -> None:
         self.notice_upserts.append(notice)
+
+    async def sync_state_read(self, key: str) -> Mapping[str, Any] | None:
+        return self.sync_states.get(key)
+
+    async def sync_state_write(
+        self,
+        key: str,
+        value: Mapping[str, Any],
+    ) -> None:
+        self.sync_states[key] = dict(value)
+
+    async def sync_state_delete(self, key: str) -> None:
+        self.sync_states.pop(key, None)
 
 
 def test_codex_runtime_lifecycle_and_config() -> None:
@@ -388,16 +402,110 @@ def test_codex_runtime_lists_sessions_from_thread_list() -> None:
 
 
 async def _test_codex_runtime_lists_sessions_from_thread_list() -> None:
-    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=FakeCodexClient())
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=FakeCodexClient())
 
     sessions = await runtime.list_sessions(limit=10)
 
-    assert len(sessions) == 1
+    assert len(sessions) == 2
     assert sessions[0].session_id == stable_session_id("conn_test", "thread_1")
     assert sessions[0].external_session_id == "thread_1"
     assert sessions[0].title == "Fix tests"
     assert sessions[0].cwd == "/repo"
     assert sessions[0].ordering_time == "2026-08-02T00:00:00Z"
+    assert sessions[0].metadata["local_state"] == "active"
+    assert sessions[0].metadata["hidden"] is False
+    assert sessions[0].metadata["sync"]["changed"] is True
+    assert sessions[0].metadata["sync"]["requires_timeline_sync"] is True
+    assert sessions[1].external_session_id == "thread_archived"
+    assert sessions[1].metadata["local_state"] == "archived"
+    assert sessions[1].metadata["hidden"] is True
+    assert sessions[1].metadata["sync"]["requires_timeline_sync"] is False
+    assert host.sync_states["codex/session-sync/thread_1"]["session_id"] == (
+        stable_session_id("conn_test", "thread_1")
+    )
+
+
+def test_codex_runtime_session_sync_marker_skips_unchanged_timeline() -> None:
+    asyncio.run(_test_codex_runtime_session_sync_marker_skips_unchanged_timeline())
+
+
+async def _test_codex_runtime_session_sync_marker_skips_unchanged_timeline() -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    first = await runtime.list_sessions(limit=10)
+    second = await runtime.list_sessions(limit=10)
+    restarted_runtime = CodexRuntime(config=_config(), host=host, client=client)
+    after_restart = await restarted_runtime.list_sessions(limit=10)
+
+    assert first[0].metadata["sync"]["requires_timeline_sync"] is True
+    assert second[0].metadata["sync"]["changed"] is False
+    assert second[0].metadata["sync"]["requires_timeline_sync"] is False
+    assert after_restart[0].session_id == first[0].session_id
+    assert after_restart[0].metadata["sync"]["changed"] is False
+    assert all(request[0] != "thread/read" for request in client.requests)
+
+
+def test_codex_runtime_session_sync_force_requires_timeline() -> None:
+    asyncio.run(_test_codex_runtime_session_sync_force_requires_timeline())
+
+
+async def _test_codex_runtime_session_sync_force_requires_timeline() -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    await runtime.list_sessions(limit=10)
+    forced = await runtime.list_sessions(limit=10, force=True)
+
+    assert forced[0].metadata["sync"]["changed"] is True
+    assert forced[0].metadata["sync"]["requires_timeline_sync"] is True
+
+
+def test_codex_runtime_session_sync_marker_allows_rename_only_meta_update() -> None:
+    asyncio.run(_test_codex_runtime_session_sync_marker_allows_rename_only_meta_update())
+
+
+async def _test_codex_runtime_session_sync_marker_allows_rename_only_meta_update() -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    await runtime.list_sessions(limit=10)
+    client.results["thread/list"] = {
+        "threads": [
+            {
+                "id": "thread_1",
+                "name": "Renamed",
+                "cwd": "/repo",
+                "updatedAt": "2026-08-02T00:00:00Z",
+            }
+        ]
+    }
+    sessions = await runtime.list_sessions(limit=10)
+
+    assert sessions[0].title == "Renamed"
+    assert sessions[0].metadata["sync"]["changed"] is False
+    assert sessions[0].metadata["sync"]["requires_timeline_sync"] is False
+    assert host.sync_states["codex/session-sync/thread_1"]["title"] == "Renamed"
+
+
+def test_codex_runtime_list_sessions_passes_cursor_to_runtime() -> None:
+    asyncio.run(_test_codex_runtime_list_sessions_passes_cursor_to_runtime())
+
+
+async def _test_codex_runtime_list_sessions_passes_cursor_to_runtime() -> None:
+    client = FakeCodexClient()
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=client)
+
+    await runtime.list_sessions(limit=5, cursor="next-page")
+
+    assert client.requests[-1] == (
+        "thread/list",
+        {"limit": 5, "sortKey": "updated_at", "cursor": "next-page"},
+    )
 
 
 def test_codex_runtime_session_state_defaults_to_idle_for_known_external_session() -> (
