@@ -33,7 +33,7 @@ Rough completion by behavior area:
 | Timeline identity and dedupe | Complete for T01 | `clientMessageId` tagging, live/snapshot echo projection, and stable fallback identity are covered; broader SDK event coverage continues in T02/T04. |
 | Turn lifecycle | Complete for T03 | Codex runtime now covers waiting/running/blocked/idle convergence, failed-turn blocking notices, item-event running inference, and stale no-active-turn correction. |
 | Notice/interaction lifecycle | Partial | Approval open/respond exists; close/resolved/failed lifecycle is incomplete. |
-| Tool/reasoning/file reduce | Partial | Basic assistant and command output deltas exist; SDK-native tool/file/error coverage is incomplete. |
+| Tool/reasoning/file reduce | Complete for T04 | SDK/native message, reasoning, tool, file-change, runtime/system, and unknown fallback items reduce to platform-safe timeline shapes. |
 | Selections | Partial | Catalogs and start-time resolution exist; live session selection read/update is incomplete. |
 | Commands | Partial | `/compact` exists; command-mode lifecycle and UI-facing failure semantics remain incomplete. |
 | Session discovery/sync | Partial | Basic `thread/list` and snapshot exist; sync markers and rename-only updates remain incomplete. |
@@ -163,7 +163,7 @@ uv run pytest tests/test_connector_runtime.py -q
 
 ### T04. Timeline item reduce coverage
 
-Status: not started.
+Status: complete.
 
 Goal:
 
@@ -184,11 +184,26 @@ Required item coverage:
 - runtime/system message
 - unknown fallback with safe source metadata
 
+Completed:
+
+- Platform timeline types now hide Codex-native item names from Web-facing
+  `RuntimeTimelineItem.type`.
+- User, steering-user, assistant, assistant-delta, and reasoning items reduce to
+  message/system timeline content with stable text extraction.
+- Command execution, command output deltas, command completion/failure,
+  function calls, custom tool calls, and tool outputs reduce to tool timeline
+  content.
+- File change patch/update notifications reduce to artifact timeline content.
+- Runtime/system messages reduce to system timeline content.
+- Unknown native item types reduce to a safe system fallback while preserving
+  source metadata for debugging.
+
 Verification:
 
 ```bash
 cd connector
 uv run pytest tests/test_codex_runtime.py -q
+uv run ruff check connector/runtimes/codex tests/test_codex_runtime.py
 ```
 
 ### T05. Notice and interaction lifecycle

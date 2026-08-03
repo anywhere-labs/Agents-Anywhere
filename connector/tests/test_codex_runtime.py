@@ -844,6 +844,254 @@ async def _test_codex_runtime_reasoning_item_maps_to_system_timeline_item() -> N
     }
 
 
+def test_codex_runtime_reduces_agent_message_snapshot_without_native_type_leak() -> None:
+    asyncio.run(_test_codex_runtime_reduces_agent_message_snapshot_without_native_type_leak())
+
+
+async def _test_codex_runtime_reduces_agent_message_snapshot_without_native_type_leak() -> None:
+    client = FakeCodexClient()
+    client.results["thread/read"] = {
+        "thread": {
+            "id": "thread_1",
+            "items": [
+                {
+                    "id": "item_agent",
+                    "type": "agentMessage",
+                    "text": "hello",
+                    "status": "completed",
+                }
+            ],
+        }
+    }
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=client)
+
+    snapshot = await runtime.get_session_snapshot("sess_1", "thread_1")
+
+    item = snapshot.items[0]
+    assert item.type == "message"
+    assert item.role == "assistant"
+    assert item.status == "done"
+    assert item.content == {"text": "hello", "format": "markdown"}
+    assert item.source["rawType"] == "agentMessage"
+
+
+def test_codex_runtime_reduces_command_completion_and_failure() -> None:
+    asyncio.run(_test_codex_runtime_reduces_command_completion_and_failure())
+
+
+async def _test_codex_runtime_reduces_command_completion_and_failure() -> None:
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=FakeCodexClient())
+
+    await runtime.start()
+    await runtime._handle_notification(
+        {
+            "method": "item/completed",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_1",
+                "item": {
+                    "id": "cmd_1",
+                    "type": "commandExecution",
+                    "command": "pytest -q",
+                    "aggregatedOutput": "ok",
+                    "status": "completed",
+                },
+            },
+        }
+    )
+    await runtime._handle_notification(
+        {
+            "method": "item/completed",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_1",
+                "item": {
+                    "id": "cmd_2",
+                    "type": "commandExecution",
+                    "command": "false",
+                    "output": "failed",
+                    "exitCode": 1,
+                    "status": "failed",
+                },
+            },
+        }
+    )
+
+    done, failed = host.timeline_item_upserts[-2:]
+    assert done.type == "tool"
+    assert done.role == "tool"
+    assert done.status == "done"
+    assert done.content == {
+        "kind": "command",
+        "command": "pytest -q",
+        "output": "ok",
+        "format": "text",
+    }
+    assert failed.type == "tool"
+    assert failed.status == "failed"
+    assert failed.content == {
+        "kind": "command",
+        "command": "false",
+        "output": "failed",
+        "format": "text",
+        "exitCode": 1,
+    }
+
+
+def test_codex_runtime_reduces_function_call_and_tool_output() -> None:
+    asyncio.run(_test_codex_runtime_reduces_function_call_and_tool_output())
+
+
+async def _test_codex_runtime_reduces_function_call_and_tool_output() -> None:
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=FakeCodexClient())
+
+    await runtime.start()
+    await runtime._handle_notification(
+        {
+            "method": "item/started",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_1",
+                "item": {
+                    "id": "call_1",
+                    "type": "function_call",
+                    "name": "web_search",
+                    "arguments": {"query": "Agents Anywhere"},
+                    "status": "inProgress",
+                },
+            },
+        }
+    )
+    await runtime._handle_notification(
+        {
+            "method": "item/completed",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_1",
+                "item": {
+                    "id": "out_1",
+                    "type": "function_call_output",
+                    "output": "result text",
+                    "status": "completed",
+                },
+            },
+        }
+    )
+
+    call, output = host.timeline_item_upserts[-2:]
+    assert call.type == "tool"
+    assert call.content == {
+        "kind": "web_search",
+        "function": "web_search",
+        "query": "Agents Anywhere",
+        "arguments": {"query": "Agents Anywhere"},
+    }
+    assert output.type == "tool"
+    assert output.status == "done"
+    assert output.content == {
+        "kind": "tool_result",
+        "result": "result text",
+        "output": "result text",
+        "error": None,
+    }
+
+
+def test_codex_runtime_reduces_file_change_patch_as_artifact() -> None:
+    asyncio.run(_test_codex_runtime_reduces_file_change_patch_as_artifact())
+
+
+async def _test_codex_runtime_reduces_file_change_patch_as_artifact() -> None:
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=FakeCodexClient())
+
+    await runtime.start()
+    await runtime._handle_notification(
+        {
+            "method": "item/fileChange/patchUpdated",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_1",
+                "itemId": "file_1",
+                "path": "app.py",
+                "action": "modify",
+                "patch": "+print('hi')",
+            },
+        }
+    )
+
+    item = host.timeline_item_upserts[-1]
+    assert item.type == "artifact"
+    assert item.role is None
+    assert item.status == "running"
+    assert item.content == {
+        "kind": "file_change",
+        "path": "app.py",
+        "action": "modify",
+        "patch": "+print('hi')",
+        "changes": None,
+    }
+
+
+def test_codex_runtime_reduces_runtime_and_unknown_items_safely() -> None:
+    asyncio.run(_test_codex_runtime_reduces_runtime_and_unknown_items_safely())
+
+
+async def _test_codex_runtime_reduces_runtime_and_unknown_items_safely() -> None:
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=FakeCodexClient())
+
+    await runtime.start()
+    await runtime._handle_notification(
+        {
+            "method": "item/runtimeMessage",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_1",
+                "message": "runtime warning",
+            },
+        }
+    )
+    await runtime._handle_notification(
+        {
+            "method": "item/started",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_1",
+                "item": {
+                    "id": "mystery_1",
+                    "type": "mysteryNativeType",
+                    "payload": {"x": 1},
+                },
+            },
+        }
+    )
+
+    runtime_item, unknown_item = host.timeline_item_upserts[-2:]
+    assert runtime_item.type == "system"
+    assert runtime_item.role == "system"
+    assert runtime_item.content == {
+        "kind": "runtime",
+        "text": "runtime warning",
+        "format": "markdown",
+    }
+    assert unknown_item.type == "system"
+    assert unknown_item.role is None
+    assert unknown_item.content == {
+        "kind": "unknown",
+        "rawType": "mysteryNativeType",
+    }
+    assert unknown_item.source["rawType"] == "mysteryNativeType"
+
+
 def test_codex_runtime_completed_turn_syncs_timeline_snapshot() -> None:
     asyncio.run(_test_codex_runtime_completed_turn_syncs_timeline_snapshot())
 

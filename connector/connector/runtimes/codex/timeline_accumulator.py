@@ -69,6 +69,22 @@ class CodexTimelineAccumulator:
                 f"{previous_output if isinstance(previous_output, str) else ''}"
                 f"{codex_timeline.notification_delta(event.params)}"
             )
+        elif event.event_type == "item/reasoning/delta":
+            merged["type"] = merged.get("type") or "reasoning"
+            merged["status"] = merged.get("status") or "inProgress"
+            previous_text = previous.get("text") if previous else ""
+            merged["text"] = (
+                f"{previous_text if isinstance(previous_text, str) else ''}"
+                f"{codex_timeline.notification_delta(event.params)}"
+            )
+        elif event.event_type == "item/fileChange/patchUpdated":
+            merged["type"] = merged.get("type") or "fileChange"
+            merged["status"] = merged.get("status") or "inProgress"
+            previous_patch = previous.get("patch") if previous else ""
+            merged["patch"] = (
+                f"{previous_patch if isinstance(previous_patch, str) else ''}"
+                f"{codex_timeline.notification_delta(event.params)}"
+            )
         elif event.event_type == "item/started":
             merged.setdefault("status", "inProgress")
         elif event.event_type == "item/completed":
