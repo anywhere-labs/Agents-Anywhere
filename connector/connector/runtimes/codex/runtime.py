@@ -21,12 +21,7 @@ from connector.runtime_protocol import (
     SessionState,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
-from connector.runtimes.codex import sessions as codex_sessions
-from connector.runtimes.codex.catalogs import (
-    codex_permission_catalog_items,
-    model_catalog_from_codex_items,
-    permission_catalog_from_codex_items,
-)
+from connector.runtimes.codex.catalog_reader import CodexCatalogReader
 from connector.runtimes.codex.commands import list_codex_commands
 from connector.runtimes.codex.notifications import CodexNotificationProjector
 from connector.runtimes.codex.runtime_client import CodexRuntimeClient
@@ -48,6 +43,11 @@ class CodexRuntime(AgentRuntime):
         self._session_states = RuntimeSessionStateCache("codex", self.host)
         self._active_turn_ids: dict[str, str] = {}
         self._timeline = CodexTimelineAccumulator()
+        self._catalogs = CodexCatalogReader(
+            config=self.config,
+            ensure_started=self.start,
+            get_model_list_result=self._get_model_list_result,
+        )
         self._notifications = CodexNotificationProjector(
             host=self.host,
             session_states=self._session_states,
@@ -66,8 +66,8 @@ class CodexRuntime(AgentRuntime):
             session_states=self._session_states,
             active_turn_ids=self._active_turn_ids,
             ensure_started=self.start,
-            list_model_catalog=self.list_model_catalog,
-            list_permission_catalog=self.list_permission_catalog,
+            list_model_catalog=self._catalogs.list_model_catalog,
+            list_permission_catalog=self._catalogs.list_permission_catalog,
         )
 
     @property
@@ -99,47 +99,14 @@ class CodexRuntime(AgentRuntime):
         query: str | None = None,
         limit: int = 100,
     ) -> RuntimeModelCatalog:
-        await self.start()
-        catalog = model_catalog_from_codex_items(
-            codex_sessions.model_list_items(self._model_list_result),
-            revision=self.config.revision,
-        )
-        if query:
-            lowered = query.casefold()
-            models = tuple(
-                model
-                for model in catalog.models
-                if lowered in model.id.casefold() or lowered in model.title.casefold()
-            )
-        else:
-            models = catalog.models
-        return RuntimeModelCatalog(
-            runtime=catalog.runtime,
-            revision=catalog.revision,
-            models=models[:limit],
-        )
+        return await self._catalogs.list_model_catalog(query=query, limit=limit)
 
     async def list_permission_catalog(
         self,
         query: str | None = None,
         limit: int = 100,
     ) -> RuntimePermissionCatalog:
-        permissions = permission_catalog_from_codex_items(
-            codex_permission_catalog_items(),
-            revision=self.config.revision,
-        ).permissions
-        if query:
-            lowered = query.casefold()
-            permissions = tuple(
-                item
-                for item in permissions
-                if lowered in item.id.casefold() or lowered in item.title.casefold()
-            )
-        return RuntimePermissionCatalog(
-            runtime="codex",
-            revision=self.config.revision,
-            permissions=permissions[:limit],
-        )
+        return await self._catalogs.list_permission_catalog(query=query, limit=limit)
 
     async def list_sessions(
         self,
@@ -296,6 +263,9 @@ class CodexRuntime(AgentRuntime):
 
     async def _handle_notification(self, message: dict[str, Any]) -> None:
         await self._notifications.handle(message)
+
+    def _get_model_list_result(self) -> dict[str, Any] | None:
+        return self._model_list_result
 
     async def _set_session_state(
         self,
