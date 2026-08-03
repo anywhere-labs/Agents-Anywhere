@@ -259,3 +259,17 @@ def test_codex_timeline_items_do_not_own_content_projection() -> None:
     assert "class MappingTimelineContent" not in items_source
     assert "codex_timeline_content_from_mapping(" in content_source
     assert "class MappingTimelineContent" in content_source
+
+
+def test_codex_timeline_projection_does_not_own_raw_content_extraction() -> None:
+    projection_source = (
+        CONNECTOR_PACKAGE / "runtimes" / "codex" / "timeline" / "projection.py"
+    ).read_text(encoding="utf-8")
+    raw_content_source = (
+        CONNECTOR_PACKAGE / "runtimes" / "codex" / "timeline" / "raw_content.py"
+    ).read_text(encoding="utf-8")
+
+    assert "def timeline_item_content(" not in projection_source
+    assert "def text_from_value(" not in projection_source
+    assert "def timeline_item_content(" in raw_content_source
+    assert "def text_from_value(" in raw_content_source
