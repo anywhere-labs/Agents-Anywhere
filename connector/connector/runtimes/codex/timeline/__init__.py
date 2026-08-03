@@ -39,14 +39,12 @@ from connector.runtimes.codex.timeline.items import (
 )
 from connector.runtimes.codex.timeline.projection import (
     CodexTimelineProjection,
-    raw_timeline_items,
     timeline_item_from_projection,
     timeline_item_revision,
     timeline_item_role,
     timeline_item_status,
     timeline_item_turn_id,
     timeline_item_type,
-    timeline_items_from_thread,
     timeline_projection_from_event,
     timeline_projection_from_raw,
     timeline_raw_status,
@@ -56,6 +54,10 @@ from connector.runtimes.codex.timeline.raw_content import (
     content_hash,
     text_from_value,
     timeline_item_content,
+)
+from connector.runtimes.codex.timeline.snapshot import (
+    raw_timeline_items,
+    timeline_items_from_thread,
 )
 
 __all__ = [

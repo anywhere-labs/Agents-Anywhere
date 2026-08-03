@@ -180,7 +180,7 @@ uv run pytest tests/test_codex_runtime.py tests/test_connector_architecture.py -
 
 ### C02. Split thread snapshot reduction
 
-Status: todo.
+Status: complete.
 
 Move from `timeline/projection.py`:
 
@@ -201,6 +201,17 @@ Rules:
   typed snapshot items replace raw dictionaries.
 - Add an architecture test that `projection.py` does not define snapshot
   reduction.
+
+Completed:
+
+- Added `connector/connector/runtimes/codex/timeline/snapshot.py`.
+- Moved `timeline_items_from_thread` and `raw_timeline_items` out of
+  `timeline/projection.py`.
+- Preserved public package exports from `connector.runtimes.codex.timeline`.
+- Preserved `pending_messages.attach_to_raw_item(...)` during snapshot
+  reduction.
+- Added an architecture test that keeps snapshot reduction out of
+  `projection.py`.
 
 Verification:
 
@@ -415,7 +426,7 @@ Stop and ask before proceeding if any step would require:
 The next unchecked implementation item is:
 
 ```text
-C02. Split thread snapshot reduction
+C03. Split raw item metadata helpers
 ```
 
 Do not jump to C04/C05 before C01-C03 are done, because the raw projection

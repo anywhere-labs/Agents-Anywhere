@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
-from connector.runtime_protocol import RuntimeTimelineItem, TimelineSource
+from connector.runtime_protocol import TimelineSource
 from connector.runtimes.codex.domain.sessions import (
     first_string_from_mapping,
 )
@@ -190,56 +190,6 @@ def timeline_item_from_projection(
         fallback_index=fallback_index,
         event=event,
     )
-
-
-def timeline_items_from_thread(
-    session_id: str,
-    external_session_id: str,
-    thread: dict[str, Any],
-    limit: int,
-    pending_messages: Any | None = None,
-) -> tuple[RuntimeTimelineItem, ...]:
-    raw_items = raw_timeline_items(thread)
-    items: list[RuntimeTimelineItem] = []
-    for index, raw in enumerate(raw_items[:limit]):
-        if pending_messages is not None:
-            pending_messages.attach_to_raw_item(
-                session_id=session_id,
-                external_session_id=external_session_id,
-                raw=raw,
-            )
-        codex_item = timeline_item_from_projection(
-            timeline_projection_from_raw(raw),
-            external_session_id=external_session_id,
-            fallback_index=index,
-            event="thread/read",
-        )
-        items.append(
-            codex_item.to_platform_item(session_id=session_id, order_seq=index)
-        )
-    return tuple(items)
-
-
-def raw_timeline_items(thread: dict[str, Any]) -> list[dict[str, Any]]:
-    for key in ("items", "timeline", "timelineItems", "timeline_items"):
-        value = thread.get(key)
-        if isinstance(value, list):
-            return [item for item in value if isinstance(item, dict)]
-    turns = thread.get("turns")
-    if isinstance(turns, list):
-        result: list[dict[str, Any]] = []
-        for turn in turns:
-            if not isinstance(turn, dict):
-                continue
-            for key in ("items", "timeline", "timelineItems", "messages"):
-                value = turn.get(key)
-                if isinstance(value, list):
-                    result.extend(item for item in value if isinstance(item, dict))
-        return result
-    messages = thread.get("messages")
-    if isinstance(messages, list):
-        return [item for item in messages if isinstance(item, dict)]
-    return []
 
 
 def timeline_item_type(raw: dict[str, Any]) -> str:

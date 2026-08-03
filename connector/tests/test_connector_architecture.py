@@ -287,3 +287,17 @@ def test_codex_timeline_projection_does_not_own_notification_raw_events() -> Non
     assert "def notification_delta(" not in projection_source
     assert "def raw_item_from_notification(" in events_source
     assert "def notification_delta(" in events_source
+
+
+def test_codex_timeline_projection_does_not_own_snapshot_reduction() -> None:
+    projection_source = (
+        CONNECTOR_PACKAGE / "runtimes" / "codex" / "timeline" / "projection.py"
+    ).read_text(encoding="utf-8")
+    snapshot_source = (
+        CONNECTOR_PACKAGE / "runtimes" / "codex" / "timeline" / "snapshot.py"
+    ).read_text(encoding="utf-8")
+
+    assert "def timeline_items_from_thread(" not in projection_source
+    assert "def raw_timeline_items(" not in projection_source
+    assert "def timeline_items_from_thread(" in snapshot_source
+    assert "def raw_timeline_items(" in snapshot_source
