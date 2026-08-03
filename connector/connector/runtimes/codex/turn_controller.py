@@ -251,7 +251,10 @@ class CodexTurnController:
                 ok=False,
                 code="codex_empty_selection_update",
                 message="At least one selection scope is required.",
-                result={"sessionId": session_id, "externalSessionId": external_session_id},
+                result={
+                    "sessionId": session_id,
+                    "externalSessionId": external_session_id,
+                },
             )
         invalid_scope = _unsupported_selection_scope(selections)
         if invalid_scope is not None:
@@ -266,10 +269,10 @@ class CodexTurnController:
                 },
             )
         try:
-            selected_model = await model_settings_from_selection(
+            await model_settings_from_selection(
                 selections.get("model"), self.list_model_catalog
             )
-            native_permission = await permission_settings_from_selection(
+            await permission_settings_from_selection(
                 selections.get("permission"), self.list_permission_catalog
             )
         except RuntimeInvalidRequestError as exc:

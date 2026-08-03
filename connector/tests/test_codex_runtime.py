@@ -6,6 +6,18 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from openai_codex.generated.v2_all import (
+    AgentMessageThreadItem,
+    ThreadItem,
+    Turn,
+    TurnStatus,
+)
+from openai_codex.models import (
+    AgentMessageDeltaNotification,
+    Notification,
+    TurnCompletedNotification,
+)
+
 from connector.runtime_protocol import RuntimeConfig, SessionNotice
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex.catalogs import (
@@ -281,11 +293,17 @@ def test_codex_sdk_event_normalizes_legacy_method_dict() -> None:
     assert event.request_id == 42
 
 
-def test_codex_sdk_event_normalizes_model_dump_object() -> None:
+def test_codex_sdk_event_normalizes_typed_sdk_notification() -> None:
     event = CodexSdkEvent.from_value(
-        _ModelDumpEvent(),
-        thread_id="thread_1",
-        turn_id="turn_1",
+        Notification(
+            method="item/agentMessage/delta",
+            payload=AgentMessageDeltaNotification(
+                delta="hel",
+                itemId="item_agent",
+                threadId="thread_1",
+                turnId="turn_1",
+            ),
+        ),
     )
 
     assert event.legacy_method_shaped is False
@@ -297,6 +315,43 @@ def test_codex_sdk_event_normalizes_model_dump_object() -> None:
     assert event.role == "assistant"
     assert event.status == "inProgress"
     assert event.content == "hel"
+
+
+def test_codex_sdk_event_normalizes_typed_turn_completion() -> None:
+    event = CodexSdkEvent.from_value(
+        Notification(
+            method="turn/completed",
+            payload=TurnCompletedNotification(
+                threadId="thread_1",
+                turn=Turn(
+                    id="turn_done",
+                    status=TurnStatus.completed,
+                    items=[
+                        ThreadItem(
+                            root=AgentMessageThreadItem(
+                                id="item_agent",
+                                type="agentMessage",
+                                text="hello",
+                                memoryCitation=None,
+                                phase=None,
+                            )
+                        )
+                    ],
+                    completedAt=None,
+                    durationMs=None,
+                    error=None,
+                    itemsView=None,
+                    startedAt=None,
+                ),
+            ),
+        ),
+    )
+
+    assert event.event_type == "turn/completed"
+    assert event.thread_id == "thread_1"
+    assert event.params["turn"]["id"] == "turn_done"
+    assert event.params["turn"]["items"][0]["type"] == "agentMessage"
+    assert event.params["turn"]["items"][0]["text"] == "hello"
 
 
 def test_codex_sdk_event_normalizes_explicit_dict_shape() -> None:
@@ -475,10 +530,14 @@ async def _test_codex_runtime_session_sync_force_requires_timeline() -> None:
 
 
 def test_codex_runtime_session_sync_marker_allows_rename_only_meta_update() -> None:
-    asyncio.run(_test_codex_runtime_session_sync_marker_allows_rename_only_meta_update())
+    asyncio.run(
+        _test_codex_runtime_session_sync_marker_allows_rename_only_meta_update()
+    )
 
 
-async def _test_codex_runtime_session_sync_marker_allows_rename_only_meta_update() -> None:
+async def _test_codex_runtime_session_sync_marker_allows_rename_only_meta_update() -> (
+    None
+):
     client = FakeCodexClient()
     host = FakeHost()
     runtime = CodexRuntime(config=_config(), host=host, client=client)
@@ -785,7 +844,9 @@ async def _test_codex_runtime_update_session_selections_pushes_runtime_state() -
         (await runtime.list_model_catalog()).models[0].reasoning_items[1].selection_id
     )
     permission_selection = (
-        (await runtime.list_permission_catalog(query="full")).permissions[0].selection_id
+        (await runtime.list_permission_catalog(query="full"))
+        .permissions[0]
+        .selection_id
     )
 
     result = await runtime.update_session_selections(
@@ -1031,13 +1092,17 @@ async def _test_codex_runtime_turn_completed_notification_sets_idle() -> None:
     assert state.status == "idle"
 
 
-def test_codex_runtime_item_event_without_start_marks_running_and_interruptible() -> None:
+def test_codex_runtime_item_event_without_start_marks_running_and_interruptible() -> (
+    None
+):
     asyncio.run(
         _test_codex_runtime_item_event_without_start_marks_running_and_interruptible()
     )
 
 
-async def _test_codex_runtime_item_event_without_start_marks_running_and_interruptible() -> None:
+async def _test_codex_runtime_item_event_without_start_marks_running_and_interruptible() -> (
+    None
+):
     client = FakeCodexClient()
     host = FakeHost()
     runtime = CodexRuntime(config=_config(), host=host, client=client)
@@ -1184,11 +1249,17 @@ async def _test_codex_runtime_reasoning_item_maps_to_system_timeline_item() -> N
     }
 
 
-def test_codex_runtime_reduces_agent_message_snapshot_without_native_type_leak() -> None:
-    asyncio.run(_test_codex_runtime_reduces_agent_message_snapshot_without_native_type_leak())
+def test_codex_runtime_reduces_agent_message_snapshot_without_native_type_leak() -> (
+    None
+):
+    asyncio.run(
+        _test_codex_runtime_reduces_agent_message_snapshot_without_native_type_leak()
+    )
 
 
-async def _test_codex_runtime_reduces_agent_message_snapshot_without_native_type_leak() -> None:
+async def _test_codex_runtime_reduces_agent_message_snapshot_without_native_type_leak() -> (
+    None
+):
     client = FakeCodexClient()
     client.results["thread/read"] = {
         "thread": {
@@ -1555,7 +1626,9 @@ async def _test_codex_runtime_failed_turn_creates_blocking_error_notice() -> Non
     assert interrupt.ok is False
     assert interrupt.code == "codex_no_active_turn"
     blocked_update = next(
-        update for update in reversed(host.state_updates) if update["status"] == "blocked"
+        update
+        for update in reversed(host.state_updates)
+        if update["status"] == "blocked"
     )
     assert blocked_update["error"]["code"] == "boom"
 
@@ -1732,6 +1805,7 @@ def test_codex_sdk_stream_finally_emits_completed_when_sdk_omits_it() -> None:
 async def _test_codex_sdk_stream_finally_emits_completed_when_sdk_omits_it() -> None:
     emitted: list[dict[str, Any]] = []
     client = CodexSdkClient(_FakeSdkClient())
+
     async def handler(message: dict[str, Any]) -> None:
         emitted.append(message)
 
@@ -1743,9 +1817,7 @@ async def _test_codex_sdk_stream_finally_emits_completed_when_sdk_omits_it() -> 
         "item/agentMessage/delta",
         "turn/completed",
     ]
-    assert emitted[-1]["params"]["metadata"] == {
-        "source": "codex.sdk.stream.finally"
-    }
+    assert emitted[-1]["params"]["metadata"] == {"source": "codex.sdk.stream.finally"}
 
 
 def test_codex_runtime_approval_request_upserts_session_notice() -> None:
@@ -1876,7 +1948,10 @@ async def _test_codex_runtime_interrupts_active_turn_and_sets_idle() -> None:
     assert host.state_updates[-1]["status"] == "idle"
     assert second.ok is False
     assert second.code == "codex_no_active_turn"
-    assert host.state_updates[-1]["metadata"]["source"] == "codex.turn/interrupt.no-active-turn"
+    assert (
+        host.state_updates[-1]["metadata"]["source"]
+        == "codex.turn/interrupt.no-active-turn"
+    )
 
 
 def test_codex_runtime_interrupt_soft_failure_sets_idle() -> None:
@@ -2103,7 +2178,9 @@ def test_codex_runtime_resolved_approval_keeps_blocked_with_other_open_notice() 
     )
 
 
-async def _test_codex_runtime_resolved_approval_keeps_blocked_with_other_open_notice() -> None:
+async def _test_codex_runtime_resolved_approval_keeps_blocked_with_other_open_notice() -> (
+    None
+):
     client = FakeCodexClient()
     host = FakeHost()
     runtime = CodexRuntime(config=_config(), host=host, client=client)
@@ -2200,21 +2277,6 @@ class _FakeSdkTurn:
                 "itemId": "item_agent",
                 "delta": "hello",
             },
-        }
-
-
-class _ModelDumpEvent:
-    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
-        _ = kwargs
-        return {
-            "type": "item/agentMessage/delta",
-            "item": {
-                "id": "item_agent",
-                "type": "agentMessage",
-                "role": "assistant",
-                "status": "inProgress",
-            },
-            "delta": "hel",
         }
 
 

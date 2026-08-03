@@ -5,6 +5,18 @@ from collections.abc import Mapping
 from types import TracebackType
 from typing import Any, Self
 
+from openai_codex.generated.v2_all import (
+    AgentMessageThreadItem,
+    ThreadItem,
+    Turn,
+    TurnStatus,
+)
+from openai_codex.models import (
+    AgentMessageDeltaNotification,
+    Notification,
+    TurnCompletedNotification,
+)
+
 from connector.runtime_protocol import RuntimeConfig
 from connector.runtimes.codex.sdk_client import (
     CodexSdkClient,
@@ -138,6 +150,11 @@ async def _test_codex_sdk_client_adapts_async_codex_thread_turn_flow() -> None:
     }
     assert notifications[0]["method"] == "turn/started"
     assert notifications[0]["params"]["turn"]["id"] == "turn_sdk"
+    assert any(
+        message["method"] == "item/agentMessage/delta"
+        and message["params"]["delta"] == "hi"
+        for message in notifications
+    )
     assert any(message["method"] == "turn/completed" for message in notifications)
 
 
@@ -291,11 +308,40 @@ class _FakeTurn:
         return {}
 
     async def stream(self) -> Any:
-        yield _FakeModelDump(
-            {
-                "method": "turn/completed",
-                "params": {"threadId": "thread_sdk", "turnId": self.id},
-            }
+        yield Notification(
+            method="item/agentMessage/delta",
+            payload=AgentMessageDeltaNotification(
+                delta="hi",
+                itemId="item_agent",
+                threadId="thread_sdk",
+                turnId=self.id,
+            ),
+        )
+        yield Notification(
+            method="turn/completed",
+            payload=TurnCompletedNotification(
+                threadId="thread_sdk",
+                turn=Turn(
+                    id=self.id,
+                    status=TurnStatus.completed,
+                    items=[
+                        ThreadItem(
+                            root=AgentMessageThreadItem(
+                                id="item_agent",
+                                type="agentMessage",
+                                text="hi",
+                                memoryCitation=None,
+                                phase=None,
+                            )
+                        )
+                    ],
+                    completedAt=None,
+                    durationMs=None,
+                    error=None,
+                    itemsView=None,
+                    startedAt=None,
+                ),
+            ),
         )
 
 
