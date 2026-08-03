@@ -301,3 +301,24 @@ def test_codex_timeline_projection_does_not_own_snapshot_reduction() -> None:
     assert "def raw_timeline_items(" not in projection_source
     assert "def timeline_items_from_thread(" in snapshot_source
     assert "def raw_timeline_items(" in snapshot_source
+
+
+def test_codex_timeline_projection_does_not_own_raw_item_metadata() -> None:
+    projection_source = (
+        CONNECTOR_PACKAGE / "runtimes" / "codex" / "timeline" / "projection.py"
+    ).read_text(encoding="utf-8")
+    raw_item_source = (
+        CONNECTOR_PACKAGE / "runtimes" / "codex" / "timeline" / "raw_item.py"
+    ).read_text(encoding="utf-8")
+
+    for function_name in (
+        "timeline_item_type",
+        "timeline_item_status",
+        "timeline_raw_type",
+        "timeline_raw_status",
+        "timeline_item_role",
+        "timeline_item_turn_id",
+        "timeline_item_revision",
+    ):
+        assert f"def {function_name}(" not in projection_source
+        assert f"def {function_name}(" in raw_item_source

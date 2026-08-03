@@ -223,7 +223,7 @@ uv run pytest tests/test_codex_runtime.py tests/test_connector_architecture.py -
 
 ### C03. Split raw item metadata helpers
 
-Status: todo.
+Status: complete.
 
 Move from `timeline/projection.py`:
 
@@ -247,6 +247,15 @@ Rules:
   code.
 - Do not expand their use into business logic.
 - `projection.py` should import these helpers, but should not own raw probing.
+
+Completed:
+
+- Added `connector/connector/runtimes/codex/timeline/raw_item.py`.
+- Moved raw item parent type, status, role, turn id, revision, and raw
+  type/status helpers out of `timeline/projection.py`.
+- Preserved public package exports from `connector.runtimes.codex.timeline`.
+- Added an architecture test that keeps raw item metadata helpers out of
+  `projection.py`.
 
 Verification:
 
@@ -426,7 +435,7 @@ Stop and ask before proceeding if any step would require:
 The next unchecked implementation item is:
 
 ```text
-C03. Split raw item metadata helpers
+C04. Remove `CodexTimelineProjection.to_legacy_raw()`
 ```
 
 Do not jump to C04/C05 before C01-C03 are done, because the raw projection
