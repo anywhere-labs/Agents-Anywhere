@@ -221,10 +221,34 @@ class CodexSdkClient:
         )
 
     async def _stream_turn(self, thread_id: str, turn_id: str, turn: Any) -> None:
+        completed_seen = False
+        cancelled = False
         try:
             async for notification in turn.stream():
-                await self._emit(notification_dict(notification, thread_id, turn_id))
+                message = notification_dict(notification, thread_id, turn_id)
+                if message.get("method") in {
+                    "turn/completed",
+                    "turn/failed",
+                    "turn/interrupted",
+                    "turn/cancelled",
+                }:
+                    completed_seen = True
+                await self._emit(message)
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
         finally:
+            if not completed_seen and not cancelled:
+                await self._emit(
+                    {
+                        "method": "turn/completed",
+                        "params": {
+                            "threadId": thread_id,
+                            "turnId": turn_id,
+                            "metadata": {"source": "codex.sdk.stream.finally"},
+                        },
+                    }
+                )
             self._stream_tasks.pop(turn_id, None)
             self._turns.pop(turn_id, None)
             if self._turns.get(thread_id) is turn:

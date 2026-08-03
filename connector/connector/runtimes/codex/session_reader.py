@@ -12,6 +12,7 @@ from connector.runtime_protocol.models import (
 )
 from connector.runtimes.codex import sessions as codex_sessions
 from connector.runtimes.codex import timeline as codex_timeline
+from connector.runtimes.codex.pending_messages import PendingClientMessageRegistry
 from connector.runtimes.codex.runtime_client import CodexRuntimeClient
 
 EnsureStarted = Callable[[], Awaitable[None]]
@@ -23,6 +24,7 @@ class CodexSessionReader:
     client: CodexRuntimeClient | None
     session_states: RuntimeSessionStateCache
     ensure_started: EnsureStarted
+    pending_messages: PendingClientMessageRegistry | None = None
 
     async def list_sessions(
         self,
@@ -120,6 +122,7 @@ class CodexSessionReader:
             external_session_id=external_session_id,
             thread=thread if isinstance(thread, dict) else {},
             limit=limit,
+            pending_messages=self.pending_messages,
         )
         return RuntimeTimelineSnapshot(
             session_id=session_id,

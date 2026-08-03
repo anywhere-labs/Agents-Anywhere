@@ -11,6 +11,7 @@ from connector.runtimes.codex.catalogs import (
     permission_catalog_from_codex_items,
 )
 from connector.runtimes.codex.runtime import CodexRuntime
+from connector.runtimes.codex.sdk_client import CodexSdkClient
 from connector.runtimes.codex.sessions import stable_session_id
 
 
@@ -399,7 +400,7 @@ async def _test_codex_runtime_reads_nested_turn_snapshot() -> None:
     )
 
     assert len(snapshot.items) == 1
-    assert snapshot.items[0].id.startswith("codex_thread_1_0_")
+    assert snapshot.items[0].id == "codex_thread_1_message-user-0"
     assert snapshot.items[0].content == {"text": "nested", "format": "markdown"}
 
 
@@ -716,6 +717,70 @@ async def _test_codex_runtime_completed_turn_syncs_timeline_snapshot() -> None:
     assert host.state_updates[-1]["status"] == "idle"
 
 
+def test_codex_runtime_tags_completed_user_echo_with_client_message_id() -> None:
+    asyncio.run(_test_codex_runtime_tags_completed_user_echo_with_client_message_id())
+
+
+async def _test_codex_runtime_tags_completed_user_echo_with_client_message_id() -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    await runtime.start_turn(
+        "sess_1",
+        "thread_1",
+        "hello from web",
+        client_message_id="cm_web_1",
+    )
+    await runtime._handle_notification(
+        {
+            "method": "turn/completed",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turn": {
+                    "id": "turn_new",
+                    "items": [
+                        {
+                            "type": "userMessage",
+                            "text": "hello from web",
+                            "status": "completed",
+                        },
+                    ],
+                },
+            },
+        }
+    )
+
+    item = host.timeline_syncs[-1]["items"][0]
+    assert item.id == "codex_client_cm_web_1"
+    assert item.source["clientMessageId"] == "cm_web_1"
+    assert item.source["derivedKey"].startswith("userMessage-")
+
+
+def test_codex_sdk_stream_finally_emits_completed_when_sdk_omits_it() -> None:
+    asyncio.run(_test_codex_sdk_stream_finally_emits_completed_when_sdk_omits_it())
+
+
+async def _test_codex_sdk_stream_finally_emits_completed_when_sdk_omits_it() -> None:
+    emitted: list[dict[str, Any]] = []
+    client = CodexSdkClient(_FakeSdkClient())
+    async def handler(message: dict[str, Any]) -> None:
+        emitted.append(message)
+
+    await client.start(handler)
+
+    await client._stream_turn("thread_1", "turn_1", _FakeSdkTurn())
+
+    assert [message["method"] for message in emitted] == [
+        "item/agentMessage/delta",
+        "turn/completed",
+    ]
+    assert emitted[-1]["params"]["metadata"] == {
+        "source": "codex.sdk.stream.finally"
+    }
+
+
 def test_codex_runtime_approval_request_upserts_session_notice() -> None:
     asyncio.run(_test_codex_runtime_approval_request_upserts_session_notice())
 
@@ -903,3 +968,18 @@ def _config() -> RuntimeConfig:
         revision=3,
         values={"environment": {}},
     )
+
+
+class _FakeSdkClient:
+    pass
+
+
+class _FakeSdkTurn:
+    async def stream(self):
+        yield {
+            "method": "item/agentMessage/delta",
+            "params": {
+                "itemId": "item_agent",
+                "delta": "hello",
+            },
+        }

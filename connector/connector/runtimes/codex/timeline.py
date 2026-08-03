@@ -11,6 +11,11 @@ from connector.runtimes.codex.sessions import (
     first_string_from_mapping,
     turn_id_from_result,
 )
+from connector.runtimes.codex.timeline_identity import (
+    client_message_id_from_raw,
+    derived_key,
+    timeline_item_id,
+)
 
 
 def timeline_items_from_thread(
@@ -18,10 +23,17 @@ def timeline_items_from_thread(
     external_session_id: str,
     thread: dict[str, Any],
     limit: int,
+    pending_messages: Any | None = None,
 ) -> tuple[RuntimeTimelineItem, ...]:
     raw_items = raw_timeline_items(thread)
     items: list[RuntimeTimelineItem] = []
     for index, raw in enumerate(raw_items[:limit]):
+        if pending_messages is not None:
+            pending_messages.attach_to_raw_item(
+                session_id=session_id,
+                external_session_id=external_session_id,
+                raw=raw,
+            )
         item_id = timeline_item_id(raw, external_session_id, index)
         content = timeline_item_content(raw)
         source = {
@@ -29,7 +41,11 @@ def timeline_items_from_thread(
             "event": "thread/read",
             "threadId": external_session_id,
             "rawType": raw.get("type"),
+            "derivedKey": derived_key(raw, index),
         }
+        client_message_id = client_message_id_from_raw(raw)
+        if client_message_id is not None:
+            source["clientMessageId"] = client_message_id
         item_type = timeline_item_type(raw)
         status = timeline_item_status(raw)
         role = timeline_item_role(raw)
@@ -79,14 +95,6 @@ def raw_timeline_items(thread: dict[str, Any]) -> list[dict[str, Any]]:
     if isinstance(messages, list):
         return [item for item in messages if isinstance(item, dict)]
     return []
-
-
-def timeline_item_id(raw: dict[str, Any], external_session_id: str, index: int) -> str:
-    for key in ("id", "itemId", "item_id"):
-        value = raw.get(key)
-        if isinstance(value, str) and value:
-            return value
-    return f"codex_{external_session_id}_{index}_{content_hash(raw)[:16]}"
 
 
 def timeline_item_type(raw: dict[str, Any]) -> str:

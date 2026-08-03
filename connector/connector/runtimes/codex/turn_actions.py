@@ -11,6 +11,7 @@ from connector.runtime_protocol import (
     RuntimeUnsupportedError,
 )
 from connector.runtimes.codex import sessions as codex_sessions
+from connector.runtimes.codex.pending_messages import PendingClientMessageRegistry
 from connector.runtimes.codex.runtime_client import CodexRuntimeClient
 from connector.runtimes.codex.runtime_helpers import (
     ensure_text_only_attachments,
@@ -26,6 +27,7 @@ class CodexTurnActions:
     session_states: RuntimeSessionStateCache
     active_turn_ids: dict[str, str]
     ensure_started: EnsureStarted
+    pending_messages: PendingClientMessageRegistry
 
     async def start_turn(
         self,
@@ -44,6 +46,12 @@ class CodexTurnActions:
             external_session_id=external_session_id,
             status="waiting",
             metadata={"source": "codex.turn/start.requested"},
+        )
+        self.pending_messages.register(
+            session_id=session_id,
+            external_session_id=external_session_id,
+            client_message_id=client_message_id,
+            text=content,
         )
         try:
             result = await self.client.request(
@@ -69,6 +77,11 @@ class CodexTurnActions:
         turn_id = codex_sessions.turn_id_from_result(result)
         if turn_id is not None:
             self.active_turn_ids[session_id] = turn_id
+            self.pending_messages.bind_turn(
+                session_id=session_id,
+                client_message_id=client_message_id,
+                turn_id=turn_id,
+            )
         await self._set_session_state(
             session_id=session_id,
             external_session_id=external_session_id,
@@ -107,6 +120,14 @@ class CodexTurnActions:
                 result={"externalSessionId": external_session_id},
             )
         await self.ensure_started()
+        self.pending_messages.register(
+            session_id=session_id,
+            external_session_id=external_session_id,
+            client_message_id=client_message_id,
+            text=content,
+            steering=True,
+            turn_id=turn_id,
+        )
         result = await self.client.request(
             "turn/steer",
             {

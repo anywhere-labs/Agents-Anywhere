@@ -7,13 +7,19 @@ from typing import Any
 from connector.runtime_protocol import RuntimeTimelineItem
 from connector.runtimes.codex import sessions as codex_sessions
 from connector.runtimes.codex import timeline as codex_timeline
+from connector.runtimes.codex.pending_messages import PendingClientMessageRegistry
+from connector.runtimes.codex.timeline_identity import (
+    client_message_id_from_raw,
+    derived_key,
+)
 
 
 class CodexTimelineAccumulator:
-    def __init__(self) -> None:
+    def __init__(self, pending_messages: PendingClientMessageRegistry | None = None) -> None:
         self._order_by_id: dict[str, int] = {}
         self._raw_by_id: dict[str, dict[str, Any]] = {}
         self._next_order = 0
+        self._pending_messages = pending_messages
 
     def item_from_notification(
         self,
@@ -25,6 +31,7 @@ class CodexTimelineAccumulator:
         raw = codex_timeline.raw_item_from_notification(method, params)
         if raw is None:
             return None
+        self._attach_client_message_id(session_id, external_session_id, raw)
         item_id = codex_timeline.timeline_item_id(raw, external_session_id, 0)
         previous = self._raw_by_id.get(item_id)
         merged = {**copy.deepcopy(previous or {}), **copy.deepcopy(raw)}
@@ -82,6 +89,7 @@ class CodexTimelineAccumulator:
                 and codex_timeline.timeline_item_turn_id(raw) is None
             ):
                 raw["turnId"] = turn_id
+            self._attach_client_message_id(session_id, external_session_id, raw)
             item_id = codex_timeline.timeline_item_id(raw, external_session_id, index)
             raw["id"] = item_id
             self._raw_by_id[item_id] = raw
@@ -140,7 +148,27 @@ class CodexTimelineAccumulator:
                 "threadId": external_session_id,
                 "rawType": raw_dict.get("type"),
                 "itemId": raw_dict.get("id") or raw_dict.get("itemId"),
+                "derivedKey": derived_key(raw_dict, fallback_index),
+                **(
+                    {"clientMessageId": client_message_id}
+                    if (client_message_id := client_message_id_from_raw(raw_dict))
+                    else {}
+                ),
             },
             revision=codex_timeline.timeline_item_revision(raw_dict),
             metadata={"raw": raw_dict},
+        )
+
+    def _attach_client_message_id(
+        self,
+        session_id: str,
+        external_session_id: str,
+        raw: dict[str, Any],
+    ) -> None:
+        if self._pending_messages is None:
+            return
+        self._pending_messages.attach_to_raw_item(
+            session_id=session_id,
+            external_session_id=external_session_id,
+            raw=raw,
         )

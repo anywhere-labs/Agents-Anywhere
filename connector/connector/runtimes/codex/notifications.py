@@ -46,8 +46,18 @@ class CodexNotificationProjector:
             return
         if method == "turn/started":
             await self._handle_turn_started(session_id, thread_id, params)
-        elif method == "turn/completed":
-            await self._handle_turn_completed(session_id, thread_id, params)
+        elif method in {
+            "turn/completed",
+            "turn/failed",
+            "turn/interrupted",
+            "turn/cancelled",
+        }:
+            await self._handle_turn_completed(
+                session_id,
+                thread_id,
+                params,
+                method=str(method),
+            )
         item = self.timeline.item_from_notification(
             session_id=session_id,
             external_session_id=thread_id,
@@ -114,13 +124,14 @@ class CodexNotificationProjector:
         session_id: str,
         thread_id: str,
         params: dict[str, Any],
+        method: str = "turn/completed",
     ) -> None:
         self.active_turn_ids.pop(session_id, None)
         turn_items = self.timeline.items_from_turn_notification(
             session_id=session_id,
             external_session_id=thread_id,
             params=params,
-            method="turn/completed",
+            method=method,
         )
         if turn_items:
             await self.host.timeline_sync(
@@ -129,13 +140,13 @@ class CodexNotificationProjector:
                 external_session_id=thread_id,
                 items=turn_items,
                 complete=False,
-                metadata={"source": "codex.turn/completed"},
+                metadata={"source": f"codex.{method}"},
             )
         await self._set_session_state(
             session_id=session_id,
             external_session_id=thread_id,
             status="idle",
-            metadata={"source": "codex.turn/completed"},
+            metadata={"source": f"codex.{method}"},
         )
 
     async def _set_session_state(

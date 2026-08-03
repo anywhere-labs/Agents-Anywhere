@@ -24,6 +24,7 @@ from connector.runtimes.codex.catalog_reader import CodexCatalogReader
 from connector.runtimes.codex.commands import list_codex_commands
 from connector.runtimes.codex.lifecycle import CodexRuntimeLifecycle
 from connector.runtimes.codex.notifications import CodexNotificationProjector
+from connector.runtimes.codex.pending_messages import PendingClientMessageRegistry
 from connector.runtimes.codex.runtime_client import CodexRuntimeClient
 from connector.runtimes.codex.session_reader import CodexSessionReader
 from connector.runtimes.codex.timeline_accumulator import CodexTimelineAccumulator
@@ -40,7 +41,10 @@ class CodexRuntime(AgentRuntime):
     def __post_init__(self) -> None:
         self._session_states = RuntimeSessionStateCache("codex", self.host)
         self._active_turn_ids: dict[str, str] = {}
-        self._timeline = CodexTimelineAccumulator()
+        self._pending_messages = PendingClientMessageRegistry()
+        self._timeline = CodexTimelineAccumulator(
+            pending_messages=self._pending_messages,
+        )
         self._notifications = CodexNotificationProjector(
             host=self.host,
             session_states=self._session_states,
@@ -61,6 +65,7 @@ class CodexRuntime(AgentRuntime):
             client=self.client,
             session_states=self._session_states,
             ensure_started=self.start,
+            pending_messages=self._pending_messages,
         )
         self._turns = CodexTurnController(
             host=self.host,
@@ -70,6 +75,7 @@ class CodexRuntime(AgentRuntime):
             ensure_started=self.start,
             list_model_catalog=self._catalogs.list_model_catalog,
             list_permission_catalog=self._catalogs.list_permission_catalog,
+            pending_messages=self._pending_messages,
         )
 
     @property

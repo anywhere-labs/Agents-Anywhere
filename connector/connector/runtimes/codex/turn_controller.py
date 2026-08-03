@@ -17,6 +17,7 @@ from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex import sessions as codex_sessions
 from connector.runtimes.codex.command_controller import CodexCommandController
 from connector.runtimes.codex.interaction_controller import CodexInteractionController
+from connector.runtimes.codex.pending_messages import PendingClientMessageRegistry
 from connector.runtimes.codex.runtime_client import CodexRuntimeClient
 from connector.runtimes.codex.runtime_helpers import ensure_text_only_attachments
 from connector.runtimes.codex.selection import (
@@ -39,6 +40,7 @@ class CodexTurnController:
     ensure_started: EnsureStarted
     list_model_catalog: ListModelCatalog
     list_permission_catalog: ListPermissionCatalog
+    pending_messages: PendingClientMessageRegistry
     actions: CodexTurnActions = field(init=False)
     commands: CodexCommandController = field(init=False)
     interactions: CodexInteractionController = field(init=False)
@@ -49,6 +51,7 @@ class CodexTurnController:
             session_states=self.session_states,
             active_turn_ids=self.active_turn_ids,
             ensure_started=self.ensure_started,
+            pending_messages=self.pending_messages,
         )
         self.commands = CodexCommandController(
             client=self.client,
