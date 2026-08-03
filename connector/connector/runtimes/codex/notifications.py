@@ -13,7 +13,7 @@ from connector.runtimes.codex.domain.approvals import (
 from connector.runtimes.codex.domain.notices import CodexNoticeRegistry
 from connector.runtimes.codex.sdk.events import CodexSdkEvent
 from connector.runtimes.codex.sdk.runtime_client import CodexNotificationMessage
-from connector.runtimes.codex.timeline_accumulator import CodexTimelineAccumulator
+from connector.runtimes.codex.timeline.accumulator import CodexTimelineAccumulator
 
 
 @dataclass(slots=True)

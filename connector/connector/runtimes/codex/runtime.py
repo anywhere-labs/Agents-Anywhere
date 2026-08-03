@@ -30,7 +30,7 @@ from connector.runtimes.codex.lifecycle.runtime_lifecycle import CodexRuntimeLif
 from connector.runtimes.codex.notifications import CodexNotificationProjector
 from connector.runtimes.codex.sdk.runtime_client import CodexRuntimeClient
 from connector.runtimes.codex.sessions.reader import CodexSessionReader
-from connector.runtimes.codex.timeline_accumulator import CodexTimelineAccumulator
+from connector.runtimes.codex.timeline.accumulator import CodexTimelineAccumulator
 from connector.runtimes.codex.turns.controller import CodexTurnController
 
 

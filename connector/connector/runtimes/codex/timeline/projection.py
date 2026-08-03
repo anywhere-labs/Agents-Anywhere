@@ -13,7 +13,7 @@ from connector.runtimes.codex.domain.sessions import (
     turn_id_from_result,
 )
 from connector.runtimes.codex.sdk.events import CodexSdkEvent
-from connector.runtimes.codex.timeline_identity import (
+from connector.runtimes.codex.timeline.identity import (
     client_message_id_from_raw,
     derived_key,
     native_item_id,

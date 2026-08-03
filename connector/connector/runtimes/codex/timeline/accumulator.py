@@ -11,7 +11,7 @@ from connector.runtimes.codex.domain.pending_messages import (
     PendingClientMessageRegistry,
 )
 from connector.runtimes.codex.sdk.events import CodexSdkEvent
-from connector.runtimes.codex.timeline_identity import (
+from connector.runtimes.codex.timeline.identity import (
     client_message_id_from_raw,
     derived_key,
 )
