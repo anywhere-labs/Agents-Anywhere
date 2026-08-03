@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
 from connector.logging import logger
+from connector.runtime_protocol import RuntimeProtocolError
 
 ConnectorDispatcher = Callable[[str, dict[str, Any]], Awaitable[Any]]
 
@@ -50,6 +51,19 @@ class ConnectorRpcChannel:
         try:
             result = await dispatch(method, params)
             await self.send_response(request_id, ok=True, result=result)
+        except RuntimeProtocolError as exc:
+            logger.warning(
+                "connector runtime request failed method={} id={} code={} message={}",
+                method,
+                request_id,
+                exc.code,
+                str(exc),
+            )
+            await self.send_response(
+                request_id,
+                ok=False,
+                error={"code": exc.code, "message": str(exc)},
+            )
         except Exception as exc:  # noqa: BLE001
             logger.exception("connector request failed method={} id={}", method, request_id)
             code = getattr(exc, "code", None) or exc.__class__.__name__

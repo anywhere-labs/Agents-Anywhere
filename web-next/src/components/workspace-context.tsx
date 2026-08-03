@@ -136,19 +136,49 @@ function mapSession(session: RealSessionView): SessionView {
     connectorId: session.connectorId,
     connectorStatus: session.connectorStatus,
     runtime: runtimeLabel(session.runtime),
+    externalSessionId: session.externalSessionId,
     title: session.title || "Untitled session",
     cwd: session.cwd,
     status: session.status,
     takeover: session.takeover,
     pinned: session.pinned,
+    pinnedAt: session.pinnedAt,
     archived: session.archived,
+    archivedAt: session.archivedAt,
     unread: session.unread,
     lastReadSeq: session.lastReadSeq,
+    lastSyncedAt: session.lastSyncedAt,
+    sourceObservedAt: session.sourceObservedAt,
+    lastActivityAt: session.lastActivityAt,
+    lastItemAt: session.lastItemAt,
+    lastItemOrderSeq: session.lastItemOrderSeq,
+    sortAt: session.sortAt,
     updatedSeq: session.updatedSeq,
     effectiveRunMode: session.effectiveRunMode,
     runtimeSettings: session.runtimeSettings ?? null,
     updatedAt: relativeSessionTime(session),
   }
+}
+
+function sessionSortMillis(session: SessionView): number {
+  const raw =
+    session.sortAt ||
+    session.lastActivityAt ||
+    session.lastItemAt ||
+    session.lastSyncedAt ||
+    session.sourceObservedAt
+  if (!raw) return 0
+  const value = Date.parse(raw)
+  return Number.isFinite(value) ? value : 0
+}
+
+function sortSessionViews(sessions: SessionView[]): SessionView[] {
+  return [...sessions].sort((a, b) =>
+    sessionSortMillis(b) - sessionSortMillis(a) ||
+    (b.lastItemOrderSeq ?? -1) - (a.lastItemOrderSeq ?? -1) ||
+    b.updatedSeq - a.updatedSeq ||
+    a.id.localeCompare(b.id),
+  )
 }
 
 function isDashboardSnapshotMessage(value: unknown): value is DashboardSnapshotMessage {
@@ -330,7 +360,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
   const applyDashboardSnapshot = React.useCallback((message: DashboardSnapshotMessage) => {
     setConnectors(message.connectors.map(mapConnector))
-    setSessions(message.sessions.map(mapSession))
+    setSessions(sortSessionViews(message.sessions.map(mapSession)))
     setIsLoading(false)
     initialLoadDoneRef.current = true
   }, [])
@@ -346,7 +376,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
           dashboardApi.listSessions(authSession.accessToken),
         ])
         setConnectors(connRes.connectors.map(mapConnector))
-        setSessions(sessRes.sessions.map(mapSession))
+        setSessions(sortSessionViews(sessRes.sessions.map(mapSession)))
         return
       }
       const [connRes, sessRes] = await Promise.all([
@@ -354,7 +384,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         listMockSessions("mock-token"),
       ])
       setConnectors(connRes.connectors)
-      setSessions(sessRes.sessions)
+      setSessions(sortSessionViews(sessRes.sessions))
     } finally {
       setIsLoading(false)
       initialLoadDoneRef.current = true
@@ -489,10 +519,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         const mapped = mapSession(response.session)
         setSessions((prev) => {
           const index = prev.findIndex((item) => item.id === mapped.id)
-          if (index === -1) return [mapped, ...prev]
+          if (index === -1) return sortSessionViews([mapped, ...prev])
           const next = [...prev]
           next[index] = mapped
-          return next
+          return sortSessionViews(next)
         })
       })
       .catch(() => {
@@ -628,7 +658,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       if (authSession?.accessToken) {
         const response = await dashboardApi.patchSession(authSession.accessToken, id, { title: nextTitle })
         const mapped = mapSession(response.session)
-        setSessions((prev) => prev.map((s) => (s.id === id ? mapped : s)))
+        setSessions((prev) => sortSessionViews(prev.map((s) => (s.id === id ? mapped : s))))
       } else {
         await patchMockSession("mock-token", id, { title: nextTitle })
       }
@@ -645,10 +675,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     const mapped = mapSession(session)
     setSessions((prev) => {
       const index = prev.findIndex((item) => item.id === mapped.id)
-      if (index === -1) return [mapped, ...prev]
+      if (index === -1) return sortSessionViews([mapped, ...prev])
       const next = [...prev]
       next[index] = mapped
-      return next
+      return sortSessionViews(next)
     })
   }, [])
 
@@ -664,10 +694,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       const mapped = mapSession(message.session)
       setSessions((prev) => {
         const index = prev.findIndex((item) => item.id === mapped.id)
-        if (index === -1) return [mapped, ...prev]
+        if (index === -1) return sortSessionViews([mapped, ...prev])
         const next = [...prev]
         next[index] = mapped
-        return next
+        return sortSessionViews(next)
       })
     }
   }, [])
@@ -696,10 +726,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     setSessions((prev) => {
       const withoutLocal = prev.filter((item) => item.id !== localSessionId)
       const index = withoutLocal.findIndex((item) => item.id === mapped.id)
-      if (index === -1) return [mapped, ...withoutLocal]
+      if (index === -1) return sortSessionViews([mapped, ...withoutLocal])
       const next = [...withoutLocal]
       next[index] = mapped
-      return next
+      return sortSessionViews(next)
     })
     const currentRoute = routeRef.current
     if (currentRoute.page === "session" && currentRoute.sessionId === localSessionId) {

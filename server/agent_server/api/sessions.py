@@ -50,6 +50,7 @@ from agent_server.core.protocol import (
 from agent_server.core.utc import utc_now
 from agent_server.deps import (
     current_user_id,
+    get_device_runtime_service,
     get_event_recovery_service,
     get_interaction_service,
     get_rpc,
@@ -70,6 +71,10 @@ from agent_server.services.connector_presence import (
     with_effective_session_connector_statuses,
 )
 from agent_server.services.dashboard_events import publish_dashboard_changed
+from agent_server.services.device_runtimes import (
+    DeviceRuntimeError,
+    DeviceRuntimeService,
+)
 from agent_server.services.effective_capabilities import project_session_capabilities
 from agent_server.services.event_recovery import EventRecoveryService
 from agent_server.services.interactions import (
@@ -873,6 +878,7 @@ async def sync_session(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
+    device_runtimes: DeviceRuntimeService = Depends(get_device_runtime_service),
 ) -> RpcResponsePayload:
     try:
         session = await db.get_session(session_id, user_id=user_id)
@@ -882,6 +888,14 @@ async def sync_session(
         raise HTTPException(status_code=409, detail="connector is offline")
     if not session.externalSessionId:
         raise HTTPException(status_code=409, detail="session has no external runtime id")
+    try:
+        await device_runtimes.ensure_active_running(
+            session.connectorId,
+            session.runtime,
+            user_id=user_id,
+        )
+    except DeviceRuntimeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     try:
         result = await manager.request(
             session.connectorId,

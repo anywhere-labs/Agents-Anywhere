@@ -13,13 +13,22 @@ from agent_server.core.protocol import (
     ProtocolPermissionCatalogResponse,
 )
 from agent_server.core.utc import utc_now
-from agent_server.deps import current_user_id, get_rpc, get_store
+from agent_server.deps import (
+    current_user_id,
+    get_device_runtime_service,
+    get_rpc,
+    get_store,
+)
 from agent_server.infra.connector_rpc import (
     ConnectorOfflineError,
     ConnectorRpcError,
     ConnectorRpcManager,
 )
 from agent_server.infra.repositories.facade import Store
+from agent_server.services.device_runtimes import (
+    DeviceRuntimeError,
+    DeviceRuntimeService,
+)
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 
@@ -33,8 +42,10 @@ async def get_agent_model_catalog(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
+    device_runtimes: DeviceRuntimeService = Depends(get_device_runtime_service),
 ) -> ProtocolModelCatalogResponse:
     await _require_connector_owner(db, connector_id, user_id)
+    await _ensure_runtime_ready(device_runtimes, connector_id, runtime, user_id)
     result = await _runtime_catalog_request(
         manager,
         connector_id,
@@ -59,8 +70,10 @@ async def get_agent_permission_catalog(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
+    device_runtimes: DeviceRuntimeService = Depends(get_device_runtime_service),
 ) -> ProtocolPermissionCatalogResponse:
     await _require_connector_owner(db, connector_id, user_id)
+    await _ensure_runtime_ready(device_runtimes, connector_id, runtime, user_id)
     result = await _runtime_catalog_request(
         manager,
         connector_id,
@@ -87,6 +100,18 @@ async def _require_connector_owner(
         raise HTTPException(status_code=404, detail="connector not found") from None
     if connector.userId != user_id:
         raise HTTPException(status_code=404, detail="connector not found")
+
+
+async def _ensure_runtime_ready(
+    service: DeviceRuntimeService,
+    connector_id: str,
+    runtime: RuntimeName,
+    user_id: str,
+) -> None:
+    try:
+        await service.ensure_active_running(connector_id, runtime, user_id=user_id)
+    except DeviceRuntimeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
 async def _runtime_catalog_request(

@@ -47,14 +47,23 @@ export type SessionView = {
   connectorId: string
   connectorStatus: ConnectorStatus
   runtime: string
+  externalSessionId?: string | null
   title?: string | null
   cwd?: string | null
   status: SessionStatus
   takeover: boolean
   pinned: boolean
+  pinnedAt?: string | null
   archived: boolean
+  archivedAt?: string | null
   unread: boolean
   lastReadSeq: number
+  lastSyncedAt?: string | null
+  sourceObservedAt?: string | null
+  lastActivityAt?: string | null
+  lastItemAt?: string | null
+  lastItemOrderSeq?: number | null
+  sortAt?: string | null
   updatedSeq: number
   effectiveRunMode?: "chat" | "terminal" | null
   runtimeSettings?: Record<string, unknown> | null

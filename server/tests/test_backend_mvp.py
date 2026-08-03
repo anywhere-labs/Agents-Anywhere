@@ -20,6 +20,7 @@ from agent_server.infra.connector_rpc import (
     DuplicateConnectorConnectionError,
 )
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
+from agent_server.services.device_runtimes import DeviceRuntimeService
 from agent_server.services.notices import upsert_execution_error_interaction
 
 
@@ -159,6 +160,79 @@ def create_connector_and_session(client: TestClient, user_id: str = ADMIN_USER):
     assert session_response.status_code == 200
     session_id = session_response.json()["session"]["id"]
     return connector_id, access_token, session_id, headers
+
+
+def _runtime_inventory(runtime: str) -> dict[str, Any]:
+    return {
+        "runtimes": [
+            {
+                "runtimeId": runtime,
+                "runtimeType": runtime,
+                "displayName": runtime.title(),
+                "discovery": {"available": True},
+                "schema": {
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": False,
+                },
+                "uiSchema": {},
+                "defaults": {},
+                "status": "available",
+                "configured": True,
+                "capabilities": {
+                    "modelCatalog": True,
+                    "permissionCatalog": True,
+                    "sessionSnapshot": True,
+                    "sessionState": True,
+                    "startTurn": True,
+                    "steerTurn": True,
+                    "interruptTurn": True,
+                    "interactions": True,
+                },
+                "metadata": {},
+            }
+        ]
+    }
+
+
+def _seed_running_runtime(
+    client: TestClient,
+    connector_id: str,
+    fake_rpc: Any,
+    runtime: str = "codex",
+) -> None:
+    client.app.state.rpc = fake_rpc
+    client.app.state.device_runtime_service = DeviceRuntimeService(
+        client.app.state.store,
+        fake_rpc,
+        client.app.state.timeline_broker,
+        client.app.state.redis,
+    )
+
+    async def _seed() -> None:
+        await client.app.state.device_runtime_service.ingest_inventory(
+            connector_id,
+            _runtime_inventory(runtime),
+        )
+        await client.app.state.store.set_device_runtime_config(
+            connector_id,
+            runtime,
+            {},
+        )
+        await client.app.state.store.set_device_runtime_active(
+            connector_id,
+            runtime,
+            True,
+        )
+        await client.app.state.store.set_device_runtime_status(
+            connector_id,
+            runtime,
+            "running",
+        )
+        await client.app.state.store.set_connector_status(connector_id, "online")
+
+    asyncio.run(_seed())
 
 
 def test_revoke_connector_rotates_token_and_disconnects(tmp_path):
@@ -2158,7 +2232,7 @@ def test_agent_catalog_reads_live_runtime_catalog(tmp_path):
     client = make_client(tmp_path)
     connector_id, _access_token, _session_id, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
-    client.app.state.rpc = fake_rpc
+    _seed_running_runtime(client, connector_id, fake_rpc, "codex")
 
     model = client.get(
         "/agents/codex/model-catalog",
@@ -3029,7 +3103,7 @@ def test_interrupt_and_sync_carry_runtime(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, _, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
-    client.app.state.rpc = fake_rpc
+    _seed_running_runtime(client, connector_id, fake_rpc, "claude")
     session_id = _create_claude_session(client, connector_id, headers, fake_rpc)
 
     # /interrupt now requires an open turn (turn.start with no turn.end).

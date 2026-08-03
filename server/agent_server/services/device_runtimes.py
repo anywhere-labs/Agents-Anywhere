@@ -186,6 +186,38 @@ class DeviceRuntimeService:
             await self._publish(connector_id, "runtime.active")
             return runtime
 
+    async def ensure_active_running(
+        self,
+        connector_id: str,
+        runtime_id: str,
+        *,
+        user_id: str,
+    ) -> DeviceRuntimeView:
+        async with self._runtime_lock(connector_id, runtime_id):
+            runtime = await self._get_owned(connector_id, runtime_id, user_id=user_id)
+            if not runtime.active:
+                raise DeviceRuntimeConflictError("runtime is not active")
+            if not runtime.configured or runtime.config is None:
+                raise DeviceRuntimeConflictError(
+                    "runtime must be configured before use"
+                )
+            if not runtime.present:
+                raise DeviceRuntimeConflictError(
+                    "runtime is not currently reported by the connector"
+                )
+            if not await self._manager.is_online(connector_id):
+                raise DeviceRuntimeOfflineError("connector is offline")
+
+            current = DeviceRuntimeView.model_validate(
+                await self._store.get_device_runtime(connector_id, runtime_id)
+            )
+            if current.status == "running":
+                return current
+            self._validate(current.config, self._schema(current))
+            started = await self._start_locked(current)
+            await self._publish(connector_id, "runtime.ensure_running")
+            return started
+
     async def delete_config(
         self,
         connector_id: str,

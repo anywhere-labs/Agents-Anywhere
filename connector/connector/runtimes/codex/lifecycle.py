@@ -31,16 +31,10 @@ class CodexRuntimeLifecycle:
     async def bootstrap(self) -> None:
         if self.client is None:
             return
-        for method in ("model/list", "thread/loaded/list"):
-            try:
-                result = await self.client.request(method)
-            except Exception as exc:  # noqa: BLE001
-                logger.debug(
-                    "codex bootstrap read failed method={} error={}", method, exc
-                )
-                continue
-            if method == "model/list":
-                self.model_list_result = result
+        try:
+            self.model_list_result = await self.client.request("model/list")
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("codex bootstrap read failed method=model/list error={}", exc)
 
     async def handle_notification(self, message: dict[str, Any]) -> None:
         await self.notifications.handle(message)

@@ -49,6 +49,19 @@ POST  /api/v2/sessions/bulk-archive
 
 `GET /sessions` returns list summaries for dashboard/session list UI. A list summary may include both meta and state because the list needs title, archived/read fields, connector status, and running status.
 
+List order is part of the API contract. The Server returns sessions ordered by:
+
+1. `sortAt` descending
+2. `lastItemOrderSeq` descending
+3. `updatedSeq` descending
+
+`sortAt` is currently computed as `lastActivityAt || lastItemAt || createdAt`.
+`lastActivityAt` is the runtime-provided `SessionMeta.ordering_time` projection.
+`lastItemAt` is derived from the newest timeline item's timestamp. Frontends
+must preserve these raw ordering fields and re-apply the same comparison after
+receiving realtime session upserts; display strings such as `updatedAt` are not
+valid ordering keys.
+
 `PATCH /sessions/{sessionId}` updates platform-owned meta/display fields only:
 
 ```json
