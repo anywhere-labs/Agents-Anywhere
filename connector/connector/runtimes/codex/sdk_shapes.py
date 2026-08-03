@@ -5,20 +5,11 @@ from typing import Any
 
 from connector.runtime_protocol import RuntimeInvalidRequestError
 from connector.runtimes.codex.runtime_client import NotificationHandler
+from connector.runtimes.codex.sdk_events import CodexSdkEvent, dump_sdk_value
 
 
 def dump_sdk_result(value: Any) -> dict[str, Any]:
-    if isinstance(value, dict):
-        return value
-    dump = getattr(value, "model_dump", None)
-    if callable(dump):
-        raw = dump(mode="json", by_alias=True, exclude_none=True)
-        return raw if isinstance(raw, dict) else {}
-    if hasattr(value, "__dict__"):
-        return {
-            key: item for key, item in vars(value).items() if not key.startswith("_")
-        }
-    return {}
+    return dump_sdk_value(value)
 
 
 def thread_ref(thread: Any) -> dict[str, Any]:
@@ -42,22 +33,11 @@ def notification_dict(
     thread_id: str,
     turn_id: str,
 ) -> dict[str, Any]:
-    raw = dump_sdk_result(notification)
-    method = raw.get("method")
-    params = raw.get("params")
-    if isinstance(method, str) and isinstance(params, dict):
-        params.setdefault("threadId", thread_id)
-        params.setdefault("turnId", turn_id)
-        return {"method": method, "params": params}
-    event = raw.get("type") or notification.__class__.__name__
-    return {
-        "method": str(event),
-        "params": {
-            **raw,
-            "threadId": thread_id,
-            "turnId": turn_id,
-        },
-    }
+    return CodexSdkEvent.from_value(
+        notification,
+        thread_id=thread_id,
+        turn_id=turn_id,
+    ).to_notification_dict()
 
 
 def run_input(params: Mapping[str, Any]) -> Any:

@@ -29,7 +29,7 @@ Rough completion by behavior area:
 
 | Area | Status | Notes |
 | --- | --- | --- |
-| SDK timeline source | Partial | SDK is the primary Codex source, but event normalization is still partially app-server-shaped. |
+| SDK timeline source | Complete for T02 | Codex SDK stream input now flows through `CodexSdkEvent`; broader item coverage continues in T04. |
 | Timeline identity and dedupe | Complete for T01 | `clientMessageId` tagging, live/snapshot echo projection, and stable fallback identity are covered; broader SDK event coverage continues in T02/T04. |
 | Turn lifecycle | Partial | Basic waiting/running/idle exists; stream-finally fallback started in `801f4b8`; error/interrupted semantics need stronger coverage. |
 | Notice/interaction lifecycle | Partial | Approval open/respond exists; close/resolved/failed lifecycle is incomplete. |
@@ -77,7 +77,7 @@ uv run ruff check connector/runtimes/codex tests/test_codex_runtime.py
 
 ### T02. Codex SDK-native event normalizer
 
-Status: not started.
+Status: complete.
 
 Goal:
 
@@ -90,6 +90,18 @@ Required behavior:
 - SDK objects using `model_dump`, plain dicts, dataclasses, and simple objects all normalize consistently.
 - Legacy method-shaped dicts remain accepted only as compatibility input.
 - Normalized events expose stable fields: `thread_id`, `turn_id`, `item_id`, `event_type`, `item_type`, `role`, `status`, `content`, `raw`.
+
+Completed:
+
+- Added `CodexSdkEvent` as the SDK-native normalized event shape.
+- SDK stream `notification_dict` now serializes from `CodexSdkEvent`.
+- `CodexNotificationProjector` reads normalized event fields before dispatching.
+- `CodexTimelineAccumulator` accepts normalized events directly while keeping legacy notification compatibility.
+- Added coverage for legacy method-shaped dicts, plain dicts, model-dump objects, dataclasses, and simple objects.
+
+Follow-up:
+
+- T04 expands the actual timeline item type coverage produced from normalized events.
 
 Verification:
 

@@ -10,6 +10,7 @@ from connector.runtimes.codex.approvals import (
     approval_notice_from_request,
     is_approval_request,
 )
+from connector.runtimes.codex.sdk_events import CodexSdkEvent
 from connector.runtimes.codex.timeline_accumulator import CodexTimelineAccumulator
 
 
@@ -23,11 +24,10 @@ class CodexNotificationProjector:
     timeline: CodexTimelineAccumulator
 
     async def handle(self, message: dict[str, Any]) -> None:
-        method = message.get("method")
-        params = (
-            message.get("params") if isinstance(message.get("params"), dict) else {}
-        )
-        thread_id = codex_sessions.thread_id_from_result(params)
+        event = CodexSdkEvent.from_message(message)
+        method = event.event_type
+        params = event.params
+        thread_id = event.thread_id or codex_sessions.thread_id_from_result(params)
         session_id = codex_sessions.session_id_from_notification(params)
         if session_id is None and thread_id is not None:
             session_id = codex_sessions.stable_session_id(
@@ -39,9 +39,9 @@ class CodexNotificationProjector:
             await self._handle_approval_request(
                 session_id=session_id,
                 thread_id=thread_id,
-                method=str(method),
+                method=method,
                 params=params,
-                request_id=message.get("id"),
+                request_id=event.request_id,
             )
             return
         if method == "turn/started":
@@ -58,11 +58,10 @@ class CodexNotificationProjector:
                 params,
                 method=str(method),
             )
-        item = self.timeline.item_from_notification(
+        item = self.timeline.item_from_event(
             session_id=session_id,
             external_session_id=thread_id,
-            method=str(method),
-            params=params,
+            event=event,
         )
         if item is not None:
             await self.host.timeline_item_upsert(item)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from connector.runtime_protocol import RuntimeConfig, SessionNotice
@@ -12,6 +13,8 @@ from connector.runtimes.codex.catalogs import (
 )
 from connector.runtimes.codex.runtime import CodexRuntime
 from connector.runtimes.codex.sdk_client import CodexSdkClient
+from connector.runtimes.codex.sdk_events import CodexSdkEvent
+from connector.runtimes.codex.sdk_shapes import notification_dict
 from connector.runtimes.codex.sessions import stable_session_id
 
 
@@ -226,6 +229,110 @@ async def _test_codex_runtime_lifecycle_and_config() -> None:
 
     assert client.started is True
     assert client.stopped is True
+
+
+def test_codex_sdk_event_normalizes_legacy_method_dict() -> None:
+    event = CodexSdkEvent.from_value(
+        {
+            "jsonrpc": "2.0",
+            "id": 42,
+            "method": "item/started",
+            "params": {
+                "threadId": "thread_1",
+                "turnId": "turn_1",
+                "item": {
+                    "id": "item_1",
+                    "type": "agentMessage",
+                    "role": "assistant",
+                    "status": "inProgress",
+                    "text": "hello",
+                },
+            },
+        }
+    )
+
+    assert event.legacy_method_shaped is True
+    assert event.event_type == "item/started"
+    assert event.thread_id == "thread_1"
+    assert event.turn_id == "turn_1"
+    assert event.item_id == "item_1"
+    assert event.item_type == "agentMessage"
+    assert event.role == "assistant"
+    assert event.status == "inProgress"
+    assert event.content == "hello"
+    assert event.request_id == 42
+
+
+def test_codex_sdk_event_normalizes_model_dump_object() -> None:
+    event = CodexSdkEvent.from_value(
+        _ModelDumpEvent(),
+        thread_id="thread_1",
+        turn_id="turn_1",
+    )
+
+    assert event.legacy_method_shaped is False
+    assert event.event_type == "item/agentMessage/delta"
+    assert event.thread_id == "thread_1"
+    assert event.turn_id == "turn_1"
+    assert event.item_id == "item_agent"
+    assert event.item_type == "agentMessage"
+    assert event.role == "assistant"
+    assert event.status == "inProgress"
+    assert event.content == "hel"
+
+
+def test_codex_sdk_event_normalizes_dataclass_and_simple_object() -> None:
+    dataclass_event = CodexSdkEvent.from_value(
+        _DataclassEvent(
+            type="item/completed",
+            item={
+                "id": "item_user",
+                "type": "userMessage",
+                "role": "user",
+                "status": "completed",
+                "content": {"text": "hi"},
+            },
+        ),
+        thread_id="thread_1",
+    )
+    object_event = CodexSdkEvent.from_value(
+        _SimpleEvent(),
+        thread_id="thread_2",
+        turn_id="turn_2",
+    )
+
+    assert dataclass_event.event_type == "item/completed"
+    assert dataclass_event.thread_id == "thread_1"
+    assert dataclass_event.item_id == "item_user"
+    assert dataclass_event.item_type == "userMessage"
+    assert dataclass_event.role == "user"
+    assert dataclass_event.status == "completed"
+    assert dataclass_event.content == {"text": "hi"}
+    assert object_event.event_type == "item/commandExecution/outputDelta"
+    assert object_event.thread_id == "thread_2"
+    assert object_event.turn_id == "turn_2"
+    assert object_event.item_id == "item_cmd"
+    assert object_event.item_type == "commandExecution"
+    assert object_event.content == "out"
+
+
+def test_codex_sdk_notification_dict_uses_normalized_event_shape() -> None:
+    message = notification_dict(_SimpleEvent(), "thread_1", "turn_1")
+
+    assert message == {
+        "method": "item/commandExecution/outputDelta",
+        "params": {
+            "type": "item/commandExecution/outputDelta",
+            "item": {
+                "id": "item_cmd",
+                "type": "commandExecution",
+                "status": "inProgress",
+            },
+            "outputDelta": "out",
+            "threadId": "thread_1",
+            "turnId": "turn_1",
+        },
+    }
 
 
 def test_codex_runtime_model_catalog_from_app_server() -> None:
@@ -1107,3 +1214,35 @@ class _FakeSdkTurn:
                 "delta": "hello",
             },
         }
+
+
+class _ModelDumpEvent:
+    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
+        _ = kwargs
+        return {
+            "type": "item/agentMessage/delta",
+            "item": {
+                "id": "item_agent",
+                "type": "agentMessage",
+                "role": "assistant",
+                "status": "inProgress",
+            },
+            "delta": "hel",
+        }
+
+
+@dataclass
+class _DataclassEvent:
+    type: str
+    item: dict[str, Any]
+
+
+class _SimpleEvent:
+    def __init__(self) -> None:
+        self.type = "item/commandExecution/outputDelta"
+        self.item = {
+            "id": "item_cmd",
+            "type": "commandExecution",
+            "status": "inProgress",
+        }
+        self.outputDelta = "out"

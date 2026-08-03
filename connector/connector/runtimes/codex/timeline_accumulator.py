@@ -8,6 +8,7 @@ from connector.runtime_protocol import RuntimeTimelineItem
 from connector.runtimes.codex import sessions as codex_sessions
 from connector.runtimes.codex import timeline as codex_timeline
 from connector.runtimes.codex.pending_messages import PendingClientMessageRegistry
+from connector.runtimes.codex.sdk_events import CodexSdkEvent
 from connector.runtimes.codex.timeline_identity import (
     client_message_id_from_raw,
     derived_key,
@@ -28,36 +29,53 @@ class CodexTimelineAccumulator:
         method: str,
         params: Mapping[str, Any],
     ) -> RuntimeTimelineItem | None:
-        raw = codex_timeline.raw_item_from_notification(method, params)
+        return self.item_from_event(
+            session_id=session_id,
+            external_session_id=external_session_id,
+            event=CodexSdkEvent.from_parts(
+                event_type=method,
+                params=dict(params),
+                raw={"method": method, "params": dict(params)},
+                legacy_method_shaped=True,
+            ),
+        )
+
+    def item_from_event(
+        self,
+        session_id: str,
+        external_session_id: str,
+        event: CodexSdkEvent,
+    ) -> RuntimeTimelineItem | None:
+        raw = codex_timeline.raw_item_from_notification(event.event_type, event.params)
         if raw is None:
             return None
         self._attach_client_message_id(session_id, external_session_id, raw)
         item_id = codex_timeline.timeline_item_id(raw, external_session_id, 0)
         previous = self._raw_by_id.get(item_id)
         merged = {**copy.deepcopy(previous or {}), **copy.deepcopy(raw)}
-        if method == "item/agentMessage/delta":
+        if event.event_type == "item/agentMessage/delta":
             merged["type"] = merged.get("type") or "agentMessage"
             merged["status"] = merged.get("status") or "inProgress"
             previous_text = previous.get("text") if previous else ""
             merged["text"] = (
                 f"{previous_text if isinstance(previous_text, str) else ''}"
-                f"{codex_timeline.notification_delta(params)}"
+                f"{codex_timeline.notification_delta(event.params)}"
             )
-        elif method == "item/commandExecution/outputDelta":
+        elif event.event_type == "item/commandExecution/outputDelta":
             merged["type"] = merged.get("type") or "commandExecution"
             merged["status"] = merged.get("status") or "inProgress"
             previous_output = previous.get("aggregatedOutput") if previous else ""
             merged["aggregatedOutput"] = (
                 f"{previous_output if isinstance(previous_output, str) else ''}"
-                f"{codex_timeline.notification_delta(params)}"
+                f"{codex_timeline.notification_delta(event.params)}"
             )
-        elif method == "item/started":
+        elif event.event_type == "item/started":
             merged.setdefault("status", "inProgress")
-        elif method == "item/completed":
+        elif event.event_type == "item/completed":
             merged["status"] = merged.get("status") or "completed"
         merged["id"] = item_id
         if codex_timeline.timeline_item_turn_id(merged) is None:
-            turn_id = codex_sessions.turn_id_from_result(dict(params))
+            turn_id = event.turn_id or codex_sessions.turn_id_from_result(event.params)
             if turn_id is not None:
                 merged["turnId"] = turn_id
         self._raw_by_id[item_id] = merged
@@ -65,7 +83,7 @@ class CodexTimelineAccumulator:
             session_id=session_id,
             external_session_id=external_session_id,
             raw=merged,
-            event=method,
+            event=event.event_type,
         )
 
     def items_from_turn_notification(
