@@ -32,39 +32,37 @@ class CodexNotificationProjector:
             if isinstance(message, CodexSdkEvent)
             else CodexSdkEvent.from_message(message)
         )
-        method = event.event_type
         params = event.params
         thread_id = event.thread_id or codex_sessions.thread_id_from_result(params)
-        session_id = codex_sessions.session_id_from_notification(params)
+        session_id = (
+            event.platform_session_id
+            or codex_sessions.session_id_from_notification(params)
+        )
         if session_id is None and thread_id is not None:
             session_id = codex_sessions.stable_session_id(
                 self.host.connector_id, thread_id
             )
         if session_id is None or thread_id is None:
             return
-        if is_approval_request(method):
+        if is_approval_request(event.event_type):
             await self._handle_approval_request(
                 session_id=session_id,
                 thread_id=thread_id,
-                method=method,
+                method=event.event_type,
                 params=params,
                 request_id=event.request_id,
             )
             return
-        if method == "turn/started":
+        if event.is_turn_started:
             await self._handle_turn_started(session_id, thread_id, params)
-        elif method in {
-            "turn/completed",
-            "turn/interrupted",
-            "turn/cancelled",
-        }:
+        elif event.is_terminal_turn:
             await self._handle_turn_completed(
                 session_id,
                 thread_id,
                 params,
-                method=str(method),
+                method=event.event_type,
             )
-        elif method == "turn/failed":
+        elif event.is_failed_turn:
             await self._handle_turn_failed(session_id, thread_id, params)
         item = self.timeline.item_from_event(
             session_id=session_id,
@@ -227,11 +225,7 @@ class CodexNotificationProjector:
         cached = self.session_states.get(session_id)
         if cached is not None and cached.status == "blocked":
             return
-        if event.event_type in {
-            "item/started",
-            "item/agentMessage/delta",
-            "item/commandExecution/outputDelta",
-        }:
+        if event.is_running_item_event:
             await self._set_session_state(
                 session_id=session_id,
                 external_session_id=thread_id,

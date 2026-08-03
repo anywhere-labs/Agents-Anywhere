@@ -129,6 +129,9 @@ Progress:
   `CodexSdkEvent` instead of immediately becoming method/params dictionaries.
 - `CodexTimelineAccumulator` now stores and merges `CodexTimelineProjection`
   objects instead of using raw dictionaries as its internal item cache.
+- `CodexNotificationProjector` now dispatches through `CodexSdkEvent` semantic
+  properties such as `is_turn_started`, `is_terminal_turn`, `is_failed_turn`,
+  and `is_running_item_event`.
 - The remaining timeline projection still has a transitional
   `to_legacy_raw()` adapter for identity/content/source helpers; remove that in
   the next reducer cleanup slice.

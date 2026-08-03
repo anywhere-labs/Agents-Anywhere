@@ -47,6 +47,7 @@ DeltaNotificationPayload = (
 class CodexSdkEvent:
     event_type: str
     thread_id: str | None
+    platform_session_id: str | None
     turn_id: str | None
     item_id: str | None
     item_type: str | None
@@ -162,6 +163,13 @@ class CodexSdkEvent:
         return cls(
             event_type=event_type,
             thread_id=thread_id,
+            platform_session_id=_first_string(
+                params,
+                "platformSessionId",
+                "platform_session_id",
+                "sessionId",
+                "session_id",
+            ),
             turn_id=turn_id,
             item_id=item_id,
             item_type=item_type,
@@ -173,6 +181,30 @@ class CodexSdkEvent:
             request_id=request_id,
             legacy_method_shaped=legacy_method_shaped,
         )
+
+    @property
+    def is_turn_started(self) -> bool:
+        return self.event_type == "turn/started"
+
+    @property
+    def is_terminal_turn(self) -> bool:
+        return self.event_type in {
+            "turn/completed",
+            "turn/interrupted",
+            "turn/cancelled",
+        }
+
+    @property
+    def is_failed_turn(self) -> bool:
+        return self.event_type == "turn/failed"
+
+    @property
+    def is_running_item_event(self) -> bool:
+        return self.event_type in {
+            "item/started",
+            "item/agentMessage/delta",
+            "item/commandExecution/outputDelta",
+        }
 
     def to_notification_dict(self) -> dict[str, Any]:
         return {
