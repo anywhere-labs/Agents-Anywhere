@@ -89,7 +89,12 @@ Goal:
 
 Required behavior:
 
-- SDK objects using `model_dump`, plain dicts, dataclasses, and simple objects all normalize consistently.
+- SDK event/result inputs must be explicit data shapes: plain dicts or objects
+  that expose an explicit `model_dump()` mapping.
+- SDK handles such as thread/turn objects must be read by method-specific shape
+  readers that extract only required public protocol fields such as `id`.
+- Generic object dumping through dataclass recursion, `vars()`, or `__dict__` is
+  not allowed in the active SDK adapter.
 - Legacy method-shaped dicts remain accepted only as compatibility input.
 - Normalized events expose stable fields: `thread_id`, `turn_id`, `item_id`, `event_type`, `item_type`, `role`, `status`, `content`, `raw`.
 
@@ -99,7 +104,12 @@ Completed:
 - SDK stream `notification_dict` now serializes from `CodexSdkEvent`.
 - `CodexNotificationProjector` reads normalized event fields before dispatching.
 - `CodexTimelineAccumulator` accepts normalized events directly while keeping legacy notification compatibility.
-- Added coverage for legacy method-shaped dicts, plain dicts, model-dump objects, dataclasses, and simple objects.
+- Added coverage for legacy method-shaped dicts, plain dicts, and model-dump
+  objects.
+- Codex SDK result handling now uses method-specific readers for model lists,
+  thread lists, thread reads, thread updates, turn actions, and compact results.
+- Codex SDK thread/turn handles are read explicitly by id and are never
+  recursively dumped or copied.
 
 Follow-up:
 
