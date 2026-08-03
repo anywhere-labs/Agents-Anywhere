@@ -20,8 +20,8 @@ from connector.runtimes.codex.command_controller import CodexCommandController
 from connector.runtimes.codex.interaction_controller import CodexInteractionController
 from connector.runtimes.codex.notice_registry import CodexNoticeRegistry
 from connector.runtimes.codex.pending_messages import PendingClientMessageRegistry
-from connector.runtimes.codex.runtime_client import CodexRuntimeClient
 from connector.runtimes.codex.runtime_helpers import ensure_text_only_attachments
+from connector.runtimes.codex.sdk.runtime_client import CodexRuntimeClient
 from connector.runtimes.codex.selection import (
     model_settings_from_selection,
     permission_settings_from_selection,

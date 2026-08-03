@@ -18,7 +18,7 @@ from connector.runtime_protocol.models import (
 from connector.runtimes.codex import sessions as codex_sessions
 from connector.runtimes.codex import timeline as codex_timeline
 from connector.runtimes.codex.pending_messages import PendingClientMessageRegistry
-from connector.runtimes.codex.runtime_client import CodexRuntimeClient
+from connector.runtimes.codex.sdk.runtime_client import CodexRuntimeClient
 from connector.runtimes.codex.selection import selections_from_thread_state
 
 ListModelCatalog = Callable[[str | None, int], Awaitable[RuntimeModelCatalog]]

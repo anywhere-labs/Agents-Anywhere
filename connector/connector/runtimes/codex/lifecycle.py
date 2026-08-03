@@ -5,7 +5,7 @@ from typing import Any
 
 from connector.logging import logger
 from connector.runtimes.codex.notifications import CodexNotificationProjector
-from connector.runtimes.codex.runtime_client import (
+from connector.runtimes.codex.sdk.runtime_client import (
     CodexNotificationMessage,
     CodexRuntimeClient,
 )

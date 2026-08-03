@@ -4,8 +4,8 @@ from collections.abc import Mapping
 from typing import Any
 
 from connector.runtime_protocol import RuntimeInvalidRequestError
-from connector.runtimes.codex.runtime_client import NotificationHandler
-from connector.runtimes.codex.sdk_events import CodexSdkEvent, sdk_event_mapping
+from connector.runtimes.codex.sdk.events import CodexSdkEvent, sdk_event_mapping
+from connector.runtimes.codex.sdk.runtime_client import NotificationHandler
 
 
 def model_list_result(result: Any) -> dict[str, Any]:

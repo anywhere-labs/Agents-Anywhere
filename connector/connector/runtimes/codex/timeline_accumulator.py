@@ -8,7 +8,7 @@ from connector.runtime_protocol import RuntimeTimelineItem
 from connector.runtimes.codex import sessions as codex_sessions
 from connector.runtimes.codex import timeline as codex_timeline
 from connector.runtimes.codex.pending_messages import PendingClientMessageRegistry
-from connector.runtimes.codex.sdk_events import CodexSdkEvent
+from connector.runtimes.codex.sdk.events import CodexSdkEvent
 from connector.runtimes.codex.timeline_identity import (
     client_message_id_from_raw,
     derived_key,

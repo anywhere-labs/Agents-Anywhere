@@ -6,12 +6,12 @@ from collections.abc import Mapping
 from typing import Any
 
 from connector.runtime_protocol import RuntimeConfig, RuntimeInvalidRequestError
-from connector.runtimes.codex.runtime_client import (
+from connector.runtimes.codex.sdk.events import CodexSdkEvent
+from connector.runtimes.codex.sdk.runtime_client import (
     CodexRuntimeClient,
     NotificationHandler,
 )
-from connector.runtimes.codex.sdk_events import CodexSdkEvent
-from connector.runtimes.codex.sdk_shapes import (
+from connector.runtimes.codex.sdk.shapes import (
     call_with_optional_handler,
     compact_result,
     id_of,

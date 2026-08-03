@@ -215,11 +215,11 @@ def test_codex_runtime_depends_on_transport_protocol_not_transports() -> None:
         CONNECTOR_PACKAGE / "runtimes" / "codex" / "runtime.py"
     ).read_text(encoding="utf-8")
     sdk_source = (
-        CONNECTOR_PACKAGE / "runtimes" / "codex" / "sdk_client.py"
+        CONNECTOR_PACKAGE / "runtimes" / "codex" / "sdk" / "client.py"
     ).read_text(encoding="utf-8")
 
     assert "CodexRuntimeClient" in runtime_source
-    assert "sdk_client" not in runtime_source
+    assert ".sdk.client" not in runtime_source
     assert "app_server_client" not in runtime_source
     assert "openai_codex" not in runtime_source
     assert "openai_codex" in sdk_source

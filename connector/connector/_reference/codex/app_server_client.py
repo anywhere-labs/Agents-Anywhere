@@ -9,7 +9,7 @@ from typing import Any
 from connector.launch import LaunchTarget
 from connector.logging import logger
 from connector.runtime_protocol import RuntimeConfig
-from connector.runtimes.codex.runtime_client import NotificationHandler
+from connector.runtimes.codex.sdk.runtime_client import NotificationHandler
 
 APP_SERVER_STREAM_LIMIT = 64 * 1024 * 1024
 

@@ -15,11 +15,11 @@ from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex import sessions as codex_sessions
 from connector.runtimes.codex.notice_registry import CodexNoticeRegistry
 from connector.runtimes.codex.pending_messages import PendingClientMessageRegistry
-from connector.runtimes.codex.runtime_client import CodexRuntimeClient
 from connector.runtimes.codex.runtime_helpers import (
     ensure_text_only_attachments,
     soft_interrupt_failure_reason,
 )
+from connector.runtimes.codex.sdk.runtime_client import CodexRuntimeClient
 from connector.runtimes.codex.selection import (
     model_settings_from_selection,
     permission_settings_from_selection,

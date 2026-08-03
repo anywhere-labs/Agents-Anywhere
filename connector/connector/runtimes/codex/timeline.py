@@ -8,7 +8,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from connector.runtime_protocol import RuntimeTimelineItem
-from connector.runtimes.codex.sdk_events import CodexSdkEvent
+from connector.runtimes.codex.sdk.events import CodexSdkEvent
 from connector.runtimes.codex.sessions import (
     first_string_from_mapping,
     turn_id_from_result,

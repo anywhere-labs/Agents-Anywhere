@@ -15,9 +15,10 @@ from connector.runtime_protocol import (
     RuntimeProvider,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
-from connector.runtimes.codex import provider_config, sdk_discovery
+from connector.runtimes.codex import provider_config
 from connector.runtimes.codex.runtime import CodexRuntime
-from connector.runtimes.codex.sdk_client import sdk_client_from_config
+from connector.runtimes.codex.sdk.client import sdk_client_from_config
+from connector.runtimes.codex.sdk.discovery import check_codex_sdk
 
 SdkChecker = Callable[[], dict[str, Any]]
 SdkClientFactory = Callable[[RuntimeConfig], Any]
@@ -41,7 +42,7 @@ class CodexProvider(RuntimeProvider):
         sdk_checker: SdkChecker | None = None,
         sdk_client_factory: SdkClientFactory | None = None,
     ) -> None:
-        self._sdk_checker = sdk_checker or sdk_discovery.check_codex_sdk
+        self._sdk_checker = sdk_checker or check_codex_sdk
         self._sdk_client_factory = sdk_client_factory or sdk_client_from_config
         self._discovered_sdk: dict[str, Any] | None = None
 

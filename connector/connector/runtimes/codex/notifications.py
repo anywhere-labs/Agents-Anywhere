@@ -11,8 +11,8 @@ from connector.runtimes.codex.approvals import (
     is_approval_request,
 )
 from connector.runtimes.codex.notice_registry import CodexNoticeRegistry
-from connector.runtimes.codex.runtime_client import CodexNotificationMessage
-from connector.runtimes.codex.sdk_events import CodexSdkEvent
+from connector.runtimes.codex.sdk.events import CodexSdkEvent
+from connector.runtimes.codex.sdk.runtime_client import CodexNotificationMessage
 from connector.runtimes.codex.timeline_accumulator import CodexTimelineAccumulator
 
 

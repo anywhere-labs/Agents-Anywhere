@@ -18,12 +18,12 @@ from openai_codex.models import (
 )
 
 from connector.runtime_protocol import RuntimeConfig
-from connector.runtimes.codex.sdk_client import (
+from connector.runtimes.codex.sdk.client import (
     CodexSdkClient,
     _create_sdk_client,
     _sdk_config,
 )
-from connector.runtimes.codex.sdk_events import CodexSdkEvent
+from connector.runtimes.codex.sdk.events import CodexSdkEvent
 
 
 def test_codex_sdk_client_delegates_runtime_protocol_methods() -> None:

@@ -25,9 +25,9 @@ from connector.runtimes.codex.catalogs import (
     permission_catalog_from_codex_items,
 )
 from connector.runtimes.codex.runtime import CodexRuntime
-from connector.runtimes.codex.sdk_client import CodexSdkClient
-from connector.runtimes.codex.sdk_events import CodexSdkEvent
-from connector.runtimes.codex.sdk_shapes import notification_dict, thread_ref
+from connector.runtimes.codex.sdk.client import CodexSdkClient
+from connector.runtimes.codex.sdk.events import CodexSdkEvent
+from connector.runtimes.codex.sdk.shapes import notification_dict, thread_ref
 from connector.runtimes.codex.sessions import stable_session_id
 
 

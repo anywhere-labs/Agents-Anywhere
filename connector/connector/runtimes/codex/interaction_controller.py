@@ -12,7 +12,7 @@ from connector.runtime_protocol import (
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex.approvals import approval_decision
 from connector.runtimes.codex.notice_registry import CodexNoticeRegistry
-from connector.runtimes.codex.runtime_client import CodexRuntimeClient
+from connector.runtimes.codex.sdk.runtime_client import CodexRuntimeClient
 
 EnsureStarted = Callable[[], Awaitable[None]]
 

@@ -26,7 +26,7 @@ from connector.runtimes.codex.lifecycle import CodexRuntimeLifecycle
 from connector.runtimes.codex.notice_registry import CodexNoticeRegistry
 from connector.runtimes.codex.notifications import CodexNotificationProjector
 from connector.runtimes.codex.pending_messages import PendingClientMessageRegistry
-from connector.runtimes.codex.runtime_client import CodexRuntimeClient
+from connector.runtimes.codex.sdk.runtime_client import CodexRuntimeClient
 from connector.runtimes.codex.session_reader import CodexSessionReader
 from connector.runtimes.codex.timeline_accumulator import CodexTimelineAccumulator
 from connector.runtimes.codex.turn_controller import CodexTurnController
