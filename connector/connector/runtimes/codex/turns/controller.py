@@ -15,7 +15,6 @@ from connector.runtime_protocol import (
     RuntimeUnsupportedError,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
-from connector.runtimes.codex.command_controller import CodexCommandController
 from connector.runtimes.codex.domain import sessions as codex_sessions
 from connector.runtimes.codex.domain.notices import CodexNoticeRegistry
 from connector.runtimes.codex.domain.pending_messages import (
@@ -25,10 +24,11 @@ from connector.runtimes.codex.domain.selections import (
     model_settings_from_selection,
     permission_settings_from_selection,
 )
-from connector.runtimes.codex.interaction_controller import CodexInteractionController
 from connector.runtimes.codex.runtime_helpers import ensure_text_only_attachments
 from connector.runtimes.codex.sdk.runtime_client import CodexRuntimeClient
-from connector.runtimes.codex.turn_actions import CodexTurnActions
+from connector.runtimes.codex.turns.actions import CodexTurnActions
+from connector.runtimes.codex.turns.commands import CodexCommandController
+from connector.runtimes.codex.turns.interactions import CodexInteractionController
 
 EnsureStarted = Callable[[], Awaitable[None]]
 ListModelCatalog = Callable[[str | None, int], Awaitable[RuntimeModelCatalog]]
