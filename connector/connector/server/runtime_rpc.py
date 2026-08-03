@@ -8,10 +8,9 @@ from connector.runtime_protocol import (
     RuntimeSupervisor,
 )
 from connector.server.runtime_rpc_params import (
-    int_param,
-    optional_string,
-    required_runtime_id,
-    runtime_config,
+    RuntimeCatalogParams,
+    RuntimeConfigParams,
+    RuntimeIdParams,
 )
 from connector.server.runtime_rpc_payloads import (
     agent_inventory_payload,
@@ -77,50 +76,54 @@ class RuntimeRpcHandler:
         if method == "runtime.discover":
             return await self.discover_runtimes()
         if method == "runtime.configSchema":
-            runtime_id = required_runtime_id(params)
-            schema = await self.agent_runtime_supervisor.entry(runtime_id).provider.get_config_schema()
+            parsed = RuntimeIdParams.parse(params)
+            schema = await self.agent_runtime_supervisor.entry(
+                parsed.runtime_id
+            ).provider.get_config_schema()
             return {"configSchema": runtime_config_schema_payload(schema)}
         if method == "runtime.config":
-            runtime_id = required_runtime_id(params)
-            entry = self.agent_runtime_supervisor.entry(runtime_id)
+            parsed = RuntimeIdParams.parse(params)
+            entry = self.agent_runtime_supervisor.entry(parsed.runtime_id)
             if entry.runtime is None:
                 return {
-                    "runtimeId": runtime_id,
+                    "runtimeId": parsed.runtime_id,
                     "running": False,
                     "config": None,
                 }
             config = await entry.runtime.get_config()
             return {
-                "runtimeId": runtime_id,
+                "runtimeId": parsed.runtime_id,
                 "running": True,
                 "config": runtime_config_payload(config),
             }
         if method == "runtime.validateConfig":
-            runtime_id = required_runtime_id(params)
-            config = runtime_config(params)
-            await self.agent_runtime_supervisor.validate_config(runtime_id, config)
-            return {"runtimeId": runtime_id, "valid": True}
+            parsed = RuntimeConfigParams.parse(params)
+            await self.agent_runtime_supervisor.validate_config(
+                parsed.runtime_id, parsed.config
+            )
+            return {"runtimeId": parsed.runtime_id, "valid": True}
         if method == "runtime.start":
-            runtime_id = required_runtime_id(params)
-            values = runtime_config(params)
-            await self.agent_runtime_supervisor.start(runtime_id, values)
-            return {"runtimeId": runtime_id, "status": "running"}
+            parsed = RuntimeConfigParams.parse(params)
+            await self.agent_runtime_supervisor.start(parsed.runtime_id, parsed.config)
+            return {"runtimeId": parsed.runtime_id, "status": "running"}
         if method == "runtime.stop":
-            runtime_id = required_runtime_id(params)
-            await self.agent_runtime_supervisor.stop(runtime_id)
-            return {"runtimeId": runtime_id, "status": "stopped"}
+            parsed = RuntimeIdParams.parse(params)
+            await self.agent_runtime_supervisor.stop(parsed.runtime_id)
+            return {"runtimeId": parsed.runtime_id, "status": "stopped"}
         if method == "runtime.modelCatalog":
             runtime = self._resolve_agent_runtime(params)
+            parsed = RuntimeCatalogParams.parse(params)
             catalog = await runtime.list_model_catalog(
-                query=optional_string(params.get("query")),
-                limit=int_param(params, "limit", 100),
+                query=parsed.query,
+                limit=parsed.limit,
             )
             return {"catalog": model_catalog_payload(catalog)}
         if method == "runtime.permissionCatalog":
             runtime = self._resolve_agent_runtime(params)
+            parsed = RuntimeCatalogParams.parse(params)
             catalog = await runtime.list_permission_catalog(
-                query=optional_string(params.get("query")),
-                limit=int_param(params, "limit", 100),
+                query=parsed.query,
+                limit=parsed.limit,
             )
             return {"catalog": permission_catalog_payload(catalog)}
         if method == "session.discover":

@@ -132,6 +132,9 @@ Progress:
 - `CodexNotificationProjector` now dispatches through `CodexSdkEvent` semantic
   properties such as `is_turn_started`, `is_terminal_turn`, `is_failed_turn`,
   and `is_running_item_event`.
+- Connector Server runtime RPC dispatch now parses request dictionaries into
+  dedicated dataclasses before calling `AgentRuntime`, keeping wire-level
+  `.get(...)` access inside `runtime_rpc_params.py`.
 - The remaining timeline projection still has a transitional
   `to_legacy_raw()` adapter for identity/content/source helpers; remove that in
   the next reducer cleanup slice.

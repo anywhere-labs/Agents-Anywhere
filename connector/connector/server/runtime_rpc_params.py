@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from connector.runtime_protocol import RuntimeAttachment
@@ -73,7 +74,9 @@ def runtime_attachments(params: dict[str, Any]) -> tuple[RuntimeAttachment, ...]
             RuntimeAttachment(
                 file_id=file_id,
                 name=optional_string(raw.get("name")),
-                media_type=optional_string(raw.get("mediaType") or raw.get("media_type")),
+                media_type=optional_string(
+                    raw.get("mediaType") or raw.get("media_type")
+                ),
                 size=raw.get("size") if isinstance(raw.get("size"), int) else None,
                 sha256=optional_string(raw.get("sha256")),
             )
@@ -121,3 +124,214 @@ def string_tuple(value: Any) -> tuple[str, ...]:
             raise TypeError("args must contain only strings")
         args.append(item)
     return tuple(args)
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeIdParams:
+    runtime_id: str
+
+    @classmethod
+    def parse(cls, params: dict[str, Any]) -> RuntimeIdParams:
+        return cls(runtime_id=required_runtime_id(params))
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeConfigParams:
+    runtime_id: str
+    config: dict[str, Any]
+
+    @classmethod
+    def parse(cls, params: dict[str, Any]) -> RuntimeConfigParams:
+        return cls(
+            runtime_id=required_runtime_id(params),
+            config=runtime_config(params),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeCatalogParams:
+    query: str | None
+    limit: int
+
+    @classmethod
+    def parse(cls, params: dict[str, Any]) -> RuntimeCatalogParams:
+        return cls(
+            query=optional_string(params.get("query")),
+            limit=int_param(params, "limit", 100),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SessionDiscoverParams:
+    limit: int
+    cursor: str | None
+    force: bool
+
+    @classmethod
+    def parse(cls, params: dict[str, Any]) -> SessionDiscoverParams:
+        return cls(
+            limit=int_param(params, "limit", 100),
+            cursor=optional_string(params.get("cursor")),
+            force=bool(params.get("force", True)),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SessionReadParams:
+    session_id: str
+    external_session_id: str | None
+    limit: int
+
+    @classmethod
+    def parse(cls, params: dict[str, Any]) -> SessionReadParams:
+        return cls(
+            session_id=required_session_id(params),
+            external_session_id=optional_string(params.get("externalSessionId")),
+            limit=int_param(params, "limit", 100),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SessionSelectionUpdateParams:
+    session_id: str
+    external_session_id: str | None
+    selections: dict[str, str | None]
+
+    @classmethod
+    def parse(cls, params: dict[str, Any]) -> SessionSelectionUpdateParams:
+        return cls(
+            session_id=required_session_id(params),
+            external_session_id=optional_string(params.get("externalSessionId")),
+            selections=runtime_selections(params),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SessionCreateParams:
+    session_id: str
+    content: str
+    title: str | None
+    cwd: str | None
+    selections: dict[str, str | None]
+    attachments: tuple[RuntimeAttachment, ...]
+    client_message_id: str | None
+
+    @classmethod
+    def parse(cls, params: dict[str, Any]) -> SessionCreateParams:
+        return cls(
+            session_id=required_session_id(params),
+            content=required_content(params),
+            title=optional_string(params.get("title")),
+            cwd=optional_string(params.get("cwd")),
+            selections=runtime_selections(params),
+            attachments=runtime_attachments(params),
+            client_message_id=optional_string(params.get("clientMessageId")),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class TurnStartParams:
+    session_id: str
+    external_session_id: str | None
+    content: str
+    selections: dict[str, str | None]
+    attachments: tuple[RuntimeAttachment, ...]
+    client_message_id: str | None
+
+    @classmethod
+    def parse(cls, params: dict[str, Any]) -> TurnStartParams:
+        return cls(
+            session_id=required_session_id(params),
+            external_session_id=optional_string(params.get("externalSessionId")),
+            content=required_content(params),
+            selections=runtime_selections(params),
+            attachments=runtime_attachments(params),
+            client_message_id=optional_string(params.get("clientMessageId")),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class TurnSteerParams:
+    session_id: str
+    external_session_id: str | None
+    content: str
+    attachments: tuple[RuntimeAttachment, ...]
+    client_message_id: str | None
+
+    @classmethod
+    def parse(cls, params: dict[str, Any]) -> TurnSteerParams:
+        return cls(
+            session_id=required_session_id(params),
+            external_session_id=optional_string(params.get("externalSessionId")),
+            content=required_content(params),
+            attachments=runtime_attachments(params),
+            client_message_id=optional_string(params.get("clientMessageId")),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class TurnInterruptParams:
+    session_id: str
+    external_session_id: str | None
+    reason: str | None
+
+    @classmethod
+    def parse(cls, params: dict[str, Any]) -> TurnInterruptParams:
+        return cls(
+            session_id=required_session_id(params),
+            external_session_id=optional_string(params.get("externalSessionId")),
+            reason=optional_string(params.get("reason")),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SessionCommandsParams:
+    session_id: str
+    external_session_id: str | None
+    query: str | None
+    limit: int
+
+    @classmethod
+    def parse(cls, params: dict[str, Any]) -> SessionCommandsParams:
+        return cls(
+            session_id=required_session_id(params),
+            external_session_id=optional_string(params.get("externalSessionId")),
+            query=optional_string(params.get("query")),
+            limit=int_param(params, "limit", 50),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CommandExecuteParams:
+    session_id: str
+    external_session_id: str | None
+    command: str
+    raw: str | None
+    args: tuple[str, ...]
+
+    @classmethod
+    def parse(cls, params: dict[str, Any]) -> CommandExecuteParams:
+        return cls(
+            session_id=required_session_id(params),
+            external_session_id=optional_string(params.get("externalSessionId")),
+            command=required_command(params),
+            raw=optional_string(params.get("raw")),
+            args=string_tuple(params.get("args") or ()),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class InteractionRespondParams:
+    session_id: str
+    notice_id: str
+    action_id: str
+    input_data: dict[str, Any] | None
+
+    @classmethod
+    def parse(cls, params: dict[str, Any]) -> InteractionRespondParams:
+        return cls(
+            session_id=required_session_id(params),
+            notice_id=required_notice_id(params),
+            action_id=required_action_id(params),
+            input_data=optional_mapping(params.get("inputData")),
+        )

@@ -4,9 +4,8 @@ from typing import Any
 
 from connector.runtime_protocol import AgentRuntime, RuntimeHostClient
 from connector.server.runtime_rpc_params import (
-    int_param,
-    optional_string,
-    required_session_id,
+    SessionDiscoverParams,
+    SessionReadParams,
 )
 from connector.server.runtime_rpc_payloads import (
     session_meta_payload,
@@ -19,10 +18,11 @@ async def discover_sessions(
     host: RuntimeHostClient,
     params: dict[str, Any],
 ) -> dict[str, Any]:
+    parsed = SessionDiscoverParams.parse(params)
     sessions = await runtime.list_sessions(
-        limit=int_param(params, "limit", 100),
-        cursor=optional_string(params.get("cursor")),
-        force=bool(params.get("force", True)),
+        limit=parsed.limit,
+        cursor=parsed.cursor,
+        force=parsed.force,
     )
     for session in sessions:
         await host.session_meta_upsert(
@@ -45,12 +45,11 @@ async def sync_session_snapshot(
     host: RuntimeHostClient,
     params: dict[str, Any],
 ) -> dict[str, Any]:
-    session_id = required_session_id(params)
-    external_session_id = optional_string(params.get("externalSessionId"))
+    parsed = SessionReadParams.parse(params)
     snapshot = await runtime.get_session_snapshot(
-        session_id,
-        external_session_id,
-        int_param(params, "limit", 100),
+        parsed.session_id,
+        parsed.external_session_id,
+        parsed.limit,
     )
     await host.timeline_sync(
         session_id=snapshot.session_id,
@@ -60,7 +59,9 @@ async def sync_session_snapshot(
         complete=snapshot.complete,
         metadata=snapshot.metadata,
     )
-    state = await runtime.get_session_state(session_id, external_session_id)
+    state = await runtime.get_session_state(
+        parsed.session_id, parsed.external_session_id
+    )
     if state is not None:
         await host.session_state_update(
             session_id=state.session_id,
@@ -72,7 +73,9 @@ async def sync_session_snapshot(
             error=state.error,
             metadata=state.metadata,
         )
-    for notice in await runtime.get_session_notices(session_id, external_session_id):
+    for notice in await runtime.get_session_notices(
+        parsed.session_id, parsed.external_session_id
+    ):
         await host.notice_upsert(notice)
     return {
         "sessionId": snapshot.session_id,
@@ -87,9 +90,10 @@ async def read_session_state(
     host: RuntimeHostClient,
     params: dict[str, Any],
 ) -> dict[str, Any]:
-    session_id = required_session_id(params)
-    external_session_id = optional_string(params.get("externalSessionId"))
-    state = await runtime.get_session_state(session_id, external_session_id)
+    parsed = SessionReadParams.parse(params)
+    state = await runtime.get_session_state(
+        parsed.session_id, parsed.external_session_id
+    )
     if state is None:
         return {"state": None}
     await host.session_state_update(
