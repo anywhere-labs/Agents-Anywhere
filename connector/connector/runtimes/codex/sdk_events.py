@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import dataclass
 from typing import Any
 
 
@@ -26,7 +26,7 @@ class CodexSdkEvent:
         thread_id: str | None = None,
         turn_id: str | None = None,
     ) -> CodexSdkEvent:
-        raw = dump_sdk_value(value)
+        raw = sdk_event_mapping(value)
         method = raw.get("method")
         params = raw.get("params")
         if isinstance(method, str) and isinstance(params, dict):
@@ -128,20 +128,13 @@ class CodexSdkEvent:
         }
 
 
-def dump_sdk_value(value: Any) -> dict[str, Any]:
+def sdk_event_mapping(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         return dict(value)
     dump = getattr(value, "model_dump", None)
     if callable(dump):
         raw = dump(mode="json", by_alias=True, exclude_none=True)
         return dict(raw) if isinstance(raw, dict) else {}
-    if is_dataclass(value) and not isinstance(value, type):
-        raw = asdict(value)
-        return dict(raw) if isinstance(raw, dict) else {}
-    if hasattr(value, "__dict__"):
-        return {
-            key: item for key, item in vars(value).items() if not key.startswith("_")
-        }
     return {}
 
 

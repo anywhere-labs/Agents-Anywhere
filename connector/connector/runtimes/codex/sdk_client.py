@@ -12,9 +12,10 @@ from connector.runtimes.codex.runtime_client import (
 )
 from connector.runtimes.codex.sdk_shapes import (
     call_with_optional_handler,
-    dump_sdk_result,
+    compact_result,
     id_of,
     maybe_await,
+    model_list_result,
     notification_dict,
     optional_int,
     optional_string,
@@ -22,7 +23,11 @@ from connector.runtimes.codex.sdk_shapes import (
     run_input,
     sdk_approval_mode,
     sdk_sandbox,
+    thread_list_result,
+    thread_read_result,
     thread_ref,
+    thread_update_result,
+    turn_action_result,
     turn_ref,
 )
 
@@ -105,7 +110,7 @@ class CodexSdkClient:
             result = await self._client.models(
                 include_hidden=bool(params.get("includeHidden") or params.get("include_hidden"))
             )
-            return dump_sdk_result(result)
+            return model_list_result(result)
         if method == "thread/list" and callable(
             getattr(self._client, "thread_list", None)
         ):
@@ -113,14 +118,14 @@ class CodexSdkClient:
                 cursor=optional_string(params.get("cursor")),
                 limit=optional_int(params.get("limit")),
             )
-            return dump_sdk_result(result)
+            return thread_list_result(result)
         if method == "thread/read":
             thread_id = required_thread_id(params)
             thread = self._thread_handle(thread_id)
             result = await thread.read(
                 include_turns=bool(params.get("includeTurns") or params.get("include_turns"))
             )
-            return dump_sdk_result(result)
+            return thread_read_result(result)
         if method == "thread/start" and callable(
             getattr(self._client, "thread_start", None)
         ):
@@ -136,7 +141,7 @@ class CodexSdkClient:
         if method == "thread/update":
             thread = self._thread_handle(required_thread_id(params))
             result = await self._update_thread_settings(thread, params)
-            return dump_sdk_result(result) or {"thread": thread_ref(thread)}
+            return thread_update_result(result) or {"thread": thread_ref(thread)}
         if method == "turn/start":
             thread_id = required_thread_id(params)
             thread = self._thread_handle(thread_id)
@@ -162,15 +167,15 @@ class CodexSdkClient:
         if method == "turn/steer":
             turn = self._turn_handle(params)
             result = await turn.steer(run_input(params))
-            return dump_sdk_result(result) or {"turn": turn_ref(turn)}
+            return turn_action_result(result) or {"turn": turn_ref(turn)}
         if method == "turn/interrupt":
             turn = self._turn_handle(params)
             result = await turn.interrupt()
-            return dump_sdk_result(result) or {"turn": turn_ref(turn)}
+            return turn_action_result(result) or {"turn": turn_ref(turn)}
         if method == "thread/compact/start":
             thread = self._thread_handle(required_thread_id(params))
             result = await thread.compact()
-            return dump_sdk_result(result)
+            return compact_result(result)
         return None
 
     def _thread_handle(self, thread_id: str) -> Any:

@@ -5,27 +5,58 @@ from typing import Any
 
 from connector.runtime_protocol import RuntimeInvalidRequestError
 from connector.runtimes.codex.runtime_client import NotificationHandler
-from connector.runtimes.codex.sdk_events import CodexSdkEvent, dump_sdk_value
+from connector.runtimes.codex.sdk_events import CodexSdkEvent, sdk_event_mapping
 
 
-def dump_sdk_result(value: Any) -> dict[str, Any]:
-    return dump_sdk_value(value)
+def model_list_result(result: Any) -> dict[str, Any]:
+    raw = _explicit_sdk_mapping(result)
+    if isinstance(raw.get("models"), list) or isinstance(raw.get("data"), list):
+        return raw
+    return raw if raw else {}
+
+
+def thread_list_result(result: Any) -> dict[str, Any]:
+    raw = _explicit_sdk_mapping(result)
+    if (
+        isinstance(raw.get("threads"), list)
+        or isinstance(raw.get("items"), list)
+        or isinstance(raw.get("data"), list)
+    ):
+        return raw
+    return raw if raw else {}
+
+
+def thread_read_result(result: Any) -> dict[str, Any]:
+    raw = _explicit_sdk_mapping(result)
+    if isinstance(raw.get("thread"), dict) or isinstance(raw.get("items"), list):
+        return raw
+    return raw if raw else {}
+
+
+def thread_update_result(result: Any) -> dict[str, Any]:
+    return _explicit_sdk_mapping(result)
+
+
+def turn_action_result(result: Any) -> dict[str, Any]:
+    return _explicit_sdk_mapping(result)
+
+
+def compact_result(result: Any) -> dict[str, Any]:
+    return _explicit_sdk_mapping(result)
+
+
+def _explicit_sdk_mapping(value: Any) -> dict[str, Any]:
+    return sdk_event_mapping(value)
 
 
 def thread_ref(thread: Any) -> dict[str, Any]:
-    dumped = dump_sdk_result(thread)
-    thread_id = id_of(thread) or optional_string(dumped.get("id"))
-    if thread_id is not None:
-        dumped.setdefault("id", thread_id)
-    return dumped
+    thread_id = id_of(thread)
+    return {"id": thread_id} if thread_id is not None else {}
 
 
 def turn_ref(turn: Any) -> dict[str, Any]:
-    dumped = dump_sdk_result(turn)
-    turn_id = id_of(turn) or optional_string(dumped.get("id"))
-    if turn_id is not None:
-        dumped.setdefault("id", turn_id)
-    return dumped
+    turn_id = id_of(turn)
+    return {"id": turn_id} if turn_id is not None else {}
 
 
 def notification_dict(

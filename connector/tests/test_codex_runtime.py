@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -14,7 +15,7 @@ from connector.runtimes.codex.catalogs import (
 from connector.runtimes.codex.runtime import CodexRuntime
 from connector.runtimes.codex.sdk_client import CodexSdkClient
 from connector.runtimes.codex.sdk_events import CodexSdkEvent
-from connector.runtimes.codex.sdk_shapes import notification_dict
+from connector.runtimes.codex.sdk_shapes import notification_dict, thread_ref
 from connector.runtimes.codex.sessions import stable_session_id
 
 
@@ -298,43 +299,44 @@ def test_codex_sdk_event_normalizes_model_dump_object() -> None:
     assert event.content == "hel"
 
 
-def test_codex_sdk_event_normalizes_dataclass_and_simple_object() -> None:
-    dataclass_event = CodexSdkEvent.from_value(
-        _DataclassEvent(
-            type="item/completed",
-            item={
+def test_codex_sdk_event_normalizes_explicit_dict_shape() -> None:
+    event = CodexSdkEvent.from_value(
+        {
+            "type": "item/completed",
+            "item": {
                 "id": "item_user",
                 "type": "userMessage",
                 "role": "user",
                 "status": "completed",
                 "content": {"text": "hi"},
             },
-        ),
+        },
         thread_id="thread_1",
     )
-    object_event = CodexSdkEvent.from_value(
-        _SimpleEvent(),
-        thread_id="thread_2",
-        turn_id="turn_2",
-    )
 
-    assert dataclass_event.event_type == "item/completed"
-    assert dataclass_event.thread_id == "thread_1"
-    assert dataclass_event.item_id == "item_user"
-    assert dataclass_event.item_type == "userMessage"
-    assert dataclass_event.role == "user"
-    assert dataclass_event.status == "completed"
-    assert dataclass_event.content == {"text": "hi"}
-    assert object_event.event_type == "item/commandExecution/outputDelta"
-    assert object_event.thread_id == "thread_2"
-    assert object_event.turn_id == "turn_2"
-    assert object_event.item_id == "item_cmd"
-    assert object_event.item_type == "commandExecution"
-    assert object_event.content == "out"
+    assert event.event_type == "item/completed"
+    assert event.thread_id == "thread_1"
+    assert event.item_id == "item_user"
+    assert event.item_type == "userMessage"
+    assert event.role == "user"
+    assert event.status == "completed"
+    assert event.content == {"text": "hi"}
 
 
 def test_codex_sdk_notification_dict_uses_normalized_event_shape() -> None:
-    message = notification_dict(_SimpleEvent(), "thread_1", "turn_1")
+    message = notification_dict(
+        {
+            "type": "item/commandExecution/outputDelta",
+            "item": {
+                "id": "item_cmd",
+                "type": "commandExecution",
+                "status": "inProgress",
+            },
+            "outputDelta": "out",
+        },
+        "thread_1",
+        "turn_1",
+    )
 
     assert message == {
         "method": "item/commandExecution/outputDelta",
@@ -350,6 +352,14 @@ def test_codex_sdk_notification_dict_uses_normalized_event_shape() -> None:
             "turnId": "turn_1",
         },
     }
+
+
+def test_codex_sdk_thread_ref_ignores_private_sdk_handles() -> None:
+    lock = threading.Lock()
+
+    dumped = thread_ref(_SdkThreadHandle(id="thread_1", _client=lock))
+
+    assert dumped == {"id": "thread_1"}
 
 
 def test_codex_runtime_model_catalog_from_app_server() -> None:
@@ -2225,17 +2235,6 @@ class _ModelDumpEvent:
 
 
 @dataclass
-class _DataclassEvent:
-    type: str
-    item: dict[str, Any]
-
-
-class _SimpleEvent:
-    def __init__(self) -> None:
-        self.type = "item/commandExecution/outputDelta"
-        self.item = {
-            "id": "item_cmd",
-            "type": "commandExecution",
-            "status": "inProgress",
-        }
-        self.outputDelta = "out"
+class _SdkThreadHandle:
+    id: str
+    _client: Any
