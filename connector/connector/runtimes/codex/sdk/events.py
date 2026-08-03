@@ -10,14 +10,21 @@ from openai_codex.generated.v2_all import (
     AgentMessageThreadItem,
     CommandExecutionOutputDeltaNotification,
     CommandExecutionThreadItem,
+    ContentItem,
     ErrorNotification,
     FileChangeOutputDeltaNotification,
     FileChangePatchUpdatedNotification,
     FileChangeThreadItem,
     FunctionCallResponseItem,
+    ImageUserInput,
+    InputImageContentItem,
+    InputTextContentItem,
     ItemCompletedNotification,
     ItemStartedNotification,
+    LocalImageUserInput,
+    MentionUserInput,
     MessageResponseItem,
+    OutputTextContentItem,
     PlanDeltaNotification,
     PlanThreadItem,
     RawResponseItemCompletedNotification,
@@ -25,10 +32,13 @@ from openai_codex.generated.v2_all import (
     ReasoningSummaryTextDeltaNotification,
     ReasoningTextDeltaNotification,
     ReasoningThreadItem,
+    SkillUserInput,
+    TextUserInput,
     ThreadItem,
     Turn,
     TurnCompletedNotification,
     TurnStartedNotification,
+    UserInput,
     UserMessageThreadItem,
 )
 from openai_codex.models import Notification
@@ -467,21 +477,29 @@ def _sdk_response_item(item: Any) -> dict[str, Any]:
     }
 
 
-def _sdk_user_input(value: Any) -> dict[str, Any]:
-    root = getattr(value, "root", value)
-    text = _string_attr(root, "text")
-    if text is not None:
-        return {"type": "text", "text": text}
-    return {"type": _string_attr(root, "type") or root.__class__.__name__}
+def _sdk_user_input(value: UserInput) -> dict[str, Any]:
+    root = value.root
+    if isinstance(root, TextUserInput):
+        return {"type": "text", "text": root.text}
+    if isinstance(root, ImageUserInput):
+        return {"type": "image", "url": root.url}
+    if isinstance(root, LocalImageUserInput):
+        return {"type": "localImage", "path": root.path}
+    if isinstance(root, SkillUserInput):
+        return {"type": "skill", "name": root.name, "path": root.path}
+    if isinstance(root, MentionUserInput):
+        return {"type": "mention", "name": root.name, "path": root.path}
+    return {"type": root.__class__.__name__}
 
 
-def _sdk_content_text(items: Sequence[Any]) -> str:
+def _sdk_content_text(items: Sequence[ContentItem]) -> str:
     parts: list[str] = []
     for item in items:
-        root = getattr(item, "root", item)
-        text = _string_attr(root, "text")
-        if text:
-            parts.append(text)
+        root = item.root
+        if isinstance(root, InputTextContentItem | OutputTextContentItem):
+            parts.append(root.text)
+        elif isinstance(root, InputImageContentItem):
+            parts.append(root.image_url)
     return "\n".join(parts)
 
 
@@ -495,15 +513,6 @@ def _sdk_turn_error(error: Any) -> dict[str, Any]:
             else {}
         ),
     }
-
-
-def _sequence_attr(value: Any, name: str) -> Sequence[Any]:
-    raw = getattr(value, name, ())
-    return raw if isinstance(raw, Sequence) and not isinstance(raw, str | bytes) else ()
-
-
-def _string_sequence_attr(value: Any, name: str) -> list[str]:
-    return [item for item in _sequence_attr(value, name) if isinstance(item, str)]
 
 
 def _sdk_sequence_value(value: Any) -> list[Any]:
