@@ -45,7 +45,10 @@ class CodexTimelineAccumulator:
         external_session_id: str,
         event: CodexSdkEvent,
     ) -> RuntimeTimelineItem | None:
-        projection = codex_timeline.timeline_projection_from_event(event)
+        projection = (
+            codex_timeline.timeline_projection_from_sdk_event(event)
+            or codex_timeline.timeline_projection_from_event(event)
+        )
         if projection is None:
             return None
         projection = self._attach_client_message_id(
@@ -61,9 +64,7 @@ class CodexTimelineAccumulator:
             previous_text = previous.text if previous and previous.text else ""
             merged = projection.with_status(
                 projection.status or "inProgress"
-            ).with_text(
-                f"{previous_text}{codex_timeline.notification_delta(event.params)}"
-            )
+            ).with_text(f"{previous_text}{self.event_delta(event)}")
         elif event.event_type == "item/commandExecution/outputDelta":
             previous_output = (
                 previous.aggregated_output
@@ -72,23 +73,17 @@ class CodexTimelineAccumulator:
             )
             merged = projection.with_status(
                 projection.status or "inProgress"
-            ).with_aggregated_output(
-                f"{previous_output}{codex_timeline.notification_delta(event.params)}"
-            )
+            ).with_aggregated_output(f"{previous_output}{self.event_delta(event)}")
         elif event.event_type == "item/reasoning/delta":
             previous_text = previous.text if previous and previous.text else ""
             merged = projection.with_status(
                 projection.status or "inProgress"
-            ).with_text(
-                f"{previous_text}{codex_timeline.notification_delta(event.params)}"
-            )
+            ).with_text(f"{previous_text}{self.event_delta(event)}")
         elif event.event_type == "item/fileChange/patchUpdated":
             previous_patch = previous.patch if previous and previous.patch else ""
             merged = projection.with_status(
                 projection.status or "inProgress"
-            ).with_patch(
-                f"{previous_patch}{codex_timeline.notification_delta(event.params)}"
-            )
+            ).with_patch(f"{previous_patch}{self.event_delta(event)}")
         elif event.event_type == "item/started":
             merged = projection.with_status(projection.status or "inProgress")
         elif event.event_type == "item/completed":
@@ -142,6 +137,41 @@ class CodexTimelineAccumulator:
             )
         return tuple(items)
 
+    def items_from_turn_event(
+        self,
+        session_id: str,
+        external_session_id: str,
+        event: CodexSdkEvent,
+    ) -> tuple[RuntimeTimelineItem, ...]:
+        projections = codex_timeline.timeline_projections_from_sdk_turn_event(event)
+        if projections is None:
+            return self.items_from_turn_notification(
+                session_id=session_id,
+                external_session_id=external_session_id,
+                params=event.params,
+                method=event.event_type,
+            )
+        items: list[RuntimeTimelineItem] = []
+        for index, projection in enumerate(projections):
+            projection = self._attach_client_message_id(
+                session_id, external_session_id, projection
+            )
+            item_id = projection.item_id(
+                external_session_id=external_session_id,
+                fallback_index=index,
+            )
+            self._projection_by_id[item_id] = projection
+            items.append(
+                self._runtime_item(
+                    session_id=session_id,
+                    external_session_id=external_session_id,
+                    projection=projection,
+                    event=event.event_type,
+                    fallback_index=index,
+                )
+            )
+        return tuple(items)
+
     def _runtime_item(
         self,
         session_id: str,
@@ -186,3 +216,9 @@ class CodexTimelineAccumulator:
         if client_message_id is None:
             return projection
         return projection.with_client_message_id(client_message_id)
+
+    def event_delta(self, event: CodexSdkEvent) -> str:
+        return (
+            codex_timeline.sdk_event_delta_text(event)
+            or codex_timeline.notification_delta(event.params)
+        )

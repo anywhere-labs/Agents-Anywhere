@@ -59,8 +59,7 @@ class CodexNotificationProjector:
             await self._handle_turn_completed(
                 session_id,
                 thread_id,
-                params,
-                method=event.event_type,
+                event,
             )
         elif event.is_failed_turn:
             await self._handle_turn_failed(session_id, thread_id, params)
@@ -130,15 +129,14 @@ class CodexNotificationProjector:
         self,
         session_id: str,
         thread_id: str,
-        params: dict[str, Any],
-        method: str = "turn/completed",
+        event: CodexSdkEvent,
     ) -> None:
         self.active_turn_ids.pop(session_id, None)
-        turn_items = self.timeline.items_from_turn_notification(
+        method = event.event_type
+        turn_items = self.timeline.items_from_turn_event(
             session_id=session_id,
             external_session_id=thread_id,
-            params=params,
-            method=method,
+            event=event,
         )
         if turn_items:
             await self.host.timeline_sync(

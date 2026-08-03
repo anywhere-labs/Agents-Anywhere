@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from openai_codex.generated.v2_all import (
@@ -14,6 +14,7 @@ from openai_codex.generated.v2_all import (
 )
 from openai_codex.models import (
     AgentMessageDeltaNotification,
+    CommandExecutionOutputDeltaNotification,
     Notification,
     TurnCompletedNotification,
 )
@@ -48,6 +49,7 @@ from connector.runtimes.codex.sdk.runtime_client import (
     CodexTurnResult,
 )
 from connector.runtimes.codex.sdk.shapes import notification_dict, thread_ref
+from connector.runtimes.codex.timeline.accumulator import CodexTimelineAccumulator
 from connector.runtimes.codex.timeline.items import (
     CodexAgentMessageItem,
     CodexCommandExecutionItem,
@@ -577,6 +579,87 @@ def test_codex_sdk_event_normalizes_typed_turn_completion() -> None:
     assert event.params["turn"]["id"] == "turn_done"
     assert event.params["turn"]["items"][0]["type"] == "agentMessage"
     assert event.params["turn"]["items"][0]["text"] == "hello"
+
+
+def test_codex_timeline_projects_typed_sdk_delta_without_params_dict() -> None:
+    event = CodexSdkEvent.from_value(
+        Notification(
+            method="item/commandExecution/outputDelta",
+            payload=CommandExecutionOutputDeltaNotification(
+                delta="running tests",
+                itemId="item_command",
+                threadId="thread_1",
+                turnId="turn_1",
+            ),
+        ),
+    )
+    event_without_params = replace(event, params={})
+    accumulator = CodexTimelineAccumulator()
+
+    item = accumulator.item_from_event(
+        session_id="sess_1",
+        external_session_id="thread_1",
+        event=event_without_params,
+    )
+
+    assert item is not None
+    assert item.id == "item_command"
+    assert item.type == "tool"
+    assert item.status == "running"
+    assert item.content == {
+        "kind": "command",
+        "command": "",
+        "output": "running tests",
+        "format": "text",
+    }
+
+
+def test_codex_timeline_projects_typed_sdk_turn_without_params_dict() -> None:
+    event = CodexSdkEvent.from_value(
+        Notification(
+            method="turn/completed",
+            payload=TurnCompletedNotification(
+                threadId="thread_1",
+                turn=Turn(
+                    id="turn_done",
+                    status=TurnStatus.completed,
+                    items=[
+                        ThreadItem(
+                            root=AgentMessageThreadItem(
+                                id="item_agent",
+                                type="agentMessage",
+                                text="hello",
+                                memoryCitation=None,
+                                phase=None,
+                            )
+                        )
+                    ],
+                    completedAt=None,
+                    durationMs=None,
+                    error=None,
+                    itemsView=None,
+                    startedAt=None,
+                ),
+            ),
+        ),
+    )
+    event_without_params = replace(event, params={})
+    accumulator = CodexTimelineAccumulator()
+
+    items = accumulator.items_from_turn_event(
+        session_id="sess_1",
+        external_session_id="thread_1",
+        event=event_without_params,
+    )
+
+    assert len(items) == 1
+    assert items[0].id == "item_agent"
+    assert items[0].type == "message"
+    assert items[0].content == {
+        "kind": "markdown",
+        "text": "hello",
+        "format": "markdown",
+    }
 
 
 def test_codex_sdk_event_normalizes_explicit_dict_shape() -> None:

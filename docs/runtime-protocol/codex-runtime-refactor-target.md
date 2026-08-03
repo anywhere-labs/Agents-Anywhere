@@ -318,7 +318,7 @@ uv run pytest tests/test_codex_runtime.py tests/test_connector_architecture.py -
 
 ### C05. Make SDK typed events the primary notification path
 
-Status: todo.
+Status: done.
 
 Current event flow still allows known SDK events to become raw method/params
 dictionaries before timeline/status projection.
@@ -352,6 +352,29 @@ Verification:
 cd connector
 uv run ruff check connector/runtimes/codex tests/test_codex_runtime.py tests/test_codex_sdk_client.py
 uv run pytest tests/test_codex_runtime.py tests/test_codex_sdk_client.py -q
+```
+
+Completed:
+
+- Added `connector/connector/runtimes/codex/timeline/typed_events.py` for
+  known SDK notification payload projection.
+- `CodexSdkEvent` now retains the typed SDK payload for known notifications.
+- Live item accumulation tries typed SDK projection before falling back to
+  method/params diagnostics.
+- Terminal turn sync uses typed SDK turn payloads when available.
+- Delta accumulation reads typed SDK delta fields when available.
+- Added tests proving typed SDK deltas and turn completion still project when
+  `params` is empty, so known SDK reducer behavior no longer depends on the
+  dict-shaped notification body.
+- Added an architecture test preventing generic SDK model dumps in typed
+  timeline projection.
+
+Verification:
+
+```bash
+cd connector
+uv run ruff check connector/runtimes/codex tests/test_codex_runtime.py tests/test_codex_sdk_client.py tests/test_connector_architecture.py
+uv run pytest tests/test_codex_runtime.py tests/test_codex_sdk_client.py tests/test_connector_architecture.py -q
 ```
 
 ### C06. Split notification side-effect handlers
@@ -452,8 +475,9 @@ Stop and ask before proceeding if any step would require:
 The next unchecked implementation item is:
 
 ```text
-C05. Make SDK typed events the primary notification path
+C06. Split notification side-effect handlers
 ```
 
-Do not jump past C05 before C01-C04 are done, because the raw projection
-surface should be isolated before replacing it with typed SDK event reduction.
+Do not jump past C06 before C01-C05 are done, because typed SDK event
+projection should be the primary notification path before splitting
+side-effect handlers.

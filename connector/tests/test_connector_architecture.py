@@ -334,3 +334,13 @@ def test_codex_timeline_active_code_does_not_rebuild_projection_as_raw() -> None
             violations.append(f"{relative_path}: contains to_legacy_raw")
 
     assert violations == []
+
+
+def test_codex_typed_sdk_timeline_projection_does_not_dump_models() -> None:
+    typed_events_source = (
+        CONNECTOR_PACKAGE / "runtimes" / "codex" / "timeline" / "typed_events.py"
+    ).read_text(encoding="utf-8")
+
+    assert "model_dump" not in typed_events_source
+    assert "__dict__" not in typed_events_source
+    assert "vars(" not in typed_events_source

@@ -80,6 +80,7 @@ class CodexSdkEvent:
     params: dict[str, Any]
     request_id: str | int | None = None
     legacy_method_shaped: bool = False
+    payload: CodexKnownNotificationPayload | None = None
 
     @classmethod
     def from_value(
@@ -96,6 +97,7 @@ class CodexSdkEvent:
                 raw=sdk_event.raw,
                 request_id=None,
                 legacy_method_shaped=False,
+                payload=sdk_event.payload,
             )
         raw = sdk_event_mapping(value)
         method = raw.get("method")
@@ -141,6 +143,7 @@ class CodexSdkEvent:
         raw: dict[str, Any],
         request_id: str | int | None = None,
         legacy_method_shaped: bool = False,
+        payload: CodexKnownNotificationPayload | None = None,
     ) -> CodexSdkEvent:
         item = params.get("item") if isinstance(params.get("item"), dict) else params
         item_dict = item if isinstance(item, dict) else {}
@@ -202,6 +205,7 @@ class CodexSdkEvent:
             params=params,
             request_id=request_id,
             legacy_method_shaped=legacy_method_shaped,
+            payload=payload,
         )
 
     @property
@@ -251,6 +255,7 @@ class _SdkNotificationProjection:
     event_type: str
     params: dict[str, Any]
     raw: dict[str, Any]
+    payload: CodexKnownNotificationPayload
 
 
 def sdk_notification_event(
@@ -285,6 +290,7 @@ def sdk_notification_event(
             "method": value.method,
             "payloadType": value.payload.__class__.__name__,
         },
+        payload=payload,
     )
 
 

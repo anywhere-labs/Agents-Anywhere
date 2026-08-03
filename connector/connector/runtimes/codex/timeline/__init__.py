@@ -61,6 +61,11 @@ from connector.runtimes.codex.timeline.snapshot import (
     raw_timeline_items,
     timeline_items_from_thread,
 )
+from connector.runtimes.codex.timeline.typed_events import (
+    sdk_event_delta_text,
+    timeline_projection_from_sdk_event,
+    timeline_projections_from_sdk_turn_event,
+)
 
 __all__ = [
     "CodexAgentMessageItem",
@@ -94,6 +99,7 @@ __all__ = [
     "notification_delta",
     "raw_item_from_notification",
     "raw_timeline_items",
+    "sdk_event_delta_text",
     "text_from_value",
     "timeline_item_content",
     "timeline_item_from_projection",
@@ -106,6 +112,8 @@ __all__ = [
     "timeline_items_from_thread",
     "timeline_projection_from_event",
     "timeline_projection_from_raw",
+    "timeline_projection_from_sdk_event",
+    "timeline_projections_from_sdk_turn_event",
     "timeline_raw_status",
     "timeline_raw_type",
 ]
