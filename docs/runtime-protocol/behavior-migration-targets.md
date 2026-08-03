@@ -77,43 +77,62 @@ uv run pytest tests/test_codex_runtime.py -q
 uv run ruff check connector/runtimes/codex tests/test_codex_runtime.py
 ```
 
-### T02. Codex SDK-native event normalizer
+### T02. Codex SDK typed event adapter
 
-Status: complete.
+Status: needs rewrite.
 
 Goal:
 
-- Introduce a clear SDK-native event normalization layer.
-- Stop making new reducer logic depend primarily on legacy app-server method names.
-- Normalize SDK thread snapshots, turn stream events, item objects, and request/response events into one internal Codex event shape.
+- Introduce a clear SDK typed adapter layer.
+- Stop making reducer logic depend on generic dict payloads, legacy app-server
+  method shapes, or speculative field probing.
+- Normalize SDK `Notification`, `Thread`, `Turn`, and `ThreadItem` objects into
+  explicit Connector runtime protocol projections.
 
 Required behavior:
 
-- SDK event/result inputs must be explicit data shapes: plain dicts or objects
-  that expose an explicit `model_dump()` mapping.
-- SDK handles such as thread/turn objects must be read by method-specific shape
-  readers that extract only required public protocol fields such as `id`.
-- Generic object dumping through dataclass recursion, `vars()`, or `__dict__` is
-  not allowed in the active SDK adapter.
-- Legacy method-shaped dicts remain accepted only as compatibility input.
-- Normalized events expose stable fields: `thread_id`, `turn_id`, `item_id`, `event_type`, `item_type`, `role`, `status`, `content`, `raw`.
+- Known Codex SDK types must be read with attribute access. Examples:
+  `notification.method`, `notification.payload`, `payload.thread_id`,
+  `payload.turn_id`, `payload.item_id`, `payload.delta`, `thread.id`,
+  `thread.turns`, `turn.id`, `turn.items`, and wrapped `item.root`.
+- Known SDK payloads must be dispatched with type checks such as
+  `isinstance(payload, AgentMessageDeltaNotification)`,
+  `isinstance(payload, ItemStartedNotification)`, and
+  `isinstance(payload, TurnCompletedNotification)`.
+- `method` strings may be retained as protocol labels and sanity checks, but
+  primary reducer behavior must be driven by typed payloads, not
+  `params.get(...)` probing.
+- `model_dump()` is allowed only at serialization boundaries:
+  - emitting JSON to Server;
+  - test assertions for JSON shape;
+  - unknown SDK fallback diagnostics.
+- Reducer logic must not call `model_dump()`, `vars()`, `__dict__`, or generic
+  dataclass recursion before reading known SDK fields.
+- Legacy method-shaped dicts may exist only in tests or `_reference/`, not as
+  the active Codex SDK stream path.
+- The typed adapter emits runtime protocol dataclasses such as
+  `RuntimeTimelineItem`, `SessionState`, and `SessionNotice`; raw SDK objects
+  may be kept in debug metadata only after the typed projection has been made.
 
-Completed:
+Rewrite order:
 
-- Added `CodexSdkEvent` as the SDK-native normalized event shape.
-- SDK stream `notification_dict` now serializes from `CodexSdkEvent`.
-- `CodexNotificationProjector` reads normalized event fields before dispatching.
-- `CodexTimelineAccumulator` accepts normalized events directly while keeping legacy notification compatibility.
-- Added coverage for legacy method-shaped dicts, plain dicts, and model-dump
-  objects.
-- Codex SDK result handling now uses method-specific readers for model lists,
-  thread lists, thread reads, thread updates, turn actions, and compact results.
-- Codex SDK thread/turn handles are read explicitly by id and are never
-  recursively dumped or copied.
+1. Build the Codex SDK typed adapter for `Notification`, `Thread`, `Turn`, and
+   `ThreadItem`.
+2. Rework the Codex timeline reducer to consume typed adapter events/items.
+3. Rework the Codex notification projector to dispatch on typed event variants.
+4. Only after Codex streaming/status behavior is correct, clean up Server RPC
+   request/response DTO parsing.
 
-Follow-up:
+Acceptance:
 
-- T04 expands the actual timeline item type coverage produced from normalized events.
+- A real Codex SDK turn streams assistant deltas to Server as timeline item
+  upserts before the final turn completion event.
+- `turn/completed`, interrupted, cancelled, and failed events reliably update
+  `SessionState.status`.
+- Completed turns do not require `thread/read` refresh before Web can render the
+  assistant reply.
+- No active Codex SDK reducer path depends on generic dict dumping or casual
+  `.get(...)` access for known SDK fields.
 
 Verification:
 

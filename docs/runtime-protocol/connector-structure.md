@@ -25,6 +25,19 @@ Rules:
   imported by the active Connector runtime path.
 - Connector-local durable state uses JSON stores. SQLite is not part of the v2
   Connector path.
+- Native runtime adapters must preserve native SDK types until the runtime
+  boundary has projected them into runtime protocol dataclasses. Do not
+  immediately collapse known SDK objects into generic dicts.
+- For known SDK types, use attribute access and type dispatch. Do not use
+  `.get(...)`, `model_dump()`, `vars()`, `__dict__`, or recursive dataclass dumps
+  as the primary reducer mechanism.
+- `model_dump()` and plain dict payloads are allowed at JSON/HTTP/WebSocket
+  boundaries, in tests that assert wire shape, and in unknown-SDK fallback
+  diagnostics. They are not the internal representation for known runtime
+  events.
+- Dynamic `Mapping[str, Any]` fields are limited to intentionally extensible
+  protocol surfaces such as `metadata`, `source`, `content`, runtime config
+  values, JSON Schema, and UI schema.
 
 These rules are enforced by `connector/tests/test_connector_architecture.py`.
 
@@ -217,6 +230,24 @@ code. Claude owns SDK integration, transcript/history normalization, and trust
 handling.
 
 Runtime packages implement `AgentRuntime` and call `RuntimeHostClient`.
+
+Runtime package internals should follow this projection flow:
+
+```text
+native SDK object
+  -> typed runtime adapter event/item
+  -> runtime protocol dataclass
+  -> server/client JSON serializer
+```
+
+Avoid this anti-pattern in active runtime code:
+
+```text
+native SDK object
+  -> generic dict/model_dump
+  -> scattered .get(...) reducer logic
+  -> maybe runtime protocol dataclass
+```
 
 Current native runtime packages:
 

@@ -358,6 +358,17 @@ Rules:
 - `CodexRuntime` calls `RuntimeHostClient`.
 - `steer_turn` and `interrupt_turn` do not require `turn_id`.
 - Tool calls keep `SessionState.status = "running"` while active.
+- Known Codex SDK objects must be read by type and attributes, not generic
+  dict probing. For example, use `notification.payload`, `payload.thread_id`,
+  `payload.turn_id`, `payload.item_id`, `payload.delta`, `turn.items`, and
+  `item.root`.
+- The active SDK stream path must dispatch on SDK payload classes such as
+  `AgentMessageDeltaNotification`, `ItemStartedNotification`, and
+  `TurnCompletedNotification`. Method strings are labels/sanity checks, not the
+  primary source of truth for reducer shape.
+- `model_dump()` is allowed only at JSON serialization, test assertions, or
+  unknown-SDK diagnostics. It is not allowed as the first step of known Codex SDK
+  timeline/state reduction.
 
 Acceptance:
 
@@ -382,6 +393,18 @@ Acceptance:
 - Codex no longer returns `backendNotifications`.
 - Codex runtime events produce `SessionMeta`, `SessionState`, `SessionTimeline`, and `SessionNotice`.
 - Codex turn start, steer, and interrupt paths use `AgentRuntime` when the native runtime is running.
+
+Current Codex SDK rewrite sub-order:
+
+1. Rewrite the SDK notification/thread/turn/item adapter to use SDK types and
+   attribute access.
+2. Rewrite the timeline reducer to consume typed adapter events and typed SDK
+   thread items.
+3. Rewrite the notification projector to dispatch on typed event variants and
+   keep `SessionState.status` correct during streaming, tool calls, terminal
+   events, completion, interruption, cancellation, and failure.
+4. Then clean up Connector Server RPC DTO parsing/serialization so raw dicts are
+   confined to JSON transport boundaries.
 
 ## Phase 5: add Server `SessionState` as durable projection
 
