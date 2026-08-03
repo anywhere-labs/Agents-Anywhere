@@ -63,10 +63,12 @@ SQLite sync state.
 ## Runtime Discovery
 
 The connector discovers Codex and Claude locally and reports attached runtime
-capabilities to the server. If a runtime is not on `PATH`, set one of:
+capabilities to the server. Codex is discovered through the official
+`openai-codex` SDK package; the connector does not use a Codex CLI/app-server
+path or IPC switch as an active runtime surface. If Claude Code is not on
+`PATH`, set:
 
 ```bash
-CODEX_BIN=/path/to/codex
 CLAUDE_BIN=/path/to/claude
 ```
 
@@ -103,7 +105,6 @@ The server can ask an online connector to perform local work:
 | `AGENT_CONNECTOR_TOKEN` | Connector token used when `--connector-token` is omitted. |
 | `AGENT_CONNECTOR_STATE_FILE` | Runtime sync state JSON path. Defaults to `~/.agents-anywhere/connector-state.json`. |
 | `AGENT_CONNECTOR_ATTACHMENTS_ROOT` | Runtime attachment download directory. Defaults to `~/.agents-anywhere/attachments`. |
-| `CODEX_BIN` | Explicit Codex CLI/app-server path. |
 | `CLAUDE_BIN` | Explicit Claude Code CLI path. |
 
 ## Verify

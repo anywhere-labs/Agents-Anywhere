@@ -1,6 +1,7 @@
 # Runtime Protocol Implementation Order
 
-Status: active migration plan, updated after the first Connector rewrite stack.
+Status: active migration plan, updated after the Connector runtime protocol
+refactor stack on `v2-connector-refactor`.
 
 This document is the practical order for refactoring Server and Connector toward Agent Runtime Protocol v1. It is more concrete than [Migration sequence](./migration-sequence.md): each phase should be independently reviewable and should avoid mixing protocol design, file moves, database migrations, and runtime behavior changes in one commit.
 
@@ -52,15 +53,21 @@ Completed Connector migration pieces:
 - JSON runtime config storage exists under `core/runtime_config_store.py`.
 - `BackendRpcClient` is now a server-layer coordinator around auth, ingest,
   dispatch, runtime supervisor, local ops, and runtime host mapping.
+- Connector server runtime RPC is split into runtime lifecycle/config/catalog,
+  session sync/state, and turn/command/interaction coordinators.
 - Native `runtimes/codex` and `runtimes/claude` provider/runtime packages exist.
+- Active Codex is SDK-only through `CodexRuntimeClient`; historical app-server
+  and IPC code is reference/deprecated material only.
 - Old Codex/Claude/adapter code lives under `_reference/`.
-- Architecture tests forbid active imports of deprecated root modules.
+- Architecture tests forbid active imports of deprecated root modules and
+  Codex app-server/IPC tokens.
 
 Remaining Connector gaps:
 
-- Runtime command catalog/execution is still not the primary active UI path.
-- Codex SDK parity is not yet complete enough to treat all native
-  state/timeline/notice changes as fully projected protocol events.
+- Runtime parity still depends on the concrete SDK surfaces available at runtime;
+  unsupported behavior must remain explicit through capabilities/errors.
+- Additional concrete runtime command catalog entries may be added as runtimes
+  expose them.
 - Some runtime behavior is feature-incomplete compared with the old reference
   adapters and must be migrated by reimplementing protocol behavior, not by
   restoring the old adapter contract.
@@ -420,10 +427,11 @@ Acceptance:
 
 ## Phase 6: add `SessionNotice` native path
 
-Status: partial. Notices stay separate from timeline. Server ingest/respond and
-Connector dispatch paths exist; Codex app-server approval requests now project
-to `SessionNotice` through `RuntimeHostClient`. Claude approval parity and
-additional notice kinds remain.
+Status: partial outside Connector. Notices stay separate from timeline.
+Connector dispatch paths exist; active Codex SDK approval notifications and
+Claude SDK tool approvals project to `SessionNotice` through
+`RuntimeHostClient`. Additional Server/Web notice reads and notice kinds remain
+outside the connector-only refactor.
 
 Goal: make notices/interactions separate from timeline and aligned with runtime protocol.
 
@@ -455,10 +463,10 @@ Acceptance:
 
 ## Phase 7: add live runtime catalog and command APIs
 
-Status: partially implemented. Server/Connector command RPC and Web slash menu
-now use runtime reads. Codex exposes the native `/compact` command through
+Status: Connector path implemented. Connector runtime RPC reads command catalogs
+from the active runtime, and Codex exposes the native `/compact` command through
 `thread/compact/start`. Remaining work is additional concrete runtime command
-catalog entries and runtime-specific command execution behavior.
+catalog entries and Server/Web adoption where not already migrated.
 
 Goal: move model/permission/command reads to Connector RPC.
 
@@ -528,8 +536,8 @@ Acceptance:
 
 ## Phase 9: migrate Claude to native `AgentRuntime`
 
-Status: first native slice completed. Continue parity migration inside
-`runtimes/claude`; do not import `_reference.claude` from active code.
+Status: native Connector slice completed. Continue runtime parity migration
+inside `runtimes/claude`; do not import `_reference.claude` from active code.
 
 Goal: make Claude follow the same protocol with explicit unsupported behavior.
 
@@ -543,6 +551,9 @@ Acceptance:
 
 - Claude does not require Server/Web runtime-specific conditionals.
 - Capability differences are declared, not inferred from runtime name.
+- Active Claude provider/runtime code is split into provider discovery/config,
+  session reading, turn control, turn driving, approval control, and timeline
+  helpers.
 
 ## Phase 10: Web protocol-driven UI
 
@@ -574,9 +585,10 @@ Acceptance:
 
 ## Phase 11: remove compatibility paths
 
-Status: in progress. Active Connector root adapter paths are guarded by tests.
-Server/Web compatibility remnants should be removed only when their replacement
-path is the active source of truth.
+Status: in progress. Active Connector root adapter paths and active Codex
+app-server/IPC paths are guarded by tests. Server/Web compatibility remnants
+should be removed only when their replacement path is the active source of
+truth.
 
 Goal: delete old behavior after all clients and runtimes are migrated.
 
@@ -603,12 +615,15 @@ Acceptance:
 
 Continue with:
 
-1. `document current connector structure and enforce migration boundary`
-2. `make runtime command APIs server-routed`
-3. `make Web slash command menu runtime-driven`
-4. `finish SessionNotice interaction response path`
-5. `finish Codex SDK event projection into SessionState/Timeline/Notice`
-6. `remove remaining server-persisted catalog primary paths`
+1. Audit the connector-only objective against current code/tests/docs before
+   declaring it complete.
+2. If staying connector-only, add only missing architecture guards or concrete
+   SDK parity behavior; do not revive app-server/IPC as active Codex code.
+3. If moving beyond connector, continue with Server/Web adoption of
+   `SessionMeta`, `SessionState`, `SessionTimeline`, `SessionNotice`, runtime
+   catalogs, and command APIs.
+4. Remove remaining Server/Web compatibility remnants only after the
+   replacement path is the active source of truth.
 
 Do not restart the old first stack. The protocol skeleton and active Connector
 rewrite already exist; future work should extend the new protocol path.

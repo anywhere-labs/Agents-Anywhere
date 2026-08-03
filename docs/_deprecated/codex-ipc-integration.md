@@ -2,13 +2,18 @@
 
 ## Status and source
 
-Historical reference only. The active Connector v2 Codex runtime is SDK-only and
-must not implement or extend hand-written IPC as an active path. This document
-describes an internal Codex IPC contract recovered from the installed Codex IDE
-extension version `26.721.41059`. It is not a documented OpenAI public API.
+Deprecated historical reference only. The active Connector v2 Codex runtime is
+SDK-only and must not implement or extend hand-written IPC or app-server JSON-RPC
+as an active path. This document describes an internal Codex IPC contract
+recovered from the installed Codex IDE extension version `26.721.41059`. It is
+not a documented OpenAI public API.
 
 The corresponding models live in
 `connector/connector/_reference/codex/ipc_protocol.py`.
+
+Do not use the implementation sections below as a current plan. They document
+the abandoned hand-written IPC/app-server approach. Current Codex work must use
+the official SDK through `CodexRuntimeClient`.
 
 ## Transport and router
 
@@ -142,10 +147,11 @@ On any failure the mirror is no longer authoritative. It must stop emitting
 derived timeline changes and repeat `following=true` to request a fresh
 snapshot. Silently skipping a patch would corrupt all later path operations.
 
-## Integration with CodexRuntime
+## Deprecated integration plan
 
-The integration should live inside the Codex Agent Runtime Protocol
-implementation while also publishing locally owned app-server state to IPC:
+The following plan is intentionally deprecated. It described how hand-written
+IPC might have lived inside the Codex Agent Runtime Protocol implementation
+while publishing locally owned app-server state to IPC:
 
 ```text
 Codex app-server JSON-RPC ---> CodexRuntime ---> RuntimeHostClient
@@ -162,7 +168,7 @@ items and reported through `RuntimeHostClient`. Local app-server state is
 projected into the Codex canonical conversation shape and published to IPC for
 IDE/App followers.
 
-Recommended implementation sequence:
+Deprecated implementation sequence:
 
 1. Add a reconnecting `CodexIpcClient` that handles endpoint discovery,
    length-prefixed framing, initialization, broadcasts, and shutdown. It must
@@ -197,9 +203,13 @@ Recommended implementation sequence:
    incremental emission and request a new snapshot. The existing periodic
    app-server sync remains the fallback source of final state.
 
-## Publishing local app-server state
+This sequence must not be implemented in the active connector. It remains here
+only to preserve protocol research notes for comparison with old reference code.
 
-The Connector's app-server is authoritative for threads it creates or drives
+## Deprecated local app-server publishing notes
+
+The old Connector app-server path treated app-server state as authoritative for
+threads it creates or drives
 locally when no IPC owner is available. Merely loading or resuming a thread for
 synchronization does not claim ownership. A Web message also does not transfer
 ownership: when Codex App or IDE owns the thread, the Connector forwards a
