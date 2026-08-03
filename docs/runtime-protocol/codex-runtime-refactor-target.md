@@ -443,7 +443,7 @@ uv run pytest tests/test_codex_runtime.py tests/test_connector_architecture.py -
 
 ### C07. Revisit turn controller split
 
-Status: todo.
+Status: done.
 
 Current `turns/controller.py` is a large orchestration class for:
 
@@ -483,6 +483,31 @@ uv run ruff check connector/runtimes/codex tests/test_codex_runtime.py
 uv run pytest tests/test_codex_runtime.py -q
 ```
 
+Completed:
+
+- Kept `CodexTurnController` as the public operation facade.
+- Moved create-and-start session orchestration into
+  `turns/session_start.py`.
+- Moved session selection validation/state publication into
+  `turns/selections.py`.
+- Added `turns/selection_scopes.py` for shared selection scope validation.
+- Preserved `turns/actions.py` as the owner of start/steer/interrupt side
+  effects.
+- Preserved `turns/commands.py` and `turns/interactions.py` as existing focused
+  collaborators.
+- Added side-effect docstrings for the newly split session creation and
+  selection update handlers.
+- Added an architecture test preventing `CodexTurnController` from directly
+  owning `start_thread`, `session_meta_upsert`, or `session_states.update`.
+
+Verification:
+
+```bash
+cd connector
+uv run ruff check connector/runtimes/codex tests/test_codex_runtime.py tests/test_connector_architecture.py
+uv run pytest tests/test_codex_runtime.py tests/test_connector_architecture.py -q
+```
+
 ## Stop conditions
 
 Stop and ask before proceeding if any step would require:
@@ -499,9 +524,8 @@ Stop and ask before proceeding if any step would require:
 The next unchecked implementation item is:
 
 ```text
-C07. Revisit turn controller split
+none; C01-C07 are implemented
 ```
 
-Do not mark the refactor complete before C07 is done and verified, because turn
-controller orchestration still needs the same responsibility audit as
-notification handling.
+Before marking the refactor complete, run the broader connector verification
+set and audit C01-C07 against this document.

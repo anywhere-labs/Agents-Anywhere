@@ -366,3 +366,20 @@ def test_codex_notifications_are_split_by_side_effect_role() -> None:
     assert "timeline_sync(" in turn_lifecycle_source
     assert "timeline_item_upsert(" in timeline_activity_source
     assert "notice_upsert(" in notices_source
+
+
+def test_codex_turn_controller_is_operation_facade() -> None:
+    turns_dir = CONNECTOR_PACKAGE / "runtimes" / "codex" / "turns"
+    controller_source = (turns_dir / "controller.py").read_text(encoding="utf-8")
+    session_start_source = (turns_dir / "session_start.py").read_text(encoding="utf-8")
+    selections_source = (turns_dir / "selections.py").read_text(encoding="utf-8")
+
+    assert "start_thread(" not in controller_source
+    assert "session_meta_upsert(" not in controller_source
+    assert "session_states.update(" not in controller_source
+    assert "_set_session_state" not in controller_source
+    assert "CodexSessionStartController" in controller_source
+    assert "CodexSelectionController" in controller_source
+    assert "start_thread(" in session_start_source
+    assert "session_meta_upsert(" in session_start_source
+    assert "session_states.update(" in selections_source
