@@ -5,7 +5,7 @@ import base64
 import hashlib
 import json
 import sys
-from typing import Any
+from typing import Any, Self
 
 from websockets.exceptions import ConnectionClosedError
 from websockets.frames import Close
@@ -14,6 +14,8 @@ from connector.core.config import ConnectorConfig
 from connector.local.terminal import TerminalBackend
 from connector.runtime_protocol import (
     AgentRuntime,
+    MessageTimelineContent,
+    PlatformTimelineItem,
     RuntimeCommand,
     RuntimeCommandResult,
     RuntimeConfig,
@@ -30,6 +32,8 @@ from connector.runtime_protocol import (
     RuntimeTimelineSnapshot,
     SessionMeta,
     SessionState,
+    TimelineSource,
+    ToolTimelineContent,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes import default_runtime_providers
@@ -39,6 +43,68 @@ from connector.server.auth import ConnectorAuthenticationError
 from connector.server.capabilities import protocol_capabilities_from_inventory
 from connector.server.client import BackendRpcClient
 from connector.server.ingest import coalesce_timeline_item_upserts
+
+
+def test_platform_timeline_item_converts_to_runtime_wire_item() -> None:
+    item = PlatformTimelineItem(
+        id="item_1",
+        type="message",
+        status="done",
+        role="assistant",
+        turn_id="turn_1",
+        content=MessageTimelineContent(text="hello"),
+        source=TimelineSource(
+            runtime="codex",
+            external_session_id="thread_1",
+            turn_id="turn_1",
+            native_item_id="native_1",
+            native_item_type="agentMessage",
+            event="thread/read",
+        ),
+        revision=2,
+    )
+
+    wire_item = item.to_platform_item(session_id="sess_1", order_seq=7)
+
+    assert wire_item == RuntimeTimelineItem(
+        id="item_1",
+        session_id="sess_1",
+        type="message",
+        status="done",
+        order_seq=7,
+        content_hash=wire_item.content_hash,
+        role="assistant",
+        turn_id="turn_1",
+        content={"kind": "markdown", "text": "hello", "format": "markdown"},
+        source={
+            "runtime": "codex",
+            "sessionId": "thread_1",
+            "turnId": "turn_1",
+            "itemId": "native_1",
+            "itemType": "agentMessage",
+            "event": "thread/read",
+        },
+        revision=2,
+    )
+    assert wire_item.content_hash.startswith("sha256:")
+
+
+def test_tool_timeline_content_serializes_supported_parent_shape() -> None:
+    content = ToolTimelineContent(
+        kind="command",
+        title="Run tests",
+        command="pytest",
+        output="ok",
+        exit_code=0,
+    )
+
+    assert content.to_mapping() == {
+        "kind": "command",
+        "title": "Run tests",
+        "command": "pytest",
+        "output": "ok",
+        "exitCode": 0,
+    }
 
 
 class FakeAgentRuntime(AgentRuntime):
@@ -759,7 +825,7 @@ def test_connector_runtime_disables_http_proxy_for_loopback_backend() -> None:
 
 
 def test_connector_runtime_maps_device_os(monkeypatch) -> None:
-    import connector.server.urls as urls
+    from connector.server import urls
 
     monkeypatch.setattr(urls.sys, "platform", "darwin")
     assert urls.device_os() == "macos"
@@ -1159,10 +1225,10 @@ async def _exercise_access_token_refresh() -> None:
         def __init__(self, *args: Any, **kwargs: Any) -> None:
             pass
 
-        async def __aenter__(self) -> FakeHttpClient:
+        async def __aenter__(self) -> Self:
             return self
 
-        async def __aexit__(self, *args: Any) -> None:
+        async def __aexit__(self, *args: object) -> None:
             return None
 
         async def aclose(self) -> None:
