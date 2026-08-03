@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
-from typing import Any, Literal
+from collections.abc import Mapping
+from typing import Any
 
 from connector.logging import logger
 from connector.runtime_protocol.errors import (
@@ -14,40 +13,14 @@ from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtime_protocol.models import RuntimeConfig, RuntimeInventoryItem
 from connector.runtime_protocol.protocol import AgentRuntime
 from connector.runtime_protocol.provider import RuntimeProvider
-
-RuntimeLifecycleStatus = Literal[
-    "stopped",
-    "discovering",
-    "available",
-    "unavailable",
-    "validating",
-    "starting",
-    "running",
-    "stopping",
-    "error",
-]
-
-RuntimeStatusSink = Callable[
-    [str, RuntimeLifecycleStatus, Mapping[str, Any] | None],
-    Awaitable[None],
-]
-
-
-class _Missing:
-    pass
-
-
-_MISSING = _Missing()
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeSupervisorEntry:
-    provider: RuntimeProvider
-    runtime: AgentRuntime | None = None
-    config: RuntimeConfig | None = None
-    requested_values: Mapping[str, Any] | None = None
-    status: RuntimeLifecycleStatus = "stopped"
-    error: Mapping[str, Any] | None = None
+from connector.runtime_protocol.supervisor_models import (
+    MISSING,
+    RuntimeLifecycleStatus,
+    RuntimeStatusSink,
+    RuntimeSupervisorEntry,
+    error_payload,
+    same_effective_config,
+)
 
 
 class RuntimeSupervisor:
@@ -86,7 +59,7 @@ class RuntimeSupervisor:
         try:
             item = await entry.provider.discover()
         except Exception as exc:  # noqa: BLE001
-            error = _error_payload(exc)
+            error = error_payload(exc)
             await self._set_entry(runtime, status="unavailable", error=error)
             return RuntimeInventoryItem(
                 runtime=entry.provider.runtime,
@@ -119,7 +92,7 @@ class RuntimeSupervisor:
             await self._set_entry(
                 runtime,
                 status="running" if current.runtime is not None else "error",
-                error=_error_payload(exc),
+                error=error_payload(exc),
             )
             raise
         if config.runtime != runtime:
@@ -130,7 +103,7 @@ class RuntimeSupervisor:
             await self._set_entry(
                 runtime,
                 status="running" if current.runtime is not None else "error",
-                error=_error_payload(exc),
+                error=error_payload(exc),
             )
             raise exc
         current = self._entry(runtime)
@@ -163,7 +136,7 @@ class RuntimeSupervisor:
                 await self._set_entry(
                     runtime,
                     status="running" if current.runtime is not None else "error",
-                    error=_error_payload(exc),
+                    error=error_payload(exc),
                 )
                 raise
             if config.runtime != runtime:
@@ -175,12 +148,12 @@ class RuntimeSupervisor:
                     runtime,
                     status="running" if current.runtime is not None else "error",
                     config=config,
-                    error=_error_payload(exc),
+                    error=error_payload(exc),
                 )
                 raise exc
 
             entry = self._entry(runtime)
-            if entry.runtime is not None and _same_effective_config(
+            if entry.runtime is not None and same_effective_config(
                 entry.config, config
             ):
                 await self._set_entry(
@@ -207,7 +180,7 @@ class RuntimeSupervisor:
                     entry.provider, runtime_instance
                 )
                 await self._set_entry(
-                    runtime, status="error", config=config, error=_error_payload(exc)
+                    runtime, status="error", config=config, error=error_payload(exc)
                 )
                 raise
 
@@ -247,7 +220,7 @@ class RuntimeSupervisor:
         try:
             await entry.provider.stop_runtime(entry.runtime)
         except Exception as exc:
-            await self._set_entry(runtime, status="error", error=_error_payload(exc))
+            await self._set_entry(runtime, status="error", error=error_payload(exc))
             raise
         await self._set_entry(
             runtime,
@@ -260,19 +233,19 @@ class RuntimeSupervisor:
     async def _set_entry(
         self,
         runtime_key: str,
-        runtime: AgentRuntime | None | object = _MISSING,
-        config: RuntimeConfig | None | object = _MISSING,
-        requested_values: Mapping[str, Any] | None | object = _MISSING,
+        runtime: AgentRuntime | None | object = MISSING,
+        config: RuntimeConfig | None | object = MISSING,
+        requested_values: Mapping[str, Any] | None | object = MISSING,
         status: RuntimeLifecycleStatus | None = None,
-        error: Mapping[str, Any] | None | object = _MISSING,
+        error: Mapping[str, Any] | None | object = MISSING,
     ) -> None:
         entry = self._entry(runtime_key)
-        next_runtime = entry.runtime if runtime is _MISSING else runtime
-        next_config = entry.config if config is _MISSING else config
+        next_runtime = entry.runtime if runtime is MISSING else runtime
+        next_config = entry.config if config is MISSING else config
         next_requested_values = (
-            entry.requested_values if requested_values is _MISSING else requested_values
+            entry.requested_values if requested_values is MISSING else requested_values
         )
-        next_error = entry.error if error is _MISSING else error
+        next_error = entry.error if error is MISSING else error
         next_status = entry.status if status is None else status
         self._entries[runtime_key] = RuntimeSupervisorEntry(
             provider=entry.provider,
@@ -305,21 +278,3 @@ class RuntimeSupervisor:
                     runtime.identity.runtime,
                     exc.__class__.__name__,
                 )
-
-
-def _error_payload(exc: BaseException) -> dict[str, Any]:
-    return {
-        "code": getattr(exc, "code", None) or exc.__class__.__name__,
-        "message": str(exc) or exc.__class__.__name__,
-        "retryable": bool(getattr(exc, "retryable", False)),
-    }
-
-
-def _same_effective_config(left: RuntimeConfig | None, right: RuntimeConfig) -> bool:
-    if left is None:
-        return False
-    return (
-        left.runtime == right.runtime
-        and left.revision == right.revision
-        and dict(left.values) == dict(right.values)
-    )

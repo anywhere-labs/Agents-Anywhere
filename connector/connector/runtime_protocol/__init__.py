@@ -40,13 +40,15 @@ from connector.runtime_protocol.provider import RuntimeProvider
 from connector.runtime_protocol.state_cache import RuntimeSessionStateCache
 from connector.runtime_protocol.supervisor import (
     RuntimeSupervisor,
+)
+from connector.runtime_protocol.supervisor_models import (
+    RuntimeLifecycleStatus,
+    RuntimeStatusSink,
     RuntimeSupervisorEntry,
 )
 
 __all__ = [
     "AgentRuntime",
-    "attachment_target",
-    "attachments_root",
     "RuntimeAttachment",
     "RuntimeAttachmentContent",
     "RuntimeCommand",
@@ -58,6 +60,7 @@ __all__ = [
     "RuntimeIdentity",
     "RuntimeInvalidRequestError",
     "RuntimeInventoryItem",
+    "RuntimeLifecycleStatus",
     "RuntimeModelCatalog",
     "RuntimeModelItem",
     "RuntimeOperationResult",
@@ -68,6 +71,7 @@ __all__ = [
     "RuntimeReasoningItem",
     "RuntimeSessionStateCache",
     "RuntimeStatus",
+    "RuntimeStatusSink",
     "RuntimeSupervisor",
     "RuntimeSupervisorEntry",
     "RuntimeTimelineItem",
@@ -76,8 +80,10 @@ __all__ = [
     "RuntimeUnsupportedError",
     "RuntimeUpstreamError",
     "SelectionScope",
-    "session_attachments_dir",
     "SessionMeta",
     "SessionNotice",
     "SessionState",
+    "attachment_target",
+    "attachments_root",
+    "session_attachments_dir",
 ]
