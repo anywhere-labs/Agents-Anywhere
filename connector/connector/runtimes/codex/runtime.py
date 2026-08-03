@@ -4,7 +4,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from connector.logging import logger
 from connector.runtime_protocol import (
     AgentRuntime,
     RuntimeAttachment,
@@ -23,6 +22,7 @@ from connector.runtime_protocol import (
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex.catalog_reader import CodexCatalogReader
 from connector.runtimes.codex.commands import list_codex_commands
+from connector.runtimes.codex.lifecycle import CodexRuntimeLifecycle
 from connector.runtimes.codex.notifications import CodexNotificationProjector
 from connector.runtimes.codex.runtime_client import CodexRuntimeClient
 from connector.runtimes.codex.session_reader import CodexSessionReader
@@ -38,21 +38,23 @@ class CodexRuntime(AgentRuntime):
     runtime_version: str = "native-0"
 
     def __post_init__(self) -> None:
-        self._started = False
-        self._model_list_result: dict[str, Any] | None = None
         self._session_states = RuntimeSessionStateCache("codex", self.host)
         self._active_turn_ids: dict[str, str] = {}
         self._timeline = CodexTimelineAccumulator()
-        self._catalogs = CodexCatalogReader(
-            config=self.config,
-            ensure_started=self.start,
-            get_model_list_result=self._get_model_list_result,
-        )
         self._notifications = CodexNotificationProjector(
             host=self.host,
             session_states=self._session_states,
             active_turn_ids=self._active_turn_ids,
             timeline=self._timeline,
+        )
+        self._lifecycle = CodexRuntimeLifecycle(
+            client=self.client,
+            notifications=self._notifications,
+        )
+        self._catalogs = CodexCatalogReader(
+            config=self.config,
+            ensure_started=self.start,
+            get_model_list_result=self._get_model_list_result,
         )
         self._session_reader = CodexSessionReader(
             host=self.host,
@@ -79,17 +81,10 @@ class CodexRuntime(AgentRuntime):
         )
 
     async def start(self) -> None:
-        if self._started:
-            return
-        if self.client is not None:
-            await self.client.start(self._handle_notification)
-            await self._best_effort_bootstrap_reads()
-        self._started = True
+        await self._lifecycle.start()
 
     async def stop(self) -> None:
-        if self.client is not None:
-            await self.client.stop()
-        self._started = False
+        await self._lifecycle.stop()
 
     async def get_config(self) -> RuntimeConfig:
         return self.config
@@ -247,40 +242,8 @@ class CodexRuntime(AgentRuntime):
             input_data=input_data,
         )
 
-    async def _best_effort_bootstrap_reads(self) -> None:
-        if self.client is None:
-            return
-        for method in ("model/list", "thread/loaded/list"):
-            try:
-                result = await self.client.request(method)
-            except Exception as exc:  # noqa: BLE001
-                logger.debug(
-                    "codex bootstrap read failed method={} error={}", method, exc
-                )
-                continue
-            if method == "model/list":
-                self._model_list_result = result
-
     async def _handle_notification(self, message: dict[str, Any]) -> None:
-        await self._notifications.handle(message)
+        await self._lifecycle.handle_notification(message)
 
     def _get_model_list_result(self) -> dict[str, Any] | None:
-        return self._model_list_result
-
-    async def _set_session_state(
-        self,
-        session_id: str,
-        external_session_id: str | None,
-        status: str,
-        selections: Mapping[str, str | None] | None = None,
-        error: Mapping[str, Any] | None = None,
-        metadata: Mapping[str, Any] | None = None,
-    ) -> None:
-        await self._session_states.update(
-            session_id=session_id,
-            external_session_id=external_session_id,
-            status=status,  # type: ignore[arg-type]
-            selections=selections,
-            error=error,
-            metadata=metadata,
-        )
+        return self._lifecycle.model_list_result

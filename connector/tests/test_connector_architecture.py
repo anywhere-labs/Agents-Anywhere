@@ -45,6 +45,18 @@ FORBIDDEN_ACTIVE_TOKENS = {
     "EmptyCodexClient",
 }
 
+FORBIDDEN_ACTIVE_CODEX_TOKENS = {
+    "app_server_client",
+    "CodexAppServerClient",
+    "JsonRpcStdioClient",
+    "CodexIpcClient",
+    "CodexIpcPublisher",
+    "thread-follower-start-turn",
+    "thread-follower-interrupt-turn",
+    "ipcEnabled",
+    "sdkMode",
+}
+
 
 def _active_python_files() -> list[Path]:
     return [
@@ -200,8 +212,18 @@ def test_active_codex_code_does_not_import_app_server_reference() -> None:
 
     for path in (CONNECTOR_PACKAGE / "runtimes" / "codex").rglob("*.py"):
         source = path.read_text(encoding="utf-8")
-        if "app_server_client" in source:
-            relative_path = path.relative_to(CONNECTOR_PACKAGE.parent)
-            violations.append(f"{relative_path}: references app_server_client")
+        for token in FORBIDDEN_ACTIVE_CODEX_TOKENS:
+            if token in source:
+                relative_path = path.relative_to(CONNECTOR_PACKAGE.parent)
+                violations.append(f"{relative_path}: references {token}")
 
     assert violations == []
+
+
+def test_codex_runtime_keeps_state_writes_in_collaborators() -> None:
+    runtime_source = (
+        CONNECTOR_PACKAGE / "runtimes" / "codex" / "runtime.py"
+    ).read_text(encoding="utf-8")
+
+    assert "session_states.update(" not in runtime_source
+    assert "async def _set_session_state" not in runtime_source

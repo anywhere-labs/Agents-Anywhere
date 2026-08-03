@@ -794,12 +794,7 @@ async def _test_codex_runtime_responds_to_approval_interaction() -> None:
     client = FakeCodexClient()
     host = FakeHost()
     runtime = CodexRuntime(config=_config(), host=host, client=client)
-    await runtime._set_session_state(
-        session_id="sess_1",
-        external_session_id="thread_1",
-        status="blocked",
-        metadata={"source": "test"},
-    )
+    await runtime.start_turn("sess_1", "thread_1", "hello")
 
     result = await runtime.respond_interaction(
         "sess_1",
