@@ -8,8 +8,18 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-
-RuntimeStatus = Literal["stopped", "starting", "running", "stopping", "error", "unknown"]
+RuntimeStatus = Literal[
+    "stopped",
+    "discovering",
+    "available",
+    "unavailable",
+    "validating",
+    "starting",
+    "running",
+    "stopping",
+    "error",
+    "unknown",
+]
 _RUNTIME_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _MAX_SCHEMA_BYTES = 256 * 1024
 

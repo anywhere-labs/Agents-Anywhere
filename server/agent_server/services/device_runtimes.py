@@ -224,6 +224,10 @@ class DeviceRuntimeService:
     ) -> DeviceRuntimeView:
         if status not in {
             "stopped",
+            "discovering",
+            "available",
+            "unavailable",
+            "validating",
             "starting",
             "running",
             "stopping",

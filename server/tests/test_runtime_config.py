@@ -10,7 +10,6 @@ from agent_server.infra.connector_rpc import ConnectorRpcError
 from agent_server.services.device_runtimes import DeviceRuntimeService
 from agent_server.services.notices import upsert_execution_error_interaction
 
-
 ADMIN_USER = "user1"
 ADMIN_PASSWORD = "secret"
 
@@ -125,6 +124,22 @@ def test_inventory_exposes_runtime_owned_dynamic_schema(tmp_path):
         "/opt/homebrew/bin/codex"
     )
     assert runtime["uiSchema"]["environment"]["component"] == "keyValue"
+
+
+def test_runtime_lifecycle_discovery_status_is_accepted(tmp_path):
+    client, _, connector_id, headers = _make_client(tmp_path)
+
+    asyncio.run(
+        client.app.state.device_runtime_service.apply_status(
+            connector_id,
+            "codex",
+            "discovering",
+        )
+    )
+
+    response = client.get(f"/connectors/{connector_id}/runtimes", headers=headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["runtimes"][0]["status"] == "discovering"
 
 
 def test_empty_config_is_configured_and_validated_by_connector(tmp_path):
