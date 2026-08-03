@@ -68,6 +68,8 @@ class CodexRuntime(AgentRuntime):
             client=self.client,
             session_states=self._session_states,
             ensure_started=self.start,
+            list_model_catalog=self._catalogs.list_model_catalog,
+            list_permission_catalog=self._catalogs.list_permission_catalog,
             pending_messages=self._pending_messages,
         )
         self._turns = CodexTurnController(
@@ -205,6 +207,18 @@ class CodexRuntime(AgentRuntime):
             session_id=session_id,
             external_session_id=external_session_id,
             reason=reason,
+        )
+
+    async def update_session_selections(
+        self,
+        session_id: str,
+        external_session_id: str | None,
+        selections: Mapping[str, str | None],
+    ) -> RuntimeOperationResult:
+        return await self._turns.update_session_selections(
+            session_id=session_id,
+            external_session_id=external_session_id,
+            selections=selections,
         )
 
     async def list_commands(

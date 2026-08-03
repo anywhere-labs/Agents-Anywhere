@@ -7,6 +7,7 @@ from typing import Any
 from connector.runtime_protocol import (
     RuntimeAttachment,
     RuntimeCommandResult,
+    RuntimeInvalidRequestError,
     RuntimeModelCatalog,
     RuntimeOperationResult,
     RuntimePermissionCatalog,
@@ -84,12 +85,27 @@ class CodexTurnController:
         if self.client is None:
             raise RuntimeUnsupportedError("create_and_start_session")
         await self.ensure_started()
-        selected_model = await model_settings_from_selection(
-            (selections or {}).get("model"), self.list_model_catalog
-        )
-        native_permission = await permission_settings_from_selection(
-            (selections or {}).get("permission"), self.list_permission_catalog
-        )
+        if invalid_scope := _unsupported_selection_scope(selections or {}):
+            return RuntimeOperationResult(
+                ok=False,
+                code="codex_invalid_selection_scope",
+                message=f"Unsupported Codex selection scope: {invalid_scope}",
+                result={"sessionId": session_id, "selections": dict(selections or {})},
+            )
+        try:
+            selected_model = await model_settings_from_selection(
+                (selections or {}).get("model"), self.list_model_catalog
+            )
+            native_permission = await permission_settings_from_selection(
+                (selections or {}).get("permission"), self.list_permission_catalog
+            )
+        except RuntimeInvalidRequestError as exc:
+            return RuntimeOperationResult(
+                ok=False,
+                code="codex_invalid_selection",
+                message=str(exc),
+                result={"sessionId": session_id, "selections": dict(selections or {})},
+            )
         result = await self.client.request(
             "thread/start",
             {
@@ -216,6 +232,86 @@ class CodexTurnController:
             input_data=input_data,
         )
 
+    async def update_session_selections(
+        self,
+        session_id: str,
+        external_session_id: str | None,
+        selections: Mapping[str, str | None],
+    ) -> RuntimeOperationResult:
+        if self.client is None or external_session_id is None:
+            raise RuntimeUnsupportedError("update_session_selections")
+        if not selections:
+            return RuntimeOperationResult(
+                ok=False,
+                code="codex_empty_selection_update",
+                message="At least one selection scope is required.",
+                result={"sessionId": session_id, "externalSessionId": external_session_id},
+            )
+        invalid_scope = _unsupported_selection_scope(selections)
+        if invalid_scope is not None:
+            return RuntimeOperationResult(
+                ok=False,
+                code="codex_invalid_selection_scope",
+                message=f"Unsupported Codex selection scope: {invalid_scope}",
+                result={
+                    "sessionId": session_id,
+                    "externalSessionId": external_session_id,
+                    "selections": dict(selections),
+                },
+            )
+        try:
+            selected_model = await model_settings_from_selection(
+                selections.get("model"), self.list_model_catalog
+            )
+            native_permission = await permission_settings_from_selection(
+                selections.get("permission"), self.list_permission_catalog
+            )
+        except RuntimeInvalidRequestError as exc:
+            return RuntimeOperationResult(
+                ok=False,
+                code="codex_invalid_selection",
+                message=str(exc),
+                result={
+                    "sessionId": session_id,
+                    "externalSessionId": external_session_id,
+                    "selections": dict(selections),
+                },
+            )
+        await self.ensure_started()
+        settings = {
+            **selected_model,
+            **native_permission,
+        }
+        await self.client.request(
+            "thread/update",
+            {
+                "threadId": external_session_id,
+                "settings": settings,
+                **settings,
+            },
+        )
+        cached = self.session_states.get(session_id)
+        await self._set_session_state(
+            session_id=session_id,
+            external_session_id=external_session_id,
+            status=cached.status if cached is not None else "idle",
+            selections=selections,
+            error=cached.error if cached is not None else None,
+            metadata={
+                "source": "codex.session.selections.update",
+                "selection_scopes": tuple(selections.keys()),
+            },
+        )
+        return RuntimeOperationResult(
+            ok=True,
+            result={
+                "updated": True,
+                "sessionId": session_id,
+                "externalSessionId": external_session_id,
+                "selections": dict(selections),
+            },
+        )
+
     async def _set_session_state(
         self,
         session_id: str,
@@ -233,3 +329,10 @@ class CodexTurnController:
             error=error,
             metadata=metadata,
         )
+
+
+def _unsupported_selection_scope(
+    selections: Mapping[str, str | None],
+) -> str | None:
+    unsupported_scopes = set(selections) - {"model", "permission"}
+    return min(unsupported_scopes) if unsupported_scopes else None

@@ -420,6 +420,48 @@ async def _test_codex_runtime_session_state_defaults_to_idle_for_known_external_
     assert state.runtime == "codex"
 
 
+def test_codex_runtime_reads_current_session_selections_from_thread() -> None:
+    asyncio.run(_test_codex_runtime_reads_current_session_selections_from_thread())
+
+
+async def _test_codex_runtime_reads_current_session_selections_from_thread() -> None:
+    client = FakeCodexClient()
+    client.results["thread/read"] = {
+        "thread": {
+            "id": "thread_1",
+            "model": "gpt-example",
+            "reasoningEffort": "high",
+            "threadSettings": {
+                "approvalPolicy": "on-request",
+                "sandboxPolicy": {"type": "readOnly"},
+            },
+            "items": [],
+        }
+    }
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=client)
+    model_selection = (
+        (await runtime.list_model_catalog()).models[0].reasoning_items[1].selection_id
+    )
+    permission_selection = (
+        (await runtime.list_permission_catalog(query="read only"))
+        .permissions[0]
+        .selection_id
+    )
+
+    state = await runtime.get_session_state("sess_1", external_session_id="thread_1")
+
+    assert state is not None
+    assert state.status == "idle"
+    assert state.selections == {
+        "model": model_selection,
+        "permission": permission_selection,
+    }
+    assert client.requests[-1] == (
+        "thread/read",
+        {"threadId": "thread_1", "includeTurns": False},
+    )
+
+
 def test_codex_runtime_reads_session_snapshot() -> None:
     asyncio.run(_test_codex_runtime_reads_session_snapshot())
 
@@ -611,6 +653,101 @@ async def _test_codex_runtime_create_and_start_session_reports_meta_and_state() 
         "model": model_selection,
         "permission": permission_selection,
     }
+
+
+def test_codex_runtime_update_session_selections_pushes_runtime_state() -> None:
+    asyncio.run(_test_codex_runtime_update_session_selections_pushes_runtime_state())
+
+
+async def _test_codex_runtime_update_session_selections_pushes_runtime_state() -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+    model_selection = (
+        (await runtime.list_model_catalog()).models[0].reasoning_items[1].selection_id
+    )
+    permission_selection = (
+        (await runtime.list_permission_catalog(query="full")).permissions[0].selection_id
+    )
+
+    result = await runtime.update_session_selections(
+        "sess_1",
+        "thread_1",
+        {"model": model_selection, "permission": permission_selection},
+    )
+
+    assert result.ok is True
+    assert result.result["updated"] is True
+    assert client.requests[-1] == (
+        "thread/update",
+        {
+            "threadId": "thread_1",
+            "settings": {
+                "model": "gpt-example",
+                "effort": "high",
+                "approvalPolicy": "never",
+                "sandbox": "danger-full-access",
+                "sandboxPolicy": {"type": "dangerFullAccess"},
+            },
+            "model": "gpt-example",
+            "effort": "high",
+            "approvalPolicy": "never",
+            "sandbox": "danger-full-access",
+            "sandboxPolicy": {"type": "dangerFullAccess"},
+        },
+    )
+    assert host.state_updates[-1]["status"] == "idle"
+    assert host.state_updates[-1]["selections"] == {
+        "model": model_selection,
+        "permission": permission_selection,
+    }
+    assert host.state_updates[-1]["metadata"]["source"] == (
+        "codex.session.selections.update"
+    )
+
+
+def test_codex_runtime_invalid_selection_returns_protocol_error() -> None:
+    asyncio.run(_test_codex_runtime_invalid_selection_returns_protocol_error())
+
+
+async def _test_codex_runtime_invalid_selection_returns_protocol_error() -> None:
+    client = FakeCodexClient()
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=client)
+
+    result = await runtime.update_session_selections(
+        "sess_1",
+        "thread_1",
+        {"model": "sel_model_missing"},
+    )
+
+    assert result.ok is False
+    assert result.code == "codex_invalid_selection"
+    assert "unknown Codex model selection" in str(result.message)
+    assert all(request[0] != "thread/update" for request in client.requests)
+
+
+def test_codex_runtime_start_turn_does_not_carry_session_selections() -> None:
+    asyncio.run(_test_codex_runtime_start_turn_does_not_carry_session_selections())
+
+
+async def _test_codex_runtime_start_turn_does_not_carry_session_selections() -> None:
+    client = FakeCodexClient()
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=client)
+    selection = (await runtime.list_model_catalog()).models[1].selection_id
+
+    update = await runtime.update_session_selections(
+        "sess_1",
+        "thread_1",
+        {"model": selection},
+    )
+    result = await runtime.start_turn("sess_1", "thread_1", "hello")
+
+    assert update.ok is True
+    assert result.ok is True
+    turn_start = next(
+        request for request in reversed(client.requests) if request[0] == "turn/start"
+    )
+    assert set(turn_start[1]) == {"threadId", "input", "clientUserMessageId"}
 
 
 def test_codex_runtime_lists_compact_command_for_loaded_thread() -> None:

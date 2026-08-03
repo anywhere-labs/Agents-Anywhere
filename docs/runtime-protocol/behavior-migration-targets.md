@@ -34,7 +34,7 @@ Rough completion by behavior area:
 | Turn lifecycle | Complete for T03 | Codex runtime now covers waiting/running/blocked/idle convergence, failed-turn blocking notices, item-event running inference, and stale no-active-turn correction. |
 | Notice/interaction lifecycle | Complete for T05 | Codex approvals now move through open/responding/resolved/closed, failed responses remain retryable, and blocking state is released only after open blocking notices are gone. |
 | Tool/reasoning/file reduce | Complete for T04 | SDK/native message, reasoning, tool, file-change, runtime/system, and unknown fallback items reduce to platform-safe timeline shapes. |
-| Selections | Partial | Catalogs and start-time resolution exist; live session selection read/update is incomplete. |
+| Selections | Complete for T06 | Catalogs are live runtime reads; Codex session state can read current selections, update selections through runtime state, reject invalid ids, and keep existing sends selection-free. |
 | Commands | Partial | `/compact` exists; command-mode lifecycle and UI-facing failure semantics remain incomplete. |
 | Session discovery/sync | Partial | Basic `thread/list` and snapshot exist; sync markers and rename-only updates remain incomplete. |
 | Dashboard realtime | Not started | Polling/SSE replacement with dashboard-level realtime remains server/web work. |
@@ -252,7 +252,7 @@ uv run ruff check connector/runtimes/codex tests/test_codex_runtime.py
 
 ### T06. Session selections live behavior
 
-Status: not started.
+Status: complete.
 
 Goal:
 
@@ -267,11 +267,29 @@ Required behavior:
 - invalid selection returns a clear protocol error.
 - create-and-start remains the only send path that carries initial selections.
 
+Completed:
+
+- `get_session_state` reads Codex `thread/read` and derives session-level
+  `model` / `permission` selection ids from current native thread settings.
+- Selection id parsing is strict; unknown model or permission selection ids now
+  return `codex_invalid_selection` instead of silently falling back.
+- Unsupported selection scopes return `codex_invalid_selection_scope`.
+- `update_session_selections` validates ids, updates Codex thread settings via
+  runtime client `thread/update`, and pushes merged `session.state.updated`.
+- Existing-session `start_turn` remains selection-free; model/permission changes
+  must be applied before sending.
+- `create_and_start_session` remains the only send/create path carrying initial
+  selections and now uses the same strict validation.
+- Codex SDK client adapts `thread/update` to available thread settings methods
+  such as `update_settings`.
+
 Verification:
 
 ```bash
 cd connector
 uv run pytest tests/test_codex_runtime.py tests/test_connector_runtime.py -q
+uv run pytest tests/test_codex_sdk_client.py -q
+uv run ruff check connector/runtimes/codex tests/test_codex_runtime.py tests/test_codex_sdk_client.py
 ```
 
 ### T07. Command mode behavior

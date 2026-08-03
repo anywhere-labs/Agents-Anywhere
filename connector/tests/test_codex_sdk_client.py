@@ -107,6 +107,16 @@ async def _test_codex_sdk_client_adapts_async_codex_thread_turn_flow() -> None:
         "turn/interrupt",
         {"threadId": "thread_sdk", "turnId": "turn_sdk"},
     )
+    updated = await client.request(
+        "thread/update",
+        {
+            "threadId": "thread_sdk",
+            "model": "gpt-next",
+            "effort": "high",
+            "approvalPolicy": "never",
+            "sandbox": "read-only",
+        },
+    )
     await asyncio.sleep(0)
     await client.stop()
 
@@ -115,10 +125,17 @@ async def _test_codex_sdk_client_adapts_async_codex_thread_turn_flow() -> None:
     assert turn["turn"]["id"] == "turn_sdk"
     assert steered["turnId"] == "turn_sdk"
     assert interrupted["turn"]["id"] == "turn_sdk"
+    assert updated["updated"] is True
     assert native.entered is True
     assert native.exited is True
     assert native.started_kwargs["approval_mode"] == _FakeApprovalMode.deny_all
     assert native.started_kwargs["sandbox"] == _FakeSandbox.workspace_write
+    assert native.updated_kwargs == {
+        "model": "gpt-next",
+        "effort": "high",
+        "approval_mode": _FakeApprovalMode.deny_all,
+        "sandbox": _FakeSandbox.read_only,
+    }
     assert notifications[0]["method"] == "turn/started"
     assert notifications[0]["params"]["turn"]["id"] == "turn_sdk"
     assert any(message["method"] == "turn/completed" for message in notifications)
@@ -215,6 +232,7 @@ class _FakeAsyncCodex:
         self.entered = False
         self.exited = False
         self.started_kwargs: dict[str, Any] = {}
+        self.updated_kwargs: dict[str, Any] = {}
 
     async def __aenter__(self) -> Self:
         self.entered = True
@@ -256,6 +274,10 @@ class _FakeThread:
 
     async def compact(self) -> dict[str, Any]:
         return {}
+
+    async def update_settings(self, **kwargs: Any) -> dict[str, Any]:
+        self.codex.updated_kwargs = kwargs
+        return {"updated": True}
 
 
 class _FakeTurn:

@@ -133,6 +133,10 @@ class CodexSdkClient:
             )
             self._remember_thread(thread)
             return {"thread": thread_ref(thread)}
+        if method == "thread/update":
+            thread = self._thread_handle(required_thread_id(params))
+            result = await self._update_thread_settings(thread, params)
+            return dump_sdk_result(result) or {"thread": thread_ref(thread)}
         if method == "turn/start":
             thread_id = required_thread_id(params)
             thread = self._thread_handle(thread_id)
@@ -184,6 +188,42 @@ class CodexSdkClient:
                 "Codex SDK thread handle must be created before use"
             )
         raise RuntimeInvalidRequestError("Codex SDK does not expose AsyncThread")
+
+    async def _update_thread_settings(
+        self,
+        thread: Any,
+        params: Mapping[str, Any],
+    ) -> Any:
+        settings = params.get("settings")
+        if not isinstance(settings, dict):
+            settings = {}
+        update_kwargs = {
+            "model": optional_string(params.get("model") or settings.get("model")),
+            "effort": optional_string(params.get("effort") or settings.get("effort")),
+            "approval_mode": sdk_approval_mode(
+                self._sdk,
+                params.get("approvalPolicy") or settings.get("approvalPolicy"),
+            ),
+            "sandbox": sdk_sandbox(
+                self._sdk,
+                params.get("sandbox") or settings.get("sandbox"),
+            ),
+        }
+        update_kwargs = {
+            key: value for key, value in update_kwargs.items() if value is not None
+        }
+        for method_name in (
+            "update_settings",
+            "configure",
+            "update",
+            "set_settings",
+        ):
+            update = getattr(thread, method_name, None)
+            if callable(update):
+                return await maybe_await(update(**update_kwargs))
+        raise RuntimeInvalidRequestError(
+            "Codex SDK thread does not expose a settings update method"
+        )
 
     def _remember_thread(self, thread: Any) -> None:
         thread_id = id_of(thread)
