@@ -1052,6 +1052,27 @@ def test_dashboard_ws_returns_connector_and_session_snapshot(tmp_path):
         assert [session["id"] for session in snapshot["sessions"]] == [session_id]
 
 
+def test_dashboard_ws_pushes_snapshot_after_dashboard_change(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _access_token, session_id, headers = create_connector_and_session(client)
+    ticket = dashboard_ws_ticket(client, headers)
+
+    with client.websocket_connect(f"/dashboard/ws?ticket={ticket}") as ws:
+        snapshot = ws.receive_json()
+        assert snapshot["type"] == "dashboard.snapshot"
+        assert [connector["id"] for connector in snapshot["connectors"]] == [connector_id]
+        assert [session["id"] for session in snapshot["sessions"]] == [session_id]
+
+        created = client.post("/connectors", headers=headers, json={"name": "next"})
+        assert created.status_code == 200, created.text
+        next_connector_id = created.json()["connector"]["id"]
+
+        pushed = ws.receive_json()
+        assert pushed["type"] == "dashboard.snapshot"
+        assert next_connector_id in [connector["id"] for connector in pushed["connectors"]]
+        assert session_id in [session["id"] for session in pushed["sessions"]]
+
+
 def test_dashboard_ws_rejects_session_scoped_ticket(tmp_path):
     client = make_client(tmp_path)
     _connector_id, _access_token, session_id, headers = create_connector_and_session(client)

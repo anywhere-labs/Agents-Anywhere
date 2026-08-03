@@ -39,7 +39,7 @@ Rough completion by behavior area:
 | Session discovery/sync | Complete for T08 | Codex discovery returns SessionMeta for active and hidden local sessions, uses host JSON sync markers, skips timeline sync for unchanged sessions, and allows rename/meta-only updates. |
 | Server ingest | Complete for T09 | Runtime host notifications now land as partial state updates, upsert-only Codex timeline sync, hidden session meta, and interaction lifecycle notices. |
 | Web session interaction | Complete for T10 | Session detail composer now derives action state from `SessionState.status`, resolves optimistic messages by `clientMessageId`, and refreshes missing runtime state through the dedicated state endpoint instead of snapshot. |
-| Dashboard realtime | Not started | Polling/SSE replacement with dashboard-level realtime remains server/web work. |
+| Dashboard realtime | Complete for T11 | Dashboard connects through a dedicated WebSocket lifecycle, receives the initial connector/session snapshot there, and receives pushed snapshots for changes without recurring connector/session list polling. |
 | Codex IPC side-channel | Deferred | Old IPC behavior is reference-only while the runtime is SDK-first. |
 
 ## Target checklist
@@ -473,7 +473,7 @@ corepack yarn lint
 
 ### T11. Dashboard realtime
 
-Status: not started.
+Status: complete.
 
 Goal:
 
@@ -486,13 +486,27 @@ Required behavior:
 - dashboard changes push snapshot or invalidation without one-second polling.
 - existing SSE compatibility remains until the WebSocket path is verified.
 
+Completed:
+
+- Web authenticated dashboard startup now waits for `/dashboard/ws` initial
+  `dashboard.snapshot` instead of immediately issuing separate connector and
+  session list requests.
+- Web keeps REST `refreshData()` as an explicit/manual and first-connect
+  fallback path, not as a normal recurring dashboard lifecycle.
+- Dashboard WebSocket snapshots contain both connector and session lists.
+- Server dashboard change notifications now fan out immediately by default;
+  explicit debounce remains supported for tests or future tuning.
+- Dashboard WebSocket now has backend coverage for initial snapshot, changed
+  snapshot push, and ticket scope rejection.
+- Existing `/events/dashboard` SSE compatibility endpoint remains in place.
+
 Verification:
 
 ```bash
 cd server
 uv run pytest tests/test_backend_mvp.py -q
-cd ../web
-yarn lint
+cd ../web-next
+corepack yarn lint
 ```
 
 ### T12. Codex IPC optional side-channel

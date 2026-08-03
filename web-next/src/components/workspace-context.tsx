@@ -328,6 +328,13 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   // ── Fetch data from mock API ──────────────────────────────
   const initialLoadDoneRef = React.useRef(false)
 
+  const applyDashboardSnapshot = React.useCallback((message: DashboardSnapshotMessage) => {
+    setConnectors(message.connectors.map(mapConnector))
+    setSessions(message.sessions.map(mapSession))
+    setIsLoading(false)
+    initialLoadDoneRef.current = true
+  }, [])
+
   const fetchData = React.useCallback(async () => {
     if (!initialLoadDoneRef.current) {
       setIsLoading(true)
@@ -356,11 +363,13 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
   React.useEffect(() => {
     initialLoadDoneRef.current = false
+    setIsLoading(true)
   }, [authSession?.accessToken])
 
   React.useEffect(() => {
+    if (authSession?.accessToken) return
     fetchData()
-  }, [fetchData])
+  }, [authSession?.accessToken, fetchData])
 
   // ── Dashboard WebSocket ────────────────────────────────────
   const tokenRef = React.useRef(authSession?.accessToken ?? null)
@@ -374,10 +383,14 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     let cancelled = false
     let socket: WebSocket | null = null
     let reconnectTimer: number | null = null
+    let fallbackTimer: number | null = null
 
-    const refetch = () => {
-      if (cancelled) return
-      fetchData()
+    const scheduleInitialFallback = () => {
+      if (cancelled || initialLoadDoneRef.current || fallbackTimer !== null) return
+      fallbackTimer = window.setTimeout(() => {
+        fallbackTimer = null
+        if (!cancelled && !initialLoadDoneRef.current) fetchData()
+      }, 2500)
     }
 
     const connect = async () => {
@@ -393,16 +406,17 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
           try {
             const message = JSON.parse(event.data) as unknown
             if (!isDashboardSnapshotMessage(message)) return
-            setConnectors(message.connectors.map(mapConnector))
-            setSessions(message.sessions.map(mapSession))
-            setIsLoading(false)
-            initialLoadDoneRef.current = true
+            if (fallbackTimer !== null) {
+              window.clearTimeout(fallbackTimer)
+              fallbackTimer = null
+            }
+            applyDashboardSnapshot(message)
           } catch { /* ignore malformed */ }
         }
         socket.onclose = () => {
           if (cancelled) return
           socket = null
-          refetch()
+          scheduleInitialFallback()
           reconnectTimer = window.setTimeout(() => {
             reconnectTimer = null
             void connect()
@@ -413,6 +427,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         }
       } catch {
         if (cancelled) return
+        scheduleInitialFallback()
         reconnectTimer = window.setTimeout(() => {
           reconnectTimer = null
           void connect()
@@ -426,8 +441,9 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       cancelled = true
       socket?.close()
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
+      if (fallbackTimer !== null) window.clearTimeout(fallbackTimer)
     }
-  }, [authSession?.accessToken, fetchData])
+  }, [applyDashboardSnapshot, authSession?.accessToken, fetchData])
 
   // ── Hash routing ──────────────────────────────────────────
   React.useEffect(() => {
