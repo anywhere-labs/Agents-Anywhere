@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from connector.runtime_protocol import (
@@ -15,7 +15,8 @@ from connector.runtime_protocol import (
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex import sessions as codex_sessions
-from connector.runtimes.codex.approvals import approval_decision
+from connector.runtimes.codex.command_controller import CodexCommandController
+from connector.runtimes.codex.interaction_controller import CodexInteractionController
 from connector.runtimes.codex.runtime_client import CodexRuntimeClient
 from connector.runtimes.codex.runtime_helpers import (
     ensure_text_only_attachments,
@@ -40,6 +41,19 @@ class CodexTurnController:
     ensure_started: EnsureStarted
     list_model_catalog: ListModelCatalog
     list_permission_catalog: ListPermissionCatalog
+    commands: CodexCommandController = field(init=False)
+    interactions: CodexInteractionController = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.commands = CodexCommandController(
+            client=self.client,
+            ensure_started=self.ensure_started,
+        )
+        self.interactions = CodexInteractionController(
+            client=self.client,
+            session_states=self.session_states,
+            ensure_started=self.ensure_started,
+        )
 
     async def create_and_start_session(
         self,
@@ -290,43 +304,12 @@ class CodexTurnController:
         raw: str | None = None,
         args: tuple[str, ...] = (),
     ) -> RuntimeCommandResult:
-        _ = session_id
-        _ = raw
-        if command != "compact":
-            return RuntimeCommandResult(
-                command=command,
-                ok=False,
-                code="unknown_command",
-                message=f"Codex runtime does not support /{command}",
-            )
-        if args:
-            return RuntimeCommandResult(
-                command=command,
-                ok=False,
-                code="arguments_not_supported",
-                message="/compact does not accept arguments.",
-            )
-        if self.client is None or external_session_id is None:
-            return RuntimeCommandResult(
-                command=command,
-                ok=False,
-                code="codex_thread_required",
-                message="Codex compact requires a loaded local thread.",
-            )
-        await self.ensure_started()
-        result = await self.client.request(
-            "thread/compact/start",
-            {"threadId": external_session_id},
-        )
-        return RuntimeCommandResult(
+        return await self.commands.execute_command(
+            session_id=session_id,
             command=command,
-            ok=True,
-            code="started",
-            message="Codex compaction started.",
-            result={
-                "externalSessionId": external_session_id,
-                "thread": result,
-            },
+            external_session_id=external_session_id,
+            raw=raw,
+            args=args,
         )
 
     async def respond_interaction(
@@ -336,40 +319,11 @@ class CodexTurnController:
         action_id: str,
         input_data: Mapping[str, Any] | None = None,
     ) -> RuntimeOperationResult:
-        if self.client is None:
-            raise RuntimeUnsupportedError("respond_interaction")
-        data = dict(input_data or {})
-        request_id = data.get("requestId")
-        if not isinstance(request_id, str | int):
-            approval_source = data.get("approvalSource")
-            if isinstance(approval_source, dict):
-                request_id = approval_source.get("requestId")
-        if not isinstance(request_id, str | int):
-            raise TypeError("requestId is required to respond to a Codex interaction")
-        status = data.get("approvalStatus")
-        decision = approval_decision(status if isinstance(status, str) else action_id)
-        await self.ensure_started()
-        await self.client.respond(request_id, {"decision": decision})
-        cached_state = self.session_states.get(session_id)
-        if cached_state is not None:
-            await self._set_session_state(
-                session_id=session_id,
-                external_session_id=cached_state.external_session_id,
-                status="running",
-                metadata={
-                    "source": "codex.approval/responded",
-                    "notice_id": notice_id,
-                    "decision": decision,
-                },
-            )
-        return RuntimeOperationResult(
-            ok=True,
-            result={
-                "resolved": True,
-                "noticeId": notice_id,
-                "sessionId": session_id,
-                "decision": decision,
-            },
+        return await self.interactions.respond_interaction(
+            session_id=session_id,
+            notice_id=notice_id,
+            action_id=action_id,
+            input_data=input_data,
         )
 
     async def _set_session_state(
