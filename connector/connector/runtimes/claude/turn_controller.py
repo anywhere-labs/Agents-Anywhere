@@ -6,21 +6,19 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from connector.logging import logger
 from connector.runtime_protocol import (
     RuntimeAttachment,
     RuntimeConfig,
     RuntimeOperationResult,
     RuntimeSessionStateCache,
-    RuntimeUnsupportedError,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
-from connector.runtimes.claude import options as claude_options
-from connector.runtimes.claude import timeline, utils
+from connector.runtimes.claude import timeline
 from connector.runtimes.claude.approval_controller import ClaudeApprovalController
 from connector.runtimes.claude.attachments import materialize_claude_content
 from connector.runtimes.claude.ordering import RuntimeOrderAllocator
 from connector.runtimes.claude.runtime_session import ClaudeSession, maybe_await
+from connector.runtimes.claude.turn_driver import ClaudeTurnDriver
 
 EnsureStarted = Callable[[], Awaitable[None]]
 RequireSdk = Callable[[], Any]
@@ -38,6 +36,7 @@ class ClaudeTurnController:
     require_sdk: RequireSdk
     client_factory: ClaudeClientFactory | None = None
     approvals: ClaudeApprovalController = field(init=False)
+    driver: ClaudeTurnDriver = field(init=False)
 
     def __post_init__(self) -> None:
         self.approvals = ClaudeApprovalController(
@@ -45,6 +44,15 @@ class ClaudeTurnController:
             sessions=self.sessions,
             session_states=self.session_states,
             require_sdk=self.require_sdk,
+        )
+        self.driver = ClaudeTurnDriver(
+            config=self.config,
+            host=self.host,
+            session_states=self.session_states,
+            ordering=self.ordering,
+            require_sdk=self.require_sdk,
+            can_use_tool=self.approvals.can_use_tool,
+            client_factory=self.client_factory,
         )
 
     async def stop_sessions(self) -> None:
@@ -139,7 +147,7 @@ class ClaudeTurnController:
             metadata={"source": "claude.turn/start.requested", "turn_id": turn_id},
         )
         session.active_task = asyncio.create_task(
-            self._drive_turn(
+            self.driver.drive_turn(
                 session=session,
                 content=content,
                 attachments=attachments,
@@ -280,131 +288,6 @@ class ClaudeTurnController:
         if cwd:
             session.cwd = cwd
         return session
-
-    async def _drive_turn(
-        self,
-        session: ClaudeSession,
-        content: str,
-        attachments: tuple[RuntimeAttachment, ...],
-        client_message_id: str | None,
-    ) -> None:
-        turn_id = session.active_turn_id or f"turn_claude_{secrets.token_urlsafe(12)}"
-        try:
-            sdk = self.require_sdk()
-            client = self._new_client(sdk, session)
-            session.client = client
-            connect = getattr(client, "connect", None)
-            if callable(connect):
-                await maybe_await(connect())
-            await self._set_session_state(
-                session_id=session.session_id,
-                external_session_id=session.external_session_id,
-                status="running",
-                metadata={"source": "claude.turn/running", "turn_id": turn_id},
-            )
-            query = getattr(client, "query", None)
-            if not callable(query):
-                raise RuntimeUnsupportedError("ClaudeSDKClient.query")
-            await query(
-                timeline.prompt_stream(
-                    await materialize_claude_content(
-                        self.host, session.session_id, content, attachments
-                    )
-                )
-            )
-            await self.host.timeline_item_upsert(
-                timeline.message_item(
-                    session_id=session.session_id,
-                    external_session_id=session.external_session_id,
-                    turn_id=turn_id,
-                    role="user",
-                    text=content,
-                    source_event="claude.turn/start.user",
-                    order_seq=self.ordering.order_for(
-                        utils.stable_item_id(
-                            "claude_user",
-                            session.session_id,
-                            turn_id,
-                            client_message_id,
-                            content,
-                        )
-                    ),
-                    item_id=utils.stable_item_id(
-                        "claude_user",
-                        session.session_id,
-                        turn_id,
-                        client_message_id,
-                        content,
-                    ),
-                    client_message_id=client_message_id,
-                )
-            )
-            async for raw in timeline.receive_response(client):
-                for item in timeline.timeline_items_from_live_message(
-                    session_id=session.session_id,
-                    external_session_id=session.external_session_id,
-                    turn_id=turn_id,
-                    message=raw,
-                    next_order=self.ordering.order_for,
-                ):
-                    await self.host.timeline_item_upsert(item)
-                    source_session_id = item.source.get("sessionId")
-                    if isinstance(source_session_id, str) and source_session_id:
-                        session.external_session_id = source_session_id
-            await self._set_session_state(
-                session_id=session.session_id,
-                external_session_id=session.external_session_id,
-                status="idle",
-                metadata={"source": "claude.turn/completed", "turn_id": turn_id},
-            )
-        except asyncio.CancelledError:
-            await self._set_session_state(
-                session_id=session.session_id,
-                external_session_id=session.external_session_id,
-                status="idle",
-                metadata={"source": "claude.turn/cancelled", "turn_id": turn_id},
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.exception(
-                "claude runtime turn failed session_id={}", session.session_id
-            )
-            await self._set_session_state(
-                session_id=session.session_id,
-                external_session_id=session.external_session_id,
-                status="error",
-                error={
-                    "code": getattr(exc, "code", None) or exc.__class__.__name__,
-                    "message": str(exc) or exc.__class__.__name__,
-                },
-                metadata={"source": "claude.turn/failed", "turn_id": turn_id},
-            )
-        finally:
-            session.active_turn_id = None
-            disconnect = getattr(session.client, "disconnect", None)
-            if callable(disconnect):
-                try:
-                    await maybe_await(disconnect())
-                except Exception:  # noqa: BLE001
-                    logger.exception("disconnecting Claude SDK client failed")
-
-    def _new_client(self, sdk: Any, session: ClaudeSession) -> Any:
-        options = claude_options.sdk_options(
-            sdk=sdk,
-            config_values=self.config.values,
-            cwd=session.cwd,
-            external_session_id=session.external_session_id,
-            permission_selection=session.selections.get("permission"),
-            can_use_tool=self.approvals.can_use_tool,
-        )
-        if self.client_factory is not None:
-            return self.client_factory(sdk, options)
-        client_cls = getattr(sdk, "ClaudeSDKClient", None)
-        if client_cls is None:
-            raise RuntimeUnsupportedError("ClaudeSDKClient")
-        try:
-            return client_cls(options=options)
-        except TypeError:
-            return client_cls(options)
 
     async def _set_session_state(
         self,
