@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import Any
 
-from connector.runtime_protocol import RuntimeInvalidRequestError
 from connector.runtimes.codex.sdk.events import CodexSdkEvent, sdk_event_mapping
 from connector.runtimes.codex.sdk.runtime_client import NotificationHandler
 
@@ -31,10 +29,6 @@ def thread_read_result(result: Any) -> dict[str, Any]:
     if isinstance(raw.get("thread"), dict) or isinstance(raw.get("items"), list):
         return raw
     return raw if raw else {}
-
-
-def thread_update_result(result: Any) -> dict[str, Any]:
-    return _explicit_sdk_mapping(result)
 
 
 def turn_action_result(result: Any) -> dict[str, Any]:
@@ -69,39 +63,6 @@ def notification_dict(
         thread_id=thread_id,
         turn_id=turn_id,
     ).to_notification_dict()
-
-
-def run_input(params: Mapping[str, Any]) -> Any:
-    raw_input = params.get("input")
-    if isinstance(raw_input, str):
-        return raw_input
-    if isinstance(raw_input, list):
-        parts: list[str] = []
-        for item in raw_input:
-            if isinstance(item, dict):
-                text = item.get("text")
-                if isinstance(text, str):
-                    parts.append(text)
-            elif isinstance(item, str):
-                parts.append(item)
-        return "\n".join(parts)
-    return ""
-
-
-def required_thread_id(params: Mapping[str, Any]) -> str:
-    for key in ("threadId", "thread_id"):
-        value = params.get(key)
-        if isinstance(value, str) and value:
-            return value
-    raise RuntimeInvalidRequestError("threadId is required")
-
-
-def optional_string(value: Any) -> str | None:
-    return value if isinstance(value, str) and value else None
-
-
-def optional_int(value: Any) -> int | None:
-    return value if isinstance(value, int) else None
 
 
 def id_of(value: Any) -> str | None:

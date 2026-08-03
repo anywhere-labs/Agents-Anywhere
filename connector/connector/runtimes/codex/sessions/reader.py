@@ -52,12 +52,7 @@ class CodexSessionReader:
         if self.client is None:
             return ()
         await self.ensure_started()
-        params = {
-            "limit": limit,
-            "sortKey": "updated_at",
-            **({"cursor": cursor} if cursor else {}),
-        }
-        result = await self.client.request("thread/list", params)
+        result = await self.client.list_threads(limit=limit, cursor=cursor)
         sessions: list[SessionMeta] = []
         for thread_ref in codex_sessions.thread_refs_from_list_result(result):
             thread_id = codex_sessions.thread_id_from_result(thread_ref)
@@ -148,12 +143,9 @@ class CodexSessionReader:
         if self.client is None:
             return {}
         await self.ensure_started()
-        result = await self.client.request(
-            "thread/read",
-            {
-                "threadId": external_session_id,
-                "includeTurns": False,
-            },
+        result = await self.client.read_thread(
+            thread_id=external_session_id,
+            include_turns=False,
         )
         thread = (
             result.get("thread") if isinstance(result.get("thread"), dict) else result
@@ -182,12 +174,9 @@ class CodexSessionReader:
                 metadata={"source": "codex.runtime.basic"},
             )
         await self.ensure_started()
-        result = await self.client.request(
-            "thread/read",
-            {
-                "threadId": external_session_id,
-                "includeTurns": True,
-            },
+        result = await self.client.read_thread(
+            thread_id=external_session_id,
+            include_turns=True,
         )
         thread = (
             result.get("thread") if isinstance(result.get("thread"), dict) else result

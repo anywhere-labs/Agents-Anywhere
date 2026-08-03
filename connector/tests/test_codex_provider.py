@@ -9,6 +9,12 @@ import pytest
 from connector.runtime_protocol import RuntimeConfig, RuntimeInvalidRequestError
 from connector.runtimes.codex.provider import CodexProvider
 from connector.runtimes.codex.runtime import CodexRuntime
+from connector.runtimes.codex.sdk.runtime_client import (
+    CodexInterruptTurnRequest,
+    CodexStartThreadRequest,
+    CodexStartTurnRequest,
+    CodexSteerTurnRequest,
+)
 
 
 def test_codex_provider_requires_sdk_for_runnable_surface() -> None:
@@ -187,11 +193,48 @@ class _FakeSdkClient:
     async def stop(self) -> None:
         return None
 
-    async def request(
-        self, method: str, params: Mapping[str, Any] | None = None
+    async def list_models(self) -> dict[str, Any]:
+        return {}
+
+    async def list_threads(
+        self,
+        limit: int = 100,
+        cursor: str | None = None,
     ) -> dict[str, Any]:
-        _ = method
-        _ = params
+        _ = limit
+        _ = cursor
+        return {}
+
+    async def read_thread(
+        self,
+        thread_id: str,
+        include_turns: bool = True,
+    ) -> dict[str, Any]:
+        _ = thread_id
+        _ = include_turns
+        return {}
+
+    async def start_thread(self, request: CodexStartThreadRequest) -> dict[str, Any]:
+        _ = request
+        return {}
+
+    async def start_turn(self, request: CodexStartTurnRequest) -> dict[str, Any]:
+        _ = request
+        return {}
+
+    async def steer_turn(self, request: CodexSteerTurnRequest) -> dict[str, Any]:
+        _ = request
+        return {}
+
+    async def interrupt_turn(
+        self,
+        request: CodexInterruptTurnRequest,
+    ) -> dict[str, Any]:
+        _ = request
+        return {}
+
+    async def compact_thread(self, thread_id: str) -> dict[str, Any]:
+        _ = thread_id
         return {}
 
     async def respond(

@@ -24,6 +24,12 @@ from connector.runtimes.codex.sdk.client import (
     _sdk_config,
 )
 from connector.runtimes.codex.sdk.events import CodexSdkEvent
+from connector.runtimes.codex.sdk.runtime_client import (
+    CodexInterruptTurnRequest,
+    CodexStartThreadRequest,
+    CodexStartTurnRequest,
+    CodexSteerTurnRequest,
+)
 
 
 def test_codex_sdk_client_delegates_runtime_protocol_methods() -> None:
@@ -38,7 +44,7 @@ async def _test_codex_sdk_client_delegates_runtime_protocol_methods() -> None:
         native.handled.append(message)
 
     await client.start(handler)
-    result = await client.request("thread/list", {"limit": 1})
+    result = await client.list_threads(limit=1)
     await client.respond("req_1", {"decision": "approve"})
     await client.stop()
 
@@ -91,44 +97,33 @@ async def _test_codex_sdk_client_adapts_async_codex_thread_turn_flow() -> None:
         notifications.append(message)
 
     await client.start(handler)
-    models = await client.request("model/list")
-    started = await client.request(
-        "thread/start",
-        {
-            "cwd": "/repo",
-            "model": "gpt-example",
-            "approvalPolicy": "never",
-            "sandbox": "workspace-write",
-        },
+    models = await client.list_models()
+    started = await client.start_thread(
+        CodexStartThreadRequest(
+            cwd="/repo",
+            model="gpt-example",
+            approval_policy="never",
+            sandbox="workspace-write",
+        )
     )
-    turn = await client.request(
-        "turn/start",
-        {
-            "threadId": "thread_sdk",
-            "input": [{"type": "text", "text": "hello"}],
-        },
+    turn = await client.start_turn(
+        CodexStartTurnRequest(
+            thread_id="thread_sdk",
+            content="hello",
+        )
     )
-    steered = await client.request(
-        "turn/steer",
-        {
-            "threadId": "thread_sdk",
-            "expectedTurnId": "turn_sdk",
-            "input": [{"type": "text", "text": "more"}],
-        },
+    steered = await client.steer_turn(
+        CodexSteerTurnRequest(
+            thread_id="thread_sdk",
+            turn_id="turn_sdk",
+            content="more",
+        )
     )
-    interrupted = await client.request(
-        "turn/interrupt",
-        {"threadId": "thread_sdk", "turnId": "turn_sdk"},
-    )
-    updated = await client.request(
-        "thread/update",
-        {
-            "threadId": "thread_sdk",
-            "model": "gpt-next",
-            "effort": "high",
-            "approvalPolicy": "never",
-            "sandbox": "read-only",
-        },
+    interrupted = await client.interrupt_turn(
+        CodexInterruptTurnRequest(
+            thread_id="thread_sdk",
+            turn_id="turn_sdk",
+        )
     )
     await asyncio.sleep(0)
     await client.stop()
@@ -138,17 +133,10 @@ async def _test_codex_sdk_client_adapts_async_codex_thread_turn_flow() -> None:
     assert turn["turn"]["id"] == "turn_sdk"
     assert steered["turnId"] == "turn_sdk"
     assert interrupted["turn"]["id"] == "turn_sdk"
-    assert updated["updated"] is True
     assert native.entered is True
     assert native.exited is True
     assert native.started_kwargs["approval_mode"] == _FakeApprovalMode.deny_all
     assert native.started_kwargs["sandbox"] == _FakeSandbox.workspace_write
-    assert native.updated_kwargs == {
-        "model": "gpt-next",
-        "effort": "high",
-        "approval_mode": _FakeApprovalMode.deny_all,
-        "sandbox": _FakeSandbox.read_only,
-    }
     assert notifications[0]["method"] == "turn/started"
     assert notifications[0]["params"]["turn"]["id"] == "turn_sdk"
     assert any(
@@ -178,12 +166,17 @@ class _NativeSdkClient:
     async def stop(self) -> None:
         self.stopped = True
 
-    async def request(
+    async def thread_list(
         self,
-        method: str,
-        params: Mapping[str, Any] | None = None,
+        cursor: str | None = None,
+        limit: int | None = None,
     ) -> dict[str, Any]:
-        self.requests.append((method, dict(params or {})))
+        params: dict[str, Any] = {}
+        if cursor is not None:
+            params["cursor"] = cursor
+        if limit is not None:
+            params["limit"] = limit
+        self.requests.append(("thread/list", params))
         return {"ok": True}
 
     async def respond(
@@ -254,7 +247,6 @@ class _FakeAsyncCodex:
         self.entered = False
         self.exited = False
         self.started_kwargs: dict[str, Any] = {}
-        self.updated_kwargs: dict[str, Any] = {}
 
     async def __aenter__(self) -> Self:
         self.entered = True
@@ -296,10 +288,6 @@ class _FakeThread:
 
     async def compact(self) -> dict[str, Any]:
         return {}
-
-    async def update_settings(self, **kwargs: Any) -> dict[str, Any]:
-        self.codex.updated_kwargs = kwargs
-        return {"updated": True}
 
 
 class _FakeTurn:

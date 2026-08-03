@@ -25,7 +25,10 @@ from connector.runtimes.codex.domain.selections import (
     permission_settings_from_selection,
 )
 from connector.runtimes.codex.runtime_helpers import ensure_text_only_attachments
-from connector.runtimes.codex.sdk.runtime_client import CodexRuntimeClient
+from connector.runtimes.codex.sdk.runtime_client import (
+    CodexRuntimeClient,
+    CodexStartThreadRequest,
+)
 from connector.runtimes.codex.turns.actions import CodexTurnActions
 from connector.runtimes.codex.turns.commands import CodexCommandController
 from connector.runtimes.codex.turns.interactions import CodexInteractionController
@@ -112,15 +115,14 @@ class CodexTurnController:
                 message=str(exc),
                 result={"sessionId": session_id, "selections": dict(selections or {})},
             )
-        result = await self.client.request(
-            "thread/start",
-            {
-                "cwd": cwd,
-                "model": selected_model.get("model"),
-                "approvalPolicy": native_permission.get("approvalPolicy"),
-                "sandbox": native_permission.get("sandbox"),
-                "ephemeral": False,
-            },
+        result = await self.client.start_thread(
+            CodexStartThreadRequest(
+                cwd=cwd,
+                model=selected_model.get("model"),
+                approval_policy=native_permission.get("approvalPolicy"),
+                sandbox=native_permission.get("sandbox"),
+                ephemeral=False,
+            )
         )
         thread_id = codex_sessions.thread_id_from_result(result)
         if thread_id is None:

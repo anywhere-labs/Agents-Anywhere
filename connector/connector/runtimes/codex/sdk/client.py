@@ -8,7 +8,12 @@ from typing import Any
 from connector.runtime_protocol import RuntimeConfig, RuntimeInvalidRequestError
 from connector.runtimes.codex.sdk.events import CodexSdkEvent
 from connector.runtimes.codex.sdk.runtime_client import (
+    CodexInterruptTurnRequest,
+    CodexNotificationMessage,
     CodexRuntimeClient,
+    CodexStartThreadRequest,
+    CodexStartTurnRequest,
+    CodexSteerTurnRequest,
     NotificationHandler,
 )
 from connector.runtimes.codex.sdk.shapes import (
@@ -17,16 +22,11 @@ from connector.runtimes.codex.sdk.shapes import (
     id_of,
     maybe_await,
     model_list_result,
-    optional_int,
-    optional_string,
-    required_thread_id,
-    run_input,
     sdk_approval_mode,
     sdk_sandbox,
     thread_list_result,
     thread_read_result,
     thread_ref,
-    thread_update_result,
     turn_action_result,
     turn_ref,
 )
@@ -71,21 +71,96 @@ class CodexSdkClient:
         elif hasattr(self._client, "close"):
             await maybe_await(self._client.close())
 
-    async def request(
+    async def list_models(self) -> dict[str, Any]:
+        models = getattr(self._client, "models", None)
+        if not callable(models):
+            raise RuntimeInvalidRequestError("Codex SDK client does not expose models()")
+        result = await models(include_hidden=False)
+        return model_list_result(result)
+
+    async def list_threads(
         self,
-        method: str,
-        params: Mapping[str, Any] | None = None,
+        limit: int = 100,
+        cursor: str | None = None,
     ) -> dict[str, Any]:
-        routed = await self._request_sdk_method(method, dict(params or {}))
-        if routed is not None:
-            return routed
-        request = getattr(self._client, "request", None)
-        if not callable(request):
+        thread_list = getattr(self._client, "thread_list", None)
+        if not callable(thread_list):
             raise RuntimeInvalidRequestError(
-                f"Codex SDK client does not expose request(method, params) for {method}"
+                "Codex SDK client does not expose thread_list()"
             )
-        result = await maybe_await(request(method, dict(params or {})))
-        return result if isinstance(result, dict) else {}
+        result = await thread_list(cursor=cursor, limit=limit)
+        return thread_list_result(result)
+
+    async def read_thread(
+        self,
+        thread_id: str,
+        include_turns: bool = True,
+    ) -> dict[str, Any]:
+        thread = self._thread_handle(thread_id)
+        result = await thread.read(include_turns=include_turns)
+        return thread_read_result(result)
+
+    async def start_thread(self, request: CodexStartThreadRequest) -> dict[str, Any]:
+        thread_start = getattr(self._client, "thread_start", None)
+        if not callable(thread_start):
+            raise RuntimeInvalidRequestError(
+                "Codex SDK client does not expose thread_start()"
+            )
+        thread = await thread_start(
+            cwd=request.cwd,
+            model=request.model,
+            approval_mode=sdk_approval_mode(self._sdk, request.approval_policy),
+            sandbox=sdk_sandbox(self._sdk, request.sandbox),
+            ephemeral=request.ephemeral,
+        )
+        self._remember_thread(thread)
+        return {"thread": thread_ref(thread)}
+
+    async def start_turn(self, request: CodexStartTurnRequest) -> dict[str, Any]:
+        thread = self._thread_handle(request.thread_id)
+        turn = await thread.turn(
+            request.content,
+            model=request.model,
+            effort=request.effort,
+            approval_mode=sdk_approval_mode(self._sdk, request.approval_policy),
+            sandbox=sdk_sandbox(self._sdk, request.sandbox),
+        )
+        self._remember_turn(request.thread_id, turn)
+        await self._emit(
+            {
+                "method": "turn/started",
+                "params": {
+                    "threadId": request.thread_id,
+                    "turn": turn_ref(turn),
+                },
+            }
+        )
+        self._start_stream_task(request.thread_id, turn)
+        return {"turn": turn_ref(turn)}
+
+    async def steer_turn(self, request: CodexSteerTurnRequest) -> dict[str, Any]:
+        turn = self._turn_handle(
+            thread_id=request.thread_id,
+            turn_id=request.turn_id,
+        )
+        result = await turn.steer(request.content)
+        return turn_action_result(result) or {"turn": turn_ref(turn)}
+
+    async def interrupt_turn(
+        self,
+        request: CodexInterruptTurnRequest,
+    ) -> dict[str, Any]:
+        turn = self._turn_handle(
+            thread_id=request.thread_id,
+            turn_id=request.turn_id,
+        )
+        result = await turn.interrupt()
+        return turn_action_result(result) or {"turn": turn_ref(turn)}
+
+    async def compact_thread(self, thread_id: str) -> dict[str, Any]:
+        thread = self._thread_handle(thread_id)
+        result = await thread.compact()
+        return compact_result(result)
 
     async def respond(
         self,
@@ -98,95 +173,6 @@ class CodexSdkClient:
                 "Codex SDK client does not expose respond(request_id, result)"
             )
         await maybe_await(respond(request_id, dict(result or {})))
-
-    async def _request_sdk_method(
-        self,
-        method: str,
-        params: dict[str, Any],
-    ) -> dict[str, Any] | None:
-        if method == "initialize":
-            return {}
-        if method == "model/list" and callable(getattr(self._client, "models", None)):
-            result = await self._client.models(
-                include_hidden=bool(
-                    params.get("includeHidden") or params.get("include_hidden")
-                )
-            )
-            return model_list_result(result)
-        if method == "thread/list" and callable(
-            getattr(self._client, "thread_list", None)
-        ):
-            result = await self._client.thread_list(
-                cursor=optional_string(params.get("cursor")),
-                limit=optional_int(params.get("limit")),
-            )
-            return thread_list_result(result)
-        if method == "thread/read":
-            thread_id = required_thread_id(params)
-            thread = self._thread_handle(thread_id)
-            result = await thread.read(
-                include_turns=bool(
-                    params.get("includeTurns") or params.get("include_turns")
-                )
-            )
-            return thread_read_result(result)
-        if method == "thread/start" and callable(
-            getattr(self._client, "thread_start", None)
-        ):
-            thread = await self._client.thread_start(
-                cwd=optional_string(params.get("cwd")),
-                model=optional_string(params.get("model")),
-                approval_mode=sdk_approval_mode(
-                    self._sdk, params.get("approvalPolicy")
-                ),
-                sandbox=sdk_sandbox(self._sdk, params.get("sandbox")),
-                ephemeral=bool(params.get("ephemeral"))
-                if "ephemeral" in params
-                else None,
-            )
-            self._remember_thread(thread)
-            return {"thread": thread_ref(thread)}
-        if method == "thread/update":
-            thread = self._thread_handle(required_thread_id(params))
-            result = await self._update_thread_settings(thread, params)
-            return thread_update_result(result) or {"thread": thread_ref(thread)}
-        if method == "turn/start":
-            thread_id = required_thread_id(params)
-            thread = self._thread_handle(thread_id)
-            turn = await thread.turn(
-                run_input(params),
-                model=optional_string(params.get("model")),
-                effort=optional_string(params.get("effort")),
-                approval_mode=sdk_approval_mode(
-                    self._sdk, params.get("approvalPolicy")
-                ),
-                sandbox=sdk_sandbox(self._sdk, params.get("sandbox")),
-            )
-            self._remember_turn(thread_id, turn)
-            await self._emit(
-                {
-                    "method": "turn/started",
-                    "params": {
-                        "threadId": thread_id,
-                        "turn": turn_ref(turn),
-                    },
-                }
-            )
-            self._start_stream_task(thread_id, turn)
-            return {"turn": turn_ref(turn)}
-        if method == "turn/steer":
-            turn = self._turn_handle(params)
-            result = await turn.steer(run_input(params))
-            return turn_action_result(result) or {"turn": turn_ref(turn)}
-        if method == "turn/interrupt":
-            turn = self._turn_handle(params)
-            result = await turn.interrupt()
-            return turn_action_result(result) or {"turn": turn_ref(turn)}
-        if method == "thread/compact/start":
-            thread = self._thread_handle(required_thread_id(params))
-            result = await thread.compact()
-            return compact_result(result)
-        return None
 
     def _thread_handle(self, thread_id: str) -> Any:
         cached = self._threads.get(thread_id)
@@ -206,42 +192,6 @@ class CodexSdkClient:
             )
         raise RuntimeInvalidRequestError("Codex SDK does not expose AsyncThread")
 
-    async def _update_thread_settings(
-        self,
-        thread: Any,
-        params: Mapping[str, Any],
-    ) -> Any:
-        settings = params.get("settings")
-        if not isinstance(settings, dict):
-            settings = {}
-        update_kwargs = {
-            "model": optional_string(params.get("model") or settings.get("model")),
-            "effort": optional_string(params.get("effort") or settings.get("effort")),
-            "approval_mode": sdk_approval_mode(
-                self._sdk,
-                params.get("approvalPolicy") or settings.get("approvalPolicy"),
-            ),
-            "sandbox": sdk_sandbox(
-                self._sdk,
-                params.get("sandbox") or settings.get("sandbox"),
-            ),
-        }
-        update_kwargs = {
-            key: value for key, value in update_kwargs.items() if value is not None
-        }
-        for method_name in (
-            "update_settings",
-            "configure",
-            "update",
-            "set_settings",
-        ):
-            update = getattr(thread, method_name, None)
-            if callable(update):
-                return await maybe_await(update(**update_kwargs))
-        raise RuntimeInvalidRequestError(
-            "Codex SDK thread does not expose a settings update method"
-        )
-
     def _remember_thread(self, thread: Any) -> None:
         thread_id = id_of(thread)
         if thread_id is not None:
@@ -253,12 +203,9 @@ class CodexSdkClient:
             self._turns[turn_id] = turn
         self._turns[thread_id] = turn
 
-    def _turn_handle(self, params: Mapping[str, Any]) -> Any:
-        for key in ("turnId", "turn_id", "expectedTurnId"):
-            value = params.get(key)
-            if isinstance(value, str) and value in self._turns:
-                return self._turns[value]
-        thread_id = required_thread_id(params)
+    def _turn_handle(self, thread_id: str, turn_id: str | None) -> Any:
+        if turn_id is not None and turn_id in self._turns:
+            return self._turns[turn_id]
         turn = self._turns.get(thread_id)
         if turn is None:
             raise RuntimeInvalidRequestError(
@@ -315,7 +262,7 @@ class CodexSdkClient:
             if self._turns.get(thread_id) is turn:
                 self._turns.pop(thread_id, None)
 
-    async def _emit(self, message: dict[str, Any]) -> None:
+    async def _emit(self, message: CodexNotificationMessage) -> None:
         if self._handler is not None:
             await self._handler(message)
 

@@ -28,6 +28,12 @@ from connector.runtimes.codex.domain.sessions import stable_session_id
 from connector.runtimes.codex.runtime import CodexRuntime
 from connector.runtimes.codex.sdk.client import CodexSdkClient
 from connector.runtimes.codex.sdk.events import CodexSdkEvent
+from connector.runtimes.codex.sdk.runtime_client import (
+    CodexInterruptTurnRequest,
+    CodexStartThreadRequest,
+    CodexStartTurnRequest,
+    CodexSteerTurnRequest,
+)
 from connector.runtimes.codex.sdk.shapes import notification_dict, thread_ref
 
 
@@ -122,16 +128,94 @@ class FakeCodexClient:
     async def stop(self) -> None:
         self.stopped = True
 
-    async def request(
-        self,
-        method: str,
-        params: Mapping[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        self.requests.append((method, dict(params or {})))
+    def record_request(self, method: str, params: Mapping[str, Any]) -> dict[str, Any]:
+        self.requests.append((method, dict(params)))
         result = self.results.get(method, {})
         if isinstance(result, Exception):
             raise result
         return result
+
+    async def list_models(self) -> dict[str, Any]:
+        return self.record_request("model/list", {})
+
+    async def list_threads(
+        self,
+        limit: int = 100,
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "limit": limit,
+            "sortKey": "updated_at",
+        }
+        if cursor is not None:
+            params["cursor"] = cursor
+        return self.record_request("thread/list", params)
+
+    async def read_thread(
+        self,
+        thread_id: str,
+        include_turns: bool = True,
+    ) -> dict[str, Any]:
+        return self.record_request(
+            "thread/read",
+            {
+                "threadId": thread_id,
+                "includeTurns": include_turns,
+            },
+        )
+
+    async def start_thread(self, request: CodexStartThreadRequest) -> dict[str, Any]:
+        return self.record_request(
+            "thread/start",
+            {
+                "cwd": request.cwd,
+                "model": request.model,
+                "approvalPolicy": request.approval_policy,
+                "sandbox": request.sandbox,
+                "ephemeral": request.ephemeral,
+            },
+        )
+
+    async def start_turn(self, request: CodexStartTurnRequest) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "threadId": request.thread_id,
+            "input": [{"type": "text", "text": request.content, "text_elements": []}],
+            "clientUserMessageId": request.client_message_id,
+            "model": request.model,
+            "effort": request.effort,
+            "approvalPolicy": request.approval_policy,
+            "sandbox": request.sandbox,
+        }
+        return self.record_request(
+            "turn/start",
+            {key: value for key, value in params.items() if value is not None},
+        )
+
+    async def steer_turn(self, request: CodexSteerTurnRequest) -> dict[str, Any]:
+        return self.record_request(
+            "turn/steer",
+            {
+                "threadId": request.thread_id,
+                "input": [{"type": "text", "text": request.content, "text_elements": []}],
+                "expectedTurnId": request.turn_id,
+                "clientUserMessageId": request.client_message_id,
+            },
+        )
+
+    async def interrupt_turn(
+        self,
+        request: CodexInterruptTurnRequest,
+    ) -> dict[str, Any]:
+        return self.record_request(
+            "turn/interrupt",
+            {
+                "threadId": request.thread_id,
+                "turnId": request.turn_id,
+            },
+        )
+
+    async def compact_thread(self, thread_id: str) -> dict[str, Any]:
+        return self.record_request("thread/compact/start", {"threadId": thread_id})
 
     async def respond(
         self,

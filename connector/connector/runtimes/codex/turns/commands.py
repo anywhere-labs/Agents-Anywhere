@@ -60,10 +60,7 @@ class CodexCommandController:
             )
         await self.ensure_started()
         try:
-            result = await self.client.request(
-                "thread/compact/start",
-                {"threadId": external_session_id},
-            )
+            result = await self.client.compact_thread(external_session_id)
         except RuntimeError as exc:
             return RuntimeCommandResult(
                 command=command_id,

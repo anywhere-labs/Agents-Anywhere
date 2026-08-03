@@ -25,7 +25,12 @@ from connector.runtimes.codex.runtime_helpers import (
     ensure_text_only_attachments,
     soft_interrupt_failure_reason,
 )
-from connector.runtimes.codex.sdk.runtime_client import CodexRuntimeClient
+from connector.runtimes.codex.sdk.runtime_client import (
+    CodexInterruptTurnRequest,
+    CodexRuntimeClient,
+    CodexStartTurnRequest,
+    CodexSteerTurnRequest,
+)
 
 EnsureStarted = Callable[[], Awaitable[None]]
 
@@ -97,18 +102,16 @@ class CodexTurnActions:
             text=content,
         )
         try:
-            turn_params = {
-                "threadId": external_session_id,
-                "input": [{"type": "text", "text": content, "text_elements": []}],
-                "clientUserMessageId": client_message_id,
-                "model": selected_model.get("model"),
-                "effort": selected_model.get("effort"),
-                "approvalPolicy": native_permission.get("approvalPolicy"),
-                "sandbox": native_permission.get("sandbox"),
-            }
-            result = await self.client.request(
-                "turn/start",
-                {key: value for key, value in turn_params.items() if value is not None},
+            result = await self.client.start_turn(
+                CodexStartTurnRequest(
+                    thread_id=external_session_id,
+                    content=content,
+                    client_message_id=client_message_id,
+                    model=selected_model.get("model"),
+                    effort=selected_model.get("effort"),
+                    approval_policy=native_permission.get("approvalPolicy"),
+                    sandbox=native_permission.get("sandbox"),
+                )
             )
         except Exception as exc:
             await self._set_session_state(
@@ -116,7 +119,7 @@ class CodexTurnActions:
                 external_session_id=external_session_id,
                 status="error",
                 error={
-                    "code": getattr(exc, "code", None) or exc.__class__.__name__,
+                    "code": exc.__class__.__name__,
                     "message": str(exc) or exc.__class__.__name__,
                 },
                 metadata={"source": "codex.turn/start.failed"},
@@ -183,14 +186,13 @@ class CodexTurnActions:
             steering=True,
             turn_id=turn_id,
         )
-        result = await self.client.request(
-            "turn/steer",
-            {
-                "threadId": external_session_id,
-                "input": [{"type": "text", "text": content, "text_elements": []}],
-                "expectedTurnId": turn_id,
-                "clientUserMessageId": client_message_id,
-            },
+        result = await self.client.steer_turn(
+            CodexSteerTurnRequest(
+                thread_id=external_session_id,
+                turn_id=turn_id,
+                content=content,
+                client_message_id=client_message_id,
+            )
         )
         await self._set_session_state(
             session_id=session_id,
@@ -233,12 +235,11 @@ class CodexTurnActions:
             )
         await self.ensure_started()
         try:
-            result = await self.client.request(
-                "turn/interrupt",
-                {
-                    "threadId": external_session_id,
-                    "turnId": turn_id,
-                },
+            result = await self.client.interrupt_turn(
+                CodexInterruptTurnRequest(
+                    thread_id=external_session_id,
+                    turn_id=turn_id,
+                )
             )
         except RuntimeError as exc:
             soft_reason = soft_interrupt_failure_reason(str(exc))

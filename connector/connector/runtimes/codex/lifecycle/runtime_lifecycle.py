@@ -35,7 +35,7 @@ class CodexRuntimeLifecycle:
         if self.client is None:
             return
         try:
-            self.model_list_result = await self.client.request("model/list")
+            self.model_list_result = await self.client.list_models()
         except Exception as exc:  # noqa: BLE001
             logger.debug("codex bootstrap read failed method=model/list error={}", exc)
 

@@ -42,6 +42,18 @@ DeltaNotificationPayload = (
     | ReasoningSummaryTextDeltaNotification
 )
 
+CodexKnownNotificationPayload = (
+    DeltaNotificationPayload
+    | ReasoningSummaryPartAddedNotification
+    | FileChangePatchUpdatedNotification
+    | ItemStartedNotification
+    | ItemCompletedNotification
+    | TurnStartedNotification
+    | TurnCompletedNotification
+    | ErrorNotification
+    | RawResponseItemCompletedNotification
+)
+
 
 @dataclass(frozen=True, slots=True)
 class CodexSdkEvent:
@@ -246,7 +258,10 @@ def sdk_notification_event(
 
     if not isinstance(value, Notification):
         return None
-    params = _sdk_payload_params(value.method, value.payload)
+    payload = value.payload
+    if not isinstance(payload, CodexKnownNotificationPayload):
+        return None
+    params = _sdk_payload_params(value.method, payload)
     if params is None:
         return None
     if thread_id is not None:
@@ -263,7 +278,10 @@ def sdk_notification_event(
     )
 
 
-def _sdk_payload_params(method: str, payload: Any) -> dict[str, Any] | None:
+def _sdk_payload_params(
+    method: str,
+    payload: CodexKnownNotificationPayload,
+) -> dict[str, Any] | None:
     common = _sdk_common_params(payload)
     if isinstance(payload, DeltaNotificationPayload):
         return {
@@ -310,7 +328,7 @@ def _sdk_payload_params(method: str, payload: Any) -> dict[str, Any] | None:
     return common if common else None
 
 
-def _delta_item_semantics(payload: Any) -> dict[str, Any]:
+def _delta_item_semantics(payload: DeltaNotificationPayload) -> dict[str, Any]:
     if isinstance(payload, AgentMessageDeltaNotification):
         return {"itemType": "agentMessage", "role": "assistant", "status": "inProgress"}
     if isinstance(payload, CommandExecutionOutputDeltaNotification):
@@ -330,18 +348,34 @@ def _delta_item_semantics(payload: Any) -> dict[str, Any]:
     return {}
 
 
-def _sdk_common_params(payload: Any) -> dict[str, Any]:
+def _sdk_common_params(payload: CodexKnownNotificationPayload) -> dict[str, Any]:
     params: dict[str, Any] = {}
-    thread_id = getattr(payload, "thread_id", None)
-    if isinstance(thread_id, str) and thread_id:
-        params["threadId"] = thread_id
-    turn_id = getattr(payload, "turn_id", None)
-    if isinstance(turn_id, str) and turn_id:
+    if payload.thread_id:
+        params["threadId"] = payload.thread_id
+    turn_id = _payload_turn_id(payload)
+    if turn_id is not None:
         params["turnId"] = turn_id
-    item_id = getattr(payload, "item_id", None)
+    item_id = _payload_item_id(payload)
     if isinstance(item_id, str) and item_id:
         params["itemId"] = item_id
     return params
+
+
+def _payload_item_id(payload: CodexKnownNotificationPayload) -> str | None:
+    if isinstance(
+        payload,
+        DeltaNotificationPayload
+        | ReasoningSummaryPartAddedNotification
+        | FileChangePatchUpdatedNotification,
+    ):
+        return payload.item_id
+    return None
+
+
+def _payload_turn_id(payload: CodexKnownNotificationPayload) -> str | None:
+    if isinstance(payload, TurnStartedNotification | TurnCompletedNotification):
+        return payload.turn.id
+    return payload.turn_id
 
 
 def _sdk_turn(turn: Turn) -> dict[str, Any]:
