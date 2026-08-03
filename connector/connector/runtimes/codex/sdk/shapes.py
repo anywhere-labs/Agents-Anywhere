@@ -3,32 +3,41 @@ from __future__ import annotations
 from typing import Any
 
 from connector.runtimes.codex.sdk.events import CodexSdkEvent, sdk_event_mapping
-from connector.runtimes.codex.sdk.runtime_client import NotificationHandler
+from connector.runtimes.codex.sdk.runtime_client import (
+    CodexModelListResult,
+    CodexThreadListResult,
+    CodexThreadReadResult,
+    NotificationHandler,
+)
 
 
-def model_list_result(result: Any) -> dict[str, Any]:
+def model_list_result(result: Any) -> CodexModelListResult:
     raw = _explicit_sdk_mapping(result)
-    if isinstance(raw.get("models"), list) or isinstance(raw.get("data"), list):
-        return raw
-    return raw if raw else {}
+    models = _mapping_items(raw, "models", "items", "data")
+    return CodexModelListResult(
+        models=models,
+        next_cursor=_string_value(raw, "nextCursor", "next_cursor"),
+    )
 
 
-def thread_list_result(result: Any) -> dict[str, Any]:
+def thread_list_result(result: Any) -> CodexThreadListResult:
     raw = _explicit_sdk_mapping(result)
-    if (
-        isinstance(raw.get("threads"), list)
-        or isinstance(raw.get("items"), list)
-        or isinstance(raw.get("data"), list)
-    ):
-        return raw
-    return raw if raw else {}
+    threads = _mapping_items(raw, "threads", "items", "data")
+    nested_thread = raw.get("thread")
+    if isinstance(nested_thread, dict):
+        threads = (*threads, nested_thread)
+    return CodexThreadListResult(
+        threads=threads,
+        next_cursor=_string_value(raw, "nextCursor", "next_cursor"),
+    )
 
 
-def thread_read_result(result: Any) -> dict[str, Any]:
+def thread_read_result(result: Any) -> CodexThreadReadResult:
     raw = _explicit_sdk_mapping(result)
-    if isinstance(raw.get("thread"), dict) or isinstance(raw.get("items"), list):
-        return raw
-    return raw if raw else {}
+    thread = raw.get("thread")
+    if isinstance(thread, dict):
+        return CodexThreadReadResult(thread=thread)
+    return CodexThreadReadResult(thread=raw)
 
 
 def turn_action_result(result: Any) -> dict[str, Any]:
@@ -41,6 +50,22 @@ def compact_result(result: Any) -> dict[str, Any]:
 
 def _explicit_sdk_mapping(value: Any) -> dict[str, Any]:
     return sdk_event_mapping(value)
+
+
+def _mapping_items(raw: dict[str, Any], *keys: str) -> tuple[dict[str, Any], ...]:
+    for key in keys:
+        value = raw.get(key)
+        if isinstance(value, list):
+            return tuple(item for item in value if isinstance(item, dict))
+    return ()
+
+
+def _string_value(raw: dict[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        value = raw.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
 
 
 def thread_ref(thread: Any) -> dict[str, Any]:

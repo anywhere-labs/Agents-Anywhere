@@ -54,7 +54,8 @@ class CodexSessionReader:
         await self.ensure_started()
         result = await self.client.list_threads(limit=limit, cursor=cursor)
         sessions: list[SessionMeta] = []
-        for thread_ref in codex_sessions.thread_refs_from_list_result(result):
+        for thread_ref_mapping in result.threads:
+            thread_ref = dict(thread_ref_mapping)
             thread_id = codex_sessions.thread_id_from_result(thread_ref)
             if thread_id is None:
                 continue
@@ -147,10 +148,8 @@ class CodexSessionReader:
             thread_id=external_session_id,
             include_turns=False,
         )
-        thread = (
-            result.get("thread") if isinstance(result.get("thread"), dict) else result
-        )
-        if not isinstance(thread, dict):
+        thread = dict(result.thread)
+        if not thread:
             return {}
         return await selections_from_thread_state(
             thread,
@@ -178,13 +177,10 @@ class CodexSessionReader:
             thread_id=external_session_id,
             include_turns=True,
         )
-        thread = (
-            result.get("thread") if isinstance(result.get("thread"), dict) else result
-        )
         items = codex_timeline.timeline_items_from_thread(
             session_id=session_id,
             external_session_id=external_session_id,
-            thread=thread if isinstance(thread, dict) else {},
+            thread=dict(result.thread),
             limit=limit,
             pending_messages=self.pending_messages,
         )

@@ -2,22 +2,21 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
 
 from connector.runtime_protocol import (
     RuntimeConfig,
     RuntimeModelCatalog,
     RuntimePermissionCatalog,
 )
-from connector.runtimes.codex.domain import sessions as codex_sessions
 from connector.runtimes.codex.domain.catalogs import (
     codex_permission_catalog_items,
     model_catalog_from_codex_items,
     permission_catalog_from_codex_items,
 )
+from connector.runtimes.codex.sdk.runtime_client import CodexModelListResult
 
 EnsureStarted = Callable[[], Awaitable[None]]
-GetModelListResult = Callable[[], dict[str, Any] | None]
+GetModelListResult = Callable[[], CodexModelListResult | None]
 
 
 @dataclass(slots=True)
@@ -32,8 +31,9 @@ class CodexCatalogReader:
         limit: int = 100,
     ) -> RuntimeModelCatalog:
         await self.ensure_started()
+        model_list_result = self.get_model_list_result()
         catalog = model_catalog_from_codex_items(
-            codex_sessions.model_list_items(self.get_model_list_result()),
+            list(model_list_result.models) if model_list_result is not None else [],
             revision=self.config.revision,
         )
         if query:

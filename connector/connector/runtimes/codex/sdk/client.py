@@ -10,11 +10,14 @@ from connector.runtimes.codex.sdk.events import CodexSdkEvent
 from connector.runtimes.codex.sdk.runtime_client import (
     CodexCompactResult,
     CodexInterruptTurnRequest,
+    CodexModelListResult,
     CodexNotificationMessage,
     CodexRuntimeClient,
     CodexStartThreadRequest,
     CodexStartTurnRequest,
     CodexSteerTurnRequest,
+    CodexThreadListResult,
+    CodexThreadReadResult,
     CodexThreadResult,
     CodexTurnResult,
     NotificationHandler,
@@ -74,7 +77,7 @@ class CodexSdkClient:
         elif hasattr(self._client, "close"):
             await maybe_await(self._client.close())
 
-    async def list_models(self) -> dict[str, Any]:
+    async def list_models(self) -> CodexModelListResult:
         models = getattr(self._client, "models", None)
         if not callable(models):
             raise RuntimeInvalidRequestError("Codex SDK client does not expose models()")
@@ -85,7 +88,7 @@ class CodexSdkClient:
         self,
         limit: int = 100,
         cursor: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> CodexThreadListResult:
         thread_list = getattr(self._client, "thread_list", None)
         if not callable(thread_list):
             raise RuntimeInvalidRequestError(
@@ -98,7 +101,7 @@ class CodexSdkClient:
         self,
         thread_id: str,
         include_turns: bool = True,
-    ) -> dict[str, Any]:
+    ) -> CodexThreadReadResult:
         thread = self._thread_handle(thread_id)
         result = await thread.read(include_turns=include_turns)
         return thread_read_result(result)

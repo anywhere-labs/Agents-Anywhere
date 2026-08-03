@@ -12,9 +12,12 @@ from connector.runtimes.codex.runtime import CodexRuntime
 from connector.runtimes.codex.sdk.runtime_client import (
     CodexCompactResult,
     CodexInterruptTurnRequest,
+    CodexModelListResult,
     CodexStartThreadRequest,
     CodexStartTurnRequest,
     CodexSteerTurnRequest,
+    CodexThreadListResult,
+    CodexThreadReadResult,
     CodexThreadResult,
     CodexTurnResult,
 )
@@ -196,26 +199,26 @@ class _FakeSdkClient:
     async def stop(self) -> None:
         return None
 
-    async def list_models(self) -> dict[str, Any]:
-        return {}
+    async def list_models(self) -> CodexModelListResult:
+        return CodexModelListResult(models=())
 
     async def list_threads(
         self,
         limit: int = 100,
         cursor: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> CodexThreadListResult:
         _ = limit
         _ = cursor
-        return {}
+        return CodexThreadListResult(threads=())
 
     async def read_thread(
         self,
         thread_id: str,
         include_turns: bool = True,
-    ) -> dict[str, Any]:
+    ) -> CodexThreadReadResult:
         _ = thread_id
         _ = include_turns
-        return {}
+        return CodexThreadReadResult(thread={})
 
     async def start_thread(self, request: CodexStartThreadRequest) -> CodexThreadResult:
         _ = request

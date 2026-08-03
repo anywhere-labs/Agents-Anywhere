@@ -31,9 +31,12 @@ from connector.runtimes.codex.sdk.events import CodexSdkEvent
 from connector.runtimes.codex.sdk.runtime_client import (
     CodexCompactResult,
     CodexInterruptTurnRequest,
+    CodexModelListResult,
     CodexStartThreadRequest,
     CodexStartTurnRequest,
     CodexSteerTurnRequest,
+    CodexThreadListResult,
+    CodexThreadReadResult,
     CodexThreadResult,
     CodexTurnResult,
 )
@@ -138,34 +141,40 @@ class FakeCodexClient:
             raise result
         return result
 
-    async def list_models(self) -> dict[str, Any]:
-        return self.record_request("model/list", {})
+    async def list_models(self) -> CodexModelListResult:
+        result = self.record_request("model/list", {})
+        models = result["models"]
+        return CodexModelListResult(models=tuple(models))
 
     async def list_threads(
         self,
         limit: int = 100,
         cursor: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> CodexThreadListResult:
         params: dict[str, Any] = {
             "limit": limit,
             "sortKey": "updated_at",
         }
         if cursor is not None:
             params["cursor"] = cursor
-        return self.record_request("thread/list", params)
+        result = self.record_request("thread/list", params)
+        threads = result["threads"]
+        return CodexThreadListResult(threads=tuple(threads))
 
     async def read_thread(
         self,
         thread_id: str,
         include_turns: bool = True,
-    ) -> dict[str, Any]:
-        return self.record_request(
+    ) -> CodexThreadReadResult:
+        result = self.record_request(
             "thread/read",
             {
                 "threadId": thread_id,
                 "includeTurns": include_turns,
             },
         )
+        thread = result["thread"]
+        return CodexThreadReadResult(thread=thread)
 
     async def start_thread(self, request: CodexStartThreadRequest) -> CodexThreadResult:
         result = self.record_request(

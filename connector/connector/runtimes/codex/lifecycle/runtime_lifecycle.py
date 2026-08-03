@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 from connector.logging import logger
 from connector.runtimes.codex.notifications import CodexNotificationProjector
 from connector.runtimes.codex.sdk.runtime_client import (
+    CodexModelListResult,
     CodexNotificationMessage,
     CodexRuntimeClient,
 )
@@ -16,7 +16,7 @@ class CodexRuntimeLifecycle:
     client: CodexRuntimeClient | None
     notifications: CodexNotificationProjector
     started: bool = False
-    model_list_result: dict[str, Any] | None = None
+    model_list_result: CodexModelListResult | None = None
 
     async def start(self) -> None:
         if self.started:

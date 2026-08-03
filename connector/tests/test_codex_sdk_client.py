@@ -52,7 +52,7 @@ async def _test_codex_sdk_client_delegates_runtime_protocol_methods() -> None:
     assert native.stopped is True
     assert native.requests == [("thread/list", {"limit": 1})]
     assert native.responses == [("req_1", {"decision": "approve"})]
-    assert result == {"ok": True}
+    assert result.threads == ()
 
 
 def test_create_sdk_client_prefers_explicit_runtime_factory() -> None:
@@ -128,7 +128,7 @@ async def _test_codex_sdk_client_adapts_async_codex_thread_turn_flow() -> None:
     await asyncio.sleep(0)
     await client.stop()
 
-    assert models["data"][0]["id"] == "gpt-example"
+    assert models.models[0]["id"] == "gpt-example"
     assert started.thread_id == "thread_sdk"
     assert started.payload["id"] == "thread_sdk"
     assert turn.turn_id == "turn_sdk"

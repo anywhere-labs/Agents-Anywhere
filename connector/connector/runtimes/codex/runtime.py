@@ -28,7 +28,10 @@ from connector.runtimes.codex.domain.pending_messages import (
 )
 from connector.runtimes.codex.lifecycle.runtime_lifecycle import CodexRuntimeLifecycle
 from connector.runtimes.codex.notifications import CodexNotificationProjector
-from connector.runtimes.codex.sdk.runtime_client import CodexRuntimeClient
+from connector.runtimes.codex.sdk.runtime_client import (
+    CodexModelListResult,
+    CodexRuntimeClient,
+)
 from connector.runtimes.codex.sessions.reader import CodexSessionReader
 from connector.runtimes.codex.timeline.accumulator import CodexTimelineAccumulator
 from connector.runtimes.codex.turns.controller import CodexTurnController
@@ -273,5 +276,5 @@ class CodexRuntime(AgentRuntime):
     async def _handle_notification(self, message: Any) -> None:
         await self._lifecycle.handle_notification(message)
 
-    def _get_model_list_result(self) -> dict[str, Any] | None:
+    def _get_model_list_result(self) -> CodexModelListResult | None:
         return self._lifecycle.model_list_result

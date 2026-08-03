@@ -45,6 +45,23 @@ class CodexInterruptTurnRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class CodexModelListResult:
+    models: tuple[Mapping[str, Any], ...]
+    next_cursor: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CodexThreadListResult:
+    threads: tuple[Mapping[str, Any], ...]
+    next_cursor: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CodexThreadReadResult:
+    thread: Mapping[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
 class CodexThreadResult:
     thread_id: str | None
     payload: Mapping[str, Any]
@@ -64,17 +81,17 @@ class CodexCompactResult:
 class CodexRuntimeClient(Protocol):
     async def start(self, handler: NotificationHandler) -> None: ...
     async def stop(self) -> None: ...
-    async def list_models(self) -> dict[str, Any]: ...
+    async def list_models(self) -> CodexModelListResult: ...
     async def list_threads(
         self,
         limit: int = 100,
         cursor: str | None = None,
-    ) -> dict[str, Any]: ...
+    ) -> CodexThreadListResult: ...
     async def read_thread(
         self,
         thread_id: str,
         include_turns: bool = True,
-    ) -> dict[str, Any]: ...
+    ) -> CodexThreadReadResult: ...
     async def start_thread(self, request: CodexStartThreadRequest) -> CodexThreadResult: ...
     async def start_turn(self, request: CodexStartTurnRequest) -> CodexTurnResult: ...
     async def steer_turn(self, request: CodexSteerTurnRequest) -> CodexTurnResult: ...

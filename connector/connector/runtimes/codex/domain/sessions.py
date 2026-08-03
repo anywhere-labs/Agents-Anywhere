@@ -13,32 +13,6 @@ def stable_session_id(connector_id: str, thread_id: str) -> str:
     return f"sess_codex_{digest}"
 
 
-def model_list_items(result: dict[str, Any] | None) -> list[dict[str, Any]]:
-    if not isinstance(result, dict):
-        return []
-    for key in ("models", "items", "data"):
-        value = result.get(key)
-        if isinstance(value, list):
-            return [item for item in value if isinstance(item, dict)]
-    nested = result.get("modelCatalog") or result.get("catalog")
-    if isinstance(nested, dict):
-        return model_list_items(nested)
-    return []
-
-
-def thread_refs_from_list_result(result: dict[str, Any]) -> list[dict[str, Any]]:
-    for key in ("threads", "data", "items"):
-        value = result.get(key)
-        if isinstance(value, list):
-            return [item for item in value if isinstance(item, dict)]
-    nested = result.get("thread")
-    if isinstance(nested, dict):
-        return [nested]
-    if thread_id_from_result(result):
-        return [result]
-    return []
-
-
 def thread_id_from_result(value: dict[str, Any]) -> str | None:
     thread = value.get("thread") if isinstance(value.get("thread"), dict) else value
     if not isinstance(thread, dict):
