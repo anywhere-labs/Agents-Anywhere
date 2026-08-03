@@ -344,3 +344,25 @@ def test_codex_typed_sdk_timeline_projection_does_not_dump_models() -> None:
     assert "model_dump" not in typed_events_source
     assert "__dict__" not in typed_events_source
     assert "vars(" not in typed_events_source
+
+
+def test_codex_notifications_are_split_by_side_effect_role() -> None:
+    notifications_dir = CONNECTOR_PACKAGE / "runtimes" / "codex" / "notifications"
+    projector_source = (notifications_dir / "projector.py").read_text(encoding="utf-8")
+    turn_lifecycle_source = (notifications_dir / "turn_lifecycle.py").read_text(
+        encoding="utf-8"
+    )
+    timeline_activity_source = (notifications_dir / "timeline_activity.py").read_text(
+        encoding="utf-8"
+    )
+    notices_source = (notifications_dir / "notices.py").read_text(encoding="utf-8")
+
+    assert notifications_dir.is_dir()
+    assert not (CONNECTOR_PACKAGE / "runtimes" / "codex" / "notifications.py").exists()
+    assert "class CodexNotificationProjector" in projector_source
+    assert "timeline_sync(" not in projector_source
+    assert "timeline_item_upsert(" not in projector_source
+    assert "notice_upsert(" not in projector_source
+    assert "timeline_sync(" in turn_lifecycle_source
+    assert "timeline_item_upsert(" in timeline_activity_source
+    assert "notice_upsert(" in notices_source

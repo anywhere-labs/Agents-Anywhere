@@ -379,7 +379,7 @@ uv run pytest tests/test_codex_runtime.py tests/test_codex_sdk_client.py tests/t
 
 ### C06. Split notification side-effect handlers
 
-Status: todo.
+Status: done.
 
 Current `notifications.py` owns:
 
@@ -408,6 +408,30 @@ Rules:
 - Methods with side effects must have short docstrings explaining host state or
   notice/timeline writes.
 - Runtime state updates remain semantic `RuntimeHostClient` calls.
+
+Verification:
+
+```bash
+cd connector
+uv run ruff check connector/runtimes/codex tests/test_codex_runtime.py tests/test_connector_architecture.py
+uv run pytest tests/test_codex_runtime.py tests/test_connector_architecture.py -q
+```
+
+Completed:
+
+- Replaced the active `notifications.py` module with a
+  `notifications/` package that keeps `CodexNotificationProjector` exported from
+  `connector.runtimes.codex.notifications`.
+- Moved top-level notification dispatch into `notifications/projector.py`.
+- Moved turn started/completed/failed side effects into
+  `notifications/turn_lifecycle.py`.
+- Moved item activity running-state updates and timeline item upserts into
+  `notifications/timeline_activity.py`.
+- Moved approval notices, blocking notice closeout, and failed-turn notice
+  publication into `notifications/notices.py`.
+- Added side-effect docstrings to the split handlers.
+- Added an architecture test that prevents the projector from owning
+  `timeline_sync`, `timeline_item_upsert`, or `notice_upsert`.
 
 Verification:
 
@@ -475,9 +499,9 @@ Stop and ask before proceeding if any step would require:
 The next unchecked implementation item is:
 
 ```text
-C06. Split notification side-effect handlers
+C07. Revisit turn controller split
 ```
 
-Do not jump past C06 before C01-C05 are done, because typed SDK event
-projection should be the primary notification path before splitting
-side-effect handlers.
+Do not mark the refactor complete before C07 is done and verified, because turn
+controller orchestration still needs the same responsibility audit as
+notification handling.
