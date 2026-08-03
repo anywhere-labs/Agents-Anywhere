@@ -5,7 +5,7 @@ import json
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from connector.runtime_protocol.models import RuntimeTimelineItem
 
@@ -21,9 +21,11 @@ TimelineItemStatus = Literal[
     "pending",
     "inProgress",
     "running",
+    "waiting_approval",
     "done",
     "failed",
     "cancelled",
+    "interrupted",
     "hidden",
 ]
 TimelineRole = Literal["user", "assistant", "system", "tool"]
@@ -172,6 +174,8 @@ class SystemTimelineContent(TimelineContent):
 
 @dataclass(frozen=True, slots=True)
 class BaseTimelineItem(ABC):
+    expected_type: ClassVar[TimelineItemType | None] = None
+
     id: str
     type: TimelineItemType
     status: TimelineItemStatus
@@ -185,6 +189,14 @@ class BaseTimelineItem(ABC):
     @abstractmethod
     def to_platform_item(self, session_id: str, order_seq: int) -> RuntimeTimelineItem:
         """Convert a runtime-specific item into the platform timeline contract."""
+
+    def __post_init__(self) -> None:
+        expected_type = self.expected_type
+        if expected_type is not None and self.type != expected_type:
+            raise ValueError(
+                f"{self.__class__.__name__} requires type={expected_type!r}, "
+                f"got {self.type!r}"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,6 +222,36 @@ class PlatformTimelineItem(BaseTimelineItem):
             revision=self.revision,
             metadata=self.metadata,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class TurnStartTimelineItem(PlatformTimelineItem):
+    expected_type: ClassVar[TimelineItemType | None] = "turn.start"
+
+
+@dataclass(frozen=True, slots=True)
+class TurnEndTimelineItem(PlatformTimelineItem):
+    expected_type: ClassVar[TimelineItemType | None] = "turn.end"
+
+
+@dataclass(frozen=True, slots=True)
+class MessageTimelineItem(PlatformTimelineItem):
+    expected_type: ClassVar[TimelineItemType | None] = "message"
+
+
+@dataclass(frozen=True, slots=True)
+class ToolTimelineItem(PlatformTimelineItem):
+    expected_type: ClassVar[TimelineItemType | None] = "tool"
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactTimelineItem(PlatformTimelineItem):
+    expected_type: ClassVar[TimelineItemType | None] = "artifact"
+
+
+@dataclass(frozen=True, slots=True)
+class SystemTimelineItem(PlatformTimelineItem):
+    expected_type: ClassVar[TimelineItemType | None] = "system"
 
 
 def timeline_content_hash(

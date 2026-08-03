@@ -22,6 +22,7 @@ from connector.runtimes.codex.timeline.identity import (
 from connector.runtimes.codex.timeline.items import (
     CodexTimelineItem,
     MappingTimelineContent,
+    codex_timeline_item_class,
     timeline_item_status_from_string,
     timeline_item_type_from_string,
     timeline_role_from_string,
@@ -78,7 +79,8 @@ class CodexTimelineProjection:
         role = timeline_item_role(raw)
         native_type = timeline_raw_type(raw)
         client_message_id = client_message_id_from_raw(raw)
-        return CodexTimelineItem(
+        item_class = codex_timeline_item_class(native_type)
+        return item_class(
             id=timeline_item_id(raw, external_session_id, fallback_index),
             type=timeline_item_type_from_string(item_type),
             status=timeline_item_status_from_string(status),
@@ -238,12 +240,14 @@ def timeline_item_type(raw: dict[str, Any]) -> str:
         return "system"
     if value in {"agentMessage", "userMessage", "steeringUserMessage"}:
         return "message"
+    if value == "turnStart":
+        return "turn.start"
+    if value == "turnEnd":
+        return "turn.end"
     if value in {
         "reasoning",
         "systemMessage",
         "runtimeMessage",
-        "turnStart",
-        "turnEnd",
         "error",
         "unknown",
     }:

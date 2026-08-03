@@ -14,7 +14,10 @@ from connector.core.config import ConnectorConfig
 from connector.local.terminal import TerminalBackend
 from connector.runtime_protocol import (
     AgentRuntime,
+    ArtifactTimelineContent,
+    ArtifactTimelineItem,
     MessageTimelineContent,
+    MessageTimelineItem,
     PlatformTimelineItem,
     RuntimeCommand,
     RuntimeCommandResult,
@@ -32,8 +35,13 @@ from connector.runtime_protocol import (
     RuntimeTimelineSnapshot,
     SessionMeta,
     SessionState,
+    SystemTimelineContent,
+    SystemTimelineItem,
     TimelineSource,
     ToolTimelineContent,
+    ToolTimelineItem,
+    TurnEndTimelineItem,
+    TurnStartTimelineItem,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes import default_runtime_providers
@@ -105,6 +113,56 @@ def test_tool_timeline_content_serializes_supported_parent_shape() -> None:
         "output": "ok",
         "exitCode": 0,
     }
+
+
+def test_platform_timeline_item_subclasses_validate_parent_type() -> None:
+    source = TimelineSource(runtime="test")
+
+    MessageTimelineItem(
+        id="message_1",
+        type="message",
+        status="done",
+        role="assistant",
+        content=MessageTimelineContent(text="ok"),
+        source=source,
+    )
+    ToolTimelineItem(
+        id="tool_1",
+        type="tool",
+        status="done",
+        role="tool",
+        content=ToolTimelineContent(kind="command"),
+        source=source,
+    )
+    ArtifactTimelineItem(
+        id="artifact_1",
+        type="artifact",
+        status="done",
+        content=ArtifactTimelineContent(kind="file"),
+        source=source,
+    )
+    SystemTimelineItem(
+        id="system_1",
+        type="system",
+        status="done",
+        role="system",
+        content=SystemTimelineContent(kind="runtime"),
+        source=source,
+    )
+    TurnStartTimelineItem(
+        id="turn_start_1",
+        type="turn.start",
+        status="running",
+        content=SystemTimelineContent(kind="runtime"),
+        source=source,
+    )
+    TurnEndTimelineItem(
+        id="turn_end_1",
+        type="turn.end",
+        status="done",
+        content=SystemTimelineContent(kind="runtime"),
+        source=source,
+    )
 
 
 class FakeAgentRuntime(AgentRuntime):

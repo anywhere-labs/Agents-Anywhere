@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 
 from connector.runtime_protocol import (
     BaseTimelineItem,
@@ -17,6 +17,8 @@ from connector.runtime_protocol import (
 
 @dataclass(frozen=True, slots=True)
 class CodexTimelineItem(BaseTimelineItem):
+    expected_native_item_types: ClassVar[tuple[str, ...]] = ()
+
     native_item_type: str = "unknown"
     native_item_id: str | None = None
     external_session_id: str | None = None
@@ -63,6 +65,153 @@ class CodexTimelineItem(BaseTimelineItem):
             revision=self.revision,
             metadata=self.metadata,
         )
+
+    def __post_init__(self) -> None:
+        BaseTimelineItem.__post_init__(self)
+        if (
+            self.expected_native_item_types
+            and self.native_item_type not in self.expected_native_item_types
+        ):
+            raise ValueError(
+                f"{self.__class__.__name__} requires native_item_type in "
+                f"{self.expected_native_item_types!r}, got {self.native_item_type!r}"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class CodexAgentMessageItem(CodexTimelineItem):
+    expected_type: ClassVar[TimelineItemType | None] = "message"
+    expected_native_item_types: ClassVar[tuple[str, ...]] = ("agentMessage",)
+
+
+@dataclass(frozen=True, slots=True)
+class CodexUserMessageItem(CodexTimelineItem):
+    expected_type: ClassVar[TimelineItemType | None] = "message"
+    expected_native_item_types: ClassVar[tuple[str, ...]] = ("userMessage",)
+
+
+@dataclass(frozen=True, slots=True)
+class CodexSteeringUserMessageItem(CodexTimelineItem):
+    expected_type: ClassVar[TimelineItemType | None] = "message"
+    expected_native_item_types: ClassVar[tuple[str, ...]] = ("steeringUserMessage",)
+
+
+@dataclass(frozen=True, slots=True)
+class CodexReasoningItem(CodexTimelineItem):
+    expected_type: ClassVar[TimelineItemType | None] = "system"
+    expected_native_item_types: ClassVar[tuple[str, ...]] = ("reasoning",)
+
+
+@dataclass(frozen=True, slots=True)
+class CodexSystemMessageItem(CodexTimelineItem):
+    expected_type: ClassVar[TimelineItemType | None] = "system"
+    expected_native_item_types: ClassVar[tuple[str, ...]] = ("systemMessage",)
+
+
+@dataclass(frozen=True, slots=True)
+class CodexRuntimeMessageItem(CodexTimelineItem):
+    expected_type: ClassVar[TimelineItemType | None] = "system"
+    expected_native_item_types: ClassVar[tuple[str, ...]] = ("runtimeMessage",)
+
+
+@dataclass(frozen=True, slots=True)
+class CodexTurnStartItem(CodexTimelineItem):
+    expected_type: ClassVar[TimelineItemType | None] = "turn.start"
+    expected_native_item_types: ClassVar[tuple[str, ...]] = ("turnStart",)
+
+
+@dataclass(frozen=True, slots=True)
+class CodexTurnEndItem(CodexTimelineItem):
+    expected_type: ClassVar[TimelineItemType | None] = "turn.end"
+    expected_native_item_types: ClassVar[tuple[str, ...]] = ("turnEnd",)
+
+
+@dataclass(frozen=True, slots=True)
+class CodexErrorItem(CodexTimelineItem):
+    expected_type: ClassVar[TimelineItemType | None] = "system"
+    expected_native_item_types: ClassVar[tuple[str, ...]] = ("error",)
+
+
+@dataclass(frozen=True, slots=True)
+class CodexCommandExecutionItem(CodexTimelineItem):
+    expected_type: ClassVar[TimelineItemType | None] = "tool"
+    expected_native_item_types: ClassVar[tuple[str, ...]] = ("commandExecution",)
+
+
+@dataclass(frozen=True, slots=True)
+class CodexFunctionCallItem(CodexTimelineItem):
+    expected_type: ClassVar[TimelineItemType | None] = "tool"
+    expected_native_item_types: ClassVar[tuple[str, ...]] = ("function_call",)
+
+
+@dataclass(frozen=True, slots=True)
+class CodexFunctionCallOutputItem(CodexTimelineItem):
+    expected_type: ClassVar[TimelineItemType | None] = "tool"
+    expected_native_item_types: ClassVar[tuple[str, ...]] = ("function_call_output",)
+
+
+@dataclass(frozen=True, slots=True)
+class CodexCustomToolCallItem(CodexTimelineItem):
+    expected_type: ClassVar[TimelineItemType | None] = "tool"
+    expected_native_item_types: ClassVar[tuple[str, ...]] = ("custom_tool_call",)
+
+
+@dataclass(frozen=True, slots=True)
+class CodexCustomToolCallOutputItem(CodexTimelineItem):
+    expected_type: ClassVar[TimelineItemType | None] = "tool"
+    expected_native_item_types: ClassVar[tuple[str, ...]] = ("custom_tool_call_output",)
+
+
+@dataclass(frozen=True, slots=True)
+class CodexToolCallItem(CodexTimelineItem):
+    expected_type: ClassVar[TimelineItemType | None] = "tool"
+    expected_native_item_types: ClassVar[tuple[str, ...]] = ("toolCall",)
+
+
+@dataclass(frozen=True, slots=True)
+class CodexToolResultItem(CodexTimelineItem):
+    expected_type: ClassVar[TimelineItemType | None] = "tool"
+    expected_native_item_types: ClassVar[tuple[str, ...]] = ("toolResult",)
+
+
+@dataclass(frozen=True, slots=True)
+class CodexFileChangeItem(CodexTimelineItem):
+    expected_type: ClassVar[TimelineItemType | None] = "artifact"
+    expected_native_item_types: ClassVar[tuple[str, ...]] = ("fileChange", "file_change")
+
+
+@dataclass(frozen=True, slots=True)
+class CodexUnknownItem(CodexTimelineItem):
+    expected_type: ClassVar[TimelineItemType | None] = "system"
+
+
+CODEX_TIMELINE_ITEM_CLASS_BY_NATIVE_TYPE: Mapping[str, type[CodexTimelineItem]] = {
+    "agentMessage": CodexAgentMessageItem,
+    "userMessage": CodexUserMessageItem,
+    "steeringUserMessage": CodexSteeringUserMessageItem,
+    "reasoning": CodexReasoningItem,
+    "systemMessage": CodexSystemMessageItem,
+    "runtimeMessage": CodexRuntimeMessageItem,
+    "turnStart": CodexTurnStartItem,
+    "turnEnd": CodexTurnEndItem,
+    "error": CodexErrorItem,
+    "commandExecution": CodexCommandExecutionItem,
+    "function_call": CodexFunctionCallItem,
+    "function_call_output": CodexFunctionCallOutputItem,
+    "custom_tool_call": CodexCustomToolCallItem,
+    "custom_tool_call_output": CodexCustomToolCallOutputItem,
+    "toolCall": CodexToolCallItem,
+    "toolResult": CodexToolResultItem,
+    "fileChange": CodexFileChangeItem,
+    "file_change": CodexFileChangeItem,
+}
+
+
+def codex_timeline_item_class(native_item_type: str) -> type[CodexTimelineItem]:
+    return CODEX_TIMELINE_ITEM_CLASS_BY_NATIVE_TYPE.get(
+        native_item_type,
+        CodexUnknownItem,
+    )
 
 
 def timeline_item_type_from_string(value: str) -> TimelineItemType:

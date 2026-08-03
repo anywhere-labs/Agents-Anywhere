@@ -46,7 +46,19 @@ from connector.runtimes.codex.sdk.runtime_client import (
     CodexTurnResult,
 )
 from connector.runtimes.codex.sdk.shapes import notification_dict, thread_ref
-from connector.runtimes.codex.timeline.items import CodexTimelineItem
+from connector.runtimes.codex.timeline.items import (
+    CodexAgentMessageItem,
+    CodexCommandExecutionItem,
+    CodexFileChangeItem,
+    CodexReasoningItem,
+    CodexRuntimeMessageItem,
+    CodexTimelineItem,
+    CodexTurnEndItem,
+    CodexTurnStartItem,
+    CodexUnknownItem,
+    CodexUserMessageItem,
+    codex_timeline_item_class,
+)
 
 
 def test_codex_timeline_item_maps_native_type_to_platform_parent_type() -> None:
@@ -83,6 +95,18 @@ def test_codex_timeline_item_maps_native_type_to_platform_parent_type() -> None:
         "derivedKey": "agentMessage-native_agent",
         "clientMessageId": "cm_1",
     }
+
+
+def test_codex_timeline_native_item_classes_are_explicitly_mapped() -> None:
+    assert codex_timeline_item_class("agentMessage") is CodexAgentMessageItem
+    assert codex_timeline_item_class("userMessage") is CodexUserMessageItem
+    assert codex_timeline_item_class("reasoning") is CodexReasoningItem
+    assert codex_timeline_item_class("runtimeMessage") is CodexRuntimeMessageItem
+    assert codex_timeline_item_class("commandExecution") is CodexCommandExecutionItem
+    assert codex_timeline_item_class("fileChange") is CodexFileChangeItem
+    assert codex_timeline_item_class("turnStart") is CodexTurnStartItem
+    assert codex_timeline_item_class("turnEnd") is CodexTurnEndItem
+    assert codex_timeline_item_class("futureNativeType") is CodexUnknownItem
 
 
 class FakeCodexClient:
