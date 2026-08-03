@@ -590,6 +590,43 @@ async def _test_codex_runtime_agent_message_delta_upserts_timeline_item() -> Non
     assert second.source["event"] == "item/agentMessage/delta"
 
 
+def test_codex_runtime_reasoning_item_maps_to_system_timeline_item() -> None:
+    asyncio.run(_test_codex_runtime_reasoning_item_maps_to_system_timeline_item())
+
+
+async def _test_codex_runtime_reasoning_item_maps_to_system_timeline_item() -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    await runtime.start()
+    await runtime._handle_notification(
+        {
+            "method": "item/started",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_1",
+                "itemId": "item_reasoning",
+                "item": {
+                    "id": "item_reasoning",
+                    "type": "reasoning",
+                    "summary": "thinking",
+                },
+            },
+        }
+    )
+
+    item = host.timeline_item_upserts[-1]
+    assert item.type == "system"
+    assert item.role == "system"
+    assert item.content == {
+        "kind": "reasoning",
+        "text": "thinking",
+        "format": "markdown",
+    }
+
+
 def test_codex_runtime_completed_turn_syncs_timeline_snapshot() -> None:
     asyncio.run(_test_codex_runtime_completed_turn_syncs_timeline_snapshot())
 

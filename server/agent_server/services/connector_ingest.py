@@ -8,7 +8,10 @@ from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.services.connector_notifications import ConnectorNotificationService
 from agent_server.services.connector_presence import ConnectorPresencePort
 from agent_server.services.dashboard_events import publish_dashboard_changed
-from agent_server.services.device_runtimes import DeviceRuntimeService
+from agent_server.services.device_runtimes import (
+    DeviceRuntimeNotFoundError,
+    DeviceRuntimeService,
+)
 from agent_server.services.effective_capabilities import (
     project_session_capabilities,
     publish_connector_session_capabilities,
@@ -211,9 +214,16 @@ class ConnectorIngestService:
         if not isinstance(status, str) or not status:
             raise ValueError("runtime.statusChanged requires status")
         error = params.get("error") if isinstance(params.get("error"), dict) else None
-        await self._device_runtimes.apply_status(
-            connector_id,
-            runtime_id,
-            status,
-            error=error,
-        )
+        try:
+            await self._device_runtimes.apply_status(
+                connector_id,
+                runtime_id,
+                status,
+                error=error,
+            )
+        except DeviceRuntimeNotFoundError:
+            # Runtime lifecycle notifications may arrive while the connector is
+            # still producing the inventory snapshot for a fresh pairing or
+            # reconnect. Inventory is the source that creates runtime rows; a
+            # pre-inventory status must not tear down the connector WebSocket.
+            return

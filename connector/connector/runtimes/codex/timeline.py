@@ -95,10 +95,12 @@ def timeline_item_type(raw: dict[str, Any]) -> str:
         return "message"
     if value in {"agentMessage", "userMessage", "steeringUserMessage"}:
         return "message"
+    if value == "reasoning":
+        return "system"
     if value == "commandExecution":
-        return "command"
+        return "tool"
     if value == "fileChange":
-        return "file_change"
+        return "artifact"
     return value
 
 
@@ -118,10 +120,14 @@ def timeline_item_role(raw: dict[str, Any]) -> str | None:
     if isinstance(value, str) and value:
         return value
     item_type = raw.get("type")
+    if item_type == "reasoning":
+        return "system"
     if item_type in {"userMessage", "steeringUserMessage"}:
         return "user"
     if item_type == "agentMessage":
         return "assistant"
+    if item_type == "commandExecution":
+        return "tool"
     return None
 
 
@@ -140,6 +146,19 @@ def timeline_item_revision(raw: dict[str, Any]) -> int:
 
 def timeline_item_content(raw: dict[str, Any]) -> Mapping[str, Any]:
     content = raw.get("content")
+    if raw.get("type") == "reasoning":
+        if isinstance(content, dict):
+            return {"kind": "reasoning", **content}
+        text = raw.get("text")
+        if isinstance(text, str):
+            return {"kind": "reasoning", "text": text, "format": "markdown"}
+        summary = raw.get("summary")
+        if isinstance(summary, str):
+            return {"kind": "reasoning", "text": summary, "format": "markdown"}
+        summaries = raw.get("summaries")
+        if isinstance(summaries, list):
+            return {"kind": "reasoning", "summaries": summaries}
+        return {"kind": "reasoning"}
     if isinstance(content, dict):
         return content
     text = raw.get("text")

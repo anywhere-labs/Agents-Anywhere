@@ -7,6 +7,8 @@ from conftest import ApiV2TestClient as TestClient
 
 from agent_server.app import create_app
 from agent_server.infra.connector_rpc import ConnectorRpcError
+from agent_server.services.connector_ingest import ConnectorIngestService
+from agent_server.services.connector_notifications import ConnectorNotificationService
 from agent_server.services.device_runtimes import DeviceRuntimeService
 from agent_server.services.notices import upsert_execution_error_interaction
 
@@ -146,6 +148,34 @@ def test_runtime_lifecycle_discovery_status_is_accepted(tmp_path):
     response = client.get(f"/connectors/{connector_id}/runtimes", headers=headers)
     assert response.status_code == 200, response.text
     assert response.json()["runtimes"][0]["status"] == "discovering"
+
+
+def test_pre_inventory_runtime_status_does_not_disconnect_connector(tmp_path):
+    app = create_app(tmp_path / "test.sqlite3")
+    client = TestClient(app)
+    headers = _auth_headers(client)
+    created = client.post("/connectors", headers=headers, json={"name": "dev"})
+    assert created.status_code == 200, created.text
+    connector_id = created.json()["connector"]["id"]
+    ingest = ConnectorIngestService(
+        app.state.store,
+        ConnectorNotificationService(app.state.store, None),
+        app.state.timeline_broker,
+        app.state.device_runtime_service,
+        app.state.rpc,
+    )
+
+    asyncio.run(
+        ingest.handle_notification_message(
+            connector_id=connector_id,
+            method="runtime.statusChanged",
+            params={"runtimeId": "codex", "status": "discovering"},
+        )
+    )
+
+    response = client.get(f"/connectors/{connector_id}/runtimes", headers=headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["runtimes"] == []
 
 
 def test_empty_config_is_configured_and_validated_by_connector(tmp_path):
