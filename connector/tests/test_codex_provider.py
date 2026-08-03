@@ -10,10 +10,13 @@ from connector.runtime_protocol import RuntimeConfig, RuntimeInvalidRequestError
 from connector.runtimes.codex.provider import CodexProvider
 from connector.runtimes.codex.runtime import CodexRuntime
 from connector.runtimes.codex.sdk.runtime_client import (
+    CodexCompactResult,
     CodexInterruptTurnRequest,
     CodexStartThreadRequest,
     CodexStartTurnRequest,
     CodexSteerTurnRequest,
+    CodexThreadResult,
+    CodexTurnResult,
 )
 
 
@@ -214,28 +217,28 @@ class _FakeSdkClient:
         _ = include_turns
         return {}
 
-    async def start_thread(self, request: CodexStartThreadRequest) -> dict[str, Any]:
+    async def start_thread(self, request: CodexStartThreadRequest) -> CodexThreadResult:
         _ = request
-        return {}
+        return CodexThreadResult(thread_id=None, payload={})
 
-    async def start_turn(self, request: CodexStartTurnRequest) -> dict[str, Any]:
+    async def start_turn(self, request: CodexStartTurnRequest) -> CodexTurnResult:
         _ = request
-        return {}
+        return CodexTurnResult(turn_id=None, payload={})
 
-    async def steer_turn(self, request: CodexSteerTurnRequest) -> dict[str, Any]:
+    async def steer_turn(self, request: CodexSteerTurnRequest) -> CodexTurnResult:
         _ = request
-        return {}
+        return CodexTurnResult(turn_id=None, payload={})
 
     async def interrupt_turn(
         self,
         request: CodexInterruptTurnRequest,
-    ) -> dict[str, Any]:
+    ) -> CodexTurnResult:
         _ = request
-        return {}
+        return CodexTurnResult(turn_id=None, payload={})
 
-    async def compact_thread(self, thread_id: str) -> dict[str, Any]:
+    async def compact_thread(self, thread_id: str) -> CodexCompactResult:
         _ = thread_id
-        return {}
+        return CodexCompactResult(payload={})
 
     async def respond(
         self, request_id: str | int, result: Mapping[str, Any] | None = None

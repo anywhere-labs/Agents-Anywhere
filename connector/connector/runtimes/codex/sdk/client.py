@@ -8,12 +8,15 @@ from typing import Any
 from connector.runtime_protocol import RuntimeConfig, RuntimeInvalidRequestError
 from connector.runtimes.codex.sdk.events import CodexSdkEvent
 from connector.runtimes.codex.sdk.runtime_client import (
+    CodexCompactResult,
     CodexInterruptTurnRequest,
     CodexNotificationMessage,
     CodexRuntimeClient,
     CodexStartThreadRequest,
     CodexStartTurnRequest,
     CodexSteerTurnRequest,
+    CodexThreadResult,
+    CodexTurnResult,
     NotificationHandler,
 )
 from connector.runtimes.codex.sdk.shapes import (
@@ -100,7 +103,7 @@ class CodexSdkClient:
         result = await thread.read(include_turns=include_turns)
         return thread_read_result(result)
 
-    async def start_thread(self, request: CodexStartThreadRequest) -> dict[str, Any]:
+    async def start_thread(self, request: CodexStartThreadRequest) -> CodexThreadResult:
         thread_start = getattr(self._client, "thread_start", None)
         if not callable(thread_start):
             raise RuntimeInvalidRequestError(
@@ -114,9 +117,10 @@ class CodexSdkClient:
             ephemeral=request.ephemeral,
         )
         self._remember_thread(thread)
-        return {"thread": thread_ref(thread)}
+        payload = thread_ref(thread)
+        return CodexThreadResult(thread_id=id_of(thread), payload=payload)
 
-    async def start_turn(self, request: CodexStartTurnRequest) -> dict[str, Any]:
+    async def start_turn(self, request: CodexStartTurnRequest) -> CodexTurnResult:
         thread = self._thread_handle(request.thread_id)
         turn = await thread.turn(
             request.content,
@@ -136,31 +140,34 @@ class CodexSdkClient:
             }
         )
         self._start_stream_task(request.thread_id, turn)
-        return {"turn": turn_ref(turn)}
+        payload = turn_ref(turn)
+        return CodexTurnResult(turn_id=id_of(turn), payload=payload)
 
-    async def steer_turn(self, request: CodexSteerTurnRequest) -> dict[str, Any]:
+    async def steer_turn(self, request: CodexSteerTurnRequest) -> CodexTurnResult:
         turn = self._turn_handle(
             thread_id=request.thread_id,
             turn_id=request.turn_id,
         )
         result = await turn.steer(request.content)
-        return turn_action_result(result) or {"turn": turn_ref(turn)}
+        payload = turn_action_result(result) or turn_ref(turn)
+        return CodexTurnResult(turn_id=id_of(turn), payload=payload)
 
     async def interrupt_turn(
         self,
         request: CodexInterruptTurnRequest,
-    ) -> dict[str, Any]:
+    ) -> CodexTurnResult:
         turn = self._turn_handle(
             thread_id=request.thread_id,
             turn_id=request.turn_id,
         )
         result = await turn.interrupt()
-        return turn_action_result(result) or {"turn": turn_ref(turn)}
+        payload = turn_action_result(result) or turn_ref(turn)
+        return CodexTurnResult(turn_id=id_of(turn), payload=payload)
 
-    async def compact_thread(self, thread_id: str) -> dict[str, Any]:
+    async def compact_thread(self, thread_id: str) -> CodexCompactResult:
         thread = self._thread_handle(thread_id)
         result = await thread.compact()
-        return compact_result(result)
+        return CodexCompactResult(payload=compact_result(result))
 
     async def respond(
         self,

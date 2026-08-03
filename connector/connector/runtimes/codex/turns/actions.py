@@ -12,7 +12,6 @@ from connector.runtime_protocol import (
     RuntimeUnsupportedError,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
-from connector.runtimes.codex.domain import sessions as codex_sessions
 from connector.runtimes.codex.domain.notices import CodexNoticeRegistry
 from connector.runtimes.codex.domain.pending_messages import (
     PendingClientMessageRegistry,
@@ -107,10 +106,10 @@ class CodexTurnActions:
                     thread_id=external_session_id,
                     content=content,
                     client_message_id=client_message_id,
-                    model=selected_model.get("model"),
-                    effort=selected_model.get("effort"),
-                    approval_policy=native_permission.get("approvalPolicy"),
-                    sandbox=native_permission.get("sandbox"),
+                    model=selected_model.model,
+                    effort=selected_model.effort,
+                    approval_policy=native_permission.approval_policy,
+                    sandbox=native_permission.sandbox,
                 )
             )
         except Exception as exc:
@@ -125,7 +124,7 @@ class CodexTurnActions:
                 metadata={"source": "codex.turn/start.failed"},
             )
             raise
-        turn_id = codex_sessions.turn_id_from_result(result)
+        turn_id = result.turn_id
         if turn_id is not None:
             self.active_turn_ids[session_id] = turn_id
             self.pending_messages.bind_turn(
@@ -147,7 +146,7 @@ class CodexTurnActions:
             ok=True,
             result={
                 "turnId": turn_id,
-                "turn": result.get("turn") or result,
+                "turn": dict(result.payload),
                 "externalSessionId": external_session_id,
             },
         )
@@ -206,7 +205,7 @@ class CodexTurnActions:
                 "steered": True,
                 "turnId": turn_id,
                 "externalSessionId": external_session_id,
-                "turn": result.get("turn") or result,
+                "turn": dict(result.payload),
             },
         )
 
@@ -277,7 +276,7 @@ class CodexTurnActions:
                 "interrupted": True,
                 "turnId": turn_id,
                 "externalSessionId": external_session_id,
-                "turn": result.get("turn") or result,
+                "turn": dict(result.payload),
             },
         )
 

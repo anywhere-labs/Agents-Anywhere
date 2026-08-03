@@ -78,7 +78,7 @@ class CodexCommandController:
         await self._publish_compact_started(
             session_id=session_id,
             external_session_id=external_session_id,
-            result=result,
+            result=dict(result.payload),
         )
         return RuntimeCommandResult(
             command=command_id,
@@ -87,7 +87,7 @@ class CodexCommandController:
             message="Codex compaction started.",
             result={
                 "externalSessionId": external_session_id,
-                "thread": result,
+                "thread": dict(result.payload),
             },
         )
 

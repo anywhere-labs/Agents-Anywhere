@@ -129,10 +129,14 @@ async def _test_codex_sdk_client_adapts_async_codex_thread_turn_flow() -> None:
     await client.stop()
 
     assert models["data"][0]["id"] == "gpt-example"
-    assert started["thread"]["id"] == "thread_sdk"
-    assert turn["turn"]["id"] == "turn_sdk"
-    assert steered["turnId"] == "turn_sdk"
-    assert interrupted["turn"]["id"] == "turn_sdk"
+    assert started.thread_id == "thread_sdk"
+    assert started.payload["id"] == "thread_sdk"
+    assert turn.turn_id == "turn_sdk"
+    assert turn.payload["id"] == "turn_sdk"
+    assert steered.turn_id == "turn_sdk"
+    assert steered.payload["turnId"] == "turn_sdk"
+    assert interrupted.turn_id == "turn_sdk"
+    assert interrupted.payload["id"] == "turn_sdk"
     assert native.entered is True
     assert native.exited is True
     assert native.started_kwargs["approval_mode"] == _FakeApprovalMode.deny_all

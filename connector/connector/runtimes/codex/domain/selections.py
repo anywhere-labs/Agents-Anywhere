@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
 
 from connector.runtime_protocol import (
@@ -13,33 +14,51 @@ ModelCatalogReader = Callable[[], Awaitable[RuntimeModelCatalog]]
 PermissionCatalogReader = Callable[[], Awaitable[RuntimePermissionCatalog]]
 
 
+@dataclass(frozen=True, slots=True)
+class CodexModelSettings:
+    model: str | None = None
+    effort: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CodexPermissionSettings:
+    approval_policy: str | None = None
+    sandbox: str | None = None
+
+
 async def model_settings_from_selection(
     selection_id: str | None,
     read_catalog: ModelCatalogReader,
-) -> dict[str, str]:
+) -> CodexModelSettings:
     if selection_id is None:
-        return {}
+        return CodexModelSettings()
     catalog = await read_catalog()
     for model in catalog.models:
         if model.selection_id == selection_id:
-            return {"model": model.id}
+            return CodexModelSettings(model=model.id)
         for reasoning in model.reasoning_items:
             if reasoning.selection_id == selection_id:
-                return {"model": model.id, "effort": reasoning.id}
+                return CodexModelSettings(model=model.id, effort=reasoning.id)
     raise RuntimeInvalidRequestError(f"unknown Codex model selection: {selection_id}")
 
 
 async def permission_settings_from_selection(
     selection_id: str | None,
     read_catalog: PermissionCatalogReader,
-) -> dict[str, Any]:
+) -> CodexPermissionSettings:
     if selection_id is None:
-        return {}
+        return CodexPermissionSettings()
     catalog = await read_catalog()
     for permission in catalog.permissions:
-        if permission.selection_id == selection_id:
-            native = permission.metadata.get("nativeSettings")
-            return dict(native) if isinstance(native, dict) else {}
+        if permission.selection_id != selection_id:
+            continue
+        native = permission.metadata.get("nativeSettings")
+        if isinstance(native, dict):
+            return CodexPermissionSettings(
+                approval_policy=_native_setting_string(native, "approvalPolicy"),
+                sandbox=_native_setting_string(native, "sandbox"),
+            )
+        return CodexPermissionSettings()
     raise RuntimeInvalidRequestError(
         f"unknown Codex permission selection: {selection_id}"
     )
@@ -216,3 +235,8 @@ def _sandbox_mode(value: Any) -> str | None:
         if isinstance(sandbox_type, str):
             return _sandbox_mode(sandbox_type)
     return None
+
+
+def _native_setting_string(value: dict[str, Any], key: str) -> str | None:
+    raw = value.get(key)
+    return raw if isinstance(raw, str) and raw else None

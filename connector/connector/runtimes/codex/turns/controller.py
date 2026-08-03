@@ -15,7 +15,6 @@ from connector.runtime_protocol import (
     RuntimeUnsupportedError,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
-from connector.runtimes.codex.domain import sessions as codex_sessions
 from connector.runtimes.codex.domain.notices import CodexNoticeRegistry
 from connector.runtimes.codex.domain.pending_messages import (
     PendingClientMessageRegistry,
@@ -118,19 +117,19 @@ class CodexTurnController:
         result = await self.client.start_thread(
             CodexStartThreadRequest(
                 cwd=cwd,
-                model=selected_model.get("model"),
-                approval_policy=native_permission.get("approvalPolicy"),
-                sandbox=native_permission.get("sandbox"),
+                model=selected_model.model,
+                approval_policy=native_permission.approval_policy,
+                sandbox=native_permission.sandbox,
                 ephemeral=False,
             )
         )
-        thread_id = codex_sessions.thread_id_from_result(result)
+        thread_id = result.thread_id
         if thread_id is None:
             return RuntimeOperationResult(
                 ok=False,
                 code="codex_thread_start_failed",
                 message="Codex thread/start did not return a thread id",
-                result={"raw": result},
+                result={"thread": dict(result.payload)},
             )
         await self.host.session_meta_upsert(
             session_id=session_id,
@@ -161,7 +160,7 @@ class CodexTurnController:
             result={
                 "sessionId": session_id,
                 "externalSessionId": thread_id,
-                "thread": result.get("thread") or result,
+                "thread": dict(result.payload),
                 **turn_result.result,
             },
         )

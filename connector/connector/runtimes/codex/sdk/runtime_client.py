@@ -44,6 +44,23 @@ class CodexInterruptTurnRequest:
     turn_id: str
 
 
+@dataclass(frozen=True, slots=True)
+class CodexThreadResult:
+    thread_id: str | None
+    payload: Mapping[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class CodexTurnResult:
+    turn_id: str | None
+    payload: Mapping[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class CodexCompactResult:
+    payload: Mapping[str, Any]
+
+
 class CodexRuntimeClient(Protocol):
     async def start(self, handler: NotificationHandler) -> None: ...
     async def stop(self) -> None: ...
@@ -58,14 +75,14 @@ class CodexRuntimeClient(Protocol):
         thread_id: str,
         include_turns: bool = True,
     ) -> dict[str, Any]: ...
-    async def start_thread(self, request: CodexStartThreadRequest) -> dict[str, Any]: ...
-    async def start_turn(self, request: CodexStartTurnRequest) -> dict[str, Any]: ...
-    async def steer_turn(self, request: CodexSteerTurnRequest) -> dict[str, Any]: ...
+    async def start_thread(self, request: CodexStartThreadRequest) -> CodexThreadResult: ...
+    async def start_turn(self, request: CodexStartTurnRequest) -> CodexTurnResult: ...
+    async def steer_turn(self, request: CodexSteerTurnRequest) -> CodexTurnResult: ...
     async def interrupt_turn(
         self,
         request: CodexInterruptTurnRequest,
-    ) -> dict[str, Any]: ...
-    async def compact_thread(self, thread_id: str) -> dict[str, Any]: ...
+    ) -> CodexTurnResult: ...
+    async def compact_thread(self, thread_id: str) -> CodexCompactResult: ...
     async def respond(
         self,
         request_id: str | int,
