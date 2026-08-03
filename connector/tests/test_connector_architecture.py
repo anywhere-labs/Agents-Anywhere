@@ -273,3 +273,17 @@ def test_codex_timeline_projection_does_not_own_raw_content_extraction() -> None
     assert "def text_from_value(" not in projection_source
     assert "def timeline_item_content(" in raw_content_source
     assert "def text_from_value(" in raw_content_source
+
+
+def test_codex_timeline_projection_does_not_own_notification_raw_events() -> None:
+    projection_source = (
+        CONNECTOR_PACKAGE / "runtimes" / "codex" / "timeline" / "projection.py"
+    ).read_text(encoding="utf-8")
+    events_source = (
+        CONNECTOR_PACKAGE / "runtimes" / "codex" / "timeline" / "events.py"
+    ).read_text(encoding="utf-8")
+
+    assert "def raw_item_from_notification(" not in projection_source
+    assert "def notification_delta(" not in projection_source
+    assert "def raw_item_from_notification(" in events_source
+    assert "def notification_delta(" in events_source

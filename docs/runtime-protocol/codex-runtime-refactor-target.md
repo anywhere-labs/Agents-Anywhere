@@ -141,7 +141,7 @@ Generic Connector server code must not import any Codex internals.
 
 ### C01. Split notification raw event extraction
 
-Status: todo.
+Status: complete.
 
 Move from `timeline/projection.py`:
 
@@ -160,6 +160,15 @@ Rules:
 - Do not change runtime behavior.
 - Add an architecture test that `projection.py` does not define notification
   raw extraction.
+
+Completed:
+
+- Added `connector/connector/runtimes/codex/timeline/events.py`.
+- Moved `raw_item_from_notification` and `notification_delta` out of
+  `timeline/projection.py`.
+- Preserved public package exports from `connector.runtimes.codex.timeline`.
+- Added an architecture test that keeps notification raw extraction out of
+  `projection.py`.
 
 Verification:
 
@@ -406,7 +415,7 @@ Stop and ask before proceeding if any step would require:
 The next unchecked implementation item is:
 
 ```text
-C01. Split notification raw event extraction
+C02. Split thread snapshot reduction
 ```
 
 Do not jump to C04/C05 before C01-C03 are done, because the raw projection

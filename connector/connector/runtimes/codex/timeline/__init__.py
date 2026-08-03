@@ -4,6 +4,10 @@ from connector.runtimes.codex.timeline.content import (
     MappingTimelineContent,
     codex_timeline_content_from_mapping,
 )
+from connector.runtimes.codex.timeline.events import (
+    notification_delta,
+    raw_item_from_notification,
+)
 from connector.runtimes.codex.timeline.identity import (
     client_message_id_from_raw,
     derived_key,
@@ -35,8 +39,6 @@ from connector.runtimes.codex.timeline.items import (
 )
 from connector.runtimes.codex.timeline.projection import (
     CodexTimelineProjection,
-    notification_delta,
-    raw_item_from_notification,
     raw_timeline_items,
     timeline_item_from_projection,
     timeline_item_revision,

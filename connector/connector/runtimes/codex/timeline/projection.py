@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Any
@@ -8,12 +7,12 @@ from typing import Any
 from connector.runtime_protocol import RuntimeTimelineItem, TimelineSource
 from connector.runtimes.codex.domain.sessions import (
     first_string_from_mapping,
-    turn_id_from_result,
 )
 from connector.runtimes.codex.sdk.events import CodexSdkEvent
 from connector.runtimes.codex.timeline.content import (
     codex_timeline_content_from_mapping,
 )
+from connector.runtimes.codex.timeline.events import raw_item_from_notification
 from connector.runtimes.codex.timeline.identity import (
     client_message_id_from_raw,
     derived_key,
@@ -342,71 +341,3 @@ def timeline_item_turn_id(raw: dict[str, Any]) -> str | None:
 def timeline_item_revision(raw: dict[str, Any]) -> int:
     value = raw.get("revision")
     return value if isinstance(value, int) and value > 0 else 1
-
-
-def raw_item_from_notification(
-    method: str,
-    params: Mapping[str, Any],
-) -> dict[str, Any] | None:
-    if method not in {
-        "item/started",
-        "item/completed",
-        "item/agentMessage/delta",
-        "item/commandExecution/outputDelta",
-        "item/fileChange/patchUpdated",
-        "item/reasoning/delta",
-        "item/systemMessage",
-        "item/runtimeMessage",
-    }:
-        return None
-    item = params.get("item")
-    if isinstance(item, dict):
-        raw: dict[str, Any] = copy.deepcopy(item)
-    else:
-        raw = {
-            key: copy.deepcopy(value)
-            for key, value in params.items()
-            if key
-            not in {
-                "platformSessionId",
-                "platform_session_id",
-                "sessionId",
-                "session_id",
-                "threadId",
-                "thread_id",
-                "turnId",
-                "turn_id",
-            }
-        }
-    item_id = first_string_from_mapping(params, "itemId", "item_id")
-    if item_id is not None:
-        raw["id"] = item_id
-    if not isinstance(raw.get("type"), str) or not raw["type"]:
-        if method == "item/agentMessage/delta":
-            raw["type"] = "agentMessage"
-        elif method == "item/commandExecution/outputDelta":
-            raw["type"] = "commandExecution"
-        elif method == "item/fileChange/patchUpdated":
-            raw["type"] = "fileChange"
-        elif method == "item/reasoning/delta":
-            raw["type"] = "reasoning"
-        elif method == "item/systemMessage":
-            raw["type"] = "systemMessage"
-        elif method == "item/runtimeMessage":
-            raw["type"] = "runtimeMessage"
-    if not isinstance(raw.get("id"), str) or not raw["id"]:
-        raw_type = raw.get("type")
-        if not isinstance(raw_type, str):
-            return None
-    turn_id = turn_id_from_result(dict(params))
-    if turn_id is not None and timeline_item_turn_id(raw) is None:
-        raw["turnId"] = turn_id
-    return raw
-
-
-def notification_delta(params: Mapping[str, Any]) -> str:
-    for key in ("delta", "text", "outputDelta", "output_delta", "patch"):
-        value = params.get(key)
-        if isinstance(value, str):
-            return value
-    return ""
