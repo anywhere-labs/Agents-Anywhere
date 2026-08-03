@@ -758,6 +758,130 @@ async def _test_codex_runtime_tags_completed_user_echo_with_client_message_id() 
     assert item.source["derivedKey"].startswith("userMessage-")
 
 
+def test_codex_runtime_tags_live_user_echo_with_client_message_id() -> None:
+    asyncio.run(_test_codex_runtime_tags_live_user_echo_with_client_message_id())
+
+
+async def _test_codex_runtime_tags_live_user_echo_with_client_message_id() -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    await runtime.start_turn(
+        "sess_1",
+        "thread_1",
+        "live hello",
+        client_message_id="cm_live_1",
+    )
+    await runtime._handle_notification(
+        {
+            "method": "item/started",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_new",
+                "item": {
+                    "type": "userMessage",
+                    "text": "live hello",
+                },
+            },
+        }
+    )
+
+    item = host.timeline_item_upserts[-1]
+    assert item.id == "codex_client_cm_live_1"
+    assert item.source["clientMessageId"] == "cm_live_1"
+    assert item.role == "user"
+    assert item.content == {"text": "live hello", "format": "markdown"}
+
+
+def test_codex_runtime_tags_live_steer_echo_with_client_message_id() -> None:
+    asyncio.run(_test_codex_runtime_tags_live_steer_echo_with_client_message_id())
+
+
+async def _test_codex_runtime_tags_live_steer_echo_with_client_message_id() -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    await runtime.start_turn("sess_1", "thread_1", "start")
+    await runtime.steer_turn(
+        "sess_1",
+        "thread_1",
+        "more context",
+        client_message_id="cm_steer_1",
+    )
+    await runtime._handle_notification(
+        {
+            "method": "item/started",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_new",
+                "item": {
+                    "type": "steeringUserMessage",
+                    "text": "more context",
+                },
+            },
+        }
+    )
+
+    item = host.timeline_item_upserts[-1]
+    assert item.id == "codex_client_cm_steer_1"
+    assert item.source["clientMessageId"] == "cm_steer_1"
+    assert item.source["rawType"] == "steeringUserMessage"
+    assert item.role == "user"
+
+
+def test_codex_runtime_snapshot_and_live_use_same_sdk_item_identity() -> None:
+    asyncio.run(_test_codex_runtime_snapshot_and_live_use_same_sdk_item_identity())
+
+
+async def _test_codex_runtime_snapshot_and_live_use_same_sdk_item_identity() -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    client.results["thread/read"] = {
+        "thread": {
+            "id": "thread_1",
+            "items": [
+                {
+                    "id": "sdk_item_1",
+                    "type": "agentMessage",
+                    "text": "hello",
+                    "status": "completed",
+                }
+            ],
+        }
+    }
+    snapshot = await runtime.get_session_snapshot(
+        "sess_1",
+        external_session_id="thread_1",
+    )
+    await runtime.start()
+    await runtime._handle_notification(
+        {
+            "method": "item/completed",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "item": {
+                    "id": "sdk_item_1",
+                    "type": "agentMessage",
+                    "text": "hello",
+                    "status": "completed",
+                },
+            },
+        }
+    )
+
+    live_item = host.timeline_item_upserts[-1]
+    assert snapshot.items[0].id == live_item.id == "sdk_item_1"
+    assert snapshot.items[0].content_hash == live_item.content_hash
+    assert snapshot.items[0].source["derivedKey"] == live_item.source["derivedKey"]
+
+
 def test_codex_sdk_stream_finally_emits_completed_when_sdk_omits_it() -> None:
     asyncio.run(_test_codex_sdk_stream_finally_emits_completed_when_sdk_omits_it())
 

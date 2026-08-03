@@ -228,13 +228,17 @@ def raw_item_from_notification(
     item_id = first_string_from_mapping(params, "itemId", "item_id")
     if item_id is not None:
         raw["id"] = item_id
-    if not isinstance(raw.get("id"), str) or not raw["id"]:
-        return None
     if not isinstance(raw.get("type"), str) or not raw["type"]:
         if method == "item/agentMessage/delta":
             raw["type"] = "agentMessage"
         elif method == "item/commandExecution/outputDelta":
             raw["type"] = "commandExecution"
+    if not isinstance(raw.get("id"), str) or not raw["id"]:
+        raw_type = raw.get("type")
+        if method not in {"item/started", "item/completed"} or not isinstance(
+            raw_type, str
+        ):
+            return None
     turn_id = turn_id_from_result(dict(params))
     if turn_id is not None and timeline_item_turn_id(raw) is None:
         raw["turnId"] = turn_id

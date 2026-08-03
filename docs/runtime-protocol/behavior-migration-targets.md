@@ -30,7 +30,7 @@ Rough completion by behavior area:
 | Area | Status | Notes |
 | --- | --- | --- |
 | SDK timeline source | Partial | SDK is the primary Codex source, but event normalization is still partially app-server-shaped. |
-| Timeline identity and dedupe | Partial | `clientMessageId` tagging and stable fallback identity started in `801f4b8`; full SDK event coverage remains. |
+| Timeline identity and dedupe | Complete for T01 | `clientMessageId` tagging, live/snapshot echo projection, and stable fallback identity are covered; broader SDK event coverage continues in T02/T04. |
 | Turn lifecycle | Partial | Basic waiting/running/idle exists; stream-finally fallback started in `801f4b8`; error/interrupted semantics need stronger coverage. |
 | Notice/interaction lifecycle | Partial | Approval open/respond exists; close/resolved/failed lifecycle is incomplete. |
 | Tool/reasoning/file reduce | Partial | Basic assistant and command output deltas exist; SDK-native tool/file/error coverage is incomplete. |
@@ -44,7 +44,7 @@ Rough completion by behavior area:
 
 ### T01. Codex SDK timeline identity and client message projection
 
-Status: partial.
+Status: complete.
 
 Goal:
 
@@ -53,18 +53,19 @@ Goal:
 - Preserve `clientMessageId` on web-originated user message echoes.
 - Avoid content-hash-based identity for fallback items.
 
-Already done:
+Completed:
 
 - Added Codex pending client message registry.
 - Added Codex timeline identity helper.
 - Tagged completed user echoes with `clientMessageId`.
+- Tagged live user and steer echoes with `clientMessageId`.
+- Added snapshot/live identity equality coverage for shared SDK item ids.
 - Added SDK stream-finally completion fallback.
 
-Remaining:
+Follow-up:
 
-- Move more SDK event/object parsing out of old app-server method strings.
-- Ensure live user/steer message echoes also get `clientMessageId`, not only completed snapshots.
-- Add tests for snapshot/live identity equality for the same SDK item.
+- Moving more SDK event/object parsing out of old app-server method strings is
+  tracked by T02.
 
 Verification:
 
