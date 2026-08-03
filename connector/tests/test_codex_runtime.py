@@ -56,10 +56,11 @@ class FakeCodexClient:
                     "items": [
                         {
                             "id": "item_user",
-                            "type": "message",
-                            "role": "user",
+                            "type": "userMessage",
                             "status": "done",
-                            "content": {"text": "hello", "format": "markdown"},
+                            "input": [
+                                {"type": "text", "text": "hello"},
+                            ],
                             "turnId": "turn_1",
                         },
                         {
@@ -326,7 +327,46 @@ async def _test_codex_runtime_reads_session_snapshot() -> None:
     assert snapshot.items[0].content_hash.startswith("sha256:")
     assert snapshot.items[0].role == "user"
     assert snapshot.items[0].turn_id == "turn_1"
+    assert snapshot.items[0].content == {"text": "hello", "format": "markdown"}
     assert snapshot.items[1].content == {"text": "hi", "format": "markdown"}
+
+
+def test_codex_runtime_reads_user_message_text_elements_snapshot() -> None:
+    asyncio.run(_test_codex_runtime_reads_user_message_text_elements_snapshot())
+
+
+async def _test_codex_runtime_reads_user_message_text_elements_snapshot() -> None:
+    client = FakeCodexClient()
+    client.results["thread/read"] = {
+        "thread": {
+            "id": "thread_1",
+            "items": [
+                {
+                    "id": "item_user",
+                    "type": "userMessage",
+                    "status": "done",
+                    "content": {
+                        "text_elements": [
+                            {"type": "text", "text": "first"},
+                            {"type": "text", "text": "second"},
+                        ]
+                    },
+                },
+            ],
+        },
+    }
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=client)
+
+    snapshot = await runtime.get_session_snapshot(
+        "sess_1",
+        external_session_id="thread_1",
+    )
+
+    assert snapshot.items[0].role == "user"
+    assert snapshot.items[0].content == {
+        "text": "first\nsecond",
+        "format": "markdown",
+    }
 
 
 def test_codex_runtime_reads_nested_turn_snapshot() -> None:

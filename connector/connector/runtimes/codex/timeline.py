@@ -148,21 +148,24 @@ def timeline_item_content(raw: dict[str, Any]) -> Mapping[str, Any]:
     content = raw.get("content")
     if raw.get("type") == "reasoning":
         if isinstance(content, dict):
+            text = text_from_value(content)
+            if text:
+                return {"kind": "reasoning", "text": text, "format": "markdown"}
             return {"kind": "reasoning", **content}
-        text = raw.get("text")
-        if isinstance(text, str):
+        text = text_from_value(raw)
+        if text:
             return {"kind": "reasoning", "text": text, "format": "markdown"}
-        summary = raw.get("summary")
-        if isinstance(summary, str):
-            return {"kind": "reasoning", "text": summary, "format": "markdown"}
         summaries = raw.get("summaries")
         if isinstance(summaries, list):
             return {"kind": "reasoning", "summaries": summaries}
         return {"kind": "reasoning"}
     if isinstance(content, dict):
+        text = text_from_value(content)
+        if text:
+            return {"text": text, "format": "markdown"}
         return content
-    text = raw.get("text")
-    if isinstance(text, str):
+    text = text_from_value(raw)
+    if text:
         return {"text": text, "format": "markdown"}
     if isinstance(content, str):
         return {"text": content, "format": "markdown"}
@@ -180,6 +183,25 @@ def timeline_item_content(raw: dict[str, Any]) -> Mapping[str, Any]:
             "format": "text",
         }
     return {}
+
+
+def text_from_value(value: Any) -> str | None:
+    if isinstance(value, str):
+        return value if value else None
+    if isinstance(value, list):
+        parts = [text for item in value if (text := text_from_value(item))]
+        return "\n".join(parts) if parts else None
+    if not isinstance(value, dict):
+        return None
+    for key in ("text", "message", "rawText", "content", "summary"):
+        text = text_from_value(value.get(key))
+        if text:
+            return text
+    for key in ("input", "text_elements", "textElements", "parts", "items"):
+        text = text_from_value(value.get(key))
+        if text:
+            return text
+    return None
 
 
 def raw_item_from_notification(
