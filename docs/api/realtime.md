@@ -176,18 +176,33 @@ should use it to decide whether to show runtime features such as command mode,
 attachments, interactions, or IPC controls instead of hardcoding Codex/Claude
 conditionals.
 
-The payload semantics may evolve behind the channel. During migration, Connector may continue sending old notification names. The target semantic ingest methods are:
+`runtime.inventoryUpdated` is not the primary frontend capability contract.
+Connector also publishes `protocol.capabilitiesUpdated`, which maps
+runtime-native flags such as `modelCatalog` and `permissionCatalog` to protocol
+capability ids such as `catalog.model`, `catalog.permission`, and
+`catalog.effort`. Session UI should use the effective protocol capabilities and
+then read model/permission catalogs through live runtime catalog APIs.
+
+Runtime host live events are sent as connector WebSocket notifications on
+`WS /api/v2/connector/ws`. `POST /api/v2/connector/ingest` is reserved for
+explicit bulk sync and disconnected WebSocket fallback; it must still compute
+changed timeline items and publish session WebSocket events for frontend
+convergence.
+
+The target semantic connector notification methods are:
 
 ```text
 session.meta.upsert
 session.state.updated
 timeline.sync
-timeline.item.upsert
+timeline.itemUpsert
 notice.upsert
 runtime.error
 ```
 
-The connector application layer can bridge new `RuntimeHostClient` calls to old ingest payloads until Server natively supports the target semantic events.
+The connector application layer bridges `RuntimeHostClient` calls to these
+server-facing notification payloads. Runtime adapters should never call
+connector HTTP/WS transports directly.
 
 ## Terminal realtime
 

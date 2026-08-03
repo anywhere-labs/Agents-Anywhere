@@ -36,6 +36,7 @@ from connector.runtimes import default_runtime_providers
 from connector.runtimes.claude.provider import ClaudeProvider
 from connector.runtimes.codex.provider import CodexProvider
 from connector.server.auth import ConnectorAuthenticationError
+from connector.server.capabilities import protocol_capabilities_from_inventory
 from connector.server.client import BackendRpcClient
 from connector.server.ingest import coalesce_timeline_item_upserts
 
@@ -555,6 +556,138 @@ def test_connector_coalesces_duplicate_timeline_upserts_within_batch() -> None:
     ]
     assert coalesced[1]["params"]["item"]["id"] == "item_2"
     assert coalesced[2]["params"]["item"] == {"id": "item_1", "revision": 2}
+
+
+def test_connector_projects_inventory_capabilities_to_protocol_ids() -> None:
+    payload = protocol_capabilities_from_inventory(
+        {
+            "runtimes": [
+                {
+                    "runtimeId": "codex",
+                    "status": "available",
+                    "configured": True,
+                    "schema": {"type": "object"},
+                    "capabilities": {
+                        "modelCatalog": True,
+                        "permissionCatalog": True,
+                        "startTurn": True,
+                        "steerTurn": True,
+                        "interruptTurn": True,
+                        "interactions": True,
+                    },
+                },
+                {
+                    "runtimeId": "claude",
+                    "status": "available",
+                    "configured": True,
+                    "schema": {"type": "object"},
+                    "capabilities": {
+                        "modelCatalog": False,
+                        "permissionCatalog": True,
+                    },
+                },
+                {
+                    "runtimeId": "unknown-agent",
+                    "status": "available",
+                    "configured": True,
+                    "capabilities": {"modelCatalog": True},
+                },
+            ]
+        }
+    )
+
+    by_runtime_and_id = {
+        (item["runtime"], item["capabilityId"]): item
+        for item in payload["capabilities"]
+    }
+
+    assert by_runtime_and_id[("codex", "catalog.model")]["available"] is True
+    assert by_runtime_and_id[("codex", "catalog.permission")]["available"] is True
+    assert by_runtime_and_id[("codex", "catalog.effort")]["available"] is True
+    assert by_runtime_and_id[("codex", "session.send_message")]["available"] is True
+    assert by_runtime_and_id[("codex", "session.steer")]["available"] is True
+    assert by_runtime_and_id[("codex", "session.interrupt")]["available"] is True
+    assert by_runtime_and_id[("codex", "session.interaction.approval")]["available"] is True
+    assert by_runtime_and_id[("codex", "runtime.config")]["available"] is True
+    assert by_runtime_and_id[("claude", "catalog.model")]["supported"] is False
+    assert by_runtime_and_id[("claude", "catalog.model")]["available"] is False
+    assert by_runtime_and_id[("claude", "catalog.permission")]["available"] is True
+    assert ("unknown-agent", "catalog.model") not in by_runtime_and_id
+
+
+def test_connector_runtime_host_live_notifications_use_websocket_when_connected() -> None:
+    asyncio.run(_exercise_runtime_host_live_notification_uses_websocket())
+
+
+async def _exercise_runtime_host_live_notification_uses_websocket() -> None:
+    client = _client()
+    ws = FakeWebSocket()
+    client._rpc.set_connection(ws)  # type: ignore[arg-type]
+    enqueued: list[tuple[str, dict[str, Any]]] = []
+
+    async def enqueue(method: str, params: dict[str, Any]) -> None:
+        enqueued.append((method, params))
+
+    client._ingest.enqueue = enqueue  # type: ignore[method-assign]
+
+    await client.agent_runtime_host.timeline_item_upsert(
+        RuntimeTimelineItem(
+            id="item_live",
+            session_id="sess_1",
+            type="message",
+            status="running",
+            order_seq=1,
+            content_hash="sha256:live",
+            role="assistant",
+            content={"text": "live", "format": "markdown"},
+            source={"runtime": "codex", "sessionId": "thread_1"},
+        )
+    )
+
+    assert enqueued == []
+    assert ws.messages == [
+        {
+            "type": "notification",
+            "method": "timeline.itemUpsert",
+            "params": {
+                "sessionId": "sess_1",
+                "item": {
+                    "id": "item_live",
+                    "sessionId": "sess_1",
+                    "type": "message",
+                    "status": "running",
+                    "role": "assistant",
+                    "content": {"text": "live", "format": "markdown"},
+                    "source": {
+                        "runtime": "codex",
+                        "sessionId": "thread_1",
+                        "itemId": "item_live",
+                    },
+                    "orderSeq": 1,
+                    "revision": 1,
+                    "contentHash": "sha256:live",
+                },
+            },
+        }
+    ]
+
+
+def test_connector_runtime_host_notifications_fallback_to_ingest_without_websocket() -> None:
+    asyncio.run(_exercise_runtime_host_notification_ingest_fallback())
+
+
+async def _exercise_runtime_host_notification_ingest_fallback() -> None:
+    client = _client()
+    enqueued: list[tuple[str, dict[str, Any]]] = []
+
+    async def enqueue(method: str, params: dict[str, Any]) -> None:
+        enqueued.append((method, params))
+
+    client._ingest.enqueue = enqueue  # type: ignore[method-assign]
+
+    await client.send_backend_notification("session.meta.upsert", {"sessionId": "sess_1"})
+
+    assert enqueued == [("session.meta.upsert", {"sessionId": "sess_1"})]
 
 
 def test_connector_refreshes_expiring_access_token_before_ingest() -> None:

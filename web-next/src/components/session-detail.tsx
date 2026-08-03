@@ -39,6 +39,7 @@ import { InteractionCard, NotificationCard } from "@/components/session/session-
 import { SessionSkeleton, SessionSkeletonInline } from "@/components/session/session-skeleton"
 import { TimelineEntry } from "@/components/session/session-timeline-entry"
 import { isCreatedFileChange, JsonBlock } from "@/components/session/session-tool-cards"
+import { CAPABILITY, capabilityIsUsable } from "@/components/session/capabilities"
 import { SessionComposer, type AttachedFile } from "@/components/session/session-composer"
 import {
   buildOptimisticUserMessage,
@@ -347,6 +348,69 @@ export function SessionDetail({
       window.clearTimeout(timer)
     }
   }, [commandQuery, commandSessionId, token])
+
+  React.useEffect(() => {
+    const runtime = session?.runtime
+    const connectorId = session?.connectorId
+    const capabilitySet = state?.effectiveCapabilities ?? null
+    if (!runtime || !connectorId || !capabilitySet) return
+
+    const canUseModelCatalog = capabilityIsUsable(
+      capabilitySet,
+      CAPABILITY.modelCatalog,
+      runtime,
+    )
+    const canUsePermissionCatalog = capabilityIsUsable(
+      capabilitySet,
+      CAPABILITY.permissionCatalog,
+      runtime,
+    )
+    if (!canUseModelCatalog && !canUsePermissionCatalog) return
+
+    let cancelled = false
+    void Promise.all([
+      canUseModelCatalog
+        ? dashboardApi.getAgentModelCatalog(token, runtime, connectorId)
+        : Promise.resolve(null),
+      canUsePermissionCatalog
+        ? dashboardApi.getAgentPermissionCatalog(token, runtime, connectorId)
+        : Promise.resolve(null),
+    ])
+      .then(([modelCatalogResponse, permissionCatalogResponse]) => {
+        if (cancelled) return
+        setState((current) => {
+          if (!current || current.session.id !== sessionId) return current
+          return {
+            ...current,
+            catalogs: {
+              ...current.catalogs,
+              ...(modelCatalogResponse ? { model: modelCatalogResponse.catalog } : {}),
+              ...(permissionCatalogResponse
+                ? { permission: permissionCatalogResponse.catalog }
+                : {}),
+            },
+          }
+        })
+      })
+      .catch(() => {
+        if (cancelled || process.env.NODE_ENV === "production") return
+        console.debug("[AgentsAnywhere] session catalog refresh failed", {
+          sessionId,
+          runtime,
+          connectorId,
+        })
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    session?.connectorId,
+    session?.runtime,
+    sessionId,
+    state?.effectiveCapabilities?.revision,
+    token,
+  ])
 
   React.useEffect(() => {
     const optimisticState = getOptimisticSessionState(sessionId)

@@ -24,6 +24,7 @@ from connector.runtime_protocol import (
 )
 from connector.runtimes import default_runtime_providers
 from connector.server.auth import ConnectorAuthenticationError, ConnectorAuthenticator
+from connector.server.capabilities import protocol_capabilities_from_inventory
 from connector.server.dispatch import ConnectorRequestDispatcher
 from connector.server.ingest import ConnectorIngestClient
 from connector.server.rpc import ConnectorRpcChannel
@@ -172,6 +173,10 @@ class BackendRpcClient:
             self._rpc.set_connection(ws)
             inventory = await self._dispatcher.discover_runtimes()
             await self.send_notification("runtime.inventoryUpdated", inventory)
+            await self.send_notification(
+                "protocol.capabilitiesUpdated",
+                protocol_capabilities_from_inventory(inventory),
+            )
             heartbeat_task = asyncio.create_task(self._heartbeat_loop())
             sync_task = asyncio.create_task(self._runtime_sync.sync_existing_loop())
             try:
@@ -201,6 +206,16 @@ class BackendRpcClient:
     async def send_backend_notification(
         self, method: str, params: dict[str, Any]
     ) -> None:
+        if self._rpc.connected:
+            try:
+                await self.send_notification(method, params)
+                return
+            except (RuntimeError, ConnectionClosed) as exc:
+                logger.warning(
+                    "backend websocket notification failed; falling back to ingest method={} error={}",
+                    method,
+                    exc,
+                )
         await self._ingest.enqueue(method, params)
 
     async def send_response(

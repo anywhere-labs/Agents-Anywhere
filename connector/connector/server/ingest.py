@@ -10,11 +10,11 @@ from connector.logging import logger
 from connector.server.auth import ConnectorAuthenticationError
 from connector.server.urls import api_v2_url
 
-# Notifications from the runtime host are funneled through an in-memory queue and
-# flushed in batches of up to FLUSH_MAX or after FLUSH_WINDOW_SECONDS,
-# whichever comes first. This collapses N back-to-back Codex deltas (one
-# token per delta) into 1 HTTP POST, while bounding the worst-case latency
-# added at ~20ms.
+# HTTP ingest is reserved for explicit bulk sync and disconnected WebSocket
+# fallback. Live runtime host notifications should normally travel over the
+# connector WebSocket so the server can publish frontend session events without
+# the extra HTTP batching hop. The queue still collapses fallback bursts into
+# bounded POST batches.
 FLUSH_WINDOW_SECONDS = 0.02
 FLUSH_MAX = 64
 

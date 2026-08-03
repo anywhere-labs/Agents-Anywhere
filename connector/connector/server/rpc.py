@@ -31,6 +31,10 @@ class ConnectorRpcChannel:
     def clear_connection(self) -> None:
         self._ws = None
 
+    @property
+    def connected(self) -> bool:
+        return self._ws is not None
+
     async def handle_message(
         self,
         message: dict[str, Any],

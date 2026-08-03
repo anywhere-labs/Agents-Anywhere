@@ -165,9 +165,22 @@ server/sync_state.py
   JsonSyncStateStore
 ```
 
-`ConnectorRuntimeHost` is the transport mapping boundary that maps semantic runtime host calls to server ingest notifications such as `session.updated`, `timeline.sync`, `timeline.itemUpsert`, `notice.upsert`, and `runtime.error`. Runtime adapters should call the host client, not emit server notification method names themselves.
+`ConnectorRuntimeHost` is the transport mapping boundary that maps semantic runtime host calls to server-facing connector notifications such as `session.state.updated`, `timeline.sync`, `timeline.itemUpsert`, `notice.upsert`, and `runtime.error`. Live runtime host notifications normally travel over `WS /api/v2/connector/ws`; `POST /api/v2/connector/ingest` is reserved for explicit bulk sync and disconnected WebSocket fallback. Runtime adapters should call the host client, not emit server notification method names themselves.
 
 `server/` owns the actual network client. Runtime adapters must not call server HTTP/WS directly.
+
+Runtime discovery publishes two different views:
+
+- `runtime.inventoryUpdated` reports local runtime discovery details and
+  adapter-native capability flags such as `modelCatalog` and
+  `permissionCatalog`.
+- `protocol.capabilitiesUpdated` is the UI/server contract. The connector
+  explicitly maps adapter-native flags to protocol capability ids such as
+  `catalog.model`, `catalog.permission`, `catalog.effort`,
+  `session.send_message`, `session.steer`, and `session.interrupt`.
+
+Web must gate selectors and controls from effective protocol capabilities, not
+from raw runtime inventory.
 
 ### `runtime_protocol/`
 
@@ -376,7 +389,8 @@ Runtime event flow:
 ```text
 runtime adapter
   -> RuntimeHostClient semantic method
-  -> server.ingest/notifications maps to server payload
+  -> connector WS notification (or explicit bulk/fallback ingest)
+  -> server connector notification handlers map to server payload
   -> server persists projection/timeline/notice
   -> web receives websocket/event update
 ```
