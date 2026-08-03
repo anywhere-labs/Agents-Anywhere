@@ -5,7 +5,10 @@ from typing import Any
 
 from connector.logging import logger
 from connector.runtimes.codex.notifications import CodexNotificationProjector
-from connector.runtimes.codex.runtime_client import CodexRuntimeClient
+from connector.runtimes.codex.runtime_client import (
+    CodexNotificationMessage,
+    CodexRuntimeClient,
+)
 
 
 @dataclass(slots=True)
@@ -36,5 +39,5 @@ class CodexRuntimeLifecycle:
         except Exception as exc:  # noqa: BLE001
             logger.debug("codex bootstrap read failed method=model/list error={}", exc)
 
-    async def handle_notification(self, message: dict[str, Any]) -> None:
+    async def handle_notification(self, message: CodexNotificationMessage) -> None:
         await self.notifications.handle(message)

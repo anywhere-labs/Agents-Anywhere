@@ -16,9 +16,11 @@ from connector.runtimes.codex.timeline_identity import (
 
 
 class CodexTimelineAccumulator:
-    def __init__(self, pending_messages: PendingClientMessageRegistry | None = None) -> None:
+    def __init__(
+        self, pending_messages: PendingClientMessageRegistry | None = None
+    ) -> None:
         self._order_by_id: dict[str, int] = {}
-        self._raw_by_id: dict[str, dict[str, Any]] = {}
+        self._projection_by_id: dict[str, codex_timeline.CodexTimelineProjection] = {}
         self._next_order = 0
         self._pending_messages = pending_messages
 
@@ -46,59 +48,57 @@ class CodexTimelineAccumulator:
         external_session_id: str,
         event: CodexSdkEvent,
     ) -> RuntimeTimelineItem | None:
-        raw = codex_timeline.raw_item_from_notification(event.event_type, event.params)
-        if raw is None:
+        projection = codex_timeline.timeline_projection_from_event(event)
+        if projection is None:
             return None
-        self._attach_client_message_id(session_id, external_session_id, raw)
+        projection = self._attach_client_message_id(
+            session_id, external_session_id, projection
+        )
+        raw = projection.to_legacy_raw()
         item_id = codex_timeline.timeline_item_id(raw, external_session_id, 0)
-        previous = self._raw_by_id.get(item_id)
-        merged = {**copy.deepcopy(previous or {}), **copy.deepcopy(raw)}
+        previous = self._projection_by_id.get(item_id)
+        merged = projection
         if event.event_type == "item/agentMessage/delta":
-            merged["type"] = merged.get("type") or "agentMessage"
-            merged["status"] = merged.get("status") or "inProgress"
-            previous_text = previous.get("text") if previous else ""
-            merged["text"] = (
-                f"{previous_text if isinstance(previous_text, str) else ''}"
-                f"{codex_timeline.notification_delta(event.params)}"
+            previous_text = previous.text if previous and previous.text else ""
+            merged = projection.with_status(
+                projection.status or "inProgress"
+            ).with_text(
+                f"{previous_text}{codex_timeline.notification_delta(event.params)}"
             )
         elif event.event_type == "item/commandExecution/outputDelta":
-            merged["type"] = merged.get("type") or "commandExecution"
-            merged["status"] = merged.get("status") or "inProgress"
-            previous_output = previous.get("aggregatedOutput") if previous else ""
-            merged["aggregatedOutput"] = (
-                f"{previous_output if isinstance(previous_output, str) else ''}"
-                f"{codex_timeline.notification_delta(event.params)}"
+            previous_output = (
+                previous.aggregated_output
+                if previous and previous.aggregated_output
+                else ""
+            )
+            merged = projection.with_status(
+                projection.status or "inProgress"
+            ).with_aggregated_output(
+                f"{previous_output}{codex_timeline.notification_delta(event.params)}"
             )
         elif event.event_type == "item/reasoning/delta":
-            merged["type"] = merged.get("type") or "reasoning"
-            merged["status"] = merged.get("status") or "inProgress"
-            previous_text = previous.get("text") if previous else ""
-            merged["text"] = (
-                f"{previous_text if isinstance(previous_text, str) else ''}"
-                f"{codex_timeline.notification_delta(event.params)}"
+            previous_text = previous.text if previous and previous.text else ""
+            merged = projection.with_status(
+                projection.status or "inProgress"
+            ).with_text(
+                f"{previous_text}{codex_timeline.notification_delta(event.params)}"
             )
         elif event.event_type == "item/fileChange/patchUpdated":
-            merged["type"] = merged.get("type") or "fileChange"
-            merged["status"] = merged.get("status") or "inProgress"
-            previous_patch = previous.get("patch") if previous else ""
-            merged["patch"] = (
-                f"{previous_patch if isinstance(previous_patch, str) else ''}"
-                f"{codex_timeline.notification_delta(event.params)}"
+            previous_patch = previous.patch if previous and previous.patch else ""
+            merged = projection.with_status(
+                projection.status or "inProgress"
+            ).with_patch(
+                f"{previous_patch}{codex_timeline.notification_delta(event.params)}"
             )
         elif event.event_type == "item/started":
-            merged.setdefault("status", "inProgress")
+            merged = projection.with_status(projection.status or "inProgress")
         elif event.event_type == "item/completed":
-            merged["status"] = merged.get("status") or "completed"
-        merged["id"] = item_id
-        if codex_timeline.timeline_item_turn_id(merged) is None:
-            turn_id = event.turn_id or codex_sessions.turn_id_from_result(event.params)
-            if turn_id is not None:
-                merged["turnId"] = turn_id
-        self._raw_by_id[item_id] = merged
+            merged = projection.with_status(projection.status or "completed")
+        self._projection_by_id[item_id] = merged
         return self._runtime_item(
             session_id=session_id,
             external_session_id=external_session_id,
-            raw=merged,
+            projection=merged,
             event=event.event_type,
         )
 
@@ -123,15 +123,18 @@ class CodexTimelineAccumulator:
                 and codex_timeline.timeline_item_turn_id(raw) is None
             ):
                 raw["turnId"] = turn_id
-            self._attach_client_message_id(session_id, external_session_id, raw)
+            projection = codex_timeline.timeline_projection_from_raw(raw)
+            projection = self._attach_client_message_id(
+                session_id, external_session_id, projection
+            )
+            raw = projection.to_legacy_raw()
             item_id = codex_timeline.timeline_item_id(raw, external_session_id, index)
-            raw["id"] = item_id
-            self._raw_by_id[item_id] = raw
+            self._projection_by_id[item_id] = projection
             items.append(
                 self._runtime_item(
                     session_id=session_id,
                     external_session_id=external_session_id,
-                    raw=raw,
+                    projection=projection,
                     event=method,
                     fallback_index=index,
                 )
@@ -142,11 +145,11 @@ class CodexTimelineAccumulator:
         self,
         session_id: str,
         external_session_id: str,
-        raw: Mapping[str, Any],
+        projection: codex_timeline.CodexTimelineProjection,
         event: str,
         fallback_index: int = 0,
     ) -> RuntimeTimelineItem:
-        raw_dict = dict(raw)
+        raw_dict = projection.to_legacy_raw()
         item_id = codex_timeline.timeline_item_id(
             raw_dict, external_session_id, fallback_index
         )
@@ -197,12 +200,16 @@ class CodexTimelineAccumulator:
         self,
         session_id: str,
         external_session_id: str,
-        raw: dict[str, Any],
-    ) -> None:
+        projection: codex_timeline.CodexTimelineProjection,
+    ) -> codex_timeline.CodexTimelineProjection:
         if self._pending_messages is None:
-            return
-        self._pending_messages.attach_to_raw_item(
+            return projection
+        raw = projection.to_legacy_raw()
+        client_message_id = self._pending_messages.attach_to_raw_item(
             session_id=session_id,
             external_session_id=external_session_id,
             raw=raw,
         )
+        if client_message_id is None:
+            return projection
+        return projection.with_client_message_id(client_message_id)

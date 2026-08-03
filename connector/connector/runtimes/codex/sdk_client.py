@@ -10,13 +10,13 @@ from connector.runtimes.codex.runtime_client import (
     CodexRuntimeClient,
     NotificationHandler,
 )
+from connector.runtimes.codex.sdk_events import CodexSdkEvent
 from connector.runtimes.codex.sdk_shapes import (
     call_with_optional_handler,
     compact_result,
     id_of,
     maybe_await,
     model_list_result,
-    notification_dict,
     optional_int,
     optional_string,
     required_thread_id,
@@ -108,7 +108,9 @@ class CodexSdkClient:
             return {}
         if method == "model/list" and callable(getattr(self._client, "models", None)):
             result = await self._client.models(
-                include_hidden=bool(params.get("includeHidden") or params.get("include_hidden"))
+                include_hidden=bool(
+                    params.get("includeHidden") or params.get("include_hidden")
+                )
             )
             return model_list_result(result)
         if method == "thread/list" and callable(
@@ -123,7 +125,9 @@ class CodexSdkClient:
             thread_id = required_thread_id(params)
             thread = self._thread_handle(thread_id)
             result = await thread.read(
-                include_turns=bool(params.get("includeTurns") or params.get("include_turns"))
+                include_turns=bool(
+                    params.get("includeTurns") or params.get("include_turns")
+                )
             )
             return thread_read_result(result)
         if method == "thread/start" and callable(
@@ -132,9 +136,13 @@ class CodexSdkClient:
             thread = await self._client.thread_start(
                 cwd=optional_string(params.get("cwd")),
                 model=optional_string(params.get("model")),
-                approval_mode=sdk_approval_mode(self._sdk, params.get("approvalPolicy")),
+                approval_mode=sdk_approval_mode(
+                    self._sdk, params.get("approvalPolicy")
+                ),
                 sandbox=sdk_sandbox(self._sdk, params.get("sandbox")),
-                ephemeral=bool(params.get("ephemeral")) if "ephemeral" in params else None,
+                ephemeral=bool(params.get("ephemeral"))
+                if "ephemeral" in params
+                else None,
             )
             self._remember_thread(thread)
             return {"thread": thread_ref(thread)}
@@ -149,7 +157,9 @@ class CodexSdkClient:
                 run_input(params),
                 model=optional_string(params.get("model")),
                 effort=optional_string(params.get("effort")),
-                approval_mode=sdk_approval_mode(self._sdk, params.get("approvalPolicy")),
+                approval_mode=sdk_approval_mode(
+                    self._sdk, params.get("approvalPolicy")
+                ),
                 sandbox=sdk_sandbox(self._sdk, params.get("sandbox")),
             )
             self._remember_turn(thread_id, turn)
@@ -182,7 +192,9 @@ class CodexSdkClient:
         cached = self._threads.get(thread_id)
         if cached is not None:
             return cached
-        async_thread = getattr(self._sdk, "AsyncThread", None) if self._sdk is not None else None
+        async_thread = (
+            getattr(self._sdk, "AsyncThread", None) if self._sdk is not None else None
+        )
         if callable(async_thread):
             thread = async_thread(self._client, thread_id)
             self._threads[thread_id] = thread
@@ -270,8 +282,12 @@ class CodexSdkClient:
         cancelled = False
         try:
             async for notification in turn.stream():
-                message = notification_dict(notification, thread_id, turn_id)
-                if message.get("method") in {
+                message = CodexSdkEvent.from_value(
+                    notification,
+                    thread_id=thread_id,
+                    turn_id=turn_id,
+                )
+                if message.event_type in {
                     "turn/completed",
                     "turn/failed",
                     "turn/interrupted",

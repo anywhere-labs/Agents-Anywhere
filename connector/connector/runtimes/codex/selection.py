@@ -51,7 +51,9 @@ async def selections_from_thread_state(
     read_permission_catalog: PermissionCatalogReader,
 ) -> dict[str, str]:
     selections: dict[str, str] = {}
-    model_selection = await model_selection_from_thread_state(thread, read_model_catalog)
+    model_selection = await model_selection_from_thread_state(
+        thread, read_model_catalog
+    )
     if model_selection is not None:
         selections["model"] = model_selection
     permission_selection = await permission_selection_from_thread_state(
@@ -156,7 +158,10 @@ async def permission_selection_from_thread_state(
         native = permission.metadata.get("nativeSettings")
         if not isinstance(native, dict):
             continue
-        if approval_policy is not None and native.get("approvalPolicy") != approval_policy:
+        if (
+            approval_policy is not None
+            and native.get("approvalPolicy") != approval_policy
+        ):
             continue
         if sandbox is not None and native.get("sandbox") != sandbox:
             continue

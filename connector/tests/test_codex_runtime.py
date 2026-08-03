@@ -1803,17 +1803,17 @@ def test_codex_sdk_stream_finally_emits_completed_when_sdk_omits_it() -> None:
 
 
 async def _test_codex_sdk_stream_finally_emits_completed_when_sdk_omits_it() -> None:
-    emitted: list[dict[str, Any]] = []
+    emitted: list[Any] = []
     client = CodexSdkClient(_FakeSdkClient())
 
-    async def handler(message: dict[str, Any]) -> None:
+    async def handler(message: Any) -> None:
         emitted.append(message)
 
     await client.start(handler)
 
     await client._stream_turn("thread_1", "turn_1", _FakeSdkTurn())
 
-    assert [message["method"] for message in emitted] == [
+    assert [_notification_method(message) for message in emitted] == [
         "item/agentMessage/delta",
         "turn/completed",
     ]
@@ -2255,6 +2255,12 @@ def test_codex_catalog_helpers_ignore_unrecognized_items() -> None:
 
     assert [model.id for model in models.models] == ["gpt"]
     assert [permission.id for permission in permissions.permissions] == ["perm"]
+
+
+def _notification_method(message: Any) -> str:
+    if isinstance(message, CodexSdkEvent):
+        return message.event_type
+    return str(message["method"])
 
 
 def _config() -> RuntimeConfig:

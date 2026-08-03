@@ -17,9 +17,7 @@ def model_catalog_from_codex_items(
     revision: int,
 ) -> RuntimeModelCatalog:
     models = tuple(
-        model
-        for model in (_model_item(item) for item in items)
-        if model is not None
+        model for model in (_model_item(item) for item in items) if model is not None
     )
     return RuntimeModelCatalog(runtime="codex", revision=revision, models=models)
 
@@ -33,7 +31,9 @@ def permission_catalog_from_codex_items(
         for permission in (_permission_item(item) for item in items)
         if permission is not None
     )
-    return RuntimePermissionCatalog(runtime="codex", revision=revision, permissions=permissions)
+    return RuntimePermissionCatalog(
+        runtime="codex", revision=revision, permissions=permissions
+    )
 
 
 def codex_permission_catalog_items() -> list[dict[str, Any]]:
@@ -135,10 +135,13 @@ def _model_item(item: dict[str, Any]) -> RuntimeModelItem | None:
     )
     return RuntimeModelItem(
         id=model_id,
-        title=_first_string(item, "displayName", "display_name", "label", "name") or model_id,
+        title=_first_string(item, "displayName", "display_name", "label", "name")
+        or model_id,
         selection_id=None
         if reasoning_items
-        else protocol_selection_id("codex", "model", {"model_id": model_id, "reasoning_id": None}),
+        else protocol_selection_id(
+            "codex", "model", {"model_id": model_id, "reasoning_id": None}
+        ),
         description=_first_string(item, "description"),
         reasoning_items=reasoning_items,
         metadata={"source": "codex.model/list", "raw": item},
@@ -167,7 +170,9 @@ def _reasoning_items(
         result.append(
             RuntimeReasoningItem(
                 id=reasoning_id,
-                title=_first_string(item, "displayName", "display_name", "label", "name")
+                title=_first_string(
+                    item, "displayName", "display_name", "label", "name"
+                )
                 or _reasoning_label(reasoning_id),
                 selection_id=protocol_selection_id(
                     "codex",
@@ -186,7 +191,11 @@ def _permission_item(item: dict[str, Any]) -> RuntimePermissionItem | None:
     title = _first_string(item, "label", "displayName", "display_name", "name")
     if permission_id is None or title is None:
         return None
-    identity = item.get("identity") if isinstance(item.get("identity"), dict) else {"permission_id": permission_id}
+    identity = (
+        item.get("identity")
+        if isinstance(item.get("identity"), dict)
+        else {"permission_id": permission_id}
+    )
     metadata = {"source": "codex.static-permissions"}
     if isinstance(item.get("runtimeSettings"), dict):
         metadata["runtimeSettings"] = item["runtimeSettings"]

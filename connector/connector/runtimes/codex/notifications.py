@@ -11,6 +11,7 @@ from connector.runtimes.codex.approvals import (
     is_approval_request,
 )
 from connector.runtimes.codex.notice_registry import CodexNoticeRegistry
+from connector.runtimes.codex.runtime_client import CodexNotificationMessage
 from connector.runtimes.codex.sdk_events import CodexSdkEvent
 from connector.runtimes.codex.timeline_accumulator import CodexTimelineAccumulator
 
@@ -25,8 +26,12 @@ class CodexNotificationProjector:
     timeline: CodexTimelineAccumulator
     notices: CodexNoticeRegistry
 
-    async def handle(self, message: dict[str, Any]) -> None:
-        event = CodexSdkEvent.from_message(message)
+    async def handle(self, message: CodexNotificationMessage) -> None:
+        event = (
+            message
+            if isinstance(message, CodexSdkEvent)
+            else CodexSdkEvent.from_message(message)
+        )
         method = event.event_type
         params = event.params
         thread_id = event.thread_id or codex_sessions.thread_id_from_result(params)
@@ -78,9 +83,9 @@ class CodexNotificationProjector:
         params: dict[str, Any],
         request_id: Any,
     ) -> None:
-        turn_id = codex_sessions.turn_id_from_result(params) or self.active_turn_ids.get(
-            session_id
-        )
+        turn_id = codex_sessions.turn_id_from_result(
+            params
+        ) or self.active_turn_ids.get(session_id)
         if turn_id is not None:
             self.active_turn_ids[session_id] = turn_id
         notice = approval_notice_from_request(
@@ -165,9 +170,9 @@ class CodexNotificationProjector:
         thread_id: str,
         params: dict[str, Any],
     ) -> None:
-        turn_id = codex_sessions.turn_id_from_result(params) or self.active_turn_ids.get(
-            session_id
-        )
+        turn_id = codex_sessions.turn_id_from_result(
+            params
+        ) or self.active_turn_ids.get(session_id)
         self.active_turn_ids.pop(session_id, None)
         turn_items = self.timeline.items_from_turn_notification(
             session_id=session_id,

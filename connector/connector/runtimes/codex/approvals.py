@@ -56,7 +56,11 @@ def approval_notice_from_request(
         },
         actions=(
             {"actionId": "approve", "label": "Approve", "style": "primary"},
-            {"actionId": "approve_for_session", "label": "Approve for session", "style": "secondary"},
+            {
+                "actionId": "approve_for_session",
+                "label": "Approve for session",
+                "style": "secondary",
+            },
             {"actionId": "reject", "label": "Reject", "style": "danger"},
         ),
         context={

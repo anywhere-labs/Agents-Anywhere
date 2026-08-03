@@ -106,11 +106,7 @@ class CodexTurnActions:
             }
             result = await self.client.request(
                 "turn/start",
-                {
-                    key: value
-                    for key, value in turn_params.items()
-                    if value is not None
-                },
+                {key: value for key, value in turn_params.items() if value is not None},
             )
         except Exception as exc:
             await self._set_session_state(

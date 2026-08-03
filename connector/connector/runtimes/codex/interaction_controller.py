@@ -72,8 +72,7 @@ class CodexInteractionController:
             next_status = (
                 "blocked"
                 if self.notices.open_blocking_for_session(session_id)
-                else
-                "running"
+                else "running"
                 if self.active_turn_ids.get(session_id) is not None
                 else "idle"
             )

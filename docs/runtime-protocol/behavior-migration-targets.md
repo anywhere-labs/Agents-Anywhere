@@ -123,6 +123,16 @@ Rewrite order:
 4. Only after Codex streaming/status behavior is correct, clean up Server RPC
    request/response DTO parsing.
 
+Progress:
+
+- SDK stream notifications now cross the `CodexRuntimeClient` boundary as
+  `CodexSdkEvent` instead of immediately becoming method/params dictionaries.
+- `CodexTimelineAccumulator` now stores and merges `CodexTimelineProjection`
+  objects instead of using raw dictionaries as its internal item cache.
+- The remaining timeline projection still has a transitional
+  `to_legacy_raw()` adapter for identity/content/source helpers; remove that in
+  the next reducer cleanup slice.
+
 Acceptance:
 
 - A real Codex SDK turn streams assistant deltas to Server as timeline item

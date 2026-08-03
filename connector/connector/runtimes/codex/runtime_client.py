@@ -3,7 +3,10 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, Protocol
 
-NotificationHandler = Callable[[dict[str, Any]], Awaitable[None]]
+from connector.runtimes.codex.sdk_events import CodexSdkEvent
+
+CodexNotificationMessage = CodexSdkEvent | dict[str, Any]
+NotificationHandler = Callable[[CodexNotificationMessage], Awaitable[None]]
 
 
 class CodexRuntimeClient(Protocol):

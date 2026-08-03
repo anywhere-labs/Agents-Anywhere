@@ -268,7 +268,7 @@ class CodexRuntime(AgentRuntime):
             input_data=input_data,
         )
 
-    async def _handle_notification(self, message: dict[str, Any]) -> None:
+    async def _handle_notification(self, message: Any) -> None:
         await self._lifecycle.handle_notification(message)
 
     def _get_model_list_result(self) -> dict[str, Any] | None:

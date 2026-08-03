@@ -23,6 +23,7 @@ from connector.runtimes.codex.sdk_client import (
     _create_sdk_client,
     _sdk_config,
 )
+from connector.runtimes.codex.sdk_events import CodexSdkEvent
 
 
 def test_codex_sdk_client_delegates_runtime_protocol_methods() -> None:
@@ -84,9 +85,9 @@ async def _test_codex_sdk_client_adapts_async_codex_thread_turn_flow() -> None:
     sdk = _FakeAsyncCodexSdkModule()
     native = _FakeAsyncCodex(_sdk_config(sdk, _sdk_config_values()))
     client = CodexSdkClient(native, sdk=sdk)
-    notifications: list[dict[str, Any]] = []
+    notifications: list[Any] = []
 
-    async def handler(message: dict[str, Any]) -> None:
+    async def handler(message: Any) -> None:
         notifications.append(message)
 
     await client.start(handler)
@@ -151,11 +152,15 @@ async def _test_codex_sdk_client_adapts_async_codex_thread_turn_flow() -> None:
     assert notifications[0]["method"] == "turn/started"
     assert notifications[0]["params"]["turn"]["id"] == "turn_sdk"
     assert any(
-        message["method"] == "item/agentMessage/delta"
-        and message["params"]["delta"] == "hi"
+        isinstance(message, CodexSdkEvent)
+        and message.event_type == "item/agentMessage/delta"
+        and message.content == "hi"
         for message in notifications
     )
-    assert any(message["method"] == "turn/completed" for message in notifications)
+    assert any(
+        isinstance(message, CodexSdkEvent) and message.event_type == "turn/completed"
+        for message in notifications
+    )
 
 
 class _NativeSdkClient:
