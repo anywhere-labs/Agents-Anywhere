@@ -80,6 +80,8 @@ export type SessionStatusValue =
   | "stopping"
   | "blocked";
 
+export type RuntimeStatusValue = SessionStatusValue | "error" | "disconnected";
+
 export type SessionView = {
   id: string;
   connectorId: string;
@@ -315,9 +317,11 @@ export type ProtocolCapabilityScope = ProtocolCapability["scope"];
 
 export type NoticeStatus =
   | "open"
+  | "responding"
   | "response_accepted"
   | "resolving"
   | "resolved"
+  | "closed"
   | "expired"
   | "cancelled"
   | "failed";
@@ -532,7 +536,7 @@ export type SessionRuntimeState = {
   sessionId: string;
   runtime: string;
   externalSessionId?: string | null;
-  status: SessionStatusValue;
+  status: RuntimeStatusValue;
   selections: Record<string, string | null>;
   statusReason?: string | null;
   error?: Record<string, unknown> | null;

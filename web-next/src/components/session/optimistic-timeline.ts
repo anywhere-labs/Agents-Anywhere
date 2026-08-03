@@ -53,19 +53,7 @@ function optimisticUserMessageMatchesServerItem(
   if (serverItem.type !== "message" || serverItem.role !== "user") return false
   if (optimisticItem.status !== "pending") return false
   const optimisticClientMessageId = timelineClientMessageId(optimisticItem)
-  if (serverClientMessageId && optimisticClientMessageId === serverClientMessageId) return true
-  return clientMessageTextMatches(messageText(serverItem), messageText(optimisticItem))
-}
-
-function messageText(item: TimelineItem): string {
-  const text = item.content.text
-  return typeof text === "string" ? text : ""
-}
-
-function clientMessageTextMatches(actual: string, expected: string): boolean {
-  if (!actual || !expected) return false
-  if (actual === expected) return true
-  return actual.startsWith(expected) && actual.slice(expected.length).startsWith("\n\n[")
+  return Boolean(serverClientMessageId && optimisticClientMessageId === serverClientMessageId)
 }
 
 function mergeOptimisticAttachmentMetadata(serverItem: TimelineItem, optimisticItem: TimelineItem): TimelineItem {

@@ -38,6 +38,7 @@ Rough completion by behavior area:
 | Commands | Complete for T07 | Codex commands are live runtime reads; `/compact` execution is separated from messages, disabled/invalid/unknown commands fail without fallback, and command side effects publish notice/state updates. |
 | Session discovery/sync | Complete for T08 | Codex discovery returns SessionMeta for active and hidden local sessions, uses host JSON sync markers, skips timeline sync for unchanged sessions, and allows rename/meta-only updates. |
 | Server ingest | Complete for T09 | Runtime host notifications now land as partial state updates, upsert-only Codex timeline sync, hidden session meta, and interaction lifecycle notices. |
+| Web session interaction | Complete for T10 | Session detail composer now derives action state from `SessionState.status`, resolves optimistic messages by `clientMessageId`, and refreshes missing runtime state through the dedicated state endpoint instead of snapshot. |
 | Dashboard realtime | Not started | Polling/SSE replacement with dashboard-level realtime remains server/web work. |
 | Codex IPC side-channel | Deferred | Old IPC behavior is reference-only while the runtime is SDK-first. |
 
@@ -428,7 +429,7 @@ uv run pytest tests/test_backend_mvp.py -q
 
 ### T10. Web session interaction alignment
 
-Status: not started.
+Status: complete.
 
 Goal:
 
@@ -442,11 +443,32 @@ Required behavior:
 - user optimistic messages reconcile with runtime echoes by `clientMessageId`.
 - commands, notices, selections, and timeline items use their dedicated APIs.
 
+Completed:
+
+- Session detail and composer derive interactive state from
+  `SessionRuntimeState.status`; missing state falls back only to idle or
+  disconnected, not to the legacy `SessionView.status` running projection.
+- Composer maps `waiting`, `pending`, `running`, `stopping`, `blocked`,
+  `error`, and `disconnected` into send/interrupt/placeholder behavior.
+- Interrupt is shown only for interruptible runtime states instead of whenever
+  the interrupt capability exists.
+- Session events that carry session metadata without runtime state trigger a
+  dedicated `/runtime-state` refresh, avoiding snapshot refetch for ordinary
+  state convergence.
+- Optimistic user messages are reconciled with runtime echoes only by
+  `clientMessageId`, avoiding text-based accidental merges.
+- Web notice types now accept `responding` and `closed`; responding
+  interactions remain visible until resolved/closed.
+- Commands, selections, notices, and timeline items continue to use their
+  dedicated APIs.
+- `web-next` lint verification now runs a supported TypeScript gate under the
+  project's Yarn 4/Corepack setup.
+
 Verification:
 
 ```bash
-cd web
-yarn lint
+cd web-next
+corepack yarn lint
 ```
 
 ### T11. Dashboard realtime

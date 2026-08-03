@@ -28,6 +28,7 @@ import type {
   ProtocolModelCatalog,
   ProtocolPermissionCatalog,
   RuntimeCommand,
+  RuntimeStatusValue,
   SessionRuntimeState,
   SessionView,
 } from "@/features/dashboard/types"
@@ -95,12 +96,23 @@ export function SessionComposer({
     useAttachments()
   const composerRef = React.useRef<HTMLDivElement | null>(null)
   const composerWidth = useElementWidth(composerRef)
-  const runtimeStatus = runtimeState?.status ?? session.status
+  const runtimeStatus = effectiveRuntimeStatus(runtimeState, session.connectorStatus)
   const runtimeSelections = runtimeState?.selections ?? {}
-  const isBusy = runtimeStatus === "running" || runtimeStatus === "blocked"
+  const isRunning = runtimeStatus === "running"
+  const isBlocked = runtimeStatus === "blocked"
   const isStopping = runtimeStatus === "stopping"
   const isWaiting = runtimeStatus === "waiting" || runtimeStatus === "pending"
+  const isError = runtimeStatus === "error"
+  const isDisconnected = runtimeStatus === "disconnected"
   const connectorOnline = session.connectorStatus === "online"
+  const acceptsUserInput =
+    connectorOnline &&
+    !isDisconnected &&
+    !isWaiting &&
+    !isRunning &&
+    !isStopping &&
+    !isBlocked &&
+    !isError
   const canUseSendMessage = capabilityIsUsable(effectiveCapabilities, CAPABILITY.sendMessage)
   const canUseInterrupt = capabilityIsUsable(effectiveCapabilities, CAPABILITY.interrupt)
   const interruptCapability = findCapability(effectiveCapabilities, CAPABILITY.interrupt)
@@ -111,16 +123,17 @@ export function SessionComposer({
     canUseSendMessage &&
     !creatingSession &&
     !sending &&
-    !interrupting
-  const canRunCommand = !creatingSession && !sending && !interrupting && connectorOnline
+    !interrupting &&
+    acceptsUserInput
+  const canRunCommand = !creatingSession && !sending && !interrupting && acceptsUserInput
   const hasInput = value.trim().length > 0 || attachments.length > 0
   const activeSessionCanInterrupt = Boolean(
     connectorOnline &&
     interruptCapability?.supported &&
     interruptCapability.allowed &&
-    (isWaiting || isBusy),
+    (isWaiting || isRunning || isStopping),
   )
-  const showInterrupt = !creatingSession && (canUseInterrupt || activeSessionCanInterrupt)
+  const showInterrupt = !creatingSession && canUseInterrupt && activeSessionCanInterrupt
   const [selectedPermissionMode, setSelectedPermissionMode] = React.useState("")
   const [selectedModel, setSelectedModel] = React.useState("")
   const [selectedReasoning, setSelectedReasoning] = React.useState("")
@@ -188,14 +201,18 @@ export function SessionComposer({
     ? tSession("creatingPlaceholder")
     : !session.takeover
     ? tSession("readOnlyPlaceholder")
-    : !connectorOnline
+    : isDisconnected || !connectorOnline
       ? tSession("deviceOfflinePlaceholder")
       : pendingInteractionCount > 0
         ? tSession("waitingApprovalPlaceholder")
         : isWaiting
           ? tSession("pendingPlaceholder")
-          : isStopping || isBusy
+          : isStopping || isRunning
             ? tSession("busyPlaceholder")
+            : isBlocked
+              ? tSession("waitingApprovalPlaceholder")
+              : isError
+                ? tSession("errorPlaceholder")
             : tSession("replyPlaceholder")
   const commandQuery = commandQueryFromValue(value)
   const showCommandMenu = commandQuery !== null && attachments.length === 0
@@ -555,4 +572,12 @@ function parseCommandValue(value: string): { command: string | null; args: strin
     args: parts.slice(1),
     raw,
   }
+}
+
+function effectiveRuntimeStatus(
+  runtimeState: SessionRuntimeState | null | undefined,
+  connectorStatus: SessionView["connectorStatus"],
+): RuntimeStatusValue {
+  if (runtimeState) return runtimeState.status
+  return connectorStatus === "offline" ? "disconnected" : "idle"
 }

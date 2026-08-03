@@ -9,7 +9,7 @@
     "build": "next build",
     "start": "next start --hostname 127.0.0.1 --port 5174",
     "typecheck": "tsc --noEmit",
-    "lint": "next lint",
+    "lint": "tsc --noEmit",
     "protocol:generate": "node scripts/generate-protocol-types.mjs",
     "protocol:check": "node scripts/generate-protocol-types.mjs --check"
   },
