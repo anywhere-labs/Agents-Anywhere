@@ -277,7 +277,8 @@ Required behavior:
 - `update_session_selections` changes runtime session state, not message payloads.
 - runtime pushes `session.state.updated` after selection changes.
 - invalid selection returns a clear protocol error.
-- create-and-start remains the only send path that carries initial selections.
+- public message send remains selection-free; Server may forward current
+  `SessionState.selections` to runtime `start_turn`.
 
 Completed:
 
@@ -286,14 +287,16 @@ Completed:
 - Selection id parsing is strict; unknown model or permission selection ids now
   return `codex_invalid_selection` instead of silently falling back.
 - Unsupported selection scopes return `codex_invalid_selection_scope`.
-- `update_session_selections` validates ids, updates Codex thread settings via
-  runtime client `thread/update`, and pushes merged `session.state.updated`.
-- Existing-session `start_turn` remains selection-free; model/permission changes
-  must be applied before sending.
+- `update_session_selections` validates ids, updates runtime `SessionState`, and
+  pushes merged `session.state.updated`; it does not call unavailable SDK thread
+  settings update methods.
+- Existing-session HTTP message send remains selection-free. Runtime
+  `start_turn` can receive current `SessionState.selections` and apply them as
+  per-turn SDK options when the runtime lacks persistent thread setting updates.
 - `create_and_start_session` remains the only send/create path carrying initial
   selections and now uses the same strict validation.
-- Codex SDK client adapts `thread/update` to available thread settings methods
-  such as `update_settings`.
+- Codex SDK client applies selections through `thread.turn(...)` per-turn
+  parameters.
 
 Verification:
 

@@ -796,24 +796,7 @@ async def _test_codex_runtime_update_session_selections_pushes_runtime_state() -
 
     assert result.ok is True
     assert result.result["updated"] is True
-    assert client.requests[-1] == (
-        "thread/update",
-        {
-            "threadId": "thread_1",
-            "settings": {
-                "model": "gpt-example",
-                "effort": "high",
-                "approvalPolicy": "never",
-                "sandbox": "danger-full-access",
-                "sandboxPolicy": {"type": "dangerFullAccess"},
-            },
-            "model": "gpt-example",
-            "effort": "high",
-            "approvalPolicy": "never",
-            "sandbox": "danger-full-access",
-            "sandboxPolicy": {"type": "dangerFullAccess"},
-        },
-    )
+    assert all(request[0] != "thread/update" for request in client.requests)
     assert host.state_updates[-1]["status"] == "idle"
     assert host.state_updates[-1]["selections"] == {
         "model": model_selection,
@@ -844,11 +827,11 @@ async def _test_codex_runtime_invalid_selection_returns_protocol_error() -> None
     assert all(request[0] != "thread/update" for request in client.requests)
 
 
-def test_codex_runtime_start_turn_does_not_carry_session_selections() -> None:
-    asyncio.run(_test_codex_runtime_start_turn_does_not_carry_session_selections())
+def test_codex_runtime_start_turn_carries_cached_session_selections() -> None:
+    asyncio.run(_test_codex_runtime_start_turn_carries_cached_session_selections())
 
 
-async def _test_codex_runtime_start_turn_does_not_carry_session_selections() -> None:
+async def _test_codex_runtime_start_turn_carries_cached_session_selections() -> None:
     client = FakeCodexClient()
     runtime = CodexRuntime(config=_config(), host=FakeHost(), client=client)
     selection = (await runtime.list_model_catalog()).models[1].selection_id
@@ -865,7 +848,8 @@ async def _test_codex_runtime_start_turn_does_not_carry_session_selections() -> 
     turn_start = next(
         request for request in reversed(client.requests) if request[0] == "turn/start"
     )
-    assert set(turn_start[1]) == {"threadId", "input", "clientUserMessageId"}
+    assert turn_start[1]["model"] == "gpt-plain"
+    assert "effort" not in turn_start[1]
 
 
 def test_codex_runtime_lists_compact_command_for_loaded_thread() -> None:

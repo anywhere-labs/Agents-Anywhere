@@ -6,6 +6,7 @@ from typing import Any
 
 from connector.runtime_protocol import (
     RuntimeAttachment,
+    RuntimeInvalidRequestError,
     RuntimeOperationResult,
     RuntimeSessionStateCache,
     RuntimeUnsupportedError,
@@ -18,6 +19,10 @@ from connector.runtimes.codex.runtime_client import CodexRuntimeClient
 from connector.runtimes.codex.runtime_helpers import (
     ensure_text_only_attachments,
     soft_interrupt_failure_reason,
+)
+from connector.runtimes.codex.selection import (
+    model_settings_from_selection,
+    permission_settings_from_selection,
 )
 
 EnsureStarted = Callable[[], Awaitable[None]]
@@ -32,12 +37,15 @@ class CodexTurnActions:
     notices: CodexNoticeRegistry
     ensure_started: EnsureStarted
     pending_messages: PendingClientMessageRegistry
+    list_model_catalog: Callable[[str | None, int], Awaitable[Any]] | None = None
+    list_permission_catalog: Callable[[str | None, int], Awaitable[Any]] | None = None
 
     async def start_turn(
         self,
         session_id: str,
         external_session_id: str | None,
         content: str,
+        selections: Mapping[str, str | None] | None = None,
         attachments: tuple[RuntimeAttachment, ...] = (),
         client_message_id: str | None = None,
     ) -> RuntimeOperationResult:
@@ -45,10 +53,39 @@ class CodexTurnActions:
         if self.client is None or external_session_id is None:
             raise RuntimeUnsupportedError("start_turn")
         await self.ensure_started()
+        effective_selections = dict(selections or {})
+        if not effective_selections:
+            cached = self.session_states.get(session_id)
+            effective_selections = dict(cached.selections if cached is not None else {})
+        try:
+            selected_model = (
+                await model_settings_from_selection(
+                    effective_selections.get("model"),
+                    self.list_model_catalog,
+                )
+                if self.list_model_catalog is not None
+                else {}
+            )
+            native_permission = (
+                await permission_settings_from_selection(
+                    effective_selections.get("permission"),
+                    self.list_permission_catalog,
+                )
+                if self.list_permission_catalog is not None
+                else {}
+            )
+        except RuntimeInvalidRequestError as exc:
+            return RuntimeOperationResult(
+                ok=False,
+                code="codex_invalid_selection",
+                message=str(exc),
+                result={"externalSessionId": external_session_id},
+            )
         await self._set_session_state(
             session_id=session_id,
             external_session_id=external_session_id,
             status="waiting",
+            selections=effective_selections,
             metadata={"source": "codex.turn/start.requested"},
         )
         self.pending_messages.register(
@@ -58,12 +95,21 @@ class CodexTurnActions:
             text=content,
         )
         try:
+            turn_params = {
+                "threadId": external_session_id,
+                "input": [{"type": "text", "text": content, "text_elements": []}],
+                "clientUserMessageId": client_message_id,
+                "model": selected_model.get("model"),
+                "effort": selected_model.get("effort"),
+                "approvalPolicy": native_permission.get("approvalPolicy"),
+                "sandbox": native_permission.get("sandbox"),
+            }
             result = await self.client.request(
                 "turn/start",
                 {
-                    "threadId": external_session_id,
-                    "input": [{"type": "text", "text": content, "text_elements": []}],
-                    "clientUserMessageId": client_message_id,
+                    key: value
+                    for key, value in turn_params.items()
+                    if value is not None
                 },
             )
         except Exception as exc:
@@ -90,6 +136,7 @@ class CodexTurnActions:
             session_id=session_id,
             external_session_id=external_session_id,
             status="running",
+            selections=effective_selections,
             metadata={
                 "source": "codex.turn/start",
                 **({"turn_id": turn_id} if turn_id else {}),
@@ -252,6 +299,7 @@ class CodexTurnActions:
         session_id: str,
         external_session_id: str | None,
         status: str,
+        selections: Mapping[str, str | None] | None = None,
         error: Mapping[str, Any] | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
@@ -259,6 +307,7 @@ class CodexTurnActions:
             session_id=session_id,
             external_session_id=external_session_id,
             status=status,  # type: ignore[arg-type]
+            selections=selections,
             error=error,
             metadata=metadata,
         )

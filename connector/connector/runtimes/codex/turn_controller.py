@@ -57,6 +57,8 @@ class CodexTurnController:
             notices=self.notices,
             ensure_started=self.ensure_started,
             pending_messages=self.pending_messages,
+            list_model_catalog=self.list_model_catalog,
+            list_permission_catalog=self.list_permission_catalog,
         )
         self.commands = CodexCommandController(
             host=self.host,
@@ -165,6 +167,7 @@ class CodexTurnController:
         session_id: str,
         external_session_id: str | None,
         content: str,
+        selections: Mapping[str, str | None] | None = None,
         attachments: tuple[RuntimeAttachment, ...] = (),
         client_message_id: str | None = None,
     ) -> RuntimeOperationResult:
@@ -172,6 +175,7 @@ class CodexTurnController:
             session_id=session_id,
             external_session_id=external_session_id,
             content=content,
+            selections=selections,
             attachments=attachments,
             client_message_id=client_message_id,
         )
@@ -279,19 +283,6 @@ class CodexTurnController:
                     "selections": dict(selections),
                 },
             )
-        await self.ensure_started()
-        settings = {
-            **selected_model,
-            **native_permission,
-        }
-        await self.client.request(
-            "thread/update",
-            {
-                "threadId": external_session_id,
-                "settings": settings,
-                **settings,
-            },
-        )
         cached = self.session_states.get(session_id)
         await self._set_session_state(
             session_id=session_id,

@@ -99,6 +99,7 @@ class AgentRuntime(ABC):
         session_id: str,
         external_session_id: str | None,
         content: str,
+        selections: Mapping[str, str | None] | None = None,
         attachments: tuple[RuntimeAttachment, ...] = (),
         client_message_id: str | None = None,
     ) -> RuntimeOperationResult:

@@ -135,10 +135,13 @@ For an existing session, sending a message only sends message content and attach
 
 ```text
 update_session_selections(...)
-start_turn(content, attachments, client_message_id)
+start_turn(content, selections, attachments, client_message_id)
 ```
 
-Model and permission state must be updated before sending. `start_turn` must not carry one-off model or permission selection fields.
+Model and permission state must be updated before sending. The public message
+send request must not carry one-off model or permission fields; Server may pass
+current `SessionState.selections` to runtime `start_turn` so runtimes that only
+support per-turn SDK options can apply current state at dispatch time.
 
 ## Documents
 

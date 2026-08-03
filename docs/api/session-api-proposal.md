@@ -311,6 +311,8 @@ Rules:
 
 - Message send does not carry `modelSelectionId` or `permissionSelectionId`.
 - If a selection must change, call `PATCH /state/selections` before message send.
+- Server forwards current `SessionState.selections` to the runtime RPC when
+  starting the next turn.
 - Server may set state to `waiting` after accepting a message request and before runtime confirms turn start.
 - Runtime confirms active processing by emitting `session.state.updated` with `status = running`.
 - Runtime/session state notifications accept `selections`; legacy

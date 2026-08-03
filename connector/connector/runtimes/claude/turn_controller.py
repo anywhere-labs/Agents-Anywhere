@@ -127,9 +127,11 @@ class ClaudeTurnController:
         session_id: str,
         external_session_id: str | None,
         content: str,
+        selections: Mapping[str, str | None] | None = None,
         attachments: tuple[RuntimeAttachment, ...] = (),
         client_message_id: str | None = None,
     ) -> RuntimeOperationResult:
+        _ = selections
         await self.ensure_started()
         session = self.session_for(session_id, external_session_id, None)
         if session.active_task is not None and not session.active_task.done():

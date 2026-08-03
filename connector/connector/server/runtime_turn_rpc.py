@@ -59,6 +59,7 @@ async def dispatch_turn_start(
         required_session_id(params),
         optional_string(params.get("externalSessionId")),
         required_content(params),
+        runtime_selections(params),
         runtime_attachments(params),
         optional_string(params.get("clientMessageId")),
     )

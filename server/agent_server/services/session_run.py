@@ -260,6 +260,16 @@ class SessionRunService:
             "runtime": session.runtime,
             "content": payload.content,
         }
+        try:
+            runtime_state = await self._store.get_session_runtime_state(session_id)
+        except KeyError:
+            runtime_state = None
+        if runtime_state is not None and runtime_state.selections:
+            params["selections"] = {
+                scope: selection_id
+                for scope, selection_id in runtime_state.selections.items()
+                if selection_id is not None
+            }
         if session.cwd:
             params["cwd"] = session.cwd
         if session.externalSessionId:
@@ -345,6 +355,12 @@ class SessionRunService:
             raise SessionRunConflictError(str(exc)) from exc
         except ConnectorRpcError as exc:
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
+        if isinstance(result, dict) and result.get("ok") is False:
+            code = result.get("code")
+            message = result.get("message")
+            raise SessionRunUpstreamError(
+                str(message or code or "runtime rejected selection update")
+            )
         state = await self._store.upsert_session_runtime_state(
             session_id=session_id,
             runtime=session.runtime,

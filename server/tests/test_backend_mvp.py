@@ -2748,6 +2748,67 @@ def test_patch_session_selections_routes_to_runtime_and_persists_state(tmp_path)
         "permission": "sel_permission_live",
     }
 
+    fake_rpc.requests.clear()
+    sent = client.post(
+        f"/sessions/{session_id}/messages",
+        headers=headers,
+        json={"content": "hi after selection"},
+    )
+
+    assert sent.status_code == 200, sent.text
+    assert fake_rpc.requests[-1][1] == "turn.start"
+    params = fake_rpc.requests[-1][2]
+    assert params["selections"] == {
+        "model": "sel_model_live",
+        "permission": "sel_permission_live",
+    }
+    assert "modelSelectionId" not in params
+    assert "permissionSelectionId" not in params
+
+
+def test_patch_session_selections_does_not_persist_runtime_rejection(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+
+    class RejectingSelectionRpc(FakeLocalRpc):
+        async def request(
+            self,
+            connector_id: str,
+            method: str,
+            params: dict[str, Any],
+            *,
+            timeout: float = 30,
+        ) -> Any:
+            self.requests.append((connector_id, method, params, timeout))
+            if method == "session.selections.update":
+                return {
+                    "ok": False,
+                    "code": "codex_invalid_selection",
+                    "message": "unknown Codex model selection",
+                }
+            return await super().request(
+                connector_id,
+                method,
+                params,
+                timeout=timeout,
+            )
+
+    fake_rpc = RejectingSelectionRpc()
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+
+    response = client.patch(
+        f"/sessions/{session_id}/state/selections",
+        headers=headers,
+        json={"selections": {"model": "sel_model_missing"}},
+    )
+
+    assert response.status_code == 502, response.text
+    state = client.get(f"/sessions/{session_id}/runtime-state", headers=headers)
+    if state.status_code == 200:
+        assert state.json()["state"]["selections"] == {}
+
 
 def test_send_message_rejects_legacy_model_fields(tmp_path):
     client = make_client(tmp_path)

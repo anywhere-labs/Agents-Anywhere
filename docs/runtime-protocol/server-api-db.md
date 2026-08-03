@@ -160,7 +160,10 @@ Request shape should include:
 POST /api/v2/sessions/{sessionId}/messages
 ```
 
-Message send only carries content, attachments, and client message id. It must not carry model/permission selection ids.
+Public message send only carries content, attachments, and client message id. It
+must not carry model/permission selection ids. Server may still forward current
+`SessionState.selections` to the Connector runtime RPC so the runtime can apply
+current state when starting the turn.
 
 ## Connector ingest target
 

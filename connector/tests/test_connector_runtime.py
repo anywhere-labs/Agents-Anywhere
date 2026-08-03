@@ -303,6 +303,7 @@ class FakeAgentRuntime(AgentRuntime):
         session_id: str,
         external_session_id: str | None,
         content: str,
+        selections=None,  # type: ignore[no-untyped-def]
         attachments=(),  # type: ignore[no-untyped-def]
         client_message_id: str | None = None,
     ) -> RuntimeOperationResult:
@@ -313,6 +314,7 @@ class FakeAgentRuntime(AgentRuntime):
                     "sessionId": session_id,
                     "externalSessionId": external_session_id,
                     "content": content,
+                    "selections": dict(selections or {}),
                     "attachments": attachments,
                     "clientMessageId": client_message_id,
                 },

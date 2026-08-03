@@ -170,6 +170,7 @@ class CodexRuntime(AgentRuntime):
         session_id: str,
         external_session_id: str | None,
         content: str,
+        selections: Mapping[str, str | None] | None = None,
         attachments: tuple[RuntimeAttachment, ...] = (),
         client_message_id: str | None = None,
     ) -> RuntimeOperationResult:
@@ -177,6 +178,7 @@ class CodexRuntime(AgentRuntime):
             session_id=session_id,
             external_session_id=external_session_id,
             content=content,
+            selections=selections,
             attachments=attachments,
             client_message_id=client_message_id,
         )
