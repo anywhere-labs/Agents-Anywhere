@@ -40,7 +40,7 @@ Rough completion by behavior area:
 | Server ingest | Complete for T09 | Runtime host notifications now land as partial state updates, upsert-only Codex timeline sync, hidden session meta, and interaction lifecycle notices. |
 | Web session interaction | Complete for T10 | Session detail composer now derives action state from `SessionState.status`, resolves optimistic messages by `clientMessageId`, and refreshes missing runtime state through the dedicated state endpoint instead of snapshot. |
 | Dashboard realtime | Complete for T11 | Dashboard connects through a dedicated WebSocket lifecycle, receives the initial connector/session snapshot there, and receives pushed snapshots for changes without recurring connector/session list polling. |
-| Codex IPC side-channel | Deferred | Old IPC behavior is reference-only while the runtime is SDK-first. |
+| Codex IPC side-channel | Intentionally unsupported for SDK-first release | Old IPC behavior is reference-only; active Codex runtime keeps `ipc=false` and exposes no IPC config switch. |
 
 ## Target checklist
 
@@ -511,7 +511,7 @@ corepack yarn lint
 
 ### T12. Codex IPC optional side-channel
 
-Status: deferred.
+Status: intentionally unsupported for SDK-first release.
 
 Goal:
 
@@ -525,18 +525,42 @@ Required behavior if resumed:
 - broadcasts remain fire-and-forget.
 - IPC desync does not force server snapshot polling.
 
+Decision:
+
+- Do not reintroduce Codex IPC in the SDK-first release.
+- The active Codex provider/runtime must remain SDK-only.
+- Active Codex discovery keeps capability `ipc=false`.
+- Active Codex config must not expose `ipcEnabled`, `sdkMode`, or
+  `executablePath`.
+- Active connector code and active connector tests must not import
+  `connector._reference`.
+- Historical Codex IPC protocol/state/client/publisher code remains only under
+  `_reference/codex` and `_deprecated` docs for future comparison.
+- If IPC is resumed later, it must enter through the same
+  `CodexRuntimeClient`/SDK-platform reducer boundary, not by reviving the old
+  adapter path.
+
+Completed:
+
+- Audited active connector code for `_reference` and IPC imports.
+- Kept active provider/runtime SDK-only via existing architecture tests.
+- Kept IPC protocol/state reference fixtures passing as frozen reference
+  material.
+- Documented that T12 is intentionally unsupported rather than merely deferred.
+
 Verification:
 
 ```bash
 cd connector
 uv run pytest tests/_reference/reference_codex_ipc_protocol.py tests/_reference/reference_codex_ipc_state.py -q
+uv run pytest tests/test_connector_architecture.py tests/test_codex_provider.py -q
 ```
 
 ## Definition of done
 
 The connector refactor behavior migration is considered complete when:
 
-- T01 through T11 are complete or explicitly moved out of scope.
+- T01 through T11 are complete.
 - T12 is either complete or documented as intentionally unsupported for the SDK-first release.
 - Connector tests pass.
 - Server ingest tests pass for runtime host events.
