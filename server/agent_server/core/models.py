@@ -691,9 +691,11 @@ NoticeType = Literal["notification", "interaction"]
 NoticeSeverity = Literal["info", "success", "warning", "error"]
 NoticeStatus = Literal[
     "open",
+    "responding",
     "response_accepted",
     "resolving",
     "resolved",
+    "closed",
     "expired",
     "cancelled",
     "failed",

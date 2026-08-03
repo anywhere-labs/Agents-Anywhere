@@ -181,6 +181,14 @@ class ConnectorNotificationRepository(
         source_observed_at: str | None = None,
     ) -> list[TimelineItem]: ...
 
+    async def sync_timeline_items(
+        self,
+        *,
+        session_id: str,
+        items: list[TimelineItemIn],
+        source_observed_at: str | None = None,
+    ) -> list[TimelineItem]: ...
+
     async def resolve_connector_session_id(
         self,
         *,
@@ -188,6 +196,14 @@ class ConnectorNotificationRepository(
         session_id: str,
         external_session_id: str | None = None,
     ) -> str: ...
+
+    async def set_session_archived(
+        self,
+        session_id: str,
+        archived: bool,
+        *,
+        user_id: str | None = None,
+    ) -> SessionView: ...
 
     async def update_active_run_turn_id(self, session_id: str, turn_id: str) -> None: ...
 

@@ -104,6 +104,70 @@ class TimelineRepositoryMixin:
             await self.timeline.replace(session_id, normalized)
         return normalized, bool(removed_items)
 
+    async def sync_timeline_items(
+        self,
+        *,
+        session_id: str,
+        items: list[TimelineItemIn],
+        source_observed_at: str | None = None,
+    ) -> list[TimelineItem]:
+        async with self._timeline_lock(session_id):
+            current = {existing.id: existing for existing in await self.timeline.read(session_id)}
+            candidate_by_id: dict[str, TimelineItem | TimelineItemIn] = {}
+            incoming_ids: set[str] = set()
+            now = utc_now()
+            for item in items:
+                incoming_ids.add(item.id)
+                existing = current.get(item.id)
+                if existing is not None and _should_keep_existing_timeline_item(existing, item):
+                    candidate_by_id[item.id] = existing
+                    continue
+                candidate_by_id[item.id] = item
+            for item_id, existing in current.items():
+                if item_id not in incoming_ids:
+                    candidate_by_id[item_id] = existing
+            candidate = [
+                item
+                if isinstance(item, TimelineItem)
+                else _timeline_item_from_input(item, updated_seq=0, now=now)
+                for item in candidate_by_id.values()
+            ]
+            deduped_ids = {item.id for item in _dedupe_legacy_history_items(candidate)}
+            normalized_by_id: dict[str, TimelineItem] = {}
+            max_order_seq = max((existing.orderSeq for existing in current.values()), default=0)
+            async with self._engine.begin() as conn:
+                if source_observed_at is not None:
+                    await conn.execute(
+                        update(sessions_t)
+                        .where(sessions_t.c.id == session_id)
+                        .values(source_observed_at=source_observed_at)
+                    )
+                for item_id, item in candidate_by_id.items():
+                    if item_id not in deduped_ids:
+                        continue
+                    if isinstance(item, TimelineItem):
+                        normalized_by_id[item_id] = item
+                        continue
+                    updated_seq = await self._bump_session(conn, session_id)
+                    existing = current.get(item_id)
+                    if existing is not None:
+                        order_seq = existing.orderSeq
+                    elif item.orderSeq > max_order_seq:
+                        order_seq = item.orderSeq
+                    else:
+                        max_order_seq += 1
+                        order_seq = max_order_seq
+                    max_order_seq = max(max_order_seq, order_seq)
+                    normalized = _timeline_item_from_input(
+                        item,
+                        updated_seq=updated_seq,
+                        now=now,
+                        order_seq=order_seq,
+                    )
+                    normalized_by_id[item_id] = normalized
+                    await self.timeline.upsert_one(conn, normalized)
+        return list(normalized_by_id.values())
+
     async def replace_timeline_snapshot(
         self,
         *,

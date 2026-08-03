@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from agent_server.infra.repositories.store_support import *
 
-OPEN_NOTICE_STATUSES = {"open", "response_accepted", "resolving", "failed"}
+OPEN_NOTICE_STATUSES = {"open", "responding", "response_accepted", "resolving", "failed"}
 
 
 class NoticeRepositoryMixin:
@@ -119,7 +119,7 @@ class NoticeRepositoryMixin:
                     updated_seq=updated_seq,
                     updated_at=now,
                     resolved_at=now
-                    if status in {"resolved", "expired", "cancelled"}
+                    if status in {"resolved", "closed", "expired", "cancelled"}
                     else None,
                 )
             )

@@ -169,6 +169,7 @@ class SessionNotificationHandler:
         local_state = _local_session_state(params)
         session_id = params["sessionId"]
         external_session_id = params.get("externalSessionId")
+        archived = _session_meta_archived(params, local_state)
         try:
             if isinstance(external_session_id, str):
                 session_id = await self._store.resolve_connector_session_id(
@@ -176,7 +177,7 @@ class SessionNotificationHandler:
                     session_id=session_id,
                     external_session_id=external_session_id,
                 )
-            await self._store.update_session_snapshot(
+            session = await self._store.update_session_snapshot(
                 session_id=session_id,
                 title=params.get("title"),
                 cwd=params.get("cwd"),
@@ -185,25 +186,18 @@ class SessionNotificationHandler:
                 source_observed_at=params.get("sourceObservedAt"),
                 last_activity_at=params.get("lastActivityAt"),
             )
+            if archived is not None and session.archived != archived:
+                session = await self._store.set_session_archived(session.id, archived)
             if method == "session.updated" and _has_runtime_state_fields(params):
                 await self._store.upsert_session_runtime_state(
-                    session_id=session_id,
+                    session_id=session.id,
                     runtime=params.get("runtime") or "codex",
                     external_session_id=_string_or_none(external_session_id),
                     status=_v2_session_status(params.get("status")),
                     selections=_selections_param(params),
                 )
-            return IngestEffect(session_id=session_id, session_changed=True)
+            return IngestEffect(session_id=session.id, session_changed=True)
         except KeyError:
-            if local_state in {"archived", "deleted", "unresumable"}:
-                logger.info(
-                    "ignored local {} session discovery connector_id={} session_id={} external_session_id={}",
-                    local_state,
-                    connector_id,
-                    session_id,
-                    external_session_id,
-                )
-                return IngestEffect()
             session = await self._store.upsert_connector_session(
                 connector_id=connector_id,
                 session_id=session_id,
@@ -215,6 +209,8 @@ class SessionNotificationHandler:
                 source_observed_at=params.get("sourceObservedAt"),
                 last_activity_at=params.get("lastActivityAt"),
             )
+            if archived is not None and session.archived != archived:
+                session = await self._store.set_session_archived(session.id, archived)
             if method == "session.updated" and _has_runtime_state_fields(params):
                 await self._store.upsert_session_runtime_state(
                     session_id=session.id,
@@ -335,13 +331,11 @@ class TimelineNotificationHandler:
                 items=items,
             )
         else:
-            stored_items, removed_items = await self._store.replace_timeline(
+            stored_items = await self._store.sync_timeline_items(
                 session_id=session_id,
                 source_observed_at=params.get("sourceObservedAt"),
                 items=items,
             )
-        if replace_snapshot:
-            removed_items = False
         await _reconcile_active_run_from_timeline(self._store, session_id, items)
         for item in items:
             if item.type != "turn.end":
@@ -388,7 +382,7 @@ class TimelineNotificationHandler:
             timeline_reset=replace_snapshot,
             session_changed=True,
             notices_changed=any(item.type == "turn.end" for item in items),
-            needs_refetch=removed_items or not push_items,
+            needs_refetch=not push_items,
         )
 
     async def _upsert(
@@ -485,8 +479,13 @@ class InteractionNotificationHandler:
         if await _session_disabled(self._store, notice.sessionId):
             return IngestEffect()
         if notice.type == "interaction":
+            existing = await _existing_notice(self._store, notice.noticeId)
             try:
-                stored = await self._projections.project_interaction(notice)
+                if existing is None and notice.status == "open":
+                    stored = await self._projections.project_interaction(notice)
+                else:
+                    stored = await self._store.upsert_notice(notice)
+                    await self._session_states.reconcile(stored.sessionId)
             except InteractionDomainError as exc:
                 raise NotificationValidationError(
                     "invalid_interaction",
@@ -497,7 +496,7 @@ class InteractionNotificationHandler:
             await self._session_states.reconcile(stored.sessionId)
         return IngestEffect(
             session_id=stored.sessionId,
-            session_changed=stored.blocking is not None,
+            session_changed=notice.type == "interaction" or stored.blocking is not None,
             notices_changed=True,
         )
 
@@ -527,6 +526,16 @@ class InteractionNotificationHandler:
         )
 
 
+async def _existing_notice(
+    store: ConnectorNotificationRepository,
+    notice_id: str,
+):
+    try:
+        return await store.get_notice(notice_id)
+    except KeyError:
+        return None
+
+
 async def _session_disabled(store: ConnectorNotificationRepository, session_id: str) -> bool:
     return await store.get_session_runtime(session_id) is None
 
@@ -552,7 +561,13 @@ async def _resolve_timeline_session_id(
 
 
 def _local_session_state(params: dict[str, Any]) -> str:
-    value = params.get("localState") or params.get("local_state")
+    metadata = params.get("metadata") if isinstance(params.get("metadata"), dict) else {}
+    value = (
+        params.get("localState")
+        or params.get("local_state")
+        or metadata.get("localState")
+        or metadata.get("local_state")
+    )
     if isinstance(value, str):
         normalized = value.lower()
         if normalized in {
@@ -569,7 +584,26 @@ def _local_session_state(params: dict[str, Any]) -> str:
         return "deleted"
     if params.get("resumeSupported") is False or params.get("resumable") is False:
         return "unresumable"
+    if metadata.get("hidden") is True:
+        return "archived"
     return "active"
+
+
+def _session_meta_archived(
+    params: dict[str, Any],
+    local_state: str,
+) -> bool | None:
+    metadata = params.get("metadata") if isinstance(params.get("metadata"), dict) else {}
+    hidden = params.get("hidden")
+    if hidden is None:
+        hidden = metadata.get("hidden")
+    if isinstance(hidden, bool):
+        return hidden
+    if local_state in {"archived", "deleted", "unresumable"}:
+        return True
+    if local_state == "active":
+        return False
+    return None
 
 
 def _v2_session_status(value: Any) -> SessionStatus | None:

@@ -444,7 +444,7 @@ def test_session_create_rejects_legacy_runtime_settings_model_fields(tmp_path):
     assert response.status_code == 422
 
 
-def test_claude_session_create_allows_initial_missing_external_session_id(tmp_path):
+def test_claude_session_create_without_external_session_uses_create_and_start(tmp_path):
     app = create_app(tmp_path / "test.sqlite3")
     client = TestClient(app)
     headers = auth_headers(client)
@@ -479,19 +479,9 @@ def test_claude_session_create_allows_initial_missing_external_session_id(tmp_pa
         json={"connectorId": connector_id, "runtime": "claude", "title": "New Claude session", "cwd": "/repo"},
     )
 
-    assert response.status_code == 200, response.text
-    assert response.json()["session"]["id"] == "sess_claude_created"
-    assert response.json()["session"]["externalSessionId"] is None
-    assert fake_rpc.requests == [
-        (
-            "session.create",
-            {
-                "runtime": "claude",
-                "title": "New Claude session",
-                "cwd": "/repo",
-            },
-        )
-    ]
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == "new sessions must use /sessions/create-and-start"
+    assert fake_rpc.requests == []
 
 
 def test_session_title_defaults_to_first_user_message(tmp_path):
@@ -2388,32 +2378,44 @@ def test_notice_upsert_projects_open_interaction_through_application_service(tmp
     }
 
 
-def test_notice_upsert_rejects_interaction_terminal_state_from_connector(tmp_path):
+def test_notice_upsert_accepts_interaction_lifecycle_from_connector(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, _ = create_connector_and_session(client)
 
-    response = client.post(
-        "/connector/ingest",
-        headers={"Authorization": f"Bearer {access_token}"},
-        json={
-            "notifications": [
-                {
-                    "method": "notice.upsert",
-                    "params": {
-                        "noticeId": "interaction_resolved_1",
-                        "type": "interaction",
-                        "sessionId": session_id,
-                        "title": "Already resolved",
-                        "status": "resolved",
-                        "interactionType": "confirmation",
-                    },
-                }
-            ]
-        },
-    )
+    def ingest(status: str, response_required: bool) -> None:
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "notifications": [
+                    {
+                        "method": "notice.upsert",
+                        "params": {
+                            "noticeId": "interaction_lifecycle_1",
+                            "type": "interaction",
+                            "sessionId": session_id,
+                            "title": "Input required",
+                            "status": status,
+                            "interactionType": "input_request",
+                            "responseRequired": response_required,
+                            "actions": [{"actionId": "submit", "label": "Submit"}]
+                            if response_required
+                            else [],
+                        },
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 200, response.text
 
-    assert response.status_code == 400, response.text
-    assert response.json()["detail"]["code"] == "invalid_interaction"
+    ingest("open", True)
+    ingest("responding", True)
+    ingest("closed", False)
+
+    stored = asyncio.run(client.app.state.store.get_notice("interaction_lifecycle_1"))
+    assert stored.status == "closed"
+    assert stored.responseRequired is False
+    assert stored.blocking is None
 
 
 def test_session_snapshot_includes_effective_capabilities(tmp_path):
@@ -3384,6 +3386,60 @@ def test_timeline_sync_uses_content_hash_as_state_identity(tmp_path):
     assert second_item["status"] == "running"
 
 
+def test_timeline_sync_upserts_without_deleting_missing_items(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+
+    def item(item_id: str, order_seq: int, text: str, content_hash: str):
+        return {
+            "id": item_id,
+            "sessionId": session_id,
+            "turnId": "turn_upsert_sync",
+            "type": "message",
+            "status": "done",
+            "role": "assistant",
+            "content": {"text": text},
+            "source": {
+                "runtime": "codex",
+                "sessionId": "thread_upsert_sync",
+                "turnId": "turn_upsert_sync",
+                "itemId": item_id,
+                "itemType": "agentMessage",
+            },
+            "orderSeq": order_seq,
+            "revision": 1,
+            "contentHash": content_hash,
+        }
+
+    def sync(items: list[dict[str, Any]]) -> None:
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "notifications": [
+                    {
+                        "method": "timeline.sync",
+                        "params": {"sessionId": session_id, "items": items},
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 200, response.text
+
+    sync(
+        [
+            item("tl_upsert_keep", 1, "keep me", "sha256:upsert-keep-v1"),
+            item("tl_upsert_patch", 2, "old text", "sha256:upsert-patch-v1"),
+        ]
+    )
+    sync([item("tl_upsert_patch", 2, "new text", "sha256:upsert-patch-v2")])
+
+    state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+    by_id = {entry["id"]: entry for entry in state["items"]}
+    assert by_id["tl_upsert_keep"]["content"]["text"] == "keep me"
+    assert by_id["tl_upsert_patch"]["content"]["text"] == "new text"
+
+
 def test_timeline_sync_tags_only_latest_active_run_message_and_keeps_run(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, session_id, headers = create_connector_and_session(client)
@@ -4293,7 +4349,7 @@ def test_connector_http_ingest_upserts_session_and_timeline(tmp_path):
     assert state["items"][0]["content"]["kind"] == "command"
 
 
-def test_connector_ingest_skips_new_local_archived_session(tmp_path):
+def test_connector_ingest_maps_local_hidden_session_meta(tmp_path):
     client = make_client(tmp_path)
     _, access_token, _, headers = create_connector_and_session(client)
 
@@ -4303,15 +4359,14 @@ def test_connector_ingest_skips_new_local_archived_session(tmp_path):
         json={
             "notifications": [
                 {
-                    "method": "session.updated",
+                    "method": "session.meta.upsert",
                     "params": {
                         "sessionId": "sess_local_archived",
                         "runtime": "codex",
                         "externalSessionId": "thr_local_archived",
                         "title": "Local archived",
                         "cwd": "/repo",
-                        "status": "idle",
-                        "localState": "archived",
+                        "metadata": {"local_state": "archived", "hidden": True},
                     },
                 },
             ],
@@ -4320,10 +4375,9 @@ def test_connector_ingest_skips_new_local_archived_session(tmp_path):
 
     assert response.status_code == 200
     assert response.json()["accepted"] == 1
-    listed = client.get("/sessions", headers=headers).json()["sessions"]
-    assert all(session["id"] != "sess_local_archived" for session in listed)
     state = client.get("/sessions/sess_local_archived/state", headers=headers)
-    assert state.status_code == 404
+    assert state.status_code == 200, state.text
+    assert state.json()["session"]["archived"] is True
 
 
 def test_connector_http_ingest_accepts_status_update_before_external_id(tmp_path):
@@ -5778,20 +5832,6 @@ def test_timeline_sync_dedupes_same_source_item_with_snapshot_derived_key(tmp_pa
         "revision": 1,
         "contentHash": "sha256:snapshot-real-message",
     }
-    response = client.post(
-        "/connector/ingest",
-        headers={"Authorization": f"Bearer {access_token}"},
-        json={
-            "notifications": [
-                {
-                    "method": "timeline.itemUpsert",
-                    "params": {"sessionId": session_id, "item": snapshot_item},
-                }
-            ]
-        },
-    )
-    assert response.status_code == 200, response.text
-
     sync_payload = {
         "notifications": [
             {
@@ -5810,7 +5850,7 @@ def test_timeline_sync_dedupes_same_source_item_with_snapshot_derived_key(tmp_pa
         )
         assert response.status_code == 200, response.text
         cleanup_events = [ws.receive_json() for _ in range(2)]
-        assert "session.refetch_required" in {
+        assert "session.refetch_required" not in {
             event["type"] for event in cleanup_events
         }
 

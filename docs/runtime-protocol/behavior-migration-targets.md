@@ -37,6 +37,7 @@ Rough completion by behavior area:
 | Selections | Complete for T06 | Catalogs are live runtime reads; Codex session state can read current selections, update selections through runtime state, reject invalid ids, and keep existing sends selection-free. |
 | Commands | Complete for T07 | Codex commands are live runtime reads; `/compact` execution is separated from messages, disabled/invalid/unknown commands fail without fallback, and command side effects publish notice/state updates. |
 | Session discovery/sync | Complete for T08 | Codex discovery returns SessionMeta for active and hidden local sessions, uses host JSON sync markers, skips timeline sync for unchanged sessions, and allows rename/meta-only updates. |
+| Server ingest | Complete for T09 | Runtime host notifications now land as partial state updates, upsert-only Codex timeline sync, hidden session meta, and interaction lifecycle notices. |
 | Dashboard realtime | Not started | Polling/SSE replacement with dashboard-level realtime remains server/web work. |
 | Codex IPC side-channel | Deferred | Old IPC behavior is reference-only while the runtime is SDK-first. |
 
@@ -382,7 +383,7 @@ uv run ruff check connector/runtimes/codex tests/test_codex_runtime.py
 
 ### T09. Server ingest alignment
 
-Status: not started.
+Status: complete.
 
 Goal:
 
@@ -396,6 +397,27 @@ Required behavior:
 - `notice.upsert` supports interaction lifecycle updates.
 - content hash is item-state identity, not item identity.
 - sequence gaps do not force snapshot unless server explicitly declares recovery impossible.
+
+Completed:
+
+- `session.meta.upsert` now creates or updates server sessions and maps runtime
+  hidden/local session state onto the existing archived projection instead of
+  ignoring hidden local sessions.
+- `session.state.updated` remains partial-merge safe through
+  `upsert_session_runtime_state`; legacy model/permission scalar fields remain
+  rejected.
+- Codex `timeline.sync` now uses sync-style normalization and duplicate
+  reconciliation, then upserts changed items without deleting missing persisted
+  items or forcing snapshot refetch.
+- Claude snapshot sync keeps the explicit replacement path as the old runtime
+  compatibility exception.
+- `notice.upsert` now accepts interaction lifecycle updates including
+  `responding` and `closed`, and reconciles session blocking state on lifecycle
+  changes.
+- Existing content-hash-as-item-state identity coverage remains in the backend
+  suite.
+- Recovery behavior keeps `snapshotRequired=false` for recoverable event ranges;
+  snapshot is reserved for explicit unrecoverable cases.
 
 Verification:
 
