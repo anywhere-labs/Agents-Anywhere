@@ -59,7 +59,9 @@ class CodexTurnController:
             pending_messages=self.pending_messages,
         )
         self.commands = CodexCommandController(
+            host=self.host,
             client=self.client,
+            session_states=self.session_states,
             ensure_started=self.ensure_started,
         )
         self.interactions = CodexInteractionController(

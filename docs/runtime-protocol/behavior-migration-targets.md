@@ -35,7 +35,7 @@ Rough completion by behavior area:
 | Notice/interaction lifecycle | Complete for T05 | Codex approvals now move through open/responding/resolved/closed, failed responses remain retryable, and blocking state is released only after open blocking notices are gone. |
 | Tool/reasoning/file reduce | Complete for T04 | SDK/native message, reasoning, tool, file-change, runtime/system, and unknown fallback items reduce to platform-safe timeline shapes. |
 | Selections | Complete for T06 | Catalogs are live runtime reads; Codex session state can read current selections, update selections through runtime state, reject invalid ids, and keep existing sends selection-free. |
-| Commands | Partial | `/compact` exists; command-mode lifecycle and UI-facing failure semantics remain incomplete. |
+| Commands | Complete for T07 | Codex commands are live runtime reads; `/compact` execution is separated from messages, disabled/invalid/unknown commands fail without fallback, and command side effects publish notice/state updates. |
 | Session discovery/sync | Partial | Basic `thread/list` and snapshot exist; sync markers and rename-only updates remain incomplete. |
 | Dashboard realtime | Not started | Polling/SSE replacement with dashboard-level realtime remains server/web work. |
 | Codex IPC side-channel | Deferred | Old IPC behavior is reference-only while the runtime is SDK-first. |
@@ -294,7 +294,7 @@ uv run ruff check connector/runtimes/codex tests/test_codex_runtime.py tests/tes
 
 ### T07. Command mode behavior
 
-Status: not started.
+Status: complete.
 
 Goal:
 
@@ -309,11 +309,30 @@ Required behavior:
 - command result has consistent success/failure semantics.
 - long-running command side effects are reported through state/timeline/notice updates.
 
+Completed:
+
+- `list_commands` remains a live runtime read and returns disabled commands with
+  `disabled_reason` when the local Codex thread/client is unavailable.
+- `/compact` execution is routed through `execute_command` and never through
+  normal message send or `turn/start`.
+- Unknown commands return `RuntimeCommandResult(ok=false, code=unknown_command)`.
+- `/compact` arguments return
+  `RuntimeCommandResult(ok=false, code=arguments_not_supported)`.
+- Disabled `/compact` returns
+  `RuntimeCommandResult(ok=false, code=command_disabled)` and does not call the
+  Codex client.
+- Successful `/compact` returns `ok=true, code=started` and publishes a
+  non-blocking command notice plus a `session.state.updated` metadata update.
+- Runtime/client command failures return
+  `RuntimeCommandResult(ok=false, code=codex_command_failed)` without falling
+  back to normal messages.
+
 Verification:
 
 ```bash
 cd connector
 uv run pytest tests/test_codex_runtime.py tests/test_connector_runtime.py -q
+uv run ruff check connector/runtimes/codex tests/test_codex_runtime.py
 ```
 
 ### T08. Session discovery and sync markers

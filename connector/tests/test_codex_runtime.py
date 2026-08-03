@@ -765,6 +765,23 @@ async def _test_codex_runtime_lists_compact_command_for_loaded_thread() -> None:
 
     assert [command.id for command in commands] == ["compact"]
     assert commands[0].enabled is True
+    assert commands[0].disabled_reason is None
+
+
+def test_codex_runtime_lists_disabled_compact_command_without_thread() -> None:
+    asyncio.run(_test_codex_runtime_lists_disabled_compact_command_without_thread())
+
+
+async def _test_codex_runtime_lists_disabled_compact_command_without_thread() -> None:
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=FakeCodexClient())
+
+    commands = await runtime.list_commands("sess_1", query="compact")
+
+    assert [command.id for command in commands] == ["compact"]
+    assert commands[0].enabled is False
+    assert commands[0].disabled_reason == (
+        "Codex compact requires a loaded local thread."
+    )
 
 
 def test_codex_runtime_compact_command_calls_app_server() -> None:
@@ -773,7 +790,8 @@ def test_codex_runtime_compact_command_calls_app_server() -> None:
 
 async def _test_codex_runtime_compact_command_calls_app_server() -> None:
     client = FakeCodexClient()
-    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=client)
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
 
     result = await runtime.execute_command(
         "sess_1",
@@ -783,11 +801,89 @@ async def _test_codex_runtime_compact_command_calls_app_server() -> None:
     )
 
     assert result.ok is True
+    assert result.command == "compact"
     assert result.code == "started"
     assert client.requests[-1] == (
         "thread/compact/start",
         {"threadId": "thread_1"},
     )
+    assert all(request[0] != "turn/start" for request in client.requests)
+    assert host.notice_upserts[-1].notice_id == "notice_command_compact_sess_1"
+    assert host.notice_upserts[-1].type == "notification"
+    assert host.notice_upserts[-1].context["kind"] == "compact"
+    assert host.state_updates[-1]["status"] == "idle"
+    assert host.state_updates[-1]["metadata"] == {
+        "source": "codex.command.compact",
+        "command": "compact",
+        "notice_id": "notice_command_compact_sess_1",
+    }
+
+
+def test_codex_runtime_rejects_disabled_command_without_sdk_request() -> None:
+    asyncio.run(_test_codex_runtime_rejects_disabled_command_without_sdk_request())
+
+
+async def _test_codex_runtime_rejects_disabled_command_without_sdk_request() -> None:
+    client = FakeCodexClient()
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=client)
+
+    result = await runtime.execute_command("sess_1", "compact")
+
+    assert result.ok is False
+    assert result.command == "compact"
+    assert result.code == "command_disabled"
+    assert result.message == "Codex compact requires a loaded local thread."
+    assert all(request[0] != "thread/compact/start" for request in client.requests)
+
+
+def test_codex_runtime_rejects_command_args_without_sdk_request() -> None:
+    asyncio.run(_test_codex_runtime_rejects_command_args_without_sdk_request())
+
+
+async def _test_codex_runtime_rejects_command_args_without_sdk_request() -> None:
+    client = FakeCodexClient()
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=client)
+
+    result = await runtime.execute_command(
+        "sess_1",
+        "compact",
+        external_session_id="thread_1",
+        args=("now",),
+    )
+
+    assert result.ok is False
+    assert result.command == "compact"
+    assert result.code == "arguments_not_supported"
+    assert result.message == "/compact does not accept arguments."
+    assert all(request[0] != "thread/compact/start" for request in client.requests)
+
+
+def test_codex_runtime_command_failure_returns_command_result() -> None:
+    asyncio.run(_test_codex_runtime_command_failure_returns_command_result())
+
+
+async def _test_codex_runtime_command_failure_returns_command_result() -> None:
+    client = FakeCodexClient()
+    client.results["thread/compact/start"] = RuntimeError("compact failed")
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    result = await runtime.execute_command(
+        "sess_1",
+        "compact",
+        external_session_id="thread_1",
+    )
+
+    assert result.ok is False
+    assert result.command == "compact"
+    assert result.code == "codex_command_failed"
+    assert result.message == "compact failed"
+    assert result.result["error"] == {
+        "code": "RuntimeError",
+        "message": "compact failed",
+    }
+    assert host.notice_upserts == []
+    assert host.state_updates == []
 
 
 def test_codex_runtime_rejects_unknown_command_without_transport_error() -> None:
@@ -795,7 +891,8 @@ def test_codex_runtime_rejects_unknown_command_without_transport_error() -> None
 
 
 async def _test_codex_runtime_rejects_unknown_command_without_transport_error() -> None:
-    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=FakeCodexClient())
+    client = FakeCodexClient()
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=client)
 
     result = await runtime.execute_command(
         "sess_1", "nope", external_session_id="thread_1"
@@ -803,6 +900,7 @@ async def _test_codex_runtime_rejects_unknown_command_without_transport_error() 
 
     assert result.ok is False
     assert result.code == "unknown_command"
+    assert all(request[0] != "turn/start" for request in client.requests)
 
 
 def test_codex_runtime_turn_completed_notification_sets_idle() -> None:
