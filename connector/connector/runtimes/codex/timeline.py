@@ -8,11 +8,11 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from connector.runtime_protocol import RuntimeTimelineItem
-from connector.runtimes.codex.sdk.events import CodexSdkEvent
-from connector.runtimes.codex.sessions import (
+from connector.runtimes.codex.domain.sessions import (
     first_string_from_mapping,
     turn_id_from_result,
 )
+from connector.runtimes.codex.sdk.events import CodexSdkEvent
 from connector.runtimes.codex.timeline_identity import (
     client_message_id_from_raw,
     derived_key,

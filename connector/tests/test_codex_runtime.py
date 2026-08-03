@@ -20,15 +20,15 @@ from openai_codex.models import (
 
 from connector.runtime_protocol import RuntimeConfig, SessionNotice
 from connector.runtime_protocol.host import RuntimeHostClient
-from connector.runtimes.codex.catalogs import (
+from connector.runtimes.codex.domain.catalogs import (
     model_catalog_from_codex_items,
     permission_catalog_from_codex_items,
 )
+from connector.runtimes.codex.domain.sessions import stable_session_id
 from connector.runtimes.codex.runtime import CodexRuntime
 from connector.runtimes.codex.sdk.client import CodexSdkClient
 from connector.runtimes.codex.sdk.events import CodexSdkEvent
 from connector.runtimes.codex.sdk.shapes import notification_dict, thread_ref
-from connector.runtimes.codex.sessions import stable_session_id
 
 
 class FakeCodexClient:

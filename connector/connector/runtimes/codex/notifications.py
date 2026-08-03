@@ -5,12 +5,12 @@ from typing import Any
 
 from connector.runtime_protocol import RuntimeSessionStateCache, SessionNotice
 from connector.runtime_protocol.host import RuntimeHostClient
-from connector.runtimes.codex import sessions as codex_sessions
-from connector.runtimes.codex.approvals import (
+from connector.runtimes.codex.domain import sessions as codex_sessions
+from connector.runtimes.codex.domain.approvals import (
     approval_notice_from_request,
     is_approval_request,
 )
-from connector.runtimes.codex.notice_registry import CodexNoticeRegistry
+from connector.runtimes.codex.domain.notices import CodexNoticeRegistry
 from connector.runtimes.codex.sdk.events import CodexSdkEvent
 from connector.runtimes.codex.sdk.runtime_client import CodexNotificationMessage
 from connector.runtimes.codex.timeline_accumulator import CodexTimelineAccumulator

@@ -10,7 +10,7 @@ from connector.runtime_protocol import (
     SessionNotice,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
-from connector.runtimes.codex.commands import list_codex_commands
+from connector.runtimes.codex.domain.commands import list_codex_commands
 from connector.runtimes.codex.sdk.runtime_client import CodexRuntimeClient
 
 EnsureStarted = Callable[[], Awaitable[None]]

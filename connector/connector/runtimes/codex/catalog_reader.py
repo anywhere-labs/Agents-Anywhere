@@ -9,8 +9,8 @@ from connector.runtime_protocol import (
     RuntimeModelCatalog,
     RuntimePermissionCatalog,
 )
-from connector.runtimes.codex import sessions as codex_sessions
-from connector.runtimes.codex.catalogs import (
+from connector.runtimes.codex.domain import sessions as codex_sessions
+from connector.runtimes.codex.domain.catalogs import (
     codex_permission_catalog_items,
     model_catalog_from_codex_items,
     permission_catalog_from_codex_items,
