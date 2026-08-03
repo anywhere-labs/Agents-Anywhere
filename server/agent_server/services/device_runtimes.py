@@ -94,7 +94,8 @@ class DeviceRuntimeService:
     ) -> list[DeviceRuntimeView]:
         inventory = RuntimeInventory.model_validate(raw)
         for runtime in inventory.runtimes:
-            validate_config_schema(runtime.schema_)
+            if runtime.schema_ is not None:
+                validate_config_schema(runtime.schema_)
         rows = await self._store.replace_device_runtime_inventory(
             connector_id, inventory.runtimes
         )

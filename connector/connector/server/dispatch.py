@@ -18,7 +18,6 @@ class ConnectorRequestDispatcher:
     def __init__(
         self,
         agent_runtime_supervisor: RuntimeSupervisor,
-        runtime_config_store: Any,
         agent_runtime_host: RuntimeHostClient,
         local_ops: Any,
         upload_prepared_download: UploadPreparedDownload,
@@ -27,7 +26,6 @@ class ConnectorRequestDispatcher:
     ) -> None:
         self.runtime_rpc = RuntimeRpcHandler(
             agent_runtime_supervisor=agent_runtime_supervisor,
-            runtime_config_store=runtime_config_store,
             agent_runtime_host=agent_runtime_host,
         )
         self.local_rpc = LocalRpcHandler(

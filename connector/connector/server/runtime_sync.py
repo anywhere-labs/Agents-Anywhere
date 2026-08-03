@@ -12,7 +12,6 @@ from connector.runtime_protocol import (
     RuntimeUnavailableError,
 )
 
-RuntimeConfigStore = Any
 NotificationSender = Callable[[str, dict[str, Any]], Awaitable[None]]
 PreferencesReader = Callable[[], dict[str, Any]]
 
@@ -25,31 +24,15 @@ class RuntimeSyncRunner:
         config: ConnectorConfig,
         supervisor: RuntimeSupervisor,
         host: RuntimeHostClient,
-        runtime_config_store: RuntimeConfigStore,
         preferences_reader: PreferencesReader,
         send_notification: NotificationSender,
     ) -> None:
         self.config = config
         self.supervisor = supervisor
         self.host = host
-        self.runtime_config_store = runtime_config_store
         self.preferences_reader = preferences_reader
         self.send_notification = send_notification
         self._last_preferences: dict[str, Any] | None = None
-
-    async def start_saved_runtimes(self) -> None:
-        try:
-            saved_configs = self.runtime_config_store.load_all()
-        except Exception:  # noqa: BLE001
-            logger.exception("loading saved runtime configs failed")
-            return
-        for runtime_id in self.supervisor.runtimes:
-            if runtime_id not in saved_configs:
-                continue
-            try:
-                await self.supervisor.start(runtime_id, saved_configs[runtime_id])
-            except Exception:  # noqa: BLE001
-                logger.exception("starting saved {} runtime config failed", runtime_id)
 
     async def sync_existing_loop(self) -> None:
         if not self.config.sync_existing_on_connect:

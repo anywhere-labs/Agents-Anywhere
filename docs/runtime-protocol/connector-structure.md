@@ -43,7 +43,6 @@ connector/connector/
     config.py
     json_rpc.py
     preferences.py
-    runtime_config_store.py
     runtime_owner.py
 
   server/
@@ -124,25 +123,16 @@ Small shared primitives:
 - config file loading/saving
 - local preferences
 - JSON-RPC frame helpers for local control
-- runtime config persistence
 - runtime owner lock/state helpers
 
 `core/` must not import runtime adapters or server application code.
 
-Runtime config persistence:
-
-```text
-core/runtime_config_store.py
-  JsonRuntimeConfigStore
-```
-
-The runtime config store persists raw runtime config values by runtime id in the canonical Connector data directory:
-
-```text
-~/.agents-anywhere/runtime-configs.json
-```
-
-It is JSON-backed and replaces sqlite for Connector-local runtime configuration. It does not validate runtime semantics; validation belongs to `RuntimeProvider.validate_config()`. It does not store running runtime state; lifecycle state belongs to the supervisor.
+Runtime config values are not Connector-local durable state. The Server owns
+runtime configuration values and decides activation/startup. Runtime providers
+only report config schemas/defaults and validate config values passed by Server
+RPC before startup. Connector-local durable files are limited to Connector app
+configuration, runtime ownership/sync cursors, attachments, and similar local
+operation state.
 
 ### `server/`
 
@@ -318,7 +308,7 @@ runtime_protocol/supervisor.py
   RuntimeSupervisorEntry
 ```
 
-The protocol supervisor is intentionally not a config store. It accepts raw config values for `validate_config()` and `start()`, delegates validation to `RuntimeProvider`, and keeps only the effective `RuntimeConfig` associated with an active runtime. Durable runtime config storage belongs in `core/runtime_config_store.py`.
+The protocol supervisor is intentionally not a config store. It accepts raw config values for `validate_config()` and `start()`, delegates validation to `RuntimeProvider`, and keeps only the effective `RuntimeConfig` associated with an active runtime. Durable runtime config storage belongs to the Server, not Connector local disk.
 
 Supervisor start flow:
 

@@ -11,7 +11,6 @@ from websockets.exceptions import ConnectionClosed
 
 from connector.core.config import ConnectorConfig
 from connector.core.preferences import read_local_preferences
-from connector.core.runtime_config_store import JsonRuntimeConfigStore
 from connector.local import create_local_ops
 from connector.logging import logger
 from connector.runtime_protocol import (
@@ -51,7 +50,6 @@ class BackendRpcClient:
         *,
         agent_runtime_providers: tuple[AgentRuntimeProvider, ...] | None = None,
         agent_runtime_host: RuntimeHostClient | None = None,
-        runtime_config_store: JsonRuntimeConfigStore | None = None,
         preferences_reader: Callable[[], dict[str, Any]] | None = None,
         sync_state_store: SyncStateStore | None = None,
     ) -> None:
@@ -61,7 +59,6 @@ class BackendRpcClient:
             self.sync_state_store = JsonSyncStateStore(
                 config.state_path or JsonSyncStateStore.default_path()
             )
-        self.runtime_config_store = runtime_config_store or JsonRuntimeConfigStore()
         self.agent_runtime_host = agent_runtime_host or ConnectorRuntimeHost(
             connector_id=config.connector_id,
             notifier=self.send_backend_notification,
@@ -97,7 +94,6 @@ class BackendRpcClient:
         )
         self._dispatcher = ConnectorRequestDispatcher(
             agent_runtime_supervisor=self.agent_runtime_supervisor,
-            runtime_config_store=self.runtime_config_store,
             agent_runtime_host=self.agent_runtime_host,
             local_ops=self.local_ops,
             upload_prepared_download=self.upload_prepared_download,
@@ -108,7 +104,6 @@ class BackendRpcClient:
             config=config,
             supervisor=self.agent_runtime_supervisor,
             host=self.agent_runtime_host,
-            runtime_config_store=self.runtime_config_store,
             preferences_reader=self._preferences_reader,
             send_notification=self.send_notification,
         )
@@ -177,7 +172,6 @@ class BackendRpcClient:
             self._rpc.set_connection(ws)
             inventory = await self._dispatcher.discover_runtimes()
             await self.send_notification("runtime.inventoryUpdated", inventory)
-            await self._runtime_sync.start_saved_runtimes()
             heartbeat_task = asyncio.create_task(self._heartbeat_loop())
             sync_task = asyncio.create_task(self._runtime_sync.sync_existing_loop())
             try:

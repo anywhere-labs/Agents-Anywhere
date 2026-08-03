@@ -76,11 +76,24 @@ class RuntimeInventoryItem:
     metadata: Mapping[str, Any] = field(default_factory=dict)
 ```
 
-`RuntimeConfig` is runtime-owned configuration, not Connector app configuration. `ConnectorConfig` answers how this Connector talks to the Server. `RuntimeConfig` answers how one local runtime is configured: executable path, IPC/socket mode, SDK mode, environment profile, feature flags, and other runtime-specific options.
+`RuntimeConfig` is Server-owned runtime configuration, not Connector app
+configuration. `ConnectorConfig` answers how this Connector talks to the
+Server. `RuntimeConfig` answers how one local runtime should be started:
+environment profile, executable/runtime flags when a provider supports them,
+and other runtime-specific options.
 
-Runtime config is a provider-managed startup surface, plus a runtime read-only effective projection after startup. The Server may persist the latest accepted projection for UI continuity, but the provider remains the validator and source of truth. Config `revision` is scoped to the runtime config payload and exists to ignore stale UI updates or stale projections; it does not make the Server authoritative.
+The Server is the durable source of truth for runtime config values and
+activation intent. Runtime providers report config schemas/defaults and validate
+raw config values supplied by Server RPC. A running `AgentRuntime` exposes only
+its current effective config projection; Connector must not persist runtime
+config values locally or restart runtimes from local saved config after process
+restart.
 
-A running `AgentRuntime` must not accept config mutation directly. Runtime config changes flow through the provider/supervisor path: validate the new raw values, persist the accepted effective config, then restart or recreate the runtime if necessary. This avoids hidden in-place reconfiguration semantics and keeps runtime instances stable.
+A running `AgentRuntime` must not accept config mutation directly. Runtime
+config changes flow through Server-owned config updates followed by provider
+validation and explicit Server-driven restart/recreate when necessary. This
+avoids hidden in-place reconfiguration semantics and keeps runtime instances
+stable.
 
 `schema` and `ui_schema` are optional because some runtimes may expose a fixed form in Web/CLI while others need runtime-provided fields. The protocol carries them as data so the upper Connector layer does not need Codex- or Claude-specific config conditionals.
 

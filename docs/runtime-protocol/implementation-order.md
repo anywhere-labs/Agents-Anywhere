@@ -50,7 +50,8 @@ Completed Connector migration pieces:
 
 - `RuntimeProvider`, `AgentRuntime`, `RuntimeHostClient`, and
   `RuntimeSupervisor` exist under `runtime_protocol/`.
-- JSON runtime config storage exists under `core/runtime_config_store.py`.
+- Runtime config values are Server-owned; Connector does not persist them
+  locally.
 - `BackendRpcClient` is now a server-layer coordinator around auth, ingest,
   dispatch, runtime supervisor, local ops, and runtime host mapping.
 - Connector server runtime RPC is split into runtime lifecycle/config/catalog,
@@ -241,26 +242,28 @@ Rules:
 - Runtime adapters must not receive `notification_sink`.
 - Keep commits small: one concern per commit.
 
-Runtime config store:
+Runtime config ownership:
 
 ```text
-connector/connector/core/runtime_config_store.py
+connector/connector/_deprecated/runtime_config_store.py
 ```
 
 Rules:
 
-- Store values by runtime id.
-- Use the canonical Connector data directory.
-- Do not use sqlite.
-- Do not validate runtime semantics in the store.
-- Return defensive copies so callers cannot mutate cached state.
+- Runtime config values are persisted by Server, not Connector local disk.
+- Connector reports schema/defaults and validates config values supplied by
+  Server RPC.
+- `runtime.start` requires Server to send config values in the RPC payload.
+- Connector process restart must not automatically start runtimes from local
+  saved config.
+- The old JSON store is kept only under `_deprecated/` as migration reference.
 
 Acceptance:
 
 - Root `runtime.py` is removed from the active package.
-- Runtime config values survive process restart through JSON.
-- Missing runtime config loads as `{}`.
-- Invalid JSON or invalid root shape fails explicitly.
+- Active Connector code does not import a runtime config store.
+- `runtime.config` returns only current effective running config, not saved
+  values.
 - Generic runtime code no longer imports Codex or Claude modules.
 - Server RPC dispatch resolves an `AgentRuntime`.
 - New runtime code emits through `RuntimeHostClient`, not raw notification result dictionaries.

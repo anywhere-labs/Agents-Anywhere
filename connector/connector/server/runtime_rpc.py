@@ -65,11 +65,9 @@ class RuntimeRpcHandler:
     def __init__(
         self,
         agent_runtime_supervisor: RuntimeSupervisor,
-        runtime_config_store: Any,
         agent_runtime_host: RuntimeHostClient,
     ) -> None:
         self.agent_runtime_supervisor = agent_runtime_supervisor
-        self.runtime_config_store = runtime_config_store
         self.agent_runtime_host = agent_runtime_host
 
     def supports(self, method: str) -> bool:
@@ -85,20 +83,17 @@ class RuntimeRpcHandler:
         if method == "runtime.config":
             runtime_id = required_runtime_id(params)
             entry = self.agent_runtime_supervisor.entry(runtime_id)
-            saved_values = self.runtime_config_store.load(runtime_id)
             if entry.runtime is None:
                 return {
                     "runtimeId": runtime_id,
                     "running": False,
                     "config": None,
-                    "savedValues": saved_values,
                 }
             config = await entry.runtime.get_config()
             return {
                 "runtimeId": runtime_id,
                 "running": True,
                 "config": runtime_config_payload(config),
-                "savedValues": saved_values,
             }
         if method == "runtime.validateConfig":
             runtime_id = required_runtime_id(params)
@@ -109,7 +104,6 @@ class RuntimeRpcHandler:
             runtime_id = required_runtime_id(params)
             values = runtime_config(params)
             await self.agent_runtime_supervisor.start(runtime_id, values)
-            self.runtime_config_store.save(runtime_id, values)
             return {"runtimeId": runtime_id, "status": "running"}
         if method == "runtime.stop":
             runtime_id = required_runtime_id(params)

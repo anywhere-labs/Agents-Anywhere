@@ -87,7 +87,11 @@ def _inventory(*, status: str = "stopped") -> dict[str, Any]:
                     "executablePath": {"component": "path"},
                     "environment": {"component": "keyValue"},
                 },
+                "defaults": {"environment": {}},
                 "status": status,
+                "configured": True,
+                "capabilities": {"modelCatalog": True},
+                "metadata": {"sdk": {"available": True}},
             }
         ]
     }
@@ -118,6 +122,8 @@ def test_inventory_exposes_runtime_owned_dynamic_schema(tmp_path):
 
     assert response.status_code == 200, response.text
     runtime = response.json()["runtimes"][0]
+    # Connector inventory reports provider readiness (`configured: true`), but
+    # Server-owned runtime config has not been saved yet.
     assert runtime["configured"] is False
     assert runtime["active"] is False
     assert runtime["schema"]["properties"]["executablePath"]["default"] == (

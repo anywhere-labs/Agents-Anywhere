@@ -31,9 +31,13 @@ class RuntimeInventoryItem(BaseModel):
     runtimeType: str = Field(min_length=1, max_length=64)
     displayName: str = Field(min_length=1, max_length=128)
     discovery: dict[str, Any] = Field(default_factory=dict)
-    schema_: dict[str, Any] = Field(alias="schema")
-    uiSchema: dict[str, Any] = Field(default_factory=dict)
+    schema_: dict[str, Any] | None = Field(default=None, alias="schema")
+    uiSchema: dict[str, Any] | None = None
+    defaults: dict[str, Any] = Field(default_factory=dict)
     status: RuntimeStatus = "stopped"
+    configured: bool | None = None
+    capabilities: dict[str, bool] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("runtimeId")
     @classmethod

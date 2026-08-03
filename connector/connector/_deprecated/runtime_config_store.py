@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+"""Deprecated Connector-local runtime config store.
+
+Runtime config values are Server-owned in v2. Connector runtime providers only
+publish config schemas/defaults and validate config values supplied by Server
+RPC. This module is kept as migration reference only and must not be imported by
+active Connector code.
+"""
+
 import copy
 import json
 from collections.abc import Mapping

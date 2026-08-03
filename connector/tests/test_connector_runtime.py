@@ -11,7 +11,6 @@ from websockets.exceptions import ConnectionClosedError
 from websockets.frames import Close
 
 from connector.core.config import ConnectorConfig
-from connector.core.runtime_config_store import JsonRuntimeConfigStore
 from connector.local.terminal import TerminalBackend
 from connector.runtime_protocol import (
     AgentRuntime,
@@ -455,7 +454,6 @@ class FakeWebSocket:
 def _client(
     runtime: FakeAgentRuntime | None = None,
     providers: tuple[RuntimeProvider, ...] | None = None,
-    runtime_config_store: JsonRuntimeConfigStore | None = None,
     preferences_reader=None,  # type: ignore[no-untyped-def]
     **config_overrides: Any,
 ) -> BackendRpcClient:
@@ -470,7 +468,6 @@ def _client(
             **config_overrides,
         ),
         agent_runtime_providers=providers,
-        runtime_config_store=runtime_config_store,
         preferences_reader=preferences_reader,
     )
 
@@ -613,16 +610,8 @@ def test_connector_runtime_reads_config_schema() -> None:
     asyncio.run(_exercise_runtime_config_schema_read())
 
 
-def test_connector_runtime_reads_saved_and_running_config(tmp_path) -> None:
-    asyncio.run(_exercise_runtime_config_read(tmp_path))
-
-
-def test_connector_runtime_starts_saved_runtime_configs(tmp_path) -> None:
-    asyncio.run(_exercise_saved_runtime_config_startup(tmp_path))
-
-
-def test_connector_runtime_ignores_invalid_saved_runtime_configs(tmp_path) -> None:
-    asyncio.run(_exercise_invalid_saved_runtime_config_startup(tmp_path))
+def test_connector_runtime_reads_only_effective_running_config() -> None:
+    asyncio.run(_exercise_runtime_config_read())
 
 
 def test_connector_runtime_disables_http_proxy_for_loopback_backend() -> None:
@@ -1280,10 +1269,7 @@ async def _exercise_runtime_protocol_routing() -> None:
 
 async def _exercise_agent_runtime_turn_rpc(tmp_path) -> None:
     agent_runtime = FakeAgentRuntime()
-    client = _client(
-        runtime=agent_runtime,
-        runtime_config_store=JsonRuntimeConfigStore(tmp_path / "runtime-configs.json"),
-    )
+    client = _client(runtime=agent_runtime)
     client._rpc.set_connection(FakeWebSocket())  # type: ignore[arg-type]
     await client.dispatch("runtime.start", {"runtimeId": "codex", "config": {}})
 
@@ -1375,11 +1361,9 @@ async def _exercise_runtime_config_schema_read() -> None:
     }
 
 
-async def _exercise_runtime_config_read(tmp_path) -> None:
+async def _exercise_runtime_config_read() -> None:
     runtime = FakeAgentRuntime("codex")
-    store = JsonRuntimeConfigStore(tmp_path / "runtime-configs.json")
-    store.save("codex", {"environment": {}})
-    client = _client(runtime=runtime, runtime_config_store=store)
+    client = _client(runtime=runtime)
     client._rpc.set_connection(FakeWebSocket())  # type: ignore[arg-type]
 
     stopped = await client.dispatch("runtime.config", {"runtimeId": "codex"})
@@ -1396,7 +1380,6 @@ async def _exercise_runtime_config_read(tmp_path) -> None:
         "runtimeId": "codex",
         "running": False,
         "config": None,
-        "savedValues": {"environment": {}},
     }
     assert running == {
         "runtimeId": "codex",
@@ -1414,52 +1397,7 @@ async def _exercise_runtime_config_read(tmp_path) -> None:
             "uiSchema": {"environment": {"component": "keyValue"}},
             "metadata": {"validated": True},
         },
-        "savedValues": {"environment": {"EXAMPLE": "1"}},
     }
-
-
-async def _exercise_saved_runtime_config_startup(tmp_path) -> None:
-    codex = FakeAgentRuntime("codex")
-    claude = FakeAgentRuntime("claude")
-    store = JsonRuntimeConfigStore(tmp_path / "runtime-configs.json")
-    store.save("codex", {"environment": {}})
-    store.save("claude", {"executablePath": "/opt/claude"})
-    store.save("unknown", {"ignored": True})
-    client = _client(
-        providers=(
-            FakeAgentProvider(codex, "codex"),
-            FakeAgentProvider(claude, "claude"),
-        ),
-        runtime_config_store=store,
-    )
-    ws = FakeWebSocket()
-    client._rpc.set_connection(ws)  # type: ignore[arg-type]
-
-    await client._runtime_sync.start_saved_runtimes()
-
-    assert codex.started is True
-    assert claude.started is True
-    assert client.agent_runtime_supervisor.entry("codex").config.values == {"environment": {}}
-    assert client.agent_runtime_supervisor.entry("claude").config.values == {"executablePath": "/opt/claude"}
-    assert [message["params"] for message in ws.messages if message["method"] == "runtime.statusChanged"][-2:] == [
-        {"runtimeId": "claude", "status": "starting"},
-        {"runtimeId": "claude", "status": "running"},
-    ]
-
-
-async def _exercise_invalid_saved_runtime_config_startup(tmp_path) -> None:
-    runtime = FakeAgentRuntime("codex")
-    path = tmp_path / "runtime-configs.json"
-    path.write_text("{", encoding="utf-8")
-    client = _client(
-        runtime=runtime,
-        runtime_config_store=JsonRuntimeConfigStore(path),
-    )
-    client._rpc.set_connection(FakeWebSocket())  # type: ignore[arg-type]
-
-    await client._runtime_sync.start_saved_runtimes()
-
-    assert runtime.started is False
 
 
 async def _exercise_unknown_runtime() -> None:
