@@ -31,7 +31,7 @@ Rough completion by behavior area:
 | --- | --- | --- |
 | SDK timeline source | Complete for T02 | Codex SDK stream input now flows through `CodexSdkEvent`; broader item coverage continues in T04. |
 | Timeline identity and dedupe | Complete for T01 | `clientMessageId` tagging, live/snapshot echo projection, and stable fallback identity are covered; broader SDK event coverage continues in T02/T04. |
-| Turn lifecycle | Partial | Basic waiting/running/idle exists; stream-finally fallback started in `801f4b8`; error/interrupted semantics need stronger coverage. |
+| Turn lifecycle | Complete for T03 | Codex runtime now covers waiting/running/blocked/idle convergence, failed-turn blocking notices, item-event running inference, and stale no-active-turn correction. |
 | Notice/interaction lifecycle | Partial | Approval open/respond exists; close/resolved/failed lifecycle is incomplete. |
 | Tool/reasoning/file reduce | Partial | Basic assistant and command output deltas exist; SDK-native tool/file/error coverage is incomplete. |
 | Selections | Partial | Catalogs and start-time resolution exist; live session selection read/update is incomplete. |
@@ -113,7 +113,7 @@ uv run pytest tests/test_connector_runtime.py -q
 
 ### T03. Turn lifecycle state machine
 
-Status: not started.
+Status: complete.
 
 Goal:
 
@@ -131,9 +131,27 @@ Required behavior:
 - failed turns create an error/interaction notice and move to a user-actionable state.
 - `no active turn` conflicts actively correct stale session state.
 
-Open decision:
+Decision:
 
-- Decide whether to add `interrupting` to `RuntimeStatus` or keep interrupt pending as a web-local transient operation state.
+- Do not add `interrupting` to `RuntimeStatus` in this connector target. Interrupt
+  pending remains a user-operation transient; `SessionState.status` stays
+  `running` until the runtime confirms interruption, then converges to `idle`.
+
+Completed:
+
+- `start_turn` keeps `waiting -> running`.
+- Native turn start and item activity can infer `running` even when no prior
+  platform start event was observed.
+- Tool output delta keeps the session `running` and interruptible.
+- Approval requests move the session to `blocked`.
+- Approval responses return to `running` only when an active turn still exists;
+  responses after turn completion keep `idle`.
+- Completed, interrupted, and cancelled turns clear active turn and converge to
+  `idle`.
+- Failed turns clear active turn, upsert a blocking `execution_error` notice,
+  attach structured error data, and set session state to `blocked`.
+- `steer` and `interrupt` no-active-turn conflicts actively correct stale
+  session state to `idle`.
 
 Verification:
 

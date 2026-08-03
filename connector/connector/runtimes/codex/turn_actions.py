@@ -113,6 +113,12 @@ class CodexTurnActions:
             raise RuntimeUnsupportedError("steer_turn")
         turn_id = self.active_turn_ids.get(session_id)
         if turn_id is None:
+            await self._set_session_state(
+                session_id=session_id,
+                external_session_id=external_session_id,
+                status="idle",
+                metadata={"source": "codex.turn/steer.no-active-turn"},
+            )
             return RuntimeOperationResult(
                 ok=False,
                 code="codex_no_active_turn",
@@ -164,6 +170,12 @@ class CodexTurnActions:
             raise RuntimeUnsupportedError("interrupt_turn")
         turn_id = self.active_turn_ids.get(session_id)
         if turn_id is None:
+            await self._set_session_state(
+                session_id=session_id,
+                external_session_id=external_session_id,
+                status="idle",
+                metadata={"source": "codex.turn/interrupt.no-active-turn"},
+            )
             return RuntimeOperationResult(
                 ok=False,
                 code="codex_no_active_turn",

@@ -19,6 +19,7 @@ EnsureStarted = Callable[[], Awaitable[None]]
 class CodexInteractionController:
     client: CodexRuntimeClient | None
     session_states: RuntimeSessionStateCache
+    active_turn_ids: dict[str, str]
     ensure_started: EnsureStarted
 
     async def respond_interaction(
@@ -44,10 +45,15 @@ class CodexInteractionController:
         await self.client.respond(request_id, {"decision": decision})
         cached_state = self.session_states.get(session_id)
         if cached_state is not None:
+            next_status = (
+                "running"
+                if self.active_turn_ids.get(session_id) is not None
+                else "idle"
+            )
             await self.session_states.update(
                 session_id=session_id,
                 external_session_id=cached_state.external_session_id,
-                status="running",
+                status=next_status,
                 metadata={
                     "source": "codex.approval/responded",
                     "notice_id": notice_id,

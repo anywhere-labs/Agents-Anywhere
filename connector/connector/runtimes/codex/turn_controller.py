@@ -60,6 +60,7 @@ class CodexTurnController:
         self.interactions = CodexInteractionController(
             client=self.client,
             session_states=self.session_states,
+            active_turn_ids=self.active_turn_ids,
             ensure_started=self.ensure_started,
         )
 

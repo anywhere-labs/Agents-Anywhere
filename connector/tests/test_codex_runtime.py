@@ -691,6 +691,75 @@ async def _test_codex_runtime_turn_completed_notification_sets_idle() -> None:
     assert state.status == "idle"
 
 
+def test_codex_runtime_item_event_without_start_marks_running_and_interruptible() -> None:
+    asyncio.run(
+        _test_codex_runtime_item_event_without_start_marks_running_and_interruptible()
+    )
+
+
+async def _test_codex_runtime_item_event_without_start_marks_running_and_interruptible() -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    await runtime.start()
+    await runtime._handle_notification(
+        {
+            "method": "item/started",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_event",
+                "item": {
+                    "id": "item_tool",
+                    "type": "commandExecution",
+                    "status": "inProgress",
+                    "command": "pwd",
+                },
+            },
+        }
+    )
+    result = await runtime.interrupt_turn("sess_1", "thread_1")
+
+    assert host.state_updates[-2]["status"] == "running"
+    assert host.state_updates[-2]["metadata"]["turn_id"] == "turn_event"
+    assert result.ok is True
+    assert client.requests[-1] == (
+        "turn/interrupt",
+        {
+            "threadId": "thread_1",
+            "turnId": "turn_event",
+        },
+    )
+
+
+def test_codex_runtime_tool_delta_keeps_session_running() -> None:
+    asyncio.run(_test_codex_runtime_tool_delta_keeps_session_running())
+
+
+async def _test_codex_runtime_tool_delta_keeps_session_running() -> None:
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=FakeCodexClient())
+
+    await runtime.start()
+    await runtime._handle_notification(
+        {
+            "method": "item/commandExecution/outputDelta",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_tool",
+                "itemId": "item_tool",
+                "outputDelta": "running",
+            },
+        }
+    )
+
+    assert host.timeline_item_upserts[-1].type == "tool"
+    assert host.state_updates[-1]["status"] == "running"
+    assert host.state_updates[-1]["metadata"]["turn_id"] == "turn_tool"
+
+
 def test_codex_runtime_agent_message_delta_upserts_timeline_item() -> None:
     asyncio.run(_test_codex_runtime_agent_message_delta_upserts_timeline_item())
 
@@ -822,6 +891,85 @@ async def _test_codex_runtime_completed_turn_syncs_timeline_snapshot() -> None:
     assert [item.type for item in sync["items"]] == ["message", "message"]
     assert [item.status for item in sync["items"]] == ["done", "done"]
     assert host.state_updates[-1]["status"] == "idle"
+
+
+def test_codex_runtime_interrupted_and_cancelled_turns_set_idle() -> None:
+    asyncio.run(_test_codex_runtime_interrupted_and_cancelled_turns_set_idle())
+
+
+async def _test_codex_runtime_interrupted_and_cancelled_turns_set_idle() -> None:
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=FakeCodexClient())
+
+    await runtime.start_turn("sess_1", "thread_1", "hello")
+    await runtime._handle_notification(
+        {
+            "method": "turn/interrupted",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_new",
+            },
+        }
+    )
+    await runtime.start_turn("sess_1", "thread_1", "again")
+    await runtime._handle_notification(
+        {
+            "method": "turn/cancelled",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_new",
+            },
+        }
+    )
+
+    idle_sources = [
+        update["metadata"]["source"]
+        for update in host.state_updates
+        if update["status"] == "idle"
+    ]
+    assert "codex.turn/interrupted" in idle_sources
+    assert "codex.turn/cancelled" in idle_sources
+
+
+def test_codex_runtime_failed_turn_creates_blocking_error_notice() -> None:
+    asyncio.run(_test_codex_runtime_failed_turn_creates_blocking_error_notice())
+
+
+async def _test_codex_runtime_failed_turn_creates_blocking_error_notice() -> None:
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=FakeCodexClient())
+
+    await runtime.start_turn("sess_1", "thread_1", "hello")
+    await runtime._handle_notification(
+        {
+            "method": "turn/failed",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_new",
+                "error": {
+                    "code": "boom",
+                    "message": "Exploded",
+                },
+            },
+        }
+    )
+    interrupt = await runtime.interrupt_turn("sess_1", "thread_1")
+
+    notice = host.notice_upserts[-1]
+    assert notice.type == "interaction"
+    assert notice.interaction_type == "execution_error"
+    assert notice.severity == "error"
+    assert notice.blocking == {"scope": "session", "targetId": "sess_1"}
+    assert host.state_updates[-1]["status"] == "idle"
+    assert interrupt.ok is False
+    assert interrupt.code == "codex_no_active_turn"
+    blocked_update = next(
+        update for update in reversed(host.state_updates) if update["status"] == "blocked"
+    )
+    assert blocked_update["error"]["code"] == "boom"
 
 
 def test_codex_runtime_tags_completed_user_echo_with_client_message_id() -> None:
@@ -1104,13 +1252,15 @@ def test_codex_runtime_steer_without_active_turn_returns_conflict() -> None:
 
 async def _test_codex_runtime_steer_without_active_turn_returns_conflict() -> None:
     client = FakeCodexClient()
-    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=client)
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
 
     result = await runtime.steer_turn("sess_1", "thread_1", "late")
 
     assert result.ok is False
     assert result.code == "codex_no_active_turn"
     assert all(request[0] != "turn/steer" for request in client.requests)
+    assert host.state_updates[-1]["status"] == "idle"
 
 
 def test_codex_runtime_interrupts_active_turn_and_sets_idle() -> None:
@@ -1138,6 +1288,7 @@ async def _test_codex_runtime_interrupts_active_turn_and_sets_idle() -> None:
     assert host.state_updates[-1]["status"] == "idle"
     assert second.ok is False
     assert second.code == "codex_no_active_turn"
+    assert host.state_updates[-1]["metadata"]["source"] == "codex.turn/interrupt.no-active-turn"
 
 
 def test_codex_runtime_interrupt_soft_failure_sets_idle() -> None:
@@ -1181,6 +1332,38 @@ async def _test_codex_runtime_responds_to_approval_interaction() -> None:
     assert client.responses == [("42", {"decision": "acceptForSession"})]
     assert host.state_updates[-1]["status"] == "running"
     assert host.state_updates[-1]["metadata"]["notice_id"] == "notice_1"
+
+
+def test_codex_runtime_approval_response_after_turn_end_keeps_idle() -> None:
+    asyncio.run(_test_codex_runtime_approval_response_after_turn_end_keeps_idle())
+
+
+async def _test_codex_runtime_approval_response_after_turn_end_keeps_idle() -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    await runtime.start_turn("sess_1", "thread_1", "hello")
+    await runtime._handle_notification(
+        {
+            "method": "turn/completed",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_new",
+            },
+        }
+    )
+    result = await runtime.respond_interaction(
+        "sess_1",
+        "notice_ended",
+        "approve",
+        {"approvalSource": {"requestId": "42"}},
+    )
+
+    assert result.ok is True
+    assert host.state_updates[-1]["status"] == "idle"
+    assert host.state_updates[-1]["metadata"]["notice_id"] == "notice_ended"
 
 
 def test_codex_catalog_helpers_ignore_unrecognized_items() -> None:
