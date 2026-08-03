@@ -9,7 +9,9 @@ from connector.runtime_protocol import (
     RuntimeSessionStateCache,
     RuntimeUnsupportedError,
 )
+from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex.approvals import approval_decision
+from connector.runtimes.codex.notice_registry import CodexNoticeRegistry
 from connector.runtimes.codex.runtime_client import CodexRuntimeClient
 
 EnsureStarted = Callable[[], Awaitable[None]]
@@ -17,9 +19,11 @@ EnsureStarted = Callable[[], Awaitable[None]]
 
 @dataclass(slots=True)
 class CodexInteractionController:
+    host: RuntimeHostClient
     client: CodexRuntimeClient | None
     session_states: RuntimeSessionStateCache
     active_turn_ids: dict[str, str]
+    notices: CodexNoticeRegistry
     ensure_started: EnsureStarted
 
     async def respond_interaction(
@@ -42,10 +46,33 @@ class CodexInteractionController:
         status = data.get("approvalStatus")
         decision = approval_decision(status if isinstance(status, str) else action_id)
         await self.ensure_started()
-        await self.client.respond(request_id, {"decision": decision})
+        await self._notice_responding(
+            notice_id=notice_id,
+            action_id=action_id,
+            decision=decision,
+        )
+        try:
+            await self.client.respond(request_id, {"decision": decision})
+        except Exception as exc:
+            await self._notice_response_failed(
+                session_id=session_id,
+                notice_id=notice_id,
+                action_id=action_id,
+                decision=decision,
+                exc=exc,
+            )
+            raise
+        await self._notice_resolved(
+            notice_id=notice_id,
+            action_id=action_id,
+            decision=decision,
+        )
         cached_state = self.session_states.get(session_id)
         if cached_state is not None:
             next_status = (
+                "blocked"
+                if self.notices.open_blocking_for_session(session_id)
+                else
                 "running"
                 if self.active_turn_ids.get(session_id) is not None
                 else "idle"
@@ -69,3 +96,84 @@ class CodexInteractionController:
                 "decision": decision,
             },
         )
+
+    async def _notice_responding(
+        self,
+        notice_id: str,
+        action_id: str,
+        decision: str,
+    ) -> None:
+        notice = self.notices.transition(
+            notice_id,
+            status="responding",
+            context={
+                "approvalStatus": "responding",
+                "responseActionId": action_id,
+                "decision": decision,
+            },
+            metadata={"source": "codex.approval/responding"},
+        )
+        if notice is not None:
+            await self.host.notice_upsert(notice)
+
+    async def _notice_resolved(
+        self,
+        notice_id: str,
+        action_id: str,
+        decision: str,
+    ) -> None:
+        notice = self.notices.transition(
+            notice_id,
+            status="resolved",
+            response_required=False,
+            blocking=None,
+            actions=(),
+            context={
+                "approvalStatus": "resolved",
+                "responseActionId": action_id,
+                "decision": decision,
+            },
+            metadata={"source": "codex.approval/responded"},
+        )
+        if notice is not None:
+            await self.host.notice_upsert(notice)
+
+    async def _notice_response_failed(
+        self,
+        session_id: str,
+        notice_id: str,
+        action_id: str,
+        decision: str,
+        exc: Exception,
+    ) -> None:
+        notice = self.notices.transition(
+            notice_id,
+            status="open",
+            response_required=True,
+            context={
+                "approvalStatus": "pending",
+                "responseActionId": action_id,
+                "decision": decision,
+            },
+            metadata={
+                "source": "codex.approval/respond_failed",
+                "error": {
+                    "code": exc.__class__.__name__,
+                    "message": str(exc) or exc.__class__.__name__,
+                },
+                "retryable": True,
+            },
+        )
+        if notice is not None:
+            await self.host.notice_upsert(notice)
+        cached_state = self.session_states.get(session_id)
+        if cached_state is not None:
+            await self.session_states.update(
+                session_id=session_id,
+                external_session_id=cached_state.external_session_id,
+                status="blocked",
+                metadata={
+                    "source": "codex.approval/respond_failed",
+                    "notice_id": notice_id,
+                },
+            )

@@ -24,6 +24,7 @@ class FakeCodexClient:
         self.stopped = False
         self.requests: list[tuple[str, dict[str, Any]]] = []
         self.responses: list[tuple[str | int, dict[str, Any]]] = []
+        self.response_error: Exception | None = None
         self.results: dict[str, dict[str, Any]] = {
             "model/list": {
                 "models": [
@@ -124,6 +125,8 @@ class FakeCodexClient:
         request_id: str | int,
         result: Mapping[str, Any] | None = None,
     ) -> None:
+        if self.response_error is not None:
+            raise self.response_error
         self.responses.append((request_id, dict(result or {})))
 
 
@@ -1580,6 +1583,222 @@ async def _test_codex_runtime_responds_to_approval_interaction() -> None:
     assert client.responses == [("42", {"decision": "acceptForSession"})]
     assert host.state_updates[-1]["status"] == "running"
     assert host.state_updates[-1]["metadata"]["notice_id"] == "notice_1"
+
+
+def test_codex_runtime_approval_response_resolves_notice() -> None:
+    asyncio.run(_test_codex_runtime_approval_response_resolves_notice())
+
+
+async def _test_codex_runtime_approval_response_resolves_notice() -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    await runtime.start()
+    await runtime._handle_notification(
+        {
+            "jsonrpc": "2.0",
+            "id": 42,
+            "method": "item/commandExecution/requestApproval",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_1",
+                "itemId": "item_cmd",
+                "approvalId": "appr_cmd",
+                "command": "ls -la",
+            },
+        }
+    )
+    result = await runtime.respond_interaction(
+        "sess_1",
+        "notice_approval_appr_cmd",
+        "approve_for_session",
+        {"approvalSource": {"requestId": 42}},
+    )
+
+    assert result.ok is True
+    assert client.responses == [(42, {"decision": "acceptForSession"})]
+    assert [notice.status for notice in host.notice_upserts] == [
+        "open",
+        "responding",
+        "resolved",
+    ]
+    resolved = host.notice_upserts[-1]
+    assert resolved.response_required is False
+    assert resolved.blocking is None
+    assert resolved.actions == ()
+    assert resolved.context["approvalStatus"] == "resolved"
+    assert resolved.context["decision"] == "acceptForSession"
+    assert host.state_updates[-1]["status"] == "running"
+
+
+def test_codex_runtime_failed_approval_response_keeps_notice_retryable() -> None:
+    asyncio.run(_test_codex_runtime_failed_approval_response_keeps_notice_retryable())
+
+
+async def _test_codex_runtime_failed_approval_response_keeps_notice_retryable() -> None:
+    client = FakeCodexClient()
+    client.response_error = RuntimeError("ipc disconnected")
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    await runtime.start()
+    await runtime._handle_notification(
+        {
+            "jsonrpc": "2.0",
+            "id": 42,
+            "method": "item/commandExecution/requestApproval",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_1",
+                "approvalId": "appr_cmd",
+            },
+        }
+    )
+    try:
+        await runtime.respond_interaction(
+            "sess_1",
+            "notice_approval_appr_cmd",
+            "approve",
+            {"approvalSource": {"requestId": 42}},
+        )
+    except RuntimeError as exc:
+        assert str(exc) == "ipc disconnected"
+    else:
+        raise AssertionError("respond_interaction should raise the SDK failure")
+
+    assert [notice.status for notice in host.notice_upserts] == [
+        "open",
+        "responding",
+        "open",
+    ]
+    retryable = host.notice_upserts[-1]
+    assert retryable.response_required is True
+    assert retryable.blocking == {"scope": "session", "targetId": "sess_1"}
+    assert retryable.metadata["retryable"] is True
+    assert retryable.metadata["error"] == {
+        "code": "RuntimeError",
+        "message": "ipc disconnected",
+    }
+    assert host.state_updates[-1]["status"] == "blocked"
+    assert host.state_updates[-1]["metadata"]["notice_id"] == "notice_approval_appr_cmd"
+
+
+def test_codex_runtime_terminal_turn_closes_open_approval_notice() -> None:
+    asyncio.run(_test_codex_runtime_terminal_turn_closes_open_approval_notice())
+
+
+async def _test_codex_runtime_terminal_turn_closes_open_approval_notice() -> None:
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=FakeCodexClient())
+
+    await runtime.start()
+    await runtime._handle_notification(
+        {
+            "jsonrpc": "2.0",
+            "id": 42,
+            "method": "item/fileChange/requestApproval",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_1",
+                "approvalId": "appr_file",
+            },
+        }
+    )
+    await runtime._handle_notification(
+        {
+            "method": "turn/cancelled",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_1",
+            },
+        }
+    )
+
+    assert [notice.status for notice in host.notice_upserts] == ["open", "closed"]
+    closed = host.notice_upserts[-1]
+    assert closed.notice_id == "notice_approval_appr_file"
+    assert closed.response_required is False
+    assert closed.blocking is None
+    assert closed.actions == ()
+    assert closed.metadata["close_reason"] == "cancelled"
+    assert host.state_updates[-1]["status"] == "idle"
+
+
+def test_codex_runtime_interrupt_closes_open_approval_notice() -> None:
+    asyncio.run(_test_codex_runtime_interrupt_closes_open_approval_notice())
+
+
+async def _test_codex_runtime_interrupt_closes_open_approval_notice() -> None:
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=FakeCodexClient())
+
+    await runtime.start_turn("sess_1", "thread_1", "hello")
+    await runtime._handle_notification(
+        {
+            "jsonrpc": "2.0",
+            "id": 42,
+            "method": "item/commandExecution/requestApproval",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_new",
+                "approvalId": "appr_cmd",
+            },
+        }
+    )
+    result = await runtime.interrupt_turn("sess_1", "thread_1")
+
+    assert result.ok is True
+    assert host.notice_upserts[-1].notice_id == "notice_approval_appr_cmd"
+    assert host.notice_upserts[-1].status == "closed"
+    assert host.notice_upserts[-1].metadata["close_reason"] == "interrupted"
+    assert host.state_updates[-1]["status"] == "idle"
+
+
+def test_codex_runtime_resolved_approval_keeps_blocked_with_other_open_notice() -> None:
+    asyncio.run(
+        _test_codex_runtime_resolved_approval_keeps_blocked_with_other_open_notice()
+    )
+
+
+async def _test_codex_runtime_resolved_approval_keeps_blocked_with_other_open_notice() -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    await runtime.start()
+    for request_id, approval_id in ((42, "appr_one"), (43, "appr_two")):
+        await runtime._handle_notification(
+            {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": "item/commandExecution/requestApproval",
+                "params": {
+                    "platformSessionId": "sess_1",
+                    "threadId": "thread_1",
+                    "turnId": "turn_1",
+                    "approvalId": approval_id,
+                },
+            }
+        )
+
+    result = await runtime.respond_interaction(
+        "sess_1",
+        "notice_approval_appr_one",
+        "approve",
+        {"approvalSource": {"requestId": 42}},
+    )
+
+    assert result.ok is True
+    assert host.notice_upserts[-1].notice_id == "notice_approval_appr_one"
+    assert host.notice_upserts[-1].status == "resolved"
+    assert host.state_updates[-1]["status"] == "blocked"
+    assert host.state_updates[-1]["metadata"]["notice_id"] == "notice_approval_appr_one"
 
 
 def test_codex_runtime_approval_response_after_turn_end_keeps_idle() -> None:

@@ -10,6 +10,7 @@ from connector.runtimes.codex.approvals import (
     approval_notice_from_request,
     is_approval_request,
 )
+from connector.runtimes.codex.notice_registry import CodexNoticeRegistry
 from connector.runtimes.codex.sdk_events import CodexSdkEvent
 from connector.runtimes.codex.timeline_accumulator import CodexTimelineAccumulator
 
@@ -22,6 +23,7 @@ class CodexNotificationProjector:
     session_states: RuntimeSessionStateCache
     active_turn_ids: dict[str, str]
     timeline: CodexTimelineAccumulator
+    notices: CodexNoticeRegistry
 
     async def handle(self, message: dict[str, Any]) -> None:
         event = CodexSdkEvent.from_message(message)
@@ -89,6 +91,7 @@ class CodexNotificationProjector:
             request_id=request_id,
             turn_id=turn_id,
         )
+        self.notices.upsert(notice)
         await self.host.notice_upsert(notice)
         await self._set_session_state(
             session_id=session_id,
@@ -143,6 +146,12 @@ class CodexNotificationProjector:
                 complete=False,
                 metadata={"source": f"codex.{method}"},
             )
+        await self._close_blocking_notices_for_terminal_turn(
+            session_id=session_id,
+            status="closed",
+            reason=method.rsplit("/", maxsplit=1)[-1],
+            source=f"codex.{method}",
+        )
         await self._set_session_state(
             session_id=session_id,
             external_session_id=thread_id,
@@ -181,6 +190,13 @@ class CodexNotificationProjector:
             turn_id=turn_id,
             params=params,
         )
+        await self._close_blocking_notices_for_terminal_turn(
+            session_id=session_id,
+            status="closed",
+            reason="failed",
+            source="codex.turn/failed",
+        )
+        self.notices.upsert(notice)
         await self.host.notice_upsert(notice)
         await self.session_states.update(
             session_id=session_id,
@@ -256,6 +272,21 @@ class CodexNotificationProjector:
             },
             metadata={"source": "codex.turn/failed"},
         )
+
+    async def _close_blocking_notices_for_terminal_turn(
+        self,
+        session_id: str,
+        status: str,
+        reason: str,
+        source: str,
+    ) -> None:
+        for notice in self.notices.close_open_for_session(
+            session_id=session_id,
+            status=status,
+            reason=reason,
+            source=source,
+        ):
+            await self.host.notice_upsert(notice)
 
     async def _set_session_state(
         self,

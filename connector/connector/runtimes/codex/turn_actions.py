@@ -10,7 +10,9 @@ from connector.runtime_protocol import (
     RuntimeSessionStateCache,
     RuntimeUnsupportedError,
 )
+from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex import sessions as codex_sessions
+from connector.runtimes.codex.notice_registry import CodexNoticeRegistry
 from connector.runtimes.codex.pending_messages import PendingClientMessageRegistry
 from connector.runtimes.codex.runtime_client import CodexRuntimeClient
 from connector.runtimes.codex.runtime_helpers import (
@@ -23,9 +25,11 @@ EnsureStarted = Callable[[], Awaitable[None]]
 
 @dataclass(slots=True)
 class CodexTurnActions:
+    host: RuntimeHostClient
     client: CodexRuntimeClient | None
     session_states: RuntimeSessionStateCache
     active_turn_ids: dict[str, str]
+    notices: CodexNoticeRegistry
     ensure_started: EnsureStarted
     pending_messages: PendingClientMessageRegistry
 
@@ -196,6 +200,7 @@ class CodexTurnActions:
             if soft_reason is None:
                 raise
             self.active_turn_ids.pop(session_id, None)
+            await self._close_blocking_notices_for_interrupted_turn(session_id)
             await self._set_session_state(
                 session_id=session_id,
                 external_session_id=external_session_id,
@@ -213,6 +218,7 @@ class CodexTurnActions:
                 result={"interrupted": False, "turnId": turn_id},
             )
         self.active_turn_ids.pop(session_id, None)
+        await self._close_blocking_notices_for_interrupted_turn(session_id)
         await self._set_session_state(
             session_id=session_id,
             external_session_id=external_session_id,
@@ -228,6 +234,18 @@ class CodexTurnActions:
                 "turn": result.get("turn") or result,
             },
         )
+
+    async def _close_blocking_notices_for_interrupted_turn(
+        self,
+        session_id: str,
+    ) -> None:
+        for notice in self.notices.close_open_for_session(
+            session_id=session_id,
+            status="closed",
+            reason="interrupted",
+            source="codex.turn/interrupt",
+        ):
+            await self.host.notice_upsert(notice)
 
     async def _set_session_state(
         self,

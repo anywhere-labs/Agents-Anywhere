@@ -17,6 +17,7 @@ from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex import sessions as codex_sessions
 from connector.runtimes.codex.command_controller import CodexCommandController
 from connector.runtimes.codex.interaction_controller import CodexInteractionController
+from connector.runtimes.codex.notice_registry import CodexNoticeRegistry
 from connector.runtimes.codex.pending_messages import PendingClientMessageRegistry
 from connector.runtimes.codex.runtime_client import CodexRuntimeClient
 from connector.runtimes.codex.runtime_helpers import ensure_text_only_attachments
@@ -37,6 +38,7 @@ class CodexTurnController:
     client: CodexRuntimeClient | None
     session_states: RuntimeSessionStateCache
     active_turn_ids: dict[str, str]
+    notices: CodexNoticeRegistry
     ensure_started: EnsureStarted
     list_model_catalog: ListModelCatalog
     list_permission_catalog: ListPermissionCatalog
@@ -47,9 +49,11 @@ class CodexTurnController:
 
     def __post_init__(self) -> None:
         self.actions = CodexTurnActions(
+            host=self.host,
             client=self.client,
             session_states=self.session_states,
             active_turn_ids=self.active_turn_ids,
+            notices=self.notices,
             ensure_started=self.ensure_started,
             pending_messages=self.pending_messages,
         )
@@ -58,9 +62,11 @@ class CodexTurnController:
             ensure_started=self.ensure_started,
         )
         self.interactions = CodexInteractionController(
+            host=self.host,
             client=self.client,
             session_states=self.session_states,
             active_turn_ids=self.active_turn_ids,
+            notices=self.notices,
             ensure_started=self.ensure_started,
         )
 

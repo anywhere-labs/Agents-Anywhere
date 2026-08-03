@@ -32,7 +32,7 @@ Rough completion by behavior area:
 | SDK timeline source | Complete for T02 | Codex SDK stream input now flows through `CodexSdkEvent`; broader item coverage continues in T04. |
 | Timeline identity and dedupe | Complete for T01 | `clientMessageId` tagging, live/snapshot echo projection, and stable fallback identity are covered; broader SDK event coverage continues in T02/T04. |
 | Turn lifecycle | Complete for T03 | Codex runtime now covers waiting/running/blocked/idle convergence, failed-turn blocking notices, item-event running inference, and stale no-active-turn correction. |
-| Notice/interaction lifecycle | Partial | Approval open/respond exists; close/resolved/failed lifecycle is incomplete. |
+| Notice/interaction lifecycle | Complete for T05 | Codex approvals now move through open/responding/resolved/closed, failed responses remain retryable, and blocking state is released only after open blocking notices are gone. |
 | Tool/reasoning/file reduce | Complete for T04 | SDK/native message, reasoning, tool, file-change, runtime/system, and unknown fallback items reduce to platform-safe timeline shapes. |
 | Selections | Partial | Catalogs and start-time resolution exist; live session selection read/update is incomplete. |
 | Commands | Partial | `/compact` exists; command-mode lifecycle and UI-facing failure semantics remain incomplete. |
@@ -208,7 +208,7 @@ uv run ruff check connector/runtimes/codex tests/test_codex_runtime.py
 
 ### T05. Notice and interaction lifecycle
 
-Status: not started.
+Status: complete.
 
 Goal:
 
@@ -223,12 +223,31 @@ Required behavior:
 - failed response keeps the notice open and retryable.
 - blocking session state is released only when no open blocking notice remains.
 
+Completed:
+
+- Runtime-local Codex notice registry tracks lifecycle-relevant approval notices
+  without adding local durable config/state.
+- Approval requests create `SessionNotice(status=open, response_required=true)`
+  and move session state to `blocked`.
+- Approval responses upsert `responding` before sending the SDK response.
+- Successful approval responses upsert `resolved`, clear response requirement,
+  clear blocking data, and remove available actions.
+- Failed approval responses upsert `open` with retryable error metadata and keep
+  session state `blocked`.
+- Terminal turn notifications close open blocking approval notices with
+  `status=closed`.
+- Runtime-initiated interrupt success/soft-failure also closes open blocking
+  approval notices when no terminal notification arrives first.
+- Session state leaves `blocked` only when no open blocking notice remains for
+  the session.
+
 Verification:
 
 ```bash
 cd connector
 uv run pytest tests/test_codex_runtime.py -q
 uv run pytest tests/test_connector_runtime.py -q
+uv run ruff check connector/runtimes/codex tests/test_codex_runtime.py
 ```
 
 ### T06. Session selections live behavior
