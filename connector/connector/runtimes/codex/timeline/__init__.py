@@ -1,5 +1,9 @@
 """Codex timeline projection API."""
 
+from connector.runtimes.codex.timeline.content import (
+    MappingTimelineContent,
+    codex_timeline_content_from_mapping,
+)
 from connector.runtimes.codex.timeline.identity import (
     client_message_id_from_raw,
     derived_key,
@@ -27,8 +31,6 @@ from connector.runtimes.codex.timeline.items import (
     CodexTurnStartItem,
     CodexUnknownItem,
     CodexUserMessageItem,
-    MappingTimelineContent,
-    codex_timeline_content_from_mapping,
     codex_timeline_item_class,
 )
 from connector.runtimes.codex.timeline.projection import (

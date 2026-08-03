@@ -13,6 +13,9 @@ from connector.runtimes.codex.domain.sessions import (
     turn_id_from_result,
 )
 from connector.runtimes.codex.sdk.events import CodexSdkEvent
+from connector.runtimes.codex.timeline.content import (
+    codex_timeline_content_from_mapping,
+)
 from connector.runtimes.codex.timeline.identity import (
     client_message_id_from_raw,
     derived_key,
@@ -21,7 +24,6 @@ from connector.runtimes.codex.timeline.identity import (
 )
 from connector.runtimes.codex.timeline.items import (
     CodexTimelineItem,
-    codex_timeline_content_from_mapping,
     codex_timeline_item_class,
     timeline_item_status_from_string,
     timeline_item_type_from_string,

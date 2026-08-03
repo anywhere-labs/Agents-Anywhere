@@ -245,3 +245,17 @@ def test_codex_runtime_keeps_state_writes_in_collaborators() -> None:
 
     assert "session_states.update(" not in runtime_source
     assert "async def _set_session_state" not in runtime_source
+
+
+def test_codex_timeline_items_do_not_own_content_projection() -> None:
+    items_source = (
+        CONNECTOR_PACKAGE / "runtimes" / "codex" / "timeline" / "items.py"
+    ).read_text(encoding="utf-8")
+    content_source = (
+        CONNECTOR_PACKAGE / "runtimes" / "codex" / "timeline" / "content.py"
+    ).read_text(encoding="utf-8")
+
+    assert "codex_timeline_content_from_mapping(" not in items_source
+    assert "class MappingTimelineContent" not in items_source
+    assert "codex_timeline_content_from_mapping(" in content_source
+    assert "class MappingTimelineContent" in content_source
