@@ -322,3 +322,15 @@ def test_codex_timeline_projection_does_not_own_raw_item_metadata() -> None:
     ):
         assert f"def {function_name}(" not in projection_source
         assert f"def {function_name}(" in raw_item_source
+
+
+def test_codex_timeline_active_code_does_not_rebuild_projection_as_raw() -> None:
+    violations: list[str] = []
+
+    for path in (CONNECTOR_PACKAGE / "runtimes" / "codex" / "timeline").rglob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        if "to_legacy_raw" in source:
+            relative_path = path.relative_to(CONNECTOR_PACKAGE.parent)
+            violations.append(f"{relative_path}: contains to_legacy_raw")
+
+    assert violations == []

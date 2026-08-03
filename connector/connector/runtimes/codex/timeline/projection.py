@@ -15,9 +15,9 @@ from connector.runtimes.codex.timeline.content import (
 from connector.runtimes.codex.timeline.events import raw_item_from_notification
 from connector.runtimes.codex.timeline.identity import (
     client_message_id_from_raw,
-    derived_key,
+    derived_key_from_values,
     native_item_id,
-    timeline_item_id,
+    timeline_item_id_from_values,
 )
 from connector.runtimes.codex.timeline.items import (
     CodexTimelineItem,
@@ -27,15 +27,16 @@ from connector.runtimes.codex.timeline.items import (
     timeline_role_from_string,
 )
 from connector.runtimes.codex.timeline.raw_content import (
+    query_from_arguments,
     text_from_value,
-    timeline_item_content,
 )
 from connector.runtimes.codex.timeline.raw_item import (
     timeline_item_revision,
     timeline_item_role,
-    timeline_item_status,
+    timeline_item_role_from_values,
+    timeline_item_status_from_value,
     timeline_item_turn_id,
-    timeline_item_type,
+    timeline_item_type_from_raw_type,
     timeline_raw_status,
     timeline_raw_type,
 )
@@ -79,43 +80,184 @@ class CodexTimelineProjection:
     def with_status(self, status: str) -> CodexTimelineProjection:
         return replace(self, status=status)
 
+    def effective_role(self) -> str | None:
+        return timeline_item_role_from_values(raw_type=self.raw_type, role=self.role)
+
+    def item_id(self, external_session_id: str, fallback_index: int) -> str:
+        return timeline_item_id_from_values(
+            native_id=self.native_id,
+            client_message_id=self.client_message_id,
+            raw_type=self.raw_type,
+            role=self.effective_role(),
+            turn_id=self.turn_id,
+            external_session_id=external_session_id,
+            index=fallback_index,
+        )
+
+    def derived_key(self, fallback_index: int) -> str:
+        return derived_key_from_values(
+            raw_type=self.raw_type,
+            role=self.effective_role(),
+            turn_id=self.turn_id,
+            index=fallback_index,
+        )
+
+    def pending_message_text(self) -> str:
+        text = self.text or self.message
+        if text is None:
+            return ""
+        return text
+
     def to_codex_timeline_item(
         self,
         external_session_id: str,
         fallback_index: int,
         event: str,
     ) -> CodexTimelineItem:
-        raw = self.to_legacy_raw()
-        item_type = timeline_item_type(raw)
-        status = timeline_item_status(raw)
-        role = timeline_item_role(raw)
-        native_type = timeline_raw_type(raw)
-        client_message_id = client_message_id_from_raw(raw)
+        native_type = self.raw_type
+        role = self.effective_role()
+        platform_item_type = timeline_item_type_from_string(
+            timeline_item_type_from_raw_type(native_type)
+        )
         item_class = codex_timeline_item_class(native_type)
-        platform_item_type = timeline_item_type_from_string(item_type)
         return item_class(
-            id=timeline_item_id(raw, external_session_id, fallback_index),
+            id=self.item_id(
+                external_session_id=external_session_id,
+                fallback_index=fallback_index,
+            ),
             type=platform_item_type,
-            status=timeline_item_status_from_string(status),
+            status=timeline_item_status_from_string(
+                timeline_item_status_from_value(self.status)
+            ),
             role=timeline_role_from_string(role),
-            turn_id=timeline_item_turn_id(raw),
+            turn_id=self.turn_id,
             content=codex_timeline_content_from_mapping(
                 native_item_type=native_type,
                 platform_item_type=platform_item_type,
-                content=timeline_item_content(raw),
+                content=self.content_mapping(),
             ),
             source=TimelineSource(runtime="codex"),
-            revision=timeline_item_revision(raw),
+            revision=self.revision,
             native_item_type=native_type,
-            native_item_id=native_item_id(raw),
+            native_item_id=self.native_id,
             external_session_id=external_session_id,
             event=event,
-            derived_key=derived_key(raw, fallback_index),
-            client_message_id=client_message_id,
-            metadata={"raw": raw},
+            derived_key=self.derived_key(fallback_index=fallback_index),
+            client_message_id=self.client_message_id,
+            metadata={"raw": self.raw_metadata()},
         )
 
-    def to_legacy_raw(self) -> dict[str, Any]:
+    def content_mapping(self) -> Mapping[str, Any]:
+        if self.raw_type == "reasoning":
+            if self.text:
+                return {
+                    "kind": "reasoning",
+                    "text": self.text,
+                    "format": "markdown",
+                }
+            return {"kind": "reasoning"}
+        if self.raw_type in {
+            "systemMessage",
+            "runtimeMessage",
+            "turnStart",
+            "turnEnd",
+            "error",
+        }:
+            text = self.text or self.message
+            return {
+                "kind": system_kind_from_raw_type(self.raw_type),
+                **({"text": text, "format": "markdown"} if text else {}),
+            }
+        if self.text:
+            return {"text": self.text, "format": "markdown"}
+        if self.raw_type == "function_call":
+            return self.function_call_content()
+        if self.raw_type == "custom_tool_call":
+            return self.custom_tool_call_content()
+        if self.raw_type in {
+            "function_call_output",
+            "custom_tool_call_output",
+            "toolResult",
+        }:
+            return self.tool_output_content()
+        if self.raw_type in {"fileChange", "file_change"}:
+            return self.file_change_content()
+        if self.aggregated_output is not None:
+            return {
+                "kind": "command",
+                "command": self.command or "",
+                "output": self.aggregated_output,
+                "format": "text",
+            }
+        if self.raw_type == "commandExecution":
+            return {
+                "kind": "command",
+                "command": self.command or "",
+                "output": self.output or "",
+                "format": "text",
+                **({"exitCode": self.exit_code} if self.exit_code is not None else {}),
+            }
+        unknown_text = self.text or self.message
+        return {
+            "kind": "unknown",
+            "rawType": self.raw_type,
+            **({"text": unknown_text} if unknown_text else {}),
+        }
+
+    def function_call_content(self) -> Mapping[str, Any]:
+        name = self.name or "function"
+        arguments = self.arguments if self.arguments is not None else self.input_value
+        if name in {"web_search", "web_search_preview"}:
+            return {
+                "kind": "web_search",
+                "function": name,
+                "query": query_from_arguments(arguments),
+                "arguments": arguments,
+            }
+        return {
+            "kind": "mcp",
+            "server": "function",
+            "tool": name,
+            "arguments": arguments,
+            "result": None,
+            "error": None,
+        }
+
+    def custom_tool_call_content(self) -> Mapping[str, Any]:
+        name = self.name or "custom_tool"
+        if name in {"apply_patch", "file_change"}:
+            return {
+                "kind": "file_change",
+                "tool": name,
+                "changes": self.input_value,
+            }
+        return {
+            "kind": "mcp",
+            "server": "custom",
+            "tool": name,
+            "arguments": self.input_value,
+            "result": None,
+            "error": None,
+        }
+
+    def tool_output_content(self) -> Mapping[str, Any]:
+        return {
+            "kind": "tool_result",
+            "result": self.output,
+            "output": self.output if isinstance(self.output, str) else None,
+            "error": None,
+        }
+
+    def file_change_content(self) -> Mapping[str, Any]:
+        return {
+            "kind": "file_change",
+            "path": self.path,
+            "action": self.action or "unknown",
+            "patch": self.patch,
+            "changes": self.changes,
+        }
+
+    def raw_metadata(self) -> Mapping[str, Any]:
         raw: dict[str, Any] = {
             "type": self.raw_type,
             **({"id": self.native_id} if self.native_id else {}),
@@ -199,3 +341,15 @@ def timeline_item_from_projection(
         fallback_index=fallback_index,
         event=event,
     )
+
+
+def system_kind_from_raw_type(raw_type: str) -> str:
+    if raw_type == "turnStart":
+        return "turn_start"
+    if raw_type == "turnEnd":
+        return "turn_end"
+    if raw_type == "error":
+        return "error"
+    if raw_type == "runtimeMessage":
+        return "runtime"
+    return "system"

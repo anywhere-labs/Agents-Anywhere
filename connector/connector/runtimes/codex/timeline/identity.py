@@ -18,12 +18,49 @@ def timeline_item_id(
     return f"codex_{external_session_id}_{derived_key(raw, index)}"
 
 
+def timeline_item_id_from_values(
+    native_id: str | None,
+    client_message_id: str | None,
+    raw_type: str,
+    role: str | None,
+    turn_id: str | None,
+    external_session_id: str,
+    index: int,
+) -> str:
+    if client_message_id and is_user_message_values(raw_type=raw_type, role=role):
+        return f"codex_client_{_safe_component(client_message_id)}"
+    if native_id is not None:
+        return native_id
+    return (
+        f"codex_{external_session_id}_"
+        f"{derived_key_from_values(raw_type=raw_type, role=role, turn_id=turn_id, index=index)}"
+    )
+
+
 def native_item_id(raw: dict[str, Any]) -> str | None:
     for key in ("id", "itemId", "item_id"):
         value = raw.get(key)
         if isinstance(value, str) and value:
             return value
     return None
+
+
+def derived_key_from_values(
+    raw_type: str,
+    role: str | None,
+    turn_id: str | None,
+    index: int,
+) -> str:
+    if raw_type == "reasoning":
+        return f"reasoning-{index}"
+    parts = [
+        raw_type,
+        str(role or ""),
+        str(turn_id or ""),
+        str(index),
+    ]
+    stable = "-".join(_safe_component(part) for part in parts if part)
+    return stable or f"item-{index}"
 
 
 def derived_key(raw: dict[str, Any], index: int) -> str:
@@ -43,6 +80,12 @@ def derived_key(raw: dict[str, Any], index: int) -> str:
     ]
     stable = "-".join(_safe_component(part) for part in parts if part)
     return stable or f"item-{index}"
+
+
+def is_user_message_values(raw_type: str, role: str | None) -> bool:
+    if role == "user":
+        return True
+    return raw_type in {"userMessage", "steeringUserMessage"}
 
 
 def client_message_id_from_raw(raw: dict[str, Any]) -> str | None:

@@ -76,6 +76,31 @@ class PendingClientMessageRegistry:
         if not text:
             return None
         turn_id = codex_timeline.timeline_item_turn_id(raw)
+        client_message_id = self.attach_to_item(
+            session_id=session_id,
+            external_session_id=external_session_id,
+            raw_type=str(raw.get("type") or ""),
+            role=raw.get("role") if isinstance(raw.get("role"), str) else None,
+            text=text,
+            turn_id=turn_id,
+        )
+        if client_message_id is not None:
+            raw["_clientMessageId"] = client_message_id
+        return client_message_id
+
+    def attach_to_item(
+        self,
+        session_id: str,
+        external_session_id: str,
+        raw_type: str,
+        role: str | None,
+        text: str,
+        turn_id: str | None,
+    ) -> str | None:
+        if not is_user_message(raw_type=raw_type, role=role):
+            return None
+        if not text:
+            return None
         for index in range(len(self._pending) - 1, -1, -1):
             pending = self._pending[index]
             if pending.session_id != session_id:
@@ -84,12 +109,11 @@ class PendingClientMessageRegistry:
                 continue
             if pending.turn_id and turn_id and pending.turn_id != turn_id:
                 continue
-            if pending.steering and raw.get("type") != "steeringUserMessage":
+            if pending.steering and raw_type != "steeringUserMessage":
                 continue
             if not _text_matches(text, pending.text):
                 continue
             self._pending.pop(index)
-            raw["_clientMessageId"] = pending.client_message_id
             return pending.client_message_id
         return None
 
@@ -98,7 +122,14 @@ def _is_user_message(raw: dict[str, object]) -> bool:
     role = raw.get("role")
     if role == "user":
         return True
-    return raw.get("type") in {"userMessage", "steeringUserMessage"}
+    raw_type = raw.get("type")
+    return raw_type in {"userMessage", "steeringUserMessage"}
+
+
+def is_user_message(raw_type: str, role: str | None) -> bool:
+    if role == "user":
+        return True
+    return raw_type in {"userMessage", "steeringUserMessage"}
 
 
 def _text_matches(actual: str, expected: str) -> bool:

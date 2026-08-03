@@ -267,11 +267,11 @@ uv run pytest tests/test_codex_runtime.py tests/test_connector_architecture.py -
 
 ### C04. Remove `CodexTimelineProjection.to_legacy_raw()`
 
-Status: todo.
+Status: done.
 
 Replace the remaining projection-to-dict loop with direct typed fields.
 
-Current problem:
+Removed problem:
 
 - `CodexTimelineProjection.to_codex_timeline_item()` calls `to_legacy_raw()`.
 - Identity, source, type/status/role, and content helpers then read that raw
@@ -297,6 +297,23 @@ Verification:
 cd connector
 uv run ruff check connector/runtimes/codex tests/test_codex_runtime.py
 uv run pytest tests/test_codex_runtime.py -q
+```
+
+Completed:
+
+- Removed the projection-to-raw round trip from live notification accumulation.
+- Added typed projection methods for item id, derived key, effective role, and
+  pending Web message matching.
+- Kept raw fallback data only as explicit item metadata for diagnostics.
+- Added an architecture test preventing active Codex timeline code from
+  reintroducing `to_legacy_raw`.
+
+Verification:
+
+```bash
+cd connector
+uv run ruff check connector/runtimes/codex tests/test_codex_runtime.py tests/test_connector_architecture.py
+uv run pytest tests/test_codex_runtime.py tests/test_connector_architecture.py -q
 ```
 
 ### C05. Make SDK typed events the primary notification path
@@ -435,8 +452,8 @@ Stop and ask before proceeding if any step would require:
 The next unchecked implementation item is:
 
 ```text
-C04. Remove `CodexTimelineProjection.to_legacy_raw()`
+C05. Make SDK typed events the primary notification path
 ```
 
-Do not jump to C04/C05 before C01-C03 are done, because the raw projection
+Do not jump past C05 before C01-C04 are done, because the raw projection
 surface should be isolated before replacing it with typed SDK event reduction.

@@ -5,8 +5,11 @@ from typing import Any
 
 
 def timeline_item_type(raw: Mapping[str, Any]) -> str:
-    value = timeline_raw_type(raw)
-    if not isinstance(value, str) or not value:
+    return timeline_item_type_from_raw_type(timeline_raw_type(raw))
+
+
+def timeline_item_type_from_raw_type(value: str) -> str:
+    if not value:
         return "system"
     if value in {"turn.start", "turn.end", "message", "tool", "artifact", "system"}:
         return value
@@ -40,8 +43,11 @@ def timeline_item_type(raw: Mapping[str, Any]) -> str:
 
 
 def timeline_item_status(raw: Mapping[str, Any]) -> str:
-    value = timeline_raw_status(raw)
-    if not isinstance(value, str) or not value:
+    return timeline_item_status_from_value(timeline_raw_status(raw))
+
+
+def timeline_item_status_from_value(value: str | None) -> str:
+    if not value:
         return "done"
     if value in {"inProgress", "in_progress"}:
         return "running"
@@ -64,10 +70,19 @@ def timeline_item_role(raw: Mapping[str, Any]) -> str | None:
     value = raw.get("role")
     if isinstance(value, str) and value:
         return value
-    item_type = raw.get("type")
-    if item_type == "reasoning":
+    raw_type = raw.get("type")
+    return timeline_item_role_from_values(
+        raw_type=raw_type if isinstance(raw_type, str) else "unknown",
+        role=None,
+    )
+
+
+def timeline_item_role_from_values(raw_type: str, role: str | None) -> str | None:
+    if role:
+        return role
+    if raw_type == "reasoning":
         return "system"
-    if item_type in {
+    if raw_type in {
         "systemMessage",
         "runtimeMessage",
         "turnStart",
@@ -75,11 +90,11 @@ def timeline_item_role(raw: Mapping[str, Any]) -> str | None:
         "error",
     }:
         return "system"
-    if item_type in {"userMessage", "steeringUserMessage"}:
+    if raw_type in {"userMessage", "steeringUserMessage"}:
         return "user"
-    if item_type == "agentMessage":
+    if raw_type == "agentMessage":
         return "assistant"
-    if item_type in {
+    if raw_type in {
         "commandExecution",
         "function_call",
         "function_call_output",

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 from collections.abc import Mapping
 from typing import Any
 
@@ -52,8 +51,10 @@ class CodexTimelineAccumulator:
         projection = self._attach_client_message_id(
             session_id, external_session_id, projection
         )
-        raw = projection.to_legacy_raw()
-        item_id = codex_timeline.timeline_item_id(raw, external_session_id, 0)
+        item_id = projection.item_id(
+            external_session_id=external_session_id,
+            fallback_index=0,
+        )
         previous = self._projection_by_id.get(item_id)
         merged = projection
         if event.event_type == "item/agentMessage/delta":
@@ -115,7 +116,7 @@ class CodexTimelineAccumulator:
         ) or codex_sessions.turn_id_from_result(dict(params))
         items: list[RuntimeTimelineItem] = []
         for index, raw_item in enumerate(codex_timeline.raw_timeline_items(turn)):
-            raw = copy.deepcopy(raw_item)
+            raw = dict(raw_item)
             if (
                 turn_id is not None
                 and codex_timeline.timeline_item_turn_id(raw) is None
@@ -125,8 +126,10 @@ class CodexTimelineAccumulator:
             projection = self._attach_client_message_id(
                 session_id, external_session_id, projection
             )
-            raw = projection.to_legacy_raw()
-            item_id = codex_timeline.timeline_item_id(raw, external_session_id, index)
+            item_id = projection.item_id(
+                external_session_id=external_session_id,
+                fallback_index=index,
+            )
             self._projection_by_id[item_id] = projection
             items.append(
                 self._runtime_item(
@@ -147,9 +150,9 @@ class CodexTimelineAccumulator:
         event: str,
         fallback_index: int = 0,
     ) -> RuntimeTimelineItem:
-        raw_dict = projection.to_legacy_raw()
-        item_id = codex_timeline.timeline_item_id(
-            raw_dict, external_session_id, fallback_index
+        item_id = projection.item_id(
+            external_session_id=external_session_id,
+            fallback_index=fallback_index,
         )
         order_seq = self._order_by_id.get(item_id)
         if order_seq is None:
@@ -172,11 +175,13 @@ class CodexTimelineAccumulator:
     ) -> codex_timeline.CodexTimelineProjection:
         if self._pending_messages is None:
             return projection
-        raw = projection.to_legacy_raw()
-        client_message_id = self._pending_messages.attach_to_raw_item(
+        client_message_id = self._pending_messages.attach_to_item(
             session_id=session_id,
             external_session_id=external_session_id,
-            raw=raw,
+            raw_type=projection.raw_type,
+            role=projection.effective_role(),
+            text=projection.pending_message_text(),
+            turn_id=projection.turn_id,
         )
         if client_message_id is None:
             return projection
