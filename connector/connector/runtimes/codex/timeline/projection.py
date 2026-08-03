@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
-from connector.runtime_protocol import RuntimeTimelineItem
+from connector.runtime_protocol import RuntimeTimelineItem, TimelineSource
 from connector.runtimes.codex.domain.sessions import (
     first_string_from_mapping,
     turn_id_from_result,
@@ -18,6 +18,13 @@ from connector.runtimes.codex.timeline.identity import (
     derived_key,
     native_item_id,
     timeline_item_id,
+)
+from connector.runtimes.codex.timeline.items import (
+    CodexTimelineItem,
+    MappingTimelineContent,
+    timeline_item_status_from_string,
+    timeline_item_type_from_string,
+    timeline_role_from_string,
 )
 
 
@@ -58,6 +65,36 @@ class CodexTimelineProjection:
 
     def with_status(self, status: str) -> CodexTimelineProjection:
         return replace(self, status=status)
+
+    def to_codex_timeline_item(
+        self,
+        external_session_id: str,
+        fallback_index: int,
+        event: str,
+    ) -> CodexTimelineItem:
+        raw = self.to_legacy_raw()
+        item_type = timeline_item_type(raw)
+        status = timeline_item_status(raw)
+        role = timeline_item_role(raw)
+        native_type = timeline_raw_type(raw)
+        client_message_id = client_message_id_from_raw(raw)
+        return CodexTimelineItem(
+            id=timeline_item_id(raw, external_session_id, fallback_index),
+            type=timeline_item_type_from_string(item_type),
+            status=timeline_item_status_from_string(status),
+            role=timeline_role_from_string(role),
+            turn_id=timeline_item_turn_id(raw),
+            content=MappingTimelineContent.from_mapping(timeline_item_content(raw)),
+            source=TimelineSource(runtime="codex"),
+            revision=timeline_item_revision(raw),
+            native_item_type=native_type,
+            native_item_id=native_item_id(raw),
+            external_session_id=external_session_id,
+            event=event,
+            derived_key=derived_key(raw, fallback_index),
+            client_message_id=client_message_id,
+            metadata={"raw": raw},
+        )
 
     def to_legacy_raw(self) -> dict[str, Any]:
         raw: dict[str, Any] = {
@@ -132,6 +169,19 @@ def timeline_projection_from_raw(raw: Mapping[str, Any]) -> CodexTimelineProject
     )
 
 
+def timeline_item_from_projection(
+    projection: CodexTimelineProjection,
+    external_session_id: str,
+    fallback_index: int,
+    event: str,
+) -> CodexTimelineItem:
+    return projection.to_codex_timeline_item(
+        external_session_id=external_session_id,
+        fallback_index=fallback_index,
+        event=event,
+    )
+
+
 def timeline_items_from_thread(
     session_id: str,
     external_session_id: str,
@@ -148,43 +198,14 @@ def timeline_items_from_thread(
                 external_session_id=external_session_id,
                 raw=raw,
             )
-        item_id = timeline_item_id(raw, external_session_id, index)
-        content = timeline_item_content(raw)
-        source = {
-            "runtime": "codex",
-            "event": "thread/read",
-            "threadId": external_session_id,
-            "rawType": raw.get("type"),
-            "derivedKey": derived_key(raw, index),
-        }
-        client_message_id = client_message_id_from_raw(raw)
-        if client_message_id is not None:
-            source["clientMessageId"] = client_message_id
-        item_type = timeline_item_type(raw)
-        status = timeline_item_status(raw)
-        role = timeline_item_role(raw)
+        codex_item = timeline_item_from_projection(
+            timeline_projection_from_raw(raw),
+            external_session_id=external_session_id,
+            fallback_index=index,
+            event="thread/read",
+        )
         items.append(
-            RuntimeTimelineItem(
-                id=item_id,
-                session_id=session_id,
-                type=item_type,
-                status=status,
-                order_seq=index,
-                content_hash=content_hash(
-                    {
-                        "type": item_type,
-                        "status": status,
-                        "role": role,
-                        "content": content,
-                    }
-                ),
-                role=role,
-                turn_id=timeline_item_turn_id(raw),
-                content=content,
-                source=source,
-                revision=timeline_item_revision(raw),
-                metadata={"raw": raw},
-            )
+            codex_item.to_platform_item(session_id=session_id, order_seq=index)
         )
     return tuple(items)
 

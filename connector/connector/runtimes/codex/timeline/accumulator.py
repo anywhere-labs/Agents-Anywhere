@@ -11,10 +11,6 @@ from connector.runtimes.codex.domain.pending_messages import (
     PendingClientMessageRegistry,
 )
 from connector.runtimes.codex.sdk.events import CodexSdkEvent
-from connector.runtimes.codex.timeline.identity import (
-    client_message_id_from_raw,
-    derived_key,
-)
 
 
 class CodexTimelineAccumulator:
@@ -160,43 +156,13 @@ class CodexTimelineAccumulator:
             order_seq = self._next_order
             self._next_order += 1
             self._order_by_id[item_id] = order_seq
-        content = codex_timeline.timeline_item_content(raw_dict)
-        item_type = codex_timeline.timeline_item_type(raw_dict)
-        status = codex_timeline.timeline_item_status(raw_dict)
-        role = codex_timeline.timeline_item_role(raw_dict)
-        return RuntimeTimelineItem(
-            id=item_id,
-            session_id=session_id,
-            type=item_type,
-            status=status,
-            order_seq=order_seq,
-            content_hash=codex_timeline.content_hash(
-                {
-                    "type": item_type,
-                    "status": status,
-                    "role": role,
-                    "content": content,
-                }
-            ),
-            role=role,
-            turn_id=codex_timeline.timeline_item_turn_id(raw_dict),
-            content=content,
-            source={
-                "runtime": "codex",
-                "event": event,
-                "threadId": external_session_id,
-                "rawType": raw_dict.get("type"),
-                "itemId": raw_dict.get("id") or raw_dict.get("itemId"),
-                "derivedKey": derived_key(raw_dict, fallback_index),
-                **(
-                    {"clientMessageId": client_message_id}
-                    if (client_message_id := client_message_id_from_raw(raw_dict))
-                    else {}
-                ),
-            },
-            revision=codex_timeline.timeline_item_revision(raw_dict),
-            metadata={"raw": raw_dict},
+        codex_item = codex_timeline.timeline_item_from_projection(
+            projection=projection,
+            external_session_id=external_session_id,
+            fallback_index=fallback_index,
+            event=event,
         )
+        return codex_item.to_platform_item(session_id=session_id, order_seq=order_seq)
 
     def _attach_client_message_id(
         self,

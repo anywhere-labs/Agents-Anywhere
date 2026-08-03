@@ -20,6 +20,7 @@ TimelineItemType = Literal[
 TimelineItemStatus = Literal[
     "pending",
     "inProgress",
+    "running",
     "done",
     "failed",
     "cancelled",

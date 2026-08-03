@@ -18,7 +18,12 @@ from openai_codex.models import (
     TurnCompletedNotification,
 )
 
-from connector.runtime_protocol import RuntimeConfig, SessionNotice
+from connector.runtime_protocol import (
+    MessageTimelineContent,
+    RuntimeConfig,
+    SessionNotice,
+    TimelineSource,
+)
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex.domain.catalogs import (
     model_catalog_from_codex_items,
@@ -41,6 +46,43 @@ from connector.runtimes.codex.sdk.runtime_client import (
     CodexTurnResult,
 )
 from connector.runtimes.codex.sdk.shapes import notification_dict, thread_ref
+from connector.runtimes.codex.timeline.items import CodexTimelineItem
+
+
+def test_codex_timeline_item_maps_native_type_to_platform_parent_type() -> None:
+    codex_item = CodexTimelineItem(
+        id="item_agent",
+        type="message",
+        status="done",
+        role="assistant",
+        turn_id="turn_1",
+        content=MessageTimelineContent(text="hello"),
+        source=TimelineSource(runtime="codex"),
+        native_item_type="agentMessage",
+        native_item_id="native_agent",
+        external_session_id="thread_1",
+        event="thread/read",
+        derived_key="agentMessage-native_agent",
+        client_message_id="cm_1",
+    )
+
+    platform_item = codex_item.to_platform_item(session_id="sess_1", order_seq=3)
+
+    assert platform_item.type == "message"
+    assert platform_item.content == {
+        "kind": "markdown",
+        "text": "hello",
+        "format": "markdown",
+    }
+    assert platform_item.source == {
+        "runtime": "codex",
+        "event": "thread/read",
+        "threadId": "thread_1",
+        "rawType": "agentMessage",
+        "itemId": "native_agent",
+        "derivedKey": "agentMessage-native_agent",
+        "clientMessageId": "cm_1",
+    }
 
 
 class FakeCodexClient:

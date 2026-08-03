@@ -6,6 +6,10 @@ from connector.runtimes.codex.timeline.identity import (
     native_item_id,
     timeline_item_id,
 )
+from connector.runtimes.codex.timeline.items import (
+    CodexTimelineItem,
+    MappingTimelineContent,
+)
 from connector.runtimes.codex.timeline.projection import (
     CodexTimelineProjection,
     content_hash,
@@ -14,6 +18,7 @@ from connector.runtimes.codex.timeline.projection import (
     raw_timeline_items,
     text_from_value,
     timeline_item_content,
+    timeline_item_from_projection,
     timeline_item_revision,
     timeline_item_role,
     timeline_item_status,
@@ -27,7 +32,9 @@ from connector.runtimes.codex.timeline.projection import (
 )
 
 __all__ = [
+    "CodexTimelineItem",
     "CodexTimelineProjection",
+    "MappingTimelineContent",
     "client_message_id_from_raw",
     "content_hash",
     "derived_key",
@@ -37,6 +44,7 @@ __all__ = [
     "raw_timeline_items",
     "text_from_value",
     "timeline_item_content",
+    "timeline_item_from_projection",
     "timeline_item_id",
     "timeline_item_revision",
     "timeline_item_role",
