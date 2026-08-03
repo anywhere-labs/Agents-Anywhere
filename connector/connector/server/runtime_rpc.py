@@ -9,26 +9,14 @@ from connector.runtime_protocol import (
 )
 from connector.server.runtime_rpc_params import (
     int_param,
-    optional_mapping,
     optional_string,
-    required_action_id,
-    required_command,
-    required_content,
-    required_notice_id,
     required_runtime_id,
-    required_session_id,
-    runtime_attachments,
     runtime_config,
-    runtime_selections,
-    string_tuple,
 )
 from connector.server.runtime_rpc_payloads import (
     agent_inventory_payload,
-    command_result_payload,
     model_catalog_payload,
-    operation_result_payload,
     permission_catalog_payload,
-    runtime_command_payload,
     runtime_config_payload,
     runtime_config_schema_payload,
 )
@@ -36,6 +24,16 @@ from connector.server.runtime_session_rpc import (
     discover_sessions,
     read_session_state,
     sync_session_snapshot,
+)
+from connector.server.runtime_turn_rpc import (
+    dispatch_interaction_respond,
+    dispatch_interrupt,
+    dispatch_session_command_execute,
+    dispatch_session_commands,
+    dispatch_session_create,
+    dispatch_session_selections_update,
+    dispatch_turn_start,
+    dispatch_turn_steer,
 )
 
 
@@ -138,7 +136,7 @@ class RuntimeRpcHandler:
                 params,
             )
         if method == "session.create":
-            return await self._dispatch_session_create(
+            return await dispatch_session_create(
                 self._resolve_agent_runtime(params),
                 params,
             )
@@ -155,37 +153,37 @@ class RuntimeRpcHandler:
                 params,
             )
         if method == "session.selections.update":
-            return await self._dispatch_session_selections_update(
+            return await dispatch_session_selections_update(
                 self._resolve_agent_runtime(params),
                 params,
             )
         if method == "session.commands":
-            return await self._dispatch_session_commands(
+            return await dispatch_session_commands(
                 self._resolve_agent_runtime(params),
                 params,
             )
         if method == "session.command.execute":
-            return await self._dispatch_session_command_execute(
+            return await dispatch_session_command_execute(
                 self._resolve_agent_runtime(params),
                 params,
             )
         if method == "interaction.respond":
-            return await self._dispatch_interaction_respond(
+            return await dispatch_interaction_respond(
                 self._resolve_agent_runtime(params),
                 params,
             )
         if method == "turn.start":
-            return await self._dispatch_turn_start(
+            return await dispatch_turn_start(
                 self._resolve_agent_runtime(params),
                 params,
             )
         if method == "turn.steer":
-            return await self._dispatch_turn_steer(
+            return await dispatch_turn_steer(
                 self._resolve_agent_runtime(params),
                 params,
             )
         if method == "turn.interrupt":
-            return await self._dispatch_interrupt(
+            return await dispatch_interrupt(
                 self._resolve_agent_runtime(params),
                 params,
             )
@@ -200,111 +198,3 @@ class RuntimeRpcHandler:
         if not isinstance(runtime_id, str) or not runtime_id:
             raise ValueError("runtime is required")
         return self.agent_runtime_supervisor.resolve_runtime(runtime_id)
-
-    async def _dispatch_session_create(
-        self,
-        runtime: AgentRuntime,
-        params: dict[str, Any],
-    ) -> dict[str, Any]:
-        result = await runtime.create_and_start_session(
-            required_session_id(params),
-            required_content(params),
-            optional_string(params.get("title")),
-            optional_string(params.get("cwd")),
-            runtime_selections(params),
-            runtime_attachments(params),
-            optional_string(params.get("clientMessageId")),
-        )
-        return operation_result_payload(result)
-
-    async def _dispatch_session_selections_update(
-        self,
-        runtime: AgentRuntime,
-        params: dict[str, Any],
-    ) -> dict[str, Any]:
-        result = await runtime.update_session_selections(
-            required_session_id(params),
-            optional_string(params.get("externalSessionId")),
-            runtime_selections(params),
-        )
-        return operation_result_payload(result)
-
-    async def _dispatch_turn_start(
-        self,
-        runtime: AgentRuntime,
-        params: dict[str, Any],
-    ) -> dict[str, Any]:
-        result = await runtime.start_turn(
-            required_session_id(params),
-            optional_string(params.get("externalSessionId")),
-            required_content(params),
-            runtime_attachments(params),
-            optional_string(params.get("clientMessageId")),
-        )
-        return operation_result_payload(result)
-
-    async def _dispatch_turn_steer(
-        self,
-        runtime: AgentRuntime,
-        params: dict[str, Any],
-    ) -> dict[str, Any]:
-        result = await runtime.steer_turn(
-            required_session_id(params),
-            optional_string(params.get("externalSessionId")),
-            required_content(params),
-            runtime_attachments(params),
-            optional_string(params.get("clientMessageId")),
-        )
-        return operation_result_payload(result)
-
-    async def _dispatch_interrupt(
-        self,
-        runtime: AgentRuntime,
-        params: dict[str, Any],
-    ) -> dict[str, Any]:
-        result = await runtime.interrupt_turn(
-            required_session_id(params),
-            optional_string(params.get("externalSessionId")),
-            optional_string(params.get("reason")),
-        )
-        return operation_result_payload(result)
-
-    async def _dispatch_session_commands(
-        self,
-        runtime: AgentRuntime,
-        params: dict[str, Any],
-    ) -> dict[str, Any]:
-        commands = await runtime.list_commands(
-            session_id=required_session_id(params),
-            external_session_id=optional_string(params.get("externalSessionId")),
-            query=optional_string(params.get("query")),
-            limit=int_param(params, "limit", 50),
-        )
-        return {"commands": [runtime_command_payload(command) for command in commands]}
-
-    async def _dispatch_session_command_execute(
-        self,
-        runtime: AgentRuntime,
-        params: dict[str, Any],
-    ) -> dict[str, Any]:
-        result = await runtime.execute_command(
-            session_id=required_session_id(params),
-            command=required_command(params),
-            external_session_id=optional_string(params.get("externalSessionId")),
-            raw=optional_string(params.get("raw")),
-            args=string_tuple(params.get("args") or ()),
-        )
-        return command_result_payload(result)
-
-    async def _dispatch_interaction_respond(
-        self,
-        runtime: AgentRuntime,
-        params: dict[str, Any],
-    ) -> dict[str, Any]:
-        result = await runtime.respond_interaction(
-            session_id=required_session_id(params),
-            notice_id=required_notice_id(params),
-            action_id=required_action_id(params),
-            input_data=optional_mapping(params.get("inputData")),
-        )
-        return operation_result_payload(result)

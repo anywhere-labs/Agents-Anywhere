@@ -165,6 +165,24 @@ def test_runtime_rpc_handler_keeps_session_sync_in_session_coordinator() -> None
     assert "notice_upsert(" in session_rpc_source
 
 
+def test_runtime_rpc_handler_keeps_turn_actions_in_turn_coordinator() -> None:
+    runtime_rpc_source = (CONNECTOR_PACKAGE / "server" / "runtime_rpc.py").read_text(
+        encoding="utf-8"
+    )
+    turn_rpc_source = (CONNECTOR_PACKAGE / "server" / "runtime_turn_rpc.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "create_and_start_session(" not in runtime_rpc_source
+    assert "start_turn(" not in runtime_rpc_source
+    assert "steer_turn(" not in runtime_rpc_source
+    assert "interrupt_turn(" not in runtime_rpc_source
+    assert "respond_interaction(" not in runtime_rpc_source
+    assert "create_and_start_session(" in turn_rpc_source
+    assert "start_turn(" in turn_rpc_source
+    assert "respond_interaction(" in turn_rpc_source
+
+
 def test_backend_rpc_client_delegates_runtime_sync_to_runner() -> None:
     client_source = (CONNECTOR_PACKAGE / "server" / "client.py").read_text(
         encoding="utf-8"
