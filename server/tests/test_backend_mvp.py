@@ -1189,6 +1189,14 @@ def dashboard_ws_ticket(
     return response.json()["ticket"]
 
 
+def receive_session_ws_event(ws: Any, event_type: str, attempts: int = 5) -> dict[str, Any]:
+    for _ in range(attempts):
+        event = ws.receive_json()
+        if event.get("type") == event_type:
+            return event
+    raise AssertionError(f"session websocket did not receive {event_type}")
+
+
 def test_connectors_can_be_listed_without_sessions(tmp_path):
     client = make_client(tmp_path)
     headers = auth_headers(client)
@@ -5648,6 +5656,93 @@ def test_session_ws_projects_codex_timeline_sync_as_incremental_update_without_r
         ]
         assert timeline_events
         assert timeline_events[0]["payload"]["item"]["content"]["text"] == "synced over ws"
+
+
+def test_session_ws_pushes_compact_item_completion_update(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    ticket = ws_ticket(client, session_id, headers)
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "notifications": [
+                    {
+                        "method": "timeline.itemUpsert",
+                        "params": {
+                            "sessionId": session_id,
+                            "item": {
+                                "id": "context_compaction_thr_1",
+                                "sessionId": session_id,
+                                "turnId": None,
+                                "type": "system",
+                                "status": "running",
+                                "role": "system",
+                                "content": {"kind": "compact", "state": "started"},
+                                "source": {
+                                    "runtime": "codex",
+                                    "sessionId": "thr_1",
+                                    "event": "thread/compact/started",
+                                    "itemId": "context_compaction_thr_1",
+                                    "itemType": "contextCompaction",
+                                },
+                                "orderSeq": 1,
+                                "revision": 1,
+                                "contentHash": "sha256:compact-started",
+                            },
+                        },
+                    }
+                ],
+            },
+        )
+        assert response.status_code == 200, response.text
+        created = receive_session_ws_event(ws, "timeline.item_created")
+        assert created["type"] == "timeline.item_created"
+        assert created["payload"]["item"]["content"]["state"] == "started"
+
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "notifications": [
+                    {
+                        "method": "timeline.itemUpsert",
+                        "params": {
+                            "sessionId": session_id,
+                            "item": {
+                                "id": "context_compaction_thr_1",
+                                "sessionId": session_id,
+                                "turnId": "turn_compact",
+                                "type": "system",
+                                "status": "done",
+                                "role": "system",
+                                "content": {"kind": "compact", "state": "completed"},
+                                "source": {
+                                    "runtime": "codex",
+                                    "sessionId": "thr_1",
+                                    "turnId": "turn_compact",
+                                    "event": "thread/compacted",
+                                    "itemId": "context_compaction_thr_1",
+                                    "itemType": "contextCompaction",
+                                },
+                                "orderSeq": 1,
+                                "revision": 1,
+                                "contentHash": "sha256:compact-completed",
+                            },
+                        },
+                    }
+                ],
+            },
+        )
+        assert response.status_code == 200, response.text
+        updated = receive_session_ws_event(ws, "timeline.item_updated")
+        assert updated["type"] == "timeline.item_updated"
+        assert updated["payload"]["item"]["id"] == "context_compaction_thr_1"
+        assert updated["payload"]["item"]["status"] == "done"
+        assert updated["payload"]["item"]["content"]["state"] == "completed"
 
 
 def test_unchanged_large_codex_timeline_sync_does_not_request_another_snapshot(tmp_path):

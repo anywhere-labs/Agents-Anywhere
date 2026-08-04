@@ -284,11 +284,14 @@ def _timeline_item_from_input(
     updated_seq: int,
     now: str,
     order_seq: int | None = None,
+    revision: int | None = None,
 ) -> TimelineItem:
     data = item.model_dump()
     data["updatedSeq"] = updated_seq
     if order_seq is not None:
         data["orderSeq"] = order_seq
+    if revision is not None:
+        data["revision"] = revision
     data["createdAt"] = item.createdAt or now
     data["updatedAt"] = item.updatedAt or now
     return TimelineItem.model_validate(data)

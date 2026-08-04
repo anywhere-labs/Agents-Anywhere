@@ -252,6 +252,7 @@ class TimelineRepositoryMixin:
                         updated_seq=updated_seq,
                         now=now,
                         order_seq=order_seq,
+                        revision=_upserted_timeline_revision(item, existing),
                     )
                     await self.timeline.upsert_one(conn, result)
         return result
@@ -409,3 +410,12 @@ class TimelineRepositoryMixin:
                     await conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": lock_key})
                 except Exception:  # noqa: BLE001, S110 — broad on purpose for cleanup
                     pass
+
+
+def _upserted_timeline_revision(
+    item: TimelineItemIn,
+    existing: TimelineItem | None,
+) -> int:
+    if existing is None:
+        return item.revision
+    return max(item.revision, existing.revision + 1)
