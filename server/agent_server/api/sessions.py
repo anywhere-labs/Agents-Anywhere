@@ -35,10 +35,12 @@ from agent_server.core.models import (
     SessionCreateRequest,
     SessionPatchRequest,
     SessionResponse,
+    SessionRuntimeState,
     SessionRuntimeStateResponse,
     SessionSelectionPatchRequest,
     SessionSelectionPatchResponse,
     SessionStateResponse,
+    SessionView,
     SteerTurnRequest,
     TakeoverResponse,
 )
@@ -122,18 +124,26 @@ async def _publish_session_protocol_update(
         notice_id = getattr(notice, "noticeId", None)
         if isinstance(notice_id, str):
             notices_by_id[notice_id] = notice.model_dump(mode="json")
+    session = await db.get_session(session_id)
+    runtime_state = await read_runtime_state_live(
+        db,
+        manager,
+        session,
+        user_id=None,
+    )
+    session = session_with_runtime_state(session, runtime_state)
     session, _runtime_capabilities, effective_capabilities = (
         await project_session_capabilities(
             db,
             manager,
-            await db.get_session(session_id),
+            session,
         )
     )
     envelope: dict[str, Any] = {
         "sessionId": session_id,
         "nextSeq": next_seq,
         "session": session.model_dump(mode="json"),
-        "state": (await db.get_session_runtime_state(session_id)).model_dump(mode="json"),
+        "state": runtime_state.model_dump(mode="json"),
         "effectiveCapabilities": effective_capabilities.model_dump(mode="json"),
         "notices": list(notices_by_id.values()),
     }
@@ -146,7 +156,7 @@ async def _best_effort_publish_session_protocol_update(
     manager: ConnectorRpcManager,
     session_id: str,
     *,
-    user_id: str,
+    user_id: str | None,
 ) -> None:
     try:
         await db.get_session(session_id, user_id=user_id)
@@ -366,9 +376,16 @@ async def session_runtime_state(
     session_id: str,
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
+    manager: ConnectorRpcManager = Depends(get_rpc),
 ) -> SessionRuntimeStateResponse:
     try:
-        state = await db.get_session_runtime_state(session_id, user_id=user_id)
+        session = await db.get_session(session_id, user_id=user_id)
+        state = await read_runtime_state_live(
+            db,
+            manager,
+            session,
+            user_id=user_id,
+        )
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
     return SessionRuntimeStateResponse(state=state, serverTime=utc_now())
@@ -437,7 +454,13 @@ async def session_state(
         approvals = pending_approvals_from_notices(
             await db.list_open_notices(session_id)
         )
-        runtime_state = await db.get_session_runtime_state(session_id, user_id=user_id)
+        runtime_state = await read_runtime_state_live(
+            db,
+            manager,
+            session,
+            user_id=user_id,
+        )
+        session = session_with_runtime_state(session, runtime_state)
         next_seq = await db.get_session_seq(session_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
@@ -473,7 +496,21 @@ async def session_snapshot(
         items, has_more = await db.list_timeline_latest(session_id=session_id, limit=limit)
         notices = await db.list_open_notices(session_id)
         approvals = pending_approvals_from_notices(notices)
-        runtime_state = await db.get_session_runtime_state(session_id, user_id=user_id)
+        runtime_state = await read_runtime_state_live(
+            db,
+            manager,
+            session,
+            user_id=user_id,
+        )
+        session = session_with_runtime_state(session, runtime_state)
+        _, _runtime_capabilities, effective_capabilities = (
+            await project_session_capabilities(
+                db,
+                manager,
+                session,
+                user_id=user_id,
+            )
+        )
         next_seq = await db.get_session_seq(session_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
@@ -912,3 +949,110 @@ async def sync_session(
     except ConnectorRpcError as exc:
         raise HTTPException(status_code=502, detail=exc.message or exc.code) from exc
     return RpcResponsePayload(ok=True, result=result)
+
+
+async def read_runtime_state_live(
+    db: Store,
+    manager: ConnectorRpcManager,
+    session: SessionView,
+    *,
+    user_id: str | None,
+) -> SessionRuntimeState:
+    """Read the latest runtime-owned session state.
+
+    Side effects:
+    - may perform connector RPC to the owning runtime;
+    - does not rely on DB status as the source of runtime truth.
+    """
+
+    if await manager.is_online(session.connectorId) and await connector_supports_runtime_rpc(
+        db,
+        session,
+        user_id=user_id,
+    ):
+        state = await read_runtime_state_from_connector(manager, session)
+        if state is not None:
+            return state
+    return await db.get_session_runtime_state(session.id, user_id=user_id)
+
+
+async def connector_supports_runtime_rpc(
+    db: Store,
+    session: SessionView,
+    *,
+    user_id: str,
+) -> bool:
+    capabilities = await db.get_protocol_capabilities(
+        session.connectorId,
+        user_id=user_id,
+    )
+    raw_items = capabilities.get("capabilities")
+    return isinstance(raw_items, list) and len(raw_items) > 0
+
+
+async def read_runtime_state_from_connector(
+    manager: ConnectorRpcManager,
+    session: SessionView,
+) -> SessionRuntimeState | None:
+    params: dict[str, Any] = {
+        "sessionId": session.id,
+        "runtime": session.runtime,
+    }
+    if session.externalSessionId:
+        params["externalSessionId"] = session.externalSessionId
+    try:
+        result = await manager.request(
+            session.connectorId,
+            "session.state",
+            params,
+            timeout=10,
+        )
+    except (ConnectorOfflineError, ConnectorRpcError, TimeoutError):
+        return None
+    if not isinstance(result, dict):
+        return None
+    raw_state = result.get("state")
+    if not isinstance(raw_state, dict):
+        return None
+    return runtime_state_from_rpc_payload(raw_state, session)
+
+
+def runtime_state_from_rpc_payload(
+    raw_state: dict[str, Any],
+    session: SessionView,
+) -> SessionRuntimeState:
+    now = utc_now()
+    return SessionRuntimeState.model_validate(
+        {
+            "sessionId": raw_state.get("sessionId") or session.id,
+            "runtime": raw_state.get("runtime") or session.runtime,
+            "externalSessionId": raw_state.get("externalSessionId")
+            or session.externalSessionId,
+            "status": raw_state.get("status") or "idle",
+            "selections": raw_state.get("selections")
+            if isinstance(raw_state.get("selections"), dict)
+            else {},
+            "statusReason": raw_state.get("statusReason"),
+            "error": raw_state.get("error")
+            if isinstance(raw_state.get("error"), dict)
+            else None,
+            "metadata": raw_state.get("metadata")
+            if isinstance(raw_state.get("metadata"), dict)
+            else {},
+            "updatedSeq": session.updatedSeq,
+            "createdAt": now,
+            "updatedAt": now,
+        }
+    )
+
+
+def session_with_runtime_state(
+    session: SessionView,
+    state: SessionRuntimeState,
+) -> SessionView:
+    return session.model_copy(
+        update={
+            "externalSessionId": state.externalSessionId or session.externalSessionId,
+            "status": state.status,
+        }
+    )

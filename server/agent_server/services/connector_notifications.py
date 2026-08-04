@@ -18,7 +18,6 @@ from agent_server.services.notices import (
     upsert_execution_error_interaction,
 )
 from agent_server.services.repository_ports import ConnectorNotificationRepository
-from agent_server.services.session_states import SessionStateService
 from agent_server.services.timeline_effects import (
     close_waiting_approval_items_for_finished_turn,
 )
@@ -188,14 +187,6 @@ class SessionNotificationHandler:
             )
             if archived is not None and session.archived != archived:
                 session = await self._store.set_session_archived(session.id, archived)
-            if method == "session.updated" and _has_runtime_state_fields(params):
-                await self._store.upsert_session_runtime_state(
-                    session_id=session.id,
-                    runtime=params.get("runtime") or "codex",
-                    external_session_id=_string_or_none(external_session_id),
-                    status=_v2_session_status(params.get("status")),
-                    selections=_selections_param(params),
-                )
             return IngestEffect(session_id=session.id, session_changed=True)
         except KeyError:
             session = await self._store.upsert_connector_session(
@@ -211,14 +202,6 @@ class SessionNotificationHandler:
             )
             if archived is not None and session.archived != archived:
                 session = await self._store.set_session_archived(session.id, archived)
-            if method == "session.updated" and _has_runtime_state_fields(params):
-                await self._store.upsert_session_runtime_state(
-                    session_id=session.id,
-                    runtime=params.get("runtime") or "codex",
-                    external_session_id=_string_or_none(external_session_id),
-                    status=_v2_session_status(params.get("status")),
-                    selections=_selections_param(params),
-                )
             return IngestEffect(session_id=session.id, session_changed=True)
 
 
@@ -249,36 +232,25 @@ class SessionStateNotificationHandler:
             except KeyError:
                 pass
         try:
-            await self._store.upsert_session_runtime_state(
-                session_id=session_id,
-                runtime=runtime,
-                external_session_id=external_session_id,
-                status=_v2_session_status(params.get("status")),
-                selections=_selections_param(params),
-                status_reason=_string_or_none(params.get("statusReason")),
-                error=_object_or_none(params.get("error")),
-                metadata=_object_or_none(params.get("metadata")),
-            )
+            await self._store.get_session(session_id)
         except KeyError:
             session = await self._store.upsert_connector_session(
                 connector_id=connector_id,
                 session_id=session_id,
                 runtime=runtime,
                 external_session_id=external_session_id,
-                status=_v2_session_status(params.get("status")),
-            )
-            await self._store.upsert_session_runtime_state(
-                session_id=session.id,
-                runtime=runtime,
-                external_session_id=external_session_id,
-                status=_v2_session_status(params.get("status")),
-                selections=_selections_param(params),
-                status_reason=_string_or_none(params.get("statusReason")),
-                error=_object_or_none(params.get("error")),
-                metadata=_object_or_none(params.get("metadata")),
             )
             session_id = session.id
-        return IngestEffect(session_id=session_id, session_changed=True)
+        return IngestEffect(
+            session_id=session_id,
+            runtime_state=runtime_state_from_session_state_params(
+                session_id=session_id,
+                runtime=runtime,
+                external_session_id=external_session_id,
+                params=params,
+            ),
+            session_changed=True,
+        )
 
 
 class TimelineNotificationHandler:
@@ -286,7 +258,6 @@ class TimelineNotificationHandler:
 
     def __init__(self, store: ConnectorNotificationRepository) -> None:
         self._store = store
-        self._session_states = SessionStateService(store)
 
     async def apply(
         self,
@@ -317,7 +288,6 @@ class TimelineNotificationHandler:
             return IngestEffect()
         items = [_timeline_item_for_session(item, session_id) for item in items]
         items = await _tag_active_run_user_messages(self._store, session_id, items)
-        previous_open_turn_id = await self._store.get_open_turn_id(session_id)
         previous_seq = await self._store.get_session_seq(session_id)
         replace_snapshot = await _should_replace_timeline_snapshot(
             self._store,
@@ -354,20 +324,6 @@ class TimelineNotificationHandler:
                     reason="turn_finished",
                     reconcile=False,
                 )
-        open_turn_id = await self._store.get_open_turn_id(session_id)
-        closed_previous_turn = previous_open_turn_id is not None and any(
-            item.type == "turn.end" and item.turnId == previous_open_turn_id
-            for item in items
-        )
-        if (
-            open_turn_id is not None
-            or closed_previous_turn
-            or any(_timeline_item_is_active_work(item) for item in items)
-        ):
-            await self._session_states.reconcile(
-                session_id,
-                settle_stopping=closed_previous_turn,
-            )
         changed_items = (
             stored_items
             if replace_snapshot
@@ -430,11 +386,6 @@ class TimelineNotificationHandler:
                 )
             await self._store.clear_active_run(session_id)
         affects_run_state = _timeline_item_affects_run_state(item)
-        if affects_run_state:
-            await self._session_states.reconcile(
-                session_id,
-                settle_stopping=item.type == "turn.end",
-            )
         return IngestEffect(
             session_id=session_id,
             item=stored.model_dump(mode="json"),
@@ -456,7 +407,6 @@ class InteractionNotificationHandler:
     ) -> None:
         self._store = store
         self._projections = projections
-        self._session_states = SessionStateService(store)
 
     async def apply(
         self,
@@ -485,7 +435,6 @@ class InteractionNotificationHandler:
                     stored = await self._projections.project_interaction(notice)
                 else:
                     stored = await self._store.upsert_notice(notice)
-                    await self._session_states.reconcile(stored.sessionId)
             except InteractionDomainError as exc:
                 raise NotificationValidationError(
                     "invalid_interaction",
@@ -493,7 +442,6 @@ class InteractionNotificationHandler:
                 ) from exc
         else:
             stored = await self._store.upsert_notice(notice)
-            await self._session_states.reconcile(stored.sessionId)
         return IngestEffect(
             session_id=stored.sessionId,
             session_changed=notice.type == "interaction" or stored.blocking is not None,
@@ -655,6 +603,24 @@ def _has_runtime_state_fields(params: dict[str, Any]) -> bool:
             "selections",
         )
     )
+
+
+def runtime_state_from_session_state_params(
+    session_id: str,
+    runtime: str,
+    external_session_id: str | None,
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "sessionId": session_id,
+        "runtime": runtime,
+        "externalSessionId": external_session_id,
+        "status": _v2_session_status(params.get("status")) or "idle",
+        "selections": _selections_param(params) or {},
+        "statusReason": _string_or_none(params.get("statusReason")),
+        "error": _object_or_none(params.get("error")),
+        "metadata": _object_or_none(params.get("metadata")) or {},
+    }
 
 
 def _timeline_item_for_session(

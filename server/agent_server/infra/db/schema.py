@@ -273,28 +273,6 @@ sessions = Table(
 )
 
 
-session_states = Table(
-    "session_states",
-    metadata,
-    Column(
-        "session_id",
-        Text,
-        ForeignKey("sessions.id", ondelete="CASCADE"),
-        primary_key=True,
-    ),
-    Column("runtime", Text, nullable=False),
-    Column("external_session_id", Text),
-    Column("status", Text, nullable=False),
-    Column("selections_json", Text, nullable=False),
-    Column("status_reason", Text),
-    Column("error_json", Text),
-    Column("metadata_json", Text, nullable=False),
-    Column("updated_seq", Integer, nullable=False),
-    Column("created_at", Text, nullable=False),
-    Column("updated_at", Text, nullable=False),
-)
-
-
 session_active_runs = Table(
     "session_active_runs",
     metadata,

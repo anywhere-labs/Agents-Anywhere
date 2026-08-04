@@ -352,7 +352,7 @@ def test_platform_session_create_without_external_session_is_rejected(tmp_path):
     assert fake_rpc.requests == []
 
 
-def test_session_create_binds_external_session_model_selection_to_state(tmp_path):
+def test_session_create_does_not_persist_external_session_model_selection(tmp_path):
     app = create_app(tmp_path / "test.sqlite3")
     client = TestClient(app)
     headers = auth_headers(client)
@@ -380,10 +380,10 @@ def test_session_create_binds_external_session_model_selection_to_state(tmp_path
     session_id = response.json()["session"]["id"]
     state = client.get(f"/sessions/{session_id}/runtime-state", headers=headers)
     assert state.status_code == 200
-    assert state.json()["state"]["selections"] == {"model": model_selection_id}
+    assert state.json()["state"]["selections"] == {}
 
 
-def test_session_create_binds_external_session_permission_selection_to_state(tmp_path):
+def test_session_create_does_not_persist_external_session_permission_selection(tmp_path):
     app = create_app(tmp_path / "test.sqlite3")
     client = TestClient(app)
     headers = auth_headers(client)
@@ -411,10 +411,10 @@ def test_session_create_binds_external_session_permission_selection_to_state(tmp
     session_id = response.json()["session"]["id"]
     state = client.get(f"/sessions/{session_id}/runtime-state", headers=headers)
     assert state.status_code == 200
-    assert state.json()["state"]["selections"] == {"permission": permission_selection_id}
+    assert state.json()["state"]["selections"] == {}
 
 
-def test_session_create_and_start_preallocates_session_and_runtime_state(tmp_path):
+def test_session_create_and_start_preallocates_session_and_passes_selections(tmp_path):
     app = create_app(tmp_path / "test.sqlite3")
     client = TestClient(app)
     headers = auth_headers(client)
@@ -483,13 +483,68 @@ def test_session_create_and_start_preallocates_session_and_runtime_state(tmp_pat
     ]
     state = client.get(f"/sessions/{session['id']}/runtime-state", headers=headers)
     assert state.status_code == 200
-    assert state.json()["state"]["status"] == "running"
-    assert state.json()["state"]["selections"] == {"model": model_selection_id}
+    assert state.json()["state"]["status"] == "idle"
+    assert state.json()["state"]["selections"] == {}
     active = asyncio.run(client.app.state.store.get_active_run(session["id"]))
     assert active is not None
     assert active["status"] == "running"
     assert active["externalSessionId"] == "thr_create_and_start"
     assert active["turnId"] == "turn_create_and_start"
+
+
+def test_session_state_reads_runtime_status_over_stale_db_status(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    asyncio.run(client.app.state.store.set_session_status(session_id, "running"))
+    asyncio.run(
+        client.app.state.store.update_protocol_capabilities(
+            connector_id,
+            {
+                "revision": 1,
+                "capabilities": [
+                    {
+                        "capabilityId": "session.send_message",
+                        "version": "1",
+                        "scope": "runtime",
+                        "runtime": "codex",
+                    }
+                ],
+            },
+        )
+    )
+
+    class FakeRuntimeStateRpc:
+        async def is_online(self, requested_connector_id: str) -> bool:
+            return requested_connector_id == connector_id
+
+        async def request(
+            self,
+            requested_connector_id: str,
+            method: str,
+            params: dict[str, Any],
+            *,
+            timeout: float = 30,
+        ) -> dict[str, Any]:
+            assert requested_connector_id == connector_id
+            assert method == "session.state"
+            return {
+                "state": {
+                    "sessionId": params["sessionId"],
+                    "runtime": params["runtime"],
+                    "externalSessionId": params.get("externalSessionId"),
+                    "status": "idle",
+                    "selections": {},
+                    "metadata": {"source": "test.runtime"},
+                }
+            }
+
+    client.app.state.rpc = FakeRuntimeStateRpc()
+
+    state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+
+    assert state["session"]["status"] == "idle"
+    assert state["state"]["status"] == "idle"
 
 
 def test_session_create_rejects_legacy_runtime_settings_model_fields(tmp_path):
@@ -679,38 +734,45 @@ def test_session_updated_without_external_id_does_not_clear_existing_external_id
     assert state["session"]["title"] == "Updated without external id"
 
 
-def test_session_state_updated_upserts_runtime_state(tmp_path):
+def test_session_state_updated_pushes_ephemeral_runtime_state(tmp_path):
     client = make_client(tmp_path)
     _connector_id, access_token, session_id, headers = create_connector_and_session(client)
+    ticket = ws_ticket(client, session_id, headers)
 
-    response = client.post(
-        "/connector/ingest",
-        headers={"Authorization": f"Bearer {access_token}"},
-        json={
-            "notifications": [
-                {
-                    "method": "session.state.updated",
-                    "params": {
-                        "sessionId": session_id,
-                        "runtime": "codex",
-                        "status": "running",
-                        "selections": {"model": "sel_model_runtime"},
-                        "statusReason": "tool_call",
-                        "metadata": {"phase": "tool"},
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "notifications": [
+                    {
+                        "method": "session.state.updated",
+                        "params": {
+                            "sessionId": session_id,
+                            "runtime": "codex",
+                            "status": "running",
+                            "selections": {"model": "sel_model_runtime"},
+                            "statusReason": "tool_call",
+                            "metadata": {"phase": "tool"},
+                        },
                     },
-                }
-            ],
-        },
-    )
+                ],
+            },
+        )
+        assert response.status_code == 200, response.text
+        event = ws.receive_json()
 
-    assert response.status_code == 200, response.text
-    state = client.get(f"/sessions/{session_id}/runtime-state", headers=headers)
-    assert state.status_code == 200, state.text
-    body = state.json()["state"]
+    assert event["type"] == "session.status_changed"
+    body = event["payload"]["state"]
+    assert event["payload"]["status"] == "running"
     assert body["status"] == "running"
     assert body["selections"] == {"model": "sel_model_runtime"}
     assert body["statusReason"] == "tool_call"
     assert body["metadata"] == {"phase": "tool"}
+    state = client.get(f"/sessions/{session_id}/runtime-state", headers=headers)
+    assert state.status_code == 200, state.text
+    assert state.json()["state"]["status"] == "idle"
 
 
 def test_session_state_updated_rejects_legacy_selection_fields(tmp_path):
@@ -810,6 +872,7 @@ class FakeLocalRpc:
     def __init__(self) -> None:
         self.requests: list[tuple[str, str, dict[str, Any], float]] = []
         self.terminals: dict[str, dict[str, Any]] = {}
+        self.runtime_states: dict[str, dict[str, Any]] = {}
         self.timeout_terminal_list = False
         self.delay_terminal_close = 0.0
         self.closed_on_resize: set[str] = set()
@@ -903,6 +966,34 @@ class FakeLocalRpc:
             }
         if method == "turn.interrupt":
             return self.interrupt_result
+        if method == "session.state":
+            session_id = params["sessionId"]
+            state = self.runtime_states.get(session_id)
+            if state is None:
+                state = {
+                    "sessionId": session_id,
+                    "runtime": params["runtime"],
+                    "externalSessionId": params.get("externalSessionId"),
+                    "status": "idle",
+                    "selections": {},
+                    "metadata": {},
+                }
+            return {"state": state}
+        if method == "session.selections.update":
+            session_id = params["sessionId"]
+            previous = self.runtime_states.get(session_id, {})
+            previous_selections = previous.get("selections")
+            selections = previous_selections if isinstance(previous_selections, dict) else {}
+            next_state = {
+                "sessionId": session_id,
+                "runtime": params["runtime"],
+                "externalSessionId": params.get("externalSessionId"),
+                "status": previous.get("status") or "idle",
+                "selections": {**selections, **params["selections"]},
+                "metadata": previous.get("metadata") if isinstance(previous.get("metadata"), dict) else {},
+            }
+            self.runtime_states[session_id] = next_state
+            return {"ok": True, "state": next_state}
         if method == "session.commands":
             return {
                 "commands": [
@@ -2518,7 +2609,8 @@ def test_session_snapshot_includes_effective_capabilities(tmp_path):
     connector_id, access_token, session_id, headers = create_connector_and_session(client)
     seed_codex_model_catalog(client.app, connector_id)
     seed_codex_permission_catalog(client.app, connector_id)
-    client.app.state.rpc = FakeLocalRpc()
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
 
     capability_set = {
         "revision": 3,
@@ -2573,21 +2665,20 @@ def test_session_snapshot_includes_effective_capabilities(tmp_path):
     assert idle_body["catalogs"] == {}
     assert idle_body["eventCursor"].startswith("seq:")
 
-    asyncio.run(
-        client.app.state.store.upsert_session_runtime_state(
-            session_id=session_id,
-            runtime="codex",
-            status="running",
-            selections={"model": "sel_model_runtime"},
-        )
-    )
+    fake_rpc.runtime_states[session_id] = {
+        "sessionId": session_id,
+        "runtime": "codex",
+        "externalSessionId": f"thr_{connector_id}_demo",
+        "status": "running",
+        "selections": {"model": "sel_model_runtime"},
+        "metadata": {"source": "test.runtime"},
+    }
     state_snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
     assert state_snapshot.status_code == 200, state_snapshot.text
     state_body = state_snapshot.json()["state"]
     assert state_body["status"] == "running"
     assert state_body["selections"] == {"model": "sel_model_runtime"}
 
-    asyncio.run(client.app.state.store.set_session_status(session_id, "running"))
     running_snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
     assert running_snapshot.status_code == 200, running_snapshot.text
     running_caps = {
@@ -2615,7 +2706,16 @@ def test_session_snapshot_does_not_return_persisted_runtime_catalogs(tmp_path):
 def test_running_tool_item_keeps_session_interruptible(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, session_id, headers = create_connector_and_session(client)
-    client.app.state.rpc = FakeLocalRpc()
+    fake_rpc = FakeLocalRpc()
+    fake_rpc.runtime_states[session_id] = {
+        "sessionId": session_id,
+        "runtime": "codex",
+        "externalSessionId": f"thr_{connector_id}_demo",
+        "status": "running",
+        "selections": {},
+        "metadata": {"source": "test.runtime"},
+    }
+    client.app.state.rpc = fake_rpc
     asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
     client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
 
@@ -2686,7 +2786,7 @@ def test_running_tool_item_keeps_session_interruptible(tmp_path):
 
     interrupt = client.post(f"/sessions/{session_id}/interrupt", headers=headers)
     assert interrupt.status_code == 200, interrupt.text
-    assert client.app.state.rpc.requests[-1][1] == "turn.interrupt"
+    assert any(request[1] == "turn.interrupt" for request in fake_rpc.requests)
 
 
 # ── Delete (detach) ────────────────────────────────────────────────────────
@@ -2715,12 +2815,30 @@ def test_send_message_rejects_model_selection_id(tmp_path):
     assert not any(method == "turn.start" for _, method, _, _ in fake_rpc.requests)
 
 
-def test_patch_session_selections_routes_to_runtime_and_persists_state(tmp_path):
+def test_patch_session_selections_routes_to_runtime_and_reads_live_state(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, session_id, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
     client.app.state.rpc = fake_rpc
     asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    asyncio.run(
+        client.app.state.store.update_protocol_capabilities(
+            connector_id,
+            {
+                "revision": 1,
+                "capabilities": [
+                    {
+                        "capabilityId": "catalog.model",
+                        "scope": "runtime",
+                        "runtime": "codex",
+                        "supported": True,
+                        "available": True,
+                        "allowed": True,
+                    }
+                ],
+            },
+        )
+    )
     client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
 
     response = client.patch(
@@ -2730,7 +2848,7 @@ def test_patch_session_selections_routes_to_runtime_and_persists_state(tmp_path)
     )
 
     assert response.status_code == 200, response.text
-    assert fake_rpc.requests[-1] == (
+    assert (
         connector_id,
         "session.selections.update",
         {
@@ -2740,7 +2858,7 @@ def test_patch_session_selections_routes_to_runtime_and_persists_state(tmp_path)
             "externalSessionId": f"thr_{connector_id}_demo",
         },
         30,
-    )
+    ) in fake_rpc.requests
     state = client.get(f"/sessions/{session_id}/runtime-state", headers=headers)
     assert state.status_code == 200, state.text
     assert state.json()["state"]["selections"] == {
@@ -2756,12 +2874,9 @@ def test_patch_session_selections_routes_to_runtime_and_persists_state(tmp_path)
     )
 
     assert sent.status_code == 200, sent.text
-    assert fake_rpc.requests[-1][1] == "turn.start"
-    params = fake_rpc.requests[-1][2]
-    assert params["selections"] == {
-        "model": "sel_model_live",
-        "permission": "sel_permission_live",
-    }
+    turn_start = next(request for request in fake_rpc.requests if request[1] == "turn.start")
+    params = turn_start[2]
+    assert "selections" not in params
     assert "modelSelectionId" not in params
     assert "permissionSelectionId" not in params
 
@@ -3286,7 +3401,6 @@ def test_interrupt_cancels_blocking_interactions(tmp_path):
     snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers).json()
     assert snapshot["notices"] == []
     assert snapshot["approvals"] == []
-    assert snapshot["session"]["status"] == "stopping"
     notice = asyncio.run(client.app.state.store.get_notice(notice_id))
     assert notice.status == "cancelled"
     assert notice.context["closedReason"] == "interrupt_requested"
@@ -4194,7 +4308,7 @@ def test_user_terminal_resize_removes_terminal_missing_on_connector(tmp_path):
     assert listing.json()["terminals"] == []
 
 
-def test_interrupt_does_not_mark_session_idle_before_turn_end(tmp_path):
+def test_interrupt_does_not_persist_runtime_status(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, _, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
@@ -4206,7 +4320,7 @@ def test_interrupt_does_not_mark_session_idle_before_turn_end(tmp_path):
 
     assert response.status_code == 200, response.text
     state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
-    assert state["session"]["status"] == "stopping"
+    assert state["session"]["status"] == "idle"
 
 
 def test_interaction_respond_carries_runtime(tmp_path):

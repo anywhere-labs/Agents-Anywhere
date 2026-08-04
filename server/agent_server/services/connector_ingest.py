@@ -137,6 +137,7 @@ class ConnectorIngestService:
                 effect.session_id,
                 {
                     "items": [],
+                    "runtime_state": None,
                     "timeline_reset": False,
                     "session": False,
                     "notices": False,
@@ -151,6 +152,8 @@ class ConnectorIngestService:
                     bucket["items"].append(effect.item)
                 if effect.items:
                     bucket["items"].extend(effect.items)
+            if effect.runtime_state is not None:
+                bucket["runtime_state"] = effect.runtime_state
             bucket["session"] = bucket["session"] or effect.session_changed
             bucket["notices"] = bucket["notices"] or effect.notices_changed
             bucket["refetch"] = bucket["refetch"] or effect.needs_refetch
@@ -170,13 +173,21 @@ class ConnectorIngestService:
                 envelope["timelineReset"] = True
             if bucket["items"]:
                 envelope["items"] = bucket["items"]
+            if bucket["runtime_state"]:
+                envelope["runtimeState"] = bucket["runtime_state"]
             if bucket["session"]:
                 try:
+                    session = await self._store.get_session(session_id)
+                    runtime_state = bucket["runtime_state"]
+                    if isinstance(runtime_state, dict):
+                        status = runtime_state.get("status")
+                        if isinstance(status, str):
+                            session = session.model_copy(update={"status": status})
                     session, _runtime_capabilities, effective_capabilities = (
                         await project_session_capabilities(
                             self._store,
                             self._presence,
-                            await self._store.get_session(session_id),
+                            session,
                         )
                     )
                     envelope["session"] = session.model_dump(mode="json")

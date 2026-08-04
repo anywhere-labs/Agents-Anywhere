@@ -108,11 +108,19 @@ def events_from_invalidation(payload: dict[str, Any]) -> list[ProtocolEventEnvel
     session = payload.get("session")
     if isinstance(session, dict):
         sequence = int(session.get("updatedSeq") or next_sequence or 0)
-        if sequence > 0:
+        runtime_state = payload.get("runtimeState")
+        if sequence > 0 or isinstance(runtime_state, dict):
+            if isinstance(runtime_state, dict):
+                runtime_status = runtime_state.get("status")
+                if isinstance(runtime_status, str):
+                    session = {**session, "status": runtime_status}
             event_payload: dict[str, Any] = {
                 "session": session,
                 "status": session.get("status"),
             }
+            runtime_state = payload.get("runtimeState")
+            if isinstance(runtime_state, dict):
+                event_payload["state"] = runtime_state
             effective_capabilities = payload.get("effectiveCapabilities")
             if isinstance(effective_capabilities, dict):
                 event_payload["effectiveCapabilities"] = effective_capabilities

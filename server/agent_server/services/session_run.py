@@ -10,6 +10,8 @@ from agent_server.core.models import (
     SessionCreateRequest,
     SessionRuntimeState,
     SessionSelectionPatchRequest,
+    SessionStatus,
+    SessionView,
     SteerTurnRequest,
 )
 from agent_server.core.utc import utc_now
@@ -23,7 +25,6 @@ from agent_server.services.notices import (
     upsert_execution_error_interaction,
 )
 from agent_server.services.repository_ports import SessionRunRepository
-from agent_server.services.session_states import SessionStateService
 
 
 class SessionRunError(RuntimeError):
@@ -54,7 +55,6 @@ class SessionRunService:
     def __init__(self, store: SessionRunRepository, manager: ConnectorRpcManager) -> None:
         self._store = store
         self._manager = manager
-        self._session_states = SessionStateService(store)
 
     async def create_session(
         self,
@@ -78,12 +78,6 @@ class SessionRunService:
                 external_session_id=payload.externalSessionId,
                 title=payload.title,
                 cwd=payload.cwd,
-            )
-            await self._store.upsert_session_runtime_state(
-                session_id=session.id,
-                runtime=payload.runtime,
-                external_session_id=payload.externalSessionId,
-                selections=_selections_from_mapping(payload.selections),
             )
             return {"session": session, "connectorResult": connector_result}
 
@@ -134,15 +128,7 @@ class SessionRunService:
         await self._store.start_active_run(
             session_id=session.id,
             runtime=payload.runtime,
-            status="waiting",
             params=params,
-        )
-        await self._store.upsert_session_runtime_state(
-            session_id=session.id,
-            runtime=payload.runtime,
-            status="waiting",
-            selections=selections,
-            metadata={"source": "server.session.create-and-start"},
         )
         try:
             connector_result = await self._manager.request(
@@ -153,23 +139,9 @@ class SessionRunService:
             )
         except ConnectorOfflineError as exc:
             await self._store.clear_active_run(session.id)
-            await self._store.upsert_session_runtime_state(
-                session_id=session.id,
-                runtime=payload.runtime,
-                status="blocked",
-                error={"code": "connector_offline", "message": str(exc)},
-                metadata={"source": "server.session.create-and-start.failed"},
-            )
             raise SessionRunConflictError(str(exc)) from exc
         except ConnectorRpcError as exc:
             await self._store.clear_active_run(session.id)
-            await self._store.upsert_session_runtime_state(
-                session_id=session.id,
-                runtime=payload.runtime,
-                status="blocked",
-                error={"code": exc.code, "message": exc.message or exc.code},
-                metadata={"source": "server.session.create-and-start.failed"},
-            )
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
 
         if not isinstance(connector_result, dict):
@@ -193,7 +165,6 @@ class SessionRunService:
         await self._store.start_active_run(
             session_id=session.id,
             runtime=payload.runtime,
-            status="running",
             external_session_id=external_session_id if isinstance(external_session_id, str) else None,
             turn_id=turn_id if isinstance(turn_id, str) else None,
             params=params,
@@ -205,17 +176,8 @@ class SessionRunService:
             external_session_id=external_session_id if isinstance(external_session_id, str) else None,
             title=payload.title,
             cwd=payload.cwd,
-            status="running",
             last_synced_at=utc_now(),
             origin="platform",
-        )
-        await self._store.upsert_session_runtime_state(
-            session_id=session.id,
-            runtime=payload.runtime,
-            external_session_id=external_session_id if isinstance(external_session_id, str) else None,
-            status="running",
-            selections=selections,
-            metadata={"source": "server.session.create-and-start.accepted"},
         )
         return {"session": session, "connectorResult": connector_result}
 
@@ -228,13 +190,6 @@ class SessionRunService:
         message: str,
     ) -> None:
         await self._store.clear_active_run(session_id)
-        await self._store.upsert_session_runtime_state(
-            session_id=session_id,
-            runtime=runtime,
-            status="blocked",
-            error={"code": code, "message": message},
-            metadata={"source": "server.session.create-and-start.failed"},
-        )
 
     async def send_message(
         self,
@@ -247,29 +202,19 @@ class SessionRunService:
             session = await self._store.get_session(session_id, user_id=user_id)
         except KeyError:
             raise SessionRunNotFoundError("session not found") from None
-        session = await self._session_states.reconcile(session_id)
 
         if not session.takeover:
             raise SessionRunConflictError("session is read-only until takeover is enabled")
         if not await self._manager.is_online(session.connectorId):
             raise SessionRunConflictError("connector is offline")
-        if not (await self._session_states.inspect(session_id)).can_start_turn:
-            raise SessionRunConflictError(f"session is {session.status}")
+        runtime_status = await self._read_runtime_status(session)
+        if runtime_status != "idle":
+            raise SessionRunConflictError(f"session is {runtime_status}")
         params: dict[str, Any] = {
             "sessionId": session_id,
             "runtime": session.runtime,
             "content": payload.content,
         }
-        try:
-            runtime_state = await self._store.get_session_runtime_state(session_id)
-        except KeyError:
-            runtime_state = None
-        if runtime_state is not None and runtime_state.selections:
-            params["selections"] = {
-                scope: selection_id
-                for scope, selection_id in runtime_state.selections.items()
-                if selection_id is not None
-            }
         if session.cwd:
             params["cwd"] = session.cwd
         if session.externalSessionId:
@@ -291,7 +236,6 @@ class SessionRunService:
             external_session_id=session.externalSessionId,
             params=params,
         )
-        await self._session_states.reconcile(session_id)
         try:
             result = await self._manager.request(
                 session.connectorId,
@@ -321,6 +265,34 @@ class SessionRunService:
             )
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
         return RpcResponsePayload(ok=True, result=result)
+
+    async def _read_runtime_status(self, session: SessionView) -> SessionStatus:
+        params: dict[str, Any] = {
+            "sessionId": session.id,
+            "runtime": session.runtime,
+        }
+        if session.externalSessionId:
+            params["externalSessionId"] = session.externalSessionId
+        try:
+            result = await self._manager.request(
+                session.connectorId,
+                "session.state",
+                params,
+                timeout=10,
+            )
+        except ConnectorOfflineError as exc:
+            raise SessionRunConflictError(str(exc)) from exc
+        except ConnectorRpcError as exc:
+            raise SessionRunUpstreamError(exc.message or exc.code) from exc
+        if not isinstance(result, dict):
+            return "idle"
+        state = result.get("state")
+        if not isinstance(state, dict):
+            return "idle"
+        status = state.get("status")
+        if status in {"idle", "waiting", "pending", "running", "stopping", "blocked"}:
+            return status
+        return "idle"
 
     async def update_session_selections(
         self,
@@ -361,11 +333,10 @@ class SessionRunService:
             raise SessionRunUpstreamError(
                 str(message or code or "runtime rejected selection update")
             )
-        state = await self._store.upsert_session_runtime_state(
-            session_id=session_id,
-            runtime=session.runtime,
-            external_session_id=session.externalSessionId,
-            selections=payload.selections,
+        state = _runtime_state_from_selection_result(
+            session,
+            payload.selections,
+            result,
         )
         return state, result if isinstance(result, dict) else None
 
@@ -380,7 +351,6 @@ class SessionRunService:
             session = await self._store.get_session(session_id, user_id=user_id)
         except KeyError:
             raise SessionRunNotFoundError("session not found") from None
-        session = await self._session_states.reconcile(session_id)
         if not session.takeover:
             raise SessionRunConflictError(
                 "session is read-only until takeover is enabled"
@@ -394,8 +364,7 @@ class SessionRunService:
         turn_id = active_run.get("turnId") if active_run else None
         if turn_id is None:
             turn_id = await self._store.get_open_turn_id(session_id)
-        decision = await self._session_states.inspect(session_id)
-        if turn_id is None or not decision.can_steer_turn:
+        if turn_id is None:
             raise SessionRunConflictError("no active turn to steer")
 
         params: dict[str, Any] = {
@@ -497,16 +466,12 @@ class SessionRunService:
             session = await self._store.get_session(session_id, user_id=user_id)
         except KeyError:
             raise SessionRunNotFoundError("session not found") from None
-        session = await self._session_states.reconcile(session_id)
         if require_takeover and not session.takeover:
             raise SessionRunConflictError("session is read-only until takeover is enabled")
         active_run = await self._store.get_active_run(session_id)
         turn_id = active_run.get("turnId") if active_run else None
         if turn_id is None:
             turn_id = await self._store.get_open_turn_id(session_id)
-        decision = await self._session_states.inspect(session_id)
-        if not decision.can_interrupt_turn:
-            raise SessionRunConflictError("no active turn to interrupt")
 
         params: dict[str, Any] = {
             "sessionId": session_id,
@@ -517,15 +482,11 @@ class SessionRunService:
         external_session_id = active_run.get("externalSessionId") if active_run else session.externalSessionId
         if external_session_id:
             params["externalSessionId"] = external_session_id
-        previous_status = session.status
-        await self._session_states.transition(session_id, "stopping")
         try:
             result = await self._manager.request(session.connectorId, "turn.interrupt", params)
         except ConnectorOfflineError as exc:
-            await self._session_states.transition(session_id, previous_status)
             raise SessionRunConflictError(str(exc)) from exc
         except ConnectorRpcError as exc:
-            await self._session_states.transition(session_id, previous_status)
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
         await cancel_session_blocking_interactions(
             self._store,
@@ -534,10 +495,6 @@ class SessionRunService:
         )
         if _interrupt_target_not_found(result):
             await self._store.clear_active_run(session_id)
-        await self._session_states.reconcile(
-            session_id,
-            settle_stopping=_interrupt_target_not_found(result),
-        )
         return RpcResponsePayload(ok=True, result=result)
 
 
@@ -552,6 +509,48 @@ def _interrupt_target_not_found(result: object) -> bool:
 
 def _selections_from_mapping(value: dict[str, str | None]) -> dict[str, str]:
     return {key: item for key, item in value.items() if isinstance(item, str) and item}
+
+
+def _runtime_state_from_selection_result(
+    session: SessionView,
+    selections: dict[str, str | None],
+    result: object,
+) -> SessionRuntimeState:
+    now = utc_now()
+    raw_state = result.get("state") if isinstance(result, dict) else None
+    if isinstance(raw_state, dict):
+        return SessionRuntimeState.model_validate(
+            {
+                "sessionId": raw_state.get("sessionId") or session.id,
+                "runtime": raw_state.get("runtime") or session.runtime,
+                "externalSessionId": raw_state.get("externalSessionId")
+                or session.externalSessionId,
+                "status": raw_state.get("status") or "idle",
+                "selections": raw_state.get("selections")
+                if isinstance(raw_state.get("selections"), dict)
+                else selections,
+                "statusReason": raw_state.get("statusReason"),
+                "error": raw_state.get("error")
+                if isinstance(raw_state.get("error"), dict)
+                else None,
+                "metadata": raw_state.get("metadata")
+                if isinstance(raw_state.get("metadata"), dict)
+                else {},
+                "updatedSeq": session.updatedSeq,
+                "createdAt": now,
+                "updatedAt": now,
+            }
+        )
+    return SessionRuntimeState(
+        sessionId=session.id,
+        runtime=session.runtime,
+        externalSessionId=session.externalSessionId,
+        status="idle",
+        selections=selections,
+        updatedSeq=session.updatedSeq,
+        createdAt=now,
+        updatedAt=now,
+    )
 
 
 def _timeline_attachment_payload(value: dict[str, Any]) -> dict[str, Any]:

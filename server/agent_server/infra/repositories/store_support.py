@@ -41,7 +41,6 @@ from agent_server.infra.db import (
     oauth_clients as oauth_clients_t,
     pairing_codes as pairing_codes_t,
     platform_user_activity as platform_user_activity_t,
-    session_states as session_states_t,
     sessions as sessions_t,
     timeline_items as timeline_items_t,
     users as users_t,
