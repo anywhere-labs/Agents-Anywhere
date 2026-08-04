@@ -1428,6 +1428,32 @@ async def _test_codex_runtime_update_session_selections_pushes_runtime_state() -
     assert host.state_updates[-1]["metadata"]["selection_effect"] == "next_turn"
 
 
+def test_codex_runtime_update_session_selections_allows_platform_only_session() -> None:
+    asyncio.run(
+        _test_codex_runtime_update_session_selections_allows_platform_only_session()
+    )
+
+
+async def _test_codex_runtime_update_session_selections_allows_platform_only_session() -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+    model_selection = (await runtime.list_model_catalog()).models[1].selection_id
+
+    result = await runtime.update_session_selections(
+        "sess_platform_only",
+        None,
+        {"model": model_selection},
+    )
+
+    assert result.ok is True
+    assert result.result["externalSessionId"] is None
+    assert host.state_updates[-1]["session_id"] == "sess_platform_only"
+    assert host.state_updates[-1]["external_session_id"] is None
+    assert host.state_updates[-1]["selections"] == {"model": model_selection}
+    assert host.state_updates[-1]["metadata"]["selection_effect"] == "next_turn"
+
+
 def test_codex_runtime_invalid_selection_returns_protocol_error() -> None:
     asyncio.run(_test_codex_runtime_invalid_selection_returns_protocol_error())
 

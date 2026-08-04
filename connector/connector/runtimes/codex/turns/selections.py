@@ -45,7 +45,7 @@ class CodexSelectionController:
         - publishes SessionState.selections while preserving current status/error
         """
 
-        if self.client is None or external_session_id is None:
+        if self.client is None:
             raise RuntimeUnsupportedError("update_session_selections")
         await self.ensure_started()
         if not selections:
