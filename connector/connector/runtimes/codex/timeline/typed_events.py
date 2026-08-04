@@ -236,7 +236,6 @@ def timeline_projection_from_thread_item(
             status=event_status,
             role="system",
             turn_id=turn_id,
-            message="The session context was compacted.",
         )
     return CodexTimelineProjection(
         native_id=None,

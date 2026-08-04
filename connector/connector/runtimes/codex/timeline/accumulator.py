@@ -270,7 +270,11 @@ class CodexTimelineAccumulator:
         )
         if not semantic_keys:
             return projection
-        if prefer_native_identity and projection.native_id is not None:
+        if (
+            prefer_native_identity
+            and projection.native_id is not None
+            and projection.raw_type != "contextCompaction"
+        ):
             item_id = projection.item_id(
                 external_session_id=external_session_id,
                 fallback_index=fallback_index,
@@ -415,6 +419,8 @@ def semantic_identity_keys(
     projection: codex_timeline.CodexTimelineProjection,
     fallback_index: int,
 ) -> tuple[tuple[str, ...], ...]:
+    if projection.raw_type == "contextCompaction":
+        return (("context-compaction", external_session_id),)
     role = projection.effective_role()
     if projection.raw_type not in {"agentMessage", "userMessage", "steeringUserMessage"}:
         return ()

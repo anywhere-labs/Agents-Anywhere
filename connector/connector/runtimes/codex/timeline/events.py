@@ -24,17 +24,17 @@ def raw_item_from_notification(
         "item/systemMessage",
         "item/runtimeMessage",
         "thread/compact/started",
+        "thread/compact/failed",
         "thread/compacted",
     }:
         return None
-    if method == "thread/compact/started":
+    if method in {"thread/compact/started", "thread/compact/failed"}:
         thread_id = first_string_from_mapping(params, "threadId", "thread_id")
         return {
             "id": f"context_compaction_{thread_id}" if thread_id else "context_compaction",
             "type": "contextCompaction",
-            "status": "inProgress",
+            "status": "failed" if method == "thread/compact/failed" else "inProgress",
             "role": "system",
-            "message": "The runtime is compacting the session context.",
         }
     if method == "thread/compacted":
         thread_id = first_string_from_mapping(params, "threadId", "thread_id")
@@ -44,7 +44,6 @@ def raw_item_from_notification(
             "type": "contextCompaction",
             "status": "completed",
             "role": "system",
-            "message": "The session context was compacted.",
             **({"turnId": turn_id} if turn_id is not None else {}),
         }
     item = params.get("item")

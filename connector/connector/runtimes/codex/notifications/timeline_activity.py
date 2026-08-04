@@ -34,6 +34,7 @@ class CodexTimelineActivityHandler:
             self.active_turn_ids[session_id] = turn_id
         cached = self.session_states.get(session_id)
         if cached is not None and cached.status == "blocked":
+            await self.host.timeline_item_upsert(item)
             return
         if event.is_running_item_event:
             await self.session_states.update(

@@ -115,6 +115,13 @@ class CodexNotificationProjector:
                 event=event,
                 item=item,
             )
+        if event.event_type == "thread/compacted":
+            await self.session_states.update(
+                session_id=session_id,
+                external_session_id=thread_id,
+                status="idle",
+                metadata={"source": "codex.thread/compacted"},
+            )
 
 
 def notification_event(message: CodexNotificationMessage) -> CodexSdkEvent:

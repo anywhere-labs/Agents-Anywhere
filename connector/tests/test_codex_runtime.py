@@ -703,6 +703,39 @@ async def _test_codex_runtime_thread_compacted_notification_upserts_timeline_ite
     assert item.content["kind"] == "compact"
     assert item.content["state"] == "completed"
     assert item.source["rawType"] == "contextCompaction"
+    assert host.state_updates[-1]["status"] == "idle"
+    assert host.state_updates[-1]["metadata"]["source"] == "codex.thread/compacted"
+
+
+def test_codex_compaction_snapshot_reuses_started_timeline_item() -> None:
+    accumulator = CodexTimelineAccumulator()
+    started = accumulator.item_from_notification(
+        session_id="sess_1",
+        external_session_id="thread_1",
+        method="thread/compact/started",
+        params={"threadId": "thread_1"},
+    )
+    assert started is not None
+
+    snapshot_items = accumulator.items_from_thread_snapshot(
+        session_id="sess_1",
+        external_session_id="thread_1",
+        thread={
+            "items": [
+                {
+                    "id": "compact_1",
+                    "type": "contextCompaction",
+                    "status": "completed",
+                }
+            ]
+        },
+        limit=100,
+    )
+
+    assert len(snapshot_items) == 1
+    assert snapshot_items[0].id == started.id
+    assert snapshot_items[0].content["kind"] == "compact"
+    assert snapshot_items[0].content["state"] == "completed"
 
 
 def test_codex_timeline_projects_typed_sdk_delta_without_params_dict() -> None:
@@ -1729,18 +1762,17 @@ async def _test_codex_runtime_compact_command_calls_app_server() -> None:
         "externalSessionId": "thread_1",
         "scheduled": True,
     }
-    assert host.notice_upserts[-1].notice_id == "notice_command_compact_sess_1"
-    assert host.notice_upserts[-1].type == "notification"
-    assert host.notice_upserts[-1].context["kind"] == "compact"
+    assert host.notice_upserts == []
     assert host.timeline_item_upserts[-1].type == "system"
     assert host.timeline_item_upserts[-1].status == "running"
     assert host.timeline_item_upserts[-1].content["kind"] == "compact"
     assert host.timeline_item_upserts[-1].content["state"] == "started"
-    assert host.state_updates[-1]["status"] == "idle"
+    started_item_id = host.timeline_item_upserts[-1].id
+    assert host.state_updates[-1]["status"] == "blocked"
     assert host.state_updates[-1]["metadata"] == {
         "source": "codex.command.compact",
         "command": "compact",
-        "notice_id": "notice_command_compact_sess_1",
+        "result": {},
     }
 
     await wait_for_compact_tasks(runtime)
@@ -1750,8 +1782,25 @@ async def _test_codex_runtime_compact_command_calls_app_server() -> None:
         {"threadId": "thread_1"},
     )
     assert all(request[0] != "turn/start" for request in client.requests)
-    assert host.state_updates[-1]["status"] == "idle"
+    assert host.state_updates[-1]["status"] == "blocked"
     assert host.state_updates[-1]["metadata"]["source"] == "codex.command.compact.accepted"
+
+    await runtime._handle_notification(
+        Notification(
+            method="thread/compacted",
+            payload=ContextCompactedNotification(
+                threadId="thread_1",
+                turnId="turn_compact",
+            ),
+        )
+    )
+
+    assert host.timeline_item_upserts[-1].id == started_item_id
+    assert host.timeline_item_upserts[-1].status == "done"
+    assert host.timeline_item_upserts[-1].content["kind"] == "compact"
+    assert host.timeline_item_upserts[-1].content["state"] == "completed"
+    assert host.state_updates[-1]["status"] == "idle"
+    assert host.state_updates[-1]["metadata"]["source"] == "codex.thread/compacted"
 
 
 def test_codex_runtime_rejects_disabled_command_without_sdk_request() -> None:
@@ -1821,11 +1870,9 @@ async def _test_codex_runtime_command_failure_publishes_async_failure() -> None:
 
     await wait_for_compact_tasks(runtime)
 
-    assert host.notice_upserts[-1].title == "Codex compaction failed"
-    assert host.notice_upserts[-1].context["error"] == {
-        "code": "RuntimeError",
-        "message": "compact failed",
-    }
+    assert host.notice_upserts == []
+    assert host.timeline_item_upserts[-1].content["kind"] == "compact"
+    assert host.timeline_item_upserts[-1].content["state"] == "failed"
     assert host.state_updates[-1]["status"] == "idle"
     assert host.state_updates[-1]["error"] == {
         "code": "RuntimeError",

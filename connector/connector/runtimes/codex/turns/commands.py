@@ -9,7 +9,6 @@ from connector.runtime_protocol import (
     RuntimeCommandResult,
     RuntimeInvalidRequestError,
     RuntimeSessionStateCache,
-    SessionNotice,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex.domain.commands import list_codex_commands
@@ -104,7 +103,13 @@ class CodexCommandController:
         session_id: str,
         external_session_id: str,
     ) -> None:
-        """Call the SDK compact operation and publish follow-up state/notice updates."""
+        """Call the SDK compact operation and publish follow-up state updates.
+
+        Side effects:
+        - sends the compact start request to the Codex app server
+        - publishes idle/error state when the start request fails
+        - keeps the session blocked when the start request is accepted
+        """
         if self.client is None:
             return
         try:
@@ -150,29 +155,12 @@ class CodexCommandController:
         external_session_id: str,
         result: dict[str, Any],
     ) -> None:
-        notice = SessionNotice(
-            notice_id=f"notice_command_compact_{session_id}",
-            session_id=session_id,
-            runtime="codex",
-            type="notification",
-            title="Codex compaction started",
-            message="The runtime is compacting the session context.",
-            severity="info",
-            status="open",
-            response_required=False,
-            source={
-                "command": "compact",
-                "threadId": external_session_id,
-            },
-            context={
-                "kind": "compact",
-                "command": "compact",
-                "externalSessionId": external_session_id,
-                "result": result,
-            },
-            metadata={"source": "codex.command.compact"},
-        )
-        await self.host.notice_upsert(notice)
+        """Publish compact progress through timeline and block session input.
+
+        Side effects:
+        - upserts the compact progress timeline item
+        - updates SessionState.status to blocked
+        """
         item = self.timeline.item_from_notification(
             session_id=session_id,
             external_session_id=external_session_id,
@@ -185,12 +173,12 @@ class CodexCommandController:
         await self.session_states.update(
             session_id=session_id,
             external_session_id=external_session_id,
-            status=cached.status if cached is not None else "idle",
+            status="blocked",
             error=cached.error if cached is not None else None,
             metadata={
                 "source": "codex.command.compact",
                 "command": "compact",
-                "notice_id": notice.notice_id,
+                "result": result,
             },
         )
 
@@ -204,7 +192,7 @@ class CodexCommandController:
         await self.session_states.update(
             session_id=session_id,
             external_session_id=external_session_id,
-            status=cached.status if cached is not None else "idle",
+            status=cached.status if cached is not None else "blocked",
             error=cached.error if cached is not None else None,
             metadata={
                 "source": "codex.command.compact.accepted",
@@ -220,32 +208,14 @@ class CodexCommandController:
         error_code: str,
         error_message: str,
     ) -> None:
-        notice = SessionNotice(
-            notice_id=f"notice_command_compact_{session_id}",
+        item = self.timeline.item_from_notification(
             session_id=session_id,
-            runtime="codex",
-            type="notification",
-            title="Codex compaction failed",
-            message=error_message,
-            severity="error",
-            status="closed",
-            response_required=False,
-            source={
-                "command": "compact",
-                "threadId": external_session_id,
-            },
-            context={
-                "kind": "compact",
-                "command": "compact",
-                "externalSessionId": external_session_id,
-                "error": {
-                    "code": error_code,
-                    "message": error_message,
-                },
-            },
-            metadata={"source": "codex.command.compact.failed"},
+            external_session_id=external_session_id,
+            method="thread/compact/failed",
+            params={"threadId": external_session_id},
         )
-        await self.host.notice_upsert(notice)
+        if item is not None:
+            await self.host.timeline_item_upsert(item)
         await self.session_states.update(
             session_id=session_id,
             external_session_id=external_session_id,
@@ -257,7 +227,6 @@ class CodexCommandController:
             metadata={
                 "source": "codex.command.compact.failed",
                 "command": "compact",
-                "notice_id": notice.notice_id,
             },
         )
 
