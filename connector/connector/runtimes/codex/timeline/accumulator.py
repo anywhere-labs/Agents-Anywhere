@@ -60,6 +60,7 @@ class CodexTimelineAccumulator:
             external_session_id=external_session_id,
             projection=projection,
             fallback_index=0,
+            prefer_native_identity=True,
         )
         item_id = projection.item_id(external_session_id=external_session_id, fallback_index=0)
         previous = self._projection_by_id.get(item_id)
@@ -129,6 +130,7 @@ class CodexTimelineAccumulator:
                 external_session_id=external_session_id,
                 projection=projection,
                 fallback_index=index,
+                prefer_native_identity=False,
             )
             item_id = projection.item_id(external_session_id=external_session_id, fallback_index=index)
             self._projection_by_id[item_id] = projection
@@ -147,6 +149,7 @@ class CodexTimelineAccumulator:
                 external_session_id=external_session_id,
                 projection=turn_end,
                 fallback_index=len(items),
+                prefer_native_identity=False,
             )
             items.append(
                 self._runtime_item(
@@ -182,6 +185,7 @@ class CodexTimelineAccumulator:
                 external_session_id=external_session_id,
                 projection=projection,
                 fallback_index=index,
+                prefer_native_identity=False,
             )
             item_id = projection.item_id(external_session_id=external_session_id, fallback_index=index)
             self._projection_by_id[item_id] = projection
@@ -200,6 +204,7 @@ class CodexTimelineAccumulator:
                 external_session_id=external_session_id,
                 projection=turn_end,
                 fallback_index=len(items),
+                prefer_native_identity=False,
             )
             items.append(
                 self._runtime_item(
@@ -233,6 +238,7 @@ class CodexTimelineAccumulator:
                 external_session_id=external_session_id,
                 projection=projection,
                 fallback_index=index,
+                prefer_native_identity=False,
             )
             item_id = projection.item_id(
                 external_session_id=external_session_id,
@@ -255,13 +261,22 @@ class CodexTimelineAccumulator:
         external_session_id: str,
         projection: codex_timeline.CodexTimelineProjection,
         fallback_index: int,
+        prefer_native_identity: bool,
     ) -> codex_timeline.CodexTimelineProjection:
         semantic_keys = semantic_identity_keys(
             external_session_id=external_session_id,
             projection=projection,
+            fallback_index=fallback_index,
         )
         if not semantic_keys:
             return projection
+        if prefer_native_identity and projection.native_id is not None:
+            item_id = projection.item_id(
+                external_session_id=external_session_id,
+                fallback_index=fallback_index,
+            )
+            self.record_semantic_identity(semantic_keys, item_id)
+            return projection.with_platform_id(item_id)
         for semantic_key in semantic_keys:
             existing_item_id = self._item_id_by_semantic_key.get(semantic_key)
             if existing_item_id is not None:
@@ -398,6 +413,7 @@ def terminal_turn_message(event_type: str) -> str:
 def semantic_identity_keys(
     external_session_id: str,
     projection: codex_timeline.CodexTimelineProjection,
+    fallback_index: int,
 ) -> tuple[tuple[str, ...], ...]:
     role = projection.effective_role()
     if projection.raw_type not in {"agentMessage", "userMessage", "steeringUserMessage"}:
@@ -409,6 +425,31 @@ def semantic_identity_keys(
                 "client-message",
                 external_session_id,
                 projection.client_message_id,
+            )
+        )
+    if projection.native_id is not None:
+        keys.append(
+            (
+                "native-message",
+                external_session_id,
+                projection.raw_type,
+                str(role or ""),
+                projection.native_id,
+            )
+        )
+        keys.append(
+            (
+                "derived-message",
+                external_session_id,
+                projection.derived_key(fallback_index),
+            )
+        )
+    else:
+        keys.append(
+            (
+                "derived-message",
+                external_session_id,
+                projection.derived_key(fallback_index),
             )
         )
     text = normalized_timeline_text(projection)

@@ -1755,6 +1755,46 @@ async def _test_codex_runtime_agent_message_delta_upserts_timeline_item() -> Non
     assert second.source["event"] == "item/agentMessage/delta"
 
 
+def test_codex_runtime_agent_message_native_id_overrides_text_identity() -> None:
+    asyncio.run(_test_codex_runtime_agent_message_native_id_overrides_text_identity())
+
+
+async def _test_codex_runtime_agent_message_native_id_overrides_text_identity() -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    await runtime.start()
+    await runtime._handle_notification(
+        {
+            "method": "item/agentMessage/delta",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_1",
+                "itemId": "msg_old",
+                "delta": "same text",
+            },
+        }
+    )
+    await runtime._handle_notification(
+        {
+            "method": "item/agentMessage/delta",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_1",
+                "itemId": "msg_new",
+                "delta": "same text",
+            },
+        }
+    )
+
+    assert host.timeline_item_upserts[-2].id == "msg_old"
+    assert host.timeline_item_upserts[-1].id == "msg_new"
+    assert host.timeline_item_upserts[-1].source["itemId"] == "msg_new"
+
+
 def test_codex_runtime_reasoning_item_maps_to_system_timeline_item() -> None:
     asyncio.run(_test_codex_runtime_reasoning_item_maps_to_system_timeline_item())
 
