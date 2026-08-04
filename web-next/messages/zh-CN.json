@@ -329,16 +329,16 @@
       "permissionMode": "权限模式",
       "permissionModes": {
         "askWhenRequested": {
-          "label": "按需请求确认",
-          "description": "Codex 需要更高权限时会请求确认。命令在 workspace-write 沙盒中运行。"
+          "label": "请求批准",
+          "description": "编辑外部文件和使用互联网时始终询问"
         },
         "autoReview": {
-          "label": "自动审核",
-          "description": "Codex 会自动批准低风险命令，并在需要更多权限时请求确认。"
+          "label": "替我审批",
+          "description": "仅对检测到的风险操作请求批准"
         },
         "fullAccess": {
-          "label": "完全访问",
-          "description": "不使用沙盒且不弹出审批确认。仅应在可信环境中使用。"
+          "label": "完全访问权限",
+          "description": "可不受限制地访问互联网和您电脑上的任何文件"
         }
       },
       "selectionSettings": "设置",

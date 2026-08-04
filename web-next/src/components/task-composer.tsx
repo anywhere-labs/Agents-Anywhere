@@ -713,11 +713,21 @@ export function TaskComposer() {
                         {permissionOptions.map((item) => (
                           <DropdownMenuItem
                             key={item.id}
-                            className="gap-2"
+                            className={cn(
+                              "items-start gap-2 py-2.5",
+                              selectedPermissionMode === item.id && "text-primary focus:text-primary",
+                            )}
                             onSelect={() => setSelectedPermissionMode(item.id)}
                           >
-                            <Check className={cn("size-3.5", selectedPermissionMode === item.id ? "opacity-100" : "opacity-0")} />
-                            <span>{item.label}</span>
+                            <Check className={cn("mt-0.5 size-3.5", selectedPermissionMode === item.id ? "opacity-100" : "opacity-0")} />
+                            <span className="min-w-0 flex-1">
+                              <span className="block font-medium leading-none">{item.label}</span>
+                              {item.description ? (
+                                <span className="mt-1 block whitespace-normal text-xs leading-snug text-muted-foreground">
+                                  {item.description}
+                                </span>
+                              ) : null}
+                            </span>
                           </DropdownMenuItem>
                         ))}
                       </DropdownMenuContent>

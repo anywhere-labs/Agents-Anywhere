@@ -40,8 +40,8 @@ def codex_permission_catalog_items() -> list[dict[str, Any]]:
     return [
         {
             "id": "ask_when_requested",
-            "label": "Ask when requested",
-            "description": "Let Codex ask for approval when it needs elevated access. Commands run in the workspace-write sandbox.",
+            "label": "Request approval",
+            "description": "Always ask before editing files outside the workspace or using the internet.",
             "identity": {"permission_mode": "ask_when_requested"},
             "runtimeSettings": {"permissionMode": "ask_when_requested"},
             "nativeSettings": {
@@ -57,7 +57,7 @@ def codex_permission_catalog_items() -> list[dict[str, Any]]:
         {
             "id": "auto_review",
             "label": "Auto review",
-            "description": "Let Codex automatically approve low-risk commands and ask when more access is required.",
+            "description": "Only ask for approval when Codex detects a risky operation.",
             "identity": {"permission_mode": "auto_review"},
             "runtimeSettings": {"permissionMode": "auto_review"},
             "nativeSettings": {
@@ -73,7 +73,7 @@ def codex_permission_catalog_items() -> list[dict[str, Any]]:
         {
             "id": "full_access",
             "label": "Full access",
-            "description": "Run without sandboxing and without approval prompts. Use only in trusted environments.",
+            "description": "Allow unrestricted internet access and access to any file on this computer.",
             "identity": {"permission_mode": "full_access"},
             "runtimeSettings": {"permissionMode": "full_access"},
             "nativeSettings": {
