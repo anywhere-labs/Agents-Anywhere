@@ -45,6 +45,7 @@ import type {
 } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
 import {
+  catalogI18nText,
   modelIdsForSelectionId,
   permissionIdForSelectionId,
   selectionIdForModelCatalog,
@@ -356,31 +357,31 @@ export function TaskComposer() {
   const models = React.useMemo(
     () => modelCatalog?.models.map((item) => ({
       id: item.id,
-      label: item.displayName,
-      description: item.description,
+      label: catalogI18nText(t, item.metadata, "labelKey", item.displayName),
+      description: catalogI18nText(t, item.metadata, "descriptionKey", item.description),
       default: item.default,
       selectionId: item.selectionId,
       reasoningItems: item.reasoningItems.map((reasoning) => ({
         id: reasoning.id,
-        label: reasoning.displayName,
-        description: reasoning.description,
+        label: catalogI18nText(t, reasoning.metadata, "labelKey", reasoning.displayName),
+        description: catalogI18nText(t, reasoning.metadata, "descriptionKey", reasoning.description),
         default: reasoning.default,
         selectionId: reasoning.selectionId,
       })),
     })) ?? [],
-    [modelCatalog],
+    [modelCatalog, t],
   )
   const selectedModelItem = models.find((item) => item.id === selectedModel)
   const reasoningOptions = selectedModelItem?.reasoningItems ?? []
   const permissionOptions = React.useMemo(
     () => permissionCatalog?.permissions.map((item) => ({
       id: item.id,
-      label: item.displayName,
-      description: item.description,
+      label: catalogI18nText(t, item.metadata, "labelKey", item.displayName),
+      description: catalogI18nText(t, item.metadata, "descriptionKey", item.description),
       default: item.default,
       selectionId: item.selectionId,
     })) ?? [],
-    [permissionCatalog],
+    [permissionCatalog, t],
   )
 
   React.useEffect(() => {

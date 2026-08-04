@@ -34,6 +34,7 @@ import type {
 } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
 import {
+  catalogI18nText,
   modelIdsForSelectionId,
   permissionIdForSelectionId,
   selectionIdForModelCatalog,
@@ -139,21 +140,21 @@ export function SessionComposer({
   const [selectedReasoning, setSelectedReasoning] = React.useState("")
   const permissionItems = permissionCatalog?.permissions.map((item) => ({
     id: item.id,
-    label: item.displayName,
-    description: item.description,
+    label: catalogI18nText(tNew, item.metadata, "labelKey", item.displayName),
+    description: catalogI18nText(tNew, item.metadata, "descriptionKey", item.description),
     default: item.default,
     selectionId: item.selectionId,
   })) ?? []
   const modelItems = modelCatalog?.models.map((item) => ({
     id: item.id,
-    label: item.displayName,
-    description: item.description,
+    label: catalogI18nText(tNew, item.metadata, "labelKey", item.displayName),
+    description: catalogI18nText(tNew, item.metadata, "descriptionKey", item.description),
     default: item.default,
     selectionId: item.selectionId,
     reasoningItems: item.reasoningItems.map((reasoning) => ({
       id: reasoning.id,
-      label: reasoning.displayName,
-      description: reasoning.description,
+      label: catalogI18nText(tNew, reasoning.metadata, "labelKey", reasoning.displayName),
+      description: catalogI18nText(tNew, reasoning.metadata, "descriptionKey", reasoning.description),
       default: reasoning.default,
       selectionId: reasoning.selectionId,
     })),
