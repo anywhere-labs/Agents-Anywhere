@@ -8,6 +8,7 @@ from typing import Any
 
 from openai_codex.generated.v2_all import (
     AgentMessageThreadItem,
+    ContextCompactedNotification,
     ContextCompactionThreadItem,
     TextUserInput,
     ThreadItem,
@@ -672,6 +673,34 @@ def test_codex_timeline_projects_context_compaction_thread_item() -> None:
     assert isinstance(item, CodexContextCompactionItem)
     assert platform_item.content["kind"] == "compact"
     assert platform_item.source["rawType"] == "contextCompaction"
+
+
+def test_codex_runtime_thread_compacted_notification_upserts_timeline_item() -> None:
+    asyncio.run(_test_codex_runtime_thread_compacted_notification_upserts_timeline_item())
+
+
+async def _test_codex_runtime_thread_compacted_notification_upserts_timeline_item() -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    await runtime._handle_notification(
+        Notification(
+            method="thread/compacted",
+            payload=ContextCompactedNotification(
+                threadId="thread_1",
+                turnId="turn_compact",
+            ),
+        )
+    )
+
+    assert len(host.timeline_item_upserts) == 1
+    item = host.timeline_item_upserts[0]
+    assert item.type == "system"
+    assert item.status == "done"
+    assert item.turn_id == "turn_compact"
+    assert item.content["kind"] == "compact"
+    assert item.source["rawType"] == "contextCompaction"
 
 
 def test_codex_timeline_projects_typed_sdk_delta_without_params_dict() -> None:
@@ -1694,11 +1723,10 @@ async def _test_codex_runtime_compact_command_calls_app_server() -> None:
     assert result.ok is True
     assert result.command == "compact"
     assert result.code == "started"
-    assert client.requests[-1] == (
-        "thread/compact/start",
-        {"threadId": "thread_1"},
-    )
-    assert all(request[0] != "turn/start" for request in client.requests)
+    assert result.result == {
+        "externalSessionId": "thread_1",
+        "scheduled": True,
+    }
     assert host.notice_upserts[-1].notice_id == "notice_command_compact_sess_1"
     assert host.notice_upserts[-1].type == "notification"
     assert host.notice_upserts[-1].context["kind"] == "compact"
@@ -1708,6 +1736,16 @@ async def _test_codex_runtime_compact_command_calls_app_server() -> None:
         "command": "compact",
         "notice_id": "notice_command_compact_sess_1",
     }
+
+    await wait_for_compact_tasks(runtime)
+
+    assert client.requests[-1] == (
+        "thread/compact/start",
+        {"threadId": "thread_1"},
+    )
+    assert all(request[0] != "turn/start" for request in client.requests)
+    assert host.state_updates[-1]["status"] == "idle"
+    assert host.state_updates[-1]["metadata"]["source"] == "codex.command.compact.accepted"
 
 
 def test_codex_runtime_rejects_disabled_command_without_sdk_request() -> None:
@@ -1749,11 +1787,17 @@ async def _test_codex_runtime_rejects_command_args_without_sdk_request() -> None
     assert all(request[0] != "thread/compact/start" for request in client.requests)
 
 
-def test_codex_runtime_command_failure_returns_command_result() -> None:
-    asyncio.run(_test_codex_runtime_command_failure_returns_command_result())
+async def wait_for_compact_tasks(runtime: CodexRuntime) -> None:
+    tasks = tuple(runtime._turns.commands.compact_tasks)
+    if tasks:
+        await asyncio.gather(*tasks)
 
 
-async def _test_codex_runtime_command_failure_returns_command_result() -> None:
+def test_codex_runtime_command_failure_publishes_async_failure() -> None:
+    asyncio.run(_test_codex_runtime_command_failure_publishes_async_failure())
+
+
+async def _test_codex_runtime_command_failure_publishes_async_failure() -> None:
     client = FakeCodexClient()
     client.results["thread/compact/start"] = RuntimeError("compact failed")
     host = FakeHost()
@@ -1765,16 +1809,22 @@ async def _test_codex_runtime_command_failure_returns_command_result() -> None:
         external_session_id="thread_1",
     )
 
-    assert result.ok is False
+    assert result.ok is True
     assert result.command == "compact"
-    assert result.code == "codex_command_failed"
-    assert result.message == "compact failed"
-    assert result.result["error"] == {
+    assert result.code == "started"
+
+    await wait_for_compact_tasks(runtime)
+
+    assert host.notice_upserts[-1].title == "Codex compaction failed"
+    assert host.notice_upserts[-1].context["error"] == {
         "code": "RuntimeError",
         "message": "compact failed",
     }
-    assert host.notice_upserts == []
-    assert host.state_updates == []
+    assert host.state_updates[-1]["status"] == "idle"
+    assert host.state_updates[-1]["error"] == {
+        "code": "RuntimeError",
+        "message": "compact failed",
+    }
 
 
 def test_codex_runtime_compact_thread_not_found_sets_idle() -> None:
@@ -1795,16 +1845,16 @@ async def _test_codex_runtime_compact_thread_not_found_sets_idle() -> None:
         external_session_id="thread_1",
     )
 
-    assert result.ok is False
+    assert result.ok is True
     assert result.command == "compact"
-    assert result.code == "thread_not_found"
-    assert result.result["compacted"] is False
+    assert result.code == "started"
+
+    await wait_for_compact_tasks(runtime)
+
     assert host.state_updates[-1]["status"] == "idle"
-    assert host.state_updates[-1]["metadata"] == {
-        "source": "codex.command.compact.soft-failed",
-        "reason": "thread_not_found",
-        "command": "compact",
-    }
+    assert host.state_updates[-1]["metadata"]["source"] == "codex.command.compact.soft-failed"
+    assert host.state_updates[-1]["metadata"]["reason"] == "thread_not_found"
+    assert host.state_updates[-1]["metadata"]["command"] == "compact"
 
 
 def test_codex_runtime_compact_thread_not_found_request_error_sets_idle() -> None:
@@ -1825,10 +1875,12 @@ async def _test_codex_runtime_compact_thread_not_found_request_error_sets_idle()
         external_session_id="thread_1",
     )
 
-    assert result.ok is False
+    assert result.ok is True
     assert result.command == "compact"
-    assert result.code == "thread_not_found"
-    assert result.result["compacted"] is False
+    assert result.code == "started"
+
+    await wait_for_compact_tasks(runtime)
+
     assert host.state_updates[-1]["status"] == "idle"
 
 

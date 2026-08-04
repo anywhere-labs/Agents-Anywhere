@@ -23,8 +23,19 @@ def raw_item_from_notification(
         "item/reasoning/delta",
         "item/systemMessage",
         "item/runtimeMessage",
+        "thread/compacted",
     }:
         return None
+    if method == "thread/compacted":
+        turn_id = turn_id_from_result(dict(params))
+        return {
+            "id": f"context_compaction_{turn_id}" if turn_id else "context_compaction",
+            "type": "contextCompaction",
+            "status": "completed",
+            "role": "system",
+            "message": "The session context was compacted.",
+            **({"turnId": turn_id} if turn_id is not None else {}),
+        }
     item = params.get("item")
     if isinstance(item, dict):
         raw: dict[str, Any] = copy.deepcopy(item)

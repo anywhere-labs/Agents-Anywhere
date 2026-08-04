@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from connector.runtime_protocol import (
@@ -24,6 +25,7 @@ class CodexCommandController:
     client: CodexRuntimeClient | None
     session_states: RuntimeSessionStateCache
     ensure_started: EnsureStarted
+    compact_tasks: set[asyncio.Task[None]] = field(default_factory=set, init=False)
 
     async def execute_command(
         self,
@@ -61,6 +63,48 @@ class CodexCommandController:
                 message=disabled_reason,
             )
         await self.ensure_started()
+        await self._publish_compact_started(
+            session_id=session_id,
+            external_session_id=external_session_id,
+            result={},
+        )
+        self._schedule_compact(
+            session_id=session_id,
+            external_session_id=external_session_id,
+        )
+        return RuntimeCommandResult(
+            command=command_id,
+            ok=True,
+            code="started",
+            message="Codex compaction started.",
+            result={
+                "externalSessionId": external_session_id,
+                "scheduled": True,
+            },
+        )
+
+    def _schedule_compact(
+        self,
+        session_id: str,
+        external_session_id: str,
+    ) -> None:
+        task = asyncio.create_task(
+            self._run_compact(
+                session_id=session_id,
+                external_session_id=external_session_id,
+            )
+        )
+        self.compact_tasks.add(task)
+        task.add_done_callback(self.compact_tasks.discard)
+
+    async def _run_compact(
+        self,
+        session_id: str,
+        external_session_id: str,
+    ) -> None:
+        """Call the SDK compact operation and publish follow-up state/notice updates."""
+        if self.client is None:
+            return
         try:
             result = await self.client.compact_thread(external_session_id)
         except (RuntimeError, RuntimeInvalidRequestError) as exc:
@@ -76,43 +120,26 @@ class CodexCommandController:
                         "command": "compact",
                     },
                 )
-                return RuntimeCommandResult(
-                    command=command_id,
-                    ok=False,
-                    code=soft_reason,
-                    message="Codex thread was unavailable for /compact.",
-                    result={
-                        "externalSessionId": external_session_id,
-                        "compacted": False,
-                    },
-                )
-            return RuntimeCommandResult(
-                command=command_id,
-                ok=False,
-                code="codex_command_failed",
-                message=str(exc) or exc.__class__.__name__,
-                result={
-                    "externalSessionId": external_session_id,
-                    "error": {
-                        "code": exc.__class__.__name__,
-                        "message": str(exc) or exc.__class__.__name__,
-                    },
-                },
+                return
+            await self._publish_compact_failed(
+                session_id=session_id,
+                external_session_id=external_session_id,
+                error_code=exc.__class__.__name__,
+                error_message=str(exc) or exc.__class__.__name__,
             )
-        await self._publish_compact_started(
+            return
+        except Exception as exc:
+            await self._publish_compact_failed(
+                session_id=session_id,
+                external_session_id=external_session_id,
+                error_code=exc.__class__.__name__,
+                error_message=str(exc) or exc.__class__.__name__,
+            )
+            return
+        await self._publish_compact_accepted(
             session_id=session_id,
             external_session_id=external_session_id,
             result=dict(result.payload),
-        )
-        return RuntimeCommandResult(
-            command=command_id,
-            ok=True,
-            code="started",
-            message="Codex compaction started.",
-            result={
-                "externalSessionId": external_session_id,
-                "thread": dict(result.payload),
-            },
         )
 
     async def _publish_compact_started(
@@ -152,6 +179,73 @@ class CodexCommandController:
             error=cached.error if cached is not None else None,
             metadata={
                 "source": "codex.command.compact",
+                "command": "compact",
+                "notice_id": notice.notice_id,
+            },
+        )
+
+    async def _publish_compact_accepted(
+        self,
+        session_id: str,
+        external_session_id: str,
+        result: dict[str, Any],
+    ) -> None:
+        cached = self.session_states.get(session_id)
+        await self.session_states.update(
+            session_id=session_id,
+            external_session_id=external_session_id,
+            status=cached.status if cached is not None else "idle",
+            error=cached.error if cached is not None else None,
+            metadata={
+                "source": "codex.command.compact.accepted",
+                "command": "compact",
+                "result": result,
+            },
+        )
+
+    async def _publish_compact_failed(
+        self,
+        session_id: str,
+        external_session_id: str,
+        error_code: str,
+        error_message: str,
+    ) -> None:
+        notice = SessionNotice(
+            notice_id=f"notice_command_compact_{session_id}",
+            session_id=session_id,
+            runtime="codex",
+            type="notification",
+            title="Codex compaction failed",
+            message=error_message,
+            severity="error",
+            status="closed",
+            response_required=False,
+            source={
+                "command": "compact",
+                "threadId": external_session_id,
+            },
+            context={
+                "kind": "compact",
+                "command": "compact",
+                "externalSessionId": external_session_id,
+                "error": {
+                    "code": error_code,
+                    "message": error_message,
+                },
+            },
+            metadata={"source": "codex.command.compact.failed"},
+        )
+        await self.host.notice_upsert(notice)
+        await self.session_states.update(
+            session_id=session_id,
+            external_session_id=external_session_id,
+            status="idle",
+            error={
+                "code": error_code,
+                "message": error_message,
+            },
+            metadata={
+                "source": "codex.command.compact.failed",
                 "command": "compact",
                 "notice_id": notice.notice_id,
             },

@@ -11,6 +11,7 @@ from openai_codex.generated.v2_all import (
     CommandExecutionOutputDeltaNotification,
     CommandExecutionThreadItem,
     ContentItem,
+    ContextCompactedNotification,
     ErrorNotification,
     FileChangeOutputDeltaNotification,
     FileChangePatchUpdatedNotification,
@@ -60,6 +61,7 @@ CodexKnownNotificationPayload = (
     | ItemCompletedNotification
     | TurnStartedNotification
     | TurnCompletedNotification
+    | ContextCompactedNotification
     | ErrorNotification
     | RawResponseItemCompletedNotification
 )
@@ -328,6 +330,8 @@ def _sdk_payload_params(
             **common,
             "turn": _sdk_turn(payload.turn),
         }
+    if isinstance(payload, ContextCompactedNotification):
+        return common
     if isinstance(payload, ErrorNotification):
         return {
             **common,
