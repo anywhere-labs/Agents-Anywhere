@@ -206,6 +206,7 @@ def test_codex_projection_maps_context_compaction_to_compact_content() -> None:
         "kind": "compact",
         "text": "The session context was compacted.",
         "format": "markdown",
+        "state": "completed",
     }
     assert platform_item.source["rawType"] == "contextCompaction"
 
@@ -700,6 +701,7 @@ async def _test_codex_runtime_thread_compacted_notification_upserts_timeline_ite
     assert item.status == "done"
     assert item.turn_id == "turn_compact"
     assert item.content["kind"] == "compact"
+    assert item.content["state"] == "completed"
     assert item.source["rawType"] == "contextCompaction"
 
 
@@ -1730,6 +1732,10 @@ async def _test_codex_runtime_compact_command_calls_app_server() -> None:
     assert host.notice_upserts[-1].notice_id == "notice_command_compact_sess_1"
     assert host.notice_upserts[-1].type == "notification"
     assert host.notice_upserts[-1].context["kind"] == "compact"
+    assert host.timeline_item_upserts[-1].type == "system"
+    assert host.timeline_item_upserts[-1].status == "running"
+    assert host.timeline_item_upserts[-1].content["kind"] == "compact"
+    assert host.timeline_item_upserts[-1].content["state"] == "started"
     assert host.state_updates[-1]["status"] == "idle"
     assert host.state_updates[-1]["metadata"] == {
         "source": "codex.command.compact",

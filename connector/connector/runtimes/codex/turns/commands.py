@@ -15,6 +15,7 @@ from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex.domain.commands import list_codex_commands
 from connector.runtimes.codex.runtime_helpers import soft_codex_unavailable_reason
 from connector.runtimes.codex.sdk.runtime_client import CodexRuntimeClient
+from connector.runtimes.codex.timeline.accumulator import CodexTimelineAccumulator
 
 EnsureStarted = Callable[[], Awaitable[None]]
 
@@ -25,6 +26,7 @@ class CodexCommandController:
     client: CodexRuntimeClient | None
     session_states: RuntimeSessionStateCache
     ensure_started: EnsureStarted
+    timeline: CodexTimelineAccumulator
     compact_tasks: set[asyncio.Task[None]] = field(default_factory=set, init=False)
 
     async def execute_command(
@@ -171,6 +173,14 @@ class CodexCommandController:
             metadata={"source": "codex.command.compact"},
         )
         await self.host.notice_upsert(notice)
+        item = self.timeline.item_from_notification(
+            session_id=session_id,
+            external_session_id=external_session_id,
+            method="thread/compact/started",
+            params={"threadId": external_session_id},
+        )
+        if item is not None:
+            await self.host.timeline_item_upsert(item)
         cached = self.session_states.get(session_id)
         await self.session_states.update(
             session_id=session_id,

@@ -88,6 +88,7 @@ class CodexRuntime(AgentRuntime):
             list_model_catalog=self._catalogs.list_model_catalog,
             list_permission_catalog=self._catalogs.list_permission_catalog,
             pending_messages=self._pending_messages,
+            timeline=self._timeline,
         )
 
     @property

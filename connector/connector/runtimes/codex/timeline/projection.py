@@ -174,6 +174,11 @@ class CodexTimelineProjection:
             return {
                 "kind": system_kind_from_raw_type(self.raw_type),
                 **({"text": text, "format": "markdown"} if text else {}),
+                **(
+                    {"state": compact_state_from_status(self.status)}
+                    if self.raw_type == "contextCompaction"
+                    else {}
+                ),
             }
         if self.text:
             return {"text": self.text, "format": "markdown"}
@@ -362,3 +367,11 @@ def system_kind_from_raw_type(raw_type: str) -> str:
     if raw_type == "contextCompaction":
         return "compact"
     return "system"
+
+
+def compact_state_from_status(status: str | None) -> str:
+    if status in {"inProgress", "in_progress", "running"}:
+        return "started"
+    if status in {"failed", "cancelled", "interrupted"}:
+        return status
+    return "completed"

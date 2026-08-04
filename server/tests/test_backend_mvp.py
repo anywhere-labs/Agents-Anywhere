@@ -2177,6 +2177,85 @@ def test_sessions_sort_by_codex_last_activity_at(tmp_path):
         assert listed[0]["lastActivityAt"] == "2026-05-20T13:00:00Z"
 
 
+def test_sessions_sort_at_prefers_item_over_activity_timestamp(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, first_session_id, headers = create_connector_and_session(client)
+    second_response = client.post(
+        "/sessions",
+        headers=headers,
+        json={"connectorId": connector_id, "runtime": "codex", "externalSessionId": "thr_second_stale_activity", "title": "Second", "cwd": "/repo"},
+    )
+    assert second_response.status_code == 200
+    second_session_id = second_response.json()["session"]["id"]
+
+    with client.websocket_connect(
+        "/connector/ws",
+        headers={"Authorization": f"Bearer {access_token}"},
+    ) as ws:
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "session.updated",
+                "params": {
+                    "sessionId": first_session_id,
+                    "status": "idle",
+                    "lastActivityAt": "2026-05-20T15:00:00Z",
+                },
+            }
+        )
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "session.updated",
+                "params": {
+                    "sessionId": second_session_id,
+                    "status": "idle",
+                    "lastActivityAt": "2026-05-20T14:00:00Z",
+                },
+            }
+        )
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "timeline.sync",
+                "params": {
+                    "sessionId": first_session_id,
+                    "items": [
+                        {
+                            "id": "tl_first_newer_than_activity",
+                            "sessionId": first_session_id,
+                            "type": "message",
+                            "status": "done",
+                            "role": "assistant",
+                            "content": {"text": "newer than activity", "format": "markdown"},
+                            "source": {"runtime": "codex", "itemId": "item_first"},
+                            "orderSeq": 1,
+                            "revision": 1,
+                            "contentHash": "sha256:first-newer-than-activity",
+                            "createdAt": "2026-05-20T13:00:00Z",
+                            "updatedAt": "2026-05-20T13:00:00Z",
+                        }
+                    ],
+                },
+            }
+        )
+
+        listed = wait_for_sessions_order(
+            client,
+            [second_session_id, first_session_id],
+            headers,
+            extra=lambda sessions: any(
+                session["id"] == first_session_id and session["sortAt"] == "2026-05-20T13:00:00Z"
+                for session in sessions
+            ),
+        )
+        assert [session["id"] for session in listed[:2]] == [second_session_id, first_session_id]
+        first_session = next(session for session in listed if session["id"] == first_session_id)
+        assert first_session["lastActivityAt"] == "2026-05-20T15:00:00Z"
+        assert first_session["lastItemAt"] == "2026-05-20T13:00:00Z"
+        assert first_session["sortAt"] == "2026-05-20T13:00:00Z"
+
+
 def test_empty_sessions_sort_by_session_timestamp(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, first_session_id, headers = create_connector_and_session(client)

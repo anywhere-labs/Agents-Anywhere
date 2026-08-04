@@ -813,7 +813,7 @@ class SessionRepositoryMixin:
                 title = derived
                 await self._lock_in_derived_title(session_id, derived)
         last_item_at = (latest.updatedAt or latest.completedAt or latest.createdAt) if latest else None
-        sort_at = row["last_activity_at"] or last_item_at or row["created_at"]
+        sort_at = last_item_at or row["last_activity_at"] or row["created_at"]
         last_read_seq = int(row["last_read_seq"] or 0)
         updated_seq = int(row["updated_seq"] or 0)
         return SessionView(

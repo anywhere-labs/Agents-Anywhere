@@ -108,10 +108,12 @@ function SystemCard({ item }: { item: TimelineItem }) {
   const kind = textOf(item.content.kind) || "system"
   if (kind === "reasoning") return <ReasoningEntry item={item} />
   if (kind === "compact") {
+    const compactState = compactTimelineState(item)
+    const active = compactState === "started"
     return (
       <Marker variant="separator" className="w-full normal-case">
-        <MarkerContent className="flex-none text-sm font-normal">
-          {tSession("conversationCompacted")}
+        <MarkerContent className={cn("flex-none text-sm font-normal", active && "shimmer")}>
+          {active ? tSession("conversationCompacting") : tSession("conversationCompacted")}
         </MarkerContent>
       </Marker>
     )
@@ -128,6 +130,18 @@ function SystemCard({ item }: { item: TimelineItem }) {
       detail={systemDetail(item.content)}
     />
   )
+}
+
+function compactTimelineState(item: TimelineItem): "started" | "completed" | "failed" {
+  const contentState = textOf(item.content.state)
+  if (contentState === "started" || contentState === "running" || contentState === "inProgress") {
+    return "started"
+  }
+  if (contentState === "failed" || item.status === "failed") return "failed"
+  if (item.status === "running" || item.status === "pending") {
+    return "started"
+  }
+  return "completed"
 }
 
 function ReasoningEntry({ item }: { item: TimelineItem }) {

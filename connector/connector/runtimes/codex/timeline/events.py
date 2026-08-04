@@ -23,13 +23,24 @@ def raw_item_from_notification(
         "item/reasoning/delta",
         "item/systemMessage",
         "item/runtimeMessage",
+        "thread/compact/started",
         "thread/compacted",
     }:
         return None
+    if method == "thread/compact/started":
+        thread_id = first_string_from_mapping(params, "threadId", "thread_id")
+        return {
+            "id": f"context_compaction_{thread_id}" if thread_id else "context_compaction",
+            "type": "contextCompaction",
+            "status": "inProgress",
+            "role": "system",
+            "message": "The runtime is compacting the session context.",
+        }
     if method == "thread/compacted":
+        thread_id = first_string_from_mapping(params, "threadId", "thread_id")
         turn_id = turn_id_from_result(dict(params))
         return {
-            "id": f"context_compaction_{turn_id}" if turn_id else "context_compaction",
+            "id": f"context_compaction_{thread_id}" if thread_id else "context_compaction",
             "type": "contextCompaction",
             "status": "completed",
             "role": "system",
