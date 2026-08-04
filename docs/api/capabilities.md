@@ -182,11 +182,8 @@ GET /sessions/{sessionId}/runtime/catalogs/permission
 GET /sessions/{sessionId}/runtime/commands
 ```
 
-Filtering may use query parameters, but resource ownership must not:
-
-```text
-GET /sessions/{sessionId}/runtime/commands?query=/co
-```
+Command endpoints return the current command list. Web performs fuzzy matching
+and filtering locally after reading the list.
 
 Do not add new APIs like:
 
@@ -195,7 +192,9 @@ GET /agents/{runtime}/model-catalog?connectorId=conn_...
 GET /connectors/{connectorId}/protocol/capabilities
 ```
 
-Those are transitional aliases only.
+Those legacy routes are removed from the target API. If they still exist in a
+migration build, they are compatibility shims and must forward to the scoped
+runtime or session endpoints above.
 
 ## Push API
 
@@ -254,9 +253,12 @@ source of truth changes:
   events is compatibility payload.
 - `protocol.capabilitiesUpdated` is compatibility connector input.
 - `connector_protocol_capabilities` must not be used as authoritative UI truth.
-- `/connectors/{connectorId}/protocol/capabilities` is transitional.
-- `/agents/{runtime}/model-catalog?connectorId=...` and
-  `/agents/{runtime}/permission-catalog?connectorId=...` are transitional.
+- Removed connector protocol capability reads migrate to scoped effective
+  capability endpoints.
+- Removed agent catalog reads with `connectorId` query params migrate to
+  connector runtime catalog paths.
+- Removed command query endpoints migrate to full command-list reads plus Web
+  local fuzzy matching.
 
 The target client reads effective capabilities from scoped live endpoints and
 listens for scoped `runtime.capability.updated` events.

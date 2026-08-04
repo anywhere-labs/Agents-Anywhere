@@ -471,8 +471,9 @@ core -> server/runtime_protocol/runtimes/local
    - execution calls `AgentRuntime.execute_command()`;
    - command execution must not create a normal user message.
 2. Finish live state fidelity:
-   - `SessionState.status` is the UI running-state source;
-   - tool calls and SDK events keep status interruptible while work is active.
+   - RuntimeLive state is the UI display-state source;
+   - session-scoped effective capability is the action availability source;
+   - tool calls and SDK events keep work state and capability accurate while work is active.
 3. Finish Codex SDK parity:
    - map SDK state/timeline/notice changes into host-client calls;
    - keep SDK-specific method names inside the Codex runtime package.

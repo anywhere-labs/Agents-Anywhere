@@ -36,23 +36,21 @@ Platform session metadata only:
 
 Do not store runtime selections or running state in `sessions`.
 
-### `session_states` -> `SessionState`
+### RuntimeLive state and selections
 
-Persisted runtime-owned current session projection.
+Runtime-owned current session state is not a durable Server table in the target
+design.
 
 ```text
-session_id primary key
-runtime
 status
-selections_json
+selections
 status_reason
-error_json
-metadata_json
-updated_seq
-updated_at
+error
+metadata
 ```
 
-This state deliberately excludes command data, catalog data, timeline items, and active turn id.
+This state deliberately excludes command data, catalog data, timeline items,
+notices, ordering time, and active turn id.
 
 Example:
 
@@ -68,7 +66,11 @@ Example:
 
 Selection and status changes should be applied from runtime projection events, not by the server guessing runtime-native state.
 
-`SessionState.status` is the final UI running-state source. Legacy `sessions.status` should be kept only as a migration/backfill projection. State updates are partial and merge non-empty fields. Selection updates merge by scope, and `selections_json` may contain future scopes beyond the built-in `model` and `permission` keys.
+RuntimeLive state is the display state source. Session-scoped effective
+capability is the action availability source. Legacy `sessions.status` should
+be kept only as a migration/backfill projection. State updates are live facts.
+Selection updates merge by scope, and selections may contain future scopes
+beyond the built-in `model` and `permission` keys.
 
 ### `timeline_items` -> `SessionTimeline`
 
@@ -110,16 +112,22 @@ GET /api/v2/connectors/{connectorId}/runtimes/{runtimeId}/catalogs/permission
 
 These routes call Connector RPC, which calls runtime local reads. They do not read the durable server catalog tables as the primary path.
 
-### Existing session state
+### Session RuntimeLive state
 
 ```text
-GET /api/v2/sessions/{sessionId}/state
-PATCH /api/v2/sessions/{sessionId}/state/selections
+GET /api/v2/sessions/{sessionId}/runtime/state
+PATCH /api/v2/sessions/{sessionId}/runtime/selections
 ```
 
-`GET` returns the latest persisted runtime projection, and may refresh from Connector when online.
+The old persisted `session_states` target is removed from the current design.
+Runtime state and selections are RuntimeLive facts. The Server forwards reads
+and writes to the owning runtime and does not store them as authoritative
+session truth.
 
-`PATCH` asks the runtime to update selections in `SessionState`. The runtime may accept or reject based on current state. The durable UI update should arrive as `session.state.updated`.
+`PATCH` asks the runtime to update selections. The runtime may accept or reject
+based on current state. UI reconciliation arrives through
+`runtime.state.updated` and `runtime.capability.updated`, or through a live
+runtime read.
 
 Request shape should mirror the state map and allow one or more scopes:
 
@@ -135,11 +143,12 @@ Request shape should mirror the state map and allow one or more scopes:
 ### Commands
 
 ```text
-GET /api/v2/sessions/{sessionId}/commands?query=...
-POST /api/v2/sessions/{sessionId}/commands
+GET /api/v2/sessions/{sessionId}/runtime/commands
+POST /api/v2/sessions/{sessionId}/runtime/commands
 ```
 
-Both routes call Connector RPC. Command list is not durable.
+Both routes call Connector RPC. Command list is not durable. The GET endpoint
+returns the full current command list; Web performs fuzzy matching locally.
 
 ### New session
 
@@ -163,13 +172,13 @@ Request shape should include:
 ### Existing session message send
 
 ```text
-POST /api/v2/sessions/{sessionId}/messages
+POST /api/v2/sessions/{sessionId}/runtime/messages
 ```
 
 Public message send only carries content, attachments, and client message id. It
 must not carry model/permission selection ids. Server may still forward current
-`SessionState.selections` to the Connector runtime RPC so the runtime can apply
-current state when starting the turn.
+runtime selections to the Connector runtime RPC so the runtime can apply current
+state when starting the turn.
 
 ## Connector ingest target
 

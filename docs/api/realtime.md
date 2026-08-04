@@ -103,7 +103,7 @@ Primary realtime channel:
 WS /api/v2/dashboard/ws?ticket=...
 ```
 
-Transitional SSE:
+Legacy SSE during migration:
 
 ```text
 GET /api/v2/sessions/events/dashboard?token=...

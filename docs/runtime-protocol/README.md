@@ -67,8 +67,8 @@ pushed through the session WebSocket.
 | Session state | Session | Runtime live projection | No | Status, selections, status reason, error, metadata. Server may project disconnected when runtime is unreachable. |
 | Session timeline | Session | Runtime normalized projection | Yes | Timeline items and recovery cursor. |
 | Session notice | Session | Runtime live projection | No | Notifications, interactions, approvals, and input requests. Historical display belongs in timeline. |
-| Model catalog | Runtime | Runtime local read | No, except transitional code | Read on demand when the UI opens the selector. |
-| Permission catalog | Runtime | Runtime local read | No, except transitional code | Read on demand when the UI opens the selector. |
+| Model catalog | Runtime | Runtime local read | No | Read on demand when the UI opens the selector. |
+| Permission catalog | Runtime | Runtime local read | No | Read on demand when the UI opens the selector. |
 | Command list | Session | Runtime local read | No | Read on demand when the user types `/`. |
 | Command execution | Session | Runtime RPC result | No | Side effects are reported separately through host events. |
 

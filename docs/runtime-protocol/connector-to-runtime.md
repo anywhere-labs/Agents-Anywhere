@@ -248,9 +248,9 @@ class SessionState:
     metadata: Mapping[str, Any] = field(default_factory=dict)
 ```
 
-`SessionMeta.ordering_time` is the session ordering/display time. `SessionState` deliberately does not include ordering time, active turn id, runtime catalog data, command lists, notices, or timeline items. Model and permission selections belong in `SessionState` because they are current session state, not session metadata.
+`SessionMeta.ordering_time` is the session ordering/display time. Runtime state deliberately does not include ordering time, active turn id, runtime catalog data, command lists, notices, or timeline items. Model and permission selections belong in RuntimeLive state because they are current session state, not session metadata.
 
-`SessionState.status` is the sole UI running-state source. Legacy `sessions.status` fields should become migration projections only. Tool calls keep status as `running`; tool details belong in timeline items or state metadata.
+RuntimeLive state is the display state source. Session-scoped effective capability is the action availability source. Legacy `sessions.status` fields should become migration projections only. Tool calls keep runtime state as `running`; tool details belong in timeline items or state metadata.
 
 Runtime state updates are partial updates. A runtime may update only status, only selections, only error, or only metadata. The host/server merges non-empty fields and rejects completely empty updates. Selection updates merge by scope, so future scopes can be added without replacing unrelated selections.
 

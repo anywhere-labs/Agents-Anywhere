@@ -183,9 +183,8 @@ All routes are mounted under `/api/v2`.
 GET   /sessions
 GET   /sessions/{sessionId}/meta
 PATCH /sessions/{sessionId}/meta
-POST  /sessions/{sessionId}/read
-POST  /sessions/bulk-read
-POST  /sessions/bulk-archive
+POST  /sessions/read
+POST  /sessions/archive
 ```
 
 `GET /sessions` returns SessionMeta summaries for dashboard/list views. It may
@@ -199,6 +198,26 @@ include connector presence, but must not include runtime state as durable fact.
   "pinned": true,
   "archived": false
 }
+```
+
+`POST /sessions/read` and `POST /sessions/archive` accept a direct JSON array of
+session ids:
+
+```json
+["sess_1", "sess_2"]
+```
+
+The removed per-session and bulk aliases migrate as follows:
+
+```text
+removed: POST /sessions/{sessionId}/read
+use:     POST /sessions/read with ["{sessionId}"]
+
+removed: POST /sessions/bulk-read
+use:     POST /sessions/read
+
+removed: POST /sessions/bulk-archive
+use:     POST /sessions/archive
 ```
 
 ### SessionTimeline
@@ -326,12 +345,15 @@ GET /connectors/{connectorId}/runtimes/{runtime}/catalogs/permission
 GET /connectors/{connectorId}/runtimes/{runtime}/commands
 ```
 
-Query parameters may filter a collection, but must not express resource
-hierarchy or ownership:
+Command endpoints intentionally do not accept query parameters:
 
 ```text
-GET /sessions/{sessionId}/runtime/commands?query=/co
+GET /sessions/{sessionId}/runtime/commands
 ```
+
+Command search and fuzzy matching happen in Web after reading the command list.
+Do not add command query parameters unless the command collection becomes too
+large for a normal live read.
 
 Do not add new APIs like `/agents/{runtime}/model-catalog?connectorId=...`.
 
@@ -436,24 +458,22 @@ It must not pretend to recover runtime live notices/state from DB. If the client
 misses runtime live updates, it should call the corresponding runtime live
 endpoint after reconnect.
 
-## Transitional aliases
+## Removed legacy route blocks
 
-Existing routes may remain temporarily, but new work should target the routes
-above.
+This target API intentionally removes the old legacy route block. If an
+implementation still exposes those routes during migration, it must treat them
+as compatibility shims and route them to the scoped APIs in this document.
 
-```text
-GET   /sessions/{sessionId}/state
-GET   /sessions/{sessionId}/runtime-state
-PATCH /sessions/{sessionId}/state/selections
-POST  /sessions/{sessionId}/messages
-POST  /sessions/{sessionId}/commands
-POST  /sessions/{sessionId}/interactions/{noticeId}/respond
-GET   /connectors/{connectorId}/protocol/capabilities
-GET   /agents/{runtime}/model-catalog
-GET   /agents/{runtime}/model-catalog?connectorId=...
-GET   /agents/{runtime}/permission-catalog
-GET   /agents/{runtime}/permission-catalog?connectorId=...
-```
+Migration guide:
 
-These aliases should be removed after Web and Connector use the split
-SessionMeta/SessionTimeline/RuntimeLive API.
+- Old session state reads move to `/sessions/{sessionId}/runtime/state`.
+- Old selection updates move to `/sessions/{sessionId}/runtime/selections`.
+- Old message sends move to `/sessions/{sessionId}/runtime/messages`.
+- Old command execution moves to `/sessions/{sessionId}/runtime/commands`.
+- Old interaction responses move to
+  `/sessions/{sessionId}/runtime/notices/{noticeId}/respond`.
+- Old connector protocol capability reads move to runtime-scoped or
+  session-scoped effective capability endpoints.
+- Old agent catalog reads with `connectorId` query params move to
+  `/connectors/{connectorId}/runtimes/{runtime}/catalogs/model` and
+  `/connectors/{connectorId}/runtimes/{runtime}/catalogs/permission`.

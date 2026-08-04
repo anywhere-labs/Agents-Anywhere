@@ -56,20 +56,21 @@ Changing selectors:
 
 ```text
 User chooses selection
-  -> PATCH session selection
+  -> PATCH session runtime selection
   -> runtime accepts or rejects
   -> Web may update optimistically
-  -> Web reconciles from session.state.updated event or GET /state
+  -> Web reconciles from runtime.state.updated or GET /runtime/state
 ```
 
-The runtime may also update selections without direct user action. Web must treat `session.state.updated` as authoritative.
+The runtime may also update selections without direct user action. Web must
+treat RuntimeLive state updates as authoritative.
 
 ## Message composer
 
 For existing sessions:
 
 ```text
-POST /sessions/{id}/messages
+POST /sessions/{id}/runtime/messages
 ```
 
 Payload should include:
@@ -88,11 +89,12 @@ Payload must not include:
 When the input begins with `/`, Web should list commands by live RPC:
 
 ```text
-GET /sessions/{id}/commands?query=...
+GET /sessions/{id}/runtime/commands
 ```
 
 The frontend handles:
 
+- filtering
 - fuzzy matching
 - ranking
 - keyboard navigation
@@ -104,20 +106,19 @@ The protocol does not include `autocomplete`.
 Executing a command:
 
 ```text
-POST /sessions/{id}/commands
+POST /sessions/{id}/runtime/commands
 ```
 
 Command execution returns a normal RPC result. If the runtime changes timeline, state, selection, or notices, those changes arrive through normal runtime events.
 
 If command catalog lookup or execution fails, Web must show an error and must not send the `/xxx` input as a normal message.
 
-## Session state UI
+## Session RuntimeLive UI
 
-Web should render busy/interrupt/blocking UI from session state, timeline, and notices. `SessionState.status` is the sole source for whether the session is running/interruption-capable; timeline and notices explain what is happening but must not replace the running-state projection.
-
-`SessionState` includes:
-
-- status
+Web should render busy/blocking labels from RuntimeLive state. Action
+availability, including interrupt and steer, comes from session-scoped effective
+capabilities. Timeline and notices explain what is happening but must not
+replace RuntimeLive state or effective capability.
 - selections
 - status reason
 - error

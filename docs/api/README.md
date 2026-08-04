@@ -85,29 +85,28 @@ terminal lifecycle         -> session/connector terminal streams
 
 See [Realtime API](./realtime.md).
 
-## Deprecated or transitional API areas
+## Removed legacy API areas
 
-These routes are migration/deprecation areas. They may exist while data and
-callers are moved, but they are not the target design for new work:
+The old legacy API list is intentionally removed from the target docs.
+If a migration build still exposes those routes, they are compatibility shims
+only and should forward to the scoped APIs documented here.
 
-```text
-GET  /api/v2/agents/{runtime}/model-catalog
-GET  /api/v2/agents/{runtime}/permission-catalog
-GET  /api/v2/agents/{runtime}/model-catalog?connectorId=...
-GET  /api/v2/agents/{runtime}/permission-catalog?connectorId=...
-GET  /api/v2/connectors/{connectorId}/protocol/capabilities
-GET  /api/v2/sessions/events/dashboard
-POST /api/v2/sessions
-GET  /api/v2/sessions/{sessionId}/state with timeline query params
-GET  /api/v2/sessions/{sessionId}/runtime-state
-POST /api/v2/sessions/{sessionId}/sync
-POST /api/v2/sessions/{sessionId}/interactions/{noticeId}/respond
-message/create modelSelectionId and permissionSelectionId fields
-snapshot.catalogs as a primary catalog source
-server-persisted notices as runtime notice truth
-server-persisted protocol catalogs/capabilities as runtime truth
-hardcoded session commands
-```
+Migration guide:
+
+- Agent catalog routes with `connectorId` query parameters move to connector
+  runtime catalog paths.
+- Connector protocol capability routes move to runtime-scoped or session-scoped
+  effective capability paths.
+- Session state routes move to `/sessions/{sessionId}/runtime/state`.
+- Session selection routes move to `/sessions/{sessionId}/runtime/selections`.
+- Session message and command routes move under
+  `/sessions/{sessionId}/runtime/*`.
+- Session read/archive bulk aliases move to `POST /sessions/read` and
+  `POST /sessions/archive`, each accepting a direct JSON array of session ids.
+- `snapshot.catalogs` is not a primary catalog source.
+- Server-persisted notices, catalogs, and capabilities are not runtime truth.
+- Hardcoded session commands are removed; command lists come from runtime live
+  reads.
 
 `snapshot.catalogs` is now a compatibility shell and should be empty in the
 target flow. Model and permission catalogs are read from live runtime catalog

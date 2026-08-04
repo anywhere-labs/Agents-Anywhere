@@ -357,7 +357,8 @@ Rules:
 - `CodexRuntime` implements `AgentRuntime`.
 - `CodexRuntime` calls `RuntimeHostClient`.
 - `steer_turn` and `interrupt_turn` do not require `turn_id`.
-- Tool calls keep `SessionState.status = "running"` while active.
+- Tool calls keep RuntimeLive display state as `running` while active and keep
+  session-scoped effective capabilities accurate.
 - Known Codex SDK objects must be read by type and attributes, not generic
   dict probing. For example, use `notification.payload`, `payload.thread_id`,
   `payload.turn_id`, `payload.item_id`, `payload.delta`, `turn.items`, and
@@ -389,9 +390,11 @@ Acceptance:
   protocol; SDK/app-server transport details stay outside the runtime reducer.
 - Codex text-only `create_and_start_session()` and `start_turn()` call the SDK
   runtime client, not connector-layer IPC/app-server code.
-- Codex turn start updates `SessionState.status` through `waiting` then `running`, and `turn/completed` maps back to `idle`.
+- Codex turn start pushes RuntimeLive state through `waiting` then `running`,
+  and `turn/completed` maps back to `idle`.
 - Codex no longer returns `backendNotifications`.
-- Codex runtime events produce `SessionMeta`, `SessionState`, `SessionTimeline`, and `SessionNotice`.
+- Codex runtime events produce `SessionMeta`, `SessionTimeline`, RuntimeLive
+  state, RuntimeLive notice, and effective capability updates.
 - Codex turn start, steer, and interrupt paths use `AgentRuntime` when the native runtime is running.
 
 Current Codex SDK rewrite sub-order:
@@ -401,55 +404,50 @@ Current Codex SDK rewrite sub-order:
 2. Rewrite the timeline reducer to consume typed adapter events and typed SDK
    thread items.
 3. Rewrite the notification projector to dispatch on typed event variants and
-   keep `SessionState.status` correct during streaming, tool calls, terminal
-   events, completion, interruption, cancellation, and failure.
+   keep RuntimeLive state and session-scoped effective capability correct during
+   streaming, tool calls, terminal events, completion, interruption,
+   cancellation, and failure.
 4. Then clean up Connector Server RPC DTO parsing/serialization so raw dicts are
    confined to JSON transport boundaries.
 
-## Phase 5: add Server `SessionState` as durable projection
+## Phase 5: expose RuntimeLive state and selections
 
-Status: implemented for the current state/selections path. Remaining work is to
-make all UI running-state decisions and all runtime event sources converge on
-this projection.
+Status: superseded by the RuntimeLive boundary. The old durable
+`session_states` target is removed from the current design.
 
-Goal: make `SessionState` a first-class durable model and migrate old session
-projection data into it.
+Goal: expose runtime state and selections through live runtime reads and pushes.
 
-Add database/repository/service/API support for:
+Target API:
 
 ```text
-session_states
-GET /api/v2/sessions/{sessionId}/state
-PATCH /api/v2/sessions/{sessionId}/state/selections
+GET /api/v2/sessions/{sessionId}/runtime/state
+PATCH /api/v2/sessions/{sessionId}/runtime/selections
 ```
 
-`session_states` should include:
+Removed old routes migrate as follows:
 
 ```text
-session_id primary key
-runtime
-status
-selections_json
-status_reason
-error_json
-metadata_json
-updated_seq
-updated_at
+GET /api/v2/sessions/{sessionId}/state
+  -> GET /api/v2/sessions/{sessionId}/runtime/state
+
+PATCH /api/v2/sessions/{sessionId}/state/selections
+  -> PATCH /api/v2/sessions/{sessionId}/runtime/selections
 ```
 
 Rules:
 
-- `SessionState.status` becomes the target UI running-state source.
+- RuntimeLive state is the target display state source.
+- Session-scoped effective capability is the target action availability source.
 - Existing `sessions.status` remains only as a migration projection until Web is moved.
-- State updates are partial and merge non-empty fields.
+- State updates are live facts and are not persisted as authoritative DB state.
 - Selection updates merge by scope.
 - Server does not validate selection ids against DB catalogs as protocol truth.
 
 Acceptance:
 
-- A session can refresh and recover status/selections from `SessionState`.
-- Web reads the new `SessionState` projection; any old field merge is part of the
-  migration/backfill step, not a long-term compatibility path.
+- A session can refresh status/selections through live runtime RPC.
+- Web reads RuntimeLive state and session-scoped effective capability; any old
+  field merge is part of a shim, not a long-term compatibility path.
 
 ## Phase 6: add `SessionNotice` native path
 
@@ -501,13 +499,15 @@ Add or switch primary paths:
 ```text
 GET /api/v2/connectors/{connectorId}/runtimes/{runtimeId}/catalogs/model
 GET /api/v2/connectors/{connectorId}/runtimes/{runtimeId}/catalogs/permission
-GET /api/v2/sessions/{sessionId}/runtime/commands?query=...
+GET /api/v2/sessions/{sessionId}/runtime/commands
 POST /api/v2/sessions/{sessionId}/runtime/commands
 ```
 
 Rules:
 
 - Catalogs are live runtime reads, not durable Server truth.
+- Command endpoints return full command lists; Web performs fuzzy matching
+  locally.
 - Command lists are session live reads, not frontend-built static lists.
 - `/xxx` command lookup or execution failure must not fallback to a normal user message.
 - Command result uses standardized `ok/code/message/result`.
@@ -527,8 +527,8 @@ Goal: remove one-off model/permission fields from message send and existing sess
 For existing sessions:
 
 ```text
-PATCH /sessions/{id}/state/selections
-POST /sessions/{id}/messages
+PATCH /sessions/{id}/runtime/selections
+POST /sessions/{id}/runtime/messages
 ```
 
 Message payload contains:
@@ -594,10 +594,11 @@ Goal: make UI read the new protocol projections and live catalogs.
 
 Update Web:
 
-- session load reads `meta/state/timeline/notices`
-- busy/interrupt UI reads `SessionState.status`
+- session load reads `meta/timeline/runtime`
+- busy labels read RuntimeLive state
+- actions read session-scoped effective capabilities
 - selector opens perform live runtime catalog reads
-- selection changes call `PATCH /state/selections`
+- selection changes call `PATCH /runtime/selections`
 - message send has no selection fields
 - command mode reads runtime command list
 - command execution uses command API, not message API
