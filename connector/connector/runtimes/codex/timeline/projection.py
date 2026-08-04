@@ -168,6 +168,7 @@ class CodexTimelineProjection:
             "turnStart",
             "turnEnd",
             "error",
+            "contextCompaction",
         }:
             text = self.text or self.message
             return {
@@ -358,4 +359,6 @@ def system_kind_from_raw_type(raw_type: str) -> str:
         return "error"
     if raw_type == "runtimeMessage":
         return "runtime"
+    if raw_type == "contextCompaction":
+        return "notice"
     return "system"

@@ -24,6 +24,7 @@ def timeline_item_type_from_raw_type(value: str) -> str:
         "systemMessage",
         "runtimeMessage",
         "error",
+        "contextCompaction",
         "unknown",
     }:
         return "system"
@@ -88,6 +89,7 @@ def timeline_item_role_from_values(raw_type: str, role: str | None) -> str | Non
         "turnStart",
         "turnEnd",
         "error",
+        "contextCompaction",
     }:
         return "system"
     if raw_type in {"userMessage", "steeringUserMessage"}:

@@ -8,6 +8,7 @@ from typing import Any
 
 from openai_codex.generated.v2_all import (
     AgentMessageThreadItem,
+    ContextCompactionThreadItem,
     TextUserInput,
     ThreadItem,
     Turn,
@@ -26,6 +27,7 @@ from connector.runtime_protocol import (
     CommandToolContent,
     MarkdownMessageContent,
     MessageTimelineContent,
+    NoticeSystemContent,
     RuntimeConfig,
     SessionNotice,
     TimelineSource,
@@ -56,6 +58,7 @@ from connector.runtimes.codex.timeline.accumulator import CodexTimelineAccumulat
 from connector.runtimes.codex.timeline.items import (
     CodexAgentMessageItem,
     CodexCommandExecutionItem,
+    CodexContextCompactionItem,
     CodexFileChangeItem,
     CodexReasoningItem,
     CodexRuntimeMessageItem,
@@ -69,6 +72,9 @@ from connector.runtimes.codex.timeline.items import (
 from connector.runtimes.codex.timeline.projection import (
     CodexTimelineProjection,
     timeline_item_from_projection,
+)
+from connector.runtimes.codex.timeline.typed_events import (
+    timeline_projections_from_sdk_turn_event,
 )
 
 
@@ -114,6 +120,10 @@ def test_codex_timeline_native_item_classes_are_explicitly_mapped() -> None:
     assert codex_timeline_item_class("reasoning") is CodexReasoningItem
     assert codex_timeline_item_class("runtimeMessage") is CodexRuntimeMessageItem
     assert codex_timeline_item_class("commandExecution") is CodexCommandExecutionItem
+    assert (
+        codex_timeline_item_class("contextCompaction")
+        is CodexContextCompactionItem
+    )
     assert codex_timeline_item_class("fileChange") is CodexFileChangeItem
     assert codex_timeline_item_class("turnStart") is CodexTurnStartItem
     assert codex_timeline_item_class("turnEnd") is CodexTurnEndItem
@@ -166,6 +176,36 @@ def test_codex_projection_maps_command_content_to_specific_platform_content() ->
         "output": "ok",
         "format": "text",
     }
+
+
+def test_codex_projection_maps_context_compaction_to_notice_content() -> None:
+    projection = CodexTimelineProjection(
+        native_id="compact_1",
+        raw_type="contextCompaction",
+        status="completed",
+        role="system",
+        turn_id="turn_1",
+        message="The session context was compacted.",
+    )
+
+    item = timeline_item_from_projection(
+        projection=projection,
+        external_session_id="thread_1",
+        fallback_index=0,
+        event="thread/read",
+    )
+    platform_item = item.to_platform_item(session_id="sess_1", order_seq=0)
+
+    assert isinstance(item, CodexContextCompactionItem)
+    assert isinstance(item.content, NoticeSystemContent)
+    assert platform_item.type == "system"
+    assert platform_item.role == "system"
+    assert platform_item.content == {
+        "kind": "notice",
+        "text": "The session context was compacted.",
+        "format": "markdown",
+    }
+    assert platform_item.source["rawType"] == "contextCompaction"
 
 
 class FakeCodexClient:
@@ -587,6 +627,50 @@ def test_codex_sdk_event_normalizes_typed_turn_completion() -> None:
     assert event.params["turn"]["id"] == "turn_done"
     assert event.params["turn"]["items"][0]["type"] == "agentMessage"
     assert event.params["turn"]["items"][0]["text"] == "hello"
+
+
+def test_codex_timeline_projects_context_compaction_thread_item() -> None:
+    event = CodexSdkEvent.from_value(
+        Notification(
+            method="turn/completed",
+            payload=TurnCompletedNotification(
+                threadId="thread_1",
+                turn=Turn(
+                    id="turn_done",
+                    status=TurnStatus.completed,
+                    items=[
+                        ThreadItem(
+                            root=ContextCompactionThreadItem(
+                                id="compact_1",
+                                type="contextCompaction",
+                            )
+                        )
+                    ],
+                    completedAt=None,
+                    durationMs=None,
+                    error=None,
+                    itemsView=None,
+                    startedAt=None,
+                ),
+            ),
+        ),
+    )
+
+    projections = timeline_projections_from_sdk_turn_event(event)
+
+    assert projections is not None
+    assert len(projections) == 1
+    assert projections[0].raw_type == "contextCompaction"
+    item = timeline_item_from_projection(
+        projection=projections[0],
+        external_session_id="thread_1",
+        fallback_index=0,
+        event="turn/completed",
+    )
+    platform_item = item.to_platform_item(session_id="sess_1", order_seq=0)
+    assert isinstance(item, CodexContextCompactionItem)
+    assert platform_item.content["kind"] == "notice"
+    assert platform_item.source["rawType"] == "contextCompaction"
 
 
 def test_codex_timeline_projects_typed_sdk_delta_without_params_dict() -> None:

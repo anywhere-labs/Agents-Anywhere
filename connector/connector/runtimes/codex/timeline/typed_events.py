@@ -9,6 +9,7 @@ from openai_codex.generated.v2_all import (
     CommandExecutionOutputDeltaNotification,
     CommandExecutionThreadItem,
     ContentItem,
+    ContextCompactionThreadItem,
     FileChangeOutputDeltaNotification,
     FileChangePatchUpdatedNotification,
     FileChangeThreadItem,
@@ -227,6 +228,15 @@ def timeline_projection_from_thread_item(
             role="system",
             turn_id=turn_id,
             message=root.text,
+        )
+    if isinstance(root, ContextCompactionThreadItem):
+        return CodexTimelineProjection(
+            native_id=root.id,
+            raw_type="contextCompaction",
+            status=event_status,
+            role="system",
+            turn_id=turn_id,
+            message="The session context was compacted.",
         )
     return CodexTimelineProjection(
         native_id=None,

@@ -13,7 +13,14 @@ def timeline_item_content(raw: dict[str, Any]) -> Mapping[str, Any]:
     raw_type = raw.get("type")
     if raw_type == "reasoning":
         return reasoning_content(raw=raw, content=content)
-    if raw_type in {"systemMessage", "runtimeMessage", "turnStart", "turnEnd", "error"}:
+    if raw_type in {
+        "systemMessage",
+        "runtimeMessage",
+        "turnStart",
+        "turnEnd",
+        "error",
+        "contextCompaction",
+    }:
         return system_content(raw=raw, content=content)
     if isinstance(content, dict):
         text = text_from_value(content)
@@ -120,6 +127,8 @@ def system_kind(raw: Mapping[str, Any]) -> str:
         return "error"
     if raw_type == "runtimeMessage":
         return "runtime"
+    if raw_type == "contextCompaction":
+        return "notice"
     return "system"
 
 

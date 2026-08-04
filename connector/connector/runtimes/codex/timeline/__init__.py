@@ -17,6 +17,7 @@ from connector.runtimes.codex.timeline.identity import (
 from connector.runtimes.codex.timeline.items import (
     CodexAgentMessageItem,
     CodexCommandExecutionItem,
+    CodexContextCompactionItem,
     CodexCustomToolCallItem,
     CodexCustomToolCallOutputItem,
     CodexErrorItem,
@@ -70,6 +71,7 @@ from connector.runtimes.codex.timeline.typed_events import (
 __all__ = [
     "CodexAgentMessageItem",
     "CodexCommandExecutionItem",
+    "CodexContextCompactionItem",
     "CodexCustomToolCallItem",
     "CodexCustomToolCallOutputItem",
     "CodexErrorItem",

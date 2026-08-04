@@ -138,6 +138,12 @@ class CodexErrorItem(CodexTimelineItem):
 
 
 @dataclass(frozen=True, slots=True)
+class CodexContextCompactionItem(CodexTimelineItem):
+    expected_type: ClassVar[TimelineItemType | None] = "system"
+    expected_native_item_types: ClassVar[tuple[str, ...]] = ("contextCompaction",)
+
+
+@dataclass(frozen=True, slots=True)
 class CodexCommandExecutionItem(CodexTimelineItem):
     expected_type: ClassVar[TimelineItemType | None] = "tool"
     expected_native_item_types: ClassVar[tuple[str, ...]] = ("commandExecution",)
@@ -201,6 +207,7 @@ CODEX_TIMELINE_ITEM_CLASS_BY_NATIVE_TYPE: Mapping[str, type[CodexTimelineItem]] 
     "turnStart": CodexTurnStartItem,
     "turnEnd": CodexTurnEndItem,
     "error": CodexErrorItem,
+    "contextCompaction": CodexContextCompactionItem,
     "commandExecution": CodexCommandExecutionItem,
     "function_call": CodexFunctionCallItem,
     "function_call_output": CodexFunctionCallOutputItem,

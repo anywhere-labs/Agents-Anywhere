@@ -13,6 +13,7 @@ from connector.runtime_protocol import (
     GenericSystemContent,
     MarkdownMessageContent,
     McpToolContent,
+    NoticeSystemContent,
     ReasoningSystemContent,
     RuntimeSystemContent,
     TextMessageContent,
@@ -137,6 +138,13 @@ def codex_system_content_from_mapping(
         return TurnEndSystemContent(text=text, message=message, metadata=metadata)
     if kind == "error":
         return ErrorSystemContent(
+            text=text,
+            message=message,
+            severity=severity,
+            metadata=metadata,
+        )
+    if kind == "notice":
+        return NoticeSystemContent(
             text=text,
             message=message,
             severity=severity,
