@@ -182,7 +182,11 @@ class FakeCodexClient:
                     {
                         "id": "gpt-example",
                         "displayName": "GPT Example",
-                        "supportedReasoningEfforts": ["low", "high"],
+                        "description": "SDK model description",
+                        "supportedReasoningEfforts": [
+                            {"id": "low", "description": "SDK low reasoning description"},
+                            {"id": "high", "description": "SDK high reasoning description"},
+                        ],
                     },
                     {
                         "id": "gpt-plain",
@@ -794,7 +798,9 @@ async def _test_codex_runtime_model_catalog_from_app_server() -> None:
 
     assert [model.id for model in catalog.models] == ["gpt-example", "gpt-plain"]
     assert catalog.models[0].selection_id is None
+    assert catalog.models[0].description is None
     assert [item.id for item in catalog.models[0].reasoning_items] == ["low", "high"]
+    assert catalog.models[0].reasoning_items[0].description is None
     assert catalog.models[0].reasoning_items[0].selection_id.startswith("sel_model_")
     assert catalog.models[1].selection_id.startswith("sel_model_")
 

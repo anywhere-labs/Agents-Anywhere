@@ -115,7 +115,6 @@ def _model_item(item: dict[str, Any]) -> RuntimeModelItem | None:
         else protocol_selection_id(
             "codex", "model", {"model_id": model_id, "reasoning_id": None}
         ),
-        description=_first_string(item, "description"),
         reasoning_items=reasoning_items,
         metadata={"source": "codex.model/list", "raw": item},
     )
@@ -152,7 +151,6 @@ def _reasoning_items(
                     "model",
                     {"model_id": model_id, "reasoning_id": reasoning_id},
                 ),
-                description=_first_string(item, "description"),
                 metadata={"source": "codex.model/list", "raw": item},
             )
         )
