@@ -360,5 +360,5 @@ def system_kind_from_raw_type(raw_type: str) -> str:
     if raw_type == "runtimeMessage":
         return "runtime"
     if raw_type == "contextCompaction":
-        return "notice"
+        return "compact"
     return "system"

@@ -638,6 +638,7 @@
       "resolveBelow": "请在下方处理",
       "reasoning": "推理",
       "reasoningSummary": "推理过程 · {count} 条摘要",
+      "conversationCompacted": "对话已压缩",
       "loadOlder": "加载更早消息",
       "expandMessage": "展开",
       "collapseMessage": "收起",

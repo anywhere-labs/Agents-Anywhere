@@ -25,9 +25,9 @@ from openai_codex.models import (
 
 from connector.runtime_protocol import (
     CommandToolContent,
+    CompactSystemContent,
     MarkdownMessageContent,
     MessageTimelineContent,
-    NoticeSystemContent,
     RuntimeConfig,
     SessionNotice,
     TimelineSource,
@@ -178,7 +178,7 @@ def test_codex_projection_maps_command_content_to_specific_platform_content() ->
     }
 
 
-def test_codex_projection_maps_context_compaction_to_notice_content() -> None:
+def test_codex_projection_maps_context_compaction_to_compact_content() -> None:
     projection = CodexTimelineProjection(
         native_id="compact_1",
         raw_type="contextCompaction",
@@ -197,11 +197,11 @@ def test_codex_projection_maps_context_compaction_to_notice_content() -> None:
     platform_item = item.to_platform_item(session_id="sess_1", order_seq=0)
 
     assert isinstance(item, CodexContextCompactionItem)
-    assert isinstance(item.content, NoticeSystemContent)
+    assert isinstance(item.content, CompactSystemContent)
     assert platform_item.type == "system"
     assert platform_item.role == "system"
     assert platform_item.content == {
-        "kind": "notice",
+        "kind": "compact",
         "text": "The session context was compacted.",
         "format": "markdown",
     }
@@ -669,7 +669,7 @@ def test_codex_timeline_projects_context_compaction_thread_item() -> None:
     )
     platform_item = item.to_platform_item(session_id="sess_1", order_seq=0)
     assert isinstance(item, CodexContextCompactionItem)
-    assert platform_item.content["kind"] == "notice"
+    assert platform_item.content["kind"] == "compact"
     assert platform_item.source["rawType"] == "contextCompaction"
 
 

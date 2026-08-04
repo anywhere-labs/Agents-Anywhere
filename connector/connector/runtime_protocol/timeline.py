@@ -59,6 +59,7 @@ SystemContentKind = Literal[
     "turn_end",
     "error",
     "notice",
+    "compact",
     "unknown",
 ]
 
@@ -358,6 +359,12 @@ class ErrorSystemContent(SystemTimelineContent):
 class NoticeSystemContent(SystemTimelineContent):
     expected_kind: ClassVar[str | None] = "notice"
     kind: SystemContentKind = "notice"
+
+
+@dataclass(frozen=True, slots=True)
+class CompactSystemContent(SystemTimelineContent):
+    expected_kind: ClassVar[str | None] = "compact"
+    kind: SystemContentKind = "compact"
 
 
 @dataclass(frozen=True, slots=True)

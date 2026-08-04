@@ -638,6 +638,7 @@
       "resolveBelow": "Resolve below",
       "reasoning": "Reasoning",
       "reasoningSummary": "Reasoning · {count} notes",
+      "conversationCompacted": "Conversation compacted",
       "loadOlder": "Load earlier messages",
       "expandMessage": "Show more",
       "collapseMessage": "Show less",

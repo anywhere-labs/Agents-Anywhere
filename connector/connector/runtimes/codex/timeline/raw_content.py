@@ -128,7 +128,7 @@ def system_kind(raw: Mapping[str, Any]) -> str:
     if raw_type == "runtimeMessage":
         return "runtime"
     if raw_type == "contextCompaction":
-        return "notice"
+        return "compact"
     return "system"
 
 

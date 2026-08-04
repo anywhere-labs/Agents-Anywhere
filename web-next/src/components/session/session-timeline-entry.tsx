@@ -104,8 +104,18 @@ function MessageCard({ token, session, item }: { token: string; session: Session
 }
 
 function SystemCard({ item }: { item: TimelineItem }) {
+  const tSession = useTranslations("dashboard.session")
   const kind = textOf(item.content.kind) || "system"
   if (kind === "reasoning") return <ReasoningEntry item={item} />
+  if (kind === "compact") {
+    return (
+      <Marker variant="separator" className="w-full normal-case">
+        <MarkerContent className="flex-none text-sm font-normal">
+          {tSession("conversationCompacted")}
+        </MarkerContent>
+      </Marker>
+    )
+  }
   const text = textOf(item.content.text) || textOf(item.content.message) || textOf(item.content.rawText)
   const failed = item.status === "failed" || kind === "error"
   const title = text ? `${kind}: ${text}` : `${kind}: ${item.status}`

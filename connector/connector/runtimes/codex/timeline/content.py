@@ -6,6 +6,7 @@ from typing import Any
 
 from connector.runtime_protocol import (
     CommandToolContent,
+    CompactSystemContent,
     ErrorSystemContent,
     FileArtifactContent,
     FileChangeArtifactContent,
@@ -145,6 +146,13 @@ def codex_system_content_from_mapping(
         )
     if kind == "notice":
         return NoticeSystemContent(
+            text=text,
+            message=message,
+            severity=severity,
+            metadata=metadata,
+        )
+    if kind == "compact":
+        return CompactSystemContent(
             text=text,
             message=message,
             severity=severity,
