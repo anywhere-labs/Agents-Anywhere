@@ -223,7 +223,7 @@ async def _test_codex_sdk_client_uses_low_level_permission_payloads() -> None:
     assert turn.turn_id == "turn_low"
     assert full_access.thread_id == "thread_low"
     assert native.initialized is True
-    assert native.low_level.thread_start_params[0]["approvalPolicy"] == "on-request"
+    assert native.low_level.thread_start_params[0]["approvalPolicy"] == "untrusted"
     assert native.low_level.thread_start_params[0]["approvalsReviewer"] == "user"
     assert native.low_level.thread_start_params[0]["sandbox"] == "workspace-write"
     assert native.low_level.turn_start_params[0]["approvalPolicy"] == "on-request"
@@ -267,7 +267,7 @@ async def _test_codex_sdk_client_resumes_thread_before_low_level_turn_start() ->
     ]
     assert native.low_level.thread_resume_params[0]["threadId"] == "thread_existing"
     assert native.low_level.thread_resume_params[0]["model"] == "gpt-example"
-    assert native.low_level.thread_resume_params[0]["approvalPolicy"] == "on-request"
+    assert native.low_level.thread_resume_params[0]["approvalPolicy"] == "untrusted"
     assert native.low_level.thread_resume_params[0]["approvalsReviewer"] == "user"
     assert native.low_level.thread_resume_params[0]["sandbox"] == "workspace-write"
 
@@ -329,7 +329,7 @@ async def _test_codex_sdk_client_retries_turn_start_after_thread_not_found() -> 
         "turn/start:thread_low",
     ]
     assert native.low_level.thread_resume_params[0]["threadId"] == "thread_low"
-    assert native.low_level.thread_resume_params[0]["approvalPolicy"] == "on-request"
+    assert native.low_level.thread_resume_params[0]["approvalPolicy"] == "untrusted"
 
 
 class _NativeSdkClient:

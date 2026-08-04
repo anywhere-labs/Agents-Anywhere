@@ -45,7 +45,8 @@ def codex_permission_catalog_items() -> list[dict[str, Any]]:
             "identity": {"permission_mode": "request_approval"},
             "runtimeSettings": {"permissionMode": "request_approval"},
             "nativeSettings": {
-                "approvalPolicy": "on-request",
+                "approvalPolicy": "untrusted",
+                "approvalsReviewer": "user",
                 "sandbox": "workspace-write",
                 "sandboxPolicy": {"type": "workspaceWrite", "networkAccess": False},
             },
@@ -61,7 +62,8 @@ def codex_permission_catalog_items() -> list[dict[str, Any]]:
             "identity": {"permission_mode": "auto_review"},
             "runtimeSettings": {"permissionMode": "auto_review"},
             "nativeSettings": {
-                "approvalPolicy": "auto_review",
+                "approvalPolicy": "on-request",
+                "approvalsReviewer": "auto_review",
                 "sandbox": "workspace-write",
                 "sandboxPolicy": {"type": "workspaceWrite", "networkAccess": False},
             },

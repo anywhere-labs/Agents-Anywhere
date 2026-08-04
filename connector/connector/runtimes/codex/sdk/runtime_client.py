@@ -15,6 +15,7 @@ class CodexStartThreadRequest:
     cwd: str | None = None
     model: str | None = None
     approval_policy: str | None = None
+    approvals_reviewer: str | None = None
     sandbox: str | None = None
     ephemeral: bool = False
 
@@ -27,6 +28,7 @@ class CodexStartTurnRequest:
     model: str | None = None
     effort: str | None = None
     approval_policy: str | None = None
+    approvals_reviewer: str | None = None
     sandbox: str | None = None
 
 

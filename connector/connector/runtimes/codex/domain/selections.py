@@ -23,6 +23,7 @@ class CodexModelSettings:
 @dataclass(frozen=True, slots=True)
 class CodexPermissionSettings:
     approval_policy: str | None = None
+    approvals_reviewer: str | None = None
     sandbox: str | None = None
 
 
@@ -56,6 +57,10 @@ async def permission_settings_from_selection(
         if isinstance(native, dict):
             return CodexPermissionSettings(
                 approval_policy=_native_setting_string(native, "approvalPolicy"),
+                approvals_reviewer=_native_setting_string(
+                    native,
+                    "approvalsReviewer",
+                ),
                 sandbox=_native_setting_string(native, "sandbox"),
             )
         return CodexPermissionSettings()
@@ -150,6 +155,19 @@ async def permission_selection_from_thread_state(
         ("latestTurnStartParams", "approvalPolicy"),
         ("latestTurnStartParams", "approval_policy"),
     )
+    approvals_reviewer = _first_string(
+        thread,
+        "approvalsReviewer",
+        "approvals_reviewer",
+        ("turnStartParams", "approvalsReviewer"),
+        ("turnStartParams", "approvals_reviewer"),
+        ("threadSettings", "approvalsReviewer"),
+        ("threadSettings", "approvals_reviewer"),
+        ("settings", "approvalsReviewer"),
+        ("settings", "approvals_reviewer"),
+        ("latestTurnStartParams", "approvalsReviewer"),
+        ("latestTurnStartParams", "approvals_reviewer"),
+    )
     sandbox = _sandbox_mode(
         _first_present(
             thread,
@@ -170,7 +188,7 @@ async def permission_selection_from_thread_state(
             ("latestTurnStartParams", "sandbox_policy"),
         )
     )
-    if approval_policy is None and sandbox is None:
+    if approval_policy is None and approvals_reviewer is None and sandbox is None:
         return None
     catalog = await read_catalog()
     for permission in catalog.permissions:
@@ -180,6 +198,17 @@ async def permission_selection_from_thread_state(
         if (
             approval_policy is not None
             and native.get("approvalPolicy") != approval_policy
+        ):
+            continue
+        if (
+            approvals_reviewer is not None
+            and native.get("approvalsReviewer") != approvals_reviewer
+        ):
+            continue
+        if (
+            approvals_reviewer is None
+            and approval_policy in {"on-request", "on_request"}
+            and native.get("approvalsReviewer") is not None
         ):
             continue
         if sandbox is not None and native.get("sandbox") != sandbox:

@@ -109,6 +109,7 @@ class CodexTurnActions:
                     model=selected_model.model,
                     effort=selected_model.effort,
                     approval_policy=native_permission.approval_policy,
+                    approvals_reviewer=native_permission.approvals_reviewer,
                     sandbox=native_permission.sandbox,
                 )
             )

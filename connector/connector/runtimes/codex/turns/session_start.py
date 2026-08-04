@@ -90,6 +90,7 @@ class CodexSessionStartController:
                 cwd=cwd,
                 model=selected_model.model,
                 approval_policy=native_permission.approval_policy,
+                approvals_reviewer=native_permission.approvals_reviewer,
                 sandbox=native_permission.sandbox,
                 ephemeral=False,
             )

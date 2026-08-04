@@ -832,6 +832,19 @@ async def _test_codex_runtime_permission_catalog() -> None:
         "auto_review",
         "full_access",
     ]
+    request_permission = all_permissions.permissions[0]
+    auto_review_permission = all_permissions.permissions[1]
+    assert request_permission.metadata["nativeSettings"]["approvalPolicy"] == (
+        "untrusted"
+    )
+    assert request_permission.metadata["nativeSettings"]["approvalsReviewer"] == "user"
+    assert auto_review_permission.metadata["nativeSettings"]["approvalPolicy"] == (
+        "on-request"
+    )
+    assert (
+        auto_review_permission.metadata["nativeSettings"]["approvalsReviewer"]
+        == "auto_review"
+    )
     assert [item.id for item in catalog.permissions] == ["full_access"]
     assert catalog.permissions[0].selection_id.startswith("sel_permission_")
     assert catalog.permissions[0].description is not None
@@ -991,7 +1004,8 @@ async def _test_codex_runtime_reads_current_session_selections_from_thread() -> 
             "model": "gpt-example",
             "reasoningEffort": "high",
             "threadSettings": {
-                "approvalPolicy": "on-request",
+                "approvalPolicy": "untrusted",
+                "approvalsReviewer": "user",
                 "sandboxPolicy": {"type": "workspaceWrite"},
             },
             "items": [],
@@ -1019,6 +1033,36 @@ async def _test_codex_runtime_reads_current_session_selections_from_thread() -> 
         "thread/read",
         {"threadId": "thread_1", "includeTurns": False},
     )
+
+
+def test_codex_runtime_distinguishes_auto_review_selection_from_thread() -> None:
+    asyncio.run(_test_codex_runtime_distinguishes_auto_review_selection_from_thread())
+
+
+async def _test_codex_runtime_distinguishes_auto_review_selection_from_thread() -> None:
+    client = FakeCodexClient()
+    client.results["thread/read"] = {
+        "thread": {
+            "id": "thread_1",
+            "threadSettings": {
+                "approvalPolicy": "on-request",
+                "approvalsReviewer": "auto_review",
+                "sandboxPolicy": {"type": "workspaceWrite"},
+            },
+            "items": [],
+        }
+    }
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=client)
+    permission_selection = (
+        (await runtime.list_permission_catalog(query="auto"))
+        .permissions[0]
+        .selection_id
+    )
+
+    state = await runtime.get_session_state("sess_1", external_session_id="thread_1")
+
+    assert state is not None
+    assert state.selections == {"permission": permission_selection}
 
 
 def test_codex_runtime_reads_session_snapshot() -> None:
@@ -1376,7 +1420,7 @@ async def _test_codex_runtime_create_and_start_session_reports_meta_and_state() 
     )
     assert thread_start[1]["cwd"] == "/repo"
     assert thread_start[1]["model"] == "gpt-example"
-    assert thread_start[1]["approvalPolicy"] == "on-request"
+    assert thread_start[1]["approvalPolicy"] == "untrusted"
     assert thread_start[1]["sandbox"] == "workspace-write"
     assert host.meta_upserts[0]["session_id"] == "sess_new"
     assert host.meta_upserts[0]["external_session_id"] == "thread_new"
