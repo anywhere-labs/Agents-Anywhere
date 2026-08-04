@@ -229,6 +229,21 @@ function selectionPatchFromComposerSelections(
   return patch
 }
 
+function runtimeStateWithSelections(
+  state: SessionRuntimeState | null | undefined,
+  session: SessionView,
+  selections: Record<string, string | null>,
+): SessionRuntimeState {
+  const nextState = nextOptimisticRuntimeState(state, session, state?.status ?? "idle")
+  return {
+    ...nextState,
+    selections: {
+      ...nextState.selections,
+      ...selections,
+    },
+  }
+}
+
 function composerDraftStorageKey(sessionId: string): string {
   return `${COMPOSER_DRAFT_STORAGE_PREFIX}${sessionId}`
 }
@@ -299,6 +314,7 @@ export function SessionDetail({
   const scrollToBottomTimerRef = React.useRef<number | null>(null)
   const pruneAfterScrollTimerRef = React.useRef<number | null>(null)
   const streamConnectedRef = React.useRef(false)
+  const selectionUpdateSeqRef = React.useRef(0)
 
   const session = state?.session ?? fallbackSession
   const runtimeState = state?.state ?? null
@@ -309,6 +325,45 @@ export function SessionDetail({
   const handleCommandQueryChange = React.useCallback((query: string | null) => {
     setCommandQuery(query)
   }, [])
+
+  const handleSelectionChange = async (
+    selections: { model?: string; permission?: string },
+  ): Promise<boolean> => {
+    if (!session) return false
+    const selectionPatch = selectionPatchFromComposerSelections(state?.state?.selections ?? {}, selections)
+    if (Object.keys(selectionPatch).length === 0) return true
+
+    const previousRuntimeState = state?.state ?? null
+    const selectionUpdateSeq = selectionUpdateSeqRef.current + 1
+    selectionUpdateSeqRef.current = selectionUpdateSeq
+    setState((current) =>
+      current
+        ? {
+            ...current,
+            state: runtimeStateWithSelections(current.state, current.session, selectionPatch),
+          }
+        : current,
+    )
+    try {
+      const result = await dashboardApi.updateSessionSelections(token, session.id, selectionPatch)
+      if (selectionUpdateSeqRef.current !== selectionUpdateSeq) return true
+      setState((current) =>
+        current
+          ? {
+              ...current,
+              state: result.state ?? runtimeStateWithSelections(current.state, current.session, selectionPatch),
+            }
+          : current,
+      )
+      return true
+    } catch (err) {
+      if (selectionUpdateSeqRef.current === selectionUpdateSeq) {
+        setState((current) => current ? { ...current, state: previousRuntimeState } : current)
+      }
+      toast.error(err instanceof Error ? err.message : tSession("updateSelectionsFailed"))
+      return false
+    }
+  }
 
   const applyOptimisticItems = React.useCallback((next: SessionRemoteState): SessionRemoteState => ({
     ...next,
@@ -1246,6 +1301,7 @@ export function SessionDetail({
             commandsLoading={commandsLoading}
             onCommandQueryChange={handleCommandQueryChange}
             onValueChange={setComposerDraft}
+            onSelectionChange={handleSelectionChange}
             onSend={handleSend}
             onInterrupt={handleInterrupt}
             onCommand={handleSessionCommand}

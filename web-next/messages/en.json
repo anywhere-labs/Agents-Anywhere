@@ -623,6 +623,7 @@
       "loadFailed": "Failed to load session.",
       "loadRuntimeSettingsFailed": "Failed to load runtime settings.",
       "sendFailed": "Failed to send message.",
+      "updateSelectionsFailed": "Failed to update model or permission.",
       "updateTakeoverFailed": "Failed to update takeover.",
       "interruptFailed": "Failed to interrupt session.",
       "resolveInteractionFailed": "Failed to resolve interaction.",

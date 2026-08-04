@@ -62,6 +62,7 @@ export function SessionComposer({
   commandsLoading = false,
   onCommandQueryChange,
   onValueChange,
+  onSelectionChange,
   onSend,
   onInterrupt,
   onCommand,
@@ -82,6 +83,7 @@ export function SessionComposer({
   commandsLoading?: boolean
   onCommandQueryChange: (query: string | null) => void
   onValueChange: (value: string) => void
+  onSelectionChange: (selections: { model?: string; permission?: string }) => Promise<boolean>
   onSend: (
     content: string,
     attachments: AttachedFile[],
@@ -208,6 +210,31 @@ export function SessionComposer({
   }, [effortItems, effortValue])
   const selectedModelSelection = selectionIdForModelCatalog(modelCatalog, selectedModel, selectedReasoning)
   const selectedPermissionSelection = selectionIdForPermissionCatalog(permissionCatalog, selectedPermissionMode)
+  const choosePermission = (permissionId: string) => {
+    if (permissionId === selectedPermissionMode) return
+    const previousPermission = selectedPermissionMode
+    const nextSelection = selectionIdForPermissionCatalog(permissionCatalog, permissionId)
+    if (!nextSelection) return
+    setSelectedPermissionMode(permissionId)
+    void onSelectionChange({ permission: nextSelection }).then((ok) => {
+      if (!ok) setSelectedPermissionMode(previousPermission)
+    })
+  }
+  const chooseModel = (modelId: string, reasoningId: string) => {
+    if (modelId === selectedModel && reasoningId === selectedReasoning) return
+    const previousModel = selectedModel
+    const previousReasoning = selectedReasoning
+    const nextSelection = selectionIdForModelCatalog(modelCatalog, modelId, reasoningId)
+    if (!nextSelection) return
+    setSelectedModel(modelId)
+    setSelectedReasoning(reasoningId)
+    void onSelectionChange({ model: nextSelection }).then((ok) => {
+      if (!ok) {
+        setSelectedModel(previousModel)
+        setSelectedReasoning(previousReasoning)
+      }
+    })
+  }
   const placeholder = creatingSession
     ? tSession("creatingPlaceholder")
     : !session.takeover
@@ -362,14 +389,11 @@ export function SessionComposer({
                   reasoningLabel={tNew("reasoning")}
                   permissionItems={permissionItems}
                   selectedPermission={selectedPermissionMode}
-                  onPermissionChange={setSelectedPermissionMode}
+                  onPermissionChange={choosePermission}
                   modelItems={modelItems}
                   selectedModel={selectedModel}
                   selectedReasoning={selectedReasoning}
-                  onModelChange={(modelId, reasoningId) => {
-                    setSelectedModel(modelId)
-                    setSelectedReasoning(reasoningId)
-                  }}
+                  onModelChange={chooseModel}
                 />
               ) : (
                 <>
@@ -396,7 +420,7 @@ export function SessionComposer({
                             "items-start gap-2 py-2.5",
                             selectedPermissionMode === item.id && "text-primary focus:text-primary",
                           )}
-                          onSelect={() => setSelectedPermissionMode(item.id)}
+                          onSelect={() => choosePermission(item.id)}
                         >
                           <Check className={cn("mt-0.5 size-3.5", selectedPermissionMode === item.id ? "opacity-100" : "opacity-0")} />
                           <span className="min-w-0 flex-1">
@@ -437,10 +461,7 @@ export function SessionComposer({
                               <DropdownMenuItem
                                 key={modelItem.id}
                                 className="gap-2"
-                                onSelect={() => {
-                                  setSelectedModel(modelItem.id)
-                                  setSelectedReasoning("")
-                                }}
+                                onSelect={() => chooseModel(modelItem.id, "")}
                               >
                                 <Check className={cn("size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
                                 <span className="truncate">{modelItem.label}</span>
@@ -458,10 +479,7 @@ export function SessionComposer({
                                   <DropdownMenuItem
                                     key={item.id}
                                     className="gap-2"
-                                    onSelect={() => {
-                                      setSelectedModel(modelItem.id)
-                                      setSelectedReasoning(item.id)
-                                    }}
+                                    onSelect={() => chooseModel(modelItem.id, item.id)}
                                   >
                                     <Check className={cn(
                                       "size-3.5",

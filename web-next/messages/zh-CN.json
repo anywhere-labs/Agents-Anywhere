@@ -623,6 +623,7 @@
       "loadFailed": "无法加载会话。",
       "loadRuntimeSettingsFailed": "无法加载运行时设置。",
       "sendFailed": "无法发送消息。",
+      "updateSelectionsFailed": "无法更新模型或权限。",
       "updateTakeoverFailed": "无法更新接管状态。",
       "interruptFailed": "无法中断会话。",
       "resolveInteractionFailed": "无法处理交互请求。",
