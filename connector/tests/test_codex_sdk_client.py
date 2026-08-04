@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
-from types import TracebackType
+from types import SimpleNamespace, TracebackType
 from typing import Any, Self
 
 from openai_codex.generated.v2_all import (
     AgentMessageThreadItem,
     ThreadItem,
+    ThreadStartParams,
     Turn,
+    TurnStartParams,
     TurnStatus,
 )
 from openai_codex.models import (
@@ -99,6 +101,10 @@ def test_codex_sdk_client_adapts_async_codex_thread_turn_flow() -> None:
     asyncio.run(_test_codex_sdk_client_adapts_async_codex_thread_turn_flow())
 
 
+def test_codex_sdk_client_uses_low_level_permission_payloads() -> None:
+    asyncio.run(_test_codex_sdk_client_uses_low_level_permission_payloads())
+
+
 async def _test_codex_sdk_client_adapts_async_codex_thread_turn_flow() -> None:
     sdk = _FakeAsyncCodexSdkModule()
     native = _FakeAsyncCodex(_sdk_config(sdk, _sdk_config_values()))
@@ -165,6 +171,59 @@ async def _test_codex_sdk_client_adapts_async_codex_thread_turn_flow() -> None:
         isinstance(message, CodexSdkEvent) and message.event_type == "turn/completed"
         for message in notifications
     )
+
+
+async def _test_codex_sdk_client_uses_low_level_permission_payloads() -> None:
+    sdk = _FakeLowLevelSdkModule()
+    native = _FakeLowLevelAsyncCodex()
+    client = CodexSdkClient(native, sdk=sdk)
+
+    async def handler(message: Any) -> None:
+        native.handled.append(message)
+
+    await client.start(handler)
+    started = await client.start_thread(
+        CodexStartThreadRequest(
+            cwd="/repo",
+            approval_policy="request_approval",
+            sandbox="workspace-write",
+        )
+    )
+    turn = await client.start_turn(
+        CodexStartTurnRequest(
+            thread_id="thread_low",
+            content="hello",
+            approval_policy="auto_review",
+            sandbox="workspace-write",
+        )
+    )
+    full_access = await client.start_thread(
+        CodexStartThreadRequest(
+            approval_policy="full_access",
+            sandbox="danger-full-access",
+        )
+    )
+    await asyncio.sleep(0)
+    await client.stop()
+
+    assert started.thread_id == "thread_low"
+    assert turn.turn_id == "turn_low"
+    assert full_access.thread_id == "thread_low"
+    assert native.initialized is True
+    assert native.low_level.thread_start_params[0]["approvalPolicy"] == "on-request"
+    assert native.low_level.thread_start_params[0]["approvalsReviewer"] == "user"
+    assert native.low_level.thread_start_params[0]["sandbox"] == "workspace-write"
+    assert native.low_level.turn_start_params[0]["approvalPolicy"] == "on-request"
+    assert native.low_level.turn_start_params[0]["approvalsReviewer"] == "auto_review"
+    assert native.low_level.turn_start_params[0]["sandboxPolicy"]["type"] == (
+        "workspaceWrite"
+    )
+    assert (
+        native.low_level.turn_start_params[0]["sandboxPolicy"]["networkAccess"] is False
+    )
+    assert native.low_level.thread_start_params[1]["approvalPolicy"] == "never"
+    assert "approvalsReviewer" not in native.low_level.thread_start_params[1]
+    assert native.low_level.thread_start_params[1]["sandbox"] == "danger-full-access"
 
 
 class _NativeSdkClient:
@@ -257,6 +316,83 @@ class _FakeAsyncCodexSdkModule:
         return _FakeThread(codex, thread_id)
 
 
+class _FakeLowLevelSdkModule(_FakeAsyncCodexSdkModule):
+    def AsyncThread(self, codex: Any, thread_id: str) -> _FakeThread:
+        return _FakeThread(codex, thread_id)
+
+    def AsyncTurnHandle(self, codex: Any, thread_id: str, turn_id: str) -> _FakeTurn:
+        _ = codex
+        _ = thread_id
+        return _FakeTurn(turn_id)
+
+
+class _FakeLowLevelClient:
+    def __init__(self) -> None:
+        self.thread_start_params: list[dict[str, Any]] = []
+        self.turn_start_params: list[dict[str, Any]] = []
+
+    async def thread_start(self, params: ThreadStartParams) -> Any:
+        self.thread_start_params.append(generated_params_payload(params))
+        return SimpleNamespace(thread=SimpleNamespace(id="thread_low"))
+
+    async def turn_start(
+        self,
+        thread_id: str,
+        content: str,
+        params: TurnStartParams,
+    ) -> Any:
+        _ = thread_id
+        _ = content
+        self.turn_start_params.append(generated_params_payload(params))
+        return SimpleNamespace(turn=SimpleNamespace(id="turn_low"))
+
+    def register_turn_notifications(self, turn_id: str) -> None:
+        _ = turn_id
+
+    def unregister_turn_notifications(self, turn_id: str) -> None:
+        _ = turn_id
+
+
+class _FakeLowLevelAsyncCodex:
+    def __init__(self) -> None:
+        self._client = _FakeLowLevelClient()
+        self.low_level = self._client
+        self.initialized = False
+        self.entered = False
+        self.exited = False
+        self.handled: list[Any] = []
+
+    async def __aenter__(self) -> Self:
+        self.entered = True
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        _ = exc_type
+        _ = exc
+        _ = tb
+        self.exited = True
+
+    async def _ensure_initialized(self) -> None:
+        self.initialized = True
+
+
+def generated_params_payload(
+    params: ThreadStartParams | TurnStartParams,
+) -> dict[str, Any]:
+    payload = params.model_dump(
+        by_alias=True,
+        exclude_none=True,
+        mode="json",
+    )
+    assert isinstance(payload, dict)
+    return payload
+
+
 class _FakeAsyncCodex:
     def __init__(self, config: _FakeCodexConfig | None = None) -> None:
         self.config = config
@@ -307,7 +443,8 @@ class _FakeThread:
 
 
 class _FakeTurn:
-    id = "turn_sdk"
+    def __init__(self, turn_id: str = "turn_sdk") -> None:
+        self.id = turn_id
 
     async def steer(self, input: Any) -> _FakeModelDump:
         _ = input

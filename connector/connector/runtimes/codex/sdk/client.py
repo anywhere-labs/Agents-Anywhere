@@ -5,6 +5,20 @@ import importlib
 from collections.abc import Mapping
 from typing import Any
 
+from openai_codex.generated.v2_all import (
+    ApprovalsReviewer,
+    AskForApproval,
+    AskForApprovalValue,
+    DangerFullAccessSandboxPolicy,
+    ReadOnlySandboxPolicy,
+    ReasoningEffort,
+    SandboxMode,
+    SandboxPolicy,
+    ThreadStartParams,
+    TurnStartParams,
+    WorkspaceWriteSandboxPolicy,
+)
+
 from connector.runtime_protocol import RuntimeConfig, RuntimeInvalidRequestError
 from connector.runtimes.codex.sdk.events import CodexSdkEvent
 from connector.runtimes.codex.sdk.runtime_client import (
@@ -36,6 +50,8 @@ from connector.runtimes.codex.sdk.shapes import (
     turn_action_result,
     turn_ref,
 )
+
+CodexApprovalSettings = tuple[AskForApproval | None, ApprovalsReviewer | None]
 
 
 class CodexSdkClient:
@@ -80,7 +96,9 @@ class CodexSdkClient:
     async def list_models(self) -> CodexModelListResult:
         models = getattr(self._client, "models", None)
         if not callable(models):
-            raise RuntimeInvalidRequestError("Codex SDK client does not expose models()")
+            raise RuntimeInvalidRequestError(
+                "Codex SDK client does not expose models()"
+            )
         result = await models(include_hidden=False)
         return model_list_result(result)
 
@@ -107,6 +125,21 @@ class CodexSdkClient:
         return thread_read_result(result)
 
     async def start_thread(self, request: CodexStartThreadRequest) -> CodexThreadResult:
+        low_level_client = codex_low_level_client(self._client)
+        if low_level_client is not None:
+            await ensure_codex_initialized(self._client)
+            started = await low_level_client.thread_start(
+                codex_thread_start_params(request)
+            )
+            thread_id = id_of(started.thread)
+            thread = codex_async_thread(self._sdk, self._client, thread_id)
+            if thread is not None:
+                self._remember_thread(thread)
+            return CodexThreadResult(
+                thread_id=thread_id,
+                payload={"id": thread_id} if thread_id is not None else {},
+            )
+
         thread_start = getattr(self._client, "thread_start", None)
         if not callable(thread_start):
             raise RuntimeInvalidRequestError(
@@ -124,6 +157,39 @@ class CodexSdkClient:
         return CodexThreadResult(thread_id=id_of(thread), payload=payload)
 
     async def start_turn(self, request: CodexStartTurnRequest) -> CodexTurnResult:
+        low_level_client = codex_low_level_client(self._client)
+        if low_level_client is not None:
+            await ensure_codex_initialized(self._client)
+            started = await low_level_client.turn_start(
+                request.thread_id,
+                request.content,
+                params=codex_turn_start_params(request),
+            )
+            turn_id = id_of(started.turn)
+            turn = codex_async_turn_handle(
+                self._sdk,
+                self._client,
+                request.thread_id,
+                turn_id,
+            )
+            if turn is not None:
+                self._remember_turn(request.thread_id, turn)
+            await self._emit(
+                {
+                    "method": "turn/started",
+                    "params": {
+                        "threadId": request.thread_id,
+                        "turn": {"id": turn_id} if turn_id is not None else {},
+                    },
+                }
+            )
+            if turn is not None:
+                self._start_stream_task(request.thread_id, turn)
+            return CodexTurnResult(
+                turn_id=turn_id,
+                payload={"id": turn_id} if turn_id is not None else {},
+            )
+
         thread = self._thread_handle(request.thread_id)
         turn = await thread.turn(
             request.content,
@@ -324,3 +390,135 @@ def _sdk_config(sdk: Any, config: RuntimeConfig) -> Any:
         client_name="agents_anywhere_connector",
         client_title="Agents Anywhere Connector",
     )
+
+
+async def ensure_codex_initialized(client: Any) -> None:
+    ensure_initialized = getattr(client, "_ensure_initialized", None)
+    if callable(ensure_initialized):
+        await maybe_await(ensure_initialized())
+
+
+def codex_low_level_client(client: Any) -> Any | None:
+    candidate = getattr(client, "_client", None)
+    if candidate is None:
+        return None
+    if not callable(getattr(candidate, "thread_start", None)):
+        return None
+    if not callable(getattr(candidate, "turn_start", None)):
+        return None
+    return candidate
+
+
+def codex_thread_start_params(request: CodexStartThreadRequest) -> ThreadStartParams:
+    approval_policy, approvals_reviewer = codex_approval_settings(
+        request.approval_policy
+    )
+    return ThreadStartParams(
+        approvalPolicy=approval_policy,
+        approvalsReviewer=approvals_reviewer,
+        cwd=request.cwd,
+        ephemeral=request.ephemeral,
+        model=request.model,
+        sandbox=codex_thread_sandbox_mode(request.sandbox),
+    )
+
+
+def codex_turn_start_params(request: CodexStartTurnRequest) -> TurnStartParams:
+    approval_policy, approvals_reviewer = codex_approval_settings(
+        request.approval_policy
+    )
+    return TurnStartParams(
+        approvalPolicy=approval_policy,
+        approvalsReviewer=approvals_reviewer,
+        clientUserMessageId=request.client_message_id,
+        effort=codex_reasoning_effort(request.effort),
+        input=[],
+        model=request.model,
+        sandboxPolicy=codex_turn_sandbox_policy(request.sandbox),
+        threadId=request.thread_id,
+    )
+
+
+def codex_approval_settings(value: str | None) -> CodexApprovalSettings:
+    if value in {"request_approval", "on-request", "on_request"}:
+        return (
+            AskForApproval(root=AskForApprovalValue.on_request),
+            ApprovalsReviewer.user,
+        )
+    if value in {"auto_review", "auto-review"}:
+        return (
+            AskForApproval(root=AskForApprovalValue.on_request),
+            ApprovalsReviewer.auto_review,
+        )
+    if value in {"full_access", "never", "deny_all", "deny-all"}:
+        return AskForApproval(root=AskForApprovalValue.never), None
+    if value in {"untrusted", "ask_untrusted"}:
+        return AskForApproval(
+            root=AskForApprovalValue.untrusted
+        ), ApprovalsReviewer.user
+    return None, None
+
+
+def codex_thread_sandbox_mode(value: str | None) -> SandboxMode | None:
+    if value in {"read-only", "read_only"}:
+        return SandboxMode.read_only
+    if value in {"workspace-write", "workspace_write"}:
+        return SandboxMode.workspace_write
+    if value in {"danger-full-access", "full-access", "full_access"}:
+        return SandboxMode.danger_full_access
+    return None
+
+
+def codex_turn_sandbox_policy(value: str | None) -> SandboxPolicy | None:
+    if value in {"read-only", "read_only"}:
+        return SandboxPolicy(root=ReadOnlySandboxPolicy(type="readOnly"))
+    if value in {"workspace-write", "workspace_write"}:
+        return SandboxPolicy(root=WorkspaceWriteSandboxPolicy(type="workspaceWrite"))
+    if value in {"danger-full-access", "full-access", "full_access"}:
+        return SandboxPolicy(
+            root=DangerFullAccessSandboxPolicy(type="dangerFullAccess")
+        )
+    return None
+
+
+def codex_reasoning_effort(value: str | None) -> ReasoningEffort | None:
+    if value == "none":
+        return ReasoningEffort.none
+    if value == "minimal":
+        return ReasoningEffort.minimal
+    if value == "low":
+        return ReasoningEffort.low
+    if value == "medium":
+        return ReasoningEffort.medium
+    if value == "high":
+        return ReasoningEffort.high
+    if value == "xhigh":
+        return ReasoningEffort.xhigh
+    return None
+
+
+def codex_async_thread(
+    sdk: Any | None, client: Any, thread_id: str | None
+) -> Any | None:
+    if thread_id is None:
+        return None
+    async_thread = getattr(sdk, "AsyncThread", None) if sdk is not None else None
+    if not callable(async_thread):
+        return None
+    return async_thread(client, thread_id)
+
+
+def codex_async_turn_handle(
+    sdk: Any | None,
+    client: Any,
+    thread_id: str,
+    turn_id: str | None,
+) -> Any | None:
+    if turn_id is None:
+        return None
+    async_turn_handle = (
+        getattr(sdk, "AsyncTurnHandle", None) if sdk is not None else None
+    )
+    if not callable(async_turn_handle):
+        return None
+    return async_turn_handle(client, thread_id, turn_id)
