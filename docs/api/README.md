@@ -9,6 +9,7 @@ All Server HTTP, SSE, and WebSocket API documentation should live under this dir
 - [API v2 namespace](./namespace.md): `/api/v2` namespace and client/connector URL rules.
 - [Session API proposal](./session-api-proposal.md): authoritative target for the split `SessionMeta` / `SessionTimeline` / `RuntimeLive` client API.
 - [Session service architecture](./session-service-architecture.md): Server, Connector, Runtime, and Web ownership boundaries for session data and realtime updates.
+- [Effective capability API](./capabilities.md): global and session-scoped effective capability semantics, paths, and realtime events.
 - [Realtime API](./realtime.md): session, dashboard, connector, and terminal realtime channel semantics.
 
 ## Current API groups
@@ -35,18 +36,26 @@ The connector channel endpoints are intentionally stable. Runtime protocol refac
 /connectors
 /connectors/{connectorId}
 /connectors/{connectorId}/preferences
-/connectors/{connectorId}/protocol/capabilities
 /connectors/{connectorId}/runtimes
 /connectors/{connectorId}/runtimes/discover
+/connectors/{connectorId}/runtimes/{runtimeId}/capabilities
 /connectors/{connectorId}/runtimes/{runtimeId}/config
 /connectors/{connectorId}/runtimes/{runtimeId}/active
+/connectors/{connectorId}/runtimes/{runtimeId}/catalogs/model
+/connectors/{connectorId}/runtimes/{runtimeId}/catalogs/permission
 ```
 
-Target runtime catalog reads should live under connector runtime resources:
+Runtime-scoped capability and catalog reads live under runtime resources. If a
+specific connector must be selected, the connector is part of the path, not a
+query parameter.
+
+Generic runtime routes may exist only when the server can select the runtime
+unambiguously:
 
 ```text
-/connectors/{connectorId}/runtimes/{runtimeId}/catalogs/models
-/connectors/{connectorId}/runtimes/{runtimeId}/catalogs/permissions
+/runtimes/{runtimeId}/capabilities
+/runtimes/{runtimeId}/catalogs/model
+/runtimes/{runtimeId}/catalogs/permission
 ```
 
 ### Session API
@@ -84,6 +93,9 @@ callers are moved, but they are not the target design for new work:
 ```text
 GET  /api/v2/agents/{runtime}/model-catalog
 GET  /api/v2/agents/{runtime}/permission-catalog
+GET  /api/v2/agents/{runtime}/model-catalog?connectorId=...
+GET  /api/v2/agents/{runtime}/permission-catalog?connectorId=...
+GET  /api/v2/connectors/{connectorId}/protocol/capabilities
 GET  /api/v2/sessions/events/dashboard
 POST /api/v2/sessions
 GET  /api/v2/sessions/{sessionId}/state with timeline query params

@@ -33,7 +33,8 @@ Every fact must have one owner.
 | SessionTimeline | Server DB, written by Runtime | yes | Server DB | Server session WS |
 | Runtime session state | Runtime | no | Runtime RPC | Runtime push through connector WS |
 | Runtime notices | Runtime | no | Runtime RPC | Runtime push through connector WS |
-| Runtime capabilities | Runtime plus Server policy | no | Runtime RPC plus Server policy | Runtime push through connector WS |
+| Runtime-scoped effective capabilities | Runtime plus Server policy | no | Runtime RPC plus Server policy | Runtime push through connector WS |
+| Session-scoped effective capabilities | Runtime plus Server policy | no | Runtime RPC plus Server policy | Runtime push through connector WS |
 | Runtime catalogs | Runtime | no | Runtime RPC | Runtime push through connector WS |
 | Runtime commands | Runtime | no | Runtime RPC | optional runtime push |
 | Session selections | Runtime | no | Runtime RPC | Runtime push through connector WS |
@@ -153,14 +154,20 @@ approval approved       -> runtime updates/removes live notice
 approval history shown  -> runtime writes/updates timeline item
 ```
 
-### Runtime catalogs, selections, capabilities, commands
+### Runtime catalogs, selections, effective capabilities, commands
 
 Rules:
 
 - Catalog reads are live runtime RPCs.
 - Selection reads and updates are live session-scoped runtime RPCs.
-- Capability reads are live runtime RPCs plus Server authorization/presence
-  policy.
+- Capability reads return effective capability sets.
+- Runtime-scoped effective capabilities are read from runtime resources and
+  affect dashboard/setup/create behavior.
+- Session-scoped effective capabilities are read from session runtime resources
+  and affect current session actions.
+- Server may apply authorization, takeover, connector presence, runtime
+  reachability, and feature policy. Server must not infer runtime-owned action
+  availability from durable session data.
 - Command lists are live runtime RPCs, normally read when the user enters
   command mode.
 - Server must not treat catalog/capability DB rows as authoritative session UI
@@ -288,13 +295,45 @@ POST  /sessions/{sessionId}/runtime/notices/{noticeId}/respond
 GET   /sessions/{sessionId}/runtime/capabilities
 GET   /sessions/{sessionId}/runtime/catalogs/model
 GET   /sessions/{sessionId}/runtime/catalogs/permission
-GET   /sessions/{sessionId}/runtime/commands?query=...
+GET   /sessions/{sessionId}/runtime/commands
 POST  /sessions/{sessionId}/runtime/commands
 PATCH /sessions/{sessionId}/runtime/selections
 POST  /sessions/{sessionId}/runtime/messages
 POST  /sessions/{sessionId}/runtime/steer
 POST  /sessions/{sessionId}/runtime/interrupt
 ```
+
+`/sessions/{sessionId}/runtime/capabilities` returns session-scoped effective
+capabilities. Web must use those capabilities for current-session action
+availability instead of deriving availability from local runtime status.
+
+Runtime-scoped live endpoints use runtime resources:
+
+```text
+GET /runtimes/{runtime}/capabilities
+GET /runtimes/{runtime}/catalogs/model
+GET /runtimes/{runtime}/catalogs/permission
+GET /runtimes/{runtime}/commands
+```
+
+When the route must target a specific connector, connector ownership is encoded
+in the path:
+
+```text
+GET /connectors/{connectorId}/runtimes/{runtime}/capabilities
+GET /connectors/{connectorId}/runtimes/{runtime}/catalogs/model
+GET /connectors/{connectorId}/runtimes/{runtime}/catalogs/permission
+GET /connectors/{connectorId}/runtimes/{runtime}/commands
+```
+
+Query parameters may filter a collection, but must not express resource
+hierarchy or ownership:
+
+```text
+GET /sessions/{sessionId}/runtime/commands?query=/co
+```
+
+Do not add new APIs like `/agents/{runtime}/model-catalog?connectorId=...`.
 
 Rules:
 
@@ -371,6 +410,9 @@ Notes:
 - `timeline.*` events are durable and recoverable from Server DB.
 - `runtime.*` events are live facts. Recovery may require a runtime RPC read,
   not a Server snapshot.
+- `runtime.capability.updated` carries an effective capability set. On the
+  session socket it is session-scoped; on dashboard/runtime sockets it is
+  runtime-scoped.
 - `session.refetch_required` is reserved for durable meta/timeline recovery.
 - `runtime.refetch_required` means the Web client should call the relevant
   runtime live endpoint.
@@ -408,7 +450,9 @@ POST  /sessions/{sessionId}/commands
 POST  /sessions/{sessionId}/interactions/{noticeId}/respond
 GET   /connectors/{connectorId}/protocol/capabilities
 GET   /agents/{runtime}/model-catalog
+GET   /agents/{runtime}/model-catalog?connectorId=...
 GET   /agents/{runtime}/permission-catalog
+GET   /agents/{runtime}/permission-catalog?connectorId=...
 ```
 
 These aliases should be removed after Web and Connector use the split

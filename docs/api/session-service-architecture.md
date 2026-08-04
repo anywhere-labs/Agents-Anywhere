@@ -110,7 +110,7 @@ RuntimeLive includes:
 ```text
 RuntimeState
 RuntimeNotice
-RuntimeCapability
+RuntimeEffectiveCapability
 RuntimeCatalog
 RuntimeCommand
 RuntimeSelection
@@ -172,7 +172,40 @@ runtime is the owner of notice lifecycle.
 
 ### Live capability and catalog path
 
-Catalogs and capabilities are read when needed:
+The UI consumes effective capabilities only. Runtime capability facts are inputs
+to effective capability calculation; they are not exposed as a separate UI
+state machine.
+
+There are two scopes:
+
+```text
+runtime-scoped effective capability
+session-scoped effective capability
+```
+
+Runtime-scoped effective capabilities are read from runtime resources and affect
+dashboard/setup/create behavior:
+
+```text
+Web GET /connectors/{connectorId}/runtimes/{runtime}/capabilities
+Server RPC runtime capability read
+Runtime returns current runtime-owned capability facts
+Server applies user authorization, connector reachability, and feature policy
+Server returns effective runtime-scoped capabilities
+```
+
+Session-scoped effective capabilities are read from session runtime resources
+and affect current session actions:
+
+```text
+Web GET /sessions/{id}/runtime/capabilities
+Server RPC session capability read
+Runtime returns current session-owned capability facts
+Server applies user authorization, takeover, connector reachability, and policy
+Server returns effective session-scoped capabilities
+```
+
+Catalogs are read when needed:
 
 ```text
 selector opens
@@ -190,8 +223,25 @@ AND Server user authorization
 AND connector/runtime reachable
 ```
 
-Server must not use persisted `sessions.status` or open notices to compute
-runtime command/interrupt/steer availability.
+For session-scoped actions, runtime owns facts such as active turn, current
+compact operation, waiting approval, and whether interrupt/steer can be
+accepted now. Server must not use persisted `sessions.status`, timeline items,
+active runs, or open notices to compute runtime command/interrupt/steer
+availability.
+
+Web should use effective capabilities for action availability:
+
+```text
+session.send_message
+session.steer
+session.interrupt
+session.selection.update
+session.command.execute
+session.interaction.approval.respond
+```
+
+Runtime state remains a display fact. It can render labels such as "running" or
+"blocked", but buttons and menus should be gated by effective capability.
 
 ## Connector host notification contract
 

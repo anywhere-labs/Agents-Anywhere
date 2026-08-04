@@ -88,6 +88,12 @@ namespace for live Runtime facts.
 - Runtime live facts are not recovered from Server DB. After reconnect, Web
   calls the relevant runtime live endpoint if it needs current state, notices,
   catalogs, or capabilities.
+- `runtime.capability.updated` carries effective capabilities. On a session
+  WebSocket, it is session-scoped and controls current session actions. On a
+  dashboard/runtime WebSocket, it is runtime-scoped and controls setup,
+  create-session, catalog, and feature entry points.
+- Web should not derive action availability from `runtime.state.updated` when a
+  matching effective capability exists.
 
 ## Dashboard realtime
 
@@ -188,17 +194,18 @@ it is running. Config mutation still flows through `runtime.validateConfig` and
 `runtime.start`; running `AgentRuntime` instances do not accept direct config
 updates.
 
-`runtime.discover` includes a `capabilities` map for each runtime. Clients
-should use it to decide whether to show runtime features such as command mode,
-attachments, interactions, or IPC controls instead of hardcoding Codex/Claude
-conditionals.
+`runtime.discover` includes runtime-native capability inputs. They are not the
+primary frontend contract. The frontend contract is effective capability:
 
-`runtime.inventoryUpdated` is not the primary frontend capability contract.
-Connector also publishes `protocol.capabilitiesUpdated`, which maps
-runtime-native flags such as `modelCatalog` and `permissionCatalog` to protocol
-capability ids such as `catalog.model`, `catalog.permission`, and
-`catalog.effort`. Session UI should use the effective protocol capabilities and
-then read model/permission catalogs through live runtime catalog APIs.
+```text
+GET /connectors/{connectorId}/runtimes/{runtime}/capabilities
+GET /sessions/{sessionId}/runtime/capabilities
+runtime.capability.updated
+```
+
+The Server may apply authorization, takeover, connector reachability, and
+feature policy. It must not infer runtime-owned action availability from
+durable session data.
 
 Runtime host live events are sent as connector WebSocket notifications on
 `WS /api/v2/connector/ws`. `POST /api/v2/connector/ingest` is reserved for

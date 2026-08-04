@@ -499,10 +499,10 @@ Goal: move model/permission/command reads to Connector RPC.
 Add or switch primary paths:
 
 ```text
-GET /api/v2/connectors/{connectorId}/runtimes/{runtimeId}/catalogs/models
-GET /api/v2/connectors/{connectorId}/runtimes/{runtimeId}/catalogs/permissions
-GET /api/v2/sessions/{sessionId}/commands?query=...
-POST /api/v2/sessions/{sessionId}/commands
+GET /api/v2/connectors/{connectorId}/runtimes/{runtimeId}/catalogs/model
+GET /api/v2/connectors/{connectorId}/runtimes/{runtimeId}/catalogs/permission
+GET /api/v2/sessions/{sessionId}/runtime/commands?query=...
+POST /api/v2/sessions/{sessionId}/runtime/commands
 ```
 
 Rules:

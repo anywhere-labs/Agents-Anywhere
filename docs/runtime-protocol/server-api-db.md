@@ -79,9 +79,13 @@ Persisted chronological session record:
 
 Timeline remains upsert-only. Hiding replaces deletion.
 
-### `notices` -> `SessionNotice`
+### `notices` -> `_deprecated` persisted notice design
 
-Persisted user-attention and interaction records:
+This section describes an older design. Current API docs define notices as
+non-durable RuntimeLive facts. Server must not use a persisted notices table as
+the source of current session notices.
+
+The older persisted-notice idea covered:
 
 - notifications
 - approvals
@@ -89,7 +93,9 @@ Persisted user-attention and interaction records:
 - confirmations
 - runtime/platform errors that should be shown to the user
 
-Notices are separate from `SessionTimeline` so future notice/interaction extensions do not force timeline schema changes.
+If a notice has historical value, the runtime should write that history to
+SessionTimeline. Current live notice semantics are defined in
+[Session API Proposal](../api/session-api-proposal.md).
 
 ## API target
 
@@ -98,8 +104,8 @@ Paths are draft names. Implementation may adjust names, but the semantics should
 ### Runtime-level catalog reads
 
 ```text
-GET /api/v2/connectors/{connectorId}/runtimes/{runtimeId}/catalogs/models
-GET /api/v2/connectors/{connectorId}/runtimes/{runtimeId}/catalogs/permissions
+GET /api/v2/connectors/{connectorId}/runtimes/{runtimeId}/catalogs/model
+GET /api/v2/connectors/{connectorId}/runtimes/{runtimeId}/catalogs/permission
 ```
 
 These routes call Connector RPC, which calls runtime local reads. They do not read the durable server catalog tables as the primary path.
