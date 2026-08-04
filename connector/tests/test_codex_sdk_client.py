@@ -40,7 +40,7 @@ def test_codex_sdk_client_delegates_runtime_protocol_methods() -> None:
 def test_codex_sdk_approval_mode_maps_platform_permission_modes() -> None:
     sdk = _FakeAsyncCodexSdkModule()
 
-    assert sdk_approval_mode(sdk, "ask_when_requested") is None
+    assert sdk_approval_mode(sdk, "request_approval") is None
     assert sdk_approval_mode(sdk, "on-request") is None
     assert sdk_approval_mode(sdk, None) is None
     assert sdk_approval_mode(sdk, "auto_review") == _FakeApprovalMode.auto_review

@@ -328,7 +328,7 @@
       "modelAndReasoning": "模型和推理强度",
       "permissionMode": "权限模式",
       "permissionModes": {
-        "askWhenRequested": {
+        "requestApproval": {
           "label": "请求批准",
           "description": "编辑外部文件和使用互联网时始终询问"
         },

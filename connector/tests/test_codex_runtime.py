@@ -822,7 +822,7 @@ async def _test_codex_runtime_permission_catalog() -> None:
     catalog = await runtime.list_permission_catalog(query="full")
 
     assert [item.id for item in all_permissions.permissions] == [
-        "ask_when_requested",
+        "request_approval",
         "auto_review",
         "full_access",
     ]
@@ -996,7 +996,7 @@ async def _test_codex_runtime_reads_current_session_selections_from_thread() -> 
         (await runtime.list_model_catalog()).models[0].reasoning_items[1].selection_id
     )
     permission_selection = (
-        (await runtime.list_permission_catalog(query="ask"))
+        (await runtime.list_permission_catalog(query="request"))
         .permissions[0]
         .selection_id
     )
@@ -1346,7 +1346,7 @@ async def _test_codex_runtime_create_and_start_session_reports_meta_and_state() 
         (await runtime.list_model_catalog()).models[0].reasoning_items[0].selection_id
     )
     permission_selection = (
-        (await runtime.list_permission_catalog(query="ask"))
+        (await runtime.list_permission_catalog(query="request"))
         .permissions[0]
         .selection_id
     )

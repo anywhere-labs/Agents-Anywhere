@@ -328,7 +328,7 @@
       "modelAndReasoning": "Model and reasoning",
       "permissionMode": "Permission mode",
       "permissionModes": {
-        "askWhenRequested": {
+        "requestApproval": {
           "label": "Request approval",
           "description": "Always ask before editing files outside the workspace or using the internet."
         },

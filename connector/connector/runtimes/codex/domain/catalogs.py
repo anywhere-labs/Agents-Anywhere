@@ -39,19 +39,19 @@ def permission_catalog_from_codex_items(
 def codex_permission_catalog_items() -> list[dict[str, Any]]:
     return [
         {
-            "id": "ask_when_requested",
+            "id": "request_approval",
             "label": "Request approval",
             "description": "Always ask before editing files outside the workspace or using the internet.",
-            "identity": {"permission_mode": "ask_when_requested"},
-            "runtimeSettings": {"permissionMode": "ask_when_requested"},
+            "identity": {"permission_mode": "request_approval"},
+            "runtimeSettings": {"permissionMode": "request_approval"},
             "nativeSettings": {
                 "approvalPolicy": "on-request",
                 "sandbox": "workspace-write",
                 "sandboxPolicy": {"type": "workspaceWrite", "networkAccess": False},
             },
             "i18n": {
-                "labelKey": "dashboard.new.permissionModes.askWhenRequested.label",
-                "descriptionKey": "dashboard.new.permissionModes.askWhenRequested.description",
+                "labelKey": "dashboard.new.permissionModes.requestApproval.label",
+                "descriptionKey": "dashboard.new.permissionModes.requestApproval.description",
             },
         },
         {
