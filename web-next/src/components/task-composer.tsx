@@ -77,6 +77,14 @@ const NEW_SESSION_TITLE_KEYS = [
   "typewriter.chooseTarget",
   "typewriter.changingToday",
 ] as const
+const MOBILE_NEW_SESSION_TITLE_KEYS = [
+  "typewriter.workOn",
+  "typewriter.giveTask",
+  "typewriter.needsAttention",
+  "typewriter.nextChange",
+  "typewriter.inspect",
+  "typewriter.changingToday",
+] as const
 
 type NewSessionPreference = {
   connectorId: string
@@ -90,6 +98,7 @@ type NewSessionSelectionPreference = {
 }
 
 type NewSessionTitleKey = (typeof NEW_SESSION_TITLE_KEYS)[number]
+type MobileNewSessionTitleKey = (typeof MOBILE_NEW_SESSION_TITLE_KEYS)[number]
 
 export function TaskComposer() {
   const { session: authSession } = useAuth()
@@ -106,8 +115,11 @@ export function TaskComposer() {
   } = useWorkspace()
   const t = useTranslations("dashboard.new")
   const typewriterTitles = React.useMemo(
-    () => NEW_SESSION_TITLE_KEYS.map((key) => t(key as NewSessionTitleKey)),
-    [t],
+    () => {
+      const keys = isMobile ? MOBILE_NEW_SESSION_TITLE_KEYS : NEW_SESSION_TITLE_KEYS
+      return keys.map((key) => t(key as NewSessionTitleKey | MobileNewSessionTitleKey))
+    },
+    [isMobile, t],
   )
 
   const [runtimeInventory, setRuntimeInventory] = React.useState<Record<string, DeviceRuntimeView[]>>({})
@@ -605,8 +617,8 @@ export function TaskComposer() {
       </div>
 
       <div className="w-full max-w-3xl">
-        <h1 className="mb-6 min-h-[3rem] text-balance text-center text-4xl font-semibold leading-tight tracking-tight" aria-live="polite">
-          <span>{creating ? `${t("creatingBase")}${".".repeat((createTick % 3) + 1)}` : typedTitle}</span>
+        <h1 className="mb-6 flex h-10 items-center justify-center overflow-hidden text-center text-3xl font-semibold leading-tight tracking-tight sm:h-auto sm:min-h-[3rem] sm:text-4xl" aria-live="polite">
+          <span className="min-w-0 truncate">{creating ? `${t("creatingBase")}${".".repeat((createTick % 3) + 1)}` : typedTitle}</span>
           <span className="ml-1 inline-block h-[0.9em] w-0.5 translate-y-[0.1em] rounded-full bg-muted-foreground motion-safe:animate-[composer-caret_1s_steps(1,end)_infinite]" aria-hidden="true" />
         </h1>
 
