@@ -9,7 +9,14 @@ Agents Anywhere uses realtime channels for three different lifecycles:
 - connector RPC/ingest presence;
 - terminal streams.
 
-Connector channel endpoint names stay stable. Session and dashboard realtime semantics should be tightened around the new session model.
+Connector channel endpoint names stay stable. Session and dashboard realtime
+semantics should be tightened around the new session model:
+
+```text
+SessionMeta and SessionTimeline are durable Server facts.
+Runtime state, notices, catalogs, capabilities, commands, and selections are
+non-durable RuntimeLive facts.
+```
 
 ## Session realtime
 
@@ -35,7 +42,8 @@ POST /api/v2/ws-ticket
 
 ```text
 GET /sessions/{sessionId}/snapshot
-  -> receive eventCursor
+  -> reads durable meta/timeline from Server and RuntimeLive facts from runtime RPC
+  -> receive durable eventCursor
 POST /ws-ticket
   -> session scope ticket
 WS /sessions/{sessionId}/ws?ticket=...
@@ -52,25 +60,34 @@ GET /sessions/{sessionId}/events?after=seq:...
 ```text
 session.subscribed
 session.meta.updated
-session.state.updated
-timeline.item.created
-timeline.item.updated
+timeline.item_created
+timeline.item_updated
 timeline.snapshot
-notice.created
-notice.updated
-notice.snapshot
+runtime.state.updated
+runtime.notice.snapshot
+runtime.notice.updated
+runtime.capability.updated
+runtime.catalog.updated
+runtime.refetch_required
 session.refetch_required
 ```
 
-Current event types such as `session.status_changed` should migrate to `session.state.updated`.
+Current event types such as `session.status_changed`, `notice.created`,
+`notice.updated`, `notice.snapshot`, and embedded `effectiveCapabilities`
+payloads are compatibility shapes. They should migrate to the `runtime.*`
+namespace for live Runtime facts.
 
 ### Recovery rules
 
 - Event cursor format is `seq:{number}`.
 - Timeline items are upsert-only.
 - A sequence gap does not automatically require snapshot.
-- Server returns `snapshotRequired=true` only when recovery is explicitly impossible.
+- Server returns `snapshotRequired=true` only when durable meta/timeline
+  recovery is explicitly impossible.
 - Client pulls snapshot only for initial load or `snapshotRequired=true`.
+- Runtime live facts are not recovered from Server DB. After reconnect, Web
+  calls the relevant runtime live endpoint if it needs current state, notices,
+  catalogs, or capabilities.
 
 ## Dashboard realtime
 
@@ -193,12 +210,26 @@ The target semantic connector notification methods are:
 
 ```text
 session.meta.upsert
-session.state.updated
 timeline.sync
 timeline.itemUpsert
-notice.upsert
+runtime.state.updated
+runtime.notice.snapshot
+runtime.notice.updated
+runtime.capability.updated
+runtime.catalog.updated
 runtime.error
 ```
+
+Compatibility connector notification names may remain during migration:
+
+```text
+session.state.updated
+notice.upsert
+protocol.capabilitiesUpdated
+```
+
+The Server should translate compatibility names into RuntimeLive events without
+treating them as durable session truth.
 
 The connector application layer bridges `RuntimeHostClient` calls to these
 server-facing notification payloads. Runtime adapters should never call

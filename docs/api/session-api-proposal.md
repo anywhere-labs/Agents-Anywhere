@@ -1,8 +1,17 @@
 # Session API Proposal
 
-Status: proposal for the next breaking session API cleanup.
+Status: authoritative proposal for the next breaking session API cleanup.
 
-This document defines the client-facing session API target for Agent Runtime Protocol v1. Connector channel endpoints stay stable:
+This document defines the target client-facing session API around three
+separate facts:
+
+```text
+SessionMeta      durable Server fact
+SessionTimeline  durable Server fact written by Runtime
+RuntimeLive      non-durable Runtime fact forwarded by Server
+```
+
+Connector channel endpoint names stay stable:
 
 ```text
 POST /api/v2/connector/auth
@@ -10,59 +19,172 @@ POST /api/v2/connector/ingest
 WS   /api/v2/connector/ws
 ```
 
-The session API needs redesign because the current `/sessions/{id}/state` endpoint mixes session view, timeline reads, approvals, and cursor state, while newer product logic separates `SessionMeta`, `SessionState`, `SessionTimeline`, and `SessionNotice`.
+The refactor happens behind these endpoints and in the client-facing session
+API. The Server must not become the source of truth for runtime state, notices,
+capabilities, catalogs, commands, or selections.
 
-## Design principles
+## Source-of-truth rules
 
-- `SessionMeta`, `SessionState`, `SessionTimeline`, and `SessionNotice` have separate resource boundaries.
-- `SessionState.status` is the only UI running-state source.
-- `SessionState.status = waiting` means the platform requested a turn, but the runtime has not confirmed processing has started.
-- Timeline reads are not state reads.
-- Notices are not timeline items.
-- Runtime model/permission catalogs are live reads and are not embedded in session snapshot as primary truth.
-- Existing-session message send does not carry model/permission selection ids.
-- Selection changes update session state before sending.
-- Snapshot is for initial load or explicit recovery, not periodic refresh.
-- Event recovery is cursor based; sequence gaps do not imply snapshot unless the Server explicitly says `snapshotRequired=true`.
+Every fact must have one owner.
 
-## Target resources
+| Fact | Owner | Durable | Pull source | Push source |
+| --- | --- | --- | --- | --- |
+| SessionMeta | Server | yes | Server DB | Server session WS |
+| SessionTimeline | Server DB, written by Runtime | yes | Server DB | Server session WS |
+| Runtime session state | Runtime | no | Runtime RPC | Runtime push through connector WS |
+| Runtime notices | Runtime | no | Runtime RPC | Runtime push through connector WS |
+| Runtime capabilities | Runtime plus Server policy | no | Runtime RPC plus Server policy | Runtime push through connector WS |
+| Runtime catalogs | Runtime | no | Runtime RPC | Runtime push through connector WS |
+| Runtime commands | Runtime | no | Runtime RPC | optional runtime push |
+| Session selections | Runtime | no | Runtime RPC | Runtime push through connector WS |
+| Connector presence | Server | no/durable connector row only | Server connection state | Server WS |
+
+Pull and push must agree:
+
+- If a fact can be pushed to Web, the corresponding read endpoint must return
+  the same latest fact from the same owner.
+- If a fact is read from Server DB, runtime live pushes must not mutate it.
+- If a fact is read from Runtime RPC, Server must not synthesize stale DB
+  fallback except for explicit `unavailable` presence projection.
+
+## Durable resources
+
+### SessionMeta
+
+SessionMeta is the Server-owned session list and display metadata:
 
 ```text
-SessionMeta      -> /sessions, /sessions/{sessionId}
-SessionState     -> /sessions/{sessionId}/state
-SessionTimeline  -> /sessions/{sessionId}/timeline
-SessionNotice    -> /sessions/{sessionId}/notices
-Realtime         -> /sessions/{sessionId}/ws and /sessions/{sessionId}/events
-Aggregate load   -> /sessions/{sessionId}/snapshot
+id
+connectorId
+runtime
+externalSessionId
+origin
+title
+cwd
+takeover
+pinned / pinnedAt
+archived / archivedAt
+lastReadSeq
+lastSyncedAt
+sourceObservedAt
+lastActivityAt
+lastItemAt
+lastItemOrderSeq
+sortAt
+createdAt / updatedAt / updatedSeq
 ```
 
-## Session list and meta
+Rules:
+
+- `sessions.status` is not a runtime running-state source.
+- Server may expose connector presence on the meta/list view.
+- Server may compute `sortAt`, but runtime running/blocking status must not
+  affect sorting.
+- List sorting uses one primary ordering input at a time:
 
 ```text
-GET   /api/v2/sessions
-GET   /api/v2/sessions/{sessionId}
-PATCH /api/v2/sessions/{sessionId}
-POST  /api/v2/sessions/{sessionId}/read
-POST  /api/v2/sessions/bulk-read
-POST  /api/v2/sessions/bulk-archive
+lastItemAt -> lastActivityAt -> createdAt
 ```
 
-`GET /sessions` returns list summaries for dashboard/session list UI. A list summary may include both meta and state because the list needs title, archived/read fields, connector status, and running status.
+### SessionTimeline
 
-List order is part of the API contract. The Server returns sessions ordered by:
+SessionTimeline is the UI chat context and the only durable conversation fact.
 
-1. `sortAt` descending
-2. `lastItemOrderSeq` descending
-3. `updatedSeq` descending
+Runtime adapters reduce native events into stable platform timeline items. The
+Server persists those items, computes item diffs, assigns sequence numbers, and
+broadcasts incremental updates through the session WebSocket.
 
-`sortAt` is currently computed as `lastActivityAt || lastItemAt || createdAt`.
-`lastActivityAt` is the runtime-provided `SessionMeta.ordering_time` projection.
-`lastItemAt` is derived from the newest timeline item's timestamp. Frontends
-must preserve these raw ordering fields and re-apply the same comparison after
-receiving realtime session upserts; display strings such as `updatedAt` are not
-valid ordering keys.
+Rules:
 
-`PATCH /sessions/{sessionId}` updates platform-owned meta/display fields only:
+- Timeline is upsert-only.
+- Deletion is represented as an upserted hidden item.
+- `contentHash` is the canonical item state identity.
+- Server may bump outgoing revision for event classification, but must not use
+  revision as the write/no-write truth.
+- Timeline does not own current runtime status.
+- Timeline does not own current notice state.
+- Timeline may contain historical records of interactions, approvals, compact,
+  tool calls, and errors.
+
+## Runtime live resources
+
+RuntimeLive is non-durable and owned by the runtime. Server is an RPC and WS
+relay, with only user authorization and connector presence policy layered on
+top.
+
+### Runtime session state
+
+Runtime session state includes:
+
+```text
+status: idle | waiting | running | blocked | error | disconnected
+selections
+statusReason
+error
+metadata
+```
+
+Rules:
+
+- Runtime is the source of `idle`, `waiting`, `running`, `blocked`, and `error`.
+- Server may project `disconnected` when connector/runtime is unreachable.
+- Server must not derive running or blocked from active timeline items, open
+  notices, active runs, or turn end items.
+- A runtime state push and a runtime state read must produce the same fact.
+
+### Runtime notices
+
+Notice is a special RuntimeLive resource.
+
+Rules:
+
+- Notice is non-durable.
+- Runtime is the only fact source.
+- Server must not cache notices in DB as the session truth.
+- Server responds to notice actions by forwarding RPC to runtime.
+- If a notice has historical value, runtime writes the history to timeline.
+- Refreshing a page reads current notices from runtime RPC, not from Server DB.
+
+Examples:
+
+```text
+approval requested      -> live runtime notice
+approval approved       -> runtime updates/removes live notice
+approval history shown  -> runtime writes/updates timeline item
+```
+
+### Runtime catalogs, selections, capabilities, commands
+
+Rules:
+
+- Catalog reads are live runtime RPCs.
+- Selection reads and updates are live session-scoped runtime RPCs.
+- Capability reads are live runtime RPCs plus Server authorization/presence
+  policy.
+- Command lists are live runtime RPCs, normally read when the user enters
+  command mode.
+- Server must not treat catalog/capability DB rows as authoritative session UI
+  facts.
+
+## Target HTTP API
+
+All routes are mounted under `/api/v2`.
+
+### SessionMeta
+
+```text
+GET   /sessions
+GET   /sessions/{sessionId}/meta
+PATCH /sessions/{sessionId}/meta
+POST  /sessions/{sessionId}/read
+POST  /sessions/bulk-read
+POST  /sessions/bulk-archive
+```
+
+`GET /sessions` returns SessionMeta summaries for dashboard/list views. It may
+include connector presence, but must not include runtime state as durable fact.
+
+`PATCH /sessions/{sessionId}/meta` updates only Server-owned display metadata:
 
 ```json
 {
@@ -72,24 +194,121 @@ valid ordering keys.
 }
 ```
 
-It must not update selections or runtime running status.
-
-## Create and start
-
-Migration/bind-only:
+### SessionTimeline
 
 ```text
-POST /api/v2/sessions
+GET /sessions/{sessionId}/timeline
 ```
 
-This route must not create a new runtime session or start a turn. It is limited
-to binding an already-known `externalSessionId` during migration/discovery.
-New user tasks use create-and-start.
-
-Target:
+Query modes:
 
 ```text
-POST /api/v2/sessions/create-and-start
+?mode=latest&limit=200
+?mode=changes&afterSeq=123&limit=200
+?mode=history&beforeOrderSeq=456&limit=100
+```
+
+Response:
+
+```json
+{
+  "sessionId": "sess_...",
+  "items": [],
+  "nextSeq": 123,
+  "hasMore": false,
+  "serverTime": "2026-08-04T..."
+}
+```
+
+Timeline reads do not return runtime state, notices, catalogs, or capabilities.
+
+### Aggregate snapshot
+
+```text
+GET /sessions/{sessionId}/snapshot
+```
+
+Snapshot is an aggregate first-paint/recovery endpoint. It is not a new fact
+source.
+
+Response shape:
+
+```json
+{
+  "meta": {},
+  "timeline": {
+    "items": [],
+    "nextSeq": 123,
+    "hasMore": false
+  },
+  "runtime": {
+    "available": true,
+    "state": {},
+    "notices": [],
+    "capabilities": {},
+    "catalogs": {}
+  },
+  "eventCursor": "seq:123",
+  "serverTime": "2026-08-04T..."
+}
+```
+
+Sources:
+
+- `meta`: Server DB.
+- `timeline`: Server DB.
+- `runtime.*`: live runtime RPC.
+
+If runtime is unavailable:
+
+```json
+{
+  "runtime": {
+    "available": false,
+    "reason": "runtime_offline",
+    "state": {
+      "status": "disconnected"
+    },
+    "notices": [],
+    "capabilities": {},
+    "catalogs": {}
+  }
+}
+```
+
+The unavailable state must be clearly marked as Server presence projection, not
+as a cached runtime fact.
+
+### Runtime live endpoints
+
+```text
+GET   /sessions/{sessionId}/runtime/state
+GET   /sessions/{sessionId}/runtime/notices
+POST  /sessions/{sessionId}/runtime/notices/{noticeId}/respond
+GET   /sessions/{sessionId}/runtime/capabilities
+GET   /sessions/{sessionId}/runtime/catalogs/model
+GET   /sessions/{sessionId}/runtime/catalogs/permission
+GET   /sessions/{sessionId}/runtime/commands?query=...
+POST  /sessions/{sessionId}/runtime/commands
+PATCH /sessions/{sessionId}/runtime/selections
+POST  /sessions/{sessionId}/runtime/messages
+POST  /sessions/{sessionId}/runtime/steer
+POST  /sessions/{sessionId}/runtime/interrupt
+```
+
+Rules:
+
+- These endpoints call runtime RPC.
+- Server authorizes the user and connector/session ownership.
+- Server may return `runtime_unavailable`.
+- Server does not persist successful read results as truth.
+- Selection update changes runtime session state immediately; whether it affects
+  the current turn or next turn is a runtime boundary.
+
+### Create and start
+
+```text
+POST /sessions/create-and-start
 ```
 
 Request:
@@ -114,258 +333,83 @@ Request:
 
 Rules:
 
-- Server preallocates the platform `sessionId`.
-- Runtime receives the platform `sessionId` before producing the first timeline/state event.
-- Runtime is the final validator for selection ids.
-- Blank new session creation is not a target for the first migration.
+- Server preallocates SessionMeta.
+- Runtime receives the platform `sessionId` before producing timeline/state
+  updates.
+- Runtime validates selections.
+- Runtime creates the native session and starts the first turn as one action.
+- Runtime writes first user/assistant timeline items through the normal
+  timeline path.
 
-Response:
+## Session WebSocket
 
-```json
-{
-  "ok": true,
-  "sessionId": "sess_...",
-  "result": {},
-  "serverTime": "2026-08-02T..."
-}
-```
-
-## Session state
+One session WebSocket carries all session-scoped updates:
 
 ```text
-GET   /api/v2/sessions/{sessionId}/state
-PATCH /api/v2/sessions/{sessionId}/state/selections
+WS /sessions/{sessionId}/ws?ticket=...
 ```
 
-`GET /state` returns only `SessionState`:
-
-```json
-{
-  "sessionId": "sess_...",
-  "runtime": "codex",
-  "status": "running",
-  "selections": {
-    "model": "sel_model_...",
-    "permission": "sel_permission_..."
-  },
-  "statusReason": null,
-  "error": null,
-  "metadata": {},
-  "updatedSeq": 123,
-  "updatedAt": "2026-08-02T..."
-}
-```
-
-Status values:
+Event namespaces:
 
 ```text
-idle
-waiting
-running
-blocked
-error
-disconnected
+session.subscribed
+session.meta.updated
+timeline.item_created
+timeline.item_updated
+timeline.snapshot
+runtime.state.updated
+runtime.notice.snapshot
+runtime.notice.updated
+runtime.capability.updated
+runtime.catalog.updated
+runtime.refetch_required
+session.refetch_required
 ```
 
-`PATCH /state/selections` request:
+Notes:
 
-```json
-{
-  "selections": {
-    "model": "sel_model_..."
-  }
-}
-```
+- `timeline.*` events are durable and recoverable from Server DB.
+- `runtime.*` events are live facts. Recovery may require a runtime RPC read,
+  not a Server snapshot.
+- `session.refetch_required` is reserved for durable meta/timeline recovery.
+- `runtime.refetch_required` means the Web client should call the relevant
+  runtime live endpoint.
+- Current `session.status_changed`, `notice.*`, and
+  `effectiveCapabilities` payloads are compatibility shapes and should migrate
+  to these names.
 
-Rules:
-
-- Selection updates merge by scope.
-- Unknown future scopes are allowed by the JSON shape.
-- Runtime accepts or rejects the update.
-- Web may show a short optimistic update, but durable truth arrives through `session.state.updated` or a later `GET /state`.
-
-## Timeline
-
-Target:
+## Event recovery
 
 ```text
-GET /api/v2/sessions/{sessionId}/timeline
+GET /sessions/{sessionId}/events?after=seq:123
 ```
 
-Query modes:
+This endpoint recovers durable session events:
+
+- SessionMeta changes.
+- Timeline item changes.
+- Durable refetch signals.
+
+It must not pretend to recover runtime live notices/state from DB. If the client
+misses runtime live updates, it should call the corresponding runtime live
+endpoint after reconnect.
+
+## Transitional aliases
+
+Existing routes may remain temporarily, but new work should target the routes
+above.
 
 ```text
-?mode=latest&limit=200
-?mode=changes&afterSeq=123&limit=200
-?mode=history&beforeOrderSeq=456&limit=100
+GET   /sessions/{sessionId}/state
+GET   /sessions/{sessionId}/runtime-state
+PATCH /sessions/{sessionId}/state/selections
+POST  /sessions/{sessionId}/messages
+POST  /sessions/{sessionId}/commands
+POST  /sessions/{sessionId}/interactions/{noticeId}/respond
+GET   /connectors/{connectorId}/protocol/capabilities
+GET   /agents/{runtime}/model-catalog
+GET   /agents/{runtime}/permission-catalog
 ```
 
-Response:
-
-```json
-{
-  "items": [],
-  "nextSeq": 123,
-  "hasMore": false,
-  "serverTime": "2026-08-02T..."
-}
-```
-
-Rules:
-
-- Timeline is upsert-only.
-- Hiding replaces deletion.
-- Timeline reads do not return `SessionState`.
-- Timeline reads do not return `SessionNotice`.
-
-## Notices
-
-Target:
-
-```text
-GET  /api/v2/sessions/{sessionId}/notices
-POST /api/v2/sessions/{sessionId}/notices/{noticeId}/respond
-```
-
-Optional filters:
-
-```text
-?status=open
-?sinceSeq=123
-```
-
-`GET /notices` response:
-
-```json
-{
-  "notices": [],
-  "nextSeq": 123,
-  "serverTime": "2026-08-02T..."
-}
-```
-
-Respond request:
-
-```json
-{
-  "actionId": "approve",
-  "input": {}
-}
-```
-
-Rules:
-
-- Notice lifecycle is represented by upsert/status update, not deletion.
-- User response does not automatically close a notice unless runtime/service semantics do so.
-- Existing `/interactions/{noticeId}/respond` can remain as a transitional alias.
-
-## Snapshot
-
-```text
-GET /api/v2/sessions/{sessionId}/snapshot?limit=200
-```
-
-Response:
-
-```json
-{
-  "meta": {},
-  "state": {},
-  "timeline": {
-    "items": [],
-    "nextSeq": 123,
-    "hasMore": false
-  },
-  "notices": [],
-  "effectiveCapabilities": {},
-  "eventCursor": "seq:123",
-  "serverTime": "2026-08-02T..."
-}
-```
-
-Rules:
-
-- Snapshot is used for initial load and explicit recovery only.
-- Snapshot must not be used as a periodic refresh mechanism.
-- Snapshot must not include model/permission catalogs as primary selection source.
-
-## Messages, steer, and interrupt
-
-```text
-POST /api/v2/sessions/{sessionId}/messages
-POST /api/v2/sessions/{sessionId}/steer
-POST /api/v2/sessions/{sessionId}/interrupt
-```
-
-Message request:
-
-```json
-{
-  "content": "Hello",
-  "attachments": [],
-  "clientMessageId": "client_..."
-}
-```
-
-Rules:
-
-- Message send does not carry `modelSelectionId` or `permissionSelectionId`.
-- If a selection must change, call `PATCH /state/selections` before message send.
-- Server forwards current `SessionState.selections` to the runtime RPC when
-  starting the next turn.
-- Server may set state to `waiting` after accepting a message request and before runtime confirms turn start.
-- Runtime confirms active processing by emitting `session.state.updated` with `status = running`.
-- Runtime/session state notifications accept `selections`; legacy
-  `modelSelectionId` and `permissionSelectionId` are rejected on active
-  notification paths.
-- `interrupt` does not carry `turnId`; runtime finds its current active turn or returns conflict.
-
-## Commands
-
-```text
-GET  /api/v2/sessions/{sessionId}/commands?query=...
-POST /api/v2/sessions/{sessionId}/commands
-```
-
-`GET /commands` is a live runtime read. It does not return frontend-built static commands.
-
-Execute request:
-
-```json
-{
-  "command": "xxx",
-  "args": [],
-  "raw": "/xxx"
-}
-```
-
-Response:
-
-```json
-{
-  "command": "xxx",
-  "ok": true,
-  "code": null,
-  "message": "done",
-  "result": {},
-  "serverTime": "2026-08-02T..."
-}
-```
-
-Rules:
-
-- Command execution is not message send.
-- `/xxx` lookup or execution failure must not fallback to a normal message.
-- Runtime side effects are reported separately through state/timeline/notice events.
-
-## Current route migration table
-
-| Current route | Target | Status |
-| --- | --- | --- |
-| `POST /api/v2/sessions` | `POST /api/v2/sessions/create-and-start` | Bind-only migration route when `externalSessionId` is present; reject new task creation. |
-| `GET /api/v2/sessions/{id}/state?afterSeq=...` | `GET /api/v2/sessions/{id}/timeline` plus `GET /state` | Current route mixes state and timeline. |
-| `GET /api/v2/sessions/{id}/snapshot` | Same path, new response shape | Remove `catalogs`; split `meta/state/timeline/notices`. |
-| `POST /api/v2/sessions/{id}/messages` with selections | Same path without selections | Selection fields deprecated. |
-| `POST /api/v2/sessions/{id}/commands` hardcoded commands | `GET/POST /commands` runtime RPC | Add list endpoint and remove hardcoded command source. |
-| `POST /api/v2/sessions/{id}/interactions/{noticeId}/respond` | `POST /api/v2/sessions/{id}/notices/{noticeId}/respond` | Keep alias temporarily. |
-| `POST /api/v2/sessions/{id}/sync` | explicit recovery/snapshot paths | Deprecated for normal client use. |
+These aliases should be removed after Web and Connector use the split
+SessionMeta/SessionTimeline/RuntimeLive API.

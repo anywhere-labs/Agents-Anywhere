@@ -7,7 +7,8 @@ All Server HTTP, SSE, and WebSocket API documentation should live under this dir
 ## Documents
 
 - [API v2 namespace](./namespace.md): `/api/v2` namespace and client/connector URL rules.
-- [Session API proposal](./session-api-proposal.md): proposed client-facing session API redesign for Agent Runtime Protocol v1.
+- [Session API proposal](./session-api-proposal.md): authoritative target for the split `SessionMeta` / `SessionTimeline` / `RuntimeLive` client API.
+- [Session service architecture](./session-service-architecture.md): Server, Connector, Runtime, and Web ownership boundaries for session data and realtime updates.
 - [Realtime API](./realtime.md): session, dashboard, connector, and terminal realtime channel semantics.
 
 ## Current API groups
@@ -50,7 +51,17 @@ Target runtime catalog reads should live under connector runtime resources:
 
 ### Session API
 
-Session API is the main area that needs redesign. See [Session API proposal](./session-api-proposal.md).
+Session API is the main area that needs redesign. The current target splits
+durable Server facts from live Runtime facts:
+
+```text
+SessionMeta      -> durable Server DB
+SessionTimeline  -> durable Server DB, written by Runtime updates
+RuntimeLive      -> non-durable Runtime state/notices/catalogs/capabilities
+```
+
+See [Session API proposal](./session-api-proposal.md) and
+[Session service architecture](./session-service-architecture.md).
 
 ### Realtime API
 
@@ -76,10 +87,13 @@ GET  /api/v2/agents/{runtime}/permission-catalog
 GET  /api/v2/sessions/events/dashboard
 POST /api/v2/sessions
 GET  /api/v2/sessions/{sessionId}/state with timeline query params
+GET  /api/v2/sessions/{sessionId}/runtime-state
 POST /api/v2/sessions/{sessionId}/sync
 POST /api/v2/sessions/{sessionId}/interactions/{noticeId}/respond
 message/create modelSelectionId and permissionSelectionId fields
 snapshot.catalogs as a primary catalog source
+server-persisted notices as runtime notice truth
+server-persisted protocol catalogs/capabilities as runtime truth
 hardcoded session commands
 ```
 
