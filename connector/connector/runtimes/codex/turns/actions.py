@@ -125,6 +125,18 @@ class CodexTurnActions:
             )
             raise
         turn_id = result.turn_id
+        current_state = self.session_states.get(session_id)
+        if turn_completed_before_start_returned(current_state):
+            return RuntimeOperationResult(
+                ok=True,
+                result={
+                    "turnId": turn_id,
+                    "turn": dict(result.payload),
+                    "externalSessionId": external_session_id,
+                    "status": current_state.status if current_state is not None else None,
+                    "completed": True,
+                },
+            )
         if turn_id is not None:
             self.active_turn_ids[session_id] = turn_id
             self.pending_messages.bind_turn(
@@ -309,3 +321,19 @@ class CodexTurnActions:
             error=error,
             metadata=metadata,
         )
+
+
+def turn_completed_before_start_returned(state: Any | None) -> bool:
+    if state is None:
+        return False
+    if state.status not in {"idle", "blocked"}:
+        return False
+    source = state.metadata.get("source")
+    if not isinstance(source, str):
+        return False
+    return source in {
+        "codex.turn/completed",
+        "codex.turn/interrupted",
+        "codex.turn/cancelled",
+        "codex.turn/failed",
+    }

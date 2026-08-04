@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Mapping
 from typing import Any
 
@@ -18,6 +19,7 @@ class CodexTimelineAccumulator:
     ) -> None:
         self._order_by_id: dict[str, int] = {}
         self._projection_by_id: dict[str, codex_timeline.CodexTimelineProjection] = {}
+        self._item_id_by_semantic_key: dict[tuple[str, ...], str] = {}
         self._next_order = 0
         self._pending_messages = pending_messages
 
@@ -54,10 +56,12 @@ class CodexTimelineAccumulator:
         projection = self._attach_client_message_id(
             session_id, external_session_id, projection
         )
-        item_id = projection.item_id(
+        projection = self.stabilize_projection_identity(
             external_session_id=external_session_id,
+            projection=projection,
             fallback_index=0,
         )
+        item_id = projection.item_id(external_session_id=external_session_id, fallback_index=0)
         previous = self._projection_by_id.get(item_id)
         merged = projection
         if event.event_type == "item/agentMessage/delta":
@@ -121,10 +125,12 @@ class CodexTimelineAccumulator:
             projection = self._attach_client_message_id(
                 session_id, external_session_id, projection
             )
-            item_id = projection.item_id(
+            projection = self.stabilize_projection_identity(
                 external_session_id=external_session_id,
+                projection=projection,
                 fallback_index=index,
             )
+            item_id = projection.item_id(external_session_id=external_session_id, fallback_index=index)
             self._projection_by_id[item_id] = projection
             items.append(
                 self._runtime_item(
@@ -137,6 +143,11 @@ class CodexTimelineAccumulator:
             )
         turn_end = self.turn_end_projection_from_notification(params=params, method=method)
         if turn_end is not None:
+            turn_end = self.stabilize_projection_identity(
+                external_session_id=external_session_id,
+                projection=turn_end,
+                fallback_index=len(items),
+            )
             items.append(
                 self._runtime_item(
                     session_id=session_id,
@@ -167,10 +178,12 @@ class CodexTimelineAccumulator:
             projection = self._attach_client_message_id(
                 session_id, external_session_id, projection
             )
-            item_id = projection.item_id(
+            projection = self.stabilize_projection_identity(
                 external_session_id=external_session_id,
+                projection=projection,
                 fallback_index=index,
             )
+            item_id = projection.item_id(external_session_id=external_session_id, fallback_index=index)
             self._projection_by_id[item_id] = projection
             items.append(
                 self._runtime_item(
@@ -183,6 +196,11 @@ class CodexTimelineAccumulator:
             )
         turn_end = self.turn_end_projection(event)
         if turn_end is not None:
+            turn_end = self.stabilize_projection_identity(
+                external_session_id=external_session_id,
+                projection=turn_end,
+                fallback_index=len(items),
+            )
             items.append(
                 self._runtime_item(
                     session_id=session_id,
@@ -193,6 +211,76 @@ class CodexTimelineAccumulator:
                 )
             )
         return tuple(items)
+
+    def items_from_thread_snapshot(
+        self,
+        session_id: str,
+        external_session_id: str,
+        thread: dict[str, Any],
+        limit: int,
+    ) -> tuple[RuntimeTimelineItem, ...]:
+        items: list[RuntimeTimelineItem] = []
+        for index, raw_item in enumerate(codex_timeline.raw_timeline_items(thread)[:limit]):
+            raw = dict(raw_item)
+            if self._pending_messages is not None:
+                self._pending_messages.attach_to_raw_item(
+                    session_id=session_id,
+                    external_session_id=external_session_id,
+                    raw=raw,
+                )
+            projection = codex_timeline.timeline_projection_from_raw(raw)
+            projection = self.stabilize_projection_identity(
+                external_session_id=external_session_id,
+                projection=projection,
+                fallback_index=index,
+            )
+            item_id = projection.item_id(
+                external_session_id=external_session_id,
+                fallback_index=index,
+            )
+            self._projection_by_id[item_id] = projection
+            items.append(
+                self._runtime_item(
+                    session_id=session_id,
+                    external_session_id=external_session_id,
+                    projection=projection,
+                    event="thread/read",
+                    fallback_index=index,
+                )
+            )
+        return tuple(items)
+
+    def stabilize_projection_identity(
+        self,
+        external_session_id: str,
+        projection: codex_timeline.CodexTimelineProjection,
+        fallback_index: int,
+    ) -> codex_timeline.CodexTimelineProjection:
+        semantic_keys = semantic_identity_keys(
+            external_session_id=external_session_id,
+            projection=projection,
+        )
+        if not semantic_keys:
+            return projection
+        for semantic_key in semantic_keys:
+            existing_item_id = self._item_id_by_semantic_key.get(semantic_key)
+            if existing_item_id is not None:
+                self.record_semantic_identity(semantic_keys, existing_item_id)
+                return projection.with_platform_id(existing_item_id)
+        item_id = projection.item_id(
+            external_session_id=external_session_id,
+            fallback_index=fallback_index,
+        )
+        self.record_semantic_identity(semantic_keys, item_id)
+        return projection
+
+    def record_semantic_identity(
+        self,
+        semantic_keys: tuple[tuple[str, ...], ...],
+        item_id: str,
+    ) -> None:
+        for semantic_key in semantic_keys:
+            self._item_id_by_semantic_key[semantic_key] = item_id
 
     def _runtime_item(
         self,
@@ -305,3 +393,41 @@ def terminal_turn_message(event_type: str) -> str:
     if event_type == "turn/cancelled":
         return "Turn cancelled"
     return "Turn completed"
+
+
+def semantic_identity_keys(
+    external_session_id: str,
+    projection: codex_timeline.CodexTimelineProjection,
+) -> tuple[tuple[str, ...], ...]:
+    role = projection.effective_role()
+    if projection.raw_type not in {"agentMessage", "userMessage", "steeringUserMessage"}:
+        return ()
+    keys: list[tuple[str, ...]] = []
+    if projection.client_message_id is not None and role == "user":
+        keys.append(
+            (
+                "client-message",
+                external_session_id,
+                projection.client_message_id,
+            )
+        )
+    text = normalized_timeline_text(projection)
+    if text:
+        text_digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        keys.append(
+            (
+                "message-content",
+                external_session_id,
+                projection.raw_type,
+                str(role or ""),
+                text_digest,
+            )
+        )
+    return tuple(keys)
+
+
+def normalized_timeline_text(
+    projection: codex_timeline.CodexTimelineProjection,
+) -> str:
+    text = projection.pending_message_text()
+    return "\n".join(line.rstrip() for line in text.strip().splitlines())

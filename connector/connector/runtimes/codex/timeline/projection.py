@@ -46,6 +46,7 @@ from connector.runtimes.codex.timeline.raw_item import (
 class CodexTimelineProjection:
     native_id: str | None
     raw_type: str
+    platform_id: str | None = None
     status: str | None = None
     role: str | None = None
     turn_id: str | None = None
@@ -68,6 +69,9 @@ class CodexTimelineProjection:
     def with_client_message_id(self, client_message_id: str) -> CodexTimelineProjection:
         return replace(self, client_message_id=client_message_id)
 
+    def with_platform_id(self, platform_id: str) -> CodexTimelineProjection:
+        return replace(self, platform_id=platform_id)
+
     def with_text(self, text: str) -> CodexTimelineProjection:
         return replace(self, text=text)
 
@@ -84,6 +88,8 @@ class CodexTimelineProjection:
         return timeline_item_role_from_values(raw_type=self.raw_type, role=self.role)
 
     def item_id(self, external_session_id: str, fallback_index: int) -> str:
+        if self.platform_id is not None:
+            return self.platform_id
         return timeline_item_id_from_values(
             native_id=self.native_id,
             client_message_id=self.client_message_id,

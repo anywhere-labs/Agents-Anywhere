@@ -22,6 +22,7 @@ from connector.runtimes.codex.domain.pending_messages import (
 )
 from connector.runtimes.codex.domain.selections import selections_from_thread_state
 from connector.runtimes.codex.sdk.runtime_client import CodexRuntimeClient
+from connector.runtimes.codex.timeline.accumulator import CodexTimelineAccumulator
 
 ListModelCatalog = Callable[[str | None, int], Awaitable[RuntimeModelCatalog]]
 ListPermissionCatalog = Callable[[str | None, int], Awaitable[RuntimePermissionCatalog]]
@@ -42,6 +43,7 @@ class CodexSessionReader:
     list_model_catalog: ListModelCatalog
     list_permission_catalog: ListPermissionCatalog
     pending_messages: PendingClientMessageRegistry | None = None
+    timeline: CodexTimelineAccumulator | None = None
 
     async def list_sessions(
         self,
@@ -177,13 +179,22 @@ class CodexSessionReader:
             thread_id=external_session_id,
             include_turns=True,
         )
-        items = codex_timeline.timeline_items_from_thread(
-            session_id=session_id,
-            external_session_id=external_session_id,
-            thread=dict(result.thread),
-            limit=limit,
-            pending_messages=self.pending_messages,
-        )
+        thread = dict(result.thread)
+        if self.timeline is not None:
+            items = self.timeline.items_from_thread_snapshot(
+                session_id=session_id,
+                external_session_id=external_session_id,
+                thread=thread,
+                limit=limit,
+            )
+        else:
+            items = codex_timeline.timeline_items_from_thread(
+                session_id=session_id,
+                external_session_id=external_session_id,
+                thread=thread,
+                limit=limit,
+                pending_messages=self.pending_messages,
+            )
         return RuntimeTimelineSnapshot(
             session_id=session_id,
             external_session_id=external_session_id,

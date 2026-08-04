@@ -175,6 +175,7 @@ class FakeCodexClient:
         self.requests: list[tuple[str, dict[str, Any]]] = []
         self.responses: list[tuple[str | int, dict[str, Any]]] = []
         self.response_error: Exception | None = None
+        self.handler: Any | None = None
         self.results: dict[str, dict[str, Any]] = {
             "model/list": {
                 "models": [
@@ -253,7 +254,7 @@ class FakeCodexClient:
         }
 
     async def start(self, handler) -> None:  # type: ignore[no-untyped-def]
-        _ = handler
+        self.handler = handler
         self.started = True
 
     async def stop(self) -> None:
@@ -1026,6 +1027,112 @@ async def _test_codex_runtime_reads_session_snapshot() -> None:
     assert snapshot.items[1].content == {"kind": "markdown", "text": "hi", "format": "markdown"}
 
 
+def test_codex_snapshot_reuses_live_assistant_identity() -> None:
+    asyncio.run(_test_codex_snapshot_reuses_live_assistant_identity())
+
+
+async def _test_codex_snapshot_reuses_live_assistant_identity() -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    await runtime.start()
+    await runtime._handle_notification(
+        {
+            "method": "item/completed",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_1",
+                "item": {
+                    "id": "msg_live",
+                    "type": "agentMessage",
+                    "status": "completed",
+                    "role": "assistant",
+                    "content": {"text": "same answer"},
+                },
+            },
+        }
+    )
+    client.results["thread/read"] = {
+        "thread": {
+            "id": "thread_1",
+            "items": [
+                {
+                    "id": "item-2",
+                    "type": "agentMessage",
+                    "status": "done",
+                    "role": "assistant",
+                    "content": {"text": "same answer"},
+                }
+            ],
+        }
+    }
+
+    snapshot = await runtime.get_session_snapshot(
+        "sess_1",
+        external_session_id="thread_1",
+    )
+
+    assert host.timeline_item_upserts[-1].id == "msg_live"
+    assert snapshot.items[0].id == "msg_live"
+    assert snapshot.items[0].source["itemId"] == "item-2"
+
+
+def test_codex_snapshot_reuses_live_user_identity_when_client_id_arrives_late() -> None:
+    asyncio.run(_test_codex_snapshot_reuses_live_user_identity_when_client_id_arrives_late())
+
+
+async def _test_codex_snapshot_reuses_live_user_identity_when_client_id_arrives_late() -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    await runtime.start()
+    await runtime._handle_notification(
+        {
+            "method": "item/completed",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_1",
+                "item": {
+                    "id": "live_user",
+                    "type": "userMessage",
+                    "status": "completed",
+                    "role": "user",
+                    "content": {"text": "same prompt"},
+                },
+            },
+        }
+    )
+    client.results["thread/read"] = {
+        "thread": {
+            "id": "thread_1",
+            "items": [
+                {
+                    "id": "item-1",
+                    "type": "userMessage",
+                    "status": "done",
+                    "role": "user",
+                    "clientMessageId": "msg_late",
+                    "content": {"text": "same prompt"},
+                }
+            ],
+        }
+    }
+
+    snapshot = await runtime.get_session_snapshot(
+        "sess_1",
+        external_session_id="thread_1",
+    )
+
+    assert host.timeline_item_upserts[-1].id == "live_user"
+    assert snapshot.items[0].id == "live_user"
+    assert snapshot.items[0].source["itemId"] == "item-1"
+    assert snapshot.items[0].source["clientMessageId"] == "msg_late"
+
+
 def test_codex_runtime_reads_user_message_text_elements_snapshot() -> None:
     asyncio.run(_test_codex_runtime_reads_user_message_text_elements_snapshot())
 
@@ -1145,6 +1252,46 @@ async def _test_codex_runtime_starts_existing_turn_and_reports_running_state() -
     state = await runtime.get_session_state("sess_1")
     assert state is not None
     assert state.status == "running"
+
+
+def test_codex_runtime_does_not_restore_running_after_fast_terminal_turn() -> None:
+    asyncio.run(_test_codex_runtime_does_not_restore_running_after_fast_terminal_turn())
+
+
+async def _test_codex_runtime_does_not_restore_running_after_fast_terminal_turn() -> None:
+    class FastTerminalCodexClient(FakeCodexClient):
+        async def start_turn(self, request: CodexStartTurnRequest) -> CodexTurnResult:
+            result = await super().start_turn(request)
+            if self.handler is not None:
+                await self.handler(
+                    {
+                        "method": "turn/completed",
+                        "params": {
+                            "platformSessionId": "sess_1",
+                            "threadId": request.thread_id,
+                            "turn": {
+                                "id": result.turn_id,
+                                "status": "completed",
+                                "items": [],
+                            },
+                        },
+                    }
+                )
+            return result
+
+    client = FastTerminalCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    result = await runtime.start_turn("sess_1", "thread_1", "hello")
+
+    assert result.ok is True
+    assert result.result["completed"] is True
+    assert result.result["status"] == "idle"
+    assert [update["status"] for update in host.state_updates] == ["waiting", "idle"]
+    interrupt = await runtime.interrupt_turn("sess_1", "thread_1")
+    assert interrupt.ok is False
+    assert interrupt.code == "codex_no_active_turn"
 
 
 def test_codex_runtime_create_and_start_session_reports_meta_and_state() -> None:
