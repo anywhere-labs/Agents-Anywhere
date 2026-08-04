@@ -1425,6 +1425,7 @@ async def _test_codex_runtime_update_session_selections_pushes_runtime_state() -
     assert host.state_updates[-1]["metadata"]["source"] == (
         "codex.session.selections.update"
     )
+    assert host.state_updates[-1]["metadata"]["selection_effect"] == "next_turn"
 
 
 def test_codex_runtime_invalid_selection_returns_protocol_error() -> None:
@@ -1454,22 +1455,35 @@ def test_codex_runtime_start_turn_carries_cached_session_selections() -> None:
 async def _test_codex_runtime_start_turn_carries_cached_session_selections() -> None:
     client = FakeCodexClient()
     runtime = CodexRuntime(config=_config(), host=FakeHost(), client=client)
-    selection = (await runtime.list_model_catalog()).models[1].selection_id
+    model_selection = (
+        (await runtime.list_model_catalog()).models[0].reasoning_items[1].selection_id
+    )
+    permission_selection = (
+        (await runtime.list_permission_catalog(query="full"))
+        .permissions[0]
+        .selection_id
+    )
 
     update = await runtime.update_session_selections(
         "sess_1",
         "thread_1",
-        {"model": selection},
+        {"model": model_selection, "permission": permission_selection},
     )
     result = await runtime.start_turn("sess_1", "thread_1", "hello")
 
     assert update.ok is True
     assert result.ok is True
+    assert all(
+        request[0] not in {"thread/update", "thread/settings/update"}
+        for request in client.requests
+    )
     turn_start = next(
         request for request in reversed(client.requests) if request[0] == "turn/start"
     )
-    assert turn_start[1]["model"] == "gpt-plain"
-    assert "effort" not in turn_start[1]
+    assert turn_start[1]["model"] == "gpt-example"
+    assert turn_start[1]["effort"] == "high"
+    assert turn_start[1]["approvalPolicy"] == "never"
+    assert turn_start[1]["sandbox"] == "danger-full-access"
 
 
 def test_codex_runtime_lists_compact_command_for_loaded_thread() -> None:

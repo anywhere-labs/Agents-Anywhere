@@ -20,12 +20,14 @@ from connector.runtimes.codex.turns.selection_scopes import unsupported_selectio
 
 ListModelCatalog = Callable[[str | None, int], Awaitable[RuntimeModelCatalog]]
 ListPermissionCatalog = Callable[[str | None, int], Awaitable[RuntimePermissionCatalog]]
+EnsureStarted = Callable[[], Awaitable[None]]
 
 
 @dataclass(slots=True)
 class CodexSelectionController:
     client: CodexRuntimeClient | None
     session_states: RuntimeSessionStateCache
+    ensure_started: EnsureStarted
     list_model_catalog: ListModelCatalog
     list_permission_catalog: ListPermissionCatalog
 
@@ -38,12 +40,14 @@ class CodexSelectionController:
         """Validate and publish session selection changes.
 
         Side effects:
-        - reads current SessionState
-        - updates SessionState.selections while preserving current status/error
+        - validates the selections against live runtime catalogs
+        - stores the selections as the session preference for the next turn
+        - publishes SessionState.selections while preserving current status/error
         """
 
         if self.client is None or external_session_id is None:
             raise RuntimeUnsupportedError("update_session_selections")
+        await self.ensure_started()
         if not selections:
             return RuntimeOperationResult(
                 ok=False,
@@ -94,6 +98,7 @@ class CodexSelectionController:
             metadata={
                 "source": "codex.session.selections.update",
                 "selection_scopes": tuple(selections.keys()),
+                "selection_effect": "next_turn",
             },
         )
         return RuntimeOperationResult(

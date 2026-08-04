@@ -75,6 +75,7 @@ class CodexTurnController:
         self.selections = CodexSelectionController(
             client=self.client,
             session_states=self.session_states,
+            ensure_started=self.ensure_started,
             list_model_catalog=self.list_model_catalog,
             list_permission_catalog=self.list_permission_catalog,
         )
