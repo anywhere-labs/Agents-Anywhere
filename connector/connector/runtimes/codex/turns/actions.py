@@ -22,7 +22,7 @@ from connector.runtimes.codex.domain.selections import (
 )
 from connector.runtimes.codex.runtime_helpers import (
     ensure_text_only_attachments,
-    soft_interrupt_failure_reason,
+    soft_codex_unavailable_reason,
 )
 from connector.runtimes.codex.sdk.runtime_client import (
     CodexInterruptTurnRequest,
@@ -198,14 +198,36 @@ class CodexTurnActions:
             steering=True,
             turn_id=turn_id,
         )
-        result = await self.client.steer_turn(
-            CodexSteerTurnRequest(
-                thread_id=external_session_id,
-                turn_id=turn_id,
-                content=content,
-                client_message_id=client_message_id,
+        try:
+            result = await self.client.steer_turn(
+                CodexSteerTurnRequest(
+                    thread_id=external_session_id,
+                    turn_id=turn_id,
+                    content=content,
+                    client_message_id=client_message_id,
+                )
             )
-        )
+        except (RuntimeError, RuntimeInvalidRequestError) as exc:
+            soft_reason = soft_codex_unavailable_reason(str(exc))
+            if soft_reason is None:
+                raise
+            self.active_turn_ids.pop(session_id, None)
+            await self._set_session_state(
+                session_id=session_id,
+                external_session_id=external_session_id,
+                status="idle",
+                metadata={
+                    "source": "codex.turn/steer.soft-failed",
+                    "reason": soft_reason,
+                    "turn_id": turn_id,
+                },
+            )
+            return RuntimeOperationResult(
+                ok=False,
+                code=soft_reason,
+                message="Codex turn was unavailable to steer",
+                result={"steered": False, "turnId": turn_id},
+            )
         await self._set_session_state(
             session_id=session_id,
             external_session_id=external_session_id,
@@ -254,7 +276,7 @@ class CodexTurnActions:
                 )
             )
         except (RuntimeError, RuntimeInvalidRequestError) as exc:
-            soft_reason = soft_interrupt_failure_reason(str(exc))
+            soft_reason = soft_codex_unavailable_reason(str(exc))
             if soft_reason is None:
                 raise
             self.active_turn_ids.pop(session_id, None)

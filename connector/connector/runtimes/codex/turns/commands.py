@@ -6,11 +6,13 @@ from typing import Any
 
 from connector.runtime_protocol import (
     RuntimeCommandResult,
+    RuntimeInvalidRequestError,
     RuntimeSessionStateCache,
     SessionNotice,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex.domain.commands import list_codex_commands
+from connector.runtimes.codex.runtime_helpers import soft_codex_unavailable_reason
 from connector.runtimes.codex.sdk.runtime_client import CodexRuntimeClient
 
 EnsureStarted = Callable[[], Awaitable[None]]
@@ -61,7 +63,29 @@ class CodexCommandController:
         await self.ensure_started()
         try:
             result = await self.client.compact_thread(external_session_id)
-        except RuntimeError as exc:
+        except (RuntimeError, RuntimeInvalidRequestError) as exc:
+            soft_reason = soft_codex_unavailable_reason(str(exc))
+            if soft_reason is not None:
+                await self.session_states.update(
+                    session_id=session_id,
+                    external_session_id=external_session_id,
+                    status="idle",
+                    metadata={
+                        "source": "codex.command.compact.soft-failed",
+                        "reason": soft_reason,
+                        "command": "compact",
+                    },
+                )
+                return RuntimeCommandResult(
+                    command=command_id,
+                    ok=False,
+                    code=soft_reason,
+                    message="Codex thread was unavailable for /compact.",
+                    result={
+                        "externalSessionId": external_session_id,
+                        "compacted": False,
+                    },
+                )
             return RuntimeCommandResult(
                 command=command_id,
                 ok=False,

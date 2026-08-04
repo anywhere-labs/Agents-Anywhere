@@ -21,7 +21,7 @@ from openai_codex.generated.v2_all import (
 )
 
 from connector.runtime_protocol import RuntimeConfig, RuntimeInvalidRequestError
-from connector.runtimes.codex.runtime_helpers import soft_interrupt_failure_reason
+from connector.runtimes.codex.runtime_helpers import soft_codex_unavailable_reason
 from connector.runtimes.codex.sdk.events import CodexSdkEvent
 from connector.runtimes.codex.sdk.runtime_client import (
     CodexCompactResult,
@@ -294,7 +294,7 @@ class CodexSdkClient:
                 params=codex_turn_start_params(request),
             )
         except Exception as exc:
-            if soft_interrupt_failure_reason(str(exc)) != "thread_not_found":
+            if soft_codex_unavailable_reason(str(exc)) != "thread_not_found":
                 raise
             self._loaded_thread_ids.discard(request.thread_id)
             await self.force_thread_resume_for_turn(low_level_client, request)

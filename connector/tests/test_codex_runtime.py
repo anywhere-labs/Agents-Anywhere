@@ -1777,6 +1777,61 @@ async def _test_codex_runtime_command_failure_returns_command_result() -> None:
     assert host.state_updates == []
 
 
+def test_codex_runtime_compact_thread_not_found_sets_idle() -> None:
+    asyncio.run(_test_codex_runtime_compact_thread_not_found_sets_idle())
+
+
+async def _test_codex_runtime_compact_thread_not_found_sets_idle() -> None:
+    client = FakeCodexClient()
+    client.results["thread/compact/start"] = RuntimeError(
+        '{"message": "thread not found: thread_1"}'
+    )
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    result = await runtime.execute_command(
+        "sess_1",
+        "compact",
+        external_session_id="thread_1",
+    )
+
+    assert result.ok is False
+    assert result.command == "compact"
+    assert result.code == "thread_not_found"
+    assert result.result["compacted"] is False
+    assert host.state_updates[-1]["status"] == "idle"
+    assert host.state_updates[-1]["metadata"] == {
+        "source": "codex.command.compact.soft-failed",
+        "reason": "thread_not_found",
+        "command": "compact",
+    }
+
+
+def test_codex_runtime_compact_thread_not_found_request_error_sets_idle() -> None:
+    asyncio.run(_test_codex_runtime_compact_thread_not_found_request_error_sets_idle())
+
+
+async def _test_codex_runtime_compact_thread_not_found_request_error_sets_idle() -> None:
+    client = FakeCodexClient()
+    client.results["thread/compact/start"] = RuntimeInvalidRequestError(
+        "thread not found: thread_1"
+    )
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    result = await runtime.execute_command(
+        "sess_1",
+        "compact",
+        external_session_id="thread_1",
+    )
+
+    assert result.ok is False
+    assert result.command == "compact"
+    assert result.code == "thread_not_found"
+    assert result.result["compacted"] is False
+    assert host.state_updates[-1]["status"] == "idle"
+
+
 def test_codex_runtime_rejects_unknown_command_without_transport_error() -> None:
     asyncio.run(_test_codex_runtime_rejects_unknown_command_without_transport_error())
 
@@ -2743,6 +2798,31 @@ async def _test_codex_runtime_steer_without_active_turn_returns_conflict() -> No
     assert result.code == "codex_no_active_turn"
     assert all(request[0] != "turn/steer" for request in client.requests)
     assert host.state_updates[-1]["status"] == "idle"
+
+
+def test_codex_runtime_steer_no_active_sdk_turn_sets_idle() -> None:
+    asyncio.run(_test_codex_runtime_steer_no_active_sdk_turn_sets_idle())
+
+
+async def _test_codex_runtime_steer_no_active_sdk_turn_sets_idle() -> None:
+    client = FakeCodexClient()
+    client.results["turn/steer"] = RuntimeInvalidRequestError(
+        "Codex SDK has no active turn for thread thread_1"
+    )
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    await runtime.start_turn("sess_1", "thread_1", "hello")
+    result = await runtime.steer_turn("sess_1", "thread_1", "late")
+
+    assert result.ok is False
+    assert result.code == "turn_not_found"
+    assert result.result["steered"] is False
+    assert host.state_updates[-1]["status"] == "idle"
+    assert (
+        host.state_updates[-1]["metadata"]["source"]
+        == "codex.turn/steer.soft-failed"
+    )
 
 
 def test_codex_runtime_interrupts_active_turn_and_sets_idle() -> None:
