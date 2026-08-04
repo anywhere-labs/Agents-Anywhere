@@ -148,13 +148,11 @@ export function SessionComposer({
   const modelItems = modelCatalog?.models.map((item) => ({
     id: item.id,
     label: catalogI18nText(tNew, item.metadata, "labelKey", item.displayName),
-    description: catalogI18nText(tNew, item.metadata, "descriptionKey", item.description),
     default: item.default,
     selectionId: item.selectionId,
     reasoningItems: item.reasoningItems.map((reasoning) => ({
       id: reasoning.id,
       label: catalogI18nText(tNew, reasoning.metadata, "labelKey", reasoning.displayName),
-      description: catalogI18nText(tNew, reasoning.metadata, "descriptionKey", reasoning.description),
       default: reasoning.default,
       selectionId: reasoning.selectionId,
     })),
@@ -438,21 +436,14 @@ export function SessionComposer({
                             return (
                               <DropdownMenuItem
                                 key={modelItem.id}
-                                className="items-start gap-2 py-2.5"
+                                className="gap-2"
                                 onSelect={() => {
                                   setSelectedModel(modelItem.id)
                                   setSelectedReasoning("")
                                 }}
                               >
-                                <Check className={cn("mt-0.5 size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
-                                <span className="min-w-0 flex-1">
-                                  <span className="block truncate font-medium leading-none">{modelItem.label}</span>
-                                  {modelItem.description ? (
-                                    <span className="mt-1 block whitespace-normal text-xs leading-snug text-muted-foreground">
-                                      {modelItem.description}
-                                    </span>
-                                  ) : null}
-                                </span>
+                                <Check className={cn("size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
+                                <span className="truncate">{modelItem.label}</span>
                               </DropdownMenuItem>
                             )
                           }
@@ -466,24 +457,17 @@ export function SessionComposer({
                                 {modelEfforts.map((item) => (
                                   <DropdownMenuItem
                                     key={item.id}
-                                    className="items-start gap-2 py-2.5"
+                                    className="gap-2"
                                     onSelect={() => {
                                       setSelectedModel(modelItem.id)
                                       setSelectedReasoning(item.id)
                                     }}
                                   >
                                     <Check className={cn(
-                                      "mt-0.5 size-3.5",
+                                      "size-3.5",
                                       selectedModel === modelItem.id && selectedReasoning === item.id ? "opacity-100" : "opacity-0",
                                     )} />
-                                    <span className="min-w-0 flex-1">
-                                      <span className="block truncate font-medium leading-none">{item.label}</span>
-                                      {item.description ? (
-                                        <span className="mt-1 block whitespace-normal text-xs leading-snug text-muted-foreground">
-                                          {item.description}
-                                        </span>
-                                      ) : null}
-                                    </span>
+                                    <span className="truncate">{item.label}</span>
                                   </DropdownMenuItem>
                                 ))}
                               </DropdownMenuSubContent>

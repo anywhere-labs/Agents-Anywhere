@@ -112,7 +112,6 @@ export function SelectionSettingsDrawer({
                     <SelectionRow
                       selected={selectedModel === model.id}
                       label={model.label}
-                      helper={model.description ?? undefined}
                       disabled={modelDisabled}
                       onClick={() => {
                         onModelChange(model.id, "")
@@ -127,7 +126,7 @@ export function SelectionSettingsDrawer({
                           key={reasoning.id}
                           selected={selectedModel === model.id && selectedReasoning === reasoning.id}
                           label={`${reasoning.label} · ${model.label}`}
-                          helper={reasoning.description ?? reasoningLabel}
+                          helper={reasoningLabel}
                           disabled={modelDisabled || reasoningDisabled}
                           onClick={() => {
                             onModelChange(model.id, reasoning.id)
