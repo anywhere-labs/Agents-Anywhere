@@ -253,7 +253,7 @@ class CodexTurnActions:
                     turn_id=turn_id,
                 )
             )
-        except RuntimeError as exc:
+        except (RuntimeError, RuntimeInvalidRequestError) as exc:
             soft_reason = soft_interrupt_failure_reason(str(exc))
             if soft_reason is None:
                 raise

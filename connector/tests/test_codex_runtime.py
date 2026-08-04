@@ -29,6 +29,7 @@ from connector.runtime_protocol import (
     MarkdownMessageContent,
     MessageTimelineContent,
     RuntimeConfig,
+    RuntimeInvalidRequestError,
     SessionNotice,
     TimelineSource,
 )
@@ -2813,6 +2814,31 @@ async def _test_codex_runtime_interrupt_no_active_sdk_turn_sets_idle() -> None:
     assert result.code == "turn_not_found"
     assert result.result["interrupted"] is False
     assert host.state_updates[-1]["status"] == "idle"
+
+
+def test_codex_runtime_interrupt_no_active_sdk_turn_request_error_sets_idle() -> None:
+    asyncio.run(_test_codex_runtime_interrupt_no_active_sdk_turn_request_error_sets_idle())
+
+
+async def _test_codex_runtime_interrupt_no_active_sdk_turn_request_error_sets_idle() -> None:
+    client = FakeCodexClient()
+    client.results["turn/interrupt"] = RuntimeInvalidRequestError(
+        "Codex SDK has no active turn for thread thread_1"
+    )
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    await runtime.start_turn("sess_1", "thread_1", "hello")
+    result = await runtime.interrupt_turn("sess_1", "thread_1")
+
+    assert result.ok is False
+    assert result.code == "turn_not_found"
+    assert result.result["interrupted"] is False
+    assert host.state_updates[-1]["status"] == "idle"
+    assert (
+        host.state_updates[-1]["metadata"]["source"]
+        == "codex.turn/interrupt.soft-failed"
+    )
 
 
 def test_codex_runtime_responds_to_approval_interaction() -> None:
