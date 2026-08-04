@@ -38,7 +38,13 @@ import { useTranslations } from "next-intl"
 import { InteractionCard, NotificationCard } from "@/components/session/session-approval-card"
 import { SessionSkeleton, SessionSkeletonInline } from "@/components/session/session-skeleton"
 import { TimelineEntry } from "@/components/session/session-timeline-entry"
-import { isCreatedFileChange, JsonBlock } from "@/components/session/session-tool-cards"
+import {
+  isCreatedFileChange,
+  JsonBlock,
+  timelineItemStatusIsActive,
+  timelineItemStatusIsFailure,
+  ToolMarkerRowContent,
+} from "@/components/session/session-tool-cards"
 import { CAPABILITY, capabilityIsUsable } from "@/components/session/capabilities"
 import { SessionComposer, type AttachedFile } from "@/components/session/session-composer"
 import {
@@ -1358,7 +1364,7 @@ function groupTimelineItems(items: TimelineItem[], interactionTargetIds: Set<str
     if (pendingTools.length >= 2) {
       groups.push({
         kind: "tool-run",
-        key: pendingTools.map((item) => item.id).join(":"),
+        key: `tool-run:${pendingTools[0]?.id ?? "unknown"}`,
         items: pendingTools,
       })
     } else {
@@ -1371,7 +1377,7 @@ function groupTimelineItems(items: TimelineItem[], interactionTargetIds: Set<str
     if (pendingReconnects.length >= 2) {
       groups.push({
         kind: "reconnect",
-        key: pendingReconnects.map((item) => item.id).join(":"),
+        key: `reconnect:${pendingReconnects[0]?.id ?? "unknown"}`,
         items: pendingReconnects,
       })
     } else {
@@ -1491,41 +1497,49 @@ function ToolRunGroup({
   const tSession = useTranslations("dashboard.session")
   const [open, setOpen] = React.useState(false)
   const summary = toolRunSummary(group.items, tSession)
+  const status = toolRunStatus(group.items)
 
-	  if (open) {
-	    return (
-	      <div className="min-w-0 max-w-full space-y-2 overflow-hidden">
-	        <Marker asChild className="w-full">
-	          <button type="button" className="text-left" onClick={() => setOpen(false)}>
-	            <ChevronDown className="shrink-0 transition-transform" />
-	            <MarkerContent className="code-mono text-sm">{summary}</MarkerContent>
-	          </button>
-	        </Marker>
-	        {group.items.map((item) => (
-          <TimelineEntry
-            key={item.id}
-            token={token}
-            session={session}
-            item={item}
-            interaction={interactionByTarget.get(item.id)}
-            resolvingNoticeId={resolvingNoticeId}
-            resolvingActionId={resolvingActionId}
-            onRespondInteraction={onRespondInteraction}
-          />
-        ))}
+  return (
+    <Collapsible open={open} onOpenChange={setOpen} className="min-w-0 max-w-full overflow-hidden">
+      <div className="flex min-w-0 max-w-full flex-col gap-2 overflow-hidden">
+        <CollapsibleTrigger asChild>
+          <Marker asChild className="w-full">
+            <button type="button" className="text-left">
+              <ToolMarkerRowContent
+                collapsible
+                kind="tool"
+                status={status}
+                title={summary}
+              />
+            </button>
+          </Marker>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="min-w-0 max-w-full overflow-hidden">
+          <div className="flex flex-col gap-2">
+            {group.items.map((item) => (
+              <TimelineEntry
+                key={item.id}
+                token={token}
+                session={session}
+                item={item}
+                interaction={interactionByTarget.get(item.id)}
+                resolvingNoticeId={resolvingNoticeId}
+                resolvingActionId={resolvingActionId}
+                onRespondInteraction={onRespondInteraction}
+              />
+            ))}
+          </div>
+        </CollapsibleContent>
       </div>
-    )
-  }
+    </Collapsible>
+  )
+}
 
-	  return (
-	    <Marker asChild className="w-full">
-	      <button type="button" className="text-left" onClick={() => setOpen(true)}>
-	        <ChevronDown className="shrink-0 -rotate-90 transition-transform" />
-	        <MarkerContent className="code-mono text-sm">{summary}</MarkerContent>
-	      </button>
-	    </Marker>
-	  )
-	}
+function toolRunStatus(items: TimelineItem[]): TimelineItem["status"] {
+  if (items.some((item) => timelineItemStatusIsFailure(item.status))) return "failed"
+  if (items.some((item) => timelineItemStatusIsActive(item.status))) return "running"
+  return "done"
+}
 
 function toolRunSummary(
   items: TimelineItem[],

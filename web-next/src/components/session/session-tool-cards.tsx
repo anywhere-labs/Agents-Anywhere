@@ -53,32 +53,35 @@ export function ToolCard({
   const changes = recordsOf(item.content.changes)
   const title = timelineToolTitle(item, tSession)
   const hasDetail = Boolean(command || output || changes.length > 0 || interaction)
-  const defaultOpen = Boolean(interaction)
+  const shouldOpenForInteraction = Boolean(interaction)
+  const [open, setOpen] = React.useState(shouldOpenForInteraction)
+
+  React.useEffect(() => {
+    if (shouldOpenForInteraction) setOpen(true)
+  }, [shouldOpenForInteraction])
 
   if (!hasDetail) {
     return (
-      <Marker className="w-full">
-        <MarkerIcon>
-          <ToolIcon kind={kind} status={item.status} />
-        </MarkerIcon>
-        <ToolStatusIcon status={item.status} />
-        <MarkerContent className="code-mono text-sm">{title}</MarkerContent>
-      </Marker>
+      <ToolMarkerRow
+        kind={kind}
+        status={item.status}
+        title={title}
+      />
     )
   }
 
   return (
-    <Collapsible defaultOpen={defaultOpen} className="min-w-0 max-w-full overflow-hidden">
+    <Collapsible open={open} onOpenChange={setOpen} className="min-w-0 max-w-full overflow-hidden">
       <div className="flex min-w-0 max-w-full flex-col gap-2 overflow-hidden">
         <CollapsibleTrigger asChild>
           <Marker asChild className="w-full">
             <button type="button" className="text-left">
-              <ChevronDown className="shrink-0 -rotate-90 transition-transform group-data-[state=open]/marker:rotate-0" />
-              <MarkerIcon>
-                <ToolIcon kind={kind} status={item.status} />
-              </MarkerIcon>
-              <ToolStatusIcon status={item.status} />
-              <MarkerContent className="code-mono text-sm">{title}</MarkerContent>
+              <ToolMarkerRowContent
+                collapsible
+                kind={kind}
+                status={item.status}
+                title={title}
+              />
             </button>
           </Marker>
         </CollapsibleTrigger>
@@ -104,6 +107,57 @@ export function ToolCard({
         </CollapsibleContent>
       </div>
     </Collapsible>
+  )
+}
+
+function ToolMarkerRow({
+  kind,
+  status,
+  title,
+}: {
+  kind: string
+  status: TimelineItem["status"]
+  title: string
+}) {
+  return (
+    <Marker className="w-full">
+      <ToolMarkerRowContent kind={kind} status={status} title={title} />
+    </Marker>
+  )
+}
+
+export function ToolMarkerRowContent({
+  kind,
+  status,
+  title,
+  collapsible = false,
+}: {
+  kind: string
+  status: TimelineItem["status"]
+  title: string
+  collapsible?: boolean
+}) {
+  const active = timelineItemStatusIsActive(status)
+  const failed = timelineItemStatusIsFailure(status)
+  return (
+    <>
+      {collapsible ? (
+        <ChevronDown className="shrink-0 -rotate-90 transition-transform group-data-[state=open]/marker:rotate-0" />
+      ) : null}
+      <MarkerIcon>
+        <ToolIcon kind={kind} status={status} />
+      </MarkerIcon>
+      <MarkerContent
+        className={cn(
+          "code-mono text-sm",
+          active && "shimmer",
+          failed && "text-destructive",
+        )}
+      >
+        {title}
+      </MarkerContent>
+      {failed ? <X className="shrink-0 text-destructive" /> : null}
+    </>
   )
 }
 
@@ -393,31 +447,6 @@ function ToolIcon({ kind, status }: { kind: string; status: TimelineItem["status
   return <Hammer className={className} />
 }
 
-function ToolStatusIcon({ status }: { status: TimelineItem["status"] }) {
-  if (status === "pending" || status === "running" || status === "waiting_approval") {
-    return (
-      <span aria-label={status} className="flex shrink-0 items-center justify-center text-muted-foreground">
-        <Loader2 className="size-3.5 animate-spin" />
-      </span>
-    )
-  }
-  if (status === "done") {
-    return (
-      <span aria-label={status} className="flex shrink-0 items-center justify-center text-muted-foreground">
-        <Check className="size-3.5" />
-      </span>
-    )
-  }
-  if (status === "failed" || status === "cancelled" || status === "interrupted") {
-    return (
-      <span aria-label={status} className="flex shrink-0 items-center justify-center text-destructive">
-        <X className="size-3.5" />
-      </span>
-    )
-  }
-  return null
-}
-
 export function TimelineStatusBadge({ status }: { status: TimelineItem["status"] }) {
   const variant = status === "failed" ? "destructive" : "secondary"
   return (
@@ -425,6 +454,14 @@ export function TimelineStatusBadge({ status }: { status: TimelineItem["status"]
       {status}
     </Badge>
   )
+}
+
+export function timelineItemStatusIsActive(status: TimelineItem["status"]): boolean {
+  return status === "pending" || status === "running" || status === "waiting_approval"
+}
+
+export function timelineItemStatusIsFailure(status: TimelineItem["status"]): boolean {
+  return status === "failed" || status === "cancelled" || status === "interrupted"
 }
 
 type DiffRow = {
