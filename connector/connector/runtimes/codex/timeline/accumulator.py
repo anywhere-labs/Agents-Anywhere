@@ -135,6 +135,17 @@ class CodexTimelineAccumulator:
                     fallback_index=index,
                 )
             )
+        turn_end = self.turn_end_projection_from_notification(params=params, method=method)
+        if turn_end is not None:
+            items.append(
+                self._runtime_item(
+                    session_id=session_id,
+                    external_session_id=external_session_id,
+                    projection=turn_end,
+                    event=method,
+                    fallback_index=len(items),
+                )
+            )
         return tuple(items)
 
     def items_from_turn_event(
@@ -168,6 +179,17 @@ class CodexTimelineAccumulator:
                     projection=projection,
                     event=event.event_type,
                     fallback_index=index,
+                )
+            )
+        turn_end = self.turn_end_projection(event)
+        if turn_end is not None:
+            items.append(
+                self._runtime_item(
+                    session_id=session_id,
+                    external_session_id=external_session_id,
+                    projection=turn_end,
+                    event=event.event_type,
+                    fallback_index=len(items),
                 )
             )
         return tuple(items)
@@ -208,6 +230,7 @@ class CodexTimelineAccumulator:
         client_message_id = self._pending_messages.attach_to_item(
             session_id=session_id,
             external_session_id=external_session_id,
+            native_item_id=projection.native_id,
             raw_type=projection.raw_type,
             role=projection.effective_role(),
             text=projection.pending_message_text(),
@@ -222,3 +245,63 @@ class CodexTimelineAccumulator:
             codex_timeline.sdk_event_delta_text(event)
             or codex_timeline.notification_delta(event.params)
         )
+
+    def turn_end_projection(
+        self,
+        event: CodexSdkEvent,
+    ) -> codex_timeline.CodexTimelineProjection | None:
+        if not event.is_terminal_turn and not event.is_failed_turn:
+            return None
+        turn_id = event.turn_id or codex_sessions.turn_id_from_result(event.params)
+        return terminal_turn_projection(event_type=event.event_type, turn_id=turn_id)
+
+    def turn_end_projection_from_notification(
+        self,
+        params: Mapping[str, Any],
+        method: str,
+    ) -> codex_timeline.CodexTimelineProjection | None:
+        if method not in {
+            "turn/completed",
+            "turn/interrupted",
+            "turn/cancelled",
+            "turn/failed",
+        }:
+            return None
+        turn_id = codex_sessions.turn_id_from_result(params)
+        return terminal_turn_projection(event_type=method, turn_id=turn_id)
+
+
+def terminal_turn_projection(
+    event_type: str,
+    turn_id: str | None,
+) -> codex_timeline.CodexTimelineProjection | None:
+    if turn_id is None:
+        return None
+    return codex_timeline.CodexTimelineProjection(
+        native_id=f"codex_turn_end_{turn_id}",
+        raw_type="turnEnd",
+        status=terminal_turn_status(event_type),
+        role="system",
+        turn_id=turn_id,
+        message=terminal_turn_message(event_type),
+    )
+
+
+def terminal_turn_status(event_type: str) -> str:
+    if event_type == "turn/failed":
+        return "failed"
+    if event_type == "turn/interrupted":
+        return "interrupted"
+    if event_type == "turn/cancelled":
+        return "cancelled"
+    return "completed"
+
+
+def terminal_turn_message(event_type: str) -> str:
+    if event_type == "turn/failed":
+        return "Turn failed"
+    if event_type == "turn/interrupted":
+        return "Turn interrupted"
+    if event_type == "turn/cancelled":
+        return "Turn cancelled"
+    return "Turn completed"

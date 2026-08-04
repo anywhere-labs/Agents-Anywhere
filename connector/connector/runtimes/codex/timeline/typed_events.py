@@ -189,6 +189,7 @@ def timeline_projection_from_thread_item(
             role="user",
             turn_id=turn_id,
             text=user_input_text(root.content),
+            client_message_id=root.client_id,
         )
     if isinstance(root, ReasoningThreadItem):
         return CodexTimelineProjection(

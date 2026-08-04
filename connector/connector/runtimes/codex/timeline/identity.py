@@ -89,7 +89,12 @@ def is_user_message_values(raw_type: str, role: str | None) -> bool:
 
 
 def client_message_id_from_raw(raw: dict[str, Any]) -> str | None:
-    value = raw.get("_clientMessageId") or raw.get("clientMessageId")
+    value = (
+        raw.get("_clientMessageId")
+        or raw.get("clientMessageId")
+        or raw.get("clientId")
+        or raw.get("client_id")
+    )
     return value if isinstance(value, str) and value else None
 
 

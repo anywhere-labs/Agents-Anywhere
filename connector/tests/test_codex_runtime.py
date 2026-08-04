@@ -8,9 +8,12 @@ from typing import Any
 
 from openai_codex.generated.v2_all import (
     AgentMessageThreadItem,
+    TextUserInput,
     ThreadItem,
     Turn,
     TurnStatus,
+    UserInput,
+    UserMessageThreadItem,
 )
 from openai_codex.models import (
     AgentMessageDeltaNotification,
@@ -652,14 +655,68 @@ def test_codex_timeline_projects_typed_sdk_turn_without_params_dict() -> None:
         event=event_without_params,
     )
 
-    assert len(items) == 1
-    assert items[0].id == "item_agent"
-    assert items[0].type == "message"
-    assert items[0].content == {
+    assert len(items) == 2
+    message_item = items[0]
+    turn_end = items[1]
+    assert message_item.id == "item_agent"
+    assert message_item.type == "message"
+    assert message_item.content == {
         "kind": "markdown",
         "text": "hello",
         "format": "markdown",
     }
+    assert turn_end.id == "codex_turn_end_turn_done"
+    assert turn_end.turn_id == "turn_done"
+    assert turn_end.type == "turn.end"
+    assert turn_end.status == "done"
+
+
+def test_codex_timeline_uses_typed_sdk_user_client_id_for_identity() -> None:
+    event = CodexSdkEvent.from_value(
+        Notification(
+            method="turn/completed",
+            payload=TurnCompletedNotification(
+                threadId="thread_1",
+                turn=Turn(
+                    id="turn_done",
+                    status=TurnStatus.completed,
+                    items=[
+                        ThreadItem(
+                            root=UserMessageThreadItem(
+                                id="item_user",
+                                type="userMessage",
+                                clientId="msg_client_1",
+                                content=[
+                                    UserInput(
+                                        root=TextUserInput(
+                                            type="text",
+                                            text="hello from web",
+                                        )
+                                    )
+                                ],
+                            )
+                        )
+                    ],
+                    completedAt=None,
+                    durationMs=None,
+                    error=None,
+                    itemsView=None,
+                    startedAt=None,
+                ),
+            ),
+        ),
+    )
+    accumulator = CodexTimelineAccumulator()
+
+    items = accumulator.items_from_turn_event(
+        session_id="sess_1",
+        external_session_id="thread_1",
+        event=event,
+    )
+
+    assert items[0].id == "codex_client_msg_client_1"
+    assert items[0].source["itemId"] == "item_user"
+    assert items[0].source["clientMessageId"] == "msg_client_1"
 
 
 def test_codex_sdk_event_normalizes_explicit_dict_shape() -> None:
@@ -1853,10 +1910,18 @@ async def _test_codex_runtime_completed_turn_syncs_timeline_snapshot() -> None:
     assert sync["session_id"] == "sess_1"
     assert sync["external_session_id"] == "thread_1"
     assert sync["complete"] is False
-    assert [item.id for item in sync["items"]] == ["item_user", "item_agent"]
-    assert [item.role for item in sync["items"]] == ["user", "assistant"]
-    assert [item.type for item in sync["items"]] == ["message", "message"]
-    assert [item.status for item in sync["items"]] == ["done", "done"]
+    assert [item.id for item in sync["items"]] == [
+        "item_user",
+        "item_agent",
+        "codex_turn_end_turn_done",
+    ]
+    assert [item.role for item in sync["items"]] == ["user", "assistant", "system"]
+    assert [item.type for item in sync["items"]] == [
+        "message",
+        "message",
+        "turn.end",
+    ]
+    assert [item.status for item in sync["items"]] == ["done", "done", "done"]
     assert host.state_updates[-1]["status"] == "idle"
 
 
@@ -1980,6 +2045,53 @@ async def _test_codex_runtime_tags_completed_user_echo_with_client_message_id() 
     assert item.id == "codex_client_cm_web_1"
     assert item.source["clientMessageId"] == "cm_web_1"
     assert item.source["derivedKey"].startswith("userMessage-")
+
+
+def test_codex_runtime_remembers_completed_user_echo_client_message_id() -> None:
+    asyncio.run(
+        _test_codex_runtime_remembers_completed_user_echo_client_message_id()
+    )
+
+
+async def _test_codex_runtime_remembers_completed_user_echo_client_message_id() -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    await runtime.start_turn(
+        "sess_1",
+        "thread_1",
+        "hello from web",
+        client_message_id="cm_web_1",
+    )
+    notification = {
+        "method": "turn/completed",
+        "params": {
+            "platformSessionId": "sess_1",
+            "threadId": "thread_1",
+            "turn": {
+                "id": "turn_new",
+                "items": [
+                    {
+                        "id": "item_user",
+                        "type": "userMessage",
+                        "text": "hello from web",
+                        "status": "completed",
+                    },
+                ],
+            },
+        },
+    }
+
+    await runtime._handle_notification(notification)
+    await runtime._handle_notification(notification)
+
+    first = host.timeline_syncs[-2]["items"][0]
+    second = host.timeline_syncs[-1]["items"][0]
+    assert first.id == "codex_client_cm_web_1"
+    assert second.id == "codex_client_cm_web_1"
+    assert first.source["clientMessageId"] == "cm_web_1"
+    assert second.source["clientMessageId"] == "cm_web_1"
 
 
 def test_codex_runtime_tags_live_user_echo_with_client_message_id() -> None:

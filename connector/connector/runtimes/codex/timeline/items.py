@@ -234,6 +234,7 @@ def timeline_item_status_from_string(value: str) -> TimelineItemStatus:
         "done",
         "failed",
         "cancelled",
+        "interrupted",
         "hidden",
     }:
         return value
