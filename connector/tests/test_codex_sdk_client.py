@@ -114,6 +114,10 @@ def test_codex_sdk_client_resumes_thread_after_read_handle_cache() -> None:
     asyncio.run(_test_codex_sdk_client_resumes_thread_after_read_handle_cache())
 
 
+def test_codex_sdk_client_retries_turn_start_after_thread_not_found() -> None:
+    asyncio.run(_test_codex_sdk_client_retries_turn_start_after_thread_not_found())
+
+
 async def _test_codex_sdk_client_adapts_async_codex_thread_turn_flow() -> None:
     sdk = _FakeAsyncCodexSdkModule()
     native = _FakeAsyncCodex(_sdk_config(sdk, _sdk_config_values()))
@@ -294,6 +298,40 @@ async def _test_codex_sdk_client_resumes_thread_after_read_handle_cache() -> Non
     ]
 
 
+async def _test_codex_sdk_client_retries_turn_start_after_thread_not_found() -> None:
+    sdk = _FakeLowLevelSdkModule()
+    native = _FakeLowLevelAsyncCodex()
+    native.low_level.fail_next_turn_start = RuntimeError(
+        "JSON-RPC error -32600: thread not found: thread_existing"
+    )
+    client = CodexSdkClient(native, sdk=sdk)
+
+    async def handler(message: Any) -> None:
+        native.handled.append(message)
+
+    await client.start(handler)
+    await client.start_thread(CodexStartThreadRequest())
+    result = await client.start_turn(
+        CodexStartTurnRequest(
+            thread_id="thread_low",
+            content="retry after missing thread",
+            approval_policy="request_approval",
+        )
+    )
+    await asyncio.sleep(0)
+    await client.stop()
+
+    assert result.turn_id == "turn_low"
+    assert native.low_level.request_order == [
+        "thread/start",
+        "turn/start:thread_low",
+        "thread/resume:thread_low",
+        "turn/start:thread_low",
+    ]
+    assert native.low_level.thread_resume_params[0]["threadId"] == "thread_low"
+    assert native.low_level.thread_resume_params[0]["approvalPolicy"] == "on-request"
+
+
 class _NativeSdkClient:
     def __init__(self) -> None:
         self.started = False
@@ -400,6 +438,7 @@ class _FakeLowLevelClient:
         self.thread_resume_params: list[dict[str, Any]] = []
         self.thread_start_params: list[dict[str, Any]] = []
         self.turn_start_params: list[dict[str, Any]] = []
+        self.fail_next_turn_start: Exception | None = None
 
     async def thread_resume(
         self,
@@ -424,6 +463,10 @@ class _FakeLowLevelClient:
         _ = content
         self.request_order.append(f"turn/start:{thread_id}")
         self.turn_start_params.append(generated_params_payload(params))
+        if self.fail_next_turn_start is not None:
+            error = self.fail_next_turn_start
+            self.fail_next_turn_start = None
+            raise error
         return SimpleNamespace(turn=SimpleNamespace(id="turn_low"))
 
     def register_turn_notifications(self, turn_id: str) -> None:

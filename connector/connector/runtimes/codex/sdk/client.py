@@ -21,6 +21,7 @@ from openai_codex.generated.v2_all import (
 )
 
 from connector.runtime_protocol import RuntimeConfig, RuntimeInvalidRequestError
+from connector.runtimes.codex.runtime_helpers import soft_interrupt_failure_reason
 from connector.runtimes.codex.sdk.events import CodexSdkEvent
 from connector.runtimes.codex.sdk.runtime_client import (
     CodexCompactResult,
@@ -168,10 +169,9 @@ class CodexSdkClient:
         if low_level_client is not None:
             await ensure_codex_initialized(self._client)
             await self.ensure_thread_resumed_for_turn(low_level_client, request)
-            started = await low_level_client.turn_start(
-                request.thread_id,
-                request.content,
-                params=codex_turn_start_params(request),
+            started = await self.start_low_level_turn_with_resume_retry(
+                low_level_client,
+                request,
             )
             turn_id = id_of(started.turn)
             turn = codex_async_turn_handle(
@@ -274,6 +274,43 @@ class CodexSdkClient:
             self._remember_thread(thread)
         if thread_id is not None:
             self._loaded_thread_ids.add(thread_id)
+
+    async def start_low_level_turn_with_resume_retry(
+        self,
+        low_level_client: Any,
+        request: CodexStartTurnRequest,
+    ) -> Any:
+        """Start a Codex turn, recovering once when the thread was not loaded.
+
+        Side effects:
+        - sends turn/start to Codex app-server
+        - on thread-not-found, forces thread/resume and retries turn/start once
+        """
+
+        try:
+            return await low_level_client.turn_start(
+                request.thread_id,
+                request.content,
+                params=codex_turn_start_params(request),
+            )
+        except Exception as exc:
+            if soft_interrupt_failure_reason(str(exc)) != "thread_not_found":
+                raise
+            self._loaded_thread_ids.discard(request.thread_id)
+            await self.force_thread_resume_for_turn(low_level_client, request)
+            return await low_level_client.turn_start(
+                request.thread_id,
+                request.content,
+                params=codex_turn_start_params(request),
+            )
+
+    async def force_thread_resume_for_turn(
+        self,
+        low_level_client: Any,
+        request: CodexStartTurnRequest,
+    ) -> None:
+        self._loaded_thread_ids.discard(request.thread_id)
+        await self.ensure_thread_resumed_for_turn(low_level_client, request)
 
     async def respond(
         self,
