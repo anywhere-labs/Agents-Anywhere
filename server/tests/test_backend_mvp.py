@@ -775,6 +775,59 @@ def test_session_state_updated_pushes_ephemeral_runtime_state(tmp_path):
     assert state.json()["state"]["status"] == "idle"
 
 
+def test_session_state_updated_pushes_blocked_then_idle(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, access_token, session_id, headers = create_connector_and_session(client)
+    ticket = ws_ticket(client, session_id, headers)
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "notifications": [
+                    {
+                        "method": "session.state.updated",
+                        "params": {
+                            "sessionId": session_id,
+                            "runtime": "codex",
+                            "status": "blocked",
+                            "metadata": {"source": "codex.command.compact"},
+                        },
+                    },
+                ],
+            },
+        )
+        assert response.status_code == 200, response.text
+        blocked = receive_session_ws_event(ws, "session.status_changed")
+
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "notifications": [
+                    {
+                        "method": "session.state.updated",
+                        "params": {
+                            "sessionId": session_id,
+                            "runtime": "codex",
+                            "status": "idle",
+                            "metadata": {"source": "codex.thread/compacted"},
+                        },
+                    },
+                ],
+            },
+        )
+        assert response.status_code == 200, response.text
+        idle = receive_session_ws_event(ws, "session.status_changed")
+
+    assert blocked["payload"]["state"]["status"] == "blocked"
+    assert blocked["payload"]["state"]["metadata"]["source"] == "codex.command.compact"
+    assert idle["payload"]["state"]["status"] == "idle"
+    assert idle["payload"]["state"]["metadata"]["source"] == "codex.thread/compacted"
+
+
 def test_session_state_updated_rejects_legacy_selection_fields(tmp_path):
     client = make_client(tmp_path)
     _connector_id, access_token, session_id, _headers = create_connector_and_session(client)
