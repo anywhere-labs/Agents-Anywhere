@@ -174,26 +174,35 @@ export function SessionComposer({
   const selectorsDisabled = permissionSelectorDisabled && modelSelectorDisabled
 
   React.useEffect(() => {
-    const nextPermission = permissionItems.some((item) => item.id === permissionValue)
+    const hasRuntimePermission = permissionItems.some((item) => item.id === permissionValue)
+    const nextPermission = hasRuntimePermission
       ? permissionValue
       : permissionItems.find((item) => item.default)?.id ?? permissionItems[0]?.id ?? ""
     setSelectedPermissionMode((current) =>
-      current && permissionItems.some((item) => item.id === current) ? current : nextPermission,
+      hasRuntimePermission || !current || !permissionItems.some((item) => item.id === current)
+        ? nextPermission
+        : current,
     )
   }, [permissionItems, permissionValue])
 
   React.useEffect(() => {
-    const nextModel = modelItems.some((item) => item.id === modelValue)
+    const hasRuntimeModel = modelItems.some((item) => item.id === modelValue)
+    const nextModel = hasRuntimeModel
       ? modelValue
       : modelItems.find((item) => item.default)?.id ?? modelItems[0]?.id ?? ""
-    setSelectedModel((current) => current && modelItems.some((item) => item.id === current) ? current : nextModel)
+    setSelectedModel((current) =>
+      hasRuntimeModel || !current || !modelItems.some((item) => item.id === current) ? nextModel : current,
+    )
   }, [modelItems, modelValue])
 
   React.useEffect(() => {
-    const nextEffort = effortItems.some((item) => item.id === effortValue)
+    const hasRuntimeEffort = effortItems.some((item) => item.id === effortValue)
+    const nextEffort = hasRuntimeEffort
       ? effortValue
       : effortItems.find((item) => item.default)?.id ?? effortItems[0]?.id ?? ""
-    setSelectedReasoning((current) => current && effortItems.some((item) => item.id === current) ? current : nextEffort)
+    setSelectedReasoning((current) =>
+      hasRuntimeEffort || !current || !effortItems.some((item) => item.id === current) ? nextEffort : current,
+    )
   }, [effortItems, effortValue])
   const selectedModelSelection = selectionIdForModelCatalog(modelCatalog, selectedModel, selectedReasoning)
   const selectedPermissionSelection = selectionIdForPermissionCatalog(permissionCatalog, selectedPermissionMode)
