@@ -19,8 +19,15 @@ class RuntimeSessionStateCache:
         self._runtime = runtime
         self._host = host
         self._states: dict[str, SessionState] = {}
+        self._session_ids_by_external_id: dict[str, str] = {}
 
     def get(self, session_id: str) -> SessionState | None:
+        return self._states.get(session_id)
+
+    def get_by_external_session_id(self, external_session_id: str) -> SessionState | None:
+        session_id = self._session_ids_by_external_id.get(external_session_id)
+        if session_id is None:
+            return None
         return self._states.get(session_id)
 
     async def update(
@@ -48,6 +55,14 @@ class RuntimeSessionStateCache:
                 **dict(metadata or {}),
             },
         )
+        if (
+            previous is not None
+            and previous.external_session_id is not None
+            and previous.external_session_id != external_session_id
+        ):
+            self._session_ids_by_external_id.pop(previous.external_session_id, None)
+        if external_session_id is not None:
+            self._session_ids_by_external_id[external_session_id] = session_id
         self._states[session_id] = state
         await self._host.session_state_update(
             session_id=session_id,

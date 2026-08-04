@@ -67,9 +67,13 @@ class CodexNotificationProjector:
             event.params
         )
         if session_id is None and thread_id is not None:
-            session_id = codex_sessions.stable_session_id(
-                self.host.connector_id, thread_id
-            )
+            cached_state = self.session_states.get_by_external_session_id(thread_id)
+            if cached_state is not None:
+                session_id = cached_state.session_id
+            else:
+                session_id = codex_sessions.stable_session_id(
+                    self.host.connector_id, thread_id
+                )
         if session_id is None or thread_id is None:
             return
         if is_approval_request(event.event_type):

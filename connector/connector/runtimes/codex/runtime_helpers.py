@@ -25,4 +25,6 @@ def soft_interrupt_failure_reason(error_text: str) -> str | None:
         return "thread_not_found"
     if "turn not found" in normalized:
         return "turn_not_found"
+    if "no active turn" in normalized:
+        return "turn_not_found"
     return None

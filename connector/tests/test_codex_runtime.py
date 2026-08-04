@@ -1294,6 +1294,36 @@ async def _test_codex_runtime_does_not_restore_running_after_fast_terminal_turn(
     assert interrupt.code == "codex_no_active_turn"
 
 
+def test_codex_runtime_terminal_event_without_platform_session_uses_cached_session() -> None:
+    asyncio.run(
+        _test_codex_runtime_terminal_event_without_platform_session_uses_cached_session()
+    )
+
+
+async def _test_codex_runtime_terminal_event_without_platform_session_uses_cached_session() -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    await runtime.start_turn("sess_1", "thread_1", "hello")
+    await runtime._handle_notification(
+        {
+            "method": "turn/completed",
+            "params": {
+                "threadId": "thread_1",
+                "turnId": "turn_new",
+                "metadata": {"source": "codex.sdk.stream.finally"},
+            },
+        }
+    )
+
+    state = await runtime.get_session_state("sess_1")
+    assert state is not None
+    assert state.status == "idle"
+    assert host.state_updates[-1]["session_id"] == "sess_1"
+    assert host.state_updates[-1]["status"] == "idle"
+
+
 def test_codex_runtime_create_and_start_session_reports_meta_and_state() -> None:
     asyncio.run(_test_codex_runtime_create_and_start_session_reports_meta_and_state())
 
@@ -2528,6 +2558,27 @@ def test_codex_runtime_interrupt_soft_failure_sets_idle() -> None:
 async def _test_codex_runtime_interrupt_soft_failure_sets_idle() -> None:
     client = FakeCodexClient()
     client.results["turn/interrupt"] = RuntimeError('{"message": "turn not found"}')
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    await runtime.start_turn("sess_1", "thread_1", "hello")
+    result = await runtime.interrupt_turn("sess_1", "thread_1")
+
+    assert result.ok is False
+    assert result.code == "turn_not_found"
+    assert result.result["interrupted"] is False
+    assert host.state_updates[-1]["status"] == "idle"
+
+
+def test_codex_runtime_interrupt_no_active_sdk_turn_sets_idle() -> None:
+    asyncio.run(_test_codex_runtime_interrupt_no_active_sdk_turn_sets_idle())
+
+
+async def _test_codex_runtime_interrupt_no_active_sdk_turn_sets_idle() -> None:
+    client = FakeCodexClient()
+    client.results["turn/interrupt"] = RuntimeError(
+        "Codex SDK has no active turn for thread thread_1"
+    )
     host = FakeHost()
     runtime = CodexRuntime(config=_config(), host=host, client=client)
 
