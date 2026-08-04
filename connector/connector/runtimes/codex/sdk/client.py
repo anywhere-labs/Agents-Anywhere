@@ -68,6 +68,7 @@ class CodexSdkClient:
         self._handler: NotificationHandler | None = None
         self._entered_client: Any | None = None
         self._threads: dict[str, Any] = {}
+        self._loaded_thread_ids: set[str] = set()
         self._turns: dict[str, Any] = {}
         self._stream_tasks: dict[str, asyncio.Task[None]] = {}
 
@@ -136,6 +137,8 @@ class CodexSdkClient:
             thread = codex_async_thread(self._sdk, self._client, thread_id)
             if thread is not None:
                 self._remember_thread(thread)
+            if thread_id is not None:
+                self._loaded_thread_ids.add(thread_id)
             return CodexThreadResult(
                 thread_id=thread_id,
                 payload={"id": thread_id} if thread_id is not None else {},
@@ -154,8 +157,11 @@ class CodexSdkClient:
             ephemeral=request.ephemeral,
         )
         self._remember_thread(thread)
+        thread_id = id_of(thread)
+        if thread_id is not None:
+            self._loaded_thread_ids.add(thread_id)
         payload = thread_ref(thread)
-        return CodexThreadResult(thread_id=id_of(thread), payload=payload)
+        return CodexThreadResult(thread_id=thread_id, payload=payload)
 
     async def start_turn(self, request: CodexStartTurnRequest) -> CodexTurnResult:
         low_level_client = codex_low_level_client(self._client)
@@ -253,7 +259,7 @@ class CodexSdkClient:
         - caches an AsyncThread handle for later thread-scoped operations
         """
 
-        if request.thread_id in self._threads:
+        if request.thread_id in self._loaded_thread_ids:
             return
         thread_resume = getattr(low_level_client, "thread_resume", None)
         if not callable(thread_resume):
@@ -266,6 +272,8 @@ class CodexSdkClient:
         thread = codex_async_thread(self._sdk, self._client, thread_id)
         if thread is not None:
             self._remember_thread(thread)
+        if thread_id is not None:
+            self._loaded_thread_ids.add(thread_id)
 
     async def respond(
         self,

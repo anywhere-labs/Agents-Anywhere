@@ -110,6 +110,10 @@ def test_codex_sdk_client_resumes_thread_before_low_level_turn_start() -> None:
     asyncio.run(_test_codex_sdk_client_resumes_thread_before_low_level_turn_start())
 
 
+def test_codex_sdk_client_resumes_thread_after_read_handle_cache() -> None:
+    asyncio.run(_test_codex_sdk_client_resumes_thread_after_read_handle_cache())
+
+
 async def _test_codex_sdk_client_adapts_async_codex_thread_turn_flow() -> None:
     sdk = _FakeAsyncCodexSdkModule()
     native = _FakeAsyncCodex(_sdk_config(sdk, _sdk_config_values()))
@@ -262,6 +266,32 @@ async def _test_codex_sdk_client_resumes_thread_before_low_level_turn_start() ->
     assert native.low_level.thread_resume_params[0]["approvalPolicy"] == "on-request"
     assert native.low_level.thread_resume_params[0]["approvalsReviewer"] == "user"
     assert native.low_level.thread_resume_params[0]["sandbox"] == "workspace-write"
+
+
+async def _test_codex_sdk_client_resumes_thread_after_read_handle_cache() -> None:
+    sdk = _FakeLowLevelSdkModule()
+    native = _FakeLowLevelAsyncCodex()
+    client = CodexSdkClient(native, sdk=sdk)
+
+    async def handler(message: Any) -> None:
+        native.handled.append(message)
+
+    await client.start(handler)
+    await client.read_thread("thread_existing", include_turns=False)
+    result = await client.start_turn(
+        CodexStartTurnRequest(
+            thread_id="thread_existing",
+            content="hello after read",
+        )
+    )
+    await asyncio.sleep(0)
+    await client.stop()
+
+    assert result.turn_id == "turn_low"
+    assert native.low_level.request_order == [
+        "thread/resume:thread_existing",
+        "turn/start:thread_existing",
+    ]
 
 
 class _NativeSdkClient:
