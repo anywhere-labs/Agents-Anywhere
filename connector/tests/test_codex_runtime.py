@@ -818,10 +818,20 @@ def test_codex_runtime_permission_catalog() -> None:
 async def _test_codex_runtime_permission_catalog() -> None:
     runtime = CodexRuntime(config=_config(), host=FakeHost(), client=FakeCodexClient())
 
+    all_permissions = await runtime.list_permission_catalog()
     catalog = await runtime.list_permission_catalog(query="full")
 
-    assert [item.id for item in catalog.permissions] == ["never_danger_full_access"]
+    assert [item.id for item in all_permissions.permissions] == [
+        "ask_when_requested",
+        "auto_review",
+        "full_access",
+    ]
+    assert [item.id for item in catalog.permissions] == ["full_access"]
     assert catalog.permissions[0].selection_id.startswith("sel_permission_")
+    assert catalog.permissions[0].description is not None
+    assert catalog.permissions[0].metadata["i18n"]["labelKey"] == (
+        "dashboard.new.permissionModes.fullAccess.label"
+    )
     assert (
         catalog.permissions[0].metadata["nativeSettings"]["sandbox"]
         == "danger-full-access"
@@ -976,7 +986,7 @@ async def _test_codex_runtime_reads_current_session_selections_from_thread() -> 
             "reasoningEffort": "high",
             "threadSettings": {
                 "approvalPolicy": "on-request",
-                "sandboxPolicy": {"type": "readOnly"},
+                "sandboxPolicy": {"type": "workspaceWrite"},
             },
             "items": [],
         }
@@ -986,7 +996,7 @@ async def _test_codex_runtime_reads_current_session_selections_from_thread() -> 
         (await runtime.list_model_catalog()).models[0].reasoning_items[1].selection_id
     )
     permission_selection = (
-        (await runtime.list_permission_catalog(query="read only"))
+        (await runtime.list_permission_catalog(query="ask"))
         .permissions[0]
         .selection_id
     )
@@ -1336,7 +1346,7 @@ async def _test_codex_runtime_create_and_start_session_reports_meta_and_state() 
         (await runtime.list_model_catalog()).models[0].reasoning_items[0].selection_id
     )
     permission_selection = (
-        (await runtime.list_permission_catalog(query="read only"))
+        (await runtime.list_permission_catalog(query="ask"))
         .permissions[0]
         .selection_id
     )
@@ -1361,7 +1371,7 @@ async def _test_codex_runtime_create_and_start_session_reports_meta_and_state() 
     assert thread_start[1]["cwd"] == "/repo"
     assert thread_start[1]["model"] == "gpt-example"
     assert thread_start[1]["approvalPolicy"] == "on-request"
-    assert thread_start[1]["sandbox"] == "read-only"
+    assert thread_start[1]["sandbox"] == "workspace-write"
     assert host.meta_upserts[0]["session_id"] == "sess_new"
     assert host.meta_upserts[0]["external_session_id"] == "thread_new"
     assert [update["status"] for update in host.state_updates] == [

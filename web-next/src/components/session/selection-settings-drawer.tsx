@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils"
 export type SelectionOption = {
   id: string
   label: string
+  description?: string | null
 }
 
 export type ModelSelectionOption = SelectionOption & {
@@ -90,6 +91,7 @@ export function SelectionSettingsDrawer({
                   key={item.id}
                   selected={selectedPermission === item.id}
                   label={item.label}
+                  helper={item.description ?? undefined}
                   disabled={permissionDisabled}
                   onClick={() => {
                     onPermissionChange(item.id)
@@ -110,6 +112,7 @@ export function SelectionSettingsDrawer({
                     <SelectionRow
                       selected={selectedModel === model.id}
                       label={model.label}
+                      helper={model.description ?? undefined}
                       disabled={modelDisabled}
                       onClick={() => {
                         onModelChange(model.id, "")
@@ -124,7 +127,7 @@ export function SelectionSettingsDrawer({
                           key={reasoning.id}
                           selected={selectedModel === model.id && selectedReasoning === reasoning.id}
                           label={`${reasoning.label} · ${model.label}`}
-                          helper={reasoningLabel}
+                          helper={reasoning.description ?? reasoningLabel}
                           disabled={modelDisabled || reasoningDisabled}
                           onClick={() => {
                             onModelChange(model.id, reasoning.id)

@@ -39,78 +39,51 @@ def permission_catalog_from_codex_items(
 def codex_permission_catalog_items() -> list[dict[str, Any]]:
     return [
         {
-            "id": "untrusted_workspace_write",
-            "label": "Ask for untrusted commands",
-            "description": "Run trusted commands automatically in workspace-write sandbox; ask before untrusted commands.",
-            "identity": {
-                "approval_policy": "untrusted",
-                "sandbox": "workspace-write",
-            },
-            "runtimeSettings": {"permissionMode": "untrusted_workspace_write"},
-            "nativeSettings": {
-                "approvalPolicy": "untrusted",
-                "sandbox": "workspace-write",
-                "sandboxPolicy": {"type": "workspaceWrite", "networkAccess": False},
-            },
-        },
-        {
-            "id": "on_request_workspace_write",
+            "id": "ask_when_requested",
             "label": "Ask when requested",
-            "description": "Use workspace-write sandbox and let the model decide when to ask for approval.",
-            "identity": {
-                "approval_policy": "on-request",
-                "sandbox": "workspace-write",
-            },
-            "runtimeSettings": {"permissionMode": "on_request_workspace_write"},
+            "description": "Let Codex ask for approval when it needs elevated access. Commands run in the workspace-write sandbox.",
+            "identity": {"permission_mode": "ask_when_requested"},
+            "runtimeSettings": {"permissionMode": "ask_when_requested"},
             "nativeSettings": {
                 "approvalPolicy": "on-request",
                 "sandbox": "workspace-write",
                 "sandboxPolicy": {"type": "workspaceWrite", "networkAccess": False},
             },
-        },
-        {
-            "id": "on_request_read_only",
-            "label": "Read only",
-            "description": "Run commands in read-only sandbox; ask before work that needs writes.",
-            "identity": {
-                "approval_policy": "on-request",
-                "sandbox": "read-only",
-            },
-            "runtimeSettings": {"permissionMode": "on_request_read_only"},
-            "nativeSettings": {
-                "approvalPolicy": "on-request",
-                "sandbox": "read-only",
-                "sandboxPolicy": {"type": "readOnly", "networkAccess": False},
+            "i18n": {
+                "labelKey": "dashboard.new.permissionModes.askWhenRequested.label",
+                "descriptionKey": "dashboard.new.permissionModes.askWhenRequested.description",
             },
         },
         {
-            "id": "never_workspace_write",
-            "label": "Never ask, workspace write",
-            "description": "Do not prompt for approvals; failures are returned to the model. Commands stay sandboxed to workspace writes.",
-            "identity": {
-                "approval_policy": "never",
-                "sandbox": "workspace-write",
-            },
-            "runtimeSettings": {"permissionMode": "never_workspace_write"},
+            "id": "auto_review",
+            "label": "Auto review",
+            "description": "Let Codex automatically approve low-risk commands and ask when more access is required.",
+            "identity": {"permission_mode": "auto_review"},
+            "runtimeSettings": {"permissionMode": "auto_review"},
             "nativeSettings": {
-                "approvalPolicy": "never",
+                "approvalPolicy": "auto_review",
                 "sandbox": "workspace-write",
                 "sandboxPolicy": {"type": "workspaceWrite", "networkAccess": False},
             },
+            "i18n": {
+                "labelKey": "dashboard.new.permissionModes.autoReview.label",
+                "descriptionKey": "dashboard.new.permissionModes.autoReview.description",
+            },
         },
         {
-            "id": "never_danger_full_access",
-            "label": "Full access ⚠️",
-            "description": "Never ask and run without sandboxing. Use only in externally sandboxed environments.",
-            "identity": {
-                "approval_policy": "never",
-                "sandbox": "danger-full-access",
-            },
-            "runtimeSettings": {"permissionMode": "never_danger_full_access"},
+            "id": "full_access",
+            "label": "Full access",
+            "description": "Run without sandboxing and without approval prompts. Use only in trusted environments.",
+            "identity": {"permission_mode": "full_access"},
+            "runtimeSettings": {"permissionMode": "full_access"},
             "nativeSettings": {
                 "approvalPolicy": "never",
                 "sandbox": "danger-full-access",
                 "sandboxPolicy": {"type": "dangerFullAccess"},
+            },
+            "i18n": {
+                "labelKey": "dashboard.new.permissionModes.fullAccess.label",
+                "descriptionKey": "dashboard.new.permissionModes.fullAccess.description",
             },
         },
     ]
@@ -201,6 +174,8 @@ def _permission_item(item: dict[str, Any]) -> RuntimePermissionItem | None:
         metadata["runtimeSettings"] = item["runtimeSettings"]
     if isinstance(item.get("nativeSettings"), dict):
         metadata["nativeSettings"] = item["nativeSettings"]
+    if isinstance(item.get("i18n"), dict):
+        metadata["i18n"] = item["i18n"]
     return RuntimePermissionItem(
         id=permission_id,
         title=title,

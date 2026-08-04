@@ -357,11 +357,13 @@ export function TaskComposer() {
     () => modelCatalog?.models.map((item) => ({
       id: item.id,
       label: item.displayName,
+      description: item.description,
       default: item.default,
       selectionId: item.selectionId,
       reasoningItems: item.reasoningItems.map((reasoning) => ({
         id: reasoning.id,
         label: reasoning.displayName,
+        description: reasoning.description,
         default: reasoning.default,
         selectionId: reasoning.selectionId,
       })),
@@ -374,6 +376,7 @@ export function TaskComposer() {
     () => permissionCatalog?.permissions.map((item) => ({
       id: item.id,
       label: item.displayName,
+      description: item.description,
       default: item.default,
       selectionId: item.selectionId,
     })) ?? [],

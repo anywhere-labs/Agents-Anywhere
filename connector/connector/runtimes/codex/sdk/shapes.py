@@ -99,9 +99,9 @@ def sdk_approval_mode(sdk: Any | None, value: Any) -> Any:
     approval_mode = getattr(sdk, "ApprovalMode", None) if sdk is not None else None
     if approval_mode is None:
         return None
-    if value in {"never", "deny_all", "deny-all"}:
+    if value in {"never", "full_access", "deny_all", "deny-all"}:
         return getattr(approval_mode, "deny_all", None)
-    if value in {"untrusted", "on-request", "auto_review", "auto-review", None}:
+    if value in {"auto_review", "auto-review"}:
         return getattr(approval_mode, "auto_review", None)
     return None
 

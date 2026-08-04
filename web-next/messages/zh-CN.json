@@ -327,6 +327,20 @@
       "model": "模型",
       "modelAndReasoning": "模型和推理强度",
       "permissionMode": "权限模式",
+      "permissionModes": {
+        "askWhenRequested": {
+          "label": "按需请求确认",
+          "description": "Codex 需要更高权限时会请求确认。命令在 workspace-write 沙盒中运行。"
+        },
+        "autoReview": {
+          "label": "自动审核",
+          "description": "Codex 会自动批准低风险命令，并在需要更多权限时请求确认。"
+        },
+        "fullAccess": {
+          "label": "完全访问",
+          "description": "不使用沙盒且不弹出审批确认。仅应在可信环境中使用。"
+        }
+      },
       "selectionSettings": "设置",
       "selectionSettingsDescription": "选择这个会话使用的模型、推理强度和权限模式。",
       "placeholder": "描述任务...",
