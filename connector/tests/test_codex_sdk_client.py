@@ -8,6 +8,7 @@ from typing import Any, Self
 from openai_codex.generated.v2_all import (
     AgentMessageThreadItem,
     ThreadItem,
+    ThreadResumeParams,
     ThreadStartParams,
     Turn,
     TurnStartParams,
@@ -103,6 +104,10 @@ def test_codex_sdk_client_adapts_async_codex_thread_turn_flow() -> None:
 
 def test_codex_sdk_client_uses_low_level_permission_payloads() -> None:
     asyncio.run(_test_codex_sdk_client_uses_low_level_permission_payloads())
+
+
+def test_codex_sdk_client_resumes_thread_before_low_level_turn_start() -> None:
+    asyncio.run(_test_codex_sdk_client_resumes_thread_before_low_level_turn_start())
 
 
 async def _test_codex_sdk_client_adapts_async_codex_thread_turn_flow() -> None:
@@ -226,6 +231,39 @@ async def _test_codex_sdk_client_uses_low_level_permission_payloads() -> None:
     assert native.low_level.thread_start_params[1]["sandbox"] == "danger-full-access"
 
 
+async def _test_codex_sdk_client_resumes_thread_before_low_level_turn_start() -> None:
+    sdk = _FakeLowLevelSdkModule()
+    native = _FakeLowLevelAsyncCodex()
+    client = CodexSdkClient(native, sdk=sdk)
+
+    async def handler(message: Any) -> None:
+        native.handled.append(message)
+
+    await client.start(handler)
+    result = await client.start_turn(
+        CodexStartTurnRequest(
+            thread_id="thread_existing",
+            content="hello",
+            model="gpt-example",
+            approval_policy="request_approval",
+            sandbox="workspace-write",
+        )
+    )
+    await asyncio.sleep(0)
+    await client.stop()
+
+    assert result.turn_id == "turn_low"
+    assert native.low_level.request_order == [
+        "thread/resume:thread_existing",
+        "turn/start:thread_existing",
+    ]
+    assert native.low_level.thread_resume_params[0]["threadId"] == "thread_existing"
+    assert native.low_level.thread_resume_params[0]["model"] == "gpt-example"
+    assert native.low_level.thread_resume_params[0]["approvalPolicy"] == "on-request"
+    assert native.low_level.thread_resume_params[0]["approvalsReviewer"] == "user"
+    assert native.low_level.thread_resume_params[0]["sandbox"] == "workspace-write"
+
+
 class _NativeSdkClient:
     def __init__(self) -> None:
         self.started = False
@@ -328,10 +366,22 @@ class _FakeLowLevelSdkModule(_FakeAsyncCodexSdkModule):
 
 class _FakeLowLevelClient:
     def __init__(self) -> None:
+        self.request_order: list[str] = []
+        self.thread_resume_params: list[dict[str, Any]] = []
         self.thread_start_params: list[dict[str, Any]] = []
         self.turn_start_params: list[dict[str, Any]] = []
 
+    async def thread_resume(
+        self,
+        thread_id: str,
+        params: ThreadResumeParams,
+    ) -> Any:
+        self.request_order.append(f"thread/resume:{thread_id}")
+        self.thread_resume_params.append(generated_params_payload(params))
+        return SimpleNamespace(thread=SimpleNamespace(id=thread_id))
+
     async def thread_start(self, params: ThreadStartParams) -> Any:
+        self.request_order.append("thread/start")
         self.thread_start_params.append(generated_params_payload(params))
         return SimpleNamespace(thread=SimpleNamespace(id="thread_low"))
 
@@ -341,8 +391,8 @@ class _FakeLowLevelClient:
         content: str,
         params: TurnStartParams,
     ) -> Any:
-        _ = thread_id
         _ = content
+        self.request_order.append(f"turn/start:{thread_id}")
         self.turn_start_params.append(generated_params_payload(params))
         return SimpleNamespace(turn=SimpleNamespace(id="turn_low"))
 
@@ -382,7 +432,7 @@ class _FakeLowLevelAsyncCodex:
 
 
 def generated_params_payload(
-    params: ThreadStartParams | TurnStartParams,
+    params: ThreadResumeParams | ThreadStartParams | TurnStartParams,
 ) -> dict[str, Any]:
     payload = params.model_dump(
         by_alias=True,

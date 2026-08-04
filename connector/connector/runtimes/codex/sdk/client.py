@@ -14,6 +14,7 @@ from openai_codex.generated.v2_all import (
     ReasoningEffort,
     SandboxMode,
     SandboxPolicy,
+    ThreadResumeParams,
     ThreadStartParams,
     TurnStartParams,
     WorkspaceWriteSandboxPolicy,
@@ -160,6 +161,7 @@ class CodexSdkClient:
         low_level_client = codex_low_level_client(self._client)
         if low_level_client is not None:
             await ensure_codex_initialized(self._client)
+            await self.ensure_thread_resumed_for_turn(low_level_client, request)
             started = await low_level_client.turn_start(
                 request.thread_id,
                 request.content,
@@ -237,6 +239,33 @@ class CodexSdkClient:
         thread = self._thread_handle(thread_id)
         result = await thread.compact()
         return CodexCompactResult(payload=compact_result(result))
+
+    async def ensure_thread_resumed_for_turn(
+        self,
+        low_level_client: Any,
+        request: CodexStartTurnRequest,
+    ) -> None:
+        """Resume an existing Codex thread before starting a turn.
+
+        Side effects:
+        - sends thread/resume to the Codex app-server when this process has not
+          loaded the thread yet
+        - caches an AsyncThread handle for later thread-scoped operations
+        """
+
+        if request.thread_id in self._threads:
+            return
+        thread_resume = getattr(low_level_client, "thread_resume", None)
+        if not callable(thread_resume):
+            return
+        resumed = await thread_resume(
+            request.thread_id,
+            codex_thread_resume_params(request),
+        )
+        thread_id = id_of(resumed.thread)
+        thread = codex_async_thread(self._sdk, self._client, thread_id)
+        if thread is not None:
+            self._remember_thread(thread)
 
     async def respond(
         self,
@@ -420,6 +449,19 @@ def codex_thread_start_params(request: CodexStartThreadRequest) -> ThreadStartPa
         ephemeral=request.ephemeral,
         model=request.model,
         sandbox=codex_thread_sandbox_mode(request.sandbox),
+    )
+
+
+def codex_thread_resume_params(request: CodexStartTurnRequest) -> ThreadResumeParams:
+    approval_policy, approvals_reviewer = codex_approval_settings(
+        request.approval_policy
+    )
+    return ThreadResumeParams(
+        approvalPolicy=approval_policy,
+        approvalsReviewer=approvals_reviewer,
+        model=request.model,
+        sandbox=codex_thread_sandbox_mode(request.sandbox),
+        threadId=request.thread_id,
     )
 
 
