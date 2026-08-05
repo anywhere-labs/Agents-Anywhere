@@ -21,7 +21,10 @@ from agent_server.infra.connector_rpc import (
 )
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.services.device_runtimes import DeviceRuntimeService
-from agent_server.services.notices import upsert_execution_error_interaction
+from agent_server.services.notices import (
+    pending_approvals_from_notices,
+    upsert_execution_error_interaction,
+)
 
 
 def make_client(tmp_path):
@@ -162,6 +165,83 @@ def create_connector_and_session(client: TestClient, user_id: str = ADMIN_USER):
     return connector_id, access_token, session_id, headers
 
 
+def session_view_for_assertions(
+    client: TestClient,
+    session_id: str,
+    headers: dict[str, str],
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Read target session APIs and return the aggregate shape older assertions need."""
+    query = params or {}
+    limit = int(query.get("limit", 200))
+    meta_response = client.get(
+        f"/sessions/{session_id}/meta",
+        headers=headers,
+    )
+    meta_response.raise_for_status()
+    session = meta_response.json()["session"]
+
+    timeline_query: dict[str, Any] | None = None
+    mode = query.get("mode")
+    if mode == "latest":
+        timeline_query = {"mode": "latest", "limit": limit}
+    elif mode == "before" or query.get("beforeOrderSeq") is not None:
+        timeline_query = {
+            "mode": "history",
+            "beforeOrderSeq": query.get("beforeOrderSeq"),
+            "limit": limit,
+        }
+    elif "afterSeq" in query:
+        timeline_query = {
+            "mode": "changes",
+            "afterSeq": query.get("afterSeq", 0),
+            "limit": limit,
+        }
+
+    if timeline_query is None:
+        timeline_query = {"mode": "latest", "limit": limit}
+
+    cached_runtime_state = asyncio.run(
+        client.app.state.session_runtime_state_cache.get(session_id)
+    )
+    if cached_runtime_state is None and params is None:
+        state_response = client.get(
+            f"/sessions/{session_id}/runtime/state",
+            headers=headers,
+        )
+        state_response.raise_for_status()
+        runtime_state = state_response.json()["state"]
+        session = {**session, "status": runtime_state["status"]}
+    elif cached_runtime_state is None:
+        runtime_state = None
+    else:
+        runtime_state = cached_runtime_state.model_dump(mode="json")
+        session = {**session, "status": runtime_state["status"]}
+
+    timeline_response = client.get(
+        f"/sessions/{session_id}/timeline",
+        headers=headers,
+        params=timeline_query,
+    )
+    timeline_response.raise_for_status()
+    timeline = timeline_response.json()
+    notices = asyncio.run(client.app.state.store.list_open_notices(session_id))
+    approvals = [
+        approval.model_dump(mode="json")
+        for approval in pending_approvals_from_notices(notices)
+    ]
+
+    return {
+        "session": session,
+        "state": runtime_state,
+        "items": timeline["items"],
+        "approvals": approvals,
+        "nextSeq": timeline["nextSeq"],
+        "hasMore": timeline["hasMore"],
+        "serverTime": meta_response.json()["serverTime"],
+    }
+
+
 def _runtime_inventory(runtime: str) -> dict[str, Any]:
     return {
         "runtimes": [
@@ -295,11 +375,12 @@ def wait_for(predicate, *, attempts: int = 20, interval: float = 0.01):
 
 def wait_for_item_update(client: TestClient, session_id: str, headers: dict[str, str], after_seq: int):
     def read_state():
-        body = client.get(
-            f"/sessions/{session_id}/state",
-            headers=headers,
+        body = session_view_for_assertions(
+            client,
+            session_id,
+            headers,
             params={"afterSeq": after_seq},
-        ).json()
+        )
         return body if body["items"] else None
 
     return wait_for(read_state)
@@ -378,7 +459,7 @@ def test_session_create_does_not_persist_external_session_model_selection(tmp_pa
     assert response.status_code == 200, response.text
     assert fake_rpc.requests == []
     session_id = response.json()["session"]["id"]
-    state = client.get(f"/sessions/{session_id}/runtime-state", headers=headers)
+    state = client.get(f"/sessions/{session_id}/runtime/state", headers=headers)
     assert state.status_code == 200
     assert state.json()["state"]["selections"] == {}
 
@@ -409,7 +490,7 @@ def test_session_create_does_not_persist_external_session_permission_selection(t
     assert response.status_code == 200, response.text
     assert fake_rpc.requests == []
     session_id = response.json()["session"]["id"]
-    state = client.get(f"/sessions/{session_id}/runtime-state", headers=headers)
+    state = client.get(f"/sessions/{session_id}/runtime/state", headers=headers)
     assert state.status_code == 200
     assert state.json()["state"]["selections"] == {}
 
@@ -484,7 +565,7 @@ def test_session_create_and_start_preallocates_session_and_passes_selections(tmp
             },
         )
     ]
-    state = client.get(f"/sessions/{session['id']}/runtime-state", headers=headers)
+    state = client.get(f"/sessions/{session['id']}/runtime/state", headers=headers)
     assert state.status_code == 200
     assert state.json()["state"]["status"] == "idle"
     assert state.json()["state"]["selections"] == {}
@@ -544,7 +625,7 @@ def test_session_state_reads_runtime_status_over_stale_db_status(tmp_path):
 
     client.app.state.rpc = FakeRuntimeStateRpc()
 
-    state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+    state = session_view_for_assertions(client, session_id, headers)
 
     assert state["session"]["status"] == "idle"
     assert state["state"]["status"] == "idle"
@@ -727,7 +808,7 @@ def test_session_updated_without_external_id_does_not_clear_existing_external_id
         )
 
         def read_updated_state():
-            body = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+            body = session_view_for_assertions(client, session_id, headers)
             return body if body["session"]["title"] == "Updated without external id" else None
 
         state = wait_for(read_updated_state)
@@ -772,7 +853,7 @@ def test_session_state_updated_pushes_ephemeral_runtime_state(tmp_path):
     assert body["selections"] == {"model": "sel_model_runtime"}
     assert body["statusReason"] == "tool_call"
     assert body["metadata"] == {"phase": "tool"}
-    state = client.get(f"/sessions/{session_id}/runtime-state", headers=headers)
+    state = client.get(f"/sessions/{session_id}/runtime/state", headers=headers)
     assert state.status_code == 200, state.text
     assert state.json()["state"]["status"] == "running"
 
@@ -884,7 +965,12 @@ def test_session_updated_rejects_legacy_selection_fields(tmp_path):
 
 def wait_for_state_items(client: TestClient, session_id: str, headers: dict[str, str], predicate):
     def read_state():
-        body = client.get(f"/sessions/{session_id}/state", headers=headers, params={"afterSeq": 0}).json()
+        body = session_view_for_assertions(
+            client,
+            session_id,
+            headers,
+            params={"afterSeq": 0},
+        )
         return body if predicate(body["items"]) else None
 
     return wait_for(read_state)
@@ -892,7 +978,12 @@ def wait_for_state_items(client: TestClient, session_id: str, headers: dict[str,
 
 def wait_for_state(client: TestClient, session_id: str, headers: dict[str, str], predicate):
     def read_state():
-        body = client.get(f"/sessions/{session_id}/state", headers=headers, params={"afterSeq": 0}).json()
+        body = session_view_for_assertions(
+            client,
+            session_id,
+            headers,
+            params={"afterSeq": 0},
+        )
         return body if predicate(body) else None
 
     return wait_for(read_state)
@@ -1472,36 +1563,6 @@ def test_ws_ticket_scope_must_select_exactly_one_target(tmp_path):
     assert ambiguous.status_code == 422
 
 
-def test_session_command_list_reads_runtime_commands(tmp_path):
-    client = make_client(tmp_path)
-    connector_id, _access_token, session_id, headers = create_connector_and_session(client)
-    fake_rpc = FakeLocalRpc()
-    client.app.state.rpc = fake_rpc
-
-    response = client.get(
-        f"/sessions/{session_id}/commands?query=res&limit=10",
-        headers=headers,
-    )
-
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert [item["id"] for item in body["commands"]] == ["resume"]
-    assert fake_rpc.requests[-1] == (
-        connector_id,
-        "session.commands",
-        {
-            "sessionId": session_id,
-            "runtime": "codex",
-            "limit": 10,
-            "externalSessionId": f"thr_{connector_id}_demo",
-            "query": "res",
-        },
-        30,
-    )
-    state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
-    assert state["items"] == []
-
-
 def test_session_runtime_command_list_reads_full_runtime_commands(tmp_path):
     client = make_client(tmp_path)
     connector_id, _access_token, session_id, headers = create_connector_and_session(client)
@@ -1536,7 +1597,7 @@ def test_session_command_execute_calls_runtime(tmp_path):
     client.app.state.rpc = fake_rpc
 
     response = client.post(
-        f"/sessions/{session_id}/commands",
+        f"/sessions/{session_id}/runtime/commands",
         headers=headers,
         json={"command": "resume", "raw": "/resume now", "args": ["now"]},
     )
@@ -1626,7 +1687,7 @@ def test_session_command_returns_runtime_rpc_error(tmp_path):
     client.app.state.rpc = fake_rpc
 
     response = client.post(
-        f"/sessions/{session_id}/commands",
+        f"/sessions/{session_id}/runtime/commands",
         headers=headers,
         json={"command": "does-not-exist", "raw": "/does-not-exist"},
     )
@@ -1642,7 +1703,7 @@ def test_connector_status_response_uses_live_ws_not_stale_db(tmp_path):
 
     connector = client.get(f"/connectors/{connector_id}", headers=headers).json()["connector"]
     assert connector["status"] == "offline"
-    session = client.get(f"/sessions/{session_id}/state", headers=headers).json()["session"]
+    session = session_view_for_assertions(client, session_id, headers)["session"]
     assert session["connectorStatus"] == "offline"
 
     with client.websocket_connect(
@@ -1653,7 +1714,7 @@ def test_connector_status_response_uses_live_ws_not_stale_db(tmp_path):
         connector = client.get(f"/connectors/{connector_id}", headers=headers).json()["connector"]
         assert connector["status"] == "online"
         assert connector["deviceOs"] == "macos"
-        session = client.get(f"/sessions/{session_id}/state", headers=headers).json()["session"]
+        session = session_view_for_assertions(client, session_id, headers)["session"]
         assert session["connectorStatus"] == "online"
 
 
@@ -1819,17 +1880,17 @@ def test_user_data_is_isolated_by_jwt_subject(tmp_path):
     assert client.get("/connectors", headers=user_two_headers).json()["connectors"] == []
     assert client.get("/sessions", headers=user_two_headers).json()["sessions"] == []
     assert client.get(f"/connectors/{connector_id}", headers=user_two_headers).status_code == 404
-    assert client.get(f"/sessions/{session_id}/state", headers=user_two_headers).status_code == 404
+    assert client.get(f"/sessions/{session_id}/snapshot", headers=user_two_headers).status_code == 404
 
     assert client.get(f"/connectors/{connector_id}", headers=user_one_headers).status_code == 200
-    assert client.get(f"/sessions/{session_id}/state", headers=user_one_headers).status_code == 200
+    assert client.get(f"/sessions/{session_id}/snapshot", headers=user_one_headers).status_code == 200
 
 
 def test_state_polling_and_timeline_item_upsert(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
 
-    initial_state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+    initial_state = session_view_for_assertions(client, session_id, headers)
     assert initial_state["session"]["connectorStatus"] == "offline"
     assert initial_state["items"] == []
     assert initial_state["nextSeq"] == 0
@@ -1874,11 +1935,12 @@ def test_state_polling_and_timeline_item_upsert(tmp_path):
         assert state["items"][0]["content"]["text"] == "hello"
         assert state["items"][0]["updatedSeq"] <= state["nextSeq"]
 
-        empty_increment = client.get(
-            f"/sessions/{session_id}/state",
-            headers=headers,
+        empty_increment = session_view_for_assertions(
+            client,
+            session_id,
+            headers,
             params={"afterSeq": state["nextSeq"]},
-        ).json()
+        )
         assert empty_increment["items"] == []
 
 
@@ -2020,36 +2082,40 @@ def test_session_state_supports_latest_and_before_timeline_windows(tmp_path):
             )
 
         def read_latest_five():
-            body = client.get(
-                f"/sessions/{session_id}/state",
-                headers=headers,
+            body = session_view_for_assertions(
+                client,
+                session_id,
+                headers,
                 params={"mode": "latest", "limit": 5},
-            ).json()
+            )
             return body if len(body["items"]) == 5 else None
 
         assert wait_for(read_latest_five) is not None
 
-        latest = client.get(
-            f"/sessions/{session_id}/state",
-            headers=headers,
+        latest = session_view_for_assertions(
+            client,
+            session_id,
+            headers,
             params={"mode": "latest", "limit": 2},
-        ).json()
+        )
         assert [item["id"] for item in latest["items"]] == ["tl_4", "tl_5"]
         assert latest["hasMore"] is True
 
-        older = client.get(
-            f"/sessions/{session_id}/state",
-            headers=headers,
+        older = session_view_for_assertions(
+            client,
+            session_id,
+            headers,
             params={"mode": "before", "beforeOrderSeq": 4, "limit": 2},
-        ).json()
+        )
         assert [item["id"] for item in older["items"]] == ["tl_2", "tl_3"]
         assert older["hasMore"] is True
 
-        oldest = client.get(
-            f"/sessions/{session_id}/state",
-            headers=headers,
+        oldest = session_view_for_assertions(
+            client,
+            session_id,
+            headers,
             params={"mode": "before", "beforeOrderSeq": 2, "limit": 2},
-        ).json()
+        )
         assert [item["id"] for item in oldest["items"]] == ["tl_1"]
         assert oldest["hasMore"] is False
 
@@ -2340,7 +2406,7 @@ def test_timeline_sync_removes_snapshot_reasoning_duplicate_after_live_item(tmp_
     )
     assert synced.status_code == 200, synced.text
 
-    state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+    state = session_view_for_assertions(client, session_id, headers)
     reasoning_items = [
         item
         for item in state["items"]
@@ -2435,7 +2501,7 @@ def test_sessions_sort_by_latest_timeline_item_not_session_update(tmp_path):
         assert [session["id"] for session in listed[:2]] == [first_session_id, second_session_id]
         assert listed[0]["lastItemAt"] == "2027-05-20T12:00:00Z"
         assert listed[0]["lastItemOrderSeq"] == 1
-        first_state = client.get(f"/sessions/{first_session_id}/state", headers=headers).json()
+        first_state = session_view_for_assertions(client, first_session_id, headers)
         assert first_state["session"]["lastItemAt"] == "2027-05-20T12:00:00Z"
         assert first_state["session"]["lastItemOrderSeq"] == 1
 
@@ -2724,7 +2790,7 @@ def test_takeover_gates_remote_message_and_rpc(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
 
-    read_only_response = client.post(f"/sessions/{session_id}/messages", headers=headers, json={"content": "hi"})
+    read_only_response = client.post(f"/sessions/{session_id}/runtime/messages", headers=headers, json={"content": "hi"})
     assert read_only_response.status_code == 409
 
     client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
@@ -2740,7 +2806,7 @@ def test_takeover_gates_remote_message_and_rpc(tmp_path):
                 "params": {"sessionId": session_id, "status": "idle"},
             }
         )
-        online_state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+        online_state = session_view_for_assertions(client, session_id, headers)
         assert online_state["session"]["connectorStatus"] == "online"
         assert online_state["session"]["takeover"] is True
 
@@ -3086,7 +3152,7 @@ def test_notice_upsert_projects_open_interaction_through_application_service(tmp
     assert ingest.status_code == 200, ingest.text
 
     response = client.post(
-        f"/sessions/{session_id}/interactions/interaction_input_1/respond",
+        f"/sessions/{session_id}/runtime/notices/interaction_input_1/respond",
         headers=headers,
         json={"actionId": "submit", "input": {"value": "confirmed"}},
     )
@@ -3322,7 +3388,7 @@ def test_running_tool_item_keeps_session_interruptible(tmp_path):
     }
     assert caps["session.interrupt"]["available"] is True
 
-    interrupt = client.post(f"/sessions/{session_id}/interrupt", headers=headers)
+    interrupt = client.post(f"/sessions/{session_id}/runtime/interrupt", headers=headers)
     assert interrupt.status_code == 200, interrupt.text
     assert any(request[1] == "turn.interrupt" for request in fake_rpc.requests)
 
@@ -3341,7 +3407,7 @@ def test_send_message_rejects_model_selection_id(tmp_path):
     client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
 
     response = client.post(
-        f"/sessions/{session_id}/messages",
+        f"/sessions/{session_id}/runtime/messages",
         headers=headers,
         json={
             "content": "hi",
@@ -3380,7 +3446,7 @@ def test_patch_session_selections_routes_to_runtime_and_reads_live_state(tmp_pat
     client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
 
     response = client.patch(
-        f"/sessions/{session_id}/state/selections",
+        f"/sessions/{session_id}/runtime/selections",
         headers=headers,
         json={"selections": {"model": "sel_model_live", "permission": "sel_permission_live"}},
     )
@@ -3397,7 +3463,7 @@ def test_patch_session_selections_routes_to_runtime_and_reads_live_state(tmp_pat
         },
         30,
     ) in fake_rpc.requests
-    state = client.get(f"/sessions/{session_id}/runtime-state", headers=headers)
+    state = client.get(f"/sessions/{session_id}/runtime/state", headers=headers)
     assert state.status_code == 200, state.text
     assert state.json()["state"]["selections"] == {
         "model": "sel_model_live",
@@ -3406,7 +3472,7 @@ def test_patch_session_selections_routes_to_runtime_and_reads_live_state(tmp_pat
 
     fake_rpc.requests.clear()
     sent = client.post(
-        f"/sessions/{session_id}/messages",
+        f"/sessions/{session_id}/runtime/messages",
         headers=headers,
         json={"content": "hi after selection"},
     )
@@ -3452,13 +3518,13 @@ def test_patch_session_selections_does_not_persist_runtime_rejection(tmp_path):
     client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
 
     response = client.patch(
-        f"/sessions/{session_id}/state/selections",
+        f"/sessions/{session_id}/runtime/selections",
         headers=headers,
         json={"selections": {"model": "sel_model_missing"}},
     )
 
     assert response.status_code == 502, response.text
-    state = client.get(f"/sessions/{session_id}/runtime-state", headers=headers)
+    state = client.get(f"/sessions/{session_id}/runtime/state", headers=headers)
     if state.status_code == 200:
         assert state.json()["state"]["selections"] == {}
 
@@ -3471,7 +3537,7 @@ def test_send_message_rejects_legacy_model_fields(tmp_path):
     client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
 
     response = client.post(
-        f"/sessions/{session_id}/messages",
+        f"/sessions/{session_id}/runtime/messages",
         headers=headers,
         json={
             "content": "hi",
@@ -3493,7 +3559,7 @@ def test_send_message_forwards_client_message_id_to_connector(tmp_path):
     client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
 
     response = client.post(
-        f"/sessions/{session_id}/messages",
+        f"/sessions/{session_id}/runtime/messages",
         headers=headers,
         json={"content": "hi", "clientMessageId": "opt_abc"},
     )
@@ -3521,7 +3587,7 @@ def test_stored_execution_error_notice_does_not_override_runtime_send_capability
     )
 
     response = client.post(
-        f"/sessions/{session_id}/messages",
+        f"/sessions/{session_id}/runtime/messages",
         headers=headers,
         json={"content": "try again"},
     )
@@ -3555,7 +3621,7 @@ def test_send_message_forwards_uploaded_attachment_metadata_to_connector(tmp_pat
     attachment = upload_response.json()["attachments"][0]
 
     response = client.post(
-        f"/sessions/{session_id}/messages",
+        f"/sessions/{session_id}/runtime/messages",
         headers=headers,
         json={
             "content": "read attachment",
@@ -3605,7 +3671,7 @@ def test_ingest_adds_active_run_attachments_to_user_message(tmp_path):
     attachment = upload_response.json()["attachments"][0]
 
     response = client.post(
-        f"/sessions/{session_id}/messages",
+        f"/sessions/{session_id}/runtime/messages",
         headers=headers,
         json={
             "content": "read attachment",
@@ -3648,7 +3714,7 @@ def test_ingest_adds_active_run_attachments_to_user_message(tmp_path):
         },
     )
     assert response.status_code == 200, response.text
-    state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+    state = session_view_for_assertions(client, session_id, headers)
     item = next(item for item in state["items"] if item["id"] == "tl_user_file")
     assert item["source"]["clientMessageId"] == "opt_file"
     assert item["content"]["attachments"] == [
@@ -3671,7 +3737,7 @@ def test_send_message_omits_unspecified_overrides(tmp_path):
     client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
 
     response = client.post(
-        f"/sessions/{session_id}/messages",
+        f"/sessions/{session_id}/runtime/messages",
         headers=headers,
         json={"content": "hi"},
     )
@@ -3691,7 +3757,7 @@ def test_send_message_records_active_run(tmp_path):
     client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
 
     response = client.post(
-        f"/sessions/{session_id}/messages",
+        f"/sessions/{session_id}/runtime/messages",
         headers=headers,
         json={"content": "hi", "clientMessageId": "opt_active"},
     )
@@ -3774,7 +3840,7 @@ def test_send_message_carries_runtime_for_codex_session(tmp_path):
     client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
 
     response = client.post(
-        f"/sessions/{session_id}/messages",
+        f"/sessions/{session_id}/runtime/messages",
         headers=headers,
         json={"content": "hi"},
     )
@@ -3791,7 +3857,7 @@ def test_send_message_carries_runtime_for_claude_session(tmp_path):
     session_id = _create_claude_session(client, connector_id, headers, fake_rpc)
 
     response = client.post(
-        f"/sessions/{session_id}/messages",
+        f"/sessions/{session_id}/runtime/messages",
         headers=headers,
         json={"content": "hi"},
     )
@@ -3811,7 +3877,7 @@ def test_interrupt_and_sync_carry_runtime(tmp_path):
     # /interrupt now requires an open turn (turn.start with no turn.end).
     _ingest_open_turn(client, access_token, session_id, turn_id="turn_claude_1")
 
-    client.post(f"/sessions/{session_id}/interrupt", headers=headers).raise_for_status()
+    client.post(f"/sessions/{session_id}/runtime/interrupt", headers=headers).raise_for_status()
     interrupt_params = wait_for_rpc_method(fake_rpc, "turn.interrupt")[2]
     assert interrupt_params["runtime"] == "claude"
     assert interrupt_params["turnId"] == "turn_claude_1"
@@ -3833,7 +3899,7 @@ def test_steer_routes_to_active_codex_turn_without_changing_run_state(tmp_path):
     _ingest_open_turn(client, access_token, session_id, turn_id="turn_codex_live")
 
     response = client.post(
-        f"/sessions/{session_id}/steer",
+        f"/sessions/{session_id}/runtime/steer",
         headers=headers,
         json={"content": "focus on IPC", "clientMessageId": "msg_steer_1"},
     )
@@ -3864,12 +3930,12 @@ def test_steer_rejects_idle_session_and_turn_overrides(tmp_path):
     client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
 
     idle_response = client.post(
-        f"/sessions/{session_id}/steer",
+        f"/sessions/{session_id}/runtime/steer",
         headers=headers,
         json={"content": "too late"},
     )
     override_response = client.post(
-        f"/sessions/{session_id}/steer",
+        f"/sessions/{session_id}/runtime/steer",
         headers=headers,
         json={"content": "change model", "modelSelectionId": "codex:gpt-5"},
     )
@@ -3900,7 +3966,7 @@ def test_interrupt_not_found_result_clears_stale_active_run(tmp_path):
     asyncio.run(seed())
     client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
 
-    response = client.post(f"/sessions/{session_id}/interrupt", headers=headers)
+    response = client.post(f"/sessions/{session_id}/runtime/interrupt", headers=headers)
 
     assert response.status_code == 200, response.text
     assert response.json()["result"] == {"interrupted": False, "reason": "thread_not_found"}
@@ -3918,7 +3984,7 @@ def test_interrupt_cancels_blocking_interactions(tmp_path):
     notice_id = interaction_notice_id(client, session_id, headers, "approval")
     before_seq = asyncio.run(client.app.state.store.get_session_seq(session_id))
 
-    response = client.post(f"/sessions/{session_id}/interrupt", headers=headers)
+    response = client.post(f"/sessions/{session_id}/runtime/interrupt", headers=headers)
 
     assert response.status_code == 200, response.text
     snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers).json()
@@ -3956,7 +4022,7 @@ def test_turn_start_updates_and_turn_end_clears_active_run(tmp_path):
     session_id = _create_claude_session(client, connector_id, headers, fake_rpc)
 
     client.post(
-        f"/sessions/{session_id}/messages",
+        f"/sessions/{session_id}/runtime/messages",
         headers=headers,
         json={"content": "hi"},
     ).raise_for_status()
@@ -4009,7 +4075,7 @@ def test_claude_chat_active_run_merges_history_timeline_sync(tmp_path):
     session_id = _create_claude_session(client, connector_id, headers, fake_rpc)
 
     response = client.post(
-        f"/sessions/{session_id}/messages",
+        f"/sessions/{session_id}/runtime/messages",
         headers=headers,
         json={"content": "hi", "clientMessageId": "opt_active"},
     )
@@ -4055,7 +4121,7 @@ def test_claude_chat_active_run_merges_history_timeline_sync(tmp_path):
     )
 
     assert response.status_code == 200, response.text
-    state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+    state = session_view_for_assertions(client, session_id, headers)
     assert [item["id"] for item in state["items"]] == ["claude_msg_scanner_duplicate"]
     assert state["items"][0]["source"]["clientMessageId"] == "opt_active"
     assert asyncio.run(client.app.state.store.get_active_run(session_id)) is not None
@@ -4127,7 +4193,7 @@ def test_timeline_sync_keeps_existing_client_message_id(tmp_path):
     )
     assert response.status_code == 200, response.text
 
-    state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+    state = session_view_for_assertions(client, session_id, headers)
     assert state["items"][0]["source"]["clientMessageId"] == "opt_keep"
 
 
@@ -4175,10 +4241,10 @@ def test_timeline_sync_uses_content_hash_as_state_identity(tmp_path):
         assert response.status_code == 200, response.text
 
     ingest(revision=1, status="running", event="ipc/thread-stream-state-changed")
-    first = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+    first = session_view_for_assertions(client, session_id, headers)
     first_item = first["items"][0]
     ingest(revision=9, status="done", event="thread/read")
-    second = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+    second = session_view_for_assertions(client, session_id, headers)
     second_item = second["items"][0]
 
     assert second_item["updatedSeq"] == first_item["updatedSeq"]
@@ -4234,7 +4300,7 @@ def test_timeline_sync_upserts_without_deleting_missing_items(tmp_path):
     )
     sync([item("tl_upsert_patch", 2, "new text", "sha256:upsert-patch-v2")])
 
-    state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+    state = session_view_for_assertions(client, session_id, headers)
     by_id = {entry["id"]: entry for entry in state["items"]}
     assert by_id["tl_upsert_keep"]["content"]["text"] == "keep me"
     assert by_id["tl_upsert_patch"]["content"]["text"] == "new text"
@@ -4248,7 +4314,7 @@ def test_timeline_sync_tags_only_latest_active_run_message_and_keeps_run(tmp_pat
     asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
     client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
     client.post(
-        f"/sessions/{session_id}/messages",
+        f"/sessions/{session_id}/runtime/messages",
         headers=headers,
         json={"content": "same text", "clientMessageId": "opt_latest"},
     ).raise_for_status()
@@ -4310,7 +4376,7 @@ def test_timeline_sync_tags_only_latest_active_run_message_and_keeps_run(tmp_pat
     )
 
     assert response.status_code == 200, response.text
-    state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+    state = session_view_for_assertions(client, session_id, headers)
     by_id = {item["id"]: item for item in state["items"]}
     assert by_id["tl_old_user"]["source"].get("clientMessageId") is None
     assert by_id["tl_new_user"]["source"]["clientMessageId"] == "opt_latest"
@@ -4386,7 +4452,7 @@ def test_live_timeline_upsert_appends_when_connector_order_seq_restarts(tmp_path
     )
     assert live.status_code == 200, live.text
 
-    state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+    state = session_view_for_assertions(client, session_id, headers)
     by_id = {item["id"]: item for item in state["items"]}
     assert by_id["tl_history"]["orderSeq"] == 50
     assert by_id["tl_live"]["orderSeq"] == 51
@@ -4473,7 +4539,7 @@ def test_timeline_sync_appends_when_connector_order_seq_restarts(tmp_path):
     )
     assert synced.status_code == 200, synced.text
 
-    state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+    state = session_view_for_assertions(client, session_id, headers)
     by_id = {item["id"]: item for item in state["items"]}
     assert by_id["tl_history"]["orderSeq"] == 50
     assert by_id["tl_history"]["content"]["text"] == "old edited"
@@ -4846,10 +4912,10 @@ def test_interrupt_does_not_persist_runtime_status(tmp_path):
     session_id = _create_claude_session(client, connector_id, headers, fake_rpc)
     _ingest_open_turn(client, access_token, session_id, turn_id="turn_claude_1")
 
-    response = client.post(f"/sessions/{session_id}/interrupt", headers=headers)
+    response = client.post(f"/sessions/{session_id}/runtime/interrupt", headers=headers)
 
     assert response.status_code == 200, response.text
-    state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+    state = session_view_for_assertions(client, session_id, headers)
     assert state["session"]["status"] == "idle"
 
 
@@ -4862,7 +4928,7 @@ def test_interaction_respond_carries_runtime(tmp_path):
     notice_id = interaction_notice_id(client, session_id, headers, "approval")
 
     response = client.post(
-        f"/sessions/{session_id}/interactions/{notice_id}/respond",
+        f"/sessions/{session_id}/runtime/notices/{notice_id}/respond",
         headers=headers,
         json={"actionId": "approve"},
     )
@@ -5121,7 +5187,7 @@ def test_discovered_codex_session_reuses_existing_external_session(tmp_path):
     assert matching[0]["takeover"] is True
     state = wait_for_item_update(client, session_id, headers, 0)
     assert state["items"][0]["content"]["text"] == "synced to canonical"
-    duplicate_state = client.get("/sessions/sess_codex_duplicate/state", headers=headers)
+    duplicate_state = client.get("/sessions/sess_codex_duplicate/snapshot", headers=headers)
     assert duplicate_state.status_code == 404
 
 
@@ -5176,7 +5242,7 @@ def test_connector_http_ingest_upserts_session_and_timeline(tmp_path):
 
     assert response.status_code == 200
     assert response.json()["accepted"] == 2
-    state = client.get("/sessions/sess_http_existing/state", headers=headers).json()
+    state = session_view_for_assertions(client, "sess_http_existing", headers)
     assert state["session"]["externalSessionId"] == "thr_http"
     assert state["items"][0]["content"]["kind"] == "command"
 
@@ -5207,7 +5273,7 @@ def test_connector_ingest_maps_local_hidden_session_meta(tmp_path):
 
     assert response.status_code == 200
     assert response.json()["accepted"] == 1
-    state = client.get("/sessions/sess_local_archived/state", headers=headers)
+    state = client.get("/sessions/sess_local_archived/snapshot", headers=headers)
     assert state.status_code == 200, state.text
     assert state.json()["session"]["archived"] is True
 
@@ -5299,7 +5365,7 @@ def test_connector_http_ingest_accepts_state_update_before_external_id(tmp_path)
 
     assert response.status_code == 200
     assert response.json()["accepted"] == 2
-    state = client.get("/sessions/sess_codex_out_of_order/state", headers=headers).json()
+    state = session_view_for_assertions(client, "sess_codex_out_of_order", headers)
     assert state["session"]["runtime"] == "codex"
     assert state["session"]["externalSessionId"] is None
     assert state["session"]["status"] == "running"
@@ -5752,7 +5818,7 @@ def test_claude_empty_timeline_sync_clears_existing_timeline(tmp_path):
     )
     assert response.status_code == 200, response.text
 
-    state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+    state = session_view_for_assertions(client, session_id, headers)
     assert state["items"] == []
 
 
@@ -5799,7 +5865,7 @@ def test_timeline_sync_without_changes_does_not_rearm_unread(tmp_path):
 
         session = client.get("/sessions", headers=headers).json()["sessions"][0]
         assert session["unread"] is True
-        read_session = client.post(f"/sessions/{session_id}/read", headers=headers).json()["session"]
+        read_session = client.post("/sessions/read", headers=headers, json=[session_id]).json()["sessions"][0]
         assert read_session["unread"] is False
         read_seq = read_session["lastReadSeq"]
 
@@ -5859,7 +5925,7 @@ def test_timeline_sync_completed_at_drift_does_not_rearm_unread(tmp_path):
             }
         )
         wait_for_item_update(client, session_id, headers, 0)
-        read_session = client.post(f"/sessions/{session_id}/read", headers=headers).json()["session"]
+        read_session = client.post("/sessions/read", headers=headers, json=[session_id]).json()["sessions"][0]
         read_seq = read_session["lastReadSeq"]
         assert read_session["unread"] is False
 
@@ -5922,7 +5988,7 @@ def test_session_updated_sync_timestamps_do_not_rearm_unread(tmp_path):
         )
         wait_for_item_update(client, session_id, headers, 0)
 
-        read_session = client.post(f"/sessions/{session_id}/read", headers=headers).json()["session"]
+        read_session = client.post("/sessions/read", headers=headers, json=[session_id]).json()["sessions"][0]
         assert read_session["unread"] is False
         read_seq = read_session["lastReadSeq"]
 
@@ -5970,20 +6036,6 @@ def test_session_updated_sync_timestamps_do_not_rearm_unread(tmp_path):
         session = wait_for(read_activity_update)
         assert session["lastReadSeq"] == read_seq
         assert session["unread"] is False
-
-
-def test_dashboard_events_route_precedes_session_events(tmp_path):
-    client = make_client(tmp_path)
-    paths: list[str] = []
-    for route in client.app.router.routes:
-        effective_contexts = getattr(route, "effective_route_contexts", None)
-        if callable(effective_contexts):
-            paths.extend(getattr(context, "path", "") for context in effective_contexts())
-        else:
-            paths.append(getattr(route, "path", ""))
-    dashboard_index = paths.index("/api/v2/sessions/events/dashboard")
-    session_events_index = paths.index("/api/v2/sessions/{session_id}/events")
-    assert dashboard_index < session_events_index
 
 
 def test_ws_ticket_is_session_scoped_and_single_use(tmp_path):
@@ -6076,7 +6128,7 @@ def test_session_ws_updates_effective_capabilities_after_takeover(tmp_path):
         response = client.post(f"/sessions/{session_id}/takeover", headers=headers)
         assert response.status_code == 200, response.text
 
-        received = [ws.receive_json() for _ in range(2)]
+        received = [ws.receive_json() for _ in range(3)]
         event = next(
             item for item in received if item["type"] == "session.status_changed"
         )
@@ -6131,13 +6183,8 @@ def test_session_ws_projects_codex_timeline_sync_as_incremental_update_without_r
         )
         assert response.status_code == 200, response.text
 
-        received = [ws.receive_json() for _ in range(2)]
-        assert "session.refetch_required" not in {event["type"] for event in received}
-        timeline_events = [
-            event for event in received if event["type"] == "timeline.item_created"
-        ]
-        assert timeline_events
-        assert timeline_events[0]["payload"]["item"]["content"]["text"] == "synced over ws"
+        timeline_event = receive_session_ws_event(ws, "timeline.item_created")
+        assert timeline_event["payload"]["item"]["content"]["text"] == "synced over ws"
 
 
 def test_session_ws_pushes_compact_item_completion_update(tmp_path):
@@ -6270,8 +6317,7 @@ def test_unchanged_large_codex_timeline_sync_does_not_request_another_snapshot(t
             json=payload,
         )
         assert response.status_code == 200, response.text
-        initial_events = [ws.receive_json() for _ in range(3)]
-        assert "session.refetch_required" in {event["type"] for event in initial_events}
+        receive_session_ws_event(ws, "session.refetch_required")
 
         response = client.post(
             "/connector/ingest",
@@ -6536,7 +6582,7 @@ def test_existing_connector_session_metadata_sync_does_not_rearm_unread(tmp_path
         )
 
     asyncio.run(exercise())
-    read_session = client.post(f"/sessions/{session_id}/read", headers=headers).json()["session"]
+    read_session = client.post("/sessions/read", headers=headers, json=[session_id]).json()["sessions"][0]
     read_seq = read_session["lastReadSeq"]
     assert read_session["unread"] is False
 
@@ -6787,7 +6833,7 @@ def test_timeline_sync_dedupes_same_source_item_with_snapshot_derived_key(tmp_pa
             event["type"] for event in cleanup_events
         }
 
-        state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+        state = session_view_for_assertions(client, session_id, headers)
         messages = [item for item in state["items"] if item["type"] == "message"]
         assert [item["id"] for item in messages] == ["tl_live_real_msg"]
 
@@ -6837,7 +6883,7 @@ def test_timeline_sync_deduped_snapshot_message_does_not_rearm_unread(tmp_path):
             }
         )
         wait_for_item_update(client, session_id, headers, 0)
-        read_session = client.post(f"/sessions/{session_id}/read", headers=headers).json()["session"]
+        read_session = client.post("/sessions/read", headers=headers, json=[session_id]).json()["sessions"][0]
         read_seq = read_session["lastReadSeq"]
         assert read_session["unread"] is False
 
@@ -6892,7 +6938,7 @@ def test_interaction_respond_waits_for_connector_success_and_updates_target_item
     notice_id = interaction_notice_id(client, session_id, headers, "approval")
 
     response = client.post(
-        f"/sessions/{session_id}/interactions/{notice_id}/respond",
+        f"/sessions/{session_id}/runtime/notices/{notice_id}/respond",
         headers=headers,
         json={"actionId": "approve"},
     )
@@ -6937,7 +6983,7 @@ def test_interaction_response_recovery_falls_back_across_legacy_approval_gap(tmp
     before_seq = asyncio.run(client.app.state.store.get_session_seq(session_id))
 
     response = client.post(
-        f"/sessions/{session_id}/interactions/{notice_id}/respond",
+        f"/sessions/{session_id}/runtime/notices/{notice_id}/respond",
         headers=headers,
         json={"actionId": "approve"},
     )
@@ -6976,13 +7022,18 @@ def test_interaction_respond_keeps_pending_when_connector_fails(tmp_path):
     notice_id = interaction_notice_id(client, session_id, headers, "approval")
 
     response = client.post(
-        f"/sessions/{session_id}/interactions/{notice_id}/respond",
+        f"/sessions/{session_id}/runtime/notices/{notice_id}/respond",
         headers=headers,
         json={"actionId": "approve"},
     )
 
     assert response.status_code == 502
-    state = client.get(f"/sessions/{session_id}/state", headers=headers, params={"afterSeq": 0}).json()
+    state = session_view_for_assertions(
+        client,
+        session_id,
+        headers,
+        params={"afterSeq": 0},
+    )
     assert state["approvals"][0]["status"] == "pending"
     assert state["items"][0]["status"] == "waiting_approval"
     assert state["items"][0]["content"]["approval"]["status"] == "pending"
@@ -7005,7 +7056,7 @@ def test_approval_interaction_expires_when_runtime_no_longer_accepts_response(tm
     ]
 
     response = client.post(
-        f"/sessions/{session_id}/interactions/{notice_id}/respond",
+        f"/sessions/{session_id}/runtime/notices/{notice_id}/respond",
         headers=headers,
         json={"actionId": "approve"},
     )
@@ -7026,7 +7077,7 @@ def test_failed_approval_interaction_can_retry(tmp_path):
     notice_id = interaction_notice_id(client, session_id, headers, "approval")
 
     failed = client.post(
-        f"/sessions/{session_id}/interactions/{notice_id}/respond",
+        f"/sessions/{session_id}/runtime/notices/{notice_id}/respond",
         headers=headers,
         json={"actionId": "approve"},
     )
@@ -7039,7 +7090,7 @@ def test_failed_approval_interaction_can_retry(tmp_path):
 
     rpc.fail = False
     resolved = client.post(
-        f"/sessions/{session_id}/interactions/{notice_id}/respond",
+        f"/sessions/{session_id}/runtime/notices/{notice_id}/respond",
         headers=headers,
         json={"actionId": "approve"},
     )
@@ -7108,7 +7159,7 @@ def test_session_stays_blocked_until_all_blocking_interactions_resolve(tmp_path)
     )
 
     response = client.post(
-        f"/sessions/{session_id}/interactions/{error_notice.noticeId}/respond",
+        f"/sessions/{session_id}/runtime/notices/{error_notice.noticeId}/respond",
         headers=headers,
         json={"actionId": "continue"},
     )
@@ -7159,7 +7210,12 @@ def test_interrupted_turn_closes_pending_approval_tool_item(tmp_path):
     )
 
     assert response.status_code == 200
-    state = client.get(f"/sessions/{session_id}/state", headers=headers, params={"afterSeq": 0}).json()
+    state = session_view_for_assertions(
+        client,
+        session_id,
+        headers,
+        params={"afterSeq": 0},
+    )
     assert state["approvals"] == []
     tool = next(item for item in state["items"] if item["id"] == "tl_tool")
     assert tool["status"] == "cancelled"

@@ -770,16 +770,6 @@ class InteractionRespondRequest(BaseModel):
     input: dict[str, Any] | None = None
 
 
-class SessionStateResponse(BaseModel):
-    session: SessionView
-    state: SessionRuntimeState | None = None
-    items: list[TimelineItem]
-    approvals: list[Approval]
-    nextSeq: int
-    hasMore: bool
-    serverTime: str
-
-
 class AttachmentRef(BaseModel):
     fileId: str = Field(min_length=1, max_length=64)
 

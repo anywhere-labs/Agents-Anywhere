@@ -106,11 +106,14 @@ Primary realtime channel:
 WS /api/v2/dashboard/ws?ticket=...
 ```
 
-Legacy SSE during migration:
+Removed legacy SSE:
 
 ```text
 GET /api/v2/sessions/events/dashboard?token=...
 ```
+
+Do not add new clients for this route. Dashboard lifecycle updates use
+`/dashboard/ws`.
 
 The Web client should prefer dashboard WebSocket and stop fixed-interval polling of:
 

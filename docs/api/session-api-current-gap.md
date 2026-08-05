@@ -35,18 +35,18 @@ Current backend state:
 | Session bind | `POST /api/v2/sessions` | exists | Keep only as bind/import path during migration. Do not use for new user tasks. |
 | SessionMeta read | `GET /api/v2/sessions/{sessionId}/meta` | exists | Keep. Returns Server-owned metadata plus connector presence projection. |
 | SessionMeta update | `PATCH /api/v2/sessions/{sessionId}/meta` | exists | Keep. Updates only Server-owned display metadata. |
-| SessionMeta compatibility update | `PATCH /api/v2/sessions/{sessionId}` | exists | Mark as migration shim or replace with `/meta` when frontend migrates. |
+| SessionMeta compatibility update | `PATCH /api/v2/sessions/{sessionId}` | removed | Use `/sessions/{sessionId}/meta`. |
 | Read sessions | `POST /api/v2/sessions/read` with direct id array | exists | Keep as target. |
 | Archive sessions | `POST /api/v2/sessions/archive` with direct id array | exists | Keep as target. |
 | Unarchive sessions | `POST /api/v2/sessions/unarchive` with direct id array | exists | Keep as target. |
-| Old read one | `POST /api/v2/sessions/{sessionId}/read` | exists | Compatibility shim. Remove after frontend migration. |
+| Old read one | `POST /api/v2/sessions/{sessionId}/read` | removed | Use `/sessions/read` with a direct id array. |
 | Old bulk read | `POST /api/v2/sessions/bulk-read` | removed | Use `/sessions/read` with a direct id array. |
-| Old bulk archive | `POST /api/v2/sessions/bulk-archive` | migration error | Removed. Use `/sessions/archive` or `/sessions/unarchive` with a direct id array. |
+| Old bulk archive | `POST /api/v2/sessions/bulk-archive` | removed | Use `/sessions/archive` or `/sessions/unarchive` with a direct id array. |
 | SessionTimeline read | `GET /api/v2/sessions/{sessionId}/timeline` | exists | Keep. Returns durable timeline only. |
-| Old timeline/state read | `GET /api/v2/sessions/{sessionId}/state` | exists | Rename/split. It must not be the long-term timeline API. |
+| Old timeline/state read | `GET /api/v2/sessions/{sessionId}/state` | removed | Use `/snapshot`, `/timeline`, and `/runtime/state` by data boundary. |
 | Aggregate snapshot | `GET /api/v2/sessions/{sessionId}/snapshot` | exists | Keep. Verify runtime fields are live RPC/projection, not DB truth. |
 | Runtime state read | `GET /api/v2/sessions/{sessionId}/runtime/state` | exists | Keep. Must use runtime live fact or explicit disconnected projection. |
-| Old runtime state read | `GET /api/v2/sessions/{sessionId}/runtime-state` | exists | Compatibility shim. Remove after frontend migration. |
+| Old runtime state read | `GET /api/v2/sessions/{sessionId}/runtime-state` | removed | Use `/sessions/{sessionId}/runtime/state`. |
 | Session capabilities | `GET /api/v2/sessions/{sessionId}/runtime/capabilities` | exists | Keep. Verify frontend uses this for action availability. |
 | Session model catalog | `GET /api/v2/sessions/{sessionId}/runtime/catalogs/model` | exists | Keep as a session path to the runtime-level live catalog for existing session selectors. |
 | Session permission catalog | `GET /api/v2/sessions/{sessionId}/runtime/catalogs/permission` | exists | Keep as a session path to the runtime-level live catalog for existing session selectors. |
@@ -56,22 +56,22 @@ Current backend state:
 | Runtime commands | `GET /api/v2/connectors/{connectorId}/runtimes/{runtimeId}/commands` | exists | Keep. |
 | Session commands list | `GET /api/v2/sessions/{sessionId}/runtime/commands` | exists | Keep. Must not use query matching. |
 | Session commands execute | `POST /api/v2/sessions/{sessionId}/runtime/commands` | exists | Keep. Command execution returns RPC acceptance/result, later timeline updates are decoupled. |
-| Old session commands | `GET/POST /api/v2/sessions/{sessionId}/commands` | exists | Compatibility shim. Remove after frontend migration. |
+| Old session commands | `GET/POST /api/v2/sessions/{sessionId}/commands` | removed | Use `/sessions/{sessionId}/runtime/commands`; frontend matches command text locally. |
 | Selection update | `PATCH /api/v2/sessions/{sessionId}/runtime/selections` | exists | Keep. Runtime state should update immediately; effect boundary is runtime-owned. |
-| Old selection update | `PATCH /api/v2/sessions/{sessionId}/state/selections` | exists | Compatibility shim. Remove after frontend migration. |
+| Old selection update | `PATCH /api/v2/sessions/{sessionId}/state/selections` | removed | Use `/sessions/{sessionId}/runtime/selections`. |
 | Send message | `POST /api/v2/sessions/{sessionId}/runtime/messages` | exists | Keep. |
-| Old send message | `POST /api/v2/sessions/{sessionId}/messages` | exists | Compatibility shim. Remove after frontend migration. |
+| Old send message | `POST /api/v2/sessions/{sessionId}/messages` | removed | Use `/sessions/{sessionId}/runtime/messages`. |
 | Steer | `POST /api/v2/sessions/{sessionId}/runtime/steer` | exists | Keep. |
-| Old steer | `POST /api/v2/sessions/{sessionId}/steer` | exists | Compatibility shim. Remove after frontend migration. |
+| Old steer | `POST /api/v2/sessions/{sessionId}/steer` | removed | Use `/sessions/{sessionId}/runtime/steer`. |
 | Interrupt | `POST /api/v2/sessions/{sessionId}/runtime/interrupt` | exists | Keep. If runtime reports no active turn, runtime state/capability should converge to idle/unavailable. |
-| Old interrupt | `POST /api/v2/sessions/{sessionId}/interrupt` | exists | Compatibility shim. Remove after frontend migration. |
+| Old interrupt | `POST /api/v2/sessions/{sessionId}/interrupt` | removed | Use `/sessions/{sessionId}/runtime/interrupt`. |
 | Runtime notices read | `GET /api/v2/sessions/{sessionId}/runtime/notices` | exists | Keep. Must be non-durable runtime truth. |
 | Runtime notice response | `POST /api/v2/sessions/{sessionId}/runtime/notices/{noticeId}/respond` | exists | Keep. |
-| Old interaction response | `POST /api/v2/sessions/{sessionId}/interactions/{noticeId}/respond` | exists | Compatibility shim. Remove after frontend migration. |
+| Old interaction response | `POST /api/v2/sessions/{sessionId}/interactions/{noticeId}/respond` | removed | Use `/sessions/{sessionId}/runtime/notices/{noticeId}/respond`. |
 | Event recovery | `GET /api/v2/sessions/{sessionId}/events` | exists | Keep for durable meta/timeline recovery only. Do not recover runtime live facts from DB. |
 | Session WS | `WS /api/v2/sessions/{sessionId}/ws` | exists | Keep. Runtime event names exist; compatibility payloads remain during frontend migration. |
 | Dashboard WS | `WS /api/v2/dashboard/ws` | exists | Keep. Do not mix dashboard lifecycle with session lifecycle. |
-| Old dashboard SSE | `GET /api/v2/sessions/events/dashboard` | exists | Compatibility shim. Frontend should migrate dashboard refresh to `/dashboard/ws`. |
+| Old dashboard SSE | `GET /api/v2/sessions/events/dashboard` | removed | Use `/dashboard/ws`. |
 
 ## Realtime gap table
 

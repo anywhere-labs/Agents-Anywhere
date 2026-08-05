@@ -14,7 +14,6 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from starlette.requests import HTTPConnection
-from starlette.responses import StreamingResponse
 
 from agent_server.api.connector_runtimes import (
     parse_runtime_model_catalog_response,
@@ -44,7 +43,6 @@ from agent_server.core.models import (
     SessionRuntimeStateResponse,
     SessionSelectionPatchRequest,
     SessionSelectionPatchResponse,
-    SessionStateResponse,
     SessionView,
     SteerTurnRequest,
     TakeoverResponse,
@@ -326,10 +324,6 @@ async def get_session_meta(
 
 
 @router.patch("/{session_id}/meta", response_model=SessionResponse)
-# Migration shim: old clients still patch `/sessions/{session_id}`. New clients
-# must use `/sessions/{session_id}/meta` because only Server-owned metadata is
-# updated here.
-@router.patch("/{session_id}", response_model=SessionResponse)
 async def patch_session_meta(
     session_id: str,
     payload: SessionPatchRequest,
@@ -473,38 +467,12 @@ async def mark_sessions_read(
     )
 
 
-# Migration shim: old clients used `/sessions/{session_id}/read`. New clients
-# must send `["{session_id}"]` to `POST /sessions/read`.
-@router.post("/{session_id}/read", response_model=SessionResponse)
-async def mark_session_read(
-    session_id: str,
-    user_id: str = Depends(current_user_id),
-    db: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
-    broker: TimelineBroker = Depends(get_timeline_broker),
-) -> SessionResponse:
-    try:
-        session = await db.mark_session_read(session_id, user_id=user_id)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="session not found") from None
-    await publish_dashboard_changed(
-        db,
-        broker,
-        user_id=user_id,
-        connector_id=session.connectorId,
-        session_id=session.id,
-        reason="session.read",
-    )
-    return SessionResponse(
-        session=await with_effective_session_connector_status(manager, session),
-        serverTime=utc_now(),
-    )
+# Removed migration route:
+# - old: POST /sessions/{session_id}/read
+# - new: POST /sessions/read with a direct session id array
 
 
 @router.get("/{session_id}/runtime/state", response_model=SessionRuntimeStateResponse)
-# Migration shim: old clients used `/runtime-state`. New clients must use
-# `/runtime/state`.
-@router.get("/{session_id}/runtime-state", response_model=SessionRuntimeStateResponse)
 async def session_runtime_state(
     session_id: str,
     user_id: str = Depends(current_user_id),
@@ -624,9 +592,6 @@ async def session_runtime_permission_catalog(
 
 
 @router.patch("/{session_id}/runtime/selections", response_model=SessionSelectionPatchResponse)
-# Migration shim: old clients used `/state/selections`. New clients must use
-# `/runtime/selections`.
-@router.patch("/{session_id}/state/selections", response_model=SessionSelectionPatchResponse)
 async def patch_session_selections(
     session_id: str,
     payload: SessionSelectionPatchRequest,
@@ -709,59 +674,11 @@ async def session_timeline(
     )
 
 
-@router.get("/{session_id}/state", response_model=SessionStateResponse)
-async def session_state(
-    session_id: str,
-    after_seq: int = Query(0, alias="afterSeq", ge=0),
-    before_order_seq: int | None = Query(None, alias="beforeOrderSeq", ge=1),
-    mode: str = Query("since", pattern="^(since|latest|before)$"),
-    limit: int = Query(200, ge=1, le=500),
-    user_id: str = Depends(current_user_id),
-    db: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
-    runtime_state_cache: SessionRuntimeStateCache = Depends(
-        get_session_runtime_state_cache
-    ),
-) -> SessionStateResponse:
-    try:
-        session = await db.get_session(session_id, user_id=user_id)
-        if mode == "latest":
-            items, has_more = await db.list_timeline_latest(session_id=session_id, limit=limit)
-        elif mode == "before" or before_order_seq is not None:
-            if before_order_seq is None:
-                raise HTTPException(status_code=422, detail="beforeOrderSeq is required for before mode")
-            items, has_more = await db.list_timeline_before_order_seq(
-                session_id=session_id,
-                before_order_seq=before_order_seq,
-                limit=limit,
-            )
-        else:
-            items, has_more = await db.list_timeline_since(
-                session_id=session_id, after_seq=after_seq, limit=limit
-            )
-        approvals = pending_approvals_from_notices(
-            await db.list_open_notices(session_id)
-        )
-        runtime_state = await read_runtime_state_live(
-            db,
-            manager,
-            runtime_state_cache,
-            session,
-            user_id,
-        )
-        session = session_with_runtime_state(session, runtime_state)
-        next_seq = await db.get_session_seq(session_id)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="session not found") from None
-    return SessionStateResponse(
-        session=await with_effective_session_connector_status(manager, session),
-        state=runtime_state,
-        items=items,
-        approvals=approvals,
-        nextSeq=next_seq,
-        hasMore=has_more,
-        serverTime=utc_now(),
-    )
+# Removed migration route:
+# - old: GET /sessions/{session_id}/state
+# - new: GET /sessions/{session_id}/snapshot for initial aggregate hydration
+# - new: GET /sessions/{session_id}/timeline for durable timeline reads
+# - new: GET /sessions/{session_id}/runtime/state for live runtime state
 
 
 @router.get("/{session_id}/snapshot", response_model=ProtocolSessionSnapshotResponse)
@@ -816,41 +733,9 @@ async def session_snapshot(
     )
 
 
-@router.get("/events/dashboard")
-async def dashboard_events(
-    token: str = Query(...),
-    db: Store = Depends(get_store),
-    broker: TimelineBroker = Depends(get_timeline_broker),
-) -> StreamingResponse:
-    from agent_server.core.auth import verify_user_access_token
-
-    user_id = verify_user_access_token(token)
-    if user_id is None:
-        raise HTTPException(status_code=401, detail="invalid user access token")
-
-    queue = await broker.register_dashboard(user_id)
-
-    async def stream():
-        try:
-            yield f'data: {{"type":"dashboard.sync","serverTime":"{utc_now()}"}}\n\n'
-            while True:
-                try:
-                    message = await asyncio.wait_for(queue.get(), timeout=15.0)
-                    yield f"data: {message}\n\n"
-                except asyncio.TimeoutError:
-                    yield ": keepalive\n\n"
-        finally:
-            await broker.unregister_dashboard(user_id, queue)
-
-    return StreamingResponse(
-        stream(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache, no-transform",
-            "X-Accel-Buffering": "no",
-            "Connection": "keep-alive",
-        },
-    )
+# Removed migration route:
+# - old: GET /sessions/events/dashboard
+# - new: WS /dashboard/ws
 
 
 @router.get("/{session_id}/events")
@@ -985,54 +870,10 @@ async def disable_takeover(
         raise HTTPException(status_code=404, detail="session not found") from None
 
 
-# Migration shim: old clients read `/commands` and may pass query params. New
-# clients must read `/runtime/commands` and perform fuzzy matching locally.
-@router.get("/{session_id}/commands", response_model=SessionCommandListResponse)
-async def list_session_commands(
-    session_id: str,
-    query: str | None = Query(default=None, max_length=128),
-    limit: int = Query(default=50, ge=1, le=100),
-    user_id: str = Depends(current_user_id),
-    db: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
-) -> SessionCommandListResponse:
-    try:
-        session = await db.get_session(session_id, user_id=user_id)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="session not found") from None
-    params: dict[str, Any] = {
-        "sessionId": session.id,
-        "runtime": session.runtime,
-        "limit": limit,
-    }
-    if session.externalSessionId:
-        params["externalSessionId"] = session.externalSessionId
-    if query:
-        params["query"] = query
-    try:
-        result = await manager.request(
-            session.connectorId,
-            "session.commands",
-            params,
-            timeout=30,
-        )
-    except ConnectorOfflineError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except ConnectorRpcError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail={"code": exc.code, "message": exc.message or exc.code},
-        ) from exc
-    commands = result.get("commands") if isinstance(result, dict) else None
-    if not isinstance(commands, list):
-        raise HTTPException(
-            status_code=502,
-            detail={
-                "code": "invalid_command_catalog",
-                "message": "connector did not return a command list",
-            },
-        )
-    return SessionCommandListResponse(commands=commands, serverTime=utc_now())
+# Removed migration route:
+# - old: GET /sessions/{session_id}/commands with optional query matching
+# - new: GET /sessions/{session_id}/runtime/commands
+# Frontend performs fuzzy matching locally after reading the full runtime list.
 
 
 @router.get("/{session_id}/runtime/commands", response_model=SessionCommandListResponse)
@@ -1080,9 +921,6 @@ async def list_session_runtime_commands(
 
 
 @router.post("/{session_id}/runtime/commands", response_model=SessionCommandResponse)
-# Migration shim: old clients posted to `/commands`. New clients must use
-# `/runtime/commands`.
-@router.post("/{session_id}/commands", response_model=SessionCommandResponse)
 async def execute_session_command(
     session_id: str,
     payload: SessionCommandRequest,
@@ -1137,9 +975,6 @@ async def execute_session_command(
 
 
 @router.post("/{session_id}/runtime/messages", response_model=RpcResponsePayload)
-# Migration shim: old clients posted to `/messages`. New clients must use
-# `/runtime/messages`.
-@router.post("/{session_id}/messages", response_model=RpcResponsePayload)
 async def send_message(
     session_id: str,
     payload: MessageCreateRequest,
@@ -1175,9 +1010,6 @@ async def send_message(
 
 
 @router.post("/{session_id}/runtime/interrupt", response_model=RpcResponsePayload)
-# Migration shim: old clients posted to `/interrupt`. New clients must use
-# `/runtime/interrupt`.
-@router.post("/{session_id}/interrupt", response_model=RpcResponsePayload)
 async def interrupt_session(
     session_id: str,
     user_id: str = Depends(current_user_id),
@@ -1214,9 +1046,6 @@ async def interrupt_session(
 
 
 @router.post("/{session_id}/runtime/steer", response_model=RpcResponsePayload)
-# Migration shim: old clients posted to `/steer`. New clients must use
-# `/runtime/steer`.
-@router.post("/{session_id}/steer", response_model=RpcResponsePayload)
 async def steer_session(
     session_id: str,
     payload: SteerTurnRequest,
@@ -1274,9 +1103,6 @@ async def list_session_runtime_notices(
 
 
 @router.post("/{session_id}/runtime/notices/{notice_id}/respond", response_model=RpcResponsePayload)
-# Migration shim: old clients posted to `/interactions/{notice_id}/respond`.
-# New clients must use `/runtime/notices/{notice_id}/respond`.
-@router.post("/{session_id}/interactions/{notice_id}/respond", response_model=RpcResponsePayload)
 async def respond_interaction(
     session_id: str,
     notice_id: str,
