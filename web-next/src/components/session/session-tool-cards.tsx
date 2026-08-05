@@ -36,6 +36,8 @@ export function ToolCard({
   interaction,
   resolvingNoticeId,
   resolvingActionId,
+  open,
+  onOpenChange,
   onRespondInteraction,
 }: {
   item: TimelineItem
@@ -44,6 +46,8 @@ export function ToolCard({
   interaction?: Notice
   resolvingNoticeId: string | null
   resolvingActionId: string | null
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
   onRespondInteraction: (noticeId: string, actionId: string) => void
 }) {
   const tSession = useTranslations("dashboard.session")
@@ -54,11 +58,19 @@ export function ToolCard({
   const title = timelineToolTitle(item, tSession)
   const hasDetail = Boolean(command || output || changes.length > 0 || interaction)
   const shouldOpenForInteraction = Boolean(interaction)
-  const [open, setOpen] = React.useState(shouldOpenForInteraction)
+  const [localOpen, setLocalOpen] = React.useState(shouldOpenForInteraction)
+  const actualOpen = open ?? localOpen
+  const updateOpen = React.useCallback((nextOpen: boolean) => {
+    if (onOpenChange) {
+      onOpenChange(nextOpen)
+      return
+    }
+    setLocalOpen(nextOpen)
+  }, [onOpenChange])
 
   React.useEffect(() => {
-    if (shouldOpenForInteraction) setOpen(true)
-  }, [shouldOpenForInteraction])
+    if (shouldOpenForInteraction) updateOpen(true)
+  }, [shouldOpenForInteraction, updateOpen])
 
   if (!hasDetail) {
     return (
@@ -71,7 +83,7 @@ export function ToolCard({
   }
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen} className="min-w-0 max-w-full overflow-hidden">
+    <Collapsible open={actualOpen} onOpenChange={updateOpen} className="min-w-0 max-w-full overflow-hidden">
       <div className="flex min-w-0 max-w-full flex-col gap-2 overflow-hidden">
         <CollapsibleTrigger asChild>
           <Marker asChild className="w-full">

@@ -24,6 +24,8 @@ export function TimelineEntry({
   interaction,
   resolvingNoticeId,
   resolvingActionId,
+  toolOpen,
+  onToolOpenChange,
   onRespondInteraction,
 }: {
   token: string
@@ -32,6 +34,8 @@ export function TimelineEntry({
   interaction?: Notice
   resolvingNoticeId: string | null
   resolvingActionId: string | null
+  toolOpen?: boolean
+  onToolOpenChange?: (open: boolean) => void
   onRespondInteraction: (noticeId: string, actionId: string) => void
 }) {
   if (item.type === "turn.start" || item.type === "turn.end") return null
@@ -45,6 +49,8 @@ export function TimelineEntry({
         interaction={interaction}
         resolvingNoticeId={resolvingNoticeId}
         resolvingActionId={resolvingActionId}
+        open={toolOpen}
+        onOpenChange={onToolOpenChange}
         onRespondInteraction={onRespondInteraction}
       />
     )

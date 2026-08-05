@@ -299,6 +299,8 @@ export function SessionDetail({
   const [commandQuery, setCommandQuery] = React.useState<string | null>(null)
   const [runtimeCommands, setRuntimeCommands] = React.useState<RuntimeCommand[]>([])
   const [commandsLoading, setCommandsLoading] = React.useState(false)
+  const [timelineGroupOpenByKey, setTimelineGroupOpenByKey] = React.useState<Record<string, boolean>>({})
+  const [timelineItemOpenById, setTimelineItemOpenById] = React.useState<Record<string, boolean>>({})
   const [composerDraftState, setComposerDraftState] = React.useState<ComposerDraftState>(() => ({
     sessionId,
     value: readComposerDraft(sessionId),
@@ -324,6 +326,18 @@ export function SessionDetail({
   const isLocalOptimisticSession = isOptimisticSession(sessionId)
   const handleCommandQueryChange = React.useCallback((query: string | null) => {
     setCommandQuery(query)
+  }, [])
+  const handleTimelineGroupOpenChange = React.useCallback((key: string, open: boolean) => {
+    setTimelineGroupOpenByKey((current) => {
+      if (current[key] === open) return current
+      return { ...current, [key]: open }
+    })
+  }, [])
+  const handleTimelineItemOpenChange = React.useCallback((itemId: string, open: boolean) => {
+    setTimelineItemOpenById((current) => {
+      if (current[itemId] === open) return current
+      return { ...current, [itemId]: open }
+    })
   }, [])
 
   const handleSelectionChange = async (
@@ -380,6 +394,11 @@ export function SessionDetail({
     getOptimisticSessionStateRef.current = getOptimisticSessionState
     tSessionRef.current = tSession
   }, [applyOptimisticItems, clearResolvedOptimisticMessages, getOptimisticSessionState, tSession])
+
+  React.useEffect(() => {
+    setTimelineGroupOpenByKey({})
+    setTimelineItemOpenById({})
+  }, [sessionId])
 
   React.useEffect(() => {
     const commandMenuOpen = commandQuery !== null
@@ -1170,7 +1189,12 @@ export function SessionDetail({
             ) : null}
             {timelineGroups.map((group) =>
               group.kind === "reconnect" ? (
-                <ReconnectGroup key={group.key} group={group} />
+                <ReconnectGroup
+                  key={group.key}
+                  group={group}
+                  open={timelineGroupOpenByKey[group.key] ?? false}
+                  onOpenChange={(open) => handleTimelineGroupOpenChange(group.key, open)}
+                />
               ) : group.kind === "tool-run" ? (
                 <ToolRunGroup
                   key={group.key}
@@ -1180,6 +1204,10 @@ export function SessionDetail({
                   interactionByTarget={interactionByTarget}
                   resolvingNoticeId={resolvingNoticeId}
                   resolvingActionId={resolvingActionId}
+                  open={timelineGroupOpenByKey[group.key] ?? false}
+                  itemOpenById={timelineItemOpenById}
+                  onOpenChange={(open) => handleTimelineGroupOpenChange(group.key, open)}
+                  onItemOpenChange={handleTimelineItemOpenChange}
                   onRespondInteraction={handleRespondInteraction}
                 />
               ) : (
@@ -1191,6 +1219,8 @@ export function SessionDetail({
                   interaction={interactionByTarget.get(group.item.id)}
                   resolvingNoticeId={resolvingNoticeId}
                   resolvingActionId={resolvingActionId}
+                  toolOpen={timelineItemOpenById[group.item.id] ?? false}
+                  onToolOpenChange={(open) => handleTimelineItemOpenChange(group.item.id, open)}
                   onRespondInteraction={handleRespondInteraction}
                 />
               ),
@@ -1284,7 +1314,7 @@ export function SessionDetail({
               {takeoverTarget ? tSession("takeoverEnableTitle") : tSession("takeoverDisableTitle")}
             </DialogTitle>
             <DialogDescription asChild>
-              <ul className="list-disc space-y-1 pl-5">
+              <ul className="flex list-disc flex-col gap-1 pl-5">
                 {takeoverDescription.map((line) => (
                   <li key={line}>{line}</li>
                 ))}
@@ -1455,9 +1485,16 @@ function isToolRunBarItem(item: TimelineItem): boolean {
   return (item.content.kind ?? "artifact") !== "diff"
 }
 
-function ReconnectGroup({ group }: { group: TimelineReconnectGroup }) {
+function ReconnectGroup({
+  group,
+  open,
+  onOpenChange,
+}: {
+  group: TimelineReconnectGroup
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
   const tSession = useTranslations("dashboard.session")
-  const [open, setOpen] = React.useState(false)
   const attempts = group.items
     .map((item) => reconnectMessage(item))
     .filter((message): message is string => Boolean(message))
@@ -1471,8 +1508,8 @@ function ReconnectGroup({ group }: { group: TimelineReconnectGroup }) {
   const title = tSession("reconnectSummary", { count: group.items.length, attempts: attemptRange })
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen} className="min-w-0 max-w-full overflow-hidden">
-      <div className="min-w-0 max-w-full space-y-2 overflow-hidden">
+    <Collapsible open={open} onOpenChange={onOpenChange} className="min-w-0 max-w-full overflow-hidden">
+      <div className="flex min-w-0 max-w-full flex-col gap-2 overflow-hidden">
         <CollapsibleTrigger asChild>
           <Marker asChild className="w-full">
             <button type="button" className="text-left">
@@ -1503,6 +1540,10 @@ function ToolRunGroup({
   interactionByTarget,
   resolvingNoticeId,
   resolvingActionId,
+  open,
+  itemOpenById,
+  onOpenChange,
+  onItemOpenChange,
   onRespondInteraction,
 }: {
   group: TimelineToolRunGroup
@@ -1511,15 +1552,18 @@ function ToolRunGroup({
   interactionByTarget: Map<string | null, Notice>
   resolvingNoticeId: string | null
   resolvingActionId: string | null
+  open: boolean
+  itemOpenById: Record<string, boolean>
+  onOpenChange: (open: boolean) => void
+  onItemOpenChange: (itemId: string, open: boolean) => void
   onRespondInteraction: (noticeId: string, actionId: string) => void
 }) {
   const tSession = useTranslations("dashboard.session")
-  const [open, setOpen] = React.useState(false)
   const summary = toolRunSummary(group.items, tSession)
   const status = toolRunStatus(group.items)
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen} className="min-w-0 max-w-full overflow-hidden">
+    <Collapsible open={open} onOpenChange={onOpenChange} className="min-w-0 max-w-full overflow-hidden">
       <div className="flex min-w-0 max-w-full flex-col gap-2 overflow-hidden">
         <CollapsibleTrigger asChild>
           <Marker asChild className="w-full">
@@ -1544,6 +1588,8 @@ function ToolRunGroup({
                 interaction={interactionByTarget.get(item.id)}
                 resolvingNoticeId={resolvingNoticeId}
                 resolvingActionId={resolvingActionId}
+                toolOpen={itemOpenById[item.id] ?? false}
+                onToolOpenChange={(open) => onItemOpenChange(item.id, open)}
                 onRespondInteraction={onRespondInteraction}
               />
             ))}
