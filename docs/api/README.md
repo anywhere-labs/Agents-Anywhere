@@ -11,6 +11,7 @@ All Server HTTP, SSE, and WebSocket API documentation should live under this dir
 - [Session service architecture](./session-service-architecture.md): Server, Connector, Runtime, and Web ownership boundaries for session data and realtime updates.
 - [Effective capability API](./capabilities.md): global and session-scoped effective capability semantics, paths, and realtime events.
 - [Realtime API](./realtime.md): session, dashboard, connector, and terminal realtime channel semantics.
+- [Frontend migration checklist](./frontend-migration-checklist.md): frontend API call-site replacements and behavior changes to apply after backend cleanup.
 
 ## Current API groups
 
