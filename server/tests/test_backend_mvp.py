@@ -764,11 +764,10 @@ def test_session_state_updated_pushes_ephemeral_runtime_state(tmp_path):
             },
         )
         assert response.status_code == 200, response.text
-        event = receive_session_ws_event(ws, "session.status_changed")
+        event = receive_session_ws_event(ws, "runtime.state.updated")
 
-    assert event["type"] == "session.status_changed"
+    assert event["type"] == "runtime.state.updated"
     body = event["payload"]["state"]
-    assert event["payload"]["status"] == "running"
     assert body["status"] == "running"
     assert body["selections"] == {"model": "sel_model_runtime"}
     assert body["statusReason"] == "tool_call"
@@ -803,7 +802,7 @@ def test_session_state_updated_pushes_blocked_then_idle(tmp_path):
             },
         )
         assert response.status_code == 200, response.text
-        blocked = receive_session_ws_event(ws, "session.status_changed")
+        blocked = receive_session_ws_event(ws, "runtime.state.updated")
 
         response = client.post(
             "/connector/ingest",
@@ -823,7 +822,7 @@ def test_session_state_updated_pushes_blocked_then_idle(tmp_path):
             },
         )
         assert response.status_code == 200, response.text
-        idle = receive_session_ws_event(ws, "session.status_changed")
+        idle = receive_session_ws_event(ws, "runtime.state.updated")
 
     assert blocked["payload"]["state"]["status"] == "blocked"
     assert blocked["payload"]["state"]["metadata"]["source"] == "codex.command.compact"
@@ -6046,12 +6045,13 @@ def test_session_ws_projects_timeline_and_notice_events(tmp_path):
         )
         assert response.status_code == 200, response.text
 
-        received = [ws.receive_json() for _ in range(4)]
+        received = [ws.receive_json() for _ in range(5)]
         event_types = {event["type"] for event in received}
         assert "timeline.item_created" in event_types
         assert "session.status_changed" in event_types
         assert "runtime.capability.updated" in event_types
         assert "notice.snapshot" in event_types
+        assert "runtime.notice.snapshot" in event_types
         session_event = next(
             event for event in received if event["type"] == "session.status_changed"
         )

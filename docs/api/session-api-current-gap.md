@@ -80,9 +80,9 @@ Current backend state:
 | `timeline.item_created` | exists | Keep. Must be emitted for ingest and connector WS timeline upserts. |
 | `timeline.item_updated` | exists | Keep. Must be emitted for content-hash changes. |
 | `timeline.snapshot` | exists | Keep only for explicit snapshot/recovery cases. |
-| `runtime.state.updated` | partially implemented through compatibility `session.status_changed` payloads | Migrate session runtime state pushes to `runtime.state.updated`. |
-| `runtime.notice.snapshot` | current event names are `notice.snapshot` / `notice.updated` | Rename or map to runtime namespace. Notices remain non-durable. |
-| `runtime.notice.updated` | current event names are `notice.*` | Rename or map to runtime namespace. |
+| `runtime.state.updated` | exists for connector invalidation pushes; compatibility `session.status_changed` still carries state during migration | Frontend should migrate to this event as the runtime state truth. |
+| `runtime.notice.snapshot` | exists for connector invalidation pushes; compatibility `notice.snapshot` remains during migration | Frontend should migrate to this event. Notices remain non-durable runtime truth. |
+| `runtime.notice.updated` | exists for connector invalidation pushes; compatibility `notice.created` / `notice.updated` remain during migration | Frontend should migrate to this event. Notices remain non-durable runtime truth. |
 | `runtime.capability.updated` | exists for session WS capability projections; compatibility `effectiveCapabilities` remains on `session.status_changed` | Keep while frontend migrates to the explicit runtime event. |
 | `runtime.catalog.updated` | not clearly implemented | Add only if runtime pushes catalog changes; otherwise live reads are sufficient. |
 | `runtime.refetch_required` | not clearly implemented | Add for missed runtime live facts; Web should call the relevant runtime endpoint. |

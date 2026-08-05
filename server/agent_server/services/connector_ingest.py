@@ -230,10 +230,10 @@ class ConnectorIngestService:
                 try:
                     session = await self._store.get_session(session_id)
                     runtime_state = bucket["runtime_state"]
-                    if isinstance(runtime_state, dict):
-                        status = runtime_state.get("status")
-                        if isinstance(status, str):
-                            session = session.model_copy(update={"status": status})
+                    if isinstance(runtime_state, SessionRuntimeState):
+                        session = session.model_copy(
+                            update={"status": runtime_state.status}
+                        )
                     session, _runtime_capabilities, effective_capabilities = (
                         await project_session_capabilities(
                             self._store,

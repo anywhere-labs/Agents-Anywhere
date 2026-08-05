@@ -105,10 +105,22 @@ def events_from_invalidation(payload: dict[str, Any]) -> list[ProtocolEventEnvel
     else:
         events = timeline_events_from_items(session_id, items)
 
+    runtime_state = payload.get("runtimeState")
+    if isinstance(runtime_state, dict):
+        sequence = int(runtime_state.get("updatedSeq") or next_sequence or 0)
+        if sequence >= 0:
+            events.append(
+                protocol_event(
+                    session_id,
+                    sequence=sequence,
+                    event_type="runtime.state.updated",
+                    payload={"state": runtime_state},
+                )
+            )
+
     session = payload.get("session")
     if isinstance(session, dict):
         sequence = int(session.get("updatedSeq") or next_sequence or 0)
-        runtime_state = payload.get("runtimeState")
         if sequence > 0 or isinstance(runtime_state, dict):
             if isinstance(runtime_state, dict):
                 runtime_status = runtime_state.get("status")
@@ -149,12 +161,21 @@ def events_from_invalidation(payload: dict[str, Any]) -> list[ProtocolEventEnvel
     notices = payload.get("notices")
     if isinstance(notices, list):
         if payload.get("noticesReset") and next_sequence > 0:
+            snapshot_payload = {"notices": notices}
             events.append(
                 protocol_event(
                     session_id,
                     sequence=next_sequence,
                     event_type="notice.snapshot",
-                    payload={"notices": notices},
+                    payload=snapshot_payload,
+                )
+            )
+            events.append(
+                protocol_event(
+                    session_id,
+                    sequence=next_sequence,
+                    event_type="runtime.notice.snapshot",
+                    payload=snapshot_payload,
                 )
             )
         else:
@@ -170,12 +191,21 @@ def events_from_invalidation(payload: dict[str, Any]) -> list[ProtocolEventEnvel
                     if status == "open" and int(notice.get("revision") or 1) == 1
                     else "notice.updated"
                 )
+                notice_payload = {"notice": notice}
                 events.append(
                     protocol_event(
                         session_id,
                         sequence=sequence,
                         event_type=event_type,
-                        payload={"notice": notice},
+                        payload=notice_payload,
+                    )
+                )
+                events.append(
+                    protocol_event(
+                        session_id,
+                        sequence=sequence,
+                        event_type="runtime.notice.updated",
+                        payload=notice_payload,
                     )
                 )
 
