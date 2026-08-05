@@ -62,6 +62,7 @@ from agent_server.deps import (
     get_interaction_service,
     get_rpc,
     get_session_run_service,
+    get_session_runtime_state_cache,
     get_store,
     get_timeline_broker,
 )
@@ -82,7 +83,9 @@ from agent_server.services.device_runtimes import (
     DeviceRuntimeError,
     DeviceRuntimeService,
 )
-from agent_server.services.effective_capabilities import project_session_capabilities
+from agent_server.services.effective_capabilities import (
+    derive_session_effective_capabilities,
+)
 from agent_server.services.event_recovery import EventRecoveryService
 from agent_server.services.interactions import (
     InteractionService,
@@ -90,6 +93,7 @@ from agent_server.services.interactions import (
 )
 from agent_server.services.notices import pending_approvals_from_notices
 from agent_server.services.session_run import SessionRunError, SessionRunService
+from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -116,6 +120,7 @@ async def _publish_session_protocol_update(
     db: Store,
     broker: TimelineBroker,
     manager: ConnectorRpcManager,
+    runtime_state_cache: SessionRuntimeStateCache,
     session_id: str,
     *,
     extra_notices: list[Any] | None = None,
@@ -133,16 +138,21 @@ async def _publish_session_protocol_update(
     runtime_state = await read_runtime_state_live(
         db,
         manager,
+        runtime_state_cache,
         session,
-        user_id=None,
+        None,
     )
     session = session_with_runtime_state(session, runtime_state)
-    session, _runtime_capabilities, effective_capabilities = (
-        await project_session_capabilities(
-            db,
-            manager,
-            session,
-        )
+    session = await with_effective_session_connector_status(manager, session)
+    runtime_capabilities = await read_session_capabilities_with_fallback(
+        db,
+        manager,
+        session,
+        None,
+    )
+    effective_capabilities = derive_session_effective_capabilities(
+        session=session,
+        runtime_capabilities=runtime_capabilities,
     )
     envelope: dict[str, Any] = {
         "sessionId": session_id,
@@ -159,13 +169,20 @@ async def _best_effort_publish_session_protocol_update(
     db: Store,
     broker: TimelineBroker,
     manager: ConnectorRpcManager,
+    runtime_state_cache: SessionRuntimeStateCache,
     session_id: str,
     *,
     user_id: str | None,
 ) -> None:
     try:
         await db.get_session(session_id, user_id=user_id)
-        await _publish_session_protocol_update(db, broker, manager, session_id)
+        await _publish_session_protocol_update(
+            db,
+            broker,
+            manager,
+            runtime_state_cache,
+            session_id,
+        )
     except Exception:
         return
 
@@ -174,6 +191,7 @@ async def _publish_session_protocol_changes_since(
     db: Store,
     broker: TimelineBroker,
     manager: ConnectorRpcManager,
+    runtime_state_cache: SessionRuntimeStateCache,
     session_id: str,
     before_seq: int,
 ) -> None:
@@ -181,6 +199,7 @@ async def _publish_session_protocol_changes_since(
         db,
         broker,
         manager,
+        runtime_state_cache,
         session_id,
         extra_notices=await db.list_notices_since(session_id, before_seq),
     )
@@ -224,6 +243,9 @@ async def create_and_start_session(
     manager: ConnectorRpcManager = Depends(get_rpc),
     db: Store = Depends(get_store),
     broker: TimelineBroker = Depends(get_timeline_broker),
+    runtime_state_cache: SessionRuntimeStateCache = Depends(
+        get_session_runtime_state_cache
+    ),
 ) -> dict[str, Any]:
     try:
         result = await run_service.create_and_start_session(payload, user_id=user_id)
@@ -243,7 +265,13 @@ async def create_and_start_session(
             session_id=session.id,
             reason="session.create-and-start",
         )
-        await _publish_session_protocol_update(db, broker, manager, session.id)
+        await _publish_session_protocol_update(
+            db,
+            broker,
+            manager,
+            runtime_state_cache,
+            session.id,
+        )
     return result
 
 
@@ -440,14 +468,18 @@ async def session_runtime_state(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
+    runtime_state_cache: SessionRuntimeStateCache = Depends(
+        get_session_runtime_state_cache
+    ),
 ) -> SessionRuntimeStateResponse:
     try:
         session = await db.get_session(session_id, user_id=user_id)
         state = await read_runtime_state_live(
             db,
             manager,
+            runtime_state_cache,
             session,
-            user_id=user_id,
+            user_id,
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
@@ -465,7 +497,15 @@ async def session_runtime_capabilities(
         session = await db.get_session(session_id, user_id=user_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
-    capability_set = await read_session_capabilities_from_connector(manager, session)
+    session = await with_effective_session_connector_status(manager, session)
+    runtime_capabilities = await read_session_capabilities_from_connector(
+        manager,
+        session,
+    )
+    capability_set = derive_session_effective_capabilities(
+        session=session,
+        runtime_capabilities=runtime_capabilities,
+    )
     return ProtocolCapabilitiesResponse(
         connectorId=session.connectorId,
         capabilitySet=capability_set,
@@ -483,6 +523,9 @@ async def patch_session_selections(
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
     broker: TimelineBroker = Depends(get_timeline_broker),
+    runtime_state_cache: SessionRuntimeStateCache = Depends(
+        get_session_runtime_state_cache
+    ),
 ) -> SessionSelectionPatchResponse:
     try:
         state, connector_result = await run_service.update_session_selections(
@@ -496,6 +539,7 @@ async def patch_session_selections(
         db,
         broker,
         manager,
+        runtime_state_cache,
         session_id,
         user_id=user_id,
     )
@@ -517,6 +561,9 @@ async def session_state(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
+    runtime_state_cache: SessionRuntimeStateCache = Depends(
+        get_session_runtime_state_cache
+    ),
 ) -> SessionStateResponse:
     try:
         session = await db.get_session(session_id, user_id=user_id)
@@ -540,8 +587,9 @@ async def session_state(
         runtime_state = await read_runtime_state_live(
             db,
             manager,
+            runtime_state_cache,
             session,
-            user_id=user_id,
+            user_id,
         )
         session = session_with_runtime_state(session, runtime_state)
         next_seq = await db.get_session_seq(session_id)
@@ -565,34 +613,33 @@ async def session_snapshot(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
+    runtime_state_cache: SessionRuntimeStateCache = Depends(
+        get_session_runtime_state_cache
+    ),
 ) -> ProtocolSessionSnapshotResponse:
     try:
         session = await db.get_session(session_id, user_id=user_id)
-        session, runtime_capabilities, effective_capabilities = (
-            await project_session_capabilities(
-                db,
-                manager,
-                session,
-                user_id=user_id,
-            )
-        )
         items, has_more = await db.list_timeline_latest(session_id=session_id, limit=limit)
         notices = await db.list_open_notices(session_id)
         approvals = pending_approvals_from_notices(notices)
         runtime_state = await read_runtime_state_live(
             db,
             manager,
+            runtime_state_cache,
             session,
-            user_id=user_id,
+            user_id,
         )
         session = session_with_runtime_state(session, runtime_state)
-        _, _runtime_capabilities, effective_capabilities = (
-            await project_session_capabilities(
-                db,
-                manager,
-                session,
-                user_id=user_id,
-            )
+        session = await with_effective_session_connector_status(manager, session)
+        runtime_capabilities = await read_session_capabilities_with_fallback(
+            db,
+            manager,
+            session,
+            user_id,
+        )
+        effective_capabilities = derive_session_effective_capabilities(
+            session=session,
+            runtime_capabilities=runtime_capabilities,
         )
         next_seq = await db.get_session_seq(session_id)
     except KeyError:
@@ -731,11 +778,20 @@ async def enable_takeover(
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
     broker: TimelineBroker = Depends(get_timeline_broker),
+    runtime_state_cache: SessionRuntimeStateCache = Depends(
+        get_session_runtime_state_cache
+    ),
 ) -> TakeoverResponse:
     try:
         await db.get_session(session_id, user_id=user_id)
         session = await db.set_takeover(session_id, True)
-        await _publish_session_protocol_update(db, broker, manager, session_id)
+        await _publish_session_protocol_update(
+            db,
+            broker,
+            manager,
+            runtime_state_cache,
+            session_id,
+        )
         return TakeoverResponse(
             session=await with_effective_session_connector_status(manager, session)
         )
@@ -750,11 +806,20 @@ async def disable_takeover(
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
     broker: TimelineBroker = Depends(get_timeline_broker),
+    runtime_state_cache: SessionRuntimeStateCache = Depends(
+        get_session_runtime_state_cache
+    ),
 ) -> TakeoverResponse:
     try:
         await db.get_session(session_id, user_id=user_id)
         session = await db.set_takeover(session_id, False)
-        await _publish_session_protocol_update(db, broker, manager, session_id)
+        await _publish_session_protocol_update(
+            db,
+            broker,
+            manager,
+            runtime_state_cache,
+            session_id,
+        )
         return TakeoverResponse(
             session=await with_effective_session_connector_status(manager, session)
         )
@@ -919,16 +984,26 @@ async def send_message(
     db: Store = Depends(get_store),
     broker: TimelineBroker = Depends(get_timeline_broker),
     manager: ConnectorRpcManager = Depends(get_rpc),
+    runtime_state_cache: SessionRuntimeStateCache = Depends(
+        get_session_runtime_state_cache
+    ),
 ) -> RpcResponsePayload:
     try:
         result = await run_service.send_message(session_id, payload, user_id=user_id)
-        await _publish_session_protocol_update(db, broker, manager, session_id)
+        await _publish_session_protocol_update(
+            db,
+            broker,
+            manager,
+            runtime_state_cache,
+            session_id,
+        )
         return result
     except SessionRunError as exc:
         await _best_effort_publish_session_protocol_update(
             db,
             broker,
             manager,
+            runtime_state_cache,
             session_id,
             user_id=user_id,
         )
@@ -944,6 +1019,9 @@ async def interrupt_session(
     db: Store = Depends(get_store),
     broker: TimelineBroker = Depends(get_timeline_broker),
     manager: ConnectorRpcManager = Depends(get_rpc),
+    runtime_state_cache: SessionRuntimeStateCache = Depends(
+        get_session_runtime_state_cache
+    ),
 ) -> RpcResponsePayload:
     try:
         before_seq = await db.get_session_seq(session_id)
@@ -952,6 +1030,7 @@ async def interrupt_session(
             db,
             broker,
             manager,
+            runtime_state_cache,
             session_id,
             before_seq,
         )
@@ -961,6 +1040,7 @@ async def interrupt_session(
             db,
             broker,
             manager,
+            runtime_state_cache,
             session_id,
             user_id=user_id,
         )
@@ -977,6 +1057,9 @@ async def steer_session(
     db: Store = Depends(get_store),
     broker: TimelineBroker = Depends(get_timeline_broker),
     manager: ConnectorRpcManager = Depends(get_rpc),
+    runtime_state_cache: SessionRuntimeStateCache = Depends(
+        get_session_runtime_state_cache
+    ),
 ) -> RpcResponsePayload:
     try:
         result = await run_service.steer_session(
@@ -984,13 +1067,20 @@ async def steer_session(
             payload,
             user_id=user_id,
         )
-        await _publish_session_protocol_update(db, broker, manager, session_id)
+        await _publish_session_protocol_update(
+            db,
+            broker,
+            manager,
+            runtime_state_cache,
+            session_id,
+        )
         return result
     except SessionRunError as exc:
         await _best_effort_publish_session_protocol_update(
             db,
             broker,
             manager,
+            runtime_state_cache,
             session_id,
             user_id=user_id,
         )
@@ -1026,6 +1116,9 @@ async def respond_interaction(
     broker: TimelineBroker = Depends(get_timeline_broker),
     manager: ConnectorRpcManager = Depends(get_rpc),
     interaction_service: InteractionService = Depends(get_interaction_service),
+    runtime_state_cache: SessionRuntimeStateCache = Depends(
+        get_session_runtime_state_cache
+    ),
 ) -> RpcResponsePayload:
     try:
         before_seq = await db.get_session_seq(session_id)
@@ -1045,6 +1138,7 @@ async def respond_interaction(
                 db,
                 broker,
                 manager,
+                runtime_state_cache,
                 session_id,
                 before_seq,
             )
@@ -1053,6 +1147,7 @@ async def respond_interaction(
         db,
         broker,
         manager,
+        runtime_state_cache,
         session_id,
         before_seq,
     )
@@ -1104,8 +1199,8 @@ async def sync_session(
 async def read_runtime_state_live(
     db: Store,
     manager: ConnectorRpcManager,
+    runtime_state_cache: SessionRuntimeStateCache,
     session: SessionView,
-    *,
     user_id: str | None,
 ) -> SessionRuntimeState:
     """Read the latest runtime-owned session state.
@@ -1118,8 +1213,36 @@ async def read_runtime_state_live(
     if await manager.is_online(session.connectorId):
         state = await read_runtime_state_from_connector(manager, session)
         if state is not None:
+            await runtime_state_cache.put(state)
             return state
+    cached_state = await runtime_state_cache.get(session.id)
+    if cached_state is not None:
+        return cached_state
     return await db.get_session_runtime_state(session.id, user_id=user_id)
+
+
+async def read_session_capabilities_with_fallback(
+    db: Store,
+    manager: ConnectorRpcManager,
+    session: SessionView,
+    user_id: str | None,
+) -> ProtocolCapabilitySet:
+    """Read the latest session capability facts when possible.
+
+    Side effects:
+    - may perform connector RPC to the owning runtime;
+    - falls back to persisted capability notifications for best-effort
+      snapshot and WebSocket publish paths.
+    """
+
+    if await manager.is_online(session.connectorId):
+        try:
+            return await read_session_capabilities_from_connector(manager, session)
+        except HTTPException:
+            pass
+    return ProtocolCapabilitySet.model_validate(
+        await db.get_protocol_capabilities(session.connectorId, user_id=user_id)
+    )
 
 
 async def read_runtime_state_from_connector(

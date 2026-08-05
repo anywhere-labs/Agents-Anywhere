@@ -24,6 +24,7 @@ from agent_server.services.interactions import (
     InteractionService,
 )
 from agent_server.services.session_run import SessionRunService
+from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 from agent_server.services.terminal import TerminalService
 
 
@@ -58,6 +59,7 @@ def get_connector_ingest_service(conn: HTTPConnection) -> ConnectorIngestService
         conn.app.state.timeline_broker,
         conn.app.state.device_runtime_service,
         conn.app.state.rpc,
+        conn.app.state.session_runtime_state_cache,
     )
 
 
@@ -109,6 +111,12 @@ def get_fs_downloads(conn: HTTPConnection) -> FsDownloadRelayManager:
 
 def get_timeline_broker(conn: HTTPConnection) -> TimelineBroker:
     return conn.app.state.timeline_broker
+
+
+def get_session_runtime_state_cache(
+    conn: HTTPConnection,
+) -> SessionRuntimeStateCache:
+    return conn.app.state.session_runtime_state_cache
 
 
 def current_user_id(

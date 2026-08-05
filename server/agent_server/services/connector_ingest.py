@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent_server.core.models import ConnectorIngestRequest, ConnectorIngestResponse
+from agent_server.core.models import (
+    ConnectorIngestRequest,
+    ConnectorIngestResponse,
+    SessionRuntimeState,
+)
 from agent_server.core.utc import utc_now
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.services.connector_notifications import ConnectorNotificationService
@@ -19,6 +23,7 @@ from agent_server.services.effective_capabilities import (
 from agent_server.services.ingest_effects import IngestEffect
 from agent_server.services.notices import pending_approvals_from_notices
 from agent_server.services.repository_ports import ConnectorIngestRepository
+from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 
 
 class ConnectorIngestService:
@@ -29,12 +34,14 @@ class ConnectorIngestService:
         timeline_broker: TimelineBroker,
         device_runtimes: DeviceRuntimeService,
         presence: ConnectorPresencePort,
+        runtime_state_cache: SessionRuntimeStateCache,
     ) -> None:
         self._store = store
         self._notifications = notifications
         self._timeline_broker = timeline_broker
         self._device_runtimes = device_runtimes
         self._presence = presence
+        self._runtime_state_cache = runtime_state_cache
 
     async def ingest(
         self,
@@ -174,7 +181,13 @@ class ConnectorIngestService:
             if bucket["items"]:
                 envelope["items"] = bucket["items"]
             if bucket["runtime_state"]:
-                envelope["runtimeState"] = bucket["runtime_state"]
+                runtime_state = runtime_state_from_ingest_effect(
+                    session_id,
+                    next_seq,
+                    bucket["runtime_state"],
+                )
+                await self._runtime_state_cache.put(runtime_state)
+                envelope["runtimeState"] = runtime_state.model_dump(mode="json")
             if bucket["session"]:
                 try:
                     session = await self._store.get_session(session_id)
@@ -216,7 +229,6 @@ class ConnectorIngestService:
                 session_id=session_id,
                 reason="session.changed",
             )
-
     async def _apply_runtime_status(self, connector_id: str, params: dict) -> None:
         runtime_id = params.get("runtimeId")
         status = params.get("status")
@@ -238,3 +250,32 @@ class ConnectorIngestService:
             # reconnect. Inventory is the source that creates runtime rows; a
             # pre-inventory status must not tear down the connector WebSocket.
             return
+
+
+def runtime_state_from_ingest_effect(
+    session_id: str,
+    next_seq: int,
+    raw_state: dict[str, Any],
+) -> SessionRuntimeState:
+    now = utc_now()
+    return SessionRuntimeState.model_validate(
+        {
+            "sessionId": raw_state.get("sessionId") or session_id,
+            "runtime": raw_state.get("runtime") or "codex",
+            "externalSessionId": raw_state.get("externalSessionId"),
+            "status": raw_state.get("status") or "idle",
+            "selections": raw_state.get("selections")
+            if isinstance(raw_state.get("selections"), dict)
+            else {},
+            "statusReason": raw_state.get("statusReason"),
+            "error": raw_state.get("error")
+            if isinstance(raw_state.get("error"), dict)
+            else None,
+            "metadata": raw_state.get("metadata")
+            if isinstance(raw_state.get("metadata"), dict)
+            else {},
+            "updatedSeq": next_seq,
+            "createdAt": now,
+            "updatedAt": now,
+        }
+    )

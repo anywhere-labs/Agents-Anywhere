@@ -221,6 +221,7 @@ def test_pre_inventory_runtime_status_does_not_disconnect_connector(tmp_path):
         app.state.timeline_broker,
         app.state.device_runtime_service,
         app.state.rpc,
+        app.state.session_runtime_state_cache,
     )
 
     asyncio.run(

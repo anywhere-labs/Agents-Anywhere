@@ -467,7 +467,10 @@ def test_session_create_and_start_preallocates_session_and_passes_selections(tmp
     session = body["session"]
     assert session["takeover"] is True
     assert session["externalSessionId"] == "thr_create_and_start"
-    assert fake_rpc.requests == [
+    create_requests = [
+        request for request in fake_rpc.requests if request[0] == "session.create"
+    ]
+    assert create_requests == [
         (
             "session.create",
             {
@@ -772,7 +775,7 @@ def test_session_state_updated_pushes_ephemeral_runtime_state(tmp_path):
     assert body["metadata"] == {"phase": "tool"}
     state = client.get(f"/sessions/{session_id}/runtime-state", headers=headers)
     assert state.status_code == 200, state.text
-    assert state.json()["state"]["status"] == "idle"
+    assert state.json()["state"]["status"] == "running"
 
 
 def test_session_state_updated_pushes_blocked_then_idle(tmp_path):
@@ -1106,6 +1109,12 @@ class FakeLocalRpc:
                 ]
             }
         if method == "session.capabilities":
+            session_id = params["sessionId"]
+            runtime_state = self.runtime_states.get(session_id)
+            runtime_status = "idle"
+            if runtime_state is not None:
+                runtime_status = runtime_state.get("status") or "idle"
+            session_is_running = runtime_status == "running"
             return {
                 "capabilitySet": {
                     "revision": 11,
@@ -1115,13 +1124,85 @@ class FakeLocalRpc:
                             "version": "1",
                             "scope": "session",
                             "runtime": params["runtime"],
-                            "sessionId": params["sessionId"],
+                            "sessionId": session_id,
+                            "supported": True,
+                            "available": not session_is_running,
+                            "allowed": True,
+                            "unavailableReason": (
+                                "runtime_turn_running"
+                                if session_is_running
+                                else None
+                            ),
+                            "parameters": {},
+                        },
+                        {
+                            "capabilityId": "session.interrupt",
+                            "version": "1",
+                            "scope": "session",
+                            "runtime": params["runtime"],
+                            "sessionId": session_id,
+                            "supported": True,
+                            "available": session_is_running,
+                            "allowed": True,
+                            "unavailableReason": (
+                                None
+                                if session_is_running
+                                else "session_not_interruptible"
+                            ),
+                            "parameters": {},
+                        },
+                        {
+                            "capabilityId": "session.steer",
+                            "version": "1",
+                            "scope": "session",
+                            "runtime": params["runtime"],
+                            "sessionId": session_id,
+                            "supported": True,
+                            "available": session_is_running,
+                            "allowed": True,
+                            "unavailableReason": (
+                                None
+                                if session_is_running
+                                else "session_not_running"
+                            ),
+                            "parameters": {},
+                        },
+                        {
+                            "capabilityId": "catalog.model",
+                            "version": "1",
+                            "scope": "runtime",
+                            "runtime": params["runtime"],
+                            "sessionId": None,
                             "supported": True,
                             "available": True,
                             "allowed": True,
                             "unavailableReason": None,
                             "parameters": {},
-                        }
+                        },
+                        {
+                            "capabilityId": "catalog.permission",
+                            "version": "1",
+                            "scope": "runtime",
+                            "runtime": params["runtime"],
+                            "sessionId": None,
+                            "supported": True,
+                            "available": True,
+                            "allowed": True,
+                            "unavailableReason": None,
+                            "parameters": {},
+                        },
+                        {
+                            "capabilityId": "catalog.effort",
+                            "version": "1",
+                            "scope": "runtime",
+                            "runtime": params["runtime"],
+                            "sessionId": None,
+                            "supported": True,
+                            "available": True,
+                            "allowed": True,
+                            "unavailableReason": None,
+                            "parameters": {},
+                        },
                     ],
                 }
             }
@@ -1900,7 +1981,9 @@ def test_session_state_supports_latest_and_before_timeline_windows(tmp_path):
         assert oldest["hasMore"] is False
 
 
-def test_session_status_uses_runtime_observation_until_turn_ledger_arrives(tmp_path):
+def test_session_state_update_drives_runtime_status_independently_from_timeline(
+    tmp_path,
+):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
 
@@ -1911,8 +1994,15 @@ def test_session_status_uses_runtime_observation_until_turn_ledger_arrives(tmp_p
         ws.send_json(
             {
                 "type": "notification",
-                "method": "session.updated",
-                "params": {"sessionId": session_id, "status": "running"},
+                "method": "session.state.updated",
+                "params": {
+                    "sessionId": session_id,
+                    "runtime": "codex",
+                    "externalSessionId": "thr_1",
+                    "status": "running",
+                    "selections": {},
+                    "metadata": {},
+                },
             }
         )
         state = wait_for_state(
@@ -1980,6 +2070,20 @@ def test_session_status_uses_runtime_observation_until_turn_ledger_arrives(tmp_p
                         "orderSeq": 2,
                         "contentHash": "sha256:end",
                     },
+                },
+            }
+        )
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "session.state.updated",
+                "params": {
+                    "sessionId": session_id,
+                    "runtime": "codex",
+                    "externalSessionId": "thr_1",
+                    "status": "idle",
+                    "selections": {},
+                    "metadata": {},
                 },
             }
         )
@@ -2934,7 +3038,7 @@ def test_session_snapshot_includes_effective_capabilities(tmp_path):
     idle_snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
     assert idle_snapshot.status_code == 200, idle_snapshot.text
     idle_body = idle_snapshot.json()
-    assert idle_body["runtimeCapabilities"]["revision"] == 3
+    assert idle_body["runtimeCapabilities"]["revision"] == 11
     assert idle_body["state"]["status"] == "idle"
     assert idle_body["state"]["selections"] == {}
     idle_caps = {
@@ -2942,12 +3046,14 @@ def test_session_snapshot_includes_effective_capabilities(tmp_path):
     }
     assert idle_caps["session.send_message"]["available"] is True
     assert idle_caps["session.interrupt"]["available"] is False
-    assert idle_caps["session.interrupt"]["unavailableReason"] == "session_not_interruptible"
+    assert idle_caps["session.interrupt"]["unavailableReason"] == "session_not_taken_over"
     assert idle_caps["session.steer"]["available"] is False
     assert idle_caps["catalog.model"]["available"] is True
     assert idle_body["catalogs"] == {}
     assert idle_body["eventCursor"].startswith("seq:")
 
+    takeover = client.post(f"/sessions/{session_id}/takeover", headers=headers)
+    assert takeover.status_code == 200, takeover.text
     fake_rpc.runtime_states[session_id] = {
         "sessionId": session_id,
         "runtime": "codex",
@@ -2969,7 +3075,7 @@ def test_session_snapshot_includes_effective_capabilities(tmp_path):
         for item in running_snapshot.json()["effectiveCapabilities"]["capabilities"]
     }
     assert running_caps["session.send_message"]["available"] is False
-    assert running_caps["session.send_message"]["unavailableReason"] == "session_not_idle"
+    assert running_caps["session.send_message"]["unavailableReason"] == "runtime_turn_running"
     assert running_caps["session.interrupt"]["available"] is True
     assert running_caps["session.steer"]["available"] is True
 
@@ -3244,11 +3350,13 @@ def test_send_message_forwards_client_message_id_to_connector(tmp_path):
     )
 
     assert response.status_code == 200, response.text
-    params = fake_rpc.requests[-1][2]
+    params = wait_for_rpc_method(fake_rpc, "turn.start")[2]
     assert params["clientMessageId"] == "opt_abc"
 
 
-def test_blocking_error_interaction_must_be_resolved_before_send(tmp_path):
+def test_stored_execution_error_notice_does_not_override_runtime_send_capability(
+    tmp_path,
+):
     client = make_client(tmp_path)
     connector_id, _, session_id, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
@@ -3269,29 +3377,15 @@ def test_blocking_error_interaction_must_be_resolved_before_send(tmp_path):
         json={"content": "try again"},
     )
 
-    assert response.status_code == 409
-    assert fake_rpc.requests == []
-    unblock = client.post(
-        f"/sessions/{session_id}/interactions/{notice.noticeId}/respond",
-        headers=headers,
-        json={"actionId": "continue"},
-    )
-    assert unblock.status_code == 200, unblock.text
-    response = client.post(
-        f"/sessions/{session_id}/messages",
-        headers=headers,
-        json={"content": "try again"},
-    )
     assert response.status_code == 200, response.text
-    assert fake_rpc.requests[-1][1] == "turn.start"
-    assert fake_rpc.requests[-1][2]["content"] == "try again"
-    session = asyncio.run(
-        client.app.state.store.get_session(
-            session_id,
-            user_id=ADMIN_USER,
-        ),
-    )
-    assert session.status == "waiting"
+    turn_start_params = wait_for_rpc_method(fake_rpc, "turn.start")[2]
+    assert turn_start_params["content"] == "try again"
+    assert asyncio.run(
+        client.app.state.store.get_notice(notice.noticeId)
+    ).status == "open"
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
+    assert snapshot.status_code == 200, snapshot.text
+    assert snapshot.json()["session"]["status"] == "idle"
 
 
 def test_send_message_forwards_uploaded_attachment_metadata_to_connector(tmp_path):
@@ -3321,7 +3415,7 @@ def test_send_message_forwards_uploaded_attachment_metadata_to_connector(tmp_pat
     )
 
     assert response.status_code == 200, response.text
-    params = fake_rpc.requests[-1][2]
+    params = wait_for_rpc_method(fake_rpc, "turn.start")[2]
     assert params["attachments"] == [
         {
             "fileId": attachment["fileId"],
@@ -3434,7 +3528,7 @@ def test_send_message_omits_unspecified_overrides(tmp_path):
     )
 
     assert response.status_code == 200
-    params = fake_rpc.requests[-1][2]
+    params = wait_for_rpc_method(fake_rpc, "turn.start")[2]
     for key in ("permissionMode", "model", "effort", "approvalPolicy", "sandboxPolicy"):
         assert key not in params
 
@@ -3536,9 +3630,7 @@ def test_send_message_carries_runtime_for_codex_session(tmp_path):
         json={"content": "hi"},
     )
     assert response.status_code == 200
-    params = next(
-        request[2] for request in fake_rpc.requests if request[1] == "interaction.respond"
-    )
+    params = wait_for_rpc_method(fake_rpc, "turn.start")[2]
     assert params["runtime"] == "codex"
 
 
@@ -3555,7 +3647,7 @@ def test_send_message_carries_runtime_for_claude_session(tmp_path):
         json={"content": "hi"},
     )
     assert response.status_code == 200, response.text
-    params = fake_rpc.requests[-1][2]
+    params = wait_for_rpc_method(fake_rpc, "turn.start")[2]
     assert params["runtime"] == "claude"
     assert params["cwd"] == "/repo"
 
@@ -3571,14 +3663,12 @@ def test_interrupt_and_sync_carry_runtime(tmp_path):
     _ingest_open_turn(client, access_token, session_id, turn_id="turn_claude_1")
 
     client.post(f"/sessions/{session_id}/interrupt", headers=headers).raise_for_status()
-    interrupt_params = fake_rpc.requests[-1][2]
-    assert fake_rpc.requests[-1][1] == "turn.interrupt"
+    interrupt_params = wait_for_rpc_method(fake_rpc, "turn.interrupt")[2]
     assert interrupt_params["runtime"] == "claude"
     assert interrupt_params["turnId"] == "turn_claude_1"
 
     client.post(f"/sessions/{session_id}/sync", headers=headers).raise_for_status()
-    sync_params = fake_rpc.requests[-1][2]
-    assert fake_rpc.requests[-1][1] == "session.sync"
+    sync_params = wait_for_rpc_method(fake_rpc, "session.sync")[2]
     assert sync_params["runtime"] == "claude"
 
 
@@ -3600,8 +3690,7 @@ def test_steer_routes_to_active_codex_turn_without_changing_run_state(tmp_path):
     )
 
     assert response.status_code == 200, response.text
-    assert fake_rpc.requests[-1][1] == "turn.steer"
-    params = fake_rpc.requests[-1][2]
+    params = wait_for_rpc_method(fake_rpc, "turn.steer")[2]
     external_session_id = asyncio.run(
         client.app.state.store.get_session(session_id)
     ).externalSessionId
@@ -4967,7 +5056,7 @@ def test_connector_ingest_maps_local_hidden_session_meta(tmp_path):
     assert state.json()["session"]["archived"] is True
 
 
-def test_connector_http_ingest_accepts_status_update_before_external_id(tmp_path):
+def test_connector_http_ingest_accepts_state_update_before_external_id(tmp_path):
     client = make_client(tmp_path)
     _, access_token, _, headers = create_connector_and_session(client)
 
@@ -4977,12 +5066,14 @@ def test_connector_http_ingest_accepts_status_update_before_external_id(tmp_path
         json={
             "notifications": [
                 {
-                    "method": "session.updated",
+                    "method": "session.state.updated",
                     "params": {
                         "sessionId": "sess_codex_out_of_order",
                         "runtime": "codex",
+                        "externalSessionId": None,
                         "status": "running",
-                        "sourceObservedAt": "2027-05-20T12:00:00Z",
+                        "selections": {},
+                        "metadata": {},
                     },
                 },
                 {
@@ -6723,7 +6814,8 @@ def test_interaction_respond_keeps_pending_when_connector_fails(tmp_path):
     snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers).json()
     approval_notice = next(notice for notice in snapshot["notices"] if notice["interactionType"] == "approval")
     assert approval_notice["status"] == "failed"
-    assert snapshot["session"]["status"] == "blocked"
+    assert approval_notice["blocking"] == {"scope": "session", "targetId": session_id}
+    assert snapshot["session"]["status"] == "idle"
 
 
 def test_approval_interaction_expires_when_runtime_no_longer_accepts_response(tmp_path):
@@ -6848,7 +6940,7 @@ def test_session_stays_blocked_until_all_blocking_interactions_resolve(tmp_path)
 
     assert response.status_code == 200, response.text
     snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers).json()
-    assert snapshot["session"]["status"] == "blocked"
+    assert snapshot["session"]["status"] == "idle"
     assert [notice["interactionType"] for notice in snapshot["notices"]] == ["approval"]
 
 
@@ -6945,7 +7037,7 @@ def test_failed_turn_creates_blocking_execution_error_interaction(tmp_path):
 
     assert response.status_code == 200, response.text
     snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers).json()
-    assert snapshot["session"]["status"] == "blocked"
+    assert snapshot["session"]["status"] == "idle"
     notice = next(notice for notice in snapshot["notices"] if notice["interactionType"] == "execution_error")
     assert notice["blocking"] == {"scope": "session", "targetId": session_id}
     assert notice["context"]["error"]["code"] == "runtime_process_exited"
@@ -7106,7 +7198,12 @@ def test_fs_and_shell_rpc_forward_validated_workspace_params(tmp_path):
     assert write_response.status_code == 200
     assert list_response.status_code == 200
     assert shell_response.status_code == 200
-    assert fake_rpc.requests == [
+    workspace_requests = [
+        request
+        for request in fake_rpc.requests
+        if request[1] in {"fs.writeFile", "fs.readDir", "shell.exec"}
+    ]
+    assert workspace_requests == [
         (
             connector_id,
             "fs.writeFile",
