@@ -5,6 +5,8 @@ from typing import Any
 
 from connector.runtime_protocol import (
     RuntimeAttachmentContent,
+    RuntimeCapability,
+    RuntimeCapabilitySet,
     RuntimeStatus,
     RuntimeTimelineItem,
     SessionNotice,
@@ -81,6 +83,36 @@ class ConnectorRuntimeHost(RuntimeHostClient):
             "metadata": dict(metadata or {}),
         }
         await self._notifier("session.state.updated", _drop_none(payload))
+
+    async def runtime_capabilities_update(
+        self,
+        capabilities: RuntimeCapabilitySet,
+    ) -> None:
+        """Publish runtime-scoped capability facts to the connector transport.
+
+        Side effects:
+        - sends `runtime.capability.updated` through the backend notifier
+        """
+
+        await self._notifier(
+            "runtime.capability.updated",
+            capability_set_payload(capabilities),
+        )
+
+    async def session_capabilities_update(
+        self,
+        capabilities: RuntimeCapabilitySet,
+    ) -> None:
+        """Publish session-scoped capability facts to the connector transport.
+
+        Side effects:
+        - sends `runtime.capability.updated` through the backend notifier
+        """
+
+        await self._notifier(
+            "runtime.capability.updated",
+            capability_set_payload(capabilities),
+        )
 
     async def timeline_sync(
         self,
@@ -247,6 +279,40 @@ def _timeline_source_payload(item: RuntimeTimelineItem) -> dict[str, Any]:
             "event": source.get("event"),
             "derivedKey": source.get("derivedKey"),
             "clientMessageId": source.get("clientMessageId"),
+        }
+    )
+
+
+def capability_set_payload(capabilities: RuntimeCapabilitySet) -> dict[str, Any]:
+    return _drop_none(
+        {
+            "runtime": capabilities.runtime,
+            "revision": capabilities.revision,
+            "sessionId": capabilities.session_id,
+            "connectorId": capabilities.connector_id,
+            "capabilities": [
+                capability_payload(capability)
+                for capability in capabilities.capabilities
+            ],
+            "metadata": dict(capabilities.metadata),
+        }
+    )
+
+
+def capability_payload(capability: RuntimeCapability) -> dict[str, Any]:
+    return _drop_none(
+        {
+            "capabilityId": capability.capability_id,
+            "version": capability.version,
+            "scope": capability.scope,
+            "runtime": capability.runtime,
+            "sessionId": capability.session_id,
+            "connectorId": capability.connector_id,
+            "supported": capability.supported,
+            "available": capability.available,
+            "allowed": capability.allowed,
+            "unavailableReason": capability.unavailable_reason,
+            "metadata": dict(capability.metadata),
         }
     )
 

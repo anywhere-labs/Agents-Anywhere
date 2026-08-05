@@ -3,7 +3,15 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from connector.runtime_protocol import RuntimeTimelineItem, SessionNotice
+from connector.runtime_protocol import (
+    CAPABILITY_CATALOG_MODEL,
+    CAPABILITY_SESSION_INTERRUPT,
+    CAPABILITY_SESSION_SEND_MESSAGE,
+    RuntimeCapability,
+    RuntimeCapabilitySet,
+    RuntimeTimelineItem,
+    SessionNotice,
+)
 from connector.server.runtime_host import ConnectorRuntimeHost
 from connector.server.sync_state import JsonSyncStateStore
 
@@ -18,6 +26,14 @@ def test_connector_runtime_host_persists_sync_state(tmp_path) -> None:
 
 def test_connector_runtime_host_maps_notice_context_to_backend_notification() -> None:
     asyncio.run(_exercise_notice_notification())
+
+
+def test_connector_runtime_host_maps_runtime_capabilities_to_backend_notification() -> None:
+    asyncio.run(_exercise_runtime_capability_notification())
+
+
+def test_connector_runtime_host_maps_session_capabilities_to_backend_notification() -> None:
+    asyncio.run(_exercise_session_capability_notification())
 
 
 async def _exercise_timeline_item_notification() -> None:
@@ -82,6 +98,151 @@ async def _exercise_timeline_item_notification() -> None:
                     "revision": 3,
                     "contentHash": "sha256:abc",
                 },
+            },
+        )
+    ]
+
+
+async def _exercise_runtime_capability_notification() -> None:
+    notifications: list[tuple[str, dict[str, Any]]] = []
+
+    async def notify(method: str, params: dict[str, Any]) -> None:
+        notifications.append((method, params))
+
+    async def download(session_id: str, file_id: str) -> tuple[bytes, str, str]:
+        _ = session_id
+        return b"data", f"{file_id}.txt", "text/plain"
+
+    host = ConnectorRuntimeHost(
+        connector_id="conn_1",
+        notifier=notify,
+        attachment_downloader=download,
+    )
+
+    await host.runtime_capabilities_update(
+        RuntimeCapabilitySet(
+            runtime="codex",
+            revision=21,
+            connector_id="conn_1",
+            capabilities=(
+                RuntimeCapability(
+                    capability_id=CAPABILITY_CATALOG_MODEL,
+                    scope="runtime",
+                    runtime="codex",
+                    connector_id="conn_1",
+                    metadata={"source": "codex.catalog"},
+                ),
+            ),
+            metadata={"source": "codex.runtime"},
+        )
+    )
+
+    assert notifications == [
+        (
+            "runtime.capability.updated",
+            {
+                "runtime": "codex",
+                "revision": 21,
+                "connectorId": "conn_1",
+                "capabilities": [
+                    {
+                        "capabilityId": CAPABILITY_CATALOG_MODEL,
+                        "version": "1",
+                        "scope": "runtime",
+                        "runtime": "codex",
+                        "connectorId": "conn_1",
+                        "supported": True,
+                        "available": True,
+                        "allowed": True,
+                        "metadata": {"source": "codex.catalog"},
+                    }
+                ],
+                "metadata": {"source": "codex.runtime"},
+            },
+        )
+    ]
+
+
+async def _exercise_session_capability_notification() -> None:
+    notifications: list[tuple[str, dict[str, Any]]] = []
+
+    async def notify(method: str, params: dict[str, Any]) -> None:
+        notifications.append((method, params))
+
+    async def download(session_id: str, file_id: str) -> tuple[bytes, str, str]:
+        _ = session_id
+        return b"data", f"{file_id}.txt", "text/plain"
+
+    host = ConnectorRuntimeHost(
+        connector_id="conn_1",
+        notifier=notify,
+        attachment_downloader=download,
+    )
+
+    await host.session_capabilities_update(
+        RuntimeCapabilitySet(
+            runtime="codex",
+            revision=22,
+            session_id="sess_1",
+            connector_id="conn_1",
+            capabilities=(
+                RuntimeCapability(
+                    capability_id=CAPABILITY_SESSION_SEND_MESSAGE,
+                    scope="session",
+                    runtime="codex",
+                    session_id="sess_1",
+                    connector_id="conn_1",
+                    available=False,
+                    unavailable_reason="session_running",
+                ),
+                RuntimeCapability(
+                    capability_id=CAPABILITY_SESSION_INTERRUPT,
+                    scope="session",
+                    runtime="codex",
+                    session_id="sess_1",
+                    connector_id="conn_1",
+                    available=True,
+                ),
+            ),
+        )
+    )
+
+    assert notifications == [
+        (
+            "runtime.capability.updated",
+            {
+                "runtime": "codex",
+                "revision": 22,
+                "sessionId": "sess_1",
+                "connectorId": "conn_1",
+                "capabilities": [
+                    {
+                        "capabilityId": CAPABILITY_SESSION_SEND_MESSAGE,
+                        "version": "1",
+                        "scope": "session",
+                        "runtime": "codex",
+                        "sessionId": "sess_1",
+                        "connectorId": "conn_1",
+                        "supported": True,
+                        "available": False,
+                        "allowed": True,
+                        "unavailableReason": "session_running",
+                        "metadata": {},
+                    },
+                    {
+                        "capabilityId": CAPABILITY_SESSION_INTERRUPT,
+                        "version": "1",
+                        "scope": "session",
+                        "runtime": "codex",
+                        "sessionId": "sess_1",
+                        "connectorId": "conn_1",
+                        "supported": True,
+                        "available": True,
+                        "allowed": True,
+                        "metadata": {},
+                    },
+                ],
+                "metadata": {},
             },
         )
     ]
