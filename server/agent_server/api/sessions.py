@@ -28,7 +28,6 @@ from agent_server.core.events import (
 )
 from agent_server.core.models import (
     BulkArchiveResponse,
-    BulkReadRequest,
     InteractionRespondRequest,
     MessageCreateRequest,
     NoticeIn,
@@ -405,31 +404,9 @@ async def set_sessions_archived(
     )
 
 
-# Migration shim: old clients used `/bulk-read`. New clients must send a direct
-# session id array to `POST /sessions/read`.
-@router.post("/bulk-read", response_model=BulkArchiveResponse)
-async def bulk_mark_sessions_read(
-    payload: BulkReadRequest,
-    user_id: str = Depends(current_user_id),
-    db: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
-    broker: TimelineBroker = Depends(get_timeline_broker),
-) -> BulkArchiveResponse:
-    sessions, not_found = await db.bulk_mark_sessions_read(payload.ids, user_id=user_id)
-    for session in sessions:
-        await publish_dashboard_changed(
-            db,
-            broker,
-            user_id=user_id,
-            connector_id=session.connectorId,
-            session_id=session.id,
-            reason="sessions.read",
-        )
-    return BulkArchiveResponse(
-        sessions=await with_effective_session_connector_statuses(manager, sessions),
-        notFound=not_found,
-        serverTime=utc_now(),
-    )
+# Removed migration route:
+# - old: POST /sessions/bulk-read with `{ "ids": [...] }`
+# - new: POST /sessions/read with a direct session id array
 
 
 @router.post("/archive", response_model=BulkArchiveResponse)

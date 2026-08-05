@@ -7857,7 +7857,7 @@ def test_archive_endpoint_rejects_too_many_ids(tmp_path):
     assert response.status_code == 422
 
 
-def test_bulk_read_marks_owned_sessions_read(tmp_path):
+def test_read_endpoint_marks_owned_sessions_read(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, session_a, headers = create_connector_and_session(client)
     session_b = _create_extra_session(client, headers, connector_id, "thr_b", title="B")
@@ -7898,9 +7898,9 @@ def test_bulk_read_marks_owned_sessions_read(tmp_path):
         )
 
     response = client.post(
-        "/sessions/bulk-read",
+        "/sessions/read",
         headers=headers,
-        json={"ids": [session_a, session_b, session_a]},
+        json=[session_a, session_b, session_a],
     )
     assert response.status_code == 200, response.text
     body = response.json()
@@ -7968,15 +7968,15 @@ def test_read_endpoint_accepts_session_id_array(tmp_path):
     assert all(session["unread"] is False for session in body["sessions"])
 
 
-def test_bulk_read_filters_unowned_ids(tmp_path):
+def test_read_endpoint_filters_unowned_ids(tmp_path):
     client = make_client(tmp_path)
     _, _, session_one, user_one_headers = create_connector_and_session(client, user_id=ADMIN_USER)
     _, _, session_two, _ = create_connector_and_session(client, user_id="user2")
 
     response = client.post(
-        "/sessions/bulk-read",
+        "/sessions/read",
         headers=user_one_headers,
-        json={"ids": [session_one, session_two, "not-a-session"]},
+        json=[session_one, session_two, "not-a-session"],
     )
     assert response.status_code == 200, response.text
     body = response.json()
@@ -7984,20 +7984,20 @@ def test_bulk_read_filters_unowned_ids(tmp_path):
     assert set(body["notFound"]) == {session_two, "not-a-session"}
 
 
-def test_bulk_read_rejects_empty_ids(tmp_path):
+def test_read_endpoint_rejects_empty_ids(tmp_path):
     client = make_client(tmp_path)
     _, _, _, headers = create_connector_and_session(client)
-    response = client.post("/sessions/bulk-read", headers=headers, json={"ids": []})
+    response = client.post("/sessions/read", headers=headers, json=[])
     assert response.status_code == 422
 
 
-def test_bulk_read_rejects_too_many_ids(tmp_path):
+def test_read_endpoint_rejects_too_many_ids(tmp_path):
     client = make_client(tmp_path)
     _, _, _, headers = create_connector_and_session(client)
     response = client.post(
-        "/sessions/bulk-read",
+        "/sessions/read",
         headers=headers,
-        json={"ids": [f"id-{i}" for i in range(201)]},
+        json=[f"id-{i}" for i in range(201)],
     )
     assert response.status_code == 422
 

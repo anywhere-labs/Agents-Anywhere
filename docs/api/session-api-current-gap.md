@@ -40,7 +40,7 @@ Current backend state:
 | Archive sessions | `POST /api/v2/sessions/archive` with direct id array | exists | Keep as target. |
 | Unarchive sessions | `POST /api/v2/sessions/unarchive` with direct id array | exists | Keep as target. |
 | Old read one | `POST /api/v2/sessions/{sessionId}/read` | exists | Compatibility shim. Remove after frontend migration. |
-| Old bulk read | `POST /api/v2/sessions/bulk-read` | exists | Compatibility shim. Remove after frontend migration. |
+| Old bulk read | `POST /api/v2/sessions/bulk-read` | removed | Use `/sessions/read` with a direct id array. |
 | Old bulk archive | `POST /api/v2/sessions/bulk-archive` | migration error | Removed. Use `/sessions/archive` or `/sessions/unarchive` with a direct id array. |
 | SessionTimeline read | `GET /api/v2/sessions/{sessionId}/timeline` | exists | Keep. Returns durable timeline only. |
 | Old timeline/state read | `GET /api/v2/sessions/{sessionId}/state` | exists | Rename/split. It must not be the long-term timeline API. |

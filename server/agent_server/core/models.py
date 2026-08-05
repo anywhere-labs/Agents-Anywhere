@@ -594,10 +594,6 @@ class BulkArchiveRequest(BaseModel):
     archived: bool
 
 
-class BulkReadRequest(BaseModel):
-    ids: list[str] = Field(min_length=1, max_length=200)
-
-
 class BulkArchiveResponse(BaseModel):
     sessions: list[SessionView]
     notFound: list[str]
