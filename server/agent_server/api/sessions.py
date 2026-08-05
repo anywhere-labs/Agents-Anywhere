@@ -368,21 +368,10 @@ async def patch_session_meta(
     )
 
 
-# Migration tombstone: old clients used `/bulk-archive` with
-# `{ "ids": [...], "archived": true|false }`. New clients must call
-# `/sessions/archive` or `/sessions/unarchive` with a direct session id array.
-@router.post("/bulk-archive", response_model=BulkArchiveResponse)
-async def bulk_archive_sessions(
-    user_id: str = Depends(current_user_id),
-) -> BulkArchiveResponse:
-    _ = user_id
-    raise HTTPException(
-        status_code=410,
-        detail=(
-            "POST /sessions/bulk-archive was removed. "
-            "Use POST /sessions/archive or POST /sessions/unarchive with a direct session id array."
-        ),
-    )
+# Removed migration route:
+# - old: POST /sessions/bulk-archive with `{ "ids": [...], "archived": true|false }`
+# - new: POST /sessions/archive with a direct session id array
+# - new: POST /sessions/unarchive with a direct session id array
 
 
 async def set_sessions_archived(

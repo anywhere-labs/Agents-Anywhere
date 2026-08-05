@@ -7815,19 +7815,6 @@ def test_unarchive_endpoint_can_unarchive(tmp_path):
     assert body["sessions"][0]["archivedAt"] is None
 
 
-def test_bulk_archive_returns_migration_error(tmp_path):
-    client = make_client(tmp_path)
-    _, _, _, headers = create_connector_and_session(client)
-
-    response = client.post(
-        "/sessions/bulk-archive",
-        headers=headers,
-        json={"ids": ["sess_1"], "archived": False},
-    )
-    assert response.status_code == 410
-    assert "POST /sessions/unarchive" in response.json()["detail"]
-
-
 def test_archive_endpoint_filters_unowned_ids(tmp_path):
     client = make_client(tmp_path)
     _, _, session_one, user_one_headers = create_connector_and_session(client, user_id=ADMIN_USER)
