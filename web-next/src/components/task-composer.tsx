@@ -111,7 +111,6 @@ export function TaskComposer() {
     markOptimisticMessageFailed,
     openSession,
     upsertSession,
-    refreshData,
   } = useWorkspace()
   const t = useTranslations("dashboard.new")
   const typewriterTitles = React.useMemo(
@@ -585,7 +584,6 @@ export function TaskComposer() {
       })
       bindOptimisticSession(localSessionId, created.session)
       upsertSession(created.session)
-      refreshData()
     } catch (err) {
       const message = err instanceof Error ? err.message : t("createFailed")
       markOptimisticMessageFailed(clientMessageId, message)
