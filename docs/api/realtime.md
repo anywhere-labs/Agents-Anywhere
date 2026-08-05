@@ -72,10 +72,16 @@ runtime.refetch_required
 session.refetch_required
 ```
 
-Current event types such as `session.status_changed`, `notice.created`,
-`notice.updated`, `notice.snapshot`, and embedded `effectiveCapabilities`
-payloads are compatibility shapes. They should migrate to the `runtime.*`
-namespace for live Runtime facts.
+Removed compatibility event types:
+
+- `session.status_changed`
+- `notice.created`
+- `notice.updated`
+- `notice.snapshot`
+- embedded `effectiveCapabilities` aliases in session realtime events
+
+Use `runtime.state.updated`, `runtime.capability.updated`,
+`runtime.notice.updated`, and `runtime.notice.snapshot` for live Runtime facts.
 
 ### Recovery rules
 

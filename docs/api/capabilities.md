@@ -251,8 +251,9 @@ the interrupt button is shown only when `session.interrupt` is effective.
 Existing `ProtocolCapabilitySet` fields can be reused during migration, but the
 source of truth changes:
 
-- `effectiveCapabilities` embedded in snapshots and `session.status_changed`
-  events is compatibility payload.
+- `effectiveCapabilities` remains in session snapshots as a transitional HTTP
+  aggregate field. Session realtime updates use
+  `runtime.capability.updated.payload.capabilitySet`.
 - `protocol.capabilitiesUpdated` is compatibility connector input.
 - `connector_protocol_capabilities` must not be used as authoritative UI truth.
 - Removed connector protocol capability reads migrate to scoped effective

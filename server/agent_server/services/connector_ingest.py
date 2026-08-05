@@ -242,7 +242,7 @@ class ConnectorIngestService:
                         )
                     )
                     envelope["session"] = session.model_dump(mode="json")
-                    envelope["effectiveCapabilities"] = (
+                    envelope["capabilitySet"] = (
                         effective_capabilities.model_dump(mode="json")
                     )
                 except KeyError:

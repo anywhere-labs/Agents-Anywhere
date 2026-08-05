@@ -61,7 +61,7 @@ def test_notice_reset_invalidation_becomes_one_snapshot_event() -> None:
     )
 
     event_types = {event.type for event in events}
-    assert event_types == {"notice.snapshot", "runtime.notice.snapshot"}
+    assert event_types == {"runtime.notice.snapshot"}
     for event in events:
         assert event.payload["notices"] == []
 
@@ -102,7 +102,7 @@ def test_session_invalidation_emits_meta_event() -> None:
 
     event_types = {event.type for event in events}
     assert "session.meta.updated" in event_types
-    assert "session.status_changed" in event_types
+    assert "session.status_changed" not in event_types
     meta_event = next(event for event in events if event.type == "session.meta.updated")
     assert meta_event.payload["session"]["title"] == "Updated"
 
@@ -124,7 +124,7 @@ def test_notice_invalidation_emits_runtime_notice_update() -> None:
     )
 
     event_types = {event.type for event in events}
-    assert event_types == {"notice.updated", "runtime.notice.updated"}
+    assert event_types == {"runtime.notice.updated"}
     runtime_event = next(
         event for event in events if event.type == "runtime.notice.updated"
     )

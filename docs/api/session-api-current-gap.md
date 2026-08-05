@@ -69,7 +69,7 @@ Current backend state:
 | Runtime notice response | `POST /api/v2/sessions/{sessionId}/runtime/notices/{noticeId}/respond` | exists | Keep. |
 | Old interaction response | `POST /api/v2/sessions/{sessionId}/interactions/{noticeId}/respond` | removed | Use `/sessions/{sessionId}/runtime/notices/{noticeId}/respond`. |
 | Event recovery | `GET /api/v2/sessions/{sessionId}/events` | exists | Keep for durable meta/timeline recovery only. Do not recover runtime live facts from DB. |
-| Session WS | `WS /api/v2/sessions/{sessionId}/ws` | exists | Keep. Runtime event names exist; compatibility payloads remain during frontend migration. |
+| Session WS | `WS /api/v2/sessions/{sessionId}/ws` | exists | Keep. Runtime event names are the active contract; old session/notice compatibility events have been removed. |
 | Dashboard WS | `WS /api/v2/dashboard/ws` | exists | Keep. Do not mix dashboard lifecycle with session lifecycle. |
 | Old dashboard SSE | `GET /api/v2/sessions/events/dashboard` | removed | Use `/dashboard/ws`. |
 
@@ -82,10 +82,10 @@ Current backend state:
 | `timeline.item_created` | exists | Keep. Must be emitted for ingest and connector WS timeline upserts. |
 | `timeline.item_updated` | exists | Keep. Must be emitted for content-hash changes. |
 | `timeline.snapshot` | exists | Keep only for explicit snapshot/recovery cases. |
-| `runtime.state.updated` | exists for connector invalidation pushes; compatibility `session.status_changed` still carries state during migration | Frontend should migrate to this event as the runtime state truth. |
-| `runtime.notice.snapshot` | exists for connector invalidation pushes; compatibility `notice.snapshot` remains during migration | Frontend should migrate to this event. Notices remain non-durable runtime truth. |
-| `runtime.notice.updated` | exists for connector invalidation pushes and event recovery; compatibility `notice.created` / `notice.updated` remain during migration | Frontend should migrate to this event. Notices remain non-durable runtime truth. |
-| `runtime.capability.updated` | exists for session WS capability projections and event recovery; compatibility `effectiveCapabilities` remains on `session.status_changed` | Keep while frontend migrates to the explicit runtime event. |
+| `runtime.state.updated` | exists for connector invalidation pushes | Use as the runtime state truth. |
+| `runtime.notice.snapshot` | exists for connector invalidation pushes | Use as the runtime notice snapshot. Notices remain non-durable runtime truth. |
+| `runtime.notice.updated` | exists for connector invalidation pushes and event recovery | Use as the runtime notice update. Notices remain non-durable runtime truth. |
+| `runtime.capability.updated` | exists for session WS capability projections and event recovery | Use as the scoped effective capability update. |
 | `runtime.catalog.updated` | not implemented by design yet; legacy catalog update notifications are rejected | Keep live catalog reads as the source. Add this event only when a runtime actually pushes catalog invalidations. |
 | `runtime.refetch_required` | not implemented by design yet | Add only when a runtime reports missed live facts. Current durable timeline overflow uses `session.refetch_required`. |
 | `session.refetch_required` | exists | Restrict to durable meta/timeline recovery. |

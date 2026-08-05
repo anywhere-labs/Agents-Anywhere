@@ -176,8 +176,8 @@ async def _publish_session_protocol_update(
         "sessionId": session_id,
         "nextSeq": next_seq,
         "session": session.model_dump(mode="json"),
-        "state": runtime_state.model_dump(mode="json"),
-        "effectiveCapabilities": effective_capabilities.model_dump(mode="json"),
+        "runtimeState": runtime_state.model_dump(mode="json"),
+        "capabilitySet": effective_capabilities.model_dump(mode="json"),
         "notices": list(notices_by_id.values()),
     }
     await broker.publish(session_id, envelope)

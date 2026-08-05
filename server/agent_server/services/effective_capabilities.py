@@ -88,9 +88,7 @@ async def publish_connector_session_capabilities(
                 "sessionId": session.id,
                 "nextSeq": await store.get_session_seq(session.id),
                 "session": session.model_dump(mode="json"),
-                "effectiveCapabilities": effective_capabilities.model_dump(
-                    mode="json"
-                ),
+                "capabilitySet": effective_capabilities.model_dump(mode="json"),
             },
         )
 

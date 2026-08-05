@@ -453,9 +453,9 @@ Notes:
 - `session.refetch_required` is reserved for durable meta/timeline recovery.
 - `runtime.refetch_required` means the Web client should call the relevant
   runtime live endpoint.
-- Current `session.status_changed`, `notice.*`, and
-  `effectiveCapabilities` payloads are compatibility shapes and should migrate
-  to these names.
+- Old `session.status_changed`, `notice.*`, and realtime
+  `effectiveCapabilities` compatibility payloads are removed. New clients
+  should consume the explicit runtime event names above.
 
 ## Event recovery
 

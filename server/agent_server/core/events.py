@@ -130,40 +130,14 @@ def events_from_invalidation(payload: dict[str, Any]) -> list[ProtocolEventEnvel
                     payload={"session": session},
                 )
             )
-        if sequence > 0 or isinstance(runtime_state, dict):
-            if isinstance(runtime_state, dict):
-                runtime_status = runtime_state.get("status")
-                if isinstance(runtime_status, str):
-                    session = {**session, "status": runtime_status}
-            event_payload: dict[str, Any] = {
-                "session": session,
-                "status": session.get("status"),
-            }
-            runtime_state = payload.get("runtimeState")
-            if isinstance(runtime_state, dict):
-                event_payload["state"] = runtime_state
-            effective_capabilities = payload.get("effectiveCapabilities")
-            if isinstance(effective_capabilities, dict):
-                event_payload["effectiveCapabilities"] = effective_capabilities
-            events.append(
-                protocol_event(
-                    session_id,
-                    sequence=sequence,
-                    event_type="session.status_changed",
-                    payload=event_payload,
-                )
-            )
-        effective_capabilities = payload.get("effectiveCapabilities")
-        if isinstance(effective_capabilities, dict):
+        capability_set = payload.get("capabilitySet")
+        if isinstance(capability_set, dict):
             events.append(
                 protocol_event(
                     session_id,
                     sequence=sequence,
                     event_type="runtime.capability.updated",
-                    payload={
-                        "capabilitySet": effective_capabilities,
-                        "effectiveCapabilities": effective_capabilities,
-                    },
+                    payload={"capabilitySet": capability_set},
                 )
             )
 
@@ -171,14 +145,6 @@ def events_from_invalidation(payload: dict[str, Any]) -> list[ProtocolEventEnvel
     if isinstance(notices, list):
         if payload.get("noticesReset") and next_sequence > 0:
             snapshot_payload = {"notices": notices}
-            events.append(
-                protocol_event(
-                    session_id,
-                    sequence=next_sequence,
-                    event_type="notice.snapshot",
-                    payload=snapshot_payload,
-                )
-            )
             events.append(
                 protocol_event(
                     session_id,
@@ -194,21 +160,7 @@ def events_from_invalidation(payload: dict[str, Any]) -> list[ProtocolEventEnvel
                 sequence = int(notice.get("updatedSeq") or next_sequence or 0)
                 if sequence <= 0:
                     continue
-                status = notice.get("status")
-                event_type = (
-                    "notice.created"
-                    if status == "open" and int(notice.get("revision") or 1) == 1
-                    else "notice.updated"
-                )
                 notice_payload = {"notice": notice}
-                events.append(
-                    protocol_event(
-                        session_id,
-                        sequence=sequence,
-                        event_type=event_type,
-                        payload=notice_payload,
-                    )
-                )
                 events.append(
                     protocol_event(
                         session_id,

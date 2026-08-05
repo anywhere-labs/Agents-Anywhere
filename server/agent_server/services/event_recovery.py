@@ -125,42 +125,14 @@ class EventRecoveryService:
                 protocol_event(
                     session_id,
                     sequence=session.updatedSeq,
-                    event_type="session.status_changed",
-                    payload={
-                        "session": session_payload,
-                        "status": session.status,
-                        "effectiveCapabilities": effective_capabilities.model_dump(
-                            mode="json"
-                        ),
-                    },
-                )
-            )
-            effective_capabilities_payload = effective_capabilities.model_dump(
-                mode="json"
-            )
-            events.append(
-                protocol_event(
-                    session_id,
-                    sequence=session.updatedSeq,
                     event_type="runtime.capability.updated",
-                    payload={
-                        "capabilitySet": effective_capabilities_payload,
-                        "effectiveCapabilities": effective_capabilities_payload,
-                    },
+                    payload={"capabilitySet": effective_capabilities.model_dump(mode="json")},
                 )
             )
         for notice in notices:
             if notice.updatedSeq <= after_sequence:
                 continue
             notice_payload = {"notice": notice.model_dump(mode="json")}
-            events.append(
-                protocol_event(
-                    session_id,
-                    sequence=notice.updatedSeq,
-                    event_type="notice.updated",
-                    payload=notice_payload,
-                )
-            )
             events.append(
                 protocol_event(
                     session_id,

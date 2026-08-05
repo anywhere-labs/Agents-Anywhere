@@ -226,7 +226,7 @@ def test_presence_change_publishes_reprojected_session_capabilities() -> None:
     assert payload["session"]["connectorStatus"] == "offline"
     capabilities = {
         item["capabilityId"]: item
-        for item in payload["effectiveCapabilities"]["capabilities"]
+        for item in payload["capabilitySet"]["capabilities"]
     }
     assert capabilities[SESSION_SEND_MESSAGE]["available"] is False
     assert capabilities[SESSION_SEND_MESSAGE]["unavailableReason"] == "connector_offline"

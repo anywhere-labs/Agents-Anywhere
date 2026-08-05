@@ -3999,19 +3999,14 @@ def test_interrupt_cancels_blocking_interactions(tmp_path):
         params={"after": f"seq:{before_seq}"},
     ).json()
     assert recovered["snapshotRequired"] is False
-    notice_events = [
-        event for event in recovered["events"] if event["type"] == "notice.updated"
-    ]
     runtime_notice_events = [
         event
         for event in recovered["events"]
         if event["type"] == "runtime.notice.updated"
     ]
-    assert len(notice_events) == 1
-    assert notice_events[0]["payload"]["notice"]["noticeId"] == notice_id
-    assert notice_events[0]["payload"]["notice"]["status"] == "cancelled"
     assert len(runtime_notice_events) == 1
-    assert runtime_notice_events[0]["payload"] == notice_events[0]["payload"]
+    assert runtime_notice_events[0]["payload"]["notice"]["noticeId"] == notice_id
+    assert runtime_notice_events[0]["payload"]["notice"]["status"] == "cancelled"
 
 
 def test_turn_start_updates_and_turn_end_clears_active_run(tmp_path):
@@ -6098,22 +6093,18 @@ def test_session_ws_projects_timeline_and_notice_events(tmp_path):
         )
         assert response.status_code == 200, response.text
 
-        received = [ws.receive_json() for _ in range(6)]
+        received = [ws.receive_json() for _ in range(5)]
         event_types = {event["type"] for event in received}
         assert "timeline.item_created" in event_types
         assert "session.meta.updated" in event_types
-        assert "session.status_changed" in event_types
         assert "runtime.capability.updated" in event_types
-        assert "notice.snapshot" in event_types
         assert "runtime.notice.snapshot" in event_types
-        session_event = next(
-            event for event in received if event["type"] == "session.status_changed"
+        capability_event = next(
+            event for event in received if event["type"] == "runtime.capability.updated"
         )
         capabilities = {
             capability["capabilityId"]: capability
-            for capability in session_event["payload"]["effectiveCapabilities"][
-                "capabilities"
-            ]
+            for capability in capability_event["payload"]["capabilitySet"]["capabilities"]
         }
         assert capabilities["session.send_message"]["allowed"] is False
 
@@ -6130,11 +6121,11 @@ def test_session_ws_updates_effective_capabilities_after_takeover(tmp_path):
 
         received = [ws.receive_json() for _ in range(3)]
         event = next(
-            item for item in received if item["type"] == "session.status_changed"
+            item for item in received if item["type"] == "runtime.capability.updated"
         )
         capabilities = {
             capability["capabilityId"]: capability
-            for capability in event["payload"]["effectiveCapabilities"]["capabilities"]
+            for capability in event["payload"]["capabilitySet"]["capabilities"]
         }
         assert capabilities["session.send_message"]["allowed"] is True
 
@@ -6325,7 +6316,7 @@ def test_unchanged_large_codex_timeline_sync_does_not_request_another_snapshot(t
             json=payload,
         )
         assert response.status_code == 200, response.text
-        receive_session_ws_event(ws, "session.status_changed")
+        receive_session_ws_event(ws, "runtime.capability.updated")
 
 
 def test_session_events_recovery_returns_json_events(tmp_path):
@@ -6376,10 +6367,6 @@ def test_session_events_recovery_returns_json_events(tmp_path):
     assert "timeline.item_created" in event_types
     assert "session.meta.updated" in event_types
     assert "runtime.capability.updated" in event_types
-    session_event = next(
-        event for event in body["events"] if event["type"] == "session.status_changed"
-    )
-    assert "effectiveCapabilities" in session_event["payload"]
     capability_event = next(
         event for event in body["events"] if event["type"] == "runtime.capability.updated"
     )
@@ -6843,7 +6830,7 @@ def test_timeline_sync_dedupes_same_source_item_with_snapshot_derived_key(tmp_pa
             json=sync_payload,
         )
         assert response.status_code == 200, response.text
-        receive_session_ws_event(ws, "session.status_changed")
+        receive_session_ws_event(ws, "runtime.capability.updated")
 
 
 def test_timeline_sync_deduped_snapshot_message_does_not_rearm_unread(tmp_path):
@@ -6997,19 +6984,14 @@ def test_interaction_response_recovery_falls_back_across_legacy_approval_gap(tmp
     assert recovered.status_code == 200, recovered.text
     recovery_body = recovered.json()
     assert recovery_body["snapshotRequired"] is False
-    notice_events = [
-        event for event in recovery_body["events"] if event["type"] == "notice.updated"
-    ]
     runtime_notice_events = [
         event
         for event in recovery_body["events"]
         if event["type"] == "runtime.notice.updated"
     ]
-    assert len(notice_events) == 1
-    assert notice_events[0]["payload"]["notice"]["noticeId"] == notice_id
-    assert notice_events[0]["payload"]["notice"]["status"] == "resolved"
     assert len(runtime_notice_events) == 1
-    assert runtime_notice_events[0]["payload"] == notice_events[0]["payload"]
+    assert runtime_notice_events[0]["payload"]["notice"]["noticeId"] == notice_id
+    assert runtime_notice_events[0]["payload"]["notice"]["status"] == "resolved"
     notice = asyncio.run(client.app.state.store.get_notice(notice_id))
     assert notice.status == "resolved"
 
