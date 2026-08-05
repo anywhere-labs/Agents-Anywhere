@@ -8,6 +8,7 @@ All Server HTTP, SSE, and WebSocket API documentation should live under this dir
 
 - [API v2 namespace](./namespace.md): `/api/v2` namespace and client/connector URL rules.
 - [Session API proposal](./session-api-proposal.md): authoritative target for the split `SessionMeta` / `SessionTimeline` / `RuntimeLive` client API.
+- [Session API current gap](./session-api-current-gap.md): current backend implementation gaps against the target session API.
 - [Session service architecture](./session-service-architecture.md): Server, Connector, Runtime, and Web ownership boundaries for session data and realtime updates.
 - [Effective capability API](./capabilities.md): global and session-scoped effective capability semantics, paths, and realtime events.
 - [Realtime API](./realtime.md): session, dashboard, connector, and terminal realtime channel semantics.
