@@ -112,13 +112,22 @@ class EventRecoveryService:
             [item.model_dump(mode="json") for item in items],
         )
         if session.updatedSeq > after_sequence:
+            session_payload = session.model_dump(mode="json")
+            events.append(
+                protocol_event(
+                    session_id,
+                    sequence=session.updatedSeq,
+                    event_type="session.meta.updated",
+                    payload={"session": session_payload},
+                )
+            )
             events.append(
                 protocol_event(
                     session_id,
                     sequence=session.updatedSeq,
                     event_type="session.status_changed",
                     payload={
-                        "session": session.model_dump(mode="json"),
+                        "session": session_payload,
                         "status": session.status,
                         "effectiveCapabilities": effective_capabilities.model_dump(
                             mode="json"

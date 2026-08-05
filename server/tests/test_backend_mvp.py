@@ -6045,9 +6045,10 @@ def test_session_ws_projects_timeline_and_notice_events(tmp_path):
         )
         assert response.status_code == 200, response.text
 
-        received = [ws.receive_json() for _ in range(5)]
+        received = [ws.receive_json() for _ in range(6)]
         event_types = {event["type"] for event in received}
         assert "timeline.item_created" in event_types
+        assert "session.meta.updated" in event_types
         assert "session.status_changed" in event_types
         assert "runtime.capability.updated" in event_types
         assert "notice.snapshot" in event_types
@@ -6324,7 +6325,9 @@ def test_session_events_recovery_returns_json_events(tmp_path):
     body = recovered.json()
     assert body["snapshotRequired"] is False
     assert body["nextCursor"].startswith("seq:")
-    assert "timeline.item_created" in [event["type"] for event in body["events"]]
+    event_types = [event["type"] for event in body["events"]]
+    assert "timeline.item_created" in event_types
+    assert "session.meta.updated" in event_types
     session_event = next(
         event for event in body["events"] if event["type"] == "session.status_changed"
     )

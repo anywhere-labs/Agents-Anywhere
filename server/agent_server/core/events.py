@@ -121,6 +121,15 @@ def events_from_invalidation(payload: dict[str, Any]) -> list[ProtocolEventEnvel
     session = payload.get("session")
     if isinstance(session, dict):
         sequence = int(session.get("updatedSeq") or next_sequence or 0)
+        if sequence > 0:
+            events.append(
+                protocol_event(
+                    session_id,
+                    sequence=sequence,
+                    event_type="session.meta.updated",
+                    payload={"session": session},
+                )
+            )
         if sequence > 0 or isinstance(runtime_state, dict):
             if isinstance(runtime_state, dict):
                 runtime_status = runtime_state.get("status")

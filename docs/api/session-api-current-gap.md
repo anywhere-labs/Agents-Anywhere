@@ -77,7 +77,7 @@ Current backend state:
 | Target event | Current status | Action |
 | --- | --- | --- |
 | `session.subscribed` | exists | Keep. |
-| `session.meta.updated` | not consistently emitted | Add for durable SessionMeta changes. |
+| `session.meta.updated` | exists for connector invalidation pushes and event recovery | Frontend should use this for durable SessionMeta updates. |
 | `timeline.item_created` | exists | Keep. Must be emitted for ingest and connector WS timeline upserts. |
 | `timeline.item_updated` | exists | Keep. Must be emitted for content-hash changes. |
 | `timeline.snapshot` | exists | Keep only for explicit snapshot/recovery cases. |
@@ -93,10 +93,7 @@ Current backend state:
 
 1. Add explicit code comments for remaining compatibility session aliases so
    callers know the target migration path.
-2. Decide whether `session.meta.updated` should be added before frontend
-   migration or whether dashboard/session snapshots are sufficient for the
-   current meta update paths.
-3. Keep old aliases until frontend migration is complete, then remove them in
+2. Keep old aliases until frontend migration is complete, then remove them in
    one cleanup commit.
 
 ## Acceptance for backend cleanup

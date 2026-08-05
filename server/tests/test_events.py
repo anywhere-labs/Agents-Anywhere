@@ -86,6 +86,27 @@ def test_runtime_state_invalidation_emits_runtime_state_event() -> None:
     assert events[0].payload["state"]["status"] == "running"
 
 
+def test_session_invalidation_emits_meta_event() -> None:
+    events = events_from_invalidation(
+        {
+            "sessionId": "session-1",
+            "nextSeq": 9,
+            "session": {
+                "id": "session-1",
+                "title": "Updated",
+                "status": "idle",
+                "updatedSeq": 9,
+            },
+        }
+    )
+
+    event_types = {event.type for event in events}
+    assert "session.meta.updated" in event_types
+    assert "session.status_changed" in event_types
+    meta_event = next(event for event in events if event.type == "session.meta.updated")
+    assert meta_event.payload["session"]["title"] == "Updated"
+
+
 def test_notice_invalidation_emits_runtime_notice_update() -> None:
     events = events_from_invalidation(
         {
