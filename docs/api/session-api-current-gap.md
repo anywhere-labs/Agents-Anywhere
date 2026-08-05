@@ -23,8 +23,8 @@ Current backend state:
   `sessions.status` and now uses runtime/session capability facts plus Server
   policy.
 - Several old session aliases still exist as migration shims.
-- Several target session read endpoints and target realtime event names are
-  not yet implemented.
+- Target session read endpoints exist. Remaining backend cleanup is now about
+  migration shims and a few realtime event policy edges.
 
 ## Endpoint gap table
 
@@ -68,7 +68,7 @@ Current backend state:
 | Runtime notice response | `POST /api/v2/sessions/{sessionId}/runtime/notices/{noticeId}/respond` | exists | Keep. |
 | Old interaction response | `POST /api/v2/sessions/{sessionId}/interactions/{noticeId}/respond` | exists | Compatibility shim. Remove after frontend migration. |
 | Event recovery | `GET /api/v2/sessions/{sessionId}/events` | exists | Keep for durable meta/timeline recovery only. Do not recover runtime live facts from DB. |
-| Session WS | `WS /api/v2/sessions/{sessionId}/ws` | exists | Keep. Event names still need migration. |
+| Session WS | `WS /api/v2/sessions/{sessionId}/ws` | exists | Keep. Runtime event names exist; compatibility payloads remain during frontend migration. |
 | Dashboard WS | `WS /api/v2/dashboard/ws` | exists | Keep. Do not mix dashboard lifecycle with session lifecycle. |
 | Old dashboard SSE | `GET /api/v2/sessions/events/dashboard` | exists | Compatibility shim. Frontend should migrate dashboard refresh to `/dashboard/ws`. |
 
@@ -91,17 +91,12 @@ Current backend state:
 
 ## Required backend sequence
 
-1. Add explicit code comments for compatibility session aliases so callers know
-   the target migration path.
-2. Add missing target read endpoints:
-   - `GET /sessions/{sessionId}/meta`
-   - `PATCH /sessions/{sessionId}/meta`
-   - `GET /sessions/{sessionId}/timeline`
-   - session-scoped runtime catalog reads if the frontend cannot rely on
-     connector-scoped catalog reads for existing sessions.
-3. Migrate session WS event naming from compatibility runtime payloads to
-   explicit `runtime.*` events.
-4. Keep old aliases until frontend migration is complete, then remove them in
+1. Add explicit code comments for remaining compatibility session aliases so
+   callers know the target migration path.
+2. Decide whether `session.meta.updated` should be added before frontend
+   migration or whether dashboard/session snapshots are sufficient for the
+   current meta update paths.
+3. Keep old aliases until frontend migration is complete, then remove them in
    one cleanup commit.
 
 ## Acceptance for backend cleanup
