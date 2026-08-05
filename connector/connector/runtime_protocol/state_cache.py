@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtime_protocol.models import RuntimeStatus, SessionState
+
+SessionStateUpdated = Callable[[SessionState], Awaitable[None]]
 
 
 class RuntimeSessionStateCache:
@@ -15,9 +17,15 @@ class RuntimeSessionStateCache:
     rule in the protocol layer instead of repeating it in every runtime.
     """
 
-    def __init__(self, runtime: str, host: RuntimeHostClient) -> None:
+    def __init__(
+        self,
+        runtime: str,
+        host: RuntimeHostClient,
+        on_state_updated: SessionStateUpdated | None = None,
+    ) -> None:
         self._runtime = runtime
         self._host = host
+        self._on_state_updated = on_state_updated
         self._states: dict[str, SessionState] = {}
         self._session_ids_by_external_id: dict[str, str] = {}
 
@@ -73,4 +81,6 @@ class RuntimeSessionStateCache:
             error=state.error,
             metadata=state.metadata,
         )
+        if self._on_state_updated is not None:
+            await self._on_state_updated(state)
         return state

@@ -35,6 +35,7 @@ from connector.runtime_protocol import (
     CompactSystemContent,
     MarkdownMessageContent,
     MessageTimelineContent,
+    RuntimeCapabilitySet,
     RuntimeConfig,
     RuntimeInvalidRequestError,
     SessionNotice,
@@ -434,6 +435,8 @@ class FakeHost(RuntimeHostClient):
         self.timeline_syncs: list[dict[str, Any]] = []
         self.timeline_item_upserts: list[Any] = []
         self.notice_upserts: list[SessionNotice] = []
+        self.runtime_capability_updates: list[RuntimeCapabilitySet] = []
+        self.session_capability_updates: list[RuntimeCapabilitySet] = []
         self.sync_states: dict[str, dict[str, Any]] = {}
 
     @property
@@ -511,6 +514,18 @@ class FakeHost(RuntimeHostClient):
 
     async def notice_upsert(self, notice: SessionNotice) -> None:
         self.notice_upserts.append(notice)
+
+    async def runtime_capabilities_update(
+        self,
+        capabilities: RuntimeCapabilitySet,
+    ) -> None:
+        self.runtime_capability_updates.append(capabilities)
+
+    async def session_capabilities_update(
+        self,
+        capabilities: RuntimeCapabilitySet,
+    ) -> None:
+        self.session_capability_updates.append(capabilities)
 
     async def sync_state_read(self, key: str) -> Mapping[str, Any] | None:
         return self.sync_states.get(key)
@@ -1888,6 +1903,9 @@ async def _test_codex_runtime_compact_command_calls_app_server() -> None:
         "command": "compact",
         "result": {},
     }
+    blocked_capabilities = capability_map(host.session_capability_updates[-1])
+    assert blocked_capabilities[CAPABILITY_SESSION_SEND_MESSAGE].available is False
+    assert blocked_capabilities[CAPABILITY_SESSION_COMMANDS].available is False
 
     await wait_for_compact_tasks(runtime)
 
@@ -1896,8 +1914,15 @@ async def _test_codex_runtime_compact_command_calls_app_server() -> None:
         {"threadId": "thread_1"},
     )
     assert all(request[0] != "turn/start" for request in client.requests)
-    assert host.state_updates[-1]["status"] == "blocked"
+    assert host.timeline_item_upserts[-1].id == started_item_id
+    assert host.timeline_item_upserts[-1].status == "done"
+    assert host.timeline_item_upserts[-1].content["kind"] == "compact"
+    assert host.timeline_item_upserts[-1].content["state"] == "completed"
+    assert host.state_updates[-1]["status"] == "idle"
     assert host.state_updates[-1]["metadata"]["source"] == "codex.command.compact.accepted"
+    idle_capabilities = capability_map(host.session_capability_updates[-1])
+    assert idle_capabilities[CAPABILITY_SESSION_SEND_MESSAGE].available is True
+    assert idle_capabilities[CAPABILITY_SESSION_COMMANDS].available is True
 
     await runtime._handle_notification(
         Notification(
@@ -1960,6 +1985,13 @@ async def wait_for_compact_tasks(runtime: CodexRuntime) -> None:
     tasks = tuple(runtime._turns.commands.compact_tasks)
     if tasks:
         await asyncio.gather(*tasks)
+
+
+def capability_map(capabilities: RuntimeCapabilitySet) -> dict[str, Any]:
+    return {
+        capability.capability_id: capability
+        for capability in capabilities.capabilities
+    }
 
 
 def test_codex_runtime_command_failure_publishes_async_failure() -> None:
@@ -3072,6 +3104,12 @@ async def _test_codex_runtime_interrupts_active_turn_and_sets_idle() -> None:
     assert (
         host.state_updates[-1]["metadata"]["source"]
         == "codex.turn/interrupt.no-active-turn"
+    )
+    capabilities = capability_map(host.session_capability_updates[-1])
+    assert capabilities[CAPABILITY_SESSION_SEND_MESSAGE].available is True
+    assert capabilities[CAPABILITY_SESSION_INTERRUPT].available is False
+    assert capabilities[CAPABILITY_SESSION_INTERRUPT].unavailable_reason == (
+        "no_active_turn"
     )
 
 

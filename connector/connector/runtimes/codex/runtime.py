@@ -51,8 +51,12 @@ class CodexRuntime(AgentRuntime):
     runtime_version: str = "native-0"
 
     def __post_init__(self) -> None:
-        self._session_states = RuntimeSessionStateCache("codex", self.host)
         self._active_turn_ids: dict[str, str] = {}
+        self._session_states = RuntimeSessionStateCache(
+            "codex",
+            self.host,
+            on_state_updated=self.publish_session_capabilities_for_state,
+        )
         self._notices = CodexNoticeRegistry()
         self._pending_messages = PendingClientMessageRegistry()
         self._timeline = CodexTimelineAccumulator(
@@ -173,6 +177,40 @@ class CodexRuntime(AgentRuntime):
             has_active_turn=session_id in self._active_turn_ids,
         )
         return codex_session_capabilities(context)
+
+    async def publish_runtime_capabilities(self) -> None:
+        """Publish current runtime-scoped capabilities.
+
+        Side effects:
+        - sends a runtime capability update through the host client
+        """
+
+        await self.host.runtime_capabilities_update(
+            await self.get_runtime_capabilities()
+        )
+
+    async def publish_session_capabilities_for_state(
+        self,
+        state: SessionState,
+    ) -> None:
+        """Publish session-scoped capabilities after a state transition.
+
+        Side effects:
+        - sends a session capability update through the host client
+        """
+
+        context = codex_capability_context(
+            connector_id=self.host.connector_id,
+            revision=self.config.revision,
+            client_available=self.client is not None,
+            session_id=state.session_id,
+            external_session_id=state.external_session_id,
+            state=state,
+            has_active_turn=state.session_id in self._active_turn_ids,
+        )
+        await self.host.session_capabilities_update(
+            codex_session_capabilities(context)
+        )
 
     async def get_session_snapshot(
         self,

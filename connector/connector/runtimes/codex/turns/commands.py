@@ -188,12 +188,18 @@ class CodexCommandController:
         external_session_id: str,
         result: dict[str, Any],
     ) -> None:
-        cached = self.session_states.get(session_id)
+        item = self.timeline.item_from_notification(
+            session_id=session_id,
+            external_session_id=external_session_id,
+            method="thread/compacted",
+            params={"threadId": external_session_id},
+        )
+        if item is not None:
+            await self.host.timeline_item_upsert(item)
         await self.session_states.update(
             session_id=session_id,
             external_session_id=external_session_id,
-            status=cached.status if cached is not None else "blocked",
-            error=cached.error if cached is not None else None,
+            status="idle",
             metadata={
                 "source": "codex.command.compact.accepted",
                 "command": "compact",
