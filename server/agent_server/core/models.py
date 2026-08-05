@@ -821,6 +821,11 @@ class SessionCommandListResponse(BaseModel):
     serverTime: str
 
 
+class RuntimeCommandListResponse(BaseModel):
+    commands: list[RuntimeCommandView] = Field(default_factory=list)
+    serverTime: str
+
+
 class SessionCommandResponse(BaseModel):
     command: str
     ok: bool = True

@@ -162,6 +162,15 @@ class RuntimeCatalogParams:
 
 
 @dataclass(frozen=True, slots=True)
+class RuntimeCommandsParams:
+    limit: int
+
+    @classmethod
+    def parse(cls, params: dict[str, Any]) -> RuntimeCommandsParams:
+        return cls(limit=int_param(params, "limit", 100))
+
+
+@dataclass(frozen=True, slots=True)
 class SessionDiscoverParams:
     limit: int
     cursor: str | None

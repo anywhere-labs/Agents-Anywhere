@@ -29,6 +29,7 @@ from connector.server.runtime_session_rpc import (
 from connector.server.runtime_turn_rpc import (
     dispatch_interaction_respond,
     dispatch_interrupt,
+    dispatch_runtime_commands,
     dispatch_session_command_execute,
     dispatch_session_commands,
     dispatch_session_create,
@@ -49,6 +50,7 @@ class RuntimeRpcHandler:
         "runtime.start",
         "runtime.stop",
         "runtime.capabilities",
+        "runtime.commands",
         "runtime.modelCatalog",
         "runtime.permissionCatalog",
         "session.discover",
@@ -118,6 +120,11 @@ class RuntimeRpcHandler:
             runtime = self._resolve_agent_runtime(params)
             capabilities = await runtime.get_runtime_capabilities()
             return {"capabilitySet": capability_set_payload(capabilities)}
+        if method == "runtime.commands":
+            return await dispatch_runtime_commands(
+                self._resolve_agent_runtime(params),
+                params,
+            )
         if method == "runtime.modelCatalog":
             runtime = self._resolve_agent_runtime(params)
             parsed = RuntimeCatalogParams.parse(params)

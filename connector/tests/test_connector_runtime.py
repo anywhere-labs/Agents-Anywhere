@@ -373,6 +373,16 @@ class FakeAgentRuntime(AgentRuntime):
             ),
         )
 
+    async def list_runtime_commands(self, limit: int = 100) -> tuple[RuntimeCommand, ...]:
+        self.calls.append(("runtime.commands", {"limit": limit}))
+        return (
+            RuntimeCommand(
+                id="runtime-status",
+                title="Runtime status",
+                scope="runtime",
+            ),
+        )
+
     async def get_session_capabilities(
         self,
         session_id: str,
@@ -1151,6 +1161,29 @@ async def _exercise_runtime() -> None:
         "supported": True,
         "available": True,
         "allowed": True,
+        "metadata": {},
+    }
+
+    await client.handle_message(
+        {
+            "id": "rpc_5bb",
+            "type": "request",
+            "method": "runtime.commands",
+            "params": {"runtime": "codex", "limit": 20},
+        }
+    )
+    assert runtime.calls[-1] == ("runtime.commands", {"limit": 20})
+    assert ws.messages[-1]["result"]["commands"][0] == {
+        "id": "runtime-status",
+        "title": "Runtime status",
+        "description": None,
+        "aliases": [],
+        "category": None,
+        "scope": "runtime",
+        "enabled": True,
+        "disabledReason": None,
+        "acceptsArgs": False,
+        "argsSchema": None,
         "metadata": {},
     }
 

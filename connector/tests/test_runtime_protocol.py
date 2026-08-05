@@ -7,10 +7,10 @@ from dataclasses import fields
 import pytest
 
 from connector.runtime_protocol import (
-    AgentRuntime,
     CAPABILITY_CATALOG_MODEL,
     CAPABILITY_SESSION_INTERRUPT,
     CAPABILITY_SESSION_SEND_MESSAGE,
+    AgentRuntime,
     RuntimeCapability,
     RuntimeCapabilitySet,
     RuntimeCommandResult,
@@ -106,6 +106,7 @@ def test_runtime_protocol_default_optional_reads_are_empty() -> None:
     assert asyncio.run(runtime.get_session_state("sess_1")) is None
     assert asyncio.run(runtime.get_session_notices("sess_1")) == ()
     assert asyncio.run(runtime.list_commands("sess_1")) == ()
+    assert asyncio.run(runtime.list_runtime_commands()) == ()
     runtime_capabilities = asyncio.run(runtime.get_runtime_capabilities())
     session_capabilities = asyncio.run(runtime.get_session_capabilities("sess_1"))
 

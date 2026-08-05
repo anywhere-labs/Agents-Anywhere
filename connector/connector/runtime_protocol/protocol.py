@@ -165,6 +165,12 @@ class AgentRuntime(ABC):
     ) -> tuple[RuntimeCommand, ...]:
         return ()
 
+    async def list_runtime_commands(
+        self,
+        limit: int = 100,
+    ) -> tuple[RuntimeCommand, ...]:
+        return ()
+
     async def execute_command(
         self,
         session_id: str,

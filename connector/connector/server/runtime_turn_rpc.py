@@ -6,6 +6,7 @@ from connector.runtime_protocol import AgentRuntime
 from connector.server.runtime_rpc_params import (
     CommandExecuteParams,
     InteractionRespondParams,
+    RuntimeCommandsParams,
     SessionCommandsParams,
     SessionCreateParams,
     SessionSelectionUpdateParams,
@@ -105,6 +106,15 @@ async def dispatch_session_commands(
         query=parsed.query,
         limit=parsed.limit,
     )
+    return {"commands": [runtime_command_payload(command) for command in commands]}
+
+
+async def dispatch_runtime_commands(
+    runtime: AgentRuntime,
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    parsed = RuntimeCommandsParams.parse(params)
+    commands = await runtime.list_runtime_commands(limit=parsed.limit)
     return {"commands": [runtime_command_payload(command) for command in commands]}
 
 
