@@ -25,6 +25,12 @@ from openai_codex.models import (
 )
 
 from connector.runtime_protocol import (
+    CAPABILITY_CATALOG_MODEL,
+    CAPABILITY_RUNTIME_CONFIG,
+    CAPABILITY_SESSION_COMMANDS,
+    CAPABILITY_SESSION_INTERRUPT,
+    CAPABILITY_SESSION_SEND_MESSAGE,
+    CAPABILITY_SESSION_STEER,
     CommandToolContent,
     CompactSystemContent,
     MarkdownMessageContent,
@@ -1003,6 +1009,114 @@ async def _test_codex_runtime_permission_catalog() -> None:
     assert (
         catalog.permissions[0].metadata["nativeSettings"]["sandbox"]
         == "danger-full-access"
+    )
+
+
+def test_codex_runtime_reports_runtime_capabilities() -> None:
+    asyncio.run(_test_codex_runtime_reports_runtime_capabilities())
+
+
+async def _test_codex_runtime_reports_runtime_capabilities() -> None:
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=FakeCodexClient())
+
+    capability_set = await runtime.get_runtime_capabilities()
+    capabilities = {
+        capability.capability_id: capability
+        for capability in capability_set.capabilities
+    }
+
+    assert capability_set.runtime == "codex"
+    assert capability_set.revision == _config().revision
+    assert capability_set.connector_id == "conn_test"
+    assert capabilities[CAPABILITY_RUNTIME_CONFIG].available is True
+    assert capabilities[CAPABILITY_CATALOG_MODEL].available is True
+
+
+def test_codex_runtime_reports_unavailable_runtime_capabilities_without_client() -> None:
+    asyncio.run(_test_codex_runtime_reports_unavailable_runtime_capabilities_without_client())
+
+
+async def _test_codex_runtime_reports_unavailable_runtime_capabilities_without_client() -> None:
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=None)
+
+    capability_set = await runtime.get_runtime_capabilities()
+    capabilities = {
+        capability.capability_id: capability
+        for capability in capability_set.capabilities
+    }
+
+    assert capabilities[CAPABILITY_RUNTIME_CONFIG].available is True
+    assert capabilities[CAPABILITY_CATALOG_MODEL].available is False
+    assert capabilities[CAPABILITY_CATALOG_MODEL].unavailable_reason == (
+        "codex_unavailable"
+    )
+
+
+def test_codex_runtime_reports_idle_session_capabilities() -> None:
+    asyncio.run(_test_codex_runtime_reports_idle_session_capabilities())
+
+
+async def _test_codex_runtime_reports_idle_session_capabilities() -> None:
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=FakeCodexClient())
+
+    capability_set = await runtime.get_session_capabilities("sess_1", "thread_1")
+    capabilities = {
+        capability.capability_id: capability
+        for capability in capability_set.capabilities
+    }
+
+    assert capability_set.session_id == "sess_1"
+    assert capabilities[CAPABILITY_SESSION_SEND_MESSAGE].available is True
+    assert capabilities[CAPABILITY_SESSION_COMMANDS].available is True
+    assert capabilities[CAPABILITY_SESSION_INTERRUPT].available is False
+    assert capabilities[CAPABILITY_SESSION_INTERRUPT].unavailable_reason == (
+        "no_active_turn"
+    )
+    assert capabilities[CAPABILITY_SESSION_STEER].available is False
+
+
+def test_codex_runtime_reports_running_session_capabilities() -> None:
+    asyncio.run(_test_codex_runtime_reports_running_session_capabilities())
+
+
+async def _test_codex_runtime_reports_running_session_capabilities() -> None:
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=FakeCodexClient())
+
+    await runtime.start_turn("sess_1", "thread_1", "hello")
+    capability_set = await runtime.get_session_capabilities("sess_1", "thread_1")
+    capabilities = {
+        capability.capability_id: capability
+        for capability in capability_set.capabilities
+    }
+
+    assert capabilities[CAPABILITY_SESSION_SEND_MESSAGE].available is False
+    assert capabilities[CAPABILITY_SESSION_SEND_MESSAGE].unavailable_reason == (
+        "session_running"
+    )
+    assert capabilities[CAPABILITY_SESSION_COMMANDS].available is False
+    assert capabilities[CAPABILITY_SESSION_INTERRUPT].available is True
+    assert capabilities[CAPABILITY_SESSION_STEER].available is True
+
+
+def test_codex_runtime_reports_idle_after_no_active_turn() -> None:
+    asyncio.run(_test_codex_runtime_reports_idle_after_no_active_turn())
+
+
+async def _test_codex_runtime_reports_idle_after_no_active_turn() -> None:
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=FakeCodexClient())
+
+    await runtime.start_turn("sess_1", "thread_1", "hello")
+    await runtime.interrupt_turn("sess_1", "thread_1")
+    capability_set = await runtime.get_session_capabilities("sess_1", "thread_1")
+    capabilities = {
+        capability.capability_id: capability
+        for capability in capability_set.capabilities
+    }
+
+    assert capabilities[CAPABILITY_SESSION_SEND_MESSAGE].available is True
+    assert capabilities[CAPABILITY_SESSION_INTERRUPT].available is False
+    assert capabilities[CAPABILITY_SESSION_INTERRUPT].unavailable_reason == (
+        "no_active_turn"
     )
 
 

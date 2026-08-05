@@ -7,6 +7,7 @@ from typing import Any
 from connector.runtime_protocol import (
     AgentRuntime,
     RuntimeAttachment,
+    RuntimeCapabilitySet,
     RuntimeCommand,
     RuntimeCommandResult,
     RuntimeConfig,
@@ -21,6 +22,11 @@ from connector.runtime_protocol import (
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex.catalogs.reader import CodexCatalogReader
+from connector.runtimes.codex.domain.capabilities import (
+    codex_capability_context,
+    codex_runtime_capabilities,
+    codex_session_capabilities,
+)
 from connector.runtimes.codex.domain.commands import list_codex_commands
 from connector.runtimes.codex.domain.notices import CodexNoticeRegistry
 from connector.runtimes.codex.domain.pending_messages import (
@@ -108,6 +114,14 @@ class CodexRuntime(AgentRuntime):
     async def get_config(self) -> RuntimeConfig:
         return self.config
 
+    async def get_runtime_capabilities(self) -> RuntimeCapabilitySet:
+        context = codex_capability_context(
+            connector_id=self.host.connector_id,
+            revision=self.config.revision,
+            client_available=self.client is not None,
+        )
+        return codex_runtime_capabilities(context)
+
     async def list_model_catalog(
         self,
         query: str | None = None,
@@ -139,6 +153,26 @@ class CodexRuntime(AgentRuntime):
             session_id,
             external_session_id,
         )
+
+    async def get_session_capabilities(
+        self,
+        session_id: str,
+        external_session_id: str | None = None,
+    ) -> RuntimeCapabilitySet:
+        state = await self.get_session_state(
+            session_id=session_id,
+            external_session_id=external_session_id,
+        )
+        context = codex_capability_context(
+            connector_id=self.host.connector_id,
+            revision=self.config.revision,
+            client_available=self.client is not None,
+            session_id=session_id,
+            external_session_id=external_session_id,
+            state=state,
+            has_active_turn=session_id in self._active_turn_ids,
+        )
+        return codex_session_capabilities(context)
 
     async def get_session_snapshot(
         self,
