@@ -215,7 +215,7 @@ export class DashboardApi {
     archived: boolean,
   ): Promise<BulkArchiveResponse> {
     return this.client.post<BulkArchiveResponse>(
-      "/sessions/bulk-archive",
+      "/sessions/archive",
       { ids, archived },
       { token },
     );

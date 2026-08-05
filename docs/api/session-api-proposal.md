@@ -200,12 +200,24 @@ include connector presence, but must not include runtime state as durable fact.
 }
 ```
 
-`POST /sessions/read` and `POST /sessions/archive` accept a direct JSON array of
-session ids:
+`POST /sessions/read` accepts a direct JSON array of session ids:
 
 ```json
 ["sess_1", "sess_2"]
 ```
+
+`POST /sessions/archive` accepts an explicit archive update:
+
+```json
+{
+  "ids": ["sess_1", "sess_2"],
+  "archived": true
+}
+```
+
+For transitional callers, `POST /sessions/archive` may also accept a direct JSON
+array as shorthand for `{ "ids": [...], "archived": true }`. New callers should
+use the object form because the same endpoint is also used to unarchive.
 
 The removed per-session and bulk aliases migrate as follows:
 
@@ -217,7 +229,7 @@ removed: POST /sessions/bulk-read
 use:     POST /sessions/read
 
 removed: POST /sessions/bulk-archive
-use:     POST /sessions/archive
+use:     POST /sessions/archive with { "ids": [...], "archived": true|false }
 ```
 
 ### SessionTimeline

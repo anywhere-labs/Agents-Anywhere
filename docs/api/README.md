@@ -104,7 +104,8 @@ Migration guide:
 - Session message and command routes move under
   `/sessions/{sessionId}/runtime/*`.
 - Session read/archive bulk aliases move to `POST /sessions/read` and
-  `POST /sessions/archive`, each accepting a direct JSON array of session ids.
+  `POST /sessions/archive`. Read accepts a direct JSON array of session ids.
+  Archive accepts `{ "ids": [...], "archived": true|false }`.
 - `snapshot.catalogs` is not a primary catalog source.
 - Server-persisted notices, catalogs, and capabilities are not runtime truth.
 - Hardcoded session commands are removed; command lists come from runtime live

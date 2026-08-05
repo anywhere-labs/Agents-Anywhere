@@ -7782,6 +7782,26 @@ def test_archive_endpoint_accepts_session_id_array(tmp_path):
     assert all(session["archived"] is True for session in body["sessions"])
 
 
+def test_archive_endpoint_can_unarchive(tmp_path):
+    client = make_client(tmp_path)
+    _, _, session_id, headers = create_connector_and_session(client)
+
+    client.post(
+        "/sessions/archive",
+        headers=headers,
+        json=[session_id],
+    ).raise_for_status()
+    response = client.post(
+        "/sessions/archive",
+        headers=headers,
+        json={"ids": [session_id], "archived": False},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["sessions"][0]["archived"] is False
+    assert body["sessions"][0]["archivedAt"] is None
+
+
 def test_bulk_archive_can_unarchive(tmp_path):
     client = make_client(tmp_path)
     _, _, session_id, headers = create_connector_and_session(client)

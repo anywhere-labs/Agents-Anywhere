@@ -103,6 +103,25 @@ from agent_server.services.session_run import SessionRunError, SessionRunService
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
+ArchiveSessionsPayload = BulkArchiveRequest | list[str]
+
+
+def archive_payload_parts(payload: ArchiveSessionsPayload) -> tuple[list[str], bool]:
+    if isinstance(payload, BulkArchiveRequest):
+        return payload.ids, payload.archived
+
+    if len(payload) < 1:
+        raise HTTPException(
+            status_code=422,
+            detail="ids must contain at least one session id",
+        )
+    if len(payload) > 200:
+        raise HTTPException(
+            status_code=422,
+            detail="ids must contain at most 200 session ids",
+        )
+
+    return payload, True
 
 
 def _get_ws_tickets(conn: HTTPConnection) -> ClientWsTicketManager:
@@ -354,8 +373,8 @@ async def patch_session_meta(
     )
 
 
-# Migration shim: old clients used `/bulk-archive`. New clients must send a
-# direct session id array to `POST /sessions/archive`.
+# Migration shim: old clients used `/bulk-archive`. New clients must send
+# `{ "ids": [...], "archived": true|false }` to `POST /sessions/archive`.
 @router.post("/bulk-archive", response_model=BulkArchiveResponse)
 async def bulk_archive_sessions(
     payload: BulkArchiveRequest,
@@ -412,17 +431,19 @@ async def bulk_mark_sessions_read(
 
 @router.post("/archive", response_model=BulkArchiveResponse)
 async def archive_sessions(
-    session_ids: list[str] = Body(..., min_length=1, max_length=200),
+    payload: ArchiveSessionsPayload = Body(...),
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
     broker: TimelineBroker = Depends(get_timeline_broker),
 ) -> BulkArchiveResponse:
+    session_ids, archived = archive_payload_parts(payload)
     sessions, not_found = await db.bulk_set_session_archived(
         session_ids,
-        True,
+        archived,
         user_id=user_id,
     )
+    reason = "sessions.archived" if archived else "sessions.unarchived"
     for session in sessions:
         await publish_dashboard_changed(
             db,
@@ -430,7 +451,7 @@ async def archive_sessions(
             user_id=user_id,
             connector_id=session.connectorId,
             session_id=session.id,
-            reason="sessions.archived",
+            reason=reason,
         )
     return BulkArchiveResponse(
         sessions=await with_effective_session_connector_statuses(manager, sessions),

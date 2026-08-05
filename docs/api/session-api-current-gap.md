@@ -37,7 +37,7 @@ Current backend state:
 | SessionMeta update | `PATCH /api/v2/sessions/{sessionId}/meta` | exists | Keep. Updates only Server-owned display metadata. |
 | SessionMeta compatibility update | `PATCH /api/v2/sessions/{sessionId}` | exists | Mark as migration shim or replace with `/meta` when frontend migrates. |
 | Read sessions | `POST /api/v2/sessions/read` with direct id array | exists | Keep as target. |
-| Archive sessions | `POST /api/v2/sessions/archive` with direct id array | exists | Keep as target. |
+| Archive sessions | `POST /api/v2/sessions/archive` with `{ ids, archived }`; direct id array remains archive-only shorthand | exists | Keep as target. |
 | Old read one | `POST /api/v2/sessions/{sessionId}/read` | exists | Compatibility shim. Remove after frontend migration. |
 | Old bulk read | `POST /api/v2/sessions/bulk-read` | exists | Compatibility shim. Remove after frontend migration. |
 | Old bulk archive | `POST /api/v2/sessions/bulk-archive` | exists | Compatibility shim. Remove after frontend migration. |
