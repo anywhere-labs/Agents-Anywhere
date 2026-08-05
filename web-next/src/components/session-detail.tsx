@@ -742,7 +742,7 @@ export function SessionDetail({
       const runtimeStatePayload = readPayloadValue<SessionRuntimeState>(event.payload.state)
       markAutoScrollIfNearBottom()
       setState((current) => mergeSessionEvent(current, event))
-      if (sessionPayload && !runtimeStatePayload) {
+      if (event.type === "session.status_changed" && sessionPayload && !runtimeStatePayload) {
         void refreshRuntimeState(`event:${event.type}:state-missing`)
       }
       const item = readPayloadValue<TimelineItem>(event.payload.item)
