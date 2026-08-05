@@ -97,17 +97,17 @@ export function SessionView() {
     setExporting(true)
     try {
       const allItems: TimelineItem[] = []
-      let notices: Notice[] = []
+      const snapshot = await dashboardApi.getSessionSnapshot(token, session.id, 1, {
+        reason: "session-view.export-remote",
+      })
+      const notices: Notice[] = snapshot.notices
       let afterSeq = 0
       let nextSeq = 0
-      let sessionSnapshot: SessionViewData | null = null
-      let serverTime: string | null = null
+      let serverTime: string | null = snapshot.serverTime
 
       while (true) {
-        const page = await dashboardApi.getSessionState(token, session.id, afterSeq, 500)
+        const page = await dashboardApi.getSessionTimeline(token, session.id, afterSeq, 500)
         allItems.push(...page.items)
-        notices = page.notices ?? notices
-        sessionSnapshot = page.session
         serverTime = page.serverTime
         nextSeq = page.nextSeq
         if (!page.hasMore) break
@@ -119,7 +119,7 @@ export function SessionView() {
       downloadTimelineJson(
         {
           source: "remote",
-          session: sessionSnapshot,
+          session: snapshot.session as SessionViewData,
           items: sortTimelineItems(allItems),
           notices,
           nextSeq,

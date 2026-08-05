@@ -40,7 +40,7 @@ import type {
   SessionRuntimeStateResponse,
   SessionSelectionPatchResponse,
   SessionSnapshotResponse,
-  SessionStateResponse,
+  SessionTimelineResponse,
   TakeoverResponse,
   TerminalCreateRequest,
   TerminalListResult,
@@ -53,7 +53,7 @@ import type {
 export type SessionStateQuery = {
   afterSeq?: number;
   beforeOrderSeq?: number;
-  mode?: "since" | "latest" | "before";
+  mode?: "changes" | "latest" | "history";
   limit?: number;
 };
 
@@ -199,7 +199,7 @@ export class DashboardApi {
     body: SessionPatchRequest,
   ): Promise<SessionResponse> {
     return this.client.patch<SessionResponse>(
-      `/sessions/${encodeURIComponent(sessionId)}`,
+      `/sessions/${encodeURIComponent(sessionId)}/meta`,
       body,
       { token },
     );
@@ -232,38 +232,38 @@ export class DashboardApi {
       });
   }
 
-  getSessionState(
+  getSessionTimeline(
     token: string,
     sessionId: string,
     afterSeqOrQuery: number | SessionStateQuery = 0,
     limit = 500,
-  ): Promise<SessionStateResponse> {
+  ): Promise<SessionTimelineResponse> {
     const query =
       typeof afterSeqOrQuery === "number"
-        ? { afterSeq: afterSeqOrQuery, limit }
+        ? { mode: "changes", afterSeq: afterSeqOrQuery, limit }
         : { ...afterSeqOrQuery, limit: afterSeqOrQuery.limit ?? limit };
-    return this.client.get<SessionStateResponse>(
-      `/sessions/${encodeURIComponent(sessionId)}/state`,
+    return this.client.get<SessionTimelineResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/timeline`,
       { token, query },
     );
   }
 
-  getLatestSessionState(
+  getLatestSessionTimeline(
     token: string,
     sessionId: string,
     limit = 100,
-  ): Promise<SessionStateResponse> {
-    return this.getSessionState(token, sessionId, { mode: "latest", limit });
+  ): Promise<SessionTimelineResponse> {
+    return this.getSessionTimeline(token, sessionId, { mode: "latest", limit });
   }
 
-  getSessionStateBefore(
+  getSessionTimelineBefore(
     token: string,
     sessionId: string,
     beforeOrderSeq: number,
     limit = 100,
-  ): Promise<SessionStateResponse> {
-    return this.getSessionState(token, sessionId, {
-      mode: "before",
+  ): Promise<SessionTimelineResponse> {
+    return this.getSessionTimeline(token, sessionId, {
+      mode: "history",
       beforeOrderSeq,
       limit,
     });

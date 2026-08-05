@@ -15,8 +15,8 @@ import { dashboardApi } from "@/features/dashboard/api"
 import type {
   ConnectorView as RealConnectorView,
   DashboardSnapshotMessage,
+  SessionLocalTimelineState,
   SessionRuntimeState,
-  SessionStateResponse,
   SessionView as RealSessionView,
   TimelineItem,
 } from "@/features/dashboard/types"
@@ -268,7 +268,7 @@ type WorkspaceState = {
   bindOptimisticSession: (localSessionId: string, session: RealSessionView) => void
   clearResolvedOptimisticMessages: (sessionId: string, items: TimelineItem[]) => void
   getOptimisticItems: (sessionId: string) => TimelineItem[]
-  getOptimisticSessionState: (sessionId: string) => SessionStateResponse | null
+  getOptimisticSessionState: (sessionId: string) => SessionLocalTimelineState | null
   isOptimisticSession: (sessionId: string) => boolean
   markOptimisticMessageFailed: (clientMessageId: string, message: string) => void
   appendPathToComposer: (path: string) => boolean
@@ -768,7 +768,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       .map((message) => message.item)
   }, [optimisticMessages])
 
-  const getOptimisticSessionState = React.useCallback((sessionId: string): SessionStateResponse | null => {
+  const getOptimisticSessionState = React.useCallback((sessionId: string): SessionLocalTimelineState | null => {
     const messages = optimisticMessages.filter((message) => message.sessionId === sessionId)
     const session = messages.find((message) => message.session)?.session
     const state = messages.find((message) => message.state)?.state
@@ -779,7 +779,6 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       session,
       state: state ?? null,
       items,
-      approvals: [],
       nextSeq,
       hasMore: false,
       serverTime: new Date().toISOString(),

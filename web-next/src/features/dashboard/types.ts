@@ -368,6 +368,11 @@ export type SessionTimelineSnapshot = {
   hasMore: boolean;
 };
 
+export type SessionTimelineResponse = SessionTimelineSnapshot & {
+  sessionId: string;
+  serverTime: string;
+};
+
 export type SessionSnapshotResponse = Pick<
   ProtocolSessionSnapshotResponse,
   "eventCursor" | "serverTime"
@@ -387,11 +392,10 @@ export type SessionSnapshotResponse = Pick<
 
 export type WsTicketResponse = ProtocolWsTicketResponse;
 
-export type SessionStateResponse = {
+export type SessionLocalTimelineState = {
   session: SessionView;
   state?: SessionRuntimeState | null;
   items: TimelineItem[];
-  approvals: Approval[];
   notices?: Notice[];
   nextSeq: number;
   hasMore: boolean;

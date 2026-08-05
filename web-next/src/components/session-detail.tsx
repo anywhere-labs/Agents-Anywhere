@@ -30,7 +30,6 @@ import type {
   RuntimeStatusValue,
   SessionSnapshotResponse,
   SessionRuntimeState,
-  SessionStateResponse,
   SessionView,
   TimelineItem,
 } from "@/features/dashboard/types"
@@ -77,8 +76,14 @@ export type SessionMemorySnapshot = {
   pendingInteractionCount: number
 }
 
-type SessionRemoteState = Omit<SessionStateResponse, "approvals"> & {
+type SessionRemoteState = {
+  session: SessionView
+  state?: SessionRuntimeState | null
+  items: TimelineItem[]
   notices: Notice[]
+  nextSeq: number
+  hasMore: boolean
+  serverTime: string
   eventCursor: string
   effectiveCapabilities: ProtocolCapabilitySet | null
   catalogs: {
@@ -619,7 +624,7 @@ export function SessionDetail({
     loadingOlderRef.current = true
     setLoadingOlder(true)
     try {
-      const older = await dashboardApi.getSessionStateBefore(
+      const older = await dashboardApi.getSessionTimelineBefore(
         token,
         sessionId,
         oldestItem.orderSeq,
