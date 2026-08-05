@@ -689,6 +689,26 @@ export class DashboardApi {
     );
   }
 
+  getSessionModelCatalog(
+    token: string,
+    sessionId: string,
+  ): Promise<ProtocolModelCatalogResponse> {
+    return this.client.get<ProtocolModelCatalogResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/catalogs/model`,
+      { token },
+    );
+  }
+
+  getSessionPermissionCatalog(
+    token: string,
+    sessionId: string,
+  ): Promise<ProtocolPermissionCatalogResponse> {
+    return this.client.get<ProtocolPermissionCatalogResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/catalogs/permission`,
+      { token },
+    );
+  }
+
   uploadSessionAttachments(
     token: string,
     sessionId: string,
@@ -724,6 +744,17 @@ export class DashboardApi {
     );
   }
 
+  getConnectorRuntimeCapabilities(
+    token: string,
+    connectorId: string,
+    runtimeId: string,
+  ): Promise<ProtocolCapabilitiesResponse> {
+    return this.client.get<ProtocolCapabilitiesResponse>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtimes/${encodeURIComponent(runtimeId)}/capabilities`,
+      { token },
+    );
+  }
+
   getAgentPermissionCatalog(
     token: string,
     runtime: string,
@@ -731,6 +762,28 @@ export class DashboardApi {
   ): Promise<ProtocolPermissionCatalogResponse> {
     return this.client.get<ProtocolPermissionCatalogResponse>(
       `/agents/${encodeURIComponent(runtime)}/permission-catalog?connectorId=${encodeURIComponent(connectorId)}`,
+      { token },
+    );
+  }
+
+  getConnectorRuntimeModelCatalog(
+    token: string,
+    connectorId: string,
+    runtimeId: string,
+  ): Promise<ProtocolModelCatalogResponse> {
+    return this.client.get<ProtocolModelCatalogResponse>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtimes/${encodeURIComponent(runtimeId)}/catalogs/model`,
+      { token },
+    );
+  }
+
+  getConnectorRuntimePermissionCatalog(
+    token: string,
+    connectorId: string,
+    runtimeId: string,
+  ): Promise<ProtocolPermissionCatalogResponse> {
+    return this.client.get<ProtocolPermissionCatalogResponse>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtimes/${encodeURIComponent(runtimeId)}/catalogs/permission`,
       { token },
     );
   }

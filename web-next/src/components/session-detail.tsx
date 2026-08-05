@@ -410,9 +410,8 @@ export function SessionDetail({
 
   React.useEffect(() => {
     const runtime = session?.runtime
-    const connectorId = session?.connectorId
     const capabilitySet = state?.effectiveCapabilities ?? null
-    if (!runtime || !connectorId || !capabilitySet) return
+    if (!runtime || !capabilitySet) return
 
     const canUseModelCatalog = capabilityIsUsable(
       capabilitySet,
@@ -429,10 +428,10 @@ export function SessionDetail({
     let cancelled = false
     void Promise.all([
       canUseModelCatalog
-        ? dashboardApi.getAgentModelCatalog(token, runtime, connectorId)
+        ? dashboardApi.getSessionModelCatalog(token, sessionId)
         : Promise.resolve(null),
       canUsePermissionCatalog
-        ? dashboardApi.getAgentPermissionCatalog(token, runtime, connectorId)
+        ? dashboardApi.getSessionPermissionCatalog(token, sessionId)
         : Promise.resolve(null),
     ])
       .then(([modelCatalogResponse, permissionCatalogResponse]) => {
@@ -456,7 +455,6 @@ export function SessionDetail({
         console.debug("[AgentsAnywhere] session catalog refresh failed", {
           sessionId,
           runtime,
-          connectorId,
         })
       })
 
@@ -464,7 +462,6 @@ export function SessionDetail({
       cancelled = true
     }
   }, [
-    session?.connectorId,
     session?.runtime,
     sessionId,
     state?.effectiveCapabilities?.revision,

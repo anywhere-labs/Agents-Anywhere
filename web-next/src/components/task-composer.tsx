@@ -301,9 +301,10 @@ export function TaskComposer() {
     setModelCatalog(null)
     setPermissionCatalog(null)
     setRuntimeCapabilities(null)
-    dashboardApi.getConnectorProtocolCapabilities(
+    dashboardApi.getConnectorRuntimeCapabilities(
       authSession.accessToken,
       selectedConnectorId,
+      selectedAgent,
     )
       .then(async (capabilitiesResponse) => {
         const capabilitySet = capabilitiesResponse.capabilitySet
@@ -319,17 +320,17 @@ export function TaskComposer() {
         )
         const [modelCatalogResponse, permissionCatalogResponse] = await Promise.all([
           canUseModelCatalog
-            ? dashboardApi.getAgentModelCatalog(
+            ? dashboardApi.getConnectorRuntimeModelCatalog(
                 authSession.accessToken,
-                selectedAgent,
                 selectedConnectorId,
+                selectedAgent,
               )
             : Promise.resolve(null),
           canUsePermissionCatalog
-            ? dashboardApi.getAgentPermissionCatalog(
+            ? dashboardApi.getConnectorRuntimePermissionCatalog(
                 authSession.accessToken,
-                selectedAgent,
                 selectedConnectorId,
+                selectedAgent,
               )
             : Promise.resolve(null),
         ])
