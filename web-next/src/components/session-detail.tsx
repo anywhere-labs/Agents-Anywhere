@@ -382,7 +382,8 @@ export function SessionDetail({
   }, [applyOptimisticItems, clearResolvedOptimisticMessages, getOptimisticSessionState, tSession])
 
   React.useEffect(() => {
-    if (commandQuery === null || !commandSessionId) {
+    const commandMenuOpen = commandQuery !== null
+    if (!commandMenuOpen || !commandSessionId) {
       setRuntimeCommands([])
       setCommandsLoading(false)
       return
@@ -390,10 +391,7 @@ export function SessionDetail({
     let cancelled = false
     setCommandsLoading(true)
     const timer = window.setTimeout(() => {
-      void dashboardApi.getSessionCommands(token, commandSessionId, {
-        query: commandQuery,
-        limit: 50,
-      }).then((response) => {
+      void dashboardApi.getSessionCommands(token, commandSessionId).then((response) => {
         if (cancelled) return
         setRuntimeCommands(response.commands)
       }).catch(() => {
@@ -408,7 +406,7 @@ export function SessionDetail({
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [commandQuery, commandSessionId, token])
+  }, [commandQuery !== null, commandSessionId, token])
 
   React.useEffect(() => {
     const runtime = session?.runtime

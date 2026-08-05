@@ -206,7 +206,7 @@ export class DashboardApi {
   }
 
   bulkMarkSessionsRead(token: string, ids: string[]): Promise<BulkArchiveResponse> {
-    return this.client.post<BulkArchiveResponse>("/sessions/bulk-read", { ids }, { token });
+    return this.client.post<BulkArchiveResponse>("/sessions/read", ids, { token });
   }
 
   bulkArchiveSessions(
@@ -222,11 +222,13 @@ export class DashboardApi {
   }
 
   markSessionRead(token: string, sessionId: string): Promise<SessionResponse> {
-    return this.client.post<SessionResponse>(
-      `/sessions/${encodeURIComponent(sessionId)}/read`,
-      {},
-      { token },
-    );
+    return this.client
+      .post<BulkArchiveResponse>("/sessions/read", [sessionId], { token })
+      .then((response) => {
+        const session = response.sessions.find((item) => item.id === sessionId);
+        if (!session) throw new Error("session read response did not include session");
+        return { session, serverTime: response.serverTime };
+      });
   }
 
   getSessionState(
@@ -598,7 +600,7 @@ export class DashboardApi {
 
   interruptSession(token: string, sessionId: string): Promise<RpcResponse<unknown>> {
     return this.client.post<RpcResponse<unknown>>(
-      `/sessions/${encodeURIComponent(sessionId)}/interrupt`,
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/interrupt`,
       {},
       { token },
     );
@@ -609,12 +611,9 @@ export class DashboardApi {
     sessionId: string,
     options: { query?: string; limit?: number } = {},
   ): Promise<SessionCommandListResponse> {
-    const params = new URLSearchParams();
-    if (options.query) params.set("query", options.query);
-    if (options.limit) params.set("limit", String(options.limit));
-    const suffix = params.toString();
+    void options;
     return this.client.get<SessionCommandListResponse>(
-      `/sessions/${encodeURIComponent(sessionId)}/commands${suffix ? `?${suffix}` : ""}`,
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/commands`,
       { token },
     );
   }
@@ -626,7 +625,7 @@ export class DashboardApi {
     options: { args?: string[]; raw?: string } = {},
   ): Promise<SessionCommandResponse> {
     return this.client.post<SessionCommandResponse>(
-      `/sessions/${encodeURIComponent(sessionId)}/commands`,
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/commands`,
       {
         command,
         ...(options.args && options.args.length > 0 ? { args: options.args } : {}),
@@ -644,7 +643,7 @@ export class DashboardApi {
     input?: Record<string, unknown> | null,
   ): Promise<RpcResponse<unknown>> {
     return this.client.post<RpcResponse<unknown>>(
-      `/sessions/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(noticeId)}/respond`,
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/notices/${encodeURIComponent(noticeId)}/respond`,
       { actionId, ...(input ? { input } : {}) },
       { token },
     );
@@ -658,7 +657,7 @@ export class DashboardApi {
   ): Promise<RpcResponse<unknown>> {
     const { attachments, clientMessageId } = options;
     return this.client.post<RpcResponse<unknown>>(
-      `/sessions/${encodeURIComponent(sessionId)}/messages`,
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/messages`,
       {
         content,
         ...(attachments && attachments.length > 0 ? { attachments } : {}),
@@ -673,7 +672,7 @@ export class DashboardApi {
     sessionId: string,
   ): Promise<SessionRuntimeStateResponse> {
     return this.client.get<SessionRuntimeStateResponse>(
-      `/sessions/${encodeURIComponent(sessionId)}/runtime-state`,
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/state`,
       { token },
     );
   }
@@ -684,7 +683,7 @@ export class DashboardApi {
     selections: Record<string, string | null>,
   ): Promise<SessionSelectionPatchResponse> {
     return this.client.patch<SessionSelectionPatchResponse>(
-      `/sessions/${encodeURIComponent(sessionId)}/state/selections`,
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/selections`,
       { selections },
       { token },
     );
