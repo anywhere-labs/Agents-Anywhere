@@ -7756,15 +7756,15 @@ def _sessions_by_id(client: TestClient, headers: dict[str, str]) -> dict[str, An
     return {s["id"]: s for s in client.get("/sessions", headers=headers).json()["sessions"]}
 
 
-def test_bulk_archive_archives_owned_sessions(tmp_path):
+def test_archive_endpoint_archives_owned_sessions(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, session_a, headers = create_connector_and_session(client)
     session_b = _create_extra_session(client, headers, connector_id, "thr_b", title="B")
 
     response = client.post(
-        "/sessions/bulk-archive",
+        "/sessions/archive",
         headers=headers,
-        json={"ids": [session_a, session_b], "archived": True},
+        json=[session_a, session_b],
     )
     assert response.status_code == 200, response.text
     body = response.json()
@@ -7795,7 +7795,7 @@ def test_archive_endpoint_accepts_session_id_array(tmp_path):
     assert all(session["archived"] is True for session in body["sessions"])
 
 
-def test_archive_endpoint_can_unarchive(tmp_path):
+def test_unarchive_endpoint_can_unarchive(tmp_path):
     client = make_client(tmp_path)
     _, _, session_id, headers = create_connector_and_session(client)
 
@@ -7805,9 +7805,9 @@ def test_archive_endpoint_can_unarchive(tmp_path):
         json=[session_id],
     ).raise_for_status()
     response = client.post(
-        "/sessions/archive",
+        "/sessions/unarchive",
         headers=headers,
-        json={"ids": [session_id], "archived": False},
+        json=[session_id],
     )
     assert response.status_code == 200, response.text
     body = response.json()
@@ -7815,35 +7815,28 @@ def test_archive_endpoint_can_unarchive(tmp_path):
     assert body["sessions"][0]["archivedAt"] is None
 
 
-def test_bulk_archive_can_unarchive(tmp_path):
+def test_bulk_archive_returns_migration_error(tmp_path):
     client = make_client(tmp_path)
-    _, _, session_id, headers = create_connector_and_session(client)
+    _, _, _, headers = create_connector_and_session(client)
 
-    client.post(
-        "/sessions/bulk-archive",
-        headers=headers,
-        json={"ids": [session_id], "archived": True},
-    ).raise_for_status()
     response = client.post(
         "/sessions/bulk-archive",
         headers=headers,
-        json={"ids": [session_id], "archived": False},
+        json={"ids": ["sess_1"], "archived": False},
     )
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["sessions"][0]["archived"] is False
-    assert body["sessions"][0]["archivedAt"] is None
+    assert response.status_code == 410
+    assert "POST /sessions/unarchive" in response.json()["detail"]
 
 
-def test_bulk_archive_filters_unowned_ids(tmp_path):
+def test_archive_endpoint_filters_unowned_ids(tmp_path):
     client = make_client(tmp_path)
     _, _, session_one, user_one_headers = create_connector_and_session(client, user_id=ADMIN_USER)
     _, _, session_two, user_two_headers = create_connector_and_session(client, user_id="user2")
 
     response = client.post(
-        "/sessions/bulk-archive",
+        "/sessions/archive",
         headers=user_one_headers,
-        json={"ids": [session_one, session_two, "not-a-session"], "archived": True},
+        json=[session_one, session_two, "not-a-session"],
     )
     assert response.status_code == 200, response.text
     body = response.json()
@@ -7855,24 +7848,24 @@ def test_bulk_archive_filters_unowned_ids(tmp_path):
     assert other_state[session_two]["archived"] is False
 
 
-def test_bulk_archive_rejects_empty_ids(tmp_path):
+def test_archive_endpoint_rejects_empty_ids(tmp_path):
     client = make_client(tmp_path)
     _, _, _, headers = create_connector_and_session(client)
     response = client.post(
-        "/sessions/bulk-archive",
+        "/sessions/archive",
         headers=headers,
-        json={"ids": [], "archived": True},
+        json=[],
     )
     assert response.status_code == 422
 
 
-def test_bulk_archive_rejects_too_many_ids(tmp_path):
+def test_archive_endpoint_rejects_too_many_ids(tmp_path):
     client = make_client(tmp_path)
     _, _, _, headers = create_connector_and_session(client)
     response = client.post(
-        "/sessions/bulk-archive",
+        "/sessions/archive",
         headers=headers,
-        json={"ids": [f"id-{i}" for i in range(201)], "archived": True},
+        json=[f"id-{i}" for i in range(201)],
     )
     assert response.status_code == 422
 
@@ -8027,9 +8020,9 @@ def test_archive_all_scope_active_skips_archived(tmp_path):
     connector_id, _, active_session, headers = create_connector_and_session(client)
     already_archived = _create_extra_session(client, headers, connector_id, "thr_arch")
     client.post(
-        "/sessions/bulk-archive",
+        "/sessions/archive",
         headers=headers,
-        json={"ids": [already_archived], "archived": True},
+        json=[already_archived],
     ).raise_for_status()
 
     response = client.post(
@@ -8052,9 +8045,9 @@ def test_archive_all_scope_archived_can_unarchive(tmp_path):
     connector_id, _, session_a, headers = create_connector_and_session(client)
     session_b = _create_extra_session(client, headers, connector_id, "thr_b")
     client.post(
-        "/sessions/bulk-archive",
+        "/sessions/archive",
         headers=headers,
-        json={"ids": [session_a, session_b], "archived": True},
+        json=[session_a, session_b],
     ).raise_for_status()
 
     response = client.post(

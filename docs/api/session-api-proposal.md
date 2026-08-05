@@ -185,6 +185,7 @@ GET   /sessions/{sessionId}/meta
 PATCH /sessions/{sessionId}/meta
 POST  /sessions/read
 POST  /sessions/archive
+POST  /sessions/unarchive
 ```
 
 `GET /sessions` returns SessionMeta summaries for dashboard/list views. It may
@@ -206,18 +207,19 @@ include connector presence, but must not include runtime state as durable fact.
 ["sess_1", "sess_2"]
 ```
 
-`POST /sessions/archive` accepts an explicit archive update:
+`POST /sessions/archive` accepts a direct JSON array of session ids and archives
+those sessions:
 
 ```json
-{
-  "ids": ["sess_1", "sess_2"],
-  "archived": true
-}
+["sess_1", "sess_2"]
 ```
 
-For transitional callers, `POST /sessions/archive` may also accept a direct JSON
-array as shorthand for `{ "ids": [...], "archived": true }`. New callers should
-use the object form because the same endpoint is also used to unarchive.
+`POST /sessions/unarchive` accepts the same direct JSON array and unarchives
+those sessions:
+
+```json
+["sess_1", "sess_2"]
+```
 
 The removed per-session and bulk aliases migrate as follows:
 
@@ -229,7 +231,8 @@ removed: POST /sessions/bulk-read
 use:     POST /sessions/read
 
 removed: POST /sessions/bulk-archive
-use:     POST /sessions/archive with { "ids": [...], "archived": true|false }
+use:     POST /sessions/archive with ["sess_1", "sess_2"]
+use:     POST /sessions/unarchive with ["sess_1", "sess_2"]
 ```
 
 ### SessionTimeline

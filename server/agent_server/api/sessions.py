@@ -27,7 +27,6 @@ from agent_server.core.events import (
     protocol_event,
 )
 from agent_server.core.models import (
-    BulkArchiveRequest,
     BulkArchiveResponse,
     BulkReadRequest,
     InteractionRespondRequest,
@@ -103,13 +102,9 @@ from agent_server.services.session_run import SessionRunError, SessionRunService
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
-ArchiveSessionsPayload = BulkArchiveRequest | list[str]
 
 
-def archive_payload_parts(payload: ArchiveSessionsPayload) -> tuple[list[str], bool]:
-    if isinstance(payload, BulkArchiveRequest):
-        return payload.ids, payload.archived
-
+def validate_session_id_array(payload: list[str]) -> list[str]:
     if len(payload) < 1:
         raise HTTPException(
             status_code=422,
@@ -121,7 +116,7 @@ def archive_payload_parts(payload: ArchiveSessionsPayload) -> tuple[list[str], b
             detail="ids must contain at most 200 session ids",
         )
 
-    return payload, True
+    return payload
 
 
 def _get_ws_tickets(conn: HTTPConnection) -> ClientWsTicketManager:
@@ -373,19 +368,38 @@ async def patch_session_meta(
     )
 
 
-# Migration shim: old clients used `/bulk-archive`. New clients must send
-# `{ "ids": [...], "archived": true|false }` to `POST /sessions/archive`.
+# Migration tombstone: old clients used `/bulk-archive` with
+# `{ "ids": [...], "archived": true|false }`. New clients must call
+# `/sessions/archive` or `/sessions/unarchive` with a direct session id array.
 @router.post("/bulk-archive", response_model=BulkArchiveResponse)
 async def bulk_archive_sessions(
-    payload: BulkArchiveRequest,
     user_id: str = Depends(current_user_id),
-    db: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
-    broker: TimelineBroker = Depends(get_timeline_broker),
 ) -> BulkArchiveResponse:
-    sessions, not_found = await db.bulk_set_session_archived(
-        payload.ids, payload.archived, user_id=user_id
+    _ = user_id
+    raise HTTPException(
+        status_code=410,
+        detail=(
+            "POST /sessions/bulk-archive was removed. "
+            "Use POST /sessions/archive or POST /sessions/unarchive with a direct session id array."
+        ),
     )
+
+
+async def set_sessions_archived(
+    session_ids: list[str],
+    archived: bool,
+    user_id: str,
+    db: Store,
+    manager: ConnectorRpcManager,
+    broker: TimelineBroker,
+) -> BulkArchiveResponse:
+    """Persist archive metadata and publish dashboard invalidations."""
+    sessions, not_found = await db.bulk_set_session_archived(
+        session_ids,
+        archived,
+        user_id=user_id,
+    )
+    reason = "sessions.archived" if archived else "sessions.unarchived"
     for session in sessions:
         await publish_dashboard_changed(
             db,
@@ -393,7 +407,7 @@ async def bulk_archive_sessions(
             user_id=user_id,
             connector_id=session.connectorId,
             session_id=session.id,
-            reason="sessions.archived",
+            reason=reason,
         )
     return BulkArchiveResponse(
         sessions=await with_effective_session_connector_statuses(manager, sessions),
@@ -431,32 +445,37 @@ async def bulk_mark_sessions_read(
 
 @router.post("/archive", response_model=BulkArchiveResponse)
 async def archive_sessions(
-    payload: ArchiveSessionsPayload = Body(...),
+    payload: list[str] = Body(...),
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
     broker: TimelineBroker = Depends(get_timeline_broker),
 ) -> BulkArchiveResponse:
-    session_ids, archived = archive_payload_parts(payload)
-    sessions, not_found = await db.bulk_set_session_archived(
-        session_ids,
-        archived,
-        user_id=user_id,
+    return await set_sessions_archived(
+        validate_session_id_array(payload),
+        True,
+        user_id,
+        db,
+        manager,
+        broker,
     )
-    reason = "sessions.archived" if archived else "sessions.unarchived"
-    for session in sessions:
-        await publish_dashboard_changed(
-            db,
-            broker,
-            user_id=user_id,
-            connector_id=session.connectorId,
-            session_id=session.id,
-            reason=reason,
-        )
-    return BulkArchiveResponse(
-        sessions=await with_effective_session_connector_statuses(manager, sessions),
-        notFound=not_found,
-        serverTime=utc_now(),
+
+
+@router.post("/unarchive", response_model=BulkArchiveResponse)
+async def unarchive_sessions(
+    payload: list[str] = Body(...),
+    user_id: str = Depends(current_user_id),
+    db: Store = Depends(get_store),
+    manager: ConnectorRpcManager = Depends(get_rpc),
+    broker: TimelineBroker = Depends(get_timeline_broker),
+) -> BulkArchiveResponse:
+    return await set_sessions_archived(
+        validate_session_id_array(payload),
+        False,
+        user_id,
+        db,
+        manager,
+        broker,
     )
 
 

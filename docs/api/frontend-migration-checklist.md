@@ -53,7 +53,8 @@ Do not add new uses of:
 | Read runtime notices | snapshot/DB notice fields | `GET /sessions/{sessionId}/runtime/notices` |
 | Respond to runtime notice | `POST /sessions/{sessionId}/interactions/{noticeId}/respond` | `POST /sessions/{sessionId}/runtime/notices/{noticeId}/respond` |
 | Mark sessions read | `POST /sessions/bulk-read` with `{ "ids": [...] }` | `POST /sessions/read` with direct JSON array |
-| Archive sessions | `POST /sessions/bulk-archive` with `{ "ids": [...], "archived": true }` | `POST /sessions/archive` with `{ "ids": [...], "archived": true\|false }` |
+| Archive sessions | `POST /sessions/bulk-archive` with `{ "ids": [...], "archived": true }` | `POST /sessions/archive` with direct id array |
+| Unarchive sessions | `POST /sessions/bulk-archive` with `{ "ids": [...], "archived": false }` | `POST /sessions/unarchive` with direct id array |
 
 ## Frontend behavior changes
 

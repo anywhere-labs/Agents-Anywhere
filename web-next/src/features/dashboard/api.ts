@@ -214,9 +214,10 @@ export class DashboardApi {
     ids: string[],
     archived: boolean,
   ): Promise<BulkArchiveResponse> {
+    const path = archived ? "/sessions/archive" : "/sessions/unarchive";
     return this.client.post<BulkArchiveResponse>(
-      "/sessions/archive",
-      { ids, archived },
+      path,
+      ids,
       { token },
     );
   }
