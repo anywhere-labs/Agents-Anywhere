@@ -35,10 +35,10 @@ Rough completion by behavior area:
 | Notice/interaction lifecycle | Complete for T05 | Codex approvals now move through open/responding/resolved/closed, failed responses remain retryable, and blocking state is released only after open blocking notices are gone. |
 | Tool/reasoning/file reduce | Complete for T04 | SDK/native message, reasoning, tool, file-change, runtime/system, and unknown fallback items reduce to platform-safe timeline shapes. |
 | Selections | Complete for T06 | Catalogs are live runtime reads; Codex session state can read current selections, update selections through runtime state, reject invalid ids, and keep existing sends selection-free. |
-| Commands | Complete for T07 | Codex commands are live runtime reads; `/compact` execution is separated from messages, disabled/invalid/unknown commands fail without fallback, and command side effects publish notice/state updates. |
+| Commands | Complete for T07 | Codex commands are live runtime reads; `/compact` execution is separated from messages, disabled/invalid/unknown commands fail without fallback, and compact side effects publish timeline/state updates without runtime notices. |
 | Session discovery/sync | Complete for T08 | Codex discovery returns SessionMeta for active and hidden local sessions, uses host JSON sync markers, skips timeline sync for unchanged sessions, and allows rename/meta-only updates. |
 | Server ingest | Complete for T09 | Runtime host notifications now land as partial state updates, upsert-only Codex timeline sync, hidden session meta, and interaction lifecycle notices. |
-| Web session interaction | Complete for T10 | Session detail composer now derives action state from `SessionState.status`, resolves optimistic messages by `clientMessageId`, and refreshes missing runtime state through the dedicated state endpoint instead of snapshot. |
+| Web session interaction | Complete for T10 | Session detail composer now derives action state from runtime state plus effective capabilities, resolves optimistic messages by `clientMessageId`, ignores snapshot catalogs, and does not refresh runtime state from legacy `session.status_changed` events. |
 | Dashboard realtime | Complete for T11 | Dashboard connects through a dedicated WebSocket lifecycle, receives the initial connector/session snapshot there, and receives pushed snapshots for changes without recurring connector/session list polling. |
 | Codex IPC side-channel | Intentionally unsupported for SDK-first release | Old IPC behavior is reference-only; active Codex runtime keeps `ipc=false` and exposes no IPC config switch. |
 
@@ -357,7 +357,8 @@ Required behavior:
 - command execution is separate from normal message send.
 - unknown command and invalid args never fall back to normal message.
 - command result has consistent success/failure semantics.
-- long-running command side effects are reported through state/timeline/notice updates.
+- long-running command side effects are reported through dedicated state,
+  timeline, or notice updates as appropriate for the command.
 
 Completed:
 
@@ -371,8 +372,10 @@ Completed:
 - Disabled `/compact` returns
   `RuntimeCommandResult(ok=false, code=command_disabled)` and does not call the
   Codex client.
-- Successful `/compact` returns `ok=true, code=started` and publishes a
-  non-blocking command notice plus a `session.state.updated` metadata update.
+- Successful `/compact` returns `ok=true, code=started`, upserts a stable
+  compact timeline item, sets session state to `blocked`, and later converges
+  to `idle` when the compact operation is accepted, completed, or soft-fails.
+  It does not publish a runtime notice.
 - Runtime/client command failures return
   `RuntimeCommandResult(ok=false, code=codex_command_failed)` without falling
   back to normal messages.
