@@ -672,7 +672,6 @@ export function SessionDetail({
     let delayedRefetchTimer: number | null = null
     let refetchPromise: Promise<void> | null = null
     let recoveryPromise: Promise<void> | null = null
-    let runtimeStatePromise: Promise<void> | null = null
     let snapshotReady = false
     let bufferedEvents: ProtocolEventEnvelope[] = []
     const refetch = (reason: string) => {
@@ -694,32 +693,6 @@ export function SessionDetail({
       return refetchPromise
     }
 
-    const refreshRuntimeState = (reason: string) => {
-      if (runtimeStatePromise) return runtimeStatePromise
-      runtimeStatePromise = dashboardApi.getSessionRuntimeState(token, sessionId)
-        .then((response) => {
-          if (cancelled) return
-          setState((current) => {
-            if (!current || response.state.sessionId !== current.session.id) return current
-            if (response.state.updatedSeq < (current.state?.updatedSeq ?? 0)) return current
-            return {
-              ...current,
-              state: response.state,
-              serverTime: response.serverTime,
-            }
-          })
-        })
-        .catch(() => {
-          if (!cancelled && process.env.NODE_ENV !== "production") {
-            console.debug("[AgentsAnywhere] runtime state refresh failed", { sessionId, reason })
-          }
-        })
-        .finally(() => {
-          runtimeStatePromise = null
-        })
-      return runtimeStatePromise
-    }
-
     const scheduleRefetch = (reason: string) => {
       if (cancelled || refetchPromise || delayedRefetchTimer !== null) return
       delayedRefetchTimer = window.setTimeout(() => {
@@ -735,13 +708,8 @@ export function SessionDetail({
         void recoverEvents(nextSeqRef.current, "session.refetch_required")
         return
       }
-      const sessionPayload = readPayloadValue<SessionView>(event.payload.session)
-      const runtimeStatePayload = readPayloadValue<SessionRuntimeState>(event.payload.state)
       markAutoScrollIfNearBottom()
       setState((current) => mergeSessionEvent(current, event))
-      if (event.type === "session.status_changed" && sessionPayload && !runtimeStatePayload) {
-        void refreshRuntimeState(`event:${event.type}:state-missing`)
-      }
       const item = readPayloadValue<TimelineItem>(event.payload.item)
       if (item) clearResolvedOptimisticMessagesRef.current(sessionId, [item])
       const items = Array.isArray(event.payload.items)
@@ -1642,7 +1610,11 @@ function mergeSessionEvent(
   const noticeSnapshot = Array.isArray(event.payload.notices)
     ? event.payload.notices.filter(isNotice)
     : null
-  const effectiveCapabilities = readPayloadValue<ProtocolCapabilitySet>(event.payload.effectiveCapabilities)
+  const capabilitySet = readPayloadValue<ProtocolCapabilitySet>(event.payload.capabilitySet)
+  const compatibilityCapabilities = readPayloadValue<ProtocolCapabilitySet>(
+    event.payload.effectiveCapabilities,
+  )
+  const effectiveCapabilities = capabilitySet ?? compatibilityCapabilities
 
   const nextNotices = noticeSnapshot
     ? noticeSnapshot
