@@ -165,6 +165,13 @@ class ConnectorNotificationRepository(
 
     async def record_connector_activity(self, connector_id: str) -> None: ...
 
+    async def get_protocol_capabilities(
+        self,
+        connector_id: str,
+        *,
+        user_id: str | None = None,
+    ) -> dict[str, Any]: ...
+
     async def replace_timeline(
         self,
         *,

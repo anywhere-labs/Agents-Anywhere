@@ -764,7 +764,7 @@ def test_session_state_updated_pushes_ephemeral_runtime_state(tmp_path):
             },
         )
         assert response.status_code == 200, response.text
-        event = ws.receive_json()
+        event = receive_session_ws_event(ws, "session.status_changed")
 
     assert event["type"] == "session.status_changed"
     body = event["payload"]["state"]
@@ -2910,6 +2910,88 @@ def test_protocol_capabilities_ingest_and_read(tmp_path):
     assert {item["capabilityId"] for item in body["capabilitySet"]["capabilities"]} == {
         "session.interrupt"
     }
+
+
+def test_runtime_capability_update_merges_and_pushes_session_projection(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, session_id, headers = create_connector_and_session(client)
+    ticket = ws_ticket(client, session_id, headers)
+
+    runtime_capability_set = {
+        "revision": 7,
+        "capabilities": [
+            {
+                "capabilityId": "session.send_message",
+                "scope": "runtime",
+                "runtime": "codex",
+                "supported": True,
+                "available": True,
+                "allowed": True,
+            }
+        ],
+    }
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "protocol.capabilitiesUpdated",
+                    "params": runtime_capability_set,
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "notifications": [
+                    {
+                        "method": "runtime.capability.updated",
+                        "params": {
+                            "runtime": "codex",
+                            "revision": 1,
+                            "sessionId": session_id,
+                            "connectorId": connector_id,
+                            "capabilities": [
+                                {
+                                    "capabilityId": "session.interrupt",
+                                    "scope": "session",
+                                    "runtime": "codex",
+                                    "sessionId": session_id,
+                                    "supported": True,
+                                    "available": True,
+                                    "allowed": True,
+                                }
+                            ],
+                        },
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 200, response.text
+        event = ws.receive_json()
+
+    stored = client.get(f"/connectors/{connector_id}/protocol/capabilities", headers=headers)
+    assert stored.status_code == 200, stored.text
+    stored_capabilities = {
+        item["capabilityId"]: item
+        for item in stored.json()["capabilitySet"]["capabilities"]
+    }
+    assert stored.json()["capabilitySet"]["revision"] == 7
+    assert stored_capabilities["session.send_message"]["scope"] == "runtime"
+    assert stored_capabilities["session.interrupt"]["scope"] == "session"
+    assert event["type"] == "runtime.capability.updated"
+    effective = {
+        item["capabilityId"]: item
+        for item in event["payload"]["capabilitySet"]["capabilities"]
+    }
+    assert effective["session.interrupt"]["supported"] is True
 
 
 def test_protocol_capabilities_validation_is_mapped_by_transport(tmp_path):
@@ -5964,10 +6046,11 @@ def test_session_ws_projects_timeline_and_notice_events(tmp_path):
         )
         assert response.status_code == 200, response.text
 
-        received = [ws.receive_json() for _ in range(3)]
+        received = [ws.receive_json() for _ in range(4)]
         event_types = {event["type"] for event in received}
         assert "timeline.item_created" in event_types
         assert "session.status_changed" in event_types
+        assert "runtime.capability.updated" in event_types
         assert "notice.snapshot" in event_types
         session_event = next(
             event for event in received if event["type"] == "session.status_changed"
@@ -5991,8 +6074,10 @@ def test_session_ws_updates_effective_capabilities_after_takeover(tmp_path):
         response = client.post(f"/sessions/{session_id}/takeover", headers=headers)
         assert response.status_code == 200, response.text
 
-        event = ws.receive_json()
-        assert event["type"] == "session.status_changed"
+        received = [ws.receive_json() for _ in range(2)]
+        event = next(
+            item for item in received if item["type"] == "session.status_changed"
+        )
         capabilities = {
             capability["capabilityId"]: capability
             for capability in event["payload"]["effectiveCapabilities"]["capabilities"]
@@ -6183,7 +6268,7 @@ def test_unchanged_large_codex_timeline_sync_does_not_request_another_snapshot(t
             json=payload,
         )
         assert response.status_code == 200, response.text
-        initial_events = [ws.receive_json() for _ in range(2)]
+        initial_events = [ws.receive_json() for _ in range(3)]
         assert "session.refetch_required" in {event["type"] for event in initial_events}
 
         response = client.post(
@@ -6192,7 +6277,7 @@ def test_unchanged_large_codex_timeline_sync_does_not_request_another_snapshot(t
             json=payload,
         )
         assert response.status_code == 200, response.text
-        assert ws.receive_json()["type"] == "session.status_changed"
+        receive_session_ws_event(ws, "session.status_changed")
 
 
 def test_session_events_recovery_returns_json_events(tmp_path):
@@ -6703,7 +6788,7 @@ def test_timeline_sync_dedupes_same_source_item_with_snapshot_derived_key(tmp_pa
             json=sync_payload,
         )
         assert response.status_code == 200, response.text
-        assert ws.receive_json()["type"] == "session.status_changed"
+        receive_session_ws_event(ws, "session.status_changed")
 
 
 def test_timeline_sync_deduped_snapshot_message_does_not_rearm_unread(tmp_path):

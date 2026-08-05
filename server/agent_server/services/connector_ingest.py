@@ -52,6 +52,8 @@ class ConnectorIngestService:
         await self._store.record_connector_activity(connector_id)
         effects = []
         saw_protocol_capabilities = False
+        saw_runtime_capabilities = False
+        saw_runtime_scoped_capabilities = False
         saw_runtime_inventory = False
         for notification in payload.notifications:
             if notification.method == "runtime.inventoryUpdated":
@@ -65,6 +67,12 @@ class ConnectorIngestService:
                 continue
             if notification.method == "protocol.capabilitiesUpdated":
                 saw_protocol_capabilities = True
+            if notification.method == "runtime.capability.updated":
+                saw_runtime_capabilities = True
+                saw_runtime_scoped_capabilities = (
+                    saw_runtime_scoped_capabilities
+                    or not isinstance(notification.params.get("sessionId"), str)
+                )
             effects.append(
                 await self._notifications.apply(
                     connector_id=connector_id,
@@ -80,12 +88,26 @@ class ConnectorIngestService:
                 self._timeline_broker,
                 connector_id,
             )
+        if saw_runtime_capabilities and saw_runtime_scoped_capabilities:
+            await publish_connector_session_capabilities(
+                self._store,
+                self._presence,
+                self._timeline_broker,
+                connector_id,
+            )
         if saw_protocol_capabilities:
             await publish_dashboard_changed(
                 self._store,
                 self._timeline_broker,
                 connector_id=connector_id,
                 reason="protocol.capabilities",
+            )
+        if saw_runtime_capabilities and saw_runtime_scoped_capabilities:
+            await publish_dashboard_changed(
+                self._store,
+                self._timeline_broker,
+                connector_id=connector_id,
+                reason="runtime.capabilities",
             )
         if saw_runtime_inventory:
             import asyncio
@@ -133,6 +155,22 @@ class ConnectorIngestService:
                 self._timeline_broker,
                 connector_id=connector_id,
                 reason="protocol.capabilities",
+            )
+        if method == "runtime.capability.updated" and not isinstance(
+            params.get("sessionId"),
+            str,
+        ):
+            await publish_connector_session_capabilities(
+                self._store,
+                self._presence,
+                self._timeline_broker,
+                connector_id,
+            )
+            await publish_dashboard_changed(
+                self._store,
+                self._timeline_broker,
+                connector_id=connector_id,
+                reason="runtime.capabilities",
             )
 
     async def _publish_effects(self, effects: list[IngestEffect]) -> None:

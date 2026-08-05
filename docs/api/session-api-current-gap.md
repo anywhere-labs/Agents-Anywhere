@@ -83,7 +83,7 @@ Current backend state:
 | `runtime.state.updated` | partially implemented through compatibility `session.status_changed` payloads | Migrate session runtime state pushes to `runtime.state.updated`. |
 | `runtime.notice.snapshot` | current event names are `notice.snapshot` / `notice.updated` | Rename or map to runtime namespace. Notices remain non-durable. |
 | `runtime.notice.updated` | current event names are `notice.*` | Rename or map to runtime namespace. |
-| `runtime.capability.updated` | compatibility payload appears as `effectiveCapabilities` on `session.status_changed` | Emit explicit runtime capability updates. |
+| `runtime.capability.updated` | exists for session WS capability projections; compatibility `effectiveCapabilities` remains on `session.status_changed` | Keep while frontend migrates to the explicit runtime event. |
 | `runtime.catalog.updated` | not clearly implemented | Add only if runtime pushes catalog changes; otherwise live reads are sufficient. |
 | `runtime.refetch_required` | not clearly implemented | Add for missed runtime live facts; Web should call the relevant runtime endpoint. |
 | `session.refetch_required` | exists | Restrict to durable meta/timeline recovery. |

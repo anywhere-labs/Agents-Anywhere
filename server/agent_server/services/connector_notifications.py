@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from agent_server.core.interactions import InteractionDomainError
 from agent_server.core.models import NoticeIn, SessionStatus, TimelineItemIn
 from agent_server.core.protocol import (
+    ProtocolCapability,
     ProtocolCapabilitySet,
 )
 from agent_server.services.connector_realtime import ConnectorRealtimeService
@@ -92,6 +93,7 @@ class ConnectorProtocolNotificationHandler:
         "connector.heartbeat",
         "connector.preferencesUpdated",
         "protocol.capabilitiesUpdated",
+        "runtime.capability.updated",
     }
 
     def __init__(self, store: ConnectorNotificationRepository) -> None:
@@ -112,6 +114,8 @@ class ConnectorProtocolNotificationHandler:
             await self._update_preferences(connector_id, params)
         elif method == "protocol.capabilitiesUpdated":
             await self._update_capabilities(connector_id, params)
+        elif method == "runtime.capability.updated":
+            return await self._merge_runtime_capability_update(connector_id, params)
         return IngestEffect()
 
     async def _update_preferences(
@@ -149,6 +153,40 @@ class ConnectorProtocolNotificationHandler:
                 "protocol capabilities update for unknown connector connector_id={}",
                 connector_id,
             )
+
+    async def _merge_runtime_capability_update(
+        self,
+        connector_id: str,
+        params: dict[str, Any],
+    ) -> IngestEffect:
+        try:
+            incoming = ProtocolCapabilitySet.model_validate(params)
+        except ValidationError as exc:
+            raise NotificationValidationError(
+                "invalid_runtime_capabilities",
+                str(exc),
+            ) from exc
+        try:
+            current = ProtocolCapabilitySet.model_validate(
+                await self._store.get_protocol_capabilities(connector_id)
+            )
+            merged = merge_capability_sets(current, incoming)
+            await self._store.update_protocol_capabilities(
+                connector_id,
+                merged.model_dump(mode="json"),
+            )
+        except KeyError:
+            logger.warning(
+                "runtime capability update for unknown connector connector_id={}",
+                connector_id,
+            )
+            return IngestEffect()
+        session_id = runtime_capability_update_session_id(incoming)
+        return IngestEffect(
+            session_id=session_id,
+            session_changed=session_id is not None,
+        )
+
 
 class SessionNotificationHandler:
     def __init__(self, store: ConnectorNotificationRepository) -> None:
@@ -482,6 +520,46 @@ async def _existing_notice(
         return await store.get_notice(notice_id)
     except KeyError:
         return None
+
+
+def merge_capability_sets(
+    current: ProtocolCapabilitySet,
+    incoming: ProtocolCapabilitySet,
+) -> ProtocolCapabilitySet:
+    capabilities_by_key = {
+        capability_identity_key(capability): capability
+        for capability in current.capabilities
+    }
+    for capability in incoming.capabilities:
+        capabilities_by_key[capability_identity_key(capability)] = capability
+    return ProtocolCapabilitySet(
+        revision=max(current.revision, incoming.revision),
+        capabilities=list(capabilities_by_key.values()),
+    )
+
+
+def capability_identity_key(
+    capability: ProtocolCapability,
+) -> tuple[str, str, str | None, str | None]:
+    return (
+        capability.capabilityId,
+        capability.scope,
+        capability.runtime,
+        capability.sessionId,
+    )
+
+
+def runtime_capability_update_session_id(
+    capability_set: ProtocolCapabilitySet,
+) -> str | None:
+    session_ids = {
+        capability.sessionId
+        for capability in capability_set.capabilities
+        if capability.scope == "session" and capability.sessionId is not None
+    }
+    if len(session_ids) == 1:
+        return next(iter(session_ids))
+    return None
 
 
 async def _session_disabled(store: ConnectorNotificationRepository, session_id: str) -> bool:

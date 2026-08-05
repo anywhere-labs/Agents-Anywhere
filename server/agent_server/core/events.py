@@ -132,6 +132,19 @@ def events_from_invalidation(payload: dict[str, Any]) -> list[ProtocolEventEnvel
                     payload=event_payload,
                 )
             )
+        effective_capabilities = payload.get("effectiveCapabilities")
+        if isinstance(effective_capabilities, dict):
+            events.append(
+                protocol_event(
+                    session_id,
+                    sequence=sequence,
+                    event_type="runtime.capability.updated",
+                    payload={
+                        "capabilitySet": effective_capabilities,
+                        "effectiveCapabilities": effective_capabilities,
+                    },
+                )
+            )
 
     notices = payload.get("notices")
     if isinstance(notices, list):
