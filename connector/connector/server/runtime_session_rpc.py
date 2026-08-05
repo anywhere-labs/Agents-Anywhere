@@ -4,10 +4,12 @@ from typing import Any
 
 from connector.runtime_protocol import AgentRuntime, RuntimeHostClient
 from connector.server.runtime_rpc_params import (
+    SessionCapabilityParams,
     SessionDiscoverParams,
     SessionReadParams,
 )
 from connector.server.runtime_rpc_payloads import (
+    capability_set_payload,
     session_meta_payload,
     session_state_payload,
 )
@@ -107,3 +109,15 @@ async def read_session_state(
         metadata=state.metadata,
     )
     return {"state": session_state_payload(state)}
+
+
+async def read_session_capabilities(
+    runtime: AgentRuntime,
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    parsed = SessionCapabilityParams.parse(params)
+    capabilities = await runtime.get_session_capabilities(
+        parsed.session_id,
+        parsed.external_session_id,
+    )
+    return {"capabilitySet": capability_set_payload(capabilities)}

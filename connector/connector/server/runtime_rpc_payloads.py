@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import Any
 
 from connector.runtime_protocol import (
+    RuntimeCapability,
+    RuntimeCapabilitySet,
     RuntimeCommand,
     RuntimeCommandResult,
     RuntimeConfig,
@@ -56,6 +58,44 @@ def command_result_payload(result: RuntimeCommandResult) -> dict[str, Any]:
         "message": result.message,
         "result": dict(result.result),
     }
+
+
+def capability_set_payload(capabilities: RuntimeCapabilitySet) -> dict[str, Any]:
+    return drop_none_payload(
+        {
+            "runtime": capabilities.runtime,
+            "revision": capabilities.revision,
+            "sessionId": capabilities.session_id,
+            "connectorId": capabilities.connector_id,
+            "capabilities": [
+                capability_payload(capability)
+                for capability in capabilities.capabilities
+            ],
+            "metadata": dict(capabilities.metadata),
+        }
+    )
+
+
+def capability_payload(capability: RuntimeCapability) -> dict[str, Any]:
+    return drop_none_payload(
+        {
+            "capabilityId": capability.capability_id,
+            "version": capability.version,
+            "scope": capability.scope,
+            "runtime": capability.runtime,
+            "sessionId": capability.session_id,
+            "connectorId": capability.connector_id,
+            "supported": capability.supported,
+            "available": capability.available,
+            "allowed": capability.allowed,
+            "unavailableReason": capability.unavailable_reason,
+            "metadata": dict(capability.metadata),
+        }
+    )
+
+
+def drop_none_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in payload.items() if value is not None}
 
 
 def runtime_command_payload(command: RuntimeCommand) -> dict[str, Any]:

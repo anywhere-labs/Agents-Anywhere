@@ -26,6 +26,8 @@ from connector.runtime_protocol import (
     MessageTimelineItem,
     PlatformTimelineItem,
     ReasoningSystemContent,
+    RuntimeCapability,
+    RuntimeCapabilitySet,
     RuntimeCommand,
     RuntimeCommandResult,
     RuntimeConfig,
@@ -355,6 +357,50 @@ class FakeAgentRuntime(AgentRuntime):
             status="running",
             selections={"model": "sel_model_state"},
             metadata={"source": "fake"},
+        )
+
+    async def get_runtime_capabilities(self) -> RuntimeCapabilitySet:
+        self.calls.append(("runtime.capabilities", {}))
+        return RuntimeCapabilitySet(
+            runtime=self.runtime_id,
+            revision=9,
+            capabilities=(
+                RuntimeCapability(
+                    capability_id="runtime.config",
+                    scope="runtime",
+                    runtime=self.runtime_id,
+                ),
+            ),
+        )
+
+    async def get_session_capabilities(
+        self,
+        session_id: str,
+        external_session_id: str | None = None,
+    ) -> RuntimeCapabilitySet:
+        self.calls.append(
+            (
+                "session.capabilities",
+                {
+                    "sessionId": session_id,
+                    "externalSessionId": external_session_id,
+                },
+            )
+        )
+        return RuntimeCapabilitySet(
+            runtime=self.runtime_id,
+            revision=10,
+            session_id=session_id,
+            capabilities=(
+                RuntimeCapability(
+                    capability_id="session.interrupt",
+                    scope="session",
+                    runtime=self.runtime_id,
+                    session_id=session_id,
+                    available=False,
+                    unavailable_reason="session_not_running",
+                ),
+            ),
         )
 
     async def list_commands(
@@ -1087,6 +1133,55 @@ async def _exercise_runtime() -> None:
         {"sessionId": "sess_1", "externalSessionId": "thr_1"},
     )
     assert ws.messages[-1]["result"]["state"]["selections"] == {"model": "sel_model_state"}
+
+    await client.handle_message(
+        {
+            "id": "rpc_5b",
+            "type": "request",
+            "method": "runtime.capabilities",
+            "params": {"runtime": "codex"},
+        }
+    )
+    assert runtime.calls[-1] == ("runtime.capabilities", {})
+    assert ws.messages[-1]["result"]["capabilitySet"]["capabilities"][0] == {
+        "capabilityId": "runtime.config",
+        "version": "1",
+        "scope": "runtime",
+        "runtime": "codex",
+        "supported": True,
+        "available": True,
+        "allowed": True,
+        "metadata": {},
+    }
+
+    await client.handle_message(
+        {
+            "id": "rpc_5c",
+            "type": "request",
+            "method": "session.capabilities",
+            "params": {
+                "runtime": "codex",
+                "sessionId": "sess_1",
+                "externalSessionId": "thr_1",
+            },
+        }
+    )
+    assert runtime.calls[-1] == (
+        "session.capabilities",
+        {"sessionId": "sess_1", "externalSessionId": "thr_1"},
+    )
+    assert ws.messages[-1]["result"]["capabilitySet"]["capabilities"][0] == {
+        "capabilityId": "session.interrupt",
+        "version": "1",
+        "scope": "session",
+        "runtime": "codex",
+        "sessionId": "sess_1",
+        "supported": True,
+        "available": False,
+        "allowed": True,
+        "unavailableReason": "session_not_running",
+        "metadata": {},
+    }
 
     await client.handle_message(
         {

@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import (
     APIRouter,
+    Body,
     Depends,
     HTTPException,
     Query,
@@ -27,6 +28,7 @@ from agent_server.core.models import (
     BulkReadRequest,
     InteractionRespondRequest,
     MessageCreateRequest,
+    NoticeListResponse,
     RpcResponsePayload,
     SessionCommandListResponse,
     SessionCommandRequest,
@@ -45,6 +47,8 @@ from agent_server.core.models import (
     TakeoverResponse,
 )
 from agent_server.core.protocol import (
+    ProtocolCapabilitiesResponse,
+    ProtocolCapabilitySet,
     ProtocolEventRecoveryResponse,
     ProtocolSessionSnapshotResponse,
     ProtocolTimelineSnapshot,
@@ -345,6 +349,63 @@ async def bulk_mark_sessions_read(
     )
 
 
+@router.post("/archive", response_model=BulkArchiveResponse)
+async def archive_sessions(
+    session_ids: list[str] = Body(..., min_length=1, max_length=200),
+    user_id: str = Depends(current_user_id),
+    db: Store = Depends(get_store),
+    manager: ConnectorRpcManager = Depends(get_rpc),
+    broker: TimelineBroker = Depends(get_timeline_broker),
+) -> BulkArchiveResponse:
+    sessions, not_found = await db.bulk_set_session_archived(
+        session_ids,
+        True,
+        user_id=user_id,
+    )
+    for session in sessions:
+        await publish_dashboard_changed(
+            db,
+            broker,
+            user_id=user_id,
+            connector_id=session.connectorId,
+            session_id=session.id,
+            reason="sessions.archived",
+        )
+    return BulkArchiveResponse(
+        sessions=await with_effective_session_connector_statuses(manager, sessions),
+        notFound=not_found,
+        serverTime=utc_now(),
+    )
+
+
+@router.post("/read", response_model=BulkArchiveResponse)
+async def mark_sessions_read(
+    session_ids: list[str] = Body(..., min_length=1, max_length=200),
+    user_id: str = Depends(current_user_id),
+    db: Store = Depends(get_store),
+    manager: ConnectorRpcManager = Depends(get_rpc),
+    broker: TimelineBroker = Depends(get_timeline_broker),
+) -> BulkArchiveResponse:
+    sessions, not_found = await db.bulk_mark_sessions_read(
+        session_ids,
+        user_id=user_id,
+    )
+    for session in sessions:
+        await publish_dashboard_changed(
+            db,
+            broker,
+            user_id=user_id,
+            connector_id=session.connectorId,
+            session_id=session.id,
+            reason="sessions.read",
+        )
+    return BulkArchiveResponse(
+        sessions=await with_effective_session_connector_statuses(manager, sessions),
+        notFound=not_found,
+        serverTime=utc_now(),
+    )
+
+
 @router.post("/{session_id}/read", response_model=SessionResponse)
 async def mark_session_read(
     session_id: str,
@@ -371,6 +432,7 @@ async def mark_session_read(
     )
 
 
+@router.get("/{session_id}/runtime/state", response_model=SessionRuntimeStateResponse)
 @router.get("/{session_id}/runtime-state", response_model=SessionRuntimeStateResponse)
 async def session_runtime_state(
     session_id: str,
@@ -391,6 +453,26 @@ async def session_runtime_state(
     return SessionRuntimeStateResponse(state=state, serverTime=utc_now())
 
 
+@router.get("/{session_id}/runtime/capabilities", response_model=ProtocolCapabilitiesResponse)
+async def session_runtime_capabilities(
+    session_id: str,
+    user_id: str = Depends(current_user_id),
+    db: Store = Depends(get_store),
+    manager: ConnectorRpcManager = Depends(get_rpc),
+) -> ProtocolCapabilitiesResponse:
+    try:
+        session = await db.get_session(session_id, user_id=user_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="session not found") from None
+    capability_set = await read_session_capabilities_from_connector(manager, session)
+    return ProtocolCapabilitiesResponse(
+        connectorId=session.connectorId,
+        capabilitySet=capability_set,
+        serverTime=utc_now(),
+    )
+
+
+@router.patch("/{session_id}/runtime/selections", response_model=SessionSelectionPatchResponse)
 @router.patch("/{session_id}/state/selections", response_model=SessionSelectionPatchResponse)
 async def patch_session_selections(
     session_id: str,
@@ -727,6 +809,51 @@ async def list_session_commands(
     return SessionCommandListResponse(commands=commands, serverTime=utc_now())
 
 
+@router.get("/{session_id}/runtime/commands", response_model=SessionCommandListResponse)
+async def list_session_runtime_commands(
+    session_id: str,
+    user_id: str = Depends(current_user_id),
+    db: Store = Depends(get_store),
+    manager: ConnectorRpcManager = Depends(get_rpc),
+) -> SessionCommandListResponse:
+    try:
+        session = await db.get_session(session_id, user_id=user_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="session not found") from None
+    params: dict[str, Any] = {
+        "sessionId": session.id,
+        "runtime": session.runtime,
+        "limit": 100,
+    }
+    if session.externalSessionId:
+        params["externalSessionId"] = session.externalSessionId
+    try:
+        result = await manager.request(
+            session.connectorId,
+            "session.commands",
+            params,
+            timeout=30,
+        )
+    except ConnectorOfflineError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ConnectorRpcError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={"code": exc.code, "message": exc.message or exc.code},
+        ) from exc
+    commands = result.get("commands") if isinstance(result, dict) else None
+    if not isinstance(commands, list):
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "invalid_command_catalog",
+                "message": "connector did not return a command list",
+            },
+        )
+    return SessionCommandListResponse(commands=commands, serverTime=utc_now())
+
+
+@router.post("/{session_id}/runtime/commands", response_model=SessionCommandResponse)
 @router.post("/{session_id}/commands", response_model=SessionCommandResponse)
 async def execute_session_command(
     session_id: str,
@@ -781,6 +908,7 @@ async def execute_session_command(
     )
 
 
+@router.post("/{session_id}/runtime/messages", response_model=RpcResponsePayload)
 @router.post("/{session_id}/messages", response_model=RpcResponsePayload)
 async def send_message(
     session_id: str,
@@ -806,6 +934,7 @@ async def send_message(
         _raise_session_run_error(exc)
 
 
+@router.post("/{session_id}/runtime/interrupt", response_model=RpcResponsePayload)
 @router.post("/{session_id}/interrupt", response_model=RpcResponsePayload)
 async def interrupt_session(
     session_id: str,
@@ -837,6 +966,7 @@ async def interrupt_session(
         _raise_session_run_error(exc)
 
 
+@router.post("/{session_id}/runtime/steer", response_model=RpcResponsePayload)
 @router.post("/{session_id}/steer", response_model=RpcResponsePayload)
 async def steer_session(
     session_id: str,
@@ -866,6 +996,23 @@ async def steer_session(
         _raise_session_run_error(exc)
 
 
+@router.get("/{session_id}/runtime/notices", response_model=NoticeListResponse)
+async def list_session_runtime_notices(
+    session_id: str,
+    user_id: str = Depends(current_user_id),
+    db: Store = Depends(get_store),
+) -> NoticeListResponse:
+    try:
+        await db.get_session(session_id, user_id=user_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="session not found") from None
+    return NoticeListResponse(
+        notices=await db.list_open_notices(session_id),
+        serverTime=utc_now(),
+    )
+
+
+@router.post("/{session_id}/runtime/notices/{notice_id}/respond", response_model=RpcResponsePayload)
 @router.post("/{session_id}/interactions/{notice_id}/respond", response_model=RpcResponsePayload)
 async def respond_interaction(
     session_id: str,
@@ -965,29 +1112,11 @@ async def read_runtime_state_live(
     - does not rely on DB status as the source of runtime truth.
     """
 
-    if await manager.is_online(session.connectorId) and await connector_supports_runtime_rpc(
-        db,
-        session,
-        user_id=user_id,
-    ):
+    if await manager.is_online(session.connectorId):
         state = await read_runtime_state_from_connector(manager, session)
         if state is not None:
             return state
     return await db.get_session_runtime_state(session.id, user_id=user_id)
-
-
-async def connector_supports_runtime_rpc(
-    db: Store,
-    session: SessionView,
-    *,
-    user_id: str,
-) -> bool:
-    capabilities = await db.get_protocol_capabilities(
-        session.connectorId,
-        user_id=user_id,
-    )
-    raw_items = capabilities.get("capabilities")
-    return isinstance(raw_items, list) and len(raw_items) > 0
 
 
 async def read_runtime_state_from_connector(
@@ -1015,6 +1144,50 @@ async def read_runtime_state_from_connector(
     if not isinstance(raw_state, dict):
         return None
     return runtime_state_from_rpc_payload(raw_state, session)
+
+
+async def read_session_capabilities_from_connector(
+    manager: ConnectorRpcManager,
+    session: SessionView,
+) -> ProtocolCapabilitySet:
+    params: dict[str, Any] = {
+        "sessionId": session.id,
+        "runtime": session.runtime,
+    }
+    if session.externalSessionId:
+        params["externalSessionId"] = session.externalSessionId
+    try:
+        result = await manager.request(
+            session.connectorId,
+            "session.capabilities",
+            params,
+            timeout=10,
+        )
+    except ConnectorOfflineError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ConnectorRpcError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={"code": exc.code, "message": exc.message or exc.code},
+        ) from exc
+    if not isinstance(result, dict):
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "invalid_capability_set",
+                "message": "connector did not return a capability set",
+            },
+        )
+    raw_capability_set = result.get("capabilitySet")
+    if not isinstance(raw_capability_set, dict):
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "invalid_capability_set",
+                "message": "connector did not return a capability set",
+            },
+        )
+    return ProtocolCapabilitySet.model_validate(raw_capability_set)
 
 
 def runtime_state_from_rpc_payload(

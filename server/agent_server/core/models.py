@@ -759,6 +759,11 @@ class Notice(NoticeIn):
     updatedAt: str
 
 
+class NoticeListResponse(BaseModel):
+    notices: list[Notice] = Field(default_factory=list)
+    serverTime: str
+
+
 class InteractionRespondRequest(BaseModel):
     actionId: str
     input: dict[str, Any] | None = None

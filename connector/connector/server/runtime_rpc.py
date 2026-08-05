@@ -14,6 +14,7 @@ from connector.server.runtime_rpc_params import (
 )
 from connector.server.runtime_rpc_payloads import (
     agent_inventory_payload,
+    capability_set_payload,
     model_catalog_payload,
     permission_catalog_payload,
     runtime_config_payload,
@@ -21,6 +22,7 @@ from connector.server.runtime_rpc_payloads import (
 )
 from connector.server.runtime_session_rpc import (
     discover_sessions,
+    read_session_capabilities,
     read_session_state,
     sync_session_snapshot,
 )
@@ -46,12 +48,14 @@ class RuntimeRpcHandler:
         "runtime.validateConfig",
         "runtime.start",
         "runtime.stop",
+        "runtime.capabilities",
         "runtime.modelCatalog",
         "runtime.permissionCatalog",
         "session.discover",
         "session.create",
         "session.sync",
         "session.state",
+        "session.capabilities",
         "session.selections.update",
         "session.commands",
         "session.command.execute",
@@ -110,6 +114,10 @@ class RuntimeRpcHandler:
             parsed = RuntimeIdParams.parse(params)
             await self.agent_runtime_supervisor.stop(parsed.runtime_id)
             return {"runtimeId": parsed.runtime_id, "status": "stopped"}
+        if method == "runtime.capabilities":
+            runtime = self._resolve_agent_runtime(params)
+            capabilities = await runtime.get_runtime_capabilities()
+            return {"capabilitySet": capability_set_payload(capabilities)}
         if method == "runtime.modelCatalog":
             runtime = self._resolve_agent_runtime(params)
             parsed = RuntimeCatalogParams.parse(params)
@@ -147,6 +155,11 @@ class RuntimeRpcHandler:
             return await read_session_state(
                 self._resolve_agent_runtime(params),
                 self.agent_runtime_host,
+                params,
+            )
+        if method == "session.capabilities":
+            return await read_session_capabilities(
+                self._resolve_agent_runtime(params),
                 params,
             )
         if method == "session.selections.update":

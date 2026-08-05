@@ -192,6 +192,19 @@ class SessionReadParams:
 
 
 @dataclass(frozen=True, slots=True)
+class SessionCapabilityParams:
+    session_id: str
+    external_session_id: str | None
+
+    @classmethod
+    def parse(cls, params: dict[str, Any]) -> SessionCapabilityParams:
+        return cls(
+            session_id=required_session_id(params),
+            external_session_id=optional_string(params.get("externalSessionId")),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class SessionSelectionUpdateParams:
     session_id: str
     external_session_id: str | None

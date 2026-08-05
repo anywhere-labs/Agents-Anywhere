@@ -1065,6 +1065,26 @@ class FakeLocalRpc:
                     }
                 ]
             }
+        if method == "session.capabilities":
+            return {
+                "capabilitySet": {
+                    "revision": 11,
+                    "capabilities": [
+                        {
+                            "capabilityId": "session.send_message",
+                            "version": "1",
+                            "scope": "session",
+                            "runtime": params["runtime"],
+                            "sessionId": params["sessionId"],
+                            "supported": True,
+                            "available": True,
+                            "allowed": True,
+                            "unavailableReason": None,
+                            "parameters": {},
+                        }
+                    ],
+                }
+            }
         if method == "session.command.execute":
             return {
                 "command": params["command"],
@@ -1362,6 +1382,33 @@ def test_session_command_list_reads_runtime_commands(tmp_path):
     assert state["items"] == []
 
 
+def test_session_runtime_command_list_reads_full_runtime_commands(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _access_token, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+
+    response = client.get(
+        f"/sessions/{session_id}/runtime/commands",
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert [item["id"] for item in body["commands"]] == ["resume"]
+    assert fake_rpc.requests[-1] == (
+        connector_id,
+        "session.commands",
+        {
+            "sessionId": session_id,
+            "runtime": "codex",
+            "limit": 100,
+            "externalSessionId": f"thr_{connector_id}_demo",
+        },
+        30,
+    )
+
+
 def test_session_command_execute_calls_runtime(tmp_path):
     client = make_client(tmp_path)
     connector_id, _access_token, session_id, headers = create_connector_and_session(client)
@@ -1393,6 +1440,62 @@ def test_session_command_execute_calls_runtime(tmp_path):
         },
         30,
     )
+
+
+def test_session_runtime_command_execute_calls_runtime(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _access_token, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+
+    response = client.post(
+        f"/sessions/{session_id}/runtime/commands",
+        headers=headers,
+        json={"command": "resume", "raw": "/resume now", "args": ["now"]},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["message"] == "Command executed."
+    assert fake_rpc.requests[-1] == (
+        connector_id,
+        "session.command.execute",
+        {
+            "sessionId": session_id,
+            "runtime": "codex",
+            "command": "resume",
+            "args": ["now"],
+            "externalSessionId": f"thr_{connector_id}_demo",
+            "raw": "/resume now",
+        },
+        30,
+    )
+
+
+def test_session_runtime_state_and_capabilities_read_from_runtime(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _access_token, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+
+    state_response = client.get(
+        f"/sessions/{session_id}/runtime/state",
+        headers=headers,
+    )
+    capabilities_response = client.get(
+        f"/sessions/{session_id}/runtime/capabilities",
+        headers=headers,
+    )
+
+    assert state_response.status_code == 200, state_response.text
+    assert state_response.json()["state"]["status"] == "idle"
+    assert capabilities_response.status_code == 200, capabilities_response.text
+    body = capabilities_response.json()
+    assert body["connectorId"] == connector_id
+    assert body["capabilitySet"]["capabilities"][0]["capabilityId"] == "session.send_message"
+    assert [request[1] for request in fake_rpc.requests[-2:]] == [
+        "session.state",
+        "session.capabilities",
+    ]
 
 
 def test_session_command_returns_runtime_rpc_error(tmp_path):
@@ -4483,6 +4586,34 @@ def test_interaction_respond_carries_runtime(tmp_path):
     assert params["actionId"] == "approve"
 
 
+def test_runtime_notice_respond_carries_runtime(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, session_id, headers = create_connector_and_session(client)
+    ingest_pending_command_approval(client, access_token, session_id)
+    fake_rpc = FakeApprovalRpc()
+    client.app.state.rpc = fake_rpc
+    notice_id = interaction_notice_id(client, session_id, headers, "approval")
+
+    list_response = client.get(f"/sessions/{session_id}/runtime/notices", headers=headers)
+    response = client.post(
+        f"/sessions/{session_id}/runtime/notices/{notice_id}/respond",
+        headers=headers,
+        json={"actionId": "approve"},
+    )
+
+    assert list_response.status_code == 200, list_response.text
+    assert list_response.json()["notices"][0]["noticeId"] == notice_id
+    assert response.status_code == 200, response.text
+    requested_connector_id, method, params, _timeout = next(
+        request for request in fake_rpc.requests if request[1] == "interaction.respond"
+    )
+    assert requested_connector_id == connector_id
+    assert method == "interaction.respond"
+    assert params["runtime"] == "codex"
+    assert params["noticeId"] == notice_id
+    assert params["actionId"] == "approve"
+
+
 def test_legacy_approval_api_is_removed(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
@@ -7327,6 +7458,24 @@ def test_bulk_archive_archives_owned_sessions(tmp_path):
     assert current[session_b]["archived"] is True
 
 
+def test_archive_endpoint_accepts_session_id_array(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_a, headers = create_connector_and_session(client)
+    session_b = _create_extra_session(client, headers, connector_id, "thr_b", title="B")
+
+    response = client.post(
+        "/sessions/archive",
+        headers=headers,
+        json=[session_a, session_b, "missing"],
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert {session["id"] for session in body["sessions"]} == {session_a, session_b}
+    assert body["notFound"] == ["missing"]
+    assert all(session["archived"] is True for session in body["sessions"])
+
+
 def test_bulk_archive_can_unarchive(tmp_path):
     client = make_client(tmp_path)
     _, _, session_id, headers = create_connector_and_session(client)
@@ -7445,6 +7594,59 @@ def test_bulk_read_marks_owned_sessions_read(tmp_path):
     assert current[session_b]["unread"] is False
     assert current[session_a]["lastReadSeq"] == current[session_a]["updatedSeq"]
     assert current[session_b]["lastReadSeq"] == current[session_b]["updatedSeq"]
+
+
+def test_read_endpoint_accepts_session_id_array(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, session_a, headers = create_connector_and_session(client)
+    session_b = _create_extra_session(client, headers, connector_id, "thr_b", title="B")
+
+    with client.websocket_connect(
+        "/connector/ws",
+        headers={"Authorization": f"Bearer {access_token}"},
+    ) as ws:
+        for session_id, item_id in ((session_a, "msg_a"), (session_b, "msg_b")):
+            ws.send_json(
+                {
+                    "type": "notification",
+                    "method": "timeline.itemUpsert",
+                    "params": {
+                        "sessionId": session_id,
+                        "item": {
+                            "id": f"tl_{item_id}",
+                            "sessionId": session_id,
+                            "type": "message",
+                            "status": "done",
+                            "role": "assistant",
+                            "content": {"text": item_id, "format": "markdown"},
+                            "source": {"runtime": "codex", "itemId": item_id},
+                            "orderSeq": 1,
+                            "revision": 1,
+                            "contentHash": f"sha256:{item_id}",
+                        },
+                    },
+                }
+            )
+        wait_for(
+            lambda: (
+                state
+                if (state := _sessions_by_id(client, headers))[session_a]["unread"]
+                and state[session_b]["unread"]
+                else None
+            )
+        )
+
+    response = client.post(
+        "/sessions/read",
+        headers=headers,
+        json=[session_a, session_b, session_a],
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["notFound"] == []
+    assert [session["id"] for session in body["sessions"]] == [session_a, session_b]
+    assert all(session["unread"] is False for session in body["sessions"])
 
 
 def test_bulk_read_filters_unowned_ids(tmp_path):
