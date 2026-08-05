@@ -399,14 +399,17 @@ export function SessionDetail({
   const applyOptimisticItemsRef = React.useRef(applyOptimisticItems)
   const clearResolvedOptimisticMessagesRef = React.useRef(clearResolvedOptimisticMessages)
   const getOptimisticSessionStateRef = React.useRef(getOptimisticSessionState)
+  const markAutoScrollIfNearBottomRef = React.useRef<() => void>(() => undefined)
+  const onSessionUpdatedRef = React.useRef(onSessionUpdated)
   const tSessionRef = React.useRef(tSession)
 
   React.useEffect(() => {
     applyOptimisticItemsRef.current = applyOptimisticItems
     clearResolvedOptimisticMessagesRef.current = clearResolvedOptimisticMessages
     getOptimisticSessionStateRef.current = getOptimisticSessionState
+    onSessionUpdatedRef.current = onSessionUpdated
     tSessionRef.current = tSession
-  }, [applyOptimisticItems, clearResolvedOptimisticMessages, getOptimisticSessionState, tSession])
+  }, [applyOptimisticItems, clearResolvedOptimisticMessages, getOptimisticSessionState, onSessionUpdated, tSession])
 
   React.useEffect(() => {
     setTimelineGroupOpenByKey({})
@@ -579,6 +582,10 @@ export function SessionDetail({
     }
   }, [distanceFromBottom])
 
+  React.useEffect(() => {
+    markAutoScrollIfNearBottomRef.current = markAutoScrollIfNearBottom
+  }, [markAutoScrollIfNearBottom])
+
   const scrollToBottomThrottled = React.useCallback((behavior: ScrollBehavior = "smooth") => {
     const run = () => {
       window.requestAnimationFrame(() => {
@@ -708,7 +715,7 @@ export function SessionDetail({
     let bufferedEvents: ProtocolEventEnvelope[] = []
     const refetch = (reason: string) => {
       if (refetchPromise) return refetchPromise
-      markAutoScrollIfNearBottom()
+      markAutoScrollIfNearBottomRef.current()
       refetchPromise = loadInitialSessionState(token, sessionId, { reason })
         .then((next) => {
           if (cancelled) return
@@ -716,7 +723,7 @@ export function SessionDetail({
           clearResolvedOptimisticMessagesRef.current(sessionId, merged.items)
           nextSeqRef.current = Math.max(nextSeqRef.current, cursorSequence(next.eventCursor) || next.nextSeq)
           setState((current) => current ? { ...merged, items: preserveOptimisticItems(merged.items, current.items) } : merged)
-          onSessionUpdated?.(next.session)
+          onSessionUpdatedRef.current?.(next.session)
         })
         .catch(() => undefined)
         .finally(() => {
@@ -740,7 +747,11 @@ export function SessionDetail({
         void recoverEvents(nextSeqRef.current, "session.refetch_required")
         return
       }
-      markAutoScrollIfNearBottom()
+      if (!sessionEventCanUpdateState(event)) {
+        nextSeqRef.current = Math.max(nextSeqRef.current, event.sequence)
+        return
+      }
+      markAutoScrollIfNearBottomRef.current()
       setState((current) => mergeSessionEvent(current, event))
       const item = readPayloadValue<TimelineItem>(event.payload.item)
       if (item) clearResolvedOptimisticMessagesRef.current(sessionId, [item])
@@ -826,7 +837,7 @@ export function SessionDetail({
         clearResolvedOptimisticMessagesRef.current(sessionId, merged.items)
         setState((current) => current ? { ...merged, items: preserveOptimisticItems(merged.items, current.items) } : merged)
         nextSeqRef.current = cursorSequence(next.eventCursor) || next.nextSeq
-        onSessionUpdated?.(next.session)
+        onSessionUpdatedRef.current?.(next.session)
         snapshotReady = true
         const pending = bufferedEvents
         bufferedEvents = []
@@ -851,8 +862,6 @@ export function SessionDetail({
     }
   }, [
     isLocalOptimisticSession,
-    markAutoScrollIfNearBottom,
-    onSessionUpdated,
     sessionId,
     token,
   ])
@@ -1701,6 +1710,19 @@ function mergeSessionEvent(
   const nextRuntimeState = acceptsRuntimeState && runtimeState ? runtimeState : current.state
   const nextEffectiveCapabilities = capabilitySet ?? current.effectiveCapabilities
   const nextSeq = Math.max(current.nextSeq, event.sequence)
+  const nextEventCursor = event.sequence >= current.nextSeq ? event.cursor : current.eventCursor
+
+  if (
+    nextSession === current.session &&
+    nextRuntimeState === current.state &&
+    nextItems === current.items &&
+    nextNotices === current.notices &&
+    nextEffectiveCapabilities === current.effectiveCapabilities &&
+    nextSeq === current.nextSeq &&
+    nextEventCursor === current.eventCursor
+  ) {
+    return current
+  }
 
   return {
     ...current,
@@ -1709,10 +1731,23 @@ function mergeSessionEvent(
     items: nextItems,
     notices: nextNotices,
     nextSeq,
-    eventCursor: event.sequence >= current.nextSeq ? event.cursor : current.eventCursor,
+    eventCursor: nextEventCursor,
     effectiveCapabilities: nextEffectiveCapabilities,
     serverTime: event.emittedAt ?? current.serverTime,
   }
+}
+
+function sessionEventCanUpdateState(event: ProtocolEventEnvelope): boolean {
+  return (
+    event.type === "session.meta.updated" ||
+    event.type === "runtime.state.updated" ||
+    event.type === "runtime.capability.updated" ||
+    event.type === "runtime.notice.updated" ||
+    event.type === "runtime.notice.snapshot" ||
+    event.type === "timeline.item_created" ||
+    event.type === "timeline.item_updated" ||
+    event.type === "timeline.snapshot"
+  )
 }
 
 function effectiveRuntimeStatus(
