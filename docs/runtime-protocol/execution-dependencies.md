@@ -244,6 +244,22 @@ flowchart TD
 9. Run an end-to-end Codex flow and delete old routes/tests once the new flow is
    confirmed.
 
+Current status on `v2-connector-refactor`:
+
+- Steps 1-5 have backend/connector test coverage and are implemented enough for
+  frontend migration.
+- Codex runtime behavior has targeted coverage for:
+  - session/runtime capability reads and host pushes;
+  - selection validation and next-turn state publication;
+  - no-active-turn interrupt convergence to `idle`;
+  - compact start/done/error as one stable timeline item plus blocked/idle
+    state transitions;
+  - approval requests as runtime notices, not legacy `approval.requested`;
+  - typed Codex timeline projection including context compaction.
+- Remaining verification for those behaviors is end-to-end Web + real Codex SDK
+  runtime behavior, especially consecutive sends, streaming, tool approval,
+  compact completion, and connector restart recovery.
+
 ## Verification gates
 
 Each gate should be committed independently.
