@@ -11,6 +11,7 @@ from connector.server.runtime_rpc_params import (
 from connector.server.runtime_rpc_payloads import (
     capability_set_payload,
     session_meta_payload,
+    session_notice_payload,
     session_state_payload,
 )
 
@@ -121,3 +122,15 @@ async def read_session_capabilities(
         parsed.external_session_id,
     )
     return {"capabilitySet": capability_set_payload(capabilities)}
+
+
+async def read_session_notices(
+    runtime: AgentRuntime,
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    parsed = SessionReadParams.parse(params)
+    notices = await runtime.get_session_notices(
+        parsed.session_id,
+        parsed.external_session_id,
+    )
+    return {"notices": [session_notice_payload(notice) for notice in notices]}

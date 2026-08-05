@@ -36,6 +36,15 @@ class CodexNoticeRegistry:
             and notice.blocking is not None
         )
 
+    def current_for_session(self, session_id: str) -> tuple[SessionNotice, ...]:
+        terminal_statuses = {"closed", "resolved", "cancelled", "expired"}
+        return tuple(
+            notice
+            for notice in self._notices.values()
+            if notice.session_id == session_id
+            and notice.status not in terminal_statuses
+        )
+
     def transition(
         self,
         notice_id: str,

@@ -13,6 +13,7 @@ from connector.runtime_protocol import (
     RuntimeModelCatalog,
     RuntimeOperationResult,
     RuntimePermissionCatalog,
+    SessionNotice,
 )
 
 
@@ -125,6 +126,27 @@ def session_state_payload(state: Any) -> dict[str, Any]:
         "error": dict(state.error) if state.error is not None else None,
         "metadata": dict(state.metadata),
     }
+
+
+def session_notice_payload(notice: SessionNotice) -> dict[str, Any]:
+    return drop_none_payload(
+        {
+            "noticeId": notice.notice_id,
+            "sessionId": notice.session_id,
+            "source": {"runtime": notice.runtime, **dict(notice.source)},
+            "type": notice.type,
+            "title": notice.title,
+            "message": notice.message,
+            "severity": notice.severity,
+            "status": notice.status,
+            "interactionType": notice.interaction_type,
+            "blocking": dict(notice.blocking) if notice.blocking is not None else None,
+            "responseRequired": notice.response_required,
+            "actions": [dict(action) for action in notice.actions],
+            "context": dict(notice.context),
+            "metadata": dict(notice.metadata),
+        }
+    )
 
 
 def model_catalog_payload(catalog: RuntimeModelCatalog) -> dict[str, Any]:

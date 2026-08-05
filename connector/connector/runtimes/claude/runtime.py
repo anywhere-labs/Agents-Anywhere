@@ -15,6 +15,7 @@ from connector.runtime_protocol import (
     RuntimeSessionStateCache,
     RuntimeTimelineSnapshot,
     SessionMeta,
+    SessionNotice,
     SessionState,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
@@ -129,6 +130,21 @@ class ClaudeRuntime(AgentRuntime):
         return await self._session_reader.get_session_state(
             session_id,
             external_session_id,
+        )
+
+    async def get_session_notices(
+        self,
+        session_id: str,
+        external_session_id: str | None = None,
+    ) -> tuple[SessionNotice, ...]:
+        _ = external_session_id
+        session = self._sessions.get(session_id)
+        if session is None:
+            return ()
+        return tuple(
+            pending.notice
+            for pending in session.pending_approvals.values()
+            if pending.notice.status in {"open", "responding"}
         )
 
     async def get_session_snapshot(

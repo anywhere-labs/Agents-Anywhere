@@ -11,7 +11,10 @@ from connector.runtime_protocol import (
     SessionNotice,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
-from connector.server.runtime_rpc_payloads import capability_set_payload
+from connector.server.runtime_rpc_payloads import (
+    capability_set_payload,
+    session_notice_payload,
+)
 from connector.server.sync_state import RuntimeSyncState, SyncStateStore
 
 BackendNotifier = Callable[[str, dict[str, Any]], Awaitable[None]]
@@ -151,24 +154,7 @@ class ConnectorRuntimeHost(RuntimeHostClient):
     ) -> None:
         await self._notifier(
             "notice.upsert",
-            _drop_none(
-                {
-                    "noticeId": notice.notice_id,
-                    "sessionId": notice.session_id,
-                    "source": {"runtime": notice.runtime, **dict(notice.source)},
-                    "type": notice.type,
-                    "title": notice.title,
-                    "message": notice.message,
-                    "severity": notice.severity,
-                    "status": notice.status,
-                    "interactionType": notice.interaction_type,
-                    "blocking": dict(notice.blocking) if notice.blocking is not None else None,
-                    "responseRequired": notice.response_required,
-                    "actions": [dict(action) for action in notice.actions],
-                    "context": dict(notice.context),
-                    "metadata": dict(notice.metadata),
-                }
-            ),
+            session_notice_payload(notice),
         )
 
     async def runtime_error(

@@ -23,6 +23,7 @@ from connector.server.runtime_rpc_payloads import (
 from connector.server.runtime_session_rpc import (
     discover_sessions,
     read_session_capabilities,
+    read_session_notices,
     read_session_state,
     sync_session_snapshot,
 )
@@ -58,6 +59,7 @@ class RuntimeRpcHandler:
         "session.sync",
         "session.state",
         "session.capabilities",
+        "session.notices",
         "session.selections.update",
         "session.commands",
         "session.command.execute",
@@ -166,6 +168,11 @@ class RuntimeRpcHandler:
             )
         if method == "session.capabilities":
             return await read_session_capabilities(
+                self._resolve_agent_runtime(params),
+                params,
+            )
+        if method == "session.notices":
+            return await read_session_notices(
                 self._resolve_agent_runtime(params),
                 params,
             )

@@ -28,8 +28,9 @@ from agent_server.core.models import (
     BulkReadRequest,
     InteractionRespondRequest,
     MessageCreateRequest,
-    NoticeListResponse,
+    NoticeIn,
     RpcResponsePayload,
+    RuntimeNoticeListResponse,
     SessionCommandListResponse,
     SessionCommandRequest,
     SessionCommandResponse,
@@ -996,18 +997,20 @@ async def steer_session(
         _raise_session_run_error(exc)
 
 
-@router.get("/{session_id}/runtime/notices", response_model=NoticeListResponse)
+@router.get("/{session_id}/runtime/notices", response_model=RuntimeNoticeListResponse)
 async def list_session_runtime_notices(
     session_id: str,
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
-) -> NoticeListResponse:
+    manager: ConnectorRpcManager = Depends(get_rpc),
+) -> RuntimeNoticeListResponse:
     try:
-        await db.get_session(session_id, user_id=user_id)
+        session = await db.get_session(session_id, user_id=user_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
-    return NoticeListResponse(
-        notices=await db.list_open_notices(session_id),
+    notices = await read_session_notices_from_connector(manager, session)
+    return RuntimeNoticeListResponse(
+        notices=notices,
         serverTime=utc_now(),
     )
 
@@ -1188,6 +1191,48 @@ async def read_session_capabilities_from_connector(
             },
         )
     return ProtocolCapabilitySet.model_validate(raw_capability_set)
+
+
+async def read_session_notices_from_connector(
+    manager: ConnectorRpcManager,
+    session: SessionView,
+) -> list[NoticeIn]:
+    params: dict[str, Any] = {
+        "sessionId": session.id,
+        "runtime": session.runtime,
+    }
+    if session.externalSessionId:
+        params["externalSessionId"] = session.externalSessionId
+    try:
+        result = await manager.request(
+            session.connectorId,
+            "session.notices",
+            params,
+            timeout=10,
+        )
+    except ConnectorOfflineError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ConnectorRpcError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={"code": exc.code, "message": exc.message or exc.code},
+        ) from exc
+    raw_notices = result.get("notices") if isinstance(result, dict) else None
+    if not isinstance(raw_notices, list):
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "invalid_runtime_notices",
+                "message": "connector did not return runtime notices",
+            },
+        )
+    try:
+        return [NoticeIn.model_validate(notice) for notice in raw_notices]
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={"code": "invalid_runtime_notices", "message": str(exc)},
+        ) from exc
 
 
 def runtime_state_from_rpc_payload(

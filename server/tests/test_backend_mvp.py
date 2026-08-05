@@ -918,6 +918,26 @@ class FakeApprovalRpc:
             raise ConnectorRpcError("codex_error", "request gone")
         if self.gone:
             raise ConnectorRpcError("approval_not_found", "approval not found")
+        if method == "session.notices":
+            session_id = params["sessionId"]
+            return {
+                "notices": [
+                    {
+                        "noticeId": "notice_runtime_approval",
+                        "type": "interaction",
+                        "sessionId": session_id,
+                        "source": {"runtime": params["runtime"]},
+                        "title": "Runtime approval",
+                        "severity": "warning",
+                        "status": "open",
+                        "interactionType": "approval",
+                        "responseRequired": True,
+                        "actions": [{"actionId": "approve", "label": "Approve"}],
+                        "context": {},
+                        "metadata": {},
+                    }
+                ]
+            }
         return {"resolved": True}
 
 
@@ -1032,6 +1052,26 @@ class FakeLocalRpc:
                     "metadata": {},
                 }
             return {"state": state}
+        if method == "session.notices":
+            session_id = params["sessionId"]
+            return {
+                "notices": [
+                    {
+                        "noticeId": "notice_runtime_approval",
+                        "type": "interaction",
+                        "sessionId": session_id,
+                        "source": {"runtime": params["runtime"]},
+                        "title": "Runtime approval",
+                        "severity": "warning",
+                        "status": "open",
+                        "interactionType": "approval",
+                        "responseRequired": True,
+                        "actions": [{"actionId": "approve", "label": "Approve"}],
+                        "context": {},
+                        "metadata": {},
+                    }
+                ]
+            }
         if method == "session.selections.update":
             session_id = params["sessionId"]
             previous = self.runtime_states.get(session_id, {})
@@ -3496,7 +3536,9 @@ def test_send_message_carries_runtime_for_codex_session(tmp_path):
         json={"content": "hi"},
     )
     assert response.status_code == 200
-    params = fake_rpc.requests[-1][2]
+    params = next(
+        request[2] for request in fake_rpc.requests if request[1] == "interaction.respond"
+    )
     assert params["runtime"] == "codex"
 
 
@@ -4580,7 +4622,9 @@ def test_interaction_respond_carries_runtime(tmp_path):
         json={"actionId": "approve"},
     )
     assert response.status_code == 200
-    params = fake_rpc.requests[-1][2]
+    params = next(
+        request[2] for request in fake_rpc.requests if request[1] == "interaction.respond"
+    )
     assert params["runtime"] == "codex"
     assert params["noticeId"] == notice_id
     assert params["actionId"] == "approve"
@@ -4602,7 +4646,9 @@ def test_runtime_notice_respond_carries_runtime(tmp_path):
     )
 
     assert list_response.status_code == 200, list_response.text
-    assert list_response.json()["notices"][0]["noticeId"] == notice_id
+    runtime_notice = list_response.json()["notices"][0]
+    assert runtime_notice["noticeId"] == "notice_runtime_approval"
+    assert "updatedSeq" not in runtime_notice
     assert response.status_code == 200, response.text
     requested_connector_id, method, params, _timeout = next(
         request for request in fake_rpc.requests if request[1] == "interaction.respond"
@@ -6593,8 +6639,9 @@ def test_interaction_respond_waits_for_connector_success_and_updates_target_item
     )
 
     assert response.status_code == 200
-    assert len(fake_rpc.requests) == 1
-    requested_connector_id, method, params, timeout = fake_rpc.requests[0]
+    requested_connector_id, method, params, timeout = next(
+        request for request in fake_rpc.requests if request[1] == "interaction.respond"
+    )
     assert requested_connector_id == connector_id
     assert method == "interaction.respond"
     assert timeout == 30

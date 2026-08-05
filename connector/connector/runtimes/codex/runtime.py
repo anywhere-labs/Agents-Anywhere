@@ -18,6 +18,7 @@ from connector.runtime_protocol import (
     RuntimeSessionStateCache,
     RuntimeTimelineSnapshot,
     SessionMeta,
+    SessionNotice,
     SessionState,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
@@ -157,6 +158,14 @@ class CodexRuntime(AgentRuntime):
             session_id,
             external_session_id,
         )
+
+    async def get_session_notices(
+        self,
+        session_id: str,
+        external_session_id: str | None = None,
+    ) -> tuple[SessionNotice, ...]:
+        _ = external_session_id
+        return self._notices.current_for_session(session_id)
 
     async def get_session_capabilities(
         self,

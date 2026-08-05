@@ -43,6 +43,7 @@ from connector.runtime_protocol import (
     RuntimeTimelineItem,
     RuntimeTimelineSnapshot,
     SessionMeta,
+    SessionNotice,
     SessionState,
     SystemTimelineContent,
     SystemTimelineItem,
@@ -357,6 +358,34 @@ class FakeAgentRuntime(AgentRuntime):
             status="running",
             selections={"model": "sel_model_state"},
             metadata={"source": "fake"},
+        )
+
+    async def get_session_notices(
+        self,
+        session_id: str,
+        external_session_id: str | None = None,
+    ) -> tuple[SessionNotice, ...]:
+        self.calls.append(
+            (
+                "session.notices",
+                {
+                    "sessionId": session_id,
+                    "externalSessionId": external_session_id,
+                },
+            )
+        )
+        return (
+            SessionNotice(
+                notice_id="notice_1",
+                session_id=session_id,
+                runtime=self.runtime_id,
+                type="interaction",
+                title="Approval required",
+                status="open",
+                interaction_type="approval",
+                response_required=True,
+                actions=({"actionId": "approve", "label": "Approve"},),
+            ),
         )
 
     async def get_runtime_capabilities(self) -> RuntimeCapabilitySet:
@@ -1113,11 +1142,13 @@ async def _exercise_runtime() -> None:
             },
         }
     )
-    assert runtime.calls[-2][0] == "session.sync"
-    assert runtime.calls[-1][0] == "session.state"
-    assert [item["method"] for item in notifications[-2:]] == [
+    assert runtime.calls[-3][0] == "session.sync"
+    assert runtime.calls[-2][0] == "session.state"
+    assert runtime.calls[-1][0] == "session.notices"
+    assert [item["method"] for item in notifications[-3:]] == [
         "timeline.sync",
         "session.state.updated",
+        "notice.upsert",
     ]
     assert ws.messages[-1]["result"] == {
         "sessionId": "sess_1",
@@ -1143,6 +1174,37 @@ async def _exercise_runtime() -> None:
         {"sessionId": "sess_1", "externalSessionId": "thr_1"},
     )
     assert ws.messages[-1]["result"]["state"]["selections"] == {"model": "sel_model_state"}
+
+    await client.handle_message(
+        {
+            "id": "rpc_5a",
+            "type": "request",
+            "method": "session.notices",
+            "params": {
+                "runtime": "codex",
+                "sessionId": "sess_1",
+                "externalSessionId": "thr_1",
+            },
+        }
+    )
+    assert runtime.calls[-1] == (
+        "session.notices",
+        {"sessionId": "sess_1", "externalSessionId": "thr_1"},
+    )
+    assert ws.messages[-1]["result"]["notices"][0] == {
+        "noticeId": "notice_1",
+        "sessionId": "sess_1",
+        "source": {"runtime": "codex"},
+        "type": "interaction",
+        "title": "Approval required",
+        "severity": "info",
+        "status": "open",
+        "interactionType": "approval",
+        "responseRequired": True,
+        "actions": [{"actionId": "approve", "label": "Approve"}],
+        "context": {},
+        "metadata": {},
+    }
 
     await client.handle_message(
         {

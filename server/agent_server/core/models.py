@@ -759,6 +759,11 @@ class Notice(NoticeIn):
     updatedAt: str
 
 
+class RuntimeNoticeListResponse(BaseModel):
+    notices: list[NoticeIn] = Field(default_factory=list)
+    serverTime: str
+
+
 class NoticeListResponse(BaseModel):
     notices: list[Notice] = Field(default_factory=list)
     serverTime: str
