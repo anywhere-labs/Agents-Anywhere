@@ -2841,7 +2841,7 @@ def test_connector_preferences_round_trip_via_daemon_notification(tmp_path):
 
 
 
-def test_protocol_capabilities_ingest_and_read(tmp_path):
+def test_protocol_capabilities_ingest_and_merge(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, _, headers = create_connector_and_session(client)
     revision = 1_785_489_256_422_611
@@ -2868,12 +2868,11 @@ def test_protocol_capabilities_ingest_and_read(tmp_path):
     )
 
     assert ingest.status_code == 200, ingest.text
-    response = client.get(f"/connectors/{connector_id}/protocol/capabilities", headers=headers)
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["connectorId"] == connector_id
-    assert body["capabilitySet"]["revision"] == revision
-    assert body["capabilitySet"]["capabilities"][0]["capabilityId"] == "session.interrupt"
+    capability_body = asyncio.run(
+        client.app.state.store.get_protocol_capabilities(connector_id)
+    )
+    assert capability_body["revision"] == revision
+    assert capability_body["capabilities"][0]["capabilityId"] == "session.interrupt"
 
     stale = {
         "revision": revision - 1,
@@ -2892,11 +2891,19 @@ def test_protocol_capabilities_ingest_and_read(tmp_path):
     )
 
     assert stale_ingest.status_code == 200, stale_ingest.text
-    body = client.get(f"/connectors/{connector_id}/protocol/capabilities", headers=headers).json()
-    assert body["capabilitySet"]["revision"] == revision
-    assert {item["capabilityId"] for item in body["capabilitySet"]["capabilities"]} == {
+    capability_body = asyncio.run(
+        client.app.state.store.get_protocol_capabilities(connector_id)
+    )
+    assert capability_body["revision"] == revision
+    assert {item["capabilityId"] for item in capability_body["capabilities"]} == {
         "session.interrupt"
     }
+
+    response = client.get(f"/connectors/{connector_id}/protocol/capabilities", headers=headers)
+    assert response.status_code == 410, response.text
+    assert response.json()["detail"]["code"] == (
+        "connector_protocol_capabilities_route_removed"
+    )
 
 
 def test_runtime_capability_update_merges_and_pushes_session_projection(tmp_path):
@@ -2964,13 +2971,12 @@ def test_runtime_capability_update_merges_and_pushes_session_projection(tmp_path
         assert response.status_code == 200, response.text
         event = ws.receive_json()
 
-    stored = client.get(f"/connectors/{connector_id}/protocol/capabilities", headers=headers)
-    assert stored.status_code == 200, stored.text
+    stored = asyncio.run(client.app.state.store.get_protocol_capabilities(connector_id))
     stored_capabilities = {
         item["capabilityId"]: item
-        for item in stored.json()["capabilitySet"]["capabilities"]
+        for item in stored["capabilities"]
     }
-    assert stored.json()["capabilitySet"]["revision"] == 7
+    assert stored["revision"] == 7
     assert stored_capabilities["session.send_message"]["scope"] == "runtime"
     assert stored_capabilities["session.interrupt"]["scope"] == "session"
     assert event["type"] == "runtime.capability.updated"

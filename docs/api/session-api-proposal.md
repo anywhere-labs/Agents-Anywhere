@@ -476,7 +476,8 @@ This target API intentionally removes the old legacy route block. If an
 implementation still exposes those routes during migration, it must either
 route them to the scoped APIs in this document or return an explicit migration
 error. Removed agent catalog query routes should not start runtimes or perform
-connector RPC.
+connector RPC. Removed connector protocol capability reads should not serve UI
+capability facts.
 
 Migration guide:
 

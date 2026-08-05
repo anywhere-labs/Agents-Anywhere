@@ -91,9 +91,10 @@ See [Realtime API](./realtime.md).
 
 The old legacy API list is intentionally removed from the target docs.
 If a migration build still exposes those routes, they are compatibility shims
-only. Old agent catalog query routes should return a migration error instead of
-starting runtimes or forwarding RPC. Other temporary shims should point callers
-to the scoped APIs documented here.
+only. Old agent catalog query routes and connector protocol capability reads
+should return a migration error instead of starting runtimes, forwarding RPC, or
+serving UI facts. Other temporary shims should point callers to the scoped APIs
+documented here.
 
 Migration guide:
 

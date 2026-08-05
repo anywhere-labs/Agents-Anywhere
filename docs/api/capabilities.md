@@ -193,10 +193,10 @@ GET /connectors/{connectorId}/protocol/capabilities
 ```
 
 Those legacy routes are removed from the target API. If old agent catalog query
-routes still exist in a migration build, they should return an explicit
-migration error and must not start runtimes or perform connector RPC. Other
-temporary shims should point callers to the scoped runtime or session endpoints
-above.
+routes or connector protocol capability reads still exist in a migration build,
+they should return an explicit migration error. They must not start runtimes,
+perform connector RPC, or serve UI capability facts. Other temporary shims
+should point callers to the scoped runtime or session endpoints above.
 
 ## Push API
 
