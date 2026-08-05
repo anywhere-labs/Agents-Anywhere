@@ -15,8 +15,19 @@ RuntimeStatus = Literal[
 
 SelectionScope = Literal["model", "permission"]
 CommandScope = Literal["runtime", "session", "turn"]
+RuntimeCapabilityScope = Literal["runtime", "session"]
 NoticeType = Literal["notification", "interaction"]
 NoticeSeverity = Literal["info", "success", "warning", "error"]
+
+CAPABILITY_SESSION_SEND_MESSAGE = "session.send_message"
+CAPABILITY_SESSION_INTERRUPT = "session.interrupt"
+CAPABILITY_SESSION_STEER = "session.steer"
+CAPABILITY_SESSION_INTERACTION_APPROVAL = "session.interaction.approval"
+CAPABILITY_RUNTIME_CONFIG = "runtime.config"
+CAPABILITY_CATALOG_MODEL = "catalog.model"
+CAPABILITY_CATALOG_PERMISSION = "catalog.permission"
+CAPABILITY_CATALOG_EFFORT = "catalog.effort"
+CAPABILITY_SESSION_COMMANDS = "session.commands"
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +117,31 @@ class RuntimePermissionCatalog:
     runtime: str
     revision: int
     permissions: tuple[RuntimePermissionItem, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeCapability:
+    capability_id: str
+    scope: RuntimeCapabilityScope
+    runtime: str
+    version: str = "1"
+    session_id: str | None = None
+    connector_id: str | None = None
+    supported: bool = True
+    available: bool = True
+    allowed: bool = True
+    unavailable_reason: str | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeCapabilitySet:
+    runtime: str
+    revision: int
+    capabilities: tuple[RuntimeCapability, ...] = ()
+    session_id: str | None = None
+    connector_id: str | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

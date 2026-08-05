@@ -6,6 +6,7 @@ from typing import Any
 
 from connector.runtime_protocol.models import (
     RuntimeAttachmentContent,
+    RuntimeCapabilitySet,
     RuntimeStatus,
     RuntimeTimelineItem,
     SessionNotice,
@@ -42,6 +43,18 @@ class RuntimeHostClient(ABC):
         status_reason: str | None = None,
         error: Mapping[str, Any] | None = None,
         metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        raise NotImplementedError
+
+    async def runtime_capabilities_update(
+        self,
+        capabilities: RuntimeCapabilitySet,
+    ) -> None:
+        raise NotImplementedError
+
+    async def session_capabilities_update(
+        self,
+        capabilities: RuntimeCapabilitySet,
     ) -> None:
         raise NotImplementedError
 

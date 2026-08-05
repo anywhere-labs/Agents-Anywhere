@@ -7,6 +7,7 @@ from typing import Any
 from connector.runtime_protocol.errors import RuntimeUnsupportedError
 from connector.runtime_protocol.models import (
     RuntimeAttachment,
+    RuntimeCapabilitySet,
     RuntimeCommand,
     RuntimeCommandResult,
     RuntimeConfig,
@@ -37,6 +38,14 @@ class AgentRuntime(ABC):
 
     async def get_config(self) -> RuntimeConfig:
         raise RuntimeUnsupportedError("get_config")
+
+    async def get_runtime_capabilities(self) -> RuntimeCapabilitySet:
+        return RuntimeCapabilitySet(
+            runtime=self.identity.runtime,
+            revision=0,
+            capabilities=(),
+            metadata={"source": "runtime.default-empty-capabilities"},
+        )
 
     async def list_model_catalog(
         self,
@@ -81,6 +90,22 @@ class AgentRuntime(ABC):
         external_session_id: str | None = None,
     ) -> tuple[SessionNotice, ...]:
         return ()
+
+    async def get_session_capabilities(
+        self,
+        session_id: str,
+        external_session_id: str | None = None,
+    ) -> RuntimeCapabilitySet:
+        return RuntimeCapabilitySet(
+            runtime=self.identity.runtime,
+            revision=0,
+            capabilities=(),
+            session_id=session_id,
+            metadata={
+                "source": "runtime.default-empty-capabilities",
+                "external_session_id": external_session_id,
+            },
+        )
 
     async def create_and_start_session(
         self,
