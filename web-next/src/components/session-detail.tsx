@@ -177,11 +177,19 @@ async function loadInitialSessionState(
       // the fallback source of truth.
     }
   }
-  return sessionStateFromSnapshot(
-    await dashboardApi.getSessionSnapshot(token, sessionId, INITIAL_TIMELINE_LIMIT, {
-      reason: options.reason ?? "session-detail.initial-load",
-    }),
-  )
+  const snapshot = await dashboardApi.getSessionSnapshot(token, sessionId, INITIAL_TIMELINE_LIMIT, {
+    reason: options.reason ?? "session-detail.initial-load",
+  })
+  const state = sessionStateFromSnapshot(snapshot)
+  try {
+    const capabilities = await dashboardApi.getSessionRuntimeCapabilities(token, sessionId)
+    return {
+      ...state,
+      effectiveCapabilities: capabilities.capabilitySet,
+    }
+  } catch {
+    return state
+  }
 }
 
 function sessionStateFromSnapshot(snapshot: SessionSnapshotResponse): SessionRemoteState {
@@ -1651,21 +1659,27 @@ function mergeSessionEvent(
 ): SessionRemoteState | null {
   if (!current) return current
 
-  const session = readPayloadValue<SessionView>(event.payload.session)
-  const runtimeState = readPayloadValue<SessionRuntimeState>(event.payload.state)
-  const item = readPayloadValue<TimelineItem>(event.payload.item)
-  const timelineSnapshot = Array.isArray(event.payload.items)
+  const session = event.type === "session.meta.updated"
+    ? readPayloadValue<SessionView>(event.payload.session)
+    : null
+  const runtimeState = event.type === "runtime.state.updated"
+    ? readPayloadValue<SessionRuntimeState>(event.payload.state)
+    : null
+  const item = event.type === "timeline.item_created" || event.type === "timeline.item_updated"
+    ? readPayloadValue<TimelineItem>(event.payload.item)
+    : null
+  const timelineSnapshot = event.type === "timeline.snapshot" && Array.isArray(event.payload.items)
     ? event.payload.items.filter(isTimelineItem)
     : null
-  const notice = readPayloadValue<Notice>(event.payload.notice)
-  const noticeSnapshot = Array.isArray(event.payload.notices)
+  const notice = event.type === "runtime.notice.updated"
+    ? readPayloadValue<Notice>(event.payload.notice)
+    : null
+  const noticeSnapshot = event.type === "runtime.notice.snapshot" && Array.isArray(event.payload.notices)
     ? event.payload.notices.filter(isNotice)
     : null
-  const capabilitySet = readPayloadValue<ProtocolCapabilitySet>(event.payload.capabilitySet)
-  const compatibilityCapabilities = readPayloadValue<ProtocolCapabilitySet>(
-    event.payload.effectiveCapabilities,
-  )
-  const effectiveCapabilities = capabilitySet ?? compatibilityCapabilities
+  const capabilitySet = event.type === "runtime.capability.updated"
+    ? readPayloadValue<ProtocolCapabilitySet>(event.payload.capabilitySet)
+    : null
 
   const nextNotices = noticeSnapshot
     ? noticeSnapshot
@@ -1685,10 +1699,7 @@ function mergeSessionEvent(
       runtimeState.updatedSeq >= (current.state?.updatedSeq ?? 0),
   )
   const nextRuntimeState = acceptsRuntimeState && runtimeState ? runtimeState : current.state
-  const nextEffectiveCapabilities =
-    effectiveCapabilities && (!session || acceptsSession)
-      ? effectiveCapabilities
-      : current.effectiveCapabilities
+  const nextEffectiveCapabilities = capabilitySet ?? current.effectiveCapabilities
   const nextSeq = Math.max(current.nextSeq, event.sequence)
 
   return {

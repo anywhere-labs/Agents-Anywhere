@@ -678,6 +678,16 @@ export class DashboardApi {
     );
   }
 
+  getSessionRuntimeCapabilities(
+    token: string,
+    sessionId: string,
+  ): Promise<ProtocolCapabilitiesResponse> {
+    return this.client.get<ProtocolCapabilitiesResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/capabilities`,
+      { token },
+    );
+  }
+
   updateSessionSelections(
     token: string,
     sessionId: string,
