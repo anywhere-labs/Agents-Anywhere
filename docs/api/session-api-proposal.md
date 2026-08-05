@@ -473,8 +473,10 @@ endpoint after reconnect.
 ## Removed legacy route blocks
 
 This target API intentionally removes the old legacy route block. If an
-implementation still exposes those routes during migration, it must treat them
-as compatibility shims and route them to the scoped APIs in this document.
+implementation still exposes those routes during migration, it must either
+route them to the scoped APIs in this document or return an explicit migration
+error. Removed agent catalog query routes should not start runtimes or perform
+connector RPC.
 
 Migration guide:
 

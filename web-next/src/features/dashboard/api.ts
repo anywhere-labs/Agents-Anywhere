@@ -723,27 +723,6 @@ export class DashboardApi {
     );
   }
 
-  getAgentModelCatalog(
-    token: string,
-    runtime: string,
-    connectorId: string,
-  ): Promise<ProtocolModelCatalogResponse> {
-    return this.client.get<ProtocolModelCatalogResponse>(
-      `/agents/${encodeURIComponent(runtime)}/model-catalog?connectorId=${encodeURIComponent(connectorId)}`,
-      { token },
-    );
-  }
-
-  getConnectorProtocolCapabilities(
-    token: string,
-    connectorId: string,
-  ): Promise<ProtocolCapabilitiesResponse> {
-    return this.client.get<ProtocolCapabilitiesResponse>(
-      `/connectors/${encodeURIComponent(connectorId)}/protocol/capabilities`,
-      { token },
-    );
-  }
-
   getConnectorRuntimeCapabilities(
     token: string,
     connectorId: string,
@@ -751,17 +730,6 @@ export class DashboardApi {
   ): Promise<ProtocolCapabilitiesResponse> {
     return this.client.get<ProtocolCapabilitiesResponse>(
       `/connectors/${encodeURIComponent(connectorId)}/runtimes/${encodeURIComponent(runtimeId)}/capabilities`,
-      { token },
-    );
-  }
-
-  getAgentPermissionCatalog(
-    token: string,
-    runtime: string,
-    connectorId: string,
-  ): Promise<ProtocolPermissionCatalogResponse> {
-    return this.client.get<ProtocolPermissionCatalogResponse>(
-      `/agents/${encodeURIComponent(runtime)}/permission-catalog?connectorId=${encodeURIComponent(connectorId)}`,
       { token },
     );
   }

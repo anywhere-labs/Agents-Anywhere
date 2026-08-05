@@ -192,9 +192,11 @@ GET /agents/{runtime}/model-catalog?connectorId=conn_...
 GET /connectors/{connectorId}/protocol/capabilities
 ```
 
-Those legacy routes are removed from the target API. If they still exist in a
-migration build, they are compatibility shims and must forward to the scoped
-runtime or session endpoints above.
+Those legacy routes are removed from the target API. If old agent catalog query
+routes still exist in a migration build, they should return an explicit
+migration error and must not start runtimes or perform connector RPC. Other
+temporary shims should point callers to the scoped runtime or session endpoints
+above.
 
 ## Push API
 

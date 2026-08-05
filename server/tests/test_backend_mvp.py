@@ -2779,11 +2779,9 @@ def test_agent_catalog_rejects_unknown_runtime(tmp_path):
     assert client.get("/agents/python/permission-catalog", headers=headers).status_code == 422
 
 
-def test_agent_catalog_reads_live_runtime_catalog(tmp_path):
+def test_agent_catalog_routes_are_removed(tmp_path):
     client = make_client(tmp_path)
     connector_id, _access_token, _session_id, headers = create_connector_and_session(client)
-    fake_rpc = FakeLocalRpc()
-    _seed_running_runtime(client, connector_id, fake_rpc, "codex")
 
     model = client.get(
         "/agents/codex/model-catalog",
@@ -2796,24 +2794,14 @@ def test_agent_catalog_reads_live_runtime_catalog(tmp_path):
         params={"connectorId": connector_id, "query": "read", "limit": 13},
     )
 
-    assert model.status_code == 200, model.text
-    assert model.json()["catalog"]["models"][0]["displayName"] == "GPT Live"
-    assert permission.status_code == 200, permission.text
-    assert permission.json()["catalog"]["permissions"][0]["displayName"] == "Read only"
-    assert fake_rpc.requests[-2:] == [
-        (
-            connector_id,
-            "runtime.modelCatalog",
-            {"runtime": "codex", "limit": 12, "query": "gpt"},
-            30,
-        ),
-        (
-            connector_id,
-            "runtime.permissionCatalog",
-            {"runtime": "codex", "limit": 13, "query": "read"},
-            30,
-        ),
-    ]
+    assert model.status_code == 410, model.text
+    assert model.json()["detail"]["use"] == (
+        "/connectors/{connectorId}/runtimes/codex/catalogs/model"
+    )
+    assert permission.status_code == 410, permission.text
+    assert permission.json()["detail"]["use"] == (
+        "/connectors/{connectorId}/runtimes/codex/catalogs/permission"
+    )
 
 
 def test_connector_preferences_round_trip_via_daemon_notification(tmp_path):

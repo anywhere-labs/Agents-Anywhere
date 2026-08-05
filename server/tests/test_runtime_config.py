@@ -321,7 +321,7 @@ def test_activation_and_deactivation_drive_connector_lifecycle(tmp_path):
     assert [request[1] for request in rpc.requests] == ["runtime.start", "runtime.stop"]
 
 
-def test_live_catalog_starts_active_runtime_before_runtime_rpc(tmp_path):
+def test_removed_agent_catalog_route_does_not_start_runtime(tmp_path):
     client, rpc, connector_id, headers = _make_client(tmp_path)
     config_url = f"{_runtime_url(connector_id)}/config"
     active_url = f"{_runtime_url(connector_id)}/active"
@@ -341,12 +341,9 @@ def test_live_catalog_starts_active_runtime_before_runtime_rpc(tmp_path):
         headers=headers,
     )
 
-    assert response.status_code == 200, response.text
-    assert response.json()["catalog"]["models"][0]["selectionId"] == "sel_model_test"
-    assert [request[1] for request in rpc.requests] == [
-        "runtime.start",
-        "runtime.modelCatalog",
-    ]
+    assert response.status_code == 410, response.text
+    assert response.json()["detail"]["code"] == "agent_catalog_route_removed"
+    assert rpc.requests == []
 
 
 def test_connector_runtime_scoped_reads_start_active_runtime_before_rpc(tmp_path):
