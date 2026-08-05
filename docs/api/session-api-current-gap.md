@@ -83,8 +83,8 @@ Current backend state:
 | `timeline.snapshot` | exists | Keep only for explicit snapshot/recovery cases. |
 | `runtime.state.updated` | exists for connector invalidation pushes; compatibility `session.status_changed` still carries state during migration | Frontend should migrate to this event as the runtime state truth. |
 | `runtime.notice.snapshot` | exists for connector invalidation pushes; compatibility `notice.snapshot` remains during migration | Frontend should migrate to this event. Notices remain non-durable runtime truth. |
-| `runtime.notice.updated` | exists for connector invalidation pushes; compatibility `notice.created` / `notice.updated` remain during migration | Frontend should migrate to this event. Notices remain non-durable runtime truth. |
-| `runtime.capability.updated` | exists for session WS capability projections; compatibility `effectiveCapabilities` remains on `session.status_changed` | Keep while frontend migrates to the explicit runtime event. |
+| `runtime.notice.updated` | exists for connector invalidation pushes and event recovery; compatibility `notice.created` / `notice.updated` remain during migration | Frontend should migrate to this event. Notices remain non-durable runtime truth. |
+| `runtime.capability.updated` | exists for session WS capability projections and event recovery; compatibility `effectiveCapabilities` remains on `session.status_changed` | Keep while frontend migrates to the explicit runtime event. |
 | `runtime.catalog.updated` | not implemented by design yet; legacy catalog update notifications are rejected | Keep live catalog reads as the source. Add this event only when a runtime actually pushes catalog invalidations. |
 | `runtime.refetch_required` | not implemented by design yet | Add only when a runtime reports missed live facts. Current durable timeline overflow uses `session.refetch_required`. |
 | `session.refetch_required` | exists | Restrict to durable meta/timeline recovery. |

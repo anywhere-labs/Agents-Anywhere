@@ -3942,9 +3942,16 @@ def test_interrupt_cancels_blocking_interactions(tmp_path):
     notice_events = [
         event for event in recovered["events"] if event["type"] == "notice.updated"
     ]
+    runtime_notice_events = [
+        event
+        for event in recovered["events"]
+        if event["type"] == "runtime.notice.updated"
+    ]
     assert len(notice_events) == 1
     assert notice_events[0]["payload"]["notice"]["noticeId"] == notice_id
     assert notice_events[0]["payload"]["notice"]["status"] == "cancelled"
+    assert len(runtime_notice_events) == 1
+    assert runtime_notice_events[0]["payload"] == notice_events[0]["payload"]
 
 
 def test_turn_start_updates_and_turn_end_clears_active_run(tmp_path):
@@ -6328,10 +6335,15 @@ def test_session_events_recovery_returns_json_events(tmp_path):
     event_types = [event["type"] for event in body["events"]]
     assert "timeline.item_created" in event_types
     assert "session.meta.updated" in event_types
+    assert "runtime.capability.updated" in event_types
     session_event = next(
         event for event in body["events"] if event["type"] == "session.status_changed"
     )
     assert "effectiveCapabilities" in session_event["payload"]
+    capability_event = next(
+        event for event in body["events"] if event["type"] == "runtime.capability.updated"
+    )
+    assert "capabilitySet" in capability_event["payload"]
 
 
 def test_session_events_recovery_rejects_invalid_cursor(tmp_path):
@@ -6948,9 +6960,16 @@ def test_interaction_response_recovery_falls_back_across_legacy_approval_gap(tmp
     notice_events = [
         event for event in recovery_body["events"] if event["type"] == "notice.updated"
     ]
+    runtime_notice_events = [
+        event
+        for event in recovery_body["events"]
+        if event["type"] == "runtime.notice.updated"
+    ]
     assert len(notice_events) == 1
     assert notice_events[0]["payload"]["notice"]["noticeId"] == notice_id
     assert notice_events[0]["payload"]["notice"]["status"] == "resolved"
+    assert len(runtime_notice_events) == 1
+    assert runtime_notice_events[0]["payload"] == notice_events[0]["payload"]
     notice = asyncio.run(client.app.state.store.get_notice(notice_id))
     assert notice.status == "resolved"
 

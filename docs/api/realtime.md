@@ -85,9 +85,12 @@ namespace for live Runtime facts.
 - Server returns `snapshotRequired=true` only when durable meta/timeline
   recovery is explicitly impossible.
 - Client pulls snapshot only for initial load or `snapshotRequired=true`.
-- Runtime live facts are not recovered from Server DB. After reconnect, Web
-  calls the relevant runtime live endpoint if it needs current state, notices,
-  catalogs, or capabilities.
+- Runtime state and catalogs are not recovered from Server DB. After reconnect,
+  Web calls the relevant runtime live endpoint if it needs current state or
+  catalogs.
+- Runtime notice and capability updates are recovered when Server has a
+  sequence-backed projection for them. Web may still refresh the corresponding
+  runtime live endpoint after reconnect when it needs the latest exact fact.
 - `runtime.capability.updated` carries effective capabilities. On a session
   WebSocket, it is session-scoped and controls current session actions. On a
   dashboard/runtime WebSocket, it is runtime-scoped and controls setup,

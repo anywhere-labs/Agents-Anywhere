@@ -135,15 +135,38 @@ class EventRecoveryService:
                     },
                 )
             )
+            effective_capabilities_payload = effective_capabilities.model_dump(
+                mode="json"
+            )
+            events.append(
+                protocol_event(
+                    session_id,
+                    sequence=session.updatedSeq,
+                    event_type="runtime.capability.updated",
+                    payload={
+                        "capabilitySet": effective_capabilities_payload,
+                        "effectiveCapabilities": effective_capabilities_payload,
+                    },
+                )
+            )
         for notice in notices:
             if notice.updatedSeq <= after_sequence:
                 continue
+            notice_payload = {"notice": notice.model_dump(mode="json")}
             events.append(
                 protocol_event(
                     session_id,
                     sequence=notice.updatedSeq,
                     event_type="notice.updated",
-                    payload={"notice": notice.model_dump(mode="json")},
+                    payload=notice_payload,
+                )
+            )
+            events.append(
+                protocol_event(
+                    session_id,
+                    sequence=notice.updatedSeq,
+                    event_type="runtime.notice.updated",
+                    payload=notice_payload,
                 )
             )
         events.sort(key=lambda event: (event.sequence, event.eventId))
