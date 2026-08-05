@@ -125,6 +125,14 @@ class ProtocolTimelineSnapshot(ProtocolWireModel):
     hasMore: bool = False
 
 
+class ProtocolTimelineResponse(ProtocolWireModel):
+    sessionId: str
+    items: list[TimelineItem] = Field(default_factory=list)
+    nextSeq: int
+    hasMore: bool = False
+    serverTime: str
+
+
 class ProtocolSessionSnapshotResponse(ProtocolWireModel):
     session: SessionView
     state: SessionRuntimeState | None = None

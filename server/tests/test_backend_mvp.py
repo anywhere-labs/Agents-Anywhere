@@ -1883,6 +1883,80 @@ def test_state_polling_and_timeline_item_upsert(tmp_path):
         assert empty_increment["items"] == []
 
 
+def test_session_meta_endpoint_reads_and_patches_server_owned_metadata(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+
+    initial = client.get(f"/sessions/{session_id}/meta", headers=headers)
+    assert initial.status_code == 200, initial.text
+    assert initial.json()["session"]["id"] == session_id
+    assert initial.json()["session"]["connectorId"] == connector_id
+
+    patched = client.patch(
+        f"/sessions/{session_id}/meta",
+        headers=headers,
+        json={"title": "Renamed from meta", "pinned": True},
+    )
+
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["session"]["title"] == "Renamed from meta"
+    assert patched.json()["session"]["pinned"] is True
+
+
+def test_session_timeline_endpoint_reads_durable_timeline_only(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+
+    with client.websocket_connect(
+        "/connector/ws",
+        headers={"Authorization": f"Bearer {access_token}"},
+    ) as ws:
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "timeline.itemUpsert",
+                "params": {
+                    "sessionId": session_id,
+                    "item": {
+                        "id": "tl_timeline",
+                        "sessionId": session_id,
+                        "turnId": "turn_1",
+                        "type": "message",
+                        "status": "done",
+                        "role": "assistant",
+                        "content": {"text": "timeline only", "format": "markdown"},
+                        "source": {
+                            "runtime": "codex",
+                            "sessionId": "thr_1",
+                            "turnId": "turn_1",
+                            "itemId": "item_timeline",
+                            "itemType": "agentMessage",
+                        },
+                        "orderSeq": 1,
+                        "revision": 1,
+                        "contentHash": "sha256:timeline-only",
+                    },
+                },
+            }
+        )
+        state = wait_for_item_update(client, session_id, headers, 0)
+
+    timeline = client.get(
+        f"/sessions/{session_id}/timeline",
+        headers=headers,
+        params={"mode": "changes", "afterSeq": 0, "limit": 10},
+    )
+
+    assert timeline.status_code == 200, timeline.text
+    body = timeline.json()
+    assert body["sessionId"] == session_id
+    assert body["nextSeq"] == state["nextSeq"]
+    assert body["items"][0]["content"]["text"] == "timeline only"
+    assert "state" not in body
+    assert "notices" not in body
+    assert "effectiveCapabilities" not in body
+
+
 def test_server_serves_next_static_export(tmp_path, monkeypatch):
     static_dir = tmp_path / "web-static"
     (static_dir / "_next" / "static").mkdir(parents=True)

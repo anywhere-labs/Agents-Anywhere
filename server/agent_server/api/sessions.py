@@ -52,6 +52,7 @@ from agent_server.core.protocol import (
     ProtocolCapabilitySet,
     ProtocolEventRecoveryResponse,
     ProtocolSessionSnapshotResponse,
+    ProtocolTimelineResponse,
     ProtocolTimelineSnapshot,
 )
 from agent_server.core.utc import utc_now
@@ -288,8 +289,29 @@ async def list_sessions(
     }
 
 
+@router.get("/{session_id}/meta", response_model=SessionResponse)
+async def get_session_meta(
+    session_id: str,
+    user_id: str = Depends(current_user_id),
+    db: Store = Depends(get_store),
+    manager: ConnectorRpcManager = Depends(get_rpc),
+) -> SessionResponse:
+    try:
+        session = await db.get_session(session_id, user_id=user_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="session not found") from None
+    return SessionResponse(
+        session=await with_effective_session_connector_status(manager, session),
+        serverTime=utc_now(),
+    )
+
+
+@router.patch("/{session_id}/meta", response_model=SessionResponse)
+# Migration shim: old clients still patch `/sessions/{session_id}`. New clients
+# must use `/sessions/{session_id}/meta` because only Server-owned metadata is
+# updated here.
 @router.patch("/{session_id}", response_model=SessionResponse)
-async def patch_session(
+async def patch_session_meta(
     session_id: str,
     payload: SessionPatchRequest,
     user_id: str = Depends(current_user_id),
@@ -326,6 +348,8 @@ async def patch_session(
     )
 
 
+# Migration shim: old clients used `/bulk-archive`. New clients must send a
+# direct session id array to `POST /sessions/archive`.
 @router.post("/bulk-archive", response_model=BulkArchiveResponse)
 async def bulk_archive_sessions(
     payload: BulkArchiveRequest,
@@ -353,6 +377,8 @@ async def bulk_archive_sessions(
     )
 
 
+# Migration shim: old clients used `/bulk-read`. New clients must send a direct
+# session id array to `POST /sessions/read`.
 @router.post("/bulk-read", response_model=BulkArchiveResponse)
 async def bulk_mark_sessions_read(
     payload: BulkReadRequest,
@@ -435,6 +461,8 @@ async def mark_sessions_read(
     )
 
 
+# Migration shim: old clients used `/sessions/{session_id}/read`. New clients
+# must send `["{session_id}"]` to `POST /sessions/read`.
 @router.post("/{session_id}/read", response_model=SessionResponse)
 async def mark_session_read(
     session_id: str,
@@ -462,6 +490,8 @@ async def mark_session_read(
 
 
 @router.get("/{session_id}/runtime/state", response_model=SessionRuntimeStateResponse)
+# Migration shim: old clients used `/runtime-state`. New clients must use
+# `/runtime/state`.
 @router.get("/{session_id}/runtime-state", response_model=SessionRuntimeStateResponse)
 async def session_runtime_state(
     session_id: str,
@@ -514,6 +544,8 @@ async def session_runtime_capabilities(
 
 
 @router.patch("/{session_id}/runtime/selections", response_model=SessionSelectionPatchResponse)
+# Migration shim: old clients used `/state/selections`. New clients must use
+# `/runtime/selections`.
 @router.patch("/{session_id}/state/selections", response_model=SessionSelectionPatchResponse)
 async def patch_session_selections(
     session_id: str,
@@ -547,6 +579,52 @@ async def patch_session_selections(
         ok=True,
         state=state,
         connectorResult=connector_result,
+        serverTime=utc_now(),
+    )
+
+
+@router.get("/{session_id}/timeline", response_model=ProtocolTimelineResponse)
+async def session_timeline(
+    session_id: str,
+    after_seq: int = Query(0, alias="afterSeq", ge=0),
+    before_order_seq: int | None = Query(None, alias="beforeOrderSeq", ge=1),
+    mode: str = Query("latest", pattern="^(latest|changes|history)$"),
+    limit: int = Query(200, ge=1, le=500),
+    user_id: str = Depends(current_user_id),
+    db: Store = Depends(get_store),
+) -> ProtocolTimelineResponse:
+    try:
+        await db.get_session(session_id, user_id=user_id)
+        if mode == "latest":
+            items, has_more = await db.list_timeline_latest(
+                session_id=session_id,
+                limit=limit,
+            )
+        elif mode == "history":
+            if before_order_seq is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail="beforeOrderSeq is required for history mode",
+                )
+            items, has_more = await db.list_timeline_before_order_seq(
+                session_id=session_id,
+                before_order_seq=before_order_seq,
+                limit=limit,
+            )
+        else:
+            items, has_more = await db.list_timeline_since(
+                session_id=session_id,
+                after_seq=after_seq,
+                limit=limit,
+            )
+        next_seq = await db.get_session_seq(session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="session not found") from None
+    return ProtocolTimelineResponse(
+        sessionId=session_id,
+        items=items,
+        nextSeq=next_seq,
+        hasMore=has_more,
         serverTime=utc_now(),
     )
 
@@ -827,6 +905,8 @@ async def disable_takeover(
         raise HTTPException(status_code=404, detail="session not found") from None
 
 
+# Migration shim: old clients read `/commands` and may pass query params. New
+# clients must read `/runtime/commands` and perform fuzzy matching locally.
 @router.get("/{session_id}/commands", response_model=SessionCommandListResponse)
 async def list_session_commands(
     session_id: str,
@@ -920,6 +1000,8 @@ async def list_session_runtime_commands(
 
 
 @router.post("/{session_id}/runtime/commands", response_model=SessionCommandResponse)
+# Migration shim: old clients posted to `/commands`. New clients must use
+# `/runtime/commands`.
 @router.post("/{session_id}/commands", response_model=SessionCommandResponse)
 async def execute_session_command(
     session_id: str,
@@ -975,6 +1057,8 @@ async def execute_session_command(
 
 
 @router.post("/{session_id}/runtime/messages", response_model=RpcResponsePayload)
+# Migration shim: old clients posted to `/messages`. New clients must use
+# `/runtime/messages`.
 @router.post("/{session_id}/messages", response_model=RpcResponsePayload)
 async def send_message(
     session_id: str,
@@ -1011,6 +1095,8 @@ async def send_message(
 
 
 @router.post("/{session_id}/runtime/interrupt", response_model=RpcResponsePayload)
+# Migration shim: old clients posted to `/interrupt`. New clients must use
+# `/runtime/interrupt`.
 @router.post("/{session_id}/interrupt", response_model=RpcResponsePayload)
 async def interrupt_session(
     session_id: str,
@@ -1048,6 +1134,8 @@ async def interrupt_session(
 
 
 @router.post("/{session_id}/runtime/steer", response_model=RpcResponsePayload)
+# Migration shim: old clients posted to `/steer`. New clients must use
+# `/runtime/steer`.
 @router.post("/{session_id}/steer", response_model=RpcResponsePayload)
 async def steer_session(
     session_id: str,
@@ -1106,6 +1194,8 @@ async def list_session_runtime_notices(
 
 
 @router.post("/{session_id}/runtime/notices/{notice_id}/respond", response_model=RpcResponsePayload)
+# Migration shim: old clients posted to `/interactions/{notice_id}/respond`.
+# New clients must use `/runtime/notices/{notice_id}/respond`.
 @router.post("/{session_id}/interactions/{notice_id}/respond", response_model=RpcResponsePayload)
 async def respond_interaction(
     session_id: str,
