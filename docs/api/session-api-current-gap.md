@@ -69,7 +69,8 @@ Current backend state:
 | Old interaction response | `POST /api/v2/sessions/{sessionId}/interactions/{noticeId}/respond` | exists | Compatibility shim. Remove after frontend migration. |
 | Event recovery | `GET /api/v2/sessions/{sessionId}/events` | exists | Keep for durable meta/timeline recovery only. Do not recover runtime live facts from DB. |
 | Session WS | `WS /api/v2/sessions/{sessionId}/ws` | exists | Keep. Event names still need migration. |
-| Dashboard WS | target documented as `/api/v2/dashboard/ws` | current implementation exposes `/api/v2/ws` | Decide and align route/docs/frontend. Do not mix dashboard lifecycle with session lifecycle. |
+| Dashboard WS | `WS /api/v2/dashboard/ws` | exists | Keep. Do not mix dashboard lifecycle with session lifecycle. |
+| Old dashboard SSE | `GET /api/v2/sessions/events/dashboard` | exists | Compatibility shim. Frontend should migrate dashboard refresh to `/dashboard/ws`. |
 
 ## Realtime gap table
 
@@ -98,11 +99,9 @@ Current backend state:
    - `GET /sessions/{sessionId}/timeline`
    - session-scoped runtime catalog reads if the frontend cannot rely on
      connector-scoped catalog reads for existing sessions.
-3. Align dashboard realtime route naming or update docs to the implemented
-   route. This must be decided before frontend migration.
-4. Migrate session WS event naming from compatibility runtime payloads to
+3. Migrate session WS event naming from compatibility runtime payloads to
    explicit `runtime.*` events.
-5. Keep old aliases until frontend migration is complete, then remove them in
+4. Keep old aliases until frontend migration is complete, then remove them in
    one cleanup commit.
 
 ## Acceptance for backend cleanup
