@@ -678,6 +678,11 @@
       "toolWebFallback": "网页",
       "toolMcpFallback": "mcp",
       "toolToolFallback": "工具",
+      "fileChangeAdded": "新增",
+      "fileChangeModified": "修改",
+      "fileChangeDeleted": "删除",
+      "fileChangeRenamed": "重命名",
+      "fileChangeUnknown": "变更",
       "showCode": "显示代码",
       "hideCode": "隐藏代码",
       "loadCodeFailed": "无法加载代码"

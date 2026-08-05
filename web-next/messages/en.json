@@ -678,6 +678,11 @@
       "toolWebFallback": "web",
       "toolMcpFallback": "mcp",
       "toolToolFallback": "tool",
+      "fileChangeAdded": "Added",
+      "fileChangeModified": "Modified",
+      "fileChangeDeleted": "Deleted",
+      "fileChangeRenamed": "Renamed",
+      "fileChangeUnknown": "Changed",
       "showCode": "Show code",
       "hideCode": "Hide code",
       "loadCodeFailed": "Failed to load code"

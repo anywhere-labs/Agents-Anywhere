@@ -356,9 +356,11 @@ function FileChangeRow({
   const tSession = useTranslations("dashboard.session")
   const path = firstTextOf(change.path, change.filePath, change.file, change.uri) ?? "unknown path"
   const diff = textOf(change.diff)
+  const action = fileChangeAction(change)
+  const displayDiff = fileChangeDisplayDiff(change, diff)
   const canPreview = path !== "unknown path"
-  const renderAsDiff = diff ? isUnifiedDiffLike(diff) : false
-  const editorHeight = diff ? codePanelHeight(diff) : 0
+  const renderAsDiff = Boolean(displayDiff)
+  const editorHeight = displayDiff ? codePanelHeight(displayDiff) : diff ? codePanelHeight(diff) : 0
   const [codeOpen, setCodeOpen] = React.useState(false)
   const [codeLoading, setCodeLoading] = React.useState(false)
   const [codeError, setCodeError] = React.useState<string | null>(null)
@@ -400,6 +402,9 @@ function FileChangeRow({
     <div className="min-w-0 max-w-full overflow-hidden border-b last:border-b-0">
       <div className="flex h-9 items-center gap-2 bg-muted/20 px-3 text-sm">
         <FilePenLine className="size-4 text-muted-foreground" />
+        <Badge variant="secondary" className="h-5 shrink-0 rounded-md px-1.5 text-[11px] font-normal">
+          {tSession(fileChangeActionLabelKey(action))}
+        </Badge>
         <button
           type="button"
           className="code-mono min-w-0 truncate rounded-sm text-left text-xs underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
@@ -414,8 +419,8 @@ function FileChangeRow({
       {diff ? (
         renderAsDiff ? (
           <>
-            <CodePanelFrame label="diff" code={diff} flush action={showCodeAction}>
-              <DiffPanel code={diff} maxHeight={editorHeight} />
+            <CodePanelFrame label="diff" code={displayDiff ?? diff} flush action={showCodeAction}>
+              <DiffPanel code={displayDiff ?? diff} maxHeight={editorHeight} />
             </CodePanelFrame>
             {codeOpen ? (
               <div className="border-t">
@@ -553,7 +558,39 @@ function isUnifiedDiffLike(value: string) {
   })
 }
 
+type FileChangeAction = "add" | "modify" | "delete" | "rename" | "unknown"
+
+function fileChangeAction(change: Record<string, unknown>): FileChangeAction {
+  const direct = textOf(change.action) || textOf(change.type) || textOf(change.status)
+  const nestedKind = change.kind && typeof change.kind === "object" && !Array.isArray(change.kind)
+    ? textOf((change.kind as Record<string, unknown>).type)
+    : null
+  const value = (nestedKind || direct || "").toLowerCase()
+  if (value === "add" || value === "added" || value === "create" || value === "created") return "add"
+  if (value === "delete" || value === "deleted" || value === "remove" || value === "removed") return "delete"
+  if (value === "rename" || value === "renamed" || value === "move" || value === "moved") return "rename"
+  if (value === "modify" || value === "modified" || value === "change" || value === "changed" || value === "edit" || value === "edited") return "modify"
+  return "unknown"
+}
+
+function fileChangeActionLabelKey(action: FileChangeAction): string {
+  if (action === "add") return "fileChangeAdded"
+  if (action === "delete") return "fileChangeDeleted"
+  if (action === "rename") return "fileChangeRenamed"
+  if (action === "modify") return "fileChangeModified"
+  return "fileChangeUnknown"
+}
+
+function fileChangeDisplayDiff(change: Record<string, unknown>, diff: string | null): string | null {
+  if (!diff) return null
+  if (isUnifiedDiffLike(diff)) return diff
+  const action = fileChangeAction(change)
+  if (action === "add") return diff.split("\n").map((line) => `+${line}`).join("\n")
+  if (action === "delete") return diff.split("\n").map((line) => `-${line}`).join("\n")
+  return null
+}
+
 export function isCreatedFileChange(change: Record<string, unknown>) {
   const diff = textOf(change.diff)
-  return Boolean(diff && !isUnifiedDiffLike(diff))
+  return fileChangeAction(change) === "add" || Boolean(diff && !isUnifiedDiffLike(diff))
 }
