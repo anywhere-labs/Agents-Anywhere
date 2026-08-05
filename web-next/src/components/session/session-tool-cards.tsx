@@ -53,7 +53,11 @@ export function ToolCard({
   const tSession = useTranslations("dashboard.session")
   const kind = timelineToolKind(item)
   const command = commandText(item.content.command)
-  const output = textOf(item.content.outputPreview) || textOf(item.content.outputText) || textOf(item.content.error)
+  const output =
+    textOf(item.content.output) ||
+    textOf(item.content.outputPreview) ||
+    textOf(item.content.outputText) ||
+    textOf(item.content.error)
   const changes = recordsOf(item.content.changes)
   const title = timelineToolTitle(item, tSession)
   const hasDetail = Boolean(command || output || changes.length > 0 || interaction)
