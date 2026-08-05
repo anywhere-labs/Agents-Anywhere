@@ -16,6 +16,10 @@ from fastapi import (
 from starlette.requests import HTTPConnection
 from starlette.responses import StreamingResponse
 
+from agent_server.api.connector_runtimes import (
+    parse_runtime_model_catalog_response,
+    parse_runtime_permission_catalog_response,
+)
 from agent_server.core.events import (
     EventCursorError,
     event_cursor,
@@ -51,6 +55,8 @@ from agent_server.core.protocol import (
     ProtocolCapabilitiesResponse,
     ProtocolCapabilitySet,
     ProtocolEventRecoveryResponse,
+    ProtocolModelCatalogResponse,
+    ProtocolPermissionCatalogResponse,
     ProtocolSessionSnapshotResponse,
     ProtocolTimelineResponse,
     ProtocolTimelineSnapshot,
@@ -539,6 +545,74 @@ async def session_runtime_capabilities(
     return ProtocolCapabilitiesResponse(
         connectorId=session.connectorId,
         capabilitySet=capability_set,
+        serverTime=utc_now(),
+    )
+
+
+@router.get(
+    "/{session_id}/runtime/catalogs/model",
+    response_model=ProtocolModelCatalogResponse,
+)
+async def session_runtime_model_catalog(
+    session_id: str,
+    user_id: str = Depends(current_user_id),
+    db: Store = Depends(get_store),
+    manager: ConnectorRpcManager = Depends(get_rpc),
+    device_runtimes: DeviceRuntimeService = Depends(get_device_runtime_service),
+) -> ProtocolModelCatalogResponse:
+    try:
+        session = await db.get_session(session_id, user_id=user_id)
+        await device_runtimes.ensure_active_running(
+            session.connectorId,
+            session.runtime,
+            user_id=user_id,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="session not found") from None
+    except DeviceRuntimeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    result = await request_session_runtime_catalog(
+        manager,
+        session,
+        method="runtime.modelCatalog",
+        limit=200,
+    )
+    return ProtocolModelCatalogResponse(
+        catalog=parse_runtime_model_catalog_response(result),
+        serverTime=utc_now(),
+    )
+
+
+@router.get(
+    "/{session_id}/runtime/catalogs/permission",
+    response_model=ProtocolPermissionCatalogResponse,
+)
+async def session_runtime_permission_catalog(
+    session_id: str,
+    user_id: str = Depends(current_user_id),
+    db: Store = Depends(get_store),
+    manager: ConnectorRpcManager = Depends(get_rpc),
+    device_runtimes: DeviceRuntimeService = Depends(get_device_runtime_service),
+) -> ProtocolPermissionCatalogResponse:
+    try:
+        session = await db.get_session(session_id, user_id=user_id)
+        await device_runtimes.ensure_active_running(
+            session.connectorId,
+            session.runtime,
+            user_id=user_id,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="session not found") from None
+    except DeviceRuntimeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    result = await request_session_runtime_catalog(
+        manager,
+        session,
+        method="runtime.permissionCatalog",
+        limit=200,
+    )
+    return ProtocolPermissionCatalogResponse(
+        catalog=parse_runtime_permission_catalog_response(result),
         serverTime=utc_now(),
     )
 
@@ -1404,6 +1478,34 @@ async def read_session_capabilities_from_connector(
             },
         )
     return ProtocolCapabilitySet.model_validate(raw_capability_set)
+
+
+async def request_session_runtime_catalog(
+    manager: ConnectorRpcManager,
+    session: SessionView,
+    method: str,
+    limit: int,
+) -> Any:
+    """Request a runtime-level catalog for an existing session.
+
+    Side effects:
+    - sends a connector RPC request to the session's owning runtime.
+    """
+
+    try:
+        return await manager.request(
+            session.connectorId,
+            method,
+            {"runtime": session.runtime, "limit": limit},
+            timeout=30,
+        )
+    except ConnectorOfflineError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ConnectorRpcError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={"code": exc.code, "message": exc.message or exc.code},
+        ) from exc
 
 
 async def read_session_notices_from_connector(

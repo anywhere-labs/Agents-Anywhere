@@ -439,6 +439,60 @@ def test_session_sync_starts_active_runtime_before_sync_rpc(tmp_path):
     assert rpc.requests[-1][2]["externalSessionId"] == "thr_existing"
 
 
+def test_session_runtime_catalog_reads_start_active_runtime_before_rpc(tmp_path):
+    client, rpc, connector_id, headers = _make_client(tmp_path)
+    config_url = f"{_runtime_url(connector_id)}/config"
+    active_url = f"{_runtime_url(connector_id)}/active"
+    assert client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
+    assert client.put(active_url, headers=headers, json={"active": True}).status_code == 200
+    session_response = client.post(
+        "/sessions",
+        headers=headers,
+        json={
+            "connectorId": connector_id,
+            "runtime": "codex",
+            "externalSessionId": "thr_existing",
+            "title": "Existing",
+            "cwd": "/repo",
+        },
+    )
+    assert session_response.status_code == 200, session_response.text
+    session_id = session_response.json()["session"]["id"]
+    asyncio.run(
+        client.app.state.store.set_device_runtime_status(
+            connector_id,
+            "codex",
+            "stopped",
+        )
+    )
+    rpc.requests.clear()
+
+    model_catalog = client.get(
+        f"/sessions/{session_id}/runtime/catalogs/model",
+        headers=headers,
+    )
+    permission_catalog = client.get(
+        f"/sessions/{session_id}/runtime/catalogs/permission",
+        headers=headers,
+    )
+
+    assert model_catalog.status_code == 200, model_catalog.text
+    assert model_catalog.json()["catalog"]["models"][0]["selectionId"] == (
+        "sel_model_test"
+    )
+    assert permission_catalog.status_code == 200, permission_catalog.text
+    assert permission_catalog.json()["catalog"]["permissions"][0]["selectionId"] == (
+        "sel_permission_ask"
+    )
+    assert [request[1] for request in rpc.requests] == [
+        "runtime.start",
+        "runtime.modelCatalog",
+        "runtime.permissionCatalog",
+    ]
+    assert rpc.requests[1][2] == {"runtime": "codex", "limit": 200}
+    assert rpc.requests[2][2] == {"runtime": "codex", "limit": 200}
+
+
 def test_editing_active_config_restarts_runtime(tmp_path):
     client, rpc, connector_id, headers = _make_client(tmp_path)
     config_url = f"{_runtime_url(connector_id)}/config"

@@ -47,8 +47,8 @@ Current backend state:
 | Runtime state read | `GET /api/v2/sessions/{sessionId}/runtime/state` | exists | Keep. Must use runtime live fact or explicit disconnected projection. |
 | Old runtime state read | `GET /api/v2/sessions/{sessionId}/runtime-state` | exists | Compatibility shim. Remove after frontend migration. |
 | Session capabilities | `GET /api/v2/sessions/{sessionId}/runtime/capabilities` | exists | Keep. Verify frontend uses this for action availability. |
-| Session model catalog | `GET /api/v2/sessions/{sessionId}/runtime/catalogs/model` | missing | Add if existing session selectors need session-scoped live catalogs. |
-| Session permission catalog | `GET /api/v2/sessions/{sessionId}/runtime/catalogs/permission` | missing | Add if existing session selectors need session-scoped live catalogs. |
+| Session model catalog | `GET /api/v2/sessions/{sessionId}/runtime/catalogs/model` | exists | Keep as a session path to the runtime-level live catalog for existing session selectors. |
+| Session permission catalog | `GET /api/v2/sessions/{sessionId}/runtime/catalogs/permission` | exists | Keep as a session path to the runtime-level live catalog for existing session selectors. |
 | Runtime model catalog | `GET /api/v2/connectors/{connectorId}/runtimes/{runtimeId}/catalogs/model` | exists | Keep for setup/new-session UI. |
 | Runtime permission catalog | `GET /api/v2/connectors/{connectorId}/runtimes/{runtimeId}/catalogs/permission` | exists | Keep for setup/new-session UI. |
 | Runtime capabilities | `GET /api/v2/connectors/{connectorId}/runtimes/{runtimeId}/capabilities` | exists | Keep for dashboard/setup UI. |
