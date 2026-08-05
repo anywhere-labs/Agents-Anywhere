@@ -40,7 +40,7 @@ export function TimelineEntry({
 }) {
   if (item.type === "turn.start" || item.type === "turn.end") return null
   if (item.type === "message") return <MessageCard token={token} session={session} item={item} />
-  if (item.type === "tool") {
+  if (item.type === "tool" || isFileChangeArtifact(item)) {
     return (
       <ToolCard
         item={item}
@@ -58,6 +58,10 @@ export function TimelineEntry({
   if (item.type === "system") return <SystemCard item={item} />
   if (item.type === "artifact") return <ArtifactCard token={token} session={session} item={item} />
   return <UnknownTimelineItem item={item} />
+}
+
+function isFileChangeArtifact(item: TimelineItem): boolean {
+  return item.type === "artifact" && textOf(item.content.kind) === "file_change"
 }
 
 function MessageCard({ token, session, item }: { token: string; session: SessionView; item: TimelineItem }) {

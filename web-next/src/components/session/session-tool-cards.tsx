@@ -186,17 +186,18 @@ export function timelineToolTitle(
   item: TimelineItem,
   tSession: (key: string, values?: Record<string, string | number>) => string,
 ): string {
-  if (item.type === "artifact") {
-    return firstTextOf(item.content.path, item.content.filePath, item.content.file, item.content.uri) ?? (textOf(item.content.kind) || "artifact")
-  }
   const kind = timelineToolKind(item)
   const changes = recordsOf(item.content.changes)
   const createdFilesOnly = changes.length > 0 && changes.every(isCreatedFileChange)
+  if (kind === "file_change") {
+    return tSession(createdFilesOnly ? "toolCreatedFiles" : "toolChangedFiles")
+  }
+  if (item.type === "artifact") {
+    return firstTextOf(item.content.path, item.content.filePath, item.content.file, item.content.uri) ?? kind
+  }
   return kind === "command"
     ? tSession("toolRan", { command: commandText(item.content.command) || tSession("toolCommandFallback") })
-    : kind === "file_change"
-      ? tSession(createdFilesOnly ? "toolCreatedFiles" : "toolChangedFiles")
-      : kind === "web_search"
+    : kind === "web_search"
         ? tSession("toolSearched", { query: textOf(item.content.query) || tSession("toolWebFallback") })
         : kind === "mcp"
           ? `${textOf(item.content.server) || tSession("toolMcpFallback")} / ${
