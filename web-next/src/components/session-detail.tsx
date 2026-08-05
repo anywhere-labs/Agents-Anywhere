@@ -190,7 +190,7 @@ function sessionStateFromSnapshot(snapshot: SessionSnapshotResponse): SessionRem
     serverTime: snapshot.serverTime,
     eventCursor: snapshot.eventCursor,
     effectiveCapabilities: snapshot.effectiveCapabilities,
-    catalogs: snapshot.catalogs,
+    catalogs: {},
   }
 }
 
