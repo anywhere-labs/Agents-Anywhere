@@ -21,6 +21,8 @@ def raw_item_from_notification(
         "item/commandExecution/outputDelta",
         "item/fileChange/patchUpdated",
         "item/reasoning/delta",
+        "item/reasoning/textDelta",
+        "item/reasoning/summaryTextDelta",
         "item/systemMessage",
         "item/runtimeMessage",
         "thread/compact/started",
@@ -75,7 +77,11 @@ def raw_item_from_notification(
             raw["type"] = "commandExecution"
         elif method == "item/fileChange/patchUpdated":
             raw["type"] = "fileChange"
-        elif method == "item/reasoning/delta":
+        elif method in {
+            "item/reasoning/delta",
+            "item/reasoning/textDelta",
+            "item/reasoning/summaryTextDelta",
+        }:
             raw["type"] = "reasoning"
         elif method == "item/systemMessage":
             raw["type"] = "systemMessage"

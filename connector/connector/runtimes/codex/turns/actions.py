@@ -20,16 +20,14 @@ from connector.runtimes.codex.domain.selections import (
     model_settings_from_selection,
     permission_settings_from_selection,
 )
-from connector.runtimes.codex.runtime_helpers import (
-    ensure_text_only_attachments,
-    soft_codex_unavailable_reason,
-)
+from connector.runtimes.codex.runtime_helpers import soft_codex_unavailable_reason
 from connector.runtimes.codex.sdk.runtime_client import (
     CodexInterruptTurnRequest,
     CodexRuntimeClient,
     CodexStartTurnRequest,
     CodexSteerTurnRequest,
 )
+from connector.runtimes.codex.turns.attachments import materialize_codex_attachments
 
 EnsureStarted = Callable[[], Awaitable[None]]
 
@@ -55,7 +53,6 @@ class CodexTurnActions:
         attachments: tuple[RuntimeAttachment, ...] = (),
         client_message_id: str | None = None,
     ) -> RuntimeOperationResult:
-        ensure_text_only_attachments(attachments)
         if self.client is None or external_session_id is None:
             raise RuntimeUnsupportedError("start_turn")
         await self.ensure_started()
@@ -101,6 +98,11 @@ class CodexTurnActions:
             text=content,
         )
         try:
+            codex_attachments = await materialize_codex_attachments(
+                self.host,
+                session_id,
+                attachments,
+            )
             result = await self.client.start_turn(
                 CodexStartTurnRequest(
                     thread_id=external_session_id,
@@ -111,6 +113,7 @@ class CodexTurnActions:
                     approval_policy=native_permission.approval_policy,
                     approvals_reviewer=native_permission.approvals_reviewer,
                     sandbox=native_permission.sandbox,
+                    attachments=codex_attachments,
                 )
             )
         except Exception as exc:
@@ -172,7 +175,6 @@ class CodexTurnActions:
         attachments: tuple[RuntimeAttachment, ...] = (),
         client_message_id: str | None = None,
     ) -> RuntimeOperationResult:
-        ensure_text_only_attachments(attachments)
         if self.client is None or external_session_id is None:
             raise RuntimeUnsupportedError("steer_turn")
         turn_id = self.active_turn_ids.get(session_id)
@@ -190,6 +192,15 @@ class CodexTurnActions:
                 result={"externalSessionId": external_session_id},
             )
         await self.ensure_started()
+        codex_attachments = await materialize_codex_attachments(
+            self.host,
+            session_id,
+            attachments,
+        )
+        effective_content = content_with_codex_attachment_notes(
+            content,
+            codex_attachments,
+        )
         self.pending_messages.register(
             session_id=session_id,
             external_session_id=external_session_id,
@@ -203,7 +214,7 @@ class CodexTurnActions:
                 CodexSteerTurnRequest(
                     thread_id=external_session_id,
                     turn_id=turn_id,
-                    content=content,
+                    content=effective_content,
                     client_message_id=client_message_id,
                 )
             )
@@ -360,3 +371,16 @@ def turn_completed_before_start_returned(state: Any | None) -> bool:
         "codex.turn/cancelled",
         "codex.turn/failed",
     }
+
+
+def content_with_codex_attachment_notes(
+    content: str,
+    attachments: tuple[Any, ...],
+) -> str:
+    if not attachments:
+        return content
+    notes = [
+        f"Attached file: {attachment.name} at {attachment.path}"
+        for attachment in attachments
+    ]
+    return "\n\n".join([content, *notes])

@@ -2,13 +2,6 @@ from __future__ import annotations
 
 import json
 
-from connector.runtime_protocol import RuntimeAttachment, RuntimeUnsupportedError
-
-
-def ensure_text_only_attachments(attachments: tuple[RuntimeAttachment, ...]) -> None:
-    if attachments:
-        raise RuntimeUnsupportedError("codex.attachments")
-
 
 def soft_codex_unavailable_reason(error_text: str) -> str | None:
     message = error_text

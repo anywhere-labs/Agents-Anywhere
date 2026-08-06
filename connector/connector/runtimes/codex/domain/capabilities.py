@@ -6,6 +6,7 @@ from connector.runtime_protocol import (
     CAPABILITY_CATALOG_EFFORT,
     CAPABILITY_CATALOG_MODEL,
     CAPABILITY_CATALOG_PERMISSION,
+    CAPABILITY_RUNTIME_ATTACHMENT,
     CAPABILITY_RUNTIME_CONFIG,
     CAPABILITY_SESSION_COMMANDS,
     CAPABILITY_SESSION_INTERACTION_APPROVAL,
@@ -63,6 +64,12 @@ def codex_runtime_capabilities(context: CodexCapabilityContext) -> RuntimeCapabi
             runtime_capability(
                 context,
                 capability_id=CAPABILITY_CATALOG_EFFORT,
+                available=context.client_available,
+                unavailable_reason=client_unavailable_reason(context),
+            ),
+            runtime_capability(
+                context,
+                capability_id=CAPABILITY_RUNTIME_ATTACHMENT,
                 available=context.client_available,
                 unavailable_reason=client_unavailable_reason(context),
             ),
@@ -126,6 +133,12 @@ def codex_session_capabilities(context: CodexCapabilityContext) -> RuntimeCapabi
             session_capability(
                 context,
                 capability_id=CAPABILITY_CATALOG_EFFORT,
+                available=context.client_available,
+                unavailable_reason=client_unavailable_reason(context),
+            ),
+            session_capability(
+                context,
+                capability_id=CAPABILITY_RUNTIME_ATTACHMENT,
                 available=context.client_available,
                 unavailable_reason=client_unavailable_reason(context),
             ),

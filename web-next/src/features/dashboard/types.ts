@@ -225,6 +225,7 @@ export type SessionCreateAndStartRequest = {
   cwd?: string;
   content: string;
   selections?: Record<string, string | null>;
+  attachments?: AttachmentRef[];
   clientMessageId?: string | null;
 };
 

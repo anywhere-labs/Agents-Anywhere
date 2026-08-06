@@ -67,7 +67,7 @@ class CodexTimelineAccumulator:
         item_id = projection.item_id(external_session_id=external_session_id, fallback_index=0)
         previous = self._projection_by_id.get(item_id)
         merged = projection
-        if event.event_type == "item/agentMessage/delta":
+        if projection_is_text_delta(projection, event, "agentMessage"):
             previous_text = previous.text if previous and previous.text else ""
             merged = projection.with_status(
                 projection.status or "inProgress"
@@ -81,7 +81,7 @@ class CodexTimelineAccumulator:
             merged = projection.with_status(
                 projection.status or "inProgress"
             ).with_aggregated_output(f"{previous_output}{self.event_delta(event)}")
-        elif event.event_type == "item/reasoning/delta":
+        elif projection_is_text_delta(projection, event, "reasoning"):
             previous_text = previous.text if previous and previous.text else ""
             merged = projection.with_status(
                 projection.status or "inProgress"
@@ -446,6 +446,30 @@ def terminal_turn_projection(
         turn_id=turn_id,
         message=terminal_turn_message(event_type),
     )
+
+
+def projection_is_text_delta(
+    projection: codex_timeline.CodexTimelineProjection,
+    event: CodexSdkEvent,
+    raw_type: str,
+) -> bool:
+    legacy_delta_events = {
+        "agentMessage": {
+            "item/agentMessage/delta",
+        },
+        "reasoning": {
+            "item/reasoning/delta",
+            "item/reasoning/textDelta",
+            "item/reasoning/summaryTextDelta",
+        },
+    }
+    if event.event_type in legacy_delta_events.get(raw_type, set()):
+        return True
+    if projection.raw_type != raw_type:
+        return False
+    if projection.status != "inProgress":
+        return False
+    return bool(codex_timeline.sdk_event_delta_text(event))
 
 
 def terminal_turn_status(event_type: str) -> str:

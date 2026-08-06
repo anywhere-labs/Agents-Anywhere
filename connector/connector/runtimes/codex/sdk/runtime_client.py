@@ -13,6 +13,17 @@ NotificationHandler = Callable[[CodexNotificationMessage], Awaitable[None]]
 
 
 @dataclass(frozen=True, slots=True)
+class CodexTurnInputAttachment:
+    name: str
+    path: str
+    media_type: str
+
+    @property
+    def is_image(self) -> bool:
+        return self.media_type.startswith("image/")
+
+
+@dataclass(frozen=True, slots=True)
 class CodexStartThreadRequest:
     cwd: str | None = None
     model: str | None = None
@@ -32,6 +43,7 @@ class CodexStartTurnRequest:
     approval_policy: str | None = None
     approvals_reviewer: str | None = None
     sandbox: str | None = None
+    attachments: tuple[CodexTurnInputAttachment, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

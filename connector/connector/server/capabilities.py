@@ -17,6 +17,7 @@ _RUNTIME_CAPABILITY_MAP: tuple[tuple[str, str], ...] = (
     ("steerTurn", "session.steer"),
     ("interruptTurn", "session.interrupt"),
     ("interactions", "session.interaction.approval"),
+    ("attachments", "runtime.attachment"),
 )
 
 

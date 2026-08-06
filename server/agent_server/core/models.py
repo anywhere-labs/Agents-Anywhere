@@ -522,6 +522,10 @@ class SessionCreateRequest(BaseModel):
     selections: dict[str, str | None] = Field(default_factory=dict)
 
 
+class AttachmentRef(BaseModel):
+    fileId: str = Field(min_length=1, max_length=64)
+
+
 class SessionCreateAndStartRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -531,6 +535,7 @@ class SessionCreateAndStartRequest(BaseModel):
     cwd: str | None = None
     content: str
     selections: dict[str, str | None] = Field(default_factory=dict)
+    attachments: list[AttachmentRef] = Field(default_factory=list, max_length=10)
     clientMessageId: str | None = None
 
 
@@ -776,10 +781,6 @@ class NoticeListResponse(BaseModel):
 class InteractionRespondRequest(BaseModel):
     actionId: str
     input: dict[str, Any] | None = None
-
-
-class AttachmentRef(BaseModel):
-    fileId: str = Field(min_length=1, max_length=64)
 
 
 class MessageCreateRequest(BaseModel):

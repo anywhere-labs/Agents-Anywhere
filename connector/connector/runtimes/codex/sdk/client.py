@@ -12,13 +12,17 @@ from openai_codex.generated.v2_all import (
     AskForApproval,
     AskForApprovalValue,
     DangerFullAccessSandboxPolicy,
+    LocalImageUserInput,
+    MentionUserInput,
     ReadOnlySandboxPolicy,
     ReasoningEffort,
     SandboxMode,
     SandboxPolicy,
+    TextUserInput,
     ThreadResumeParams,
     ThreadStartParams,
     TurnStartParams,
+    UserInput,
     WorkspaceWriteSandboxPolicy,
 )
 
@@ -275,7 +279,7 @@ class CodexSdkClient:
 
         thread = self._thread_handle(request.thread_id)
         turn = await thread.turn(
-            request.content,
+            codex_high_level_turn_content(request),
             model=request.model,
             effort=request.effort,
             approval_mode=sdk_approval_mode(self._sdk, request.approval_policy),
@@ -760,11 +764,59 @@ def codex_turn_start_params(request: CodexStartTurnRequest) -> TurnStartParams:
         approvalsReviewer=approvals_reviewer,
         clientUserMessageId=request.client_message_id,
         effort=codex_reasoning_effort(request.effort),
-        input=[],
+        input=codex_turn_user_input(request),
         model=request.model,
         sandboxPolicy=codex_turn_sandbox_policy(request.sandbox),
         threadId=request.thread_id,
     )
+
+
+def codex_turn_user_input(request: CodexStartTurnRequest) -> list[UserInput]:
+    values: list[UserInput] = []
+    for attachment in request.attachments:
+        if attachment.is_image:
+            values.append(
+                UserInput(
+                    root=LocalImageUserInput(
+                        path=attachment.path,
+                        type="localImage",
+                    )
+                )
+            )
+            continue
+        values.append(
+            UserInput(
+                root=MentionUserInput(
+                    name=attachment.name,
+                    path=attachment.path,
+                    type="mention",
+                )
+            )
+        )
+    if request.attachments:
+        values.append(
+            UserInput(
+                root=TextUserInput(
+                    text=codex_attachment_input_note(request),
+                    type="text",
+                )
+            )
+        )
+    return values
+
+
+def codex_high_level_turn_content(request: CodexStartTurnRequest) -> str:
+    if not request.attachments:
+        return request.content
+    return "\n\n".join([request.content, codex_attachment_input_note(request)])
+
+
+def codex_attachment_input_note(request: CodexStartTurnRequest) -> str:
+    lines = [
+        f"Attached file: {attachment.name} at {attachment.path}"
+        for attachment in request.attachments
+    ]
+    return "\n".join(lines)
 
 
 def codex_approval_settings(

@@ -35,6 +35,7 @@ from connector.runtimes.codex.sdk.runtime_client import (
     CodexStartThreadRequest,
     CodexStartTurnRequest,
     CodexSteerTurnRequest,
+    CodexTurnInputAttachment,
 )
 from connector.runtimes.codex.sdk.shapes import sdk_approval_mode, thread_read_result
 
@@ -135,6 +136,10 @@ def test_codex_sdk_client_resumes_thread_before_low_level_turn_start() -> None:
     asyncio.run(_test_codex_sdk_client_resumes_thread_before_low_level_turn_start())
 
 
+def test_codex_sdk_client_sends_attachments_as_user_input() -> None:
+    asyncio.run(_test_codex_sdk_client_sends_attachments_as_user_input())
+
+
 def test_codex_sdk_client_resumes_thread_after_read_handle_cache() -> None:
     asyncio.run(_test_codex_sdk_client_resumes_thread_after_read_handle_cache())
 
@@ -162,7 +167,6 @@ async def _test_codex_sdk_client_adapts_async_codex_thread_turn_flow() -> None:
         CodexStartThreadRequest(
             cwd="/repo",
             model="gpt-example",
-            approval_policy="never",
             sandbox="workspace-write",
         )
     )
@@ -199,7 +203,7 @@ async def _test_codex_sdk_client_adapts_async_codex_thread_turn_flow() -> None:
     assert interrupted.payload["id"] == "turn_sdk"
     assert native.entered is True
     assert native.exited is True
-    assert native.started_kwargs["approval_mode"] == _FakeApprovalMode.deny_all
+    assert native.started_kwargs["approval_mode"] is None
     assert native.started_kwargs["sandbox"] == _FakeSandbox.workspace_write
     assert notifications[0]["method"] == "turn/started"
     assert notifications[0]["params"]["turn"]["id"] == "turn_sdk"
@@ -252,7 +256,7 @@ async def _test_codex_sdk_client_uses_low_level_permission_payloads() -> None:
     assert turn.turn_id == "turn_low"
     assert full_access.thread_id == "thread_low"
     assert native.initialized is True
-    assert native.low_level.thread_start_params[0]["approvalPolicy"] == "untrusted"
+    assert native.low_level.thread_start_params[0]["approvalPolicy"] == "on-request"
     assert native.low_level.thread_start_params[0]["approvalsReviewer"] == "user"
     assert native.low_level.thread_start_params[0]["sandbox"] == "workspace-write"
     assert native.low_level.turn_start_params[0]["approvalPolicy"] == "on-request"
@@ -266,6 +270,51 @@ async def _test_codex_sdk_client_uses_low_level_permission_payloads() -> None:
     assert native.low_level.thread_start_params[1]["approvalPolicy"] == "never"
     assert "approvalsReviewer" not in native.low_level.thread_start_params[1]
     assert native.low_level.thread_start_params[1]["sandbox"] == "danger-full-access"
+
+
+async def _test_codex_sdk_client_sends_attachments_as_user_input() -> None:
+    sdk = _FakeLowLevelSdkModule()
+    native = _FakeLowLevelAsyncCodex()
+    client = CodexSdkClient(native, sdk=sdk)
+
+    async def handler(message: Any) -> None:
+        native.handled.append(message)
+
+    await client.start(handler)
+    await client.start_turn(
+        CodexStartTurnRequest(
+            thread_id="thread_low",
+            content="hello",
+            attachments=(
+                CodexTurnInputAttachment(
+                    name="note.txt",
+                    path="/tmp/note.txt",
+                    media_type="text/plain",
+                ),
+                CodexTurnInputAttachment(
+                    name="image.png",
+                    path="/tmp/image.png",
+                    media_type="image/png",
+                ),
+            ),
+        )
+    )
+    await client.stop()
+
+    turn_input = native.low_level.turn_start_params[0]["input"]
+    assert turn_input[0] == {
+        "name": "note.txt",
+        "path": "/tmp/note.txt",
+        "type": "mention",
+    }
+    assert turn_input[1] == {
+        "path": "/tmp/image.png",
+        "type": "localImage",
+    }
+    assert turn_input[2]["text"] == (
+        "Attached file: note.txt at /tmp/note.txt\n"
+        "Attached file: image.png at /tmp/image.png"
+    )
 
 
 async def _test_codex_sdk_client_resumes_thread_before_low_level_turn_start() -> None:
@@ -296,7 +345,7 @@ async def _test_codex_sdk_client_resumes_thread_before_low_level_turn_start() ->
     ]
     assert native.low_level.thread_resume_params[0]["threadId"] == "thread_existing"
     assert native.low_level.thread_resume_params[0]["model"] == "gpt-example"
-    assert native.low_level.thread_resume_params[0]["approvalPolicy"] == "untrusted"
+    assert native.low_level.thread_resume_params[0]["approvalPolicy"] == "on-request"
     assert native.low_level.thread_resume_params[0]["approvalsReviewer"] == "user"
     assert native.low_level.thread_resume_params[0]["sandbox"] == "workspace-write"
 
@@ -394,7 +443,7 @@ async def _test_codex_sdk_client_retries_turn_start_after_thread_not_found() -> 
         "turn/start:thread_low",
     ]
     assert native.low_level.thread_resume_params[0]["threadId"] == "thread_low"
-    assert native.low_level.thread_resume_params[0]["approvalPolicy"] == "untrusted"
+    assert native.low_level.thread_resume_params[0]["approvalPolicy"] == "on-request"
 
 
 class _NativeSdkClient:

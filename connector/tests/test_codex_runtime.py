@@ -24,11 +24,13 @@ from openai_codex.models import (
     AgentMessageDeltaNotification,
     CommandExecutionOutputDeltaNotification,
     Notification,
+    ReasoningTextDeltaNotification,
     TurnCompletedNotification,
 )
 
 from connector.runtime_protocol import (
     CAPABILITY_CATALOG_MODEL,
+    CAPABILITY_RUNTIME_ATTACHMENT,
     CAPABILITY_RUNTIME_CONFIG,
     CAPABILITY_SESSION_COMMANDS,
     CAPABILITY_SESSION_INTERRUPT,
@@ -41,6 +43,8 @@ from connector.runtime_protocol import (
     MarkerTimelineItem,
     MessageTimelineContent,
     MessageTimelineItem,
+    RuntimeAttachment,
+    RuntimeAttachmentContent,
     RuntimeCapabilitySet,
     RuntimeConfig,
     RuntimeInvalidRequestError,
@@ -432,6 +436,15 @@ class FakeCodexClient:
             "approvalPolicy": request.approval_policy,
             "sandbox": request.sandbox,
         }
+        if request.attachments:
+            params["attachments"] = [
+                {
+                    "name": attachment.name,
+                    "path": attachment.path,
+                    "mediaType": attachment.media_type,
+                }
+                for attachment in request.attachments
+            ]
         result = self.record_request(
             "turn/start",
             {key: value for key, value in params.items() if value is not None},
@@ -490,6 +503,7 @@ class FakeHost(RuntimeHostClient):
         self.runtime_capability_updates: list[RuntimeCapabilitySet] = []
         self.session_capability_updates: list[RuntimeCapabilitySet] = []
         self.sync_states: dict[str, dict[str, Any]] = {}
+        self.attachments: dict[str, RuntimeAttachmentContent] = {}
 
     @property
     def connector_id(self) -> str:
@@ -591,6 +605,14 @@ class FakeHost(RuntimeHostClient):
 
     async def sync_state_delete(self, key: str) -> None:
         self.sync_states.pop(key, None)
+
+    async def attachment_download(
+        self,
+        session_id: str,
+        file_id: str,
+    ) -> RuntimeAttachmentContent:
+        _ = session_id
+        return self.attachments[file_id]
 
 
 def test_codex_runtime_lifecycle_and_config() -> None:
@@ -901,6 +923,57 @@ def test_codex_timeline_projects_typed_sdk_delta_without_params_dict() -> None:
     }
 
 
+def test_codex_timeline_accumulates_typed_reasoning_delta() -> None:
+    accumulator = CodexTimelineAccumulator()
+    first_event = CodexSdkEvent.from_value(
+        Notification(
+            method="item/reasoning/textDelta",
+            payload=ReasoningTextDeltaNotification(
+                contentIndex=0,
+                delta="thinking ",
+                itemId="item_reasoning",
+                threadId="thread_1",
+                turnId="turn_1",
+            ),
+        ),
+    )
+    second_event = CodexSdkEvent.from_value(
+        Notification(
+            method="item/reasoning/textDelta",
+            payload=ReasoningTextDeltaNotification(
+                contentIndex=0,
+                delta="now",
+                itemId="item_reasoning",
+                threadId="thread_1",
+                turnId="turn_1",
+            ),
+        ),
+    )
+
+    first = accumulator.item_from_event(
+        session_id="sess_1",
+        external_session_id="thread_1",
+        event=first_event,
+    )
+    second = accumulator.item_from_event(
+        session_id="sess_1",
+        external_session_id="thread_1",
+        event=second_event,
+    )
+
+    assert first is not None
+    assert second is not None
+    assert first.id == "item_reasoning"
+    assert second.id == "item_reasoning"
+    assert second.type == "system"
+    assert second.status == "running"
+    assert second.content == {
+        "kind": "reasoning",
+        "text": "thinking now",
+        "format": "markdown",
+    }
+
+
 def test_codex_timeline_projects_typed_sdk_turn_without_params_dict() -> None:
     event = CodexSdkEvent.from_value(
         Notification(
@@ -1170,6 +1243,10 @@ async def _test_codex_runtime_reports_unavailable_runtime_capabilities_without_c
     }
 
     assert capabilities[CAPABILITY_RUNTIME_CONFIG].available is True
+    assert capabilities[CAPABILITY_RUNTIME_ATTACHMENT].available is False
+    assert capabilities[CAPABILITY_RUNTIME_ATTACHMENT].unavailable_reason == (
+        "codex_unavailable"
+    )
     assert capabilities[CAPABILITY_CATALOG_MODEL].available is False
     assert capabilities[CAPABILITY_CATALOG_MODEL].unavailable_reason == (
         "codex_unavailable"
@@ -1194,6 +1271,7 @@ async def _test_codex_runtime_reports_idle_session_capabilities() -> None:
     assert capabilities[CAPABILITY_SESSION_COMMANDS].supported is False
     assert capabilities[CAPABILITY_SESSION_COMMANDS].available is False
     assert capabilities[CAPABILITY_SESSION_COMMANDS].unavailable_reason == "unsupported"
+    assert capabilities[CAPABILITY_RUNTIME_ATTACHMENT].available is True
     assert capabilities[CAPABILITY_SESSION_INTERRUPT].available is False
     assert capabilities[CAPABILITY_SESSION_INTERRUPT].unavailable_reason == (
         "no_active_turn"
@@ -2094,6 +2172,43 @@ async def _test_codex_runtime_starts_existing_turn_and_reports_running_state() -
     state = await runtime.get_session_state("sess_1")
     assert state is not None
     assert state.status == "running"
+
+
+def test_codex_runtime_materializes_attachments_for_turn_start() -> None:
+    asyncio.run(_test_codex_runtime_materializes_attachments_for_turn_start())
+
+
+async def _test_codex_runtime_materializes_attachments_for_turn_start() -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    host.attachments["file_1"] = RuntimeAttachmentContent(
+        file_id="file_1",
+        name="note.txt",
+        media_type="text/plain",
+        content=b"hello",
+    )
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    result = await runtime.start_turn(
+        "sess_1",
+        "thread_1",
+        "read this",
+        attachments=(
+            RuntimeAttachment(
+                file_id="file_1",
+                name="note.txt",
+                media_type="text/plain",
+            ),
+        ),
+    )
+
+    assert result.ok is True
+    method, params = client.requests[-1]
+    assert method == "turn/start"
+    attachment = params["attachments"][0]
+    assert attachment["name"] == "note.txt"
+    assert attachment["mediaType"] == "text/plain"
+    assert attachment["path"].endswith("/sess_1/file_1-note.txt")
 
 
 def test_codex_runtime_does_not_restore_running_after_fast_terminal_turn() -> None:

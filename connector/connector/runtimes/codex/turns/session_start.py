@@ -17,7 +17,6 @@ from connector.runtimes.codex.domain.selections import (
     model_settings_from_selection,
     permission_settings_from_selection,
 )
-from connector.runtimes.codex.runtime_helpers import ensure_text_only_attachments
 from connector.runtimes.codex.sdk.runtime_client import (
     CodexRuntimeClient,
     CodexStartThreadRequest,
@@ -59,7 +58,6 @@ class CodexSessionStartController:
         - delegates first turn execution to CodexTurnActions
         """
 
-        ensure_text_only_attachments(attachments)
         if self.client is None:
             raise RuntimeUnsupportedError("create_and_start_session")
         await self.ensure_started()

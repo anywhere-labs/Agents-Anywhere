@@ -120,6 +120,16 @@ class SessionRunService:
             params["selections"] = selections
         if payload.clientMessageId:
             params["clientMessageId"] = payload.clientMessageId
+        if payload.attachments:
+            attachment_payloads = await self._attachment_payloads(
+                session_id=session.id,
+                user_id=user_id,
+                file_ids=[attachment.fileId for attachment in payload.attachments],
+            )
+            params["attachments"] = attachment_payloads
+            params["timelineAttachments"] = [
+                _timeline_attachment_payload(item) for item in attachment_payloads
+            ]
 
         await self._store.start_active_run(
             session_id=session.id,

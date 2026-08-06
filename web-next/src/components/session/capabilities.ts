@@ -5,6 +5,7 @@ export const CAPABILITY = {
   interrupt: "session.interrupt",
   steer: "session.steer",
   approveInteraction: "session.interaction.approval",
+  attachment: "runtime.attachment",
   runtimeConfig: "runtime.config",
   modelCatalog: "catalog.model",
   permissionCatalog: "catalog.permission",
