@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import importlib
 from collections.abc import Mapping
 from typing import Any
@@ -54,6 +55,11 @@ from connector.runtimes.codex.sdk.shapes import (
 )
 
 CodexApprovalSettings = tuple[AskForApproval | None, ApprovalsReviewer | None]
+CODEX_SDK_APPROVAL_REQUEST_METHODS = {
+    "item/commandExecution/requestApproval",
+    "item/fileChange/requestApproval",
+    "item/permissions/requestApproval",
+}
 
 
 class CodexSdkClient:
@@ -67,6 +73,8 @@ class CodexSdkClient:
         self._client = client
         self._sdk = sdk
         self._handler: NotificationHandler | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._pending_approval_responses: dict[str, asyncio.Future[Mapping[str, Any]]] = {}
         self._entered_client: Any | None = None
         self._threads: dict[str, Any] = {}
         self._loaded_thread_ids: set[str] = set()
@@ -75,6 +83,8 @@ class CodexSdkClient:
 
     async def start(self, handler: NotificationHandler) -> None:
         self._handler = handler
+        self._loop = asyncio.get_running_loop()
+        install_codex_approval_handler(self._client, self.handle_sdk_approval_request)
         start = getattr(self._client, "start", None)
         if callable(start):
             await maybe_await(call_with_optional_handler(start, handler))
@@ -325,12 +335,56 @@ class CodexSdkClient:
         request_id: str | int,
         result: Mapping[str, Any] | None = None,
     ) -> None:
+        approval_response = self._pending_approval_responses.pop(str(request_id), None)
+        if approval_response is not None:
+            if not approval_response.done():
+                approval_response.set_result(dict(result or {}))
+            return
         respond = getattr(self._client, "respond", None)
         if not callable(respond):
             raise RuntimeInvalidRequestError(
                 "Codex SDK client does not expose respond(request_id, result)"
             )
         await maybe_await(respond(request_id, dict(result or {})))
+
+    def handle_sdk_approval_request(
+        self,
+        method: str,
+        params: Mapping[str, Any] | None,
+    ) -> dict[str, Any]:
+        if method not in CODEX_SDK_APPROVAL_REQUEST_METHODS:
+            return {}
+        loop = self._loop
+        if loop is None:
+            return {"decision": "decline"}
+        future = asyncio.run_coroutine_threadsafe(
+            self.publish_sdk_approval_request(method, dict(params or {})),
+            loop,
+        )
+        return dict(future.result())
+
+    async def publish_sdk_approval_request(
+        self,
+        method: str,
+        params: dict[str, Any],
+    ) -> Mapping[str, Any]:
+        if self._handler is None:
+            return {"decision": "decline"}
+        request_id = sdk_approval_request_id(method, params)
+        response: asyncio.Future[Mapping[str, Any]] = asyncio.Future()
+        self._pending_approval_responses[request_id] = response
+        try:
+            await self._handler(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": method,
+                    "params": params,
+                }
+            )
+            return await response
+        finally:
+            self._pending_approval_responses.pop(request_id, None)
 
     def _thread_handle(self, thread_id: str) -> Any:
         cached = self._threads.get(thread_id)
@@ -489,6 +543,34 @@ def codex_low_level_client(client: Any) -> Any | None:
     if not callable(getattr(candidate, "turn_start", None)):
         return None
     return candidate
+
+
+def install_codex_approval_handler(client: Any, handler: Any) -> bool:
+    nested_client = getattr(client, "_client", None)
+    sync_client = getattr(nested_client, "_sync", None)
+    if sync_client is not None and hasattr(sync_client, "_approval_handler"):
+        sync_client._approval_handler = handler
+        return True
+    if hasattr(client, "_approval_handler"):
+        client._approval_handler = handler
+        return True
+    return False
+
+
+def sdk_approval_request_id(method: str, params: Mapping[str, Any]) -> str:
+    for key in ("approvalId", "approval_id", "requestId", "request_id"):
+        value = params.get(key)
+        if isinstance(value, str | int) and str(value):
+            return f"approval_{value}"
+    stable_parts = [
+        method,
+        str(params.get("threadId") or params.get("thread_id") or ""),
+        str(params.get("turnId") or params.get("turn_id") or ""),
+        str(params.get("itemId") or params.get("item_id") or ""),
+        str(params.get("command") or params.get("cmd") or ""),
+    ]
+    digest = hashlib.sha256(":".join(stable_parts).encode()).hexdigest()[:24]
+    return f"approval_{digest}"
 
 
 def codex_request_requires_low_level_approval(

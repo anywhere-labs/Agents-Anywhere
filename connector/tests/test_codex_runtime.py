@@ -3062,6 +3062,44 @@ async def _test_codex_sdk_start_thread_initializes_before_low_level_detection() 
     assert result.thread_id == "thread_low"
 
 
+def test_codex_sdk_approval_handler_waits_for_connector_response() -> None:
+    asyncio.run(_test_codex_sdk_approval_handler_waits_for_connector_response())
+
+
+async def _test_codex_sdk_approval_handler_waits_for_connector_response() -> None:
+    sdk_client = _ApprovalBridgeSdkClient()
+    client = CodexSdkClient(sdk_client)
+    messages: list[Any] = []
+
+    async def handler(message: Any) -> None:
+        messages.append(message)
+
+    await client.start(handler)
+
+    task = asyncio.create_task(
+        asyncio.to_thread(
+            sdk_client.approval_handler,
+            "item/commandExecution/requestApproval",
+            {
+                "threadId": "thread_1",
+                "turnId": "turn_1",
+                "itemId": "item_cmd",
+                "approvalId": "appr_cmd",
+                "command": "touch /tmp/example",
+            },
+        )
+    )
+    while not messages:
+        await asyncio.sleep(0)
+
+    request_id = messages[0]["id"]
+    assert request_id == "approval_appr_cmd"
+    assert messages[0]["method"] == "item/commandExecution/requestApproval"
+    await client.respond(request_id, {"decision": "accept"})
+
+    assert await task == {"decision": "accept"}
+
+
 def test_codex_runtime_approval_request_upserts_session_notice() -> None:
     asyncio.run(_test_codex_runtime_approval_request_upserts_session_notice())
 
@@ -3603,6 +3641,25 @@ class _FakeSdkTurn:
                 "delta": "hello",
             },
         }
+
+
+class _ApprovalBridgeSdkClient:
+    def __init__(self) -> None:
+        self._client = _ApprovalBridgeAsyncClient()
+
+    @property
+    def approval_handler(self) -> Any:
+        return self._client._sync._approval_handler
+
+
+class _ApprovalBridgeAsyncClient:
+    def __init__(self) -> None:
+        self._sync = _ApprovalBridgeSyncClient()
+
+
+class _ApprovalBridgeSyncClient:
+    def __init__(self) -> None:
+        self._approval_handler = None
 
 
 class _LazyLowLevelSdkClient:
