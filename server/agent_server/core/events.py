@@ -160,7 +160,7 @@ def events_from_invalidation(payload: dict[str, Any]) -> list[ProtocolEventEnvel
                 sequence = int(notice.get("updatedSeq") or next_sequence or 0)
                 if sequence <= 0:
                     continue
-                notice_payload = {"notice": notice}
+                notice_payload = {"notice": notice_with_event_sequence(notice, sequence)}
                 events.append(
                     protocol_event(
                         session_id,
@@ -181,6 +181,18 @@ def events_from_invalidation(payload: dict[str, Any]) -> list[ProtocolEventEnvel
         )
     events.sort(key=lambda event: (event.sequence, event.eventId))
     return events
+
+
+def notice_with_event_sequence(
+    notice: dict[str, Any],
+    sequence: int,
+) -> dict[str, Any]:
+    if isinstance(notice.get("updatedSeq"), int):
+        return notice
+    return {
+        **notice,
+        "updatedSeq": sequence,
+    }
 
 
 def revisions_are_complete(

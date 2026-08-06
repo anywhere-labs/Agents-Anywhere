@@ -320,6 +320,7 @@ export function SessionDetail({
   const scrollToBottomTimerRef = React.useRef<number | null>(null)
   const pruneAfterScrollTimerRef = React.useRef<number | null>(null)
   const streamConnectedRef = React.useRef(false)
+  const processedEventIdsRef = React.useRef<Set<string>>(new Set())
   const selectionUpdateSeqRef = React.useRef(0)
 
   const session = state?.session ?? fallbackSession
@@ -669,6 +670,7 @@ export function SessionDetail({
 
   React.useEffect(() => {
     initialScrollDoneRef.current = false
+    processedEventIdsRef.current = new Set()
     setSending(false)
     setInterrupting(false)
     setError(null)
@@ -734,7 +736,12 @@ export function SessionDetail({
     const applyEvent = (event: ProtocolEventEnvelope) => {
       if (cancelled || event.sessionId !== sessionId) return
       if (event.type === "keepalive") return
-      if (event.sequence <= nextSeqRef.current) return
+      if (event.sequence < nextSeqRef.current) return
+      if (processedEventIdsRef.current.has(event.eventId)) return
+      processedEventIdsRef.current.add(event.eventId)
+      if (processedEventIdsRef.current.size > 1000) {
+        processedEventIdsRef.current = new Set(Array.from(processedEventIdsRef.current).slice(-500))
+      }
       if (event.type === "session.refetch_required") {
         void recoverEvents(nextSeqRef.current, "session.refetch_required")
         return
@@ -745,7 +752,7 @@ export function SessionDetail({
       }
       markAutoScrollIfNearBottomRef.current()
       setState((current) => {
-        if (current && event.sequence <= current.nextSeq) return current
+        if (current && event.sequence < current.nextSeq) return current
         return mergeSessionEvent(current, event)
       })
       const item = readPayloadValue<TimelineItem>(event.payload.item)

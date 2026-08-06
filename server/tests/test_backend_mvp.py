@@ -3279,6 +3279,7 @@ def test_notice_upsert_relays_live_notice_without_persisting_to_snapshot(tmp_pat
 
     assert event["type"] == "runtime.notice.updated"
     assert event["payload"]["notice"]["noticeId"] == "notice_compact_done"
+    assert event["payload"]["notice"]["updatedSeq"] == event["sequence"]
     snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
     assert snapshot.status_code == 200, snapshot.text
     assert snapshot.json()["notices"] == []

@@ -131,6 +131,29 @@ def test_notice_invalidation_emits_runtime_notice_update() -> None:
     assert runtime_event.payload["notice"]["id"] == "notice-1"
 
 
+def test_notice_invalidation_adds_event_sequence_for_live_notice() -> None:
+    events = events_from_invalidation(
+        {
+            "sessionId": "session-1",
+            "nextSeq": 8,
+            "notices": [
+                {
+                    "noticeId": "notice-1",
+                    "type": "interaction",
+                    "sessionId": "session-1",
+                    "title": "Approve command",
+                    "status": "open",
+                }
+            ],
+        }
+    )
+
+    assert len(events) == 1
+    assert events[0].type == "runtime.notice.updated"
+    assert events[0].sequence == 8
+    assert events[0].payload["notice"]["updatedSeq"] == 8
+
+
 def test_recovery_requires_every_durable_revision_to_be_projected() -> None:
     events = [
         protocol_event(
