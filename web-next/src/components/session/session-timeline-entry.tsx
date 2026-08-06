@@ -193,7 +193,10 @@ function ReasoningEntry({ token, session, item }: { token: string; session: Sess
     .filter((text): text is string => Boolean(text))
   const rawText = textOf(item.content.rawText) || textOf(item.content.text)
   const lines = summaries.length > 0 ? summaries : rawText ? [rawText] : []
-  const title = lines.length > 0
+  const singleSummary = lines[0] ?? ""
+  const title = lines.length === 1
+    ? tSession("reasoningSingleSummary", { summary: singleSummary })
+    : lines.length > 1
     ? tSession("reasoningSummary", { count: lines.length })
     : tSession("reasoning")
   const marker = (
@@ -205,7 +208,7 @@ function ReasoningEntry({ token, session, item }: { token: string; session: Sess
     </Marker>
   )
 
-  if (lines.length === 0) return marker
+  if (lines.length <= 1) return marker
   const markdown = lines.join("\n\n")
 
   return (

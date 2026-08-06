@@ -638,6 +638,7 @@
       "resolveAbove": "Resolve above",
       "resolveBelow": "Resolve below",
       "reasoning": "Reasoning",
+      "reasoningSingleSummary": "Reasoned · {summary}",
       "reasoningSummary": "Reasoning · {count} notes",
       "conversationCompacting": "Compacting context",
       "conversationCompacted": "Conversation compacted",
