@@ -526,6 +526,15 @@ class AttachmentRef(BaseModel):
     fileId: str = Field(min_length=1, max_length=64)
 
 
+class InlineAttachmentRef(BaseModel):
+    fileId: str = Field(min_length=1, max_length=64)
+    name: str = Field(min_length=1, max_length=512)
+    mediaType: str = Field(default="application/octet-stream", max_length=255)
+    size: int | None = Field(default=None, ge=0)
+    sha256: str | None = Field(default=None, max_length=128)
+    contentBase64: str = Field(min_length=1)
+
+
 class SessionCreateAndStartRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -535,7 +544,7 @@ class SessionCreateAndStartRequest(BaseModel):
     cwd: str | None = None
     content: str
     selections: dict[str, str | None] = Field(default_factory=dict)
-    attachments: list[AttachmentRef] = Field(default_factory=list, max_length=10)
+    attachments: list[InlineAttachmentRef] = Field(default_factory=list, max_length=10)
     clientMessageId: str | None = None
 
 

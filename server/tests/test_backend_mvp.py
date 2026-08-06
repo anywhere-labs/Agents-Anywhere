@@ -532,6 +532,16 @@ def test_session_create_and_start_preallocates_session_and_passes_selections(tmp
             "cwd": "/repo",
             "content": "hello",
             "selections": {"model": model_selection_id},
+            "attachments": [
+                {
+                    "fileId": "file_inline",
+                    "name": "note.txt",
+                    "mediaType": "text/plain",
+                    "size": 5,
+                    "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+                    "contentBase64": "aGVsbG8=",
+                }
+            ],
             "clientMessageId": "cm_create_and_start",
         },
     )
@@ -544,20 +554,36 @@ def test_session_create_and_start_preallocates_session_and_passes_selections(tmp
     create_requests = [
         request for request in fake_rpc.requests if request[0] == "session.create"
     ]
-    assert create_requests == [
-        (
-            "session.create",
-            {
-                "runtime": "codex",
-                "sessionId": session["id"],
-                "content": "hello",
-                "title": "Start now",
-                "cwd": "/repo",
-                "selections": {"model": model_selection_id},
-                "clientMessageId": "cm_create_and_start",
-            },
-        )
-    ]
+    assert len(create_requests) == 1
+    _, create_params = create_requests[0]
+    assert create_params["runtime"] == "codex"
+    assert create_params["sessionId"] == session["id"]
+    assert create_params["content"] == "hello"
+    assert create_params["title"] == "Start now"
+    assert create_params["cwd"] == "/repo"
+    assert create_params["selections"] == {"model": model_selection_id}
+    assert create_params["clientMessageId"] == "cm_create_and_start"
+    attachment = create_params["attachments"][0]
+    assert attachment["fileId"].startswith("file_")
+    assert attachment["name"] == "note.txt"
+    assert attachment["mediaType"] == "text/plain"
+    assert attachment["contentBase64"] == "aGVsbG8="
+    assert attachment["size"] == 5
+    assert attachment["sha256"] == "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    timeline_attachment = create_params["timelineAttachments"][0]
+    assert timeline_attachment == {
+        "fileId": attachment["fileId"],
+        "name": "note.txt",
+        "mediaType": "text/plain",
+        "size": 5,
+        "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+    }
+    stored_attachment = client.get(
+        f"/sessions/{session['id']}/attachments/{attachment['fileId']}",
+        headers=headers,
+    )
+    assert stored_attachment.status_code == 200
+    assert stored_attachment.json()["contentBase64"] == "aGVsbG8="
     state = client.get(f"/sessions/{session['id']}/runtime/state", headers=headers)
     assert state.status_code == 200
     assert state.json()["state"]["status"] == "idle"

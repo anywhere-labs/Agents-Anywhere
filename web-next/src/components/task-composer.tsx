@@ -26,6 +26,7 @@ import {
   AttachmentButton,
   AttachmentPreviewList,
   DragOverlay,
+  type AttachedFile,
   useAttachments,
 } from "@/components/attachment-input"
 import { buildOptimisticUserMessage } from "@/components/session/optimistic-timeline"
@@ -38,6 +39,7 @@ import { cn } from "@/lib/utils"
 import { useElementWidth } from "@/hooks/use-element-width"
 import type {
   DeviceRuntimeView,
+  InlineAttachmentRef,
   ProtocolCapabilitySet,
   ProtocolModelCatalog,
   ProtocolPermissionCatalog,
@@ -85,6 +87,42 @@ const MOBILE_NEW_SESSION_TITLE_KEYS = [
   "typewriter.inspect",
   "typewriter.changingToday",
 ] as const
+
+async function inlineAttachmentsFromFiles(files: AttachedFile[]): Promise<InlineAttachmentRef[]> {
+  const inlineAttachments: InlineAttachmentRef[] = []
+  for (const attachment of files) {
+    const content = await attachment.file.arrayBuffer()
+    const contentBase64 = arrayBufferToBase64(content)
+    const sha256 = await sha256Hex(content)
+    inlineAttachments.push({
+      fileId: attachment.id.slice(0, 64),
+      name: attachment.name,
+      mediaType: attachment.file.type || "application/octet-stream",
+      size: attachment.size,
+      sha256,
+      contentBase64,
+    })
+  }
+  return inlineAttachments
+}
+
+function arrayBufferToBase64(value: ArrayBuffer): string {
+  const bytes = new Uint8Array(value)
+  const chunkSize = 0x8000
+  let binary = ""
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    const chunk = bytes.subarray(index, index + chunkSize)
+    binary += String.fromCharCode(...chunk)
+  }
+  return btoa(binary)
+}
+
+async function sha256Hex(value: ArrayBuffer): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", value)
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("")
+}
 
 type NewSessionPreference = {
   connectorId: string
@@ -485,10 +523,6 @@ export function TaskComposer() {
     if (catalogsLoading) return
     if (requiresModelSelection && !selectedModelSelection) return
     if (requiresPermissionSelection && !selectedPermissionSelection) return
-    if (attachments.length > 0) {
-      toast.error(t("newSessionAttachmentsUnsupported"))
-      return
-    }
     const localSessionId = createClientId("session")
     const clientMessageId = createClientId("msg")
     const messageText = prompt.trim() || t("attachmentOnlyPrompt")
@@ -580,6 +614,9 @@ export function TaskComposer() {
         ...createBody,
         content: messageText,
         selections,
+        attachments: selectedAttachments.length > 0
+          ? await inlineAttachmentsFromFiles(selectedAttachments)
+          : undefined,
         clientMessageId,
       })
       bindOptimisticSession(localSessionId, created.session)

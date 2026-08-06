@@ -225,7 +225,7 @@ export type SessionCreateAndStartRequest = {
   cwd?: string;
   content: string;
   selections?: Record<string, string | null>;
-  attachments?: AttachmentRef[];
+  attachments?: InlineAttachmentRef[];
   clientMessageId?: string | null;
 };
 
@@ -535,6 +535,11 @@ export type AttachmentRef = {
   size?: number;
   mediaType?: string;
   sha256?: string;
+};
+
+export type InlineAttachmentRef = AttachmentRef & {
+  name: string;
+  contentBase64: string;
 };
 
 export type MessageSendOptions = {

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import base64
+import binascii
+
 from connector.logging import logger
 from connector.runtime_protocol import RuntimeAttachment
 from connector.runtime_protocol.attachments import attachment_target
@@ -12,15 +15,21 @@ async def materialize_codex_attachments(
     session_id: str,
     attachments: tuple[RuntimeAttachment, ...],
 ) -> tuple[CodexTurnInputAttachment, ...]:
-    """Download user attachments to local files for Codex SDK input.
+    """Materialize user attachments to local files for Codex SDK input.
 
     Side effects:
-    - downloads each attachment through the runtime host
+    - decodes request-inline content or downloads each attachment through the runtime host
     - writes each attachment into the connector-local attachment directory
     """
 
     materialized: list[CodexTurnInputAttachment] = []
     for attachment in attachments:
+        if attachment.content_base64 is not None:
+            materialized.append(
+                materialize_inline_codex_attachment(session_id, attachment)
+            )
+            continue
+
         try:
             downloaded = await host.attachment_download(session_id, attachment.file_id)
         except Exception:  # noqa: BLE001
@@ -40,3 +49,32 @@ async def materialize_codex_attachments(
             )
         )
     return tuple(materialized)
+
+
+def materialize_inline_codex_attachment(
+    session_id: str,
+    attachment: RuntimeAttachment,
+) -> CodexTurnInputAttachment:
+    """Decode and write an inline base64 attachment from create-and-start.
+
+    Side effects:
+    - decodes base64 content supplied in the RPC request
+    - writes decoded bytes into the connector-local attachment directory
+    """
+
+    if attachment.content_base64 is None:
+        raise ValueError("inline attachment contentBase64 is required")
+    try:
+        content = base64.b64decode(attachment.content_base64, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("inline attachment contentBase64 is invalid") from exc
+
+    name = attachment.name or attachment.file_id
+    target = attachment_target(session_id, attachment.file_id, name)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(content)
+    return CodexTurnInputAttachment(
+        name=name,
+        path=str(target),
+        media_type=attachment.media_type or "application/octet-stream",
+    )

@@ -79,6 +79,9 @@ def runtime_attachments(params: dict[str, Any]) -> tuple[RuntimeAttachment, ...]
                 ),
                 size=raw.get("size") if isinstance(raw.get("size"), int) else None,
                 sha256=optional_string(raw.get("sha256")),
+                content_base64=optional_string(
+                    raw.get("contentBase64") or raw.get("content_base64")
+                ),
             )
         )
     return tuple(attachments)

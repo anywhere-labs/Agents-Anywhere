@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import base64
+import binascii
+import hashlib
+from dataclasses import dataclass
 from typing import Any
 
 from agent_server.core.api_namespace import api_v2_path
 from agent_server.core.models import (
+    InlineAttachmentRef,
     MessageCreateRequest,
     RpcResponsePayload,
     SessionCreateAndStartRequest,
@@ -45,6 +50,16 @@ class SessionRunUpstreamError(SessionRunError):
 
 class SessionRunInvalidConfigError(SessionRunError):
     status_code = 422
+
+
+@dataclass(frozen=True, slots=True)
+class PersistedInlineAttachment:
+    file_id: str
+    name: str
+    media_type: str
+    size: int
+    sha256: str
+    content_base64: str
 
 
 class SessionRunService:
@@ -121,14 +136,18 @@ class SessionRunService:
         if payload.clientMessageId:
             params["clientMessageId"] = payload.clientMessageId
         if payload.attachments:
-            attachment_payloads = await self._attachment_payloads(
+            persisted_attachments = await self._persist_inline_attachments(
                 session_id=session.id,
                 user_id=user_id,
-                file_ids=[attachment.fileId for attachment in payload.attachments],
+                attachments=payload.attachments,
             )
-            params["attachments"] = attachment_payloads
+            params["attachments"] = [
+                _inline_attachment_payload(attachment)
+                for attachment in persisted_attachments
+            ]
             params["timelineAttachments"] = [
-                _timeline_attachment_payload(item) for item in attachment_payloads
+                _timeline_payload_from_persisted_inline_attachment(attachment)
+                for attachment in persisted_attachments
             ]
 
         await self._store.start_active_run(
@@ -403,7 +422,7 @@ class SessionRunService:
         session_id: str,
         user_id: str,
         file_ids: list[str],
-    ) -> list[dict[str, Any]]:
+    ) -> list[PersistedInlineAttachment]:
         payloads: list[dict[str, Any]] = []
         for file_id in file_ids:
             try:
@@ -428,6 +447,42 @@ class SessionRunService:
                 }
             )
         return payloads
+
+    async def _persist_inline_attachments(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        attachments: list[InlineAttachmentRef],
+    ) -> list[dict[str, Any]]:
+        """Persist create-and-start inline attachments into session file storage.
+
+        Side effects:
+        - decodes request base64
+        - writes each attachment into the server session-scoped file store
+        """
+
+        persisted: list[PersistedInlineAttachment] = []
+        for attachment in attachments:
+            data = _decode_inline_attachment(attachment)
+            saved = await self._store.save_user_uploaded_file(
+                session_id=session_id,
+                user_id=user_id,
+                name=attachment.name,
+                data=data,
+                media_type=attachment.mediaType,
+            )
+            persisted.append(
+                PersistedInlineAttachment(
+                    file_id=str(saved["fileId"]),
+                    name=str(saved["name"]),
+                    media_type=str(saved.get("mediaType") or ""),
+                    size=int(saved["size"]),
+                    sha256=str(saved["sha256"]),
+                    content_base64=attachment.contentBase64,
+                )
+            )
+        return persisted
 
     async def interrupt_session(
         self,
@@ -546,3 +601,46 @@ def _timeline_attachment_payload(value: dict[str, Any]) -> dict[str, Any]:
         "size": value.get("size"),
         "sha256": value.get("sha256"),
     }
+
+
+def _inline_attachment_payload(attachment: PersistedInlineAttachment) -> dict[str, Any]:
+    return {
+        "fileId": attachment.file_id,
+        "name": attachment.name,
+        "mediaType": attachment.media_type,
+        "contentBase64": attachment.content_base64,
+        "size": attachment.size,
+        "sha256": attachment.sha256,
+    }
+
+
+def _timeline_payload_from_persisted_inline_attachment(
+    attachment: PersistedInlineAttachment,
+) -> dict[str, Any]:
+    return {
+        "fileId": attachment.file_id,
+        "name": attachment.name,
+        "mediaType": attachment.media_type,
+        "size": attachment.size,
+        "sha256": attachment.sha256,
+    }
+
+
+def _decode_inline_attachment(attachment: InlineAttachmentRef) -> bytes:
+    try:
+        data = base64.b64decode(attachment.contentBase64, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise SessionRunInvalidConfigError(
+            f"attachment {attachment.fileId} contentBase64 is invalid"
+        ) from exc
+    if attachment.size is not None and attachment.size != len(data):
+        raise SessionRunInvalidConfigError(
+            f"attachment {attachment.fileId} size does not match content"
+        )
+    if attachment.sha256 is not None:
+        actual_sha256 = hashlib.sha256(data).hexdigest()
+        if attachment.sha256 != actual_sha256:
+            raise SessionRunInvalidConfigError(
+                f"attachment {attachment.fileId} sha256 does not match content"
+            )
+    return data

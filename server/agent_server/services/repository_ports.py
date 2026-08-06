@@ -288,11 +288,22 @@ class SessionRunRepository(
 
     async def create_session(self, **values: Any) -> SessionView: ...
 
+    async def save_user_uploaded_file(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        name: str,
+        data: bytes,
+        media_type: str | None = None,
+    ) -> dict[str, Any]: ...
+
     async def read_uploaded_file(
         self,
         *,
         session_id: str,
         file_id: str,
+        user_id: str,
     ) -> dict[str, Any]: ...
 
     async def resolve_connector_session_id(

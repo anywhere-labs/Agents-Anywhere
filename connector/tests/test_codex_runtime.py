@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import threading
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Any
 
 from openai_codex.generated.v2_all import (
@@ -2203,12 +2205,56 @@ async def _test_codex_runtime_materializes_attachments_for_turn_start() -> None:
     )
 
     assert result.ok is True
-    method, params = client.requests[-1]
+    method, params = next(
+        request for request in reversed(client.requests) if request[0] == "turn/start"
+    )
     assert method == "turn/start"
     attachment = params["attachments"][0]
     assert attachment["name"] == "note.txt"
     assert attachment["mediaType"] == "text/plain"
     assert attachment["path"].endswith("/sess_1/file_1-note.txt")
+
+
+def test_codex_runtime_materializes_inline_attachments_for_create_and_start(tmp_path, monkeypatch) -> None:
+    asyncio.run(
+        _test_codex_runtime_materializes_inline_attachments_for_create_and_start(
+            tmp_path,
+            monkeypatch,
+        )
+    )
+
+
+async def _test_codex_runtime_materializes_inline_attachments_for_create_and_start(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("AGENT_CONNECTOR_ATTACHMENTS_ROOT", str(tmp_path))
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    result = await runtime.create_and_start_session(
+        session_id="sess_inline",
+        content="read this",
+        attachments=(
+            RuntimeAttachment(
+                file_id="file_inline",
+                name="note.txt",
+                media_type="text/plain",
+                content_base64=base64.b64encode(b"hello inline").decode("ascii"),
+            ),
+        ),
+    )
+
+    assert result.ok is True
+    method, params = next(
+        request for request in reversed(client.requests) if request[0] == "turn/start"
+    )
+    assert method == "turn/start"
+    attachment = params["attachments"][0]
+    assert attachment["name"] == "note.txt"
+    assert attachment["mediaType"] == "text/plain"
+    assert Path(attachment["path"]).read_bytes() == b"hello inline"
 
 
 def test_codex_runtime_does_not_restore_running_after_fast_terminal_turn() -> None:
