@@ -18,7 +18,7 @@ from connector.core.runtime_owner import (
     runtime_path,
     write_runtime,
 )
-from connector.logging import install_rpc_log_sink
+from connector.logging import configure_connector_logging, install_rpc_log_sink
 from connector.server.client import BackendRpcClient
 from connector.server.pairing import (
     poll_pairing,
@@ -36,6 +36,7 @@ SHELL_LIFETIME_WARNING = (
 def main(argv: list[str] | None = None) -> None:
     parser = _build_parser()
     args = parser.parse_args(argv)
+    configure_connector_logging(debug=bool(getattr(args, "debug", False)))
     try:
         if args.command in {"pair", "login"}:
             asyncio.run(_pair(args))
@@ -90,6 +91,7 @@ def _build_parser() -> argparse.ArgumentParser:
     start.add_argument("--server-url", help="backend server URL")
     start.add_argument("--connector-id", help="connector id")
     start.add_argument("--connector-token", help="connector token")
+    _add_debug_arg(start)
 
     pair = subparsers.add_parser(
         "pair",
@@ -109,6 +111,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "rpc", help="serve the desktop connector JSON-RPC API over stdio"
     )
     _add_config_args(rpc)
+    _add_debug_arg(rpc)
     return parser
 
 
@@ -120,8 +123,17 @@ def _add_config_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_debug_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="show debug-level connector logs",
+    )
+
+
 def _add_pair_args(parser: argparse.ArgumentParser) -> None:
     _add_config_args(parser)
+    _add_debug_arg(parser)
     parser.add_argument(
         "server",
         nargs="?",
@@ -164,7 +176,12 @@ async def _rpc(args: argparse.Namespace) -> None:
         "connector.startPairing": controller.start_pairing,
         "connector.cancelPairing": controller.cancel_pairing,
     }
-    log_sink = install_rpc_log_sink(notify, remove_default_sink=True)
+    log_level = "DEBUG" if args.debug else "INFO"
+    log_sink = install_rpc_log_sink(
+        notify,
+        level=log_level,
+        remove_default_sink=True,
+    )
     server = await open_stdio_server(handlers)
     try:
         await server.serve_forever()

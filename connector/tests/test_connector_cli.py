@@ -152,6 +152,19 @@ def test_rpc_command_uses_config_path(tmp_path) -> None:
 
     assert args.command == "rpc"
     assert args.config == str(config_path)
+    assert args.debug is False
+
+
+def test_start_pair_and_rpc_accept_debug_flag() -> None:
+    parser = cli_module._build_parser()
+
+    start = parser.parse_args(["start", "--debug"])
+    pair = parser.parse_args(["pair", "http://127.0.0.1:8000", "--debug"])
+    rpc = parser.parse_args(["rpc", "--debug"])
+
+    assert start.debug is True
+    assert pair.debug is True
+    assert rpc.debug is True
 
 
 def test_pair_server_without_scheme_falls_back_to_http(monkeypatch) -> None:
