@@ -170,17 +170,8 @@ function buildComposerBlurLayers({
 async function loadInitialSessionState(
   token: string,
   sessionId: string,
-  options: { syncRuntime?: boolean; reason?: string } = {},
+  options: { reason?: string } = {},
 ): Promise<SessionRemoteState> {
-  if (options.syncRuntime) {
-    try {
-      await dashboardApi.syncSession(token, sessionId)
-    } catch {
-      // Opening a session should still work when the connector is offline or
-      // the runtime cannot provide a fresh snapshot. The HTTP snapshot remains
-      // the fallback source of truth.
-    }
-  }
   const snapshot = await dashboardApi.getSessionSnapshot(token, sessionId, INITIAL_TIMELINE_LIMIT, {
     reason: options.reason ?? "session-detail.initial-load",
   })
@@ -777,7 +768,6 @@ export function SessionDetail({
     void connect()
 
     loadInitialSessionState(token, sessionId, {
-      syncRuntime: getOptimisticSessionStateRef.current(sessionId) === null,
       reason: "session-detail.initial-load",
     })
       .then((next) => {
