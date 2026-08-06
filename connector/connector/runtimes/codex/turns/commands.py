@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
+from connector.logging import logger
 from connector.runtime_protocol import (
     RuntimeCommandResult,
     RuntimeInvalidRequestError,
@@ -88,7 +89,16 @@ class CodexCommandController:
             )
         )
         self.compact_tasks.add(task)
-        task.add_done_callback(self.compact_tasks.discard)
+        task.add_done_callback(self.handle_compact_task_done)
+
+    def handle_compact_task_done(self, task: asyncio.Task[None]) -> None:
+        self.compact_tasks.discard(task)
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            logger.debug("codex compact task cancelled")
+        except Exception:
+            logger.exception("codex compact task failed unexpectedly")
 
     async def _run_compact(
         self,
@@ -107,11 +117,22 @@ class CodexCommandController:
         """
         if self.client is None:
             return
+        logger.info(
+            "codex compact command starting session_id={} external_session_id={}",
+            session_id,
+            external_session_id,
+        )
         try:
             await self.client.compact_thread(external_session_id)
         except (RuntimeError, RuntimeInvalidRequestError) as exc:
             soft_reason = soft_codex_unavailable_reason(str(exc))
             if soft_reason is not None:
+                logger.warning(
+                    "codex compact command soft failed session_id={} external_session_id={} reason={}",
+                    session_id,
+                    external_session_id,
+                    soft_reason,
+                )
                 await self.session_states.update(
                     session_id=session_id,
                     external_session_id=external_session_id,
@@ -123,6 +144,13 @@ class CodexCommandController:
                     },
                 )
                 return
+            logger.warning(
+                "codex compact command failed session_id={} external_session_id={} error_type={} error={}",
+                session_id,
+                external_session_id,
+                exc.__class__.__name__,
+                str(exc) or exc.__class__.__name__,
+            )
             await self.publish_compact_start_failure_state(
                 session_id=session_id,
                 external_session_id=external_session_id,
@@ -131,12 +159,25 @@ class CodexCommandController:
             )
             return
         except Exception as exc:
+            logger.warning(
+                "codex compact command failed session_id={} external_session_id={} error_type={} error={}",
+                session_id,
+                external_session_id,
+                exc.__class__.__name__,
+                str(exc) or exc.__class__.__name__,
+            )
             await self.publish_compact_start_failure_state(
                 session_id=session_id,
                 external_session_id=external_session_id,
                 error_code=exc.__class__.__name__,
                 error_message=str(exc) or exc.__class__.__name__,
             )
+            return
+        logger.info(
+            "codex compact command start request completed session_id={} external_session_id={}",
+            session_id,
+            external_session_id,
+        )
 
     async def publish_compact_start_failure_state(
         self,

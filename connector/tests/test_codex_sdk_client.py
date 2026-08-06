@@ -138,6 +138,10 @@ def test_codex_sdk_client_resumes_thread_after_read_handle_cache() -> None:
     asyncio.run(_test_codex_sdk_client_resumes_thread_after_read_handle_cache())
 
 
+def test_codex_sdk_client_resumes_thread_before_compact() -> None:
+    asyncio.run(_test_codex_sdk_client_resumes_thread_before_compact())
+
+
 def test_codex_sdk_client_retries_turn_start_after_thread_not_found() -> None:
     asyncio.run(_test_codex_sdk_client_retries_turn_start_after_thread_not_found())
 
@@ -320,6 +324,26 @@ async def _test_codex_sdk_client_resumes_thread_after_read_handle_cache() -> Non
         "thread/resume:thread_existing",
         "turn/start:thread_existing",
     ]
+
+
+async def _test_codex_sdk_client_resumes_thread_before_compact() -> None:
+    sdk = _FakeLowLevelSdkModule()
+    native = _FakeLowLevelAsyncCodex()
+    client = CodexSdkClient(native, sdk=sdk)
+
+    async def handler(message: Any) -> None:
+        native.handled.append(message)
+
+    await client.start(handler)
+    result = await client.compact_thread("thread_existing")
+    await client.stop()
+
+    assert result.payload == {"compacted": True}
+    assert native.low_level.request_order == [
+        "thread/resume:thread_existing",
+        "thread/compact/start:thread_existing",
+    ]
+    assert native.low_level.thread_resume_params[0]["threadId"] == "thread_existing"
 
 
 async def _test_codex_sdk_client_retries_turn_start_after_thread_not_found() -> None:
@@ -586,7 +610,14 @@ class _FakeThread:
         return _FakeTurn()
 
     async def compact(self) -> dict[str, Any]:
-        return {}
+        request_order = getattr(
+            getattr(self.codex, "low_level", None),
+            "request_order",
+            None,
+        )
+        if isinstance(request_order, list):
+            request_order.append(f"thread/compact/start:{self.id}")
+        return {"compacted": True}
 
 
 class _FakeTurn:

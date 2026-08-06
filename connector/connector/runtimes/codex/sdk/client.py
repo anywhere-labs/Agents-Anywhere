@@ -31,6 +31,7 @@ from connector.runtimes.codex.sdk.runtime_client import (
     CodexInterruptTurnRequest,
     CodexModelListResult,
     CodexNotificationMessage,
+    CodexResumeThreadRequest,
     CodexRuntimeClient,
     CodexStartThreadRequest,
     CodexStartTurnRequest,
@@ -272,16 +273,23 @@ class CodexSdkClient:
         return CodexTurnResult(turn_id=id_of(turn), payload=payload)
 
     async def compact_thread(self, thread_id: str) -> CodexCompactResult:
+        await ensure_codex_initialized(self._client)
+        low_level_client = codex_low_level_client(self._client)
+        if low_level_client is not None:
+            await self.ensure_thread_resumed(
+                low_level_client,
+                CodexResumeThreadRequest(thread_id=thread_id),
+            )
         thread = self._thread_handle(thread_id)
         result = await thread.compact()
         return CodexCompactResult(payload=compact_result(result))
 
-    async def ensure_thread_resumed_for_turn(
+    async def ensure_thread_resumed(
         self,
         low_level_client: Any,
-        request: CodexStartTurnRequest,
+        request: CodexResumeThreadRequest,
     ) -> None:
-        """Resume an existing Codex thread before starting a turn.
+        """Resume an existing Codex thread before a thread-scoped operation.
 
         Side effects:
         - sends thread/resume to the Codex app-server when this process has not
@@ -304,6 +312,30 @@ class CodexSdkClient:
             self._remember_thread(thread)
         if thread_id is not None:
             self._loaded_thread_ids.add(thread_id)
+
+    async def ensure_thread_resumed_for_turn(
+        self,
+        low_level_client: Any,
+        request: CodexStartTurnRequest,
+    ) -> None:
+        """Resume an existing Codex thread before starting a turn.
+
+        Side effects:
+        - sends thread/resume to the Codex app-server when this process has not
+          loaded the thread yet
+        - caches an AsyncThread handle for later thread-scoped operations
+        """
+
+        await self.ensure_thread_resumed(
+            low_level_client,
+            CodexResumeThreadRequest(
+                thread_id=request.thread_id,
+                model=request.model,
+                approval_policy=request.approval_policy,
+                approvals_reviewer=request.approvals_reviewer,
+                sandbox=request.sandbox,
+            ),
+        )
 
     async def start_low_level_turn_with_resume_retry(
         self,
@@ -658,7 +690,9 @@ def codex_thread_start_params(request: CodexStartThreadRequest) -> ThreadStartPa
     )
 
 
-def codex_thread_resume_params(request: CodexStartTurnRequest) -> ThreadResumeParams:
+def codex_thread_resume_params(
+    request: CodexResumeThreadRequest | CodexStartTurnRequest,
+) -> ThreadResumeParams:
     approval_policy, approvals_reviewer = codex_approval_settings(
         request.approval_policy,
         request.approvals_reviewer,

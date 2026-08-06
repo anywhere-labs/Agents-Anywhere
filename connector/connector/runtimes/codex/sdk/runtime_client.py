@@ -35,6 +35,15 @@ class CodexStartTurnRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class CodexResumeThreadRequest:
+    thread_id: str
+    model: str | None = None
+    approval_policy: str | None = None
+    approvals_reviewer: str | None = None
+    sandbox: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class CodexSteerTurnRequest:
     thread_id: str
     turn_id: str
