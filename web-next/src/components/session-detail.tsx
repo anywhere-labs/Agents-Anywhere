@@ -99,7 +99,6 @@ const LOAD_OLDER_SCROLL_THRESHOLD = 96
 const AUTO_SCROLL_BOTTOM_DISTANCE = 180
 const INITIAL_SCROLL_LAYOUT_QUIET_MS = 120
 const INITIAL_SCROLL_LAYOUT_FALLBACK_MS = 900
-const INITIAL_SCROLL_ANIMATION_OFFSET_PX = 280
 const SCROLL_TO_BOTTOM_INTERVAL_MS = 1000
 const SCROLL_TO_BOTTOM_PRUNE_CHECK_MS = 120
 const COMMAND_QUERY_DEBOUNCE_MS = 120
@@ -1055,9 +1054,8 @@ export function SessionDetail({
       }
     }
 
-    const scrollNearBottomForInitialAnimation = (viewport: HTMLDivElement) => {
-      const bottomScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
-      viewport.scrollTop = Math.max(0, bottomScrollTop - INITIAL_SCROLL_ANIMATION_OFFSET_PX)
+    const scrollToInitialBottom = (viewport: HTMLDivElement) => {
+      viewport.scrollTop = viewport.scrollHeight
     }
 
     // Side effects: observes timeline layout, closes the first-screen loading phase,
@@ -1090,13 +1088,13 @@ export function SessionDetail({
     const viewport = timelineRef.current
     const content = timelineContentRef.current
     if (viewport) {
-      scrollNearBottomForInitialAnimation(viewport)
+      scrollToInitialBottom(viewport)
       setShowScrollBottom(false)
     }
     if (content) {
       resizeObserver = new ResizeObserver(() => {
         const latestViewport = timelineRef.current
-        if (latestViewport) scrollNearBottomForInitialAnimation(latestViewport)
+        if (latestViewport) scrollToInitialBottom(latestViewport)
         scheduleCompleteAfterQuietLayout()
       })
       resizeObserver.observe(content)
