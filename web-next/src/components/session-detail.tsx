@@ -743,6 +743,7 @@ export function SessionDetail({
     const applyEvent = (event: ProtocolEventEnvelope) => {
       if (cancelled || event.sessionId !== sessionId) return
       if (event.type === "keepalive") return
+      if (event.sequence <= nextSeqRef.current) return
       if (event.type === "session.refetch_required") {
         void recoverEvents(nextSeqRef.current, "session.refetch_required")
         return
@@ -752,7 +753,10 @@ export function SessionDetail({
         return
       }
       markAutoScrollIfNearBottomRef.current()
-      setState((current) => mergeSessionEvent(current, event))
+      setState((current) => {
+        if (current && event.sequence <= current.nextSeq) return current
+        return mergeSessionEvent(current, event)
+      })
       const item = readPayloadValue<TimelineItem>(event.payload.item)
       if (item) clearResolvedOptimisticMessagesRef.current(sessionId, [item])
       const items = Array.isArray(event.payload.items)
