@@ -71,6 +71,7 @@ from connector.runtimes.codex.timeline.items import (
     CodexAgentMessageItem,
     CodexCommandExecutionItem,
     CodexContextCompactionItem,
+    CodexDynamicToolCallItem,
     CodexFileChangeItem,
     CodexMcpToolCallItem,
     CodexReasoningItem,
@@ -135,6 +136,7 @@ def test_codex_timeline_native_item_classes_are_explicitly_mapped() -> None:
     assert codex_timeline_item_class("runtimeMessage") is CodexRuntimeMessageItem
     assert codex_timeline_item_class("commandExecution") is CodexCommandExecutionItem
     assert codex_timeline_item_class("mcpToolCall") is CodexMcpToolCallItem
+    assert codex_timeline_item_class("dynamicToolCall") is CodexDynamicToolCallItem
     assert codex_timeline_item_class("webSearch") is CodexWebSearchItem
     assert (
         codex_timeline_item_class("contextCompaction")
@@ -1620,6 +1622,73 @@ async def _test_codex_runtime_reads_typed_tool_items_from_snapshot() -> None:
         "kind": "web_search",
         "query": "Agents Anywhere",
         "action": "search",
+    }
+
+
+def test_codex_runtime_reads_typed_dynamic_tool_item_from_snapshot() -> None:
+    asyncio.run(_test_codex_runtime_reads_typed_dynamic_tool_item_from_snapshot())
+
+
+async def _test_codex_runtime_reads_typed_dynamic_tool_item_from_snapshot() -> None:
+    client = FakeCodexClient()
+    client.results["thread/read"] = {
+        "thread": Thread.model_validate(
+            {
+                "id": "thread_1",
+                "cliVersion": "0.1.0",
+                "createdAt": 1,
+                "cwd": "/repo",
+                "ephemeral": False,
+                "modelProvider": "openai",
+                "preview": "hello",
+                "sessionId": "codex_session_1",
+                "source": "appServer",
+                "status": {"type": "notLoaded"},
+                "turns": [
+                    {
+                        "id": "turn_dynamic",
+                        "status": "completed",
+                        "items": [
+                            {
+                                "id": "dyn_1",
+                                "type": "dynamicToolCall",
+                                "namespace": "browser",
+                                "tool": "open",
+                                "arguments": {"url": "https://example.com"},
+                                "status": "completed",
+                                "success": True,
+                                "contentItems": [
+                                    {"type": "inputText", "text": "opened"},
+                                ],
+                            },
+                        ],
+                    }
+                ],
+                "updatedAt": 2,
+            }
+        )
+    }
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=client)
+
+    snapshot = await runtime.get_session_snapshot(
+        "sess_1",
+        external_session_id="thread_1",
+    )
+
+    assert len(snapshot.items) == 1
+    item = snapshot.items[0]
+    assert item.id == "dyn_1"
+    assert item.type == "tool"
+    assert item.turn_id == "turn_dynamic"
+    assert item.source["itemId"] == "dyn_1"
+    assert item.source["rawType"] == "dynamicToolCall"
+    assert item.content == {
+        "kind": "mcp",
+        "server": "browser",
+        "tool": "open",
+        "arguments": {"url": "https://example.com"},
+        "output": "opened",
+        "error": None,
     }
 
 

@@ -10,6 +10,8 @@ from openai_codex.generated.v2_all import (
     CommandExecutionThreadItem,
     ContentItem,
     ContextCompactionThreadItem,
+    DynamicToolCallOutputContentItem,
+    DynamicToolCallThreadItem,
     FileChangeOutputDeltaNotification,
     FileChangePatchUpdatedNotification,
     FileChangeThreadItem,
@@ -17,7 +19,9 @@ from openai_codex.generated.v2_all import (
     FunctionCallResponseItem,
     ImageUserInput,
     InputImageContentItem,
+    InputImageDynamicToolCallOutputContentItem,
     InputTextContentItem,
+    InputTextDynamicToolCallOutputContentItem,
     ItemCompletedNotification,
     ItemStartedNotification,
     LocalImageUserInput,
@@ -245,6 +249,18 @@ def timeline_projection_from_thread_item(
             output=mcp_tool_call_result(root),
             message=mcp_tool_call_error_message(root),
         )
+    if isinstance(root, DynamicToolCallThreadItem):
+        return CodexTimelineProjection(
+            native_id=root.id,
+            raw_type="dynamicToolCall",
+            status=enum_value(root.status) or event_status,
+            role="tool",
+            turn_id=turn_id,
+            server=root.namespace,
+            name=root.tool,
+            arguments=root.arguments,
+            output=dynamic_tool_call_output(root.content_items),
+        )
     if isinstance(root, WebSearchThreadItem):
         return CodexTimelineProjection(
             native_id=root.id,
@@ -342,6 +358,21 @@ def mcp_tool_call_error_message(item: McpToolCallThreadItem) -> str | None:
     if item.error is None:
         return None
     return item.error.message
+
+
+def dynamic_tool_call_output(
+    content_items: Sequence[DynamicToolCallOutputContentItem] | None,
+) -> str | None:
+    if content_items is None:
+        return None
+    parts: list[str] = []
+    for item in content_items:
+        root = item.root
+        if isinstance(root, InputTextDynamicToolCallOutputContentItem):
+            parts.append(root.text)
+        elif isinstance(root, InputImageDynamicToolCallOutputContentItem):
+            parts.append(root.image_url)
+    return "\n".join(parts) if parts else None
 
 
 def web_search_action_value(item: WebSearchThreadItem) -> object | None:

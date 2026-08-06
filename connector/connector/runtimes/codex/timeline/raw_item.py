@@ -31,6 +31,7 @@ def timeline_item_type_from_raw_type(value: str) -> str:
     if value in {
         "commandExecution",
         "mcpToolCall",
+        "dynamicToolCall",
         "webSearch",
         "function_call",
         "function_call_output",

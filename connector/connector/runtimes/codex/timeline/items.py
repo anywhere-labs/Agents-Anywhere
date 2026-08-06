@@ -156,6 +156,12 @@ class CodexMcpToolCallItem(CodexTimelineItem):
 
 
 @dataclass(frozen=True, slots=True)
+class CodexDynamicToolCallItem(CodexTimelineItem):
+    expected_type: ClassVar[TimelineItemType | None] = "tool"
+    expected_native_item_types: ClassVar[tuple[str, ...]] = ("dynamicToolCall",)
+
+
+@dataclass(frozen=True, slots=True)
 class CodexWebSearchItem(CodexTimelineItem):
     expected_type: ClassVar[TimelineItemType | None] = "tool"
     expected_native_item_types: ClassVar[tuple[str, ...]] = ("webSearch",)
@@ -222,6 +228,7 @@ CODEX_TIMELINE_ITEM_CLASS_BY_NATIVE_TYPE: Mapping[str, type[CodexTimelineItem]] 
     "contextCompaction": CodexContextCompactionItem,
     "commandExecution": CodexCommandExecutionItem,
     "mcpToolCall": CodexMcpToolCallItem,
+    "dynamicToolCall": CodexDynamicToolCallItem,
     "webSearch": CodexWebSearchItem,
     "function_call": CodexFunctionCallItem,
     "function_call_output": CodexFunctionCallOutputItem,
