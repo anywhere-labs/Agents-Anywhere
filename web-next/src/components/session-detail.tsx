@@ -303,6 +303,7 @@ export function SessionDetail({
   const [commandQuery, setCommandQuery] = React.useState<string | null>(null)
   const [runtimeCommands, setRuntimeCommands] = React.useState<RuntimeCommand[]>([])
   const [commandsLoading, setCommandsLoading] = React.useState(false)
+  const [blockingInteractionStackHeight, setBlockingInteractionStackHeight] = React.useState(0)
   const [timelineGroupOpenByKey, setTimelineGroupOpenByKey] = React.useState<Record<string, boolean>>({})
   const [timelineItemOpenById, setTimelineItemOpenById] = React.useState<Record<string, boolean>>({})
   const [composerDraftState, setComposerDraftState] = React.useState<ComposerDraftState>(() => ({
@@ -318,6 +319,7 @@ export function SessionDetail({
   const pendingPrependScrollRestoreRef = React.useRef<{ scrollHeight: number; scrollTop: number } | null>(null)
   const lastScrollToBottomAtRef = React.useRef(0)
   const scrollToBottomTimerRef = React.useRef<number | null>(null)
+  const initialScrollFrameRef = React.useRef<number | null>(null)
   const pruneAfterScrollTimerRef = React.useRef<number | null>(null)
   const streamConnectedRef = React.useRef(false)
   const processedEventIdsRef = React.useRef<Set<string>>(new Set())
@@ -613,6 +615,9 @@ export function SessionDetail({
       if (scrollToBottomTimerRef.current !== null) {
         window.clearTimeout(scrollToBottomTimerRef.current)
       }
+      if (initialScrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(initialScrollFrameRef.current)
+      }
       if (pruneAfterScrollTimerRef.current !== null) {
         window.clearTimeout(pruneAfterScrollTimerRef.current)
       }
@@ -670,6 +675,10 @@ export function SessionDetail({
 
   React.useEffect(() => {
     initialScrollDoneRef.current = false
+    if (initialScrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(initialScrollFrameRef.current)
+      initialScrollFrameRef.current = null
+    }
     processedEventIdsRef.current = new Set()
     setSending(false)
     setInterrupting(false)
@@ -1054,15 +1063,6 @@ export function SessionDetail({
       updateScrollBottomState()
       return
     }
-    if (!initialScrollDoneRef.current && state) {
-      initialScrollDoneRef.current = true
-      const viewport = timelineRef.current
-      if (viewport) {
-        viewport.scrollTop = viewport.scrollHeight
-        setShowScrollBottom(false)
-      }
-      return
-    }
     if (forceScrollOnNextUpdateRef.current || autoScrollOnNextUpdateRef.current) {
       forceScrollOnNextUpdateRef.current = false
       autoScrollOnNextUpdateRef.current = false
@@ -1071,6 +1071,48 @@ export function SessionDetail({
     }
     updateScrollBottomState()
   }, [runtimeStatus, scrollToBottomThrottled, state?.items.length, state?.notices.length, updateScrollBottomState])
+
+  React.useEffect(() => {
+    if (initialScrollDoneRef.current || loading || !state) return
+
+    let cancelled = false
+    let stableFrames = 0
+    let lastScrollHeight = -1
+    let attempts = 0
+
+    const settleAndScroll = () => {
+      if (cancelled) return
+      const viewport = timelineRef.current
+      if (!viewport) {
+        initialScrollFrameRef.current = window.requestAnimationFrame(settleAndScroll)
+        return
+      }
+
+      const currentScrollHeight = viewport.scrollHeight
+      stableFrames = currentScrollHeight === lastScrollHeight ? stableFrames + 1 : 0
+      lastScrollHeight = currentScrollHeight
+      attempts += 1
+
+      if (stableFrames >= 4 || attempts >= 45) {
+        initialScrollDoneRef.current = true
+        initialScrollFrameRef.current = null
+        viewport.scrollTop = viewport.scrollHeight
+        setShowScrollBottom(false)
+        return
+      }
+
+      initialScrollFrameRef.current = window.requestAnimationFrame(settleAndScroll)
+    }
+
+    initialScrollFrameRef.current = window.requestAnimationFrame(settleAndScroll)
+    return () => {
+      cancelled = true
+      if (initialScrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(initialScrollFrameRef.current)
+        initialScrollFrameRef.current = null
+      }
+    }
+  }, [loading, state])
 
   const scrollToBottom = React.useCallback(() => {
     const viewport = timelineRef.current
@@ -1163,10 +1205,20 @@ export function SessionDetail({
     [state?.notices],
   )
   const blockingInteractionCount = blockingInteractionList.length
+  const timelineBottomPadding = blockingInteractionStackHeight > 0
+    ? `calc(11rem + ${blockingInteractionStackHeight}px)`
+    : undefined
+  const scrollBottomButtonOffset = `calc(9rem + ${blockingInteractionStackHeight}px)`
   const interactionTargetIds = React.useMemo(
     () => new Set(timelineInteractions.map(noticeTimelineTargetId).filter((id): id is string => Boolean(id))),
     [timelineInteractions],
   )
+
+  React.useEffect(() => {
+    if (blockingInteractionCount === 0 && blockingInteractionStackHeight !== 0) {
+      setBlockingInteractionStackHeight(0)
+    }
+  }, [blockingInteractionCount, blockingInteractionStackHeight])
   const timelineGroups = React.useMemo(
     () => groupTimelineItems(state?.items ?? [], interactionTargetIds),
     [interactionTargetIds, state?.items],
@@ -1213,9 +1265,9 @@ export function SessionDetail({
           <div
             aria-busy={runtimeStatus === "waiting" || runtimeStatus === "pending" || runtimeStatus === "running"}
             className={cn(
-              "mx-auto flex w-full min-w-0 max-w-4xl flex-col gap-3 overflow-hidden px-5 pb-44 pt-20",
-              blockingInteractionCount > 0 && "pb-[30rem]",
+              "mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-3 overflow-hidden px-4 pb-44 pt-20",
             )}
+            style={timelineBottomPadding ? { paddingBottom: timelineBottomPadding } : undefined}
           >
             {loadingOlder ? (
               <div className="flex justify-center py-2 text-muted-foreground">
@@ -1297,10 +1349,8 @@ export function SessionDetail({
             type="button"
             size="sm"
             variant="secondary"
-            className={cn(
-              "absolute left-1/2 z-30 h-8 -translate-x-1/2 gap-1.5 rounded-full border bg-background/95 px-3 shadow-lg backdrop-blur",
-              blockingInteractionCount > 0 ? "bottom-[26rem]" : "bottom-36",
-            )}
+            className="absolute left-1/2 z-30 h-8 -translate-x-1/2 gap-1.5 rounded-full border bg-background/95 px-3 shadow-lg backdrop-blur"
+            style={{ bottom: scrollBottomButtonOffset }}
             onClick={scrollToBottom}
           >
             <ArrowDown data-icon="inline-start" />
@@ -1318,6 +1368,7 @@ export function SessionDetail({
           notices={blockingInteractionList}
           resolvingNoticeId={resolvingNoticeId}
           resolvingActionId={resolvingActionId}
+          onHeightChange={setBlockingInteractionStackHeight}
           onRespondInteraction={handleRespondInteraction}
         />
         <div className="pointer-events-auto relative">
@@ -1383,20 +1434,40 @@ function BlockingInteractionStack({
   notices,
   resolvingNoticeId,
   resolvingActionId,
+  onHeightChange,
   onRespondInteraction,
 }: {
   notices: Notice[]
   resolvingNoticeId: string | null
   resolvingActionId: string | null
+  onHeightChange: (height: number) => void
   onRespondInteraction: (noticeId: string, actionId: string) => void
 }) {
+  const stackRef = React.useRef<HTMLDivElement | null>(null)
+
+  React.useLayoutEffect(() => {
+    const node = stackRef.current
+    if (!node) return
+
+    const publishHeight = () => {
+      onHeightChange(Math.ceil(node.getBoundingClientRect().height))
+    }
+
+    publishHeight()
+    const resizeObserver = new ResizeObserver(publishHeight)
+    resizeObserver.observe(node)
+    return () => {
+      resizeObserver.disconnect()
+    }
+  }, [onHeightChange, notices.length])
+
   if (notices.length === 0) return null
 
   const activeNotice = notices[0]!
   const backingNotices = notices.slice(1, 4).reverse()
 
   return (
-    <div className="pointer-events-auto mx-auto w-full max-w-3xl px-4 pb-1">
+    <div ref={stackRef} className="pointer-events-auto mx-auto w-full max-w-3xl px-4 pb-1">
       <div className={cn("relative", backingNotices.length > 0 && "pt-4")}>
         {backingNotices.map((notice, index) => {
           const depth = backingNotices.length - index

@@ -94,8 +94,11 @@ function MessageCard({ token, session, item }: { token: string; session: Session
   )
 
   return (
-    <div className={cn("flex min-w-0 max-w-full overflow-hidden", isUser && "justify-end")}>
-      <div className={cn("flex min-w-0 max-w-[88%] flex-col gap-2 text-sm leading-relaxed", isUser && "items-end")}>
+    <div className={cn("flex min-w-0 w-full max-w-full overflow-hidden", isUser && "justify-end")}>
+      <div className={cn(
+        "flex min-w-0 w-full flex-col gap-2 text-sm leading-relaxed",
+        isUser ? "max-w-[88%] items-end" : "max-w-full",
+      )}>
         {isUser ? attachmentList : null}
         {content ? (
           <div
