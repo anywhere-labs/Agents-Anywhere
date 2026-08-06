@@ -65,7 +65,35 @@ from connector.server.auth import ConnectorAuthenticationError
 from connector.server.capabilities import protocol_capabilities_from_inventory
 from connector.server.client import BackendRpcClient
 from connector.server.ingest import coalesce_timeline_item_upserts
+from connector.server.rpc import (
+    RPC_LOG_REDACTED,
+    RPC_LOG_TRUNCATED,
+    sanitize_rpc_log_value,
+)
 from connector.server.runtime_sync import RuntimeSyncRunner
+
+
+def test_rpc_log_payload_sanitizer_redacts_secrets_and_bounds_size() -> None:
+    payload = {
+        "runtime": "codex",
+        "config": {
+            "environment": {"OPENAI_API_KEY": "sk-secret"},
+            "model": "gpt-5.6-sol",
+        },
+        "token": "cxt_secret",
+        "content": "x" * 5000,
+        "items": list(range(45)),
+    }
+
+    sanitized = sanitize_rpc_log_value(payload)
+
+    assert sanitized["runtime"] == "codex"
+    assert sanitized["config"]["environment"] == RPC_LOG_REDACTED
+    assert sanitized["config"]["model"] == "gpt-5.6-sol"
+    assert sanitized["token"] == RPC_LOG_REDACTED
+    assert sanitized["content"].endswith(RPC_LOG_TRUNCATED)
+    assert len(sanitized["items"]) == 41
+    assert sanitized["items"][-1] == f"{RPC_LOG_TRUNCATED}: 5 more items"
 
 
 def test_platform_timeline_item_converts_to_runtime_wire_item() -> None:

@@ -3,13 +3,40 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any, Protocol
 
 from connector.logging import logger
 from connector.runtime_protocol import RuntimeProtocolError
 
 ConnectorDispatcher = Callable[[str, dict[str, Any]], Awaitable[Any]]
+
+RPC_LOG_REDACTED = "<redacted>"
+RPC_LOG_TRUNCATED = "<truncated>"
+RPC_LOG_MAX_DEPTH = 6
+RPC_LOG_MAX_ITEMS = 40
+RPC_LOG_MAX_STRING_LENGTH = 4000
+RPC_LOG_EXACT_SECRET_KEYS = frozenset(
+    {
+        "auth",
+        "access_token",
+        "accesstoken",
+        "api_key",
+        "apikey",
+        "authorization",
+        "bearer",
+        "connector_token",
+        "connectortoken",
+        "cookie",
+        "environment",
+        "password",
+        "secret",
+        "token",
+    }
+)
+RPC_LOG_PARTIAL_SECRET_KEYS = frozenset(
+    key for key in RPC_LOG_EXACT_SECRET_KEYS if key != "auth"
+)
 
 
 class WebSocketSender(Protocol):
@@ -51,8 +78,20 @@ class ConnectorRpcChannel:
         params = message.get("params") if isinstance(message.get("params"), dict) else {}
         if not isinstance(request_id, str) or not isinstance(method, str):
             return
+        logger.debug(
+            "connector rpc request received method={} id={} payload={}",
+            method,
+            request_id,
+            sanitize_rpc_log_value(params),
+        )
         try:
             result = await dispatch(method, params)
+            logger.debug(
+                "connector rpc request completed method={} id={} result={}",
+                method,
+                request_id,
+                sanitize_rpc_log_value(result),
+            )
             await self.send_response(request_id, ok=True, result=result)
         except RuntimeProtocolError as exc:
             logger.warning(
@@ -62,6 +101,12 @@ class ConnectorRpcChannel:
                 exc.code,
                 str(exc),
             )
+            logger.debug(
+                "connector rpc request failed method={} id={} error={}",
+                method,
+                request_id,
+                sanitize_rpc_log_value({"code": exc.code, "message": str(exc)}),
+            )
             await self.send_response(
                 request_id,
                 ok=False,
@@ -70,6 +115,12 @@ class ConnectorRpcChannel:
         except Exception as exc:  # noqa: BLE001
             logger.exception("connector request failed method={} id={}", method, request_id)
             code = getattr(exc, "code", None) or exc.__class__.__name__
+            logger.debug(
+                "connector rpc request failed method={} id={} error={}",
+                method,
+                request_id,
+                sanitize_rpc_log_value({"code": code, "message": str(exc)}),
+            )
             await self.send_response(
                 request_id,
                 ok=False,
@@ -118,6 +169,11 @@ class ConnectorRpcChannel:
             logger.exception("connector rpc request task failed")
 
     async def send_notification(self, method: str, params: dict[str, Any]) -> None:
+        logger.debug(
+            "connector rpc notification sending method={} payload={}",
+            method,
+            sanitize_rpc_log_value(params),
+        )
         await self.send_json({"type": "notification", "method": method, "params": params})
 
     async def send_response(
@@ -133,6 +189,13 @@ class ConnectorRpcChannel:
             payload["result"] = result
         else:
             payload["error"] = error or {"code": "error", "message": "connector request failed"}
+        response_body = payload.get("result") if ok else payload.get("error")
+        logger.debug(
+            "connector rpc response sending id={} ok={} payload={}",
+            request_id,
+            ok,
+            sanitize_rpc_log_value(response_body),
+        )
         await self.send_json(payload)
 
     async def send_json(self, payload: dict[str, Any]) -> None:
@@ -163,3 +226,59 @@ class ConnectorRpcChannel:
                 wait_elapsed_ms,
                 send_elapsed_ms,
             )
+
+
+def sanitize_rpc_log_value(value: Any) -> Any:
+    return sanitize_rpc_log_node(value, depth=0)
+
+
+def sanitize_rpc_log_node(value: Any, depth: int) -> Any:
+    if depth >= RPC_LOG_MAX_DEPTH:
+        return RPC_LOG_TRUNCATED
+    if isinstance(value, Mapping):
+        return sanitize_rpc_log_mapping(value, depth)
+    if isinstance(value, str):
+        return sanitize_rpc_log_string(value)
+    if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray, str)):
+        return sanitize_rpc_log_sequence(value, depth)
+    if isinstance(value, (bytes, bytearray)):
+        return f"<{len(value)} bytes>"
+    return value
+
+
+def sanitize_rpc_log_mapping(value: Mapping[Any, Any], depth: int) -> dict[str, Any]:
+    sanitized: dict[str, Any] = {}
+    for index, item in enumerate(value.items()):
+        if index >= RPC_LOG_MAX_ITEMS:
+            sanitized[RPC_LOG_TRUNCATED] = f"{len(value) - RPC_LOG_MAX_ITEMS} more keys"
+            break
+        key, child = item
+        key_text = str(key)
+        if rpc_log_key_is_secret(key_text):
+            sanitized[key_text] = RPC_LOG_REDACTED
+            continue
+        sanitized[key_text] = sanitize_rpc_log_node(child, depth + 1)
+    return sanitized
+
+
+def sanitize_rpc_log_sequence(value: Sequence[Any], depth: int) -> list[Any]:
+    sanitized = [
+        sanitize_rpc_log_node(child, depth + 1)
+        for child in list(value[:RPC_LOG_MAX_ITEMS])
+    ]
+    if len(value) > RPC_LOG_MAX_ITEMS:
+        sanitized.append(f"{RPC_LOG_TRUNCATED}: {len(value) - RPC_LOG_MAX_ITEMS} more items")
+    return sanitized
+
+
+def sanitize_rpc_log_string(value: str) -> str:
+    if len(value) <= RPC_LOG_MAX_STRING_LENGTH:
+        return value
+    return f"{value[:RPC_LOG_MAX_STRING_LENGTH]}{RPC_LOG_TRUNCATED}"
+
+
+def rpc_log_key_is_secret(key: str) -> bool:
+    normalized = key.replace("-", "_").lower()
+    if normalized in RPC_LOG_EXACT_SECRET_KEYS:
+        return True
+    return any(secret_key in normalized for secret_key in RPC_LOG_PARTIAL_SECRET_KEYS)
