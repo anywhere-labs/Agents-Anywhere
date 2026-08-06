@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
 from openai_codex.generated.v2_all import Thread
 
+from connector.logging import logger
 from connector.runtime_protocol import (
     RuntimeModelCatalog,
     RuntimePermissionCatalog,
@@ -56,6 +58,7 @@ class CodexSessionReader:
         if self.client is None:
             return ()
         await self.ensure_started()
+        started_at = time.monotonic()
         result = await self.client.list_threads(limit=limit, cursor=cursor)
         sessions: list[SessionMeta] = []
         for thread_ref_mapping in result.threads:
@@ -69,6 +72,15 @@ class CodexSessionReader:
                 force=force,
             )
             sessions.append(session)
+        elapsed_ms = (time.monotonic() - started_at) * 1000
+        logger.info(
+            "codex session list completed limit={} cursor_present={} force={} returned={} elapsed_ms={:.1f}",
+            limit,
+            cursor is not None,
+            force,
+            len(sessions),
+            elapsed_ms,
+        )
         return tuple(sessions[:limit])
 
     async def _session_meta_from_thread_ref(
@@ -148,6 +160,7 @@ class CodexSessionReader:
         if self.client is None:
             return {}
         await self.ensure_started()
+        started_at = time.monotonic()
         result = await self.client.read_thread(
             thread_id=external_session_id,
             include_turns=False,
@@ -158,11 +171,19 @@ class CodexSessionReader:
             thread_state = dict(result.thread)
         if not thread_state:
             return {}
-        return await selections_from_thread_state(
+        selections = await selections_from_thread_state(
             thread_state,
             lambda: self.list_model_catalog(None, 100),
             lambda: self.list_permission_catalog(None, 100),
         )
+        elapsed_ms = (time.monotonic() - started_at) * 1000
+        logger.info(
+            "codex session state read completed external_session_id={} selection_scopes={} elapsed_ms={:.1f}",
+            external_session_id,
+            sorted(selections.keys()),
+            elapsed_ms,
+        )
+        return selections
 
     async def get_session_snapshot(
         self,
@@ -180,10 +201,13 @@ class CodexSessionReader:
                 metadata={"source": "codex.runtime.basic"},
             )
         await self.ensure_started()
+        started_at = time.monotonic()
         result = await self.client.read_thread(
             thread_id=external_session_id,
             include_turns=True,
         )
+        read_elapsed_ms = (time.monotonic() - started_at) * 1000
+        project_started_at = time.monotonic()
         if isinstance(result.thread, Thread) and self.timeline is not None:
             items = self.timeline.items_from_sdk_thread_snapshot(
                 session_id=session_id,
@@ -208,6 +232,16 @@ class CodexSessionReader:
                 limit=limit,
                 pending_messages=self.pending_messages,
             )
+        project_elapsed_ms = (time.monotonic() - project_started_at) * 1000
+        logger.info(
+            "codex session snapshot built session_id={} external_session_id={} limit={} items={} read_elapsed_ms={:.1f} project_elapsed_ms={:.1f}",
+            session_id,
+            external_session_id,
+            limit,
+            len(items),
+            read_elapsed_ms,
+            project_elapsed_ms,
+        )
         return RuntimeTimelineSnapshot(
             session_id=session_id,
             external_session_id=external_session_id,

@@ -4,6 +4,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from connector.logging import logger
 from connector.runtime_protocol import (
     RuntimeOperationResult,
     RuntimeSessionStateCache,
@@ -51,6 +52,16 @@ class CodexInteractionController:
             action_or_status,
             response_context,
         )
+        logger.info(
+            "codex approval respond started session_id={} notice_id={} action_id={} request_id={} decision={} payload_keys={} notice_context_found={}",
+            session_id,
+            notice_id,
+            action_id,
+            request_id,
+            response.decision,
+            sorted(response.payload.keys()),
+            bool(notice_context),
+        )
         await self.ensure_started()
         await self._notice_responding(
             notice_id=notice_id,
@@ -60,6 +71,16 @@ class CodexInteractionController:
         try:
             await self.client.respond(request_id, response.payload)
         except Exception as exc:
+            logger.warning(
+                "codex approval respond failed session_id={} notice_id={} action_id={} request_id={} decision={} error_type={} error={}",
+                session_id,
+                notice_id,
+                action_id,
+                request_id,
+                response.decision,
+                exc.__class__.__name__,
+                str(exc) or exc.__class__.__name__,
+            )
             await self._notice_response_failed(
                 session_id=session_id,
                 notice_id=notice_id,
@@ -68,6 +89,14 @@ class CodexInteractionController:
                 exc=exc,
             )
             raise
+        logger.info(
+            "codex approval respond completed session_id={} notice_id={} action_id={} request_id={} decision={}",
+            session_id,
+            notice_id,
+            action_id,
+            request_id,
+            response.decision,
+        )
         await self._notice_resolved(
             notice_id=notice_id,
             action_id=action_id,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import importlib
+import time
 from collections.abc import Mapping
 from typing import Any
 
@@ -21,6 +22,7 @@ from openai_codex.generated.v2_all import (
     WorkspaceWriteSandboxPolicy,
 )
 
+from connector.logging import logger
 from connector.runtime_protocol import RuntimeConfig, RuntimeInvalidRequestError
 from connector.runtimes.codex.runtime_helpers import soft_codex_unavailable_reason
 from connector.runtimes.codex.sdk.events import CodexSdkEvent
@@ -133,9 +135,19 @@ class CodexSdkClient:
         thread_id: str,
         include_turns: bool = True,
     ) -> CodexThreadReadResult:
+        started_at = time.monotonic()
         thread = self._thread_handle(thread_id)
         result = await thread.read(include_turns=include_turns)
-        return thread_read_result(result)
+        projected = thread_read_result(result)
+        elapsed_ms = (time.monotonic() - started_at) * 1000
+        if include_turns or elapsed_ms >= 250:
+            logger.info(
+                "codex sdk thread read completed thread_id={} include_turns={} elapsed_ms={:.1f}",
+                thread_id,
+                include_turns,
+                elapsed_ms,
+            )
+        return projected
 
     async def start_thread(self, request: CodexStartThreadRequest) -> CodexThreadResult:
         await ensure_codex_initialized(self._client)
@@ -335,17 +347,30 @@ class CodexSdkClient:
         request_id: str | int,
         result: Mapping[str, Any] | None = None,
     ) -> None:
-        approval_response = self._pending_approval_responses.pop(str(request_id), None)
+        response_payload = dict(result or {})
+        request_key = str(request_id)
+        approval_response = self._pending_approval_responses.pop(request_key, None)
         if approval_response is not None:
             if not approval_response.done():
-                approval_response.set_result(dict(result or {}))
+                approval_response.set_result(response_payload)
+            logger.info(
+                "codex sdk approval response delivered request_id={} pending_hit=true payload_keys={}",
+                request_key,
+                sorted(response_payload.keys()),
+            )
             return
+        logger.warning(
+            "codex sdk approval response has no pending request request_id={} pending_ids={} payload_keys={}",
+            request_key,
+            sorted(self._pending_approval_responses.keys()),
+            sorted(response_payload.keys()),
+        )
         respond = getattr(self._client, "respond", None)
         if not callable(respond):
             raise RuntimeInvalidRequestError(
                 "Codex SDK client does not expose respond(request_id, result)"
             )
-        await maybe_await(respond(request_id, dict(result or {})))
+        await maybe_await(respond(request_id, response_payload))
 
     def handle_sdk_approval_request(
         self,
@@ -356,12 +381,25 @@ class CodexSdkClient:
             return {}
         loop = self._loop
         if loop is None:
+            logger.warning(
+                "codex sdk approval request declined because runtime loop is unavailable method={}",
+                method,
+            )
             return {"decision": "decline"}
+        started_at = time.monotonic()
         future = asyncio.run_coroutine_threadsafe(
             self.publish_sdk_approval_request(method, dict(params or {})),
             loop,
         )
-        return dict(future.result())
+        response = dict(future.result())
+        elapsed_ms = (time.monotonic() - started_at) * 1000
+        logger.info(
+            "codex sdk approval request completed method={} elapsed_ms={:.1f} response_keys={}",
+            method,
+            elapsed_ms,
+            sorted(response.keys()),
+        )
+        return response
 
     async def publish_sdk_approval_request(
         self,
@@ -369,10 +407,23 @@ class CodexSdkClient:
         params: dict[str, Any],
     ) -> Mapping[str, Any]:
         if self._handler is None:
+            logger.warning(
+                "codex sdk approval request declined because notification handler is unavailable method={}",
+                method,
+            )
             return {"decision": "decline"}
         request_id = sdk_approval_request_id(method, params)
         response: asyncio.Future[Mapping[str, Any]] = asyncio.Future()
         self._pending_approval_responses[request_id] = response
+        logger.info(
+            "codex sdk approval request registered method={} request_id={} approval_id={} thread_id={} turn_id={} item_id={}",
+            method,
+            request_id,
+            approval_identifier(params),
+            params.get("threadId") or params.get("thread_id"),
+            params.get("turnId") or params.get("turn_id"),
+            params.get("itemId") or params.get("item_id"),
+        )
         try:
             await self._handler(
                 {
@@ -385,6 +436,11 @@ class CodexSdkClient:
             return await response
         finally:
             self._pending_approval_responses.pop(request_id, None)
+            logger.debug(
+                "codex sdk approval request unregistered request_id={} pending_count={}",
+                request_id,
+                len(self._pending_approval_responses),
+            )
 
     def _thread_handle(self, thread_id: str) -> Any:
         cached = self._threads.get(thread_id)
@@ -571,6 +627,14 @@ def sdk_approval_request_id(method: str, params: Mapping[str, Any]) -> str:
     ]
     digest = hashlib.sha256(":".join(stable_parts).encode()).hexdigest()[:24]
     return f"approval_{digest}"
+
+
+def approval_identifier(params: Mapping[str, Any]) -> str | int | None:
+    for key in ("approvalId", "approval_id", "requestId", "request_id"):
+        value = params.get(key)
+        if isinstance(value, str | int) and str(value):
+            return value
+    return None
 
 
 def codex_request_requires_low_level_approval(

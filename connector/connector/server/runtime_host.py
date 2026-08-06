@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
+from connector.logging import logger
 from connector.runtime_protocol import (
     RuntimeAttachmentContent,
     RuntimeCapabilitySet,
@@ -134,7 +136,18 @@ class ConnectorRuntimeHost(RuntimeHostClient):
             "complete": complete,
             "metadata": dict(metadata or {}),
         }
+        started_at = time.monotonic()
         await self._notifier("timeline.sync", _drop_none(payload))
+        elapsed_ms = (time.monotonic() - started_at) * 1000
+        if elapsed_ms >= 250 or len(items) >= 100:
+            logger.info(
+                "runtime host timeline sync notified runtime={} session_id={} items={} complete={} elapsed_ms={:.1f}",
+                runtime,
+                session_id,
+                len(items),
+                complete,
+                elapsed_ms,
+            )
 
     async def timeline_item_upsert(
         self,

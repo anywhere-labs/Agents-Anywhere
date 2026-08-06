@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from connector.logging import logger
 from connector.runtime_protocol import RuntimeSessionStateCache, SessionNotice
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex.domain import sessions as codex_sessions
@@ -47,6 +48,16 @@ class CodexNoticeHandler:
             turn_id=turn_id,
         )
         self.notices.upsert(notice)
+        logger.info(
+            "codex approval notice upsert method={} session_id={} thread_id={} turn_id={} notice_id={} request_id={} action_ids={}",
+            method,
+            session_id,
+            thread_id,
+            turn_id,
+            notice.notice_id,
+            request_id,
+            [action.get("actionId") for action in notice.actions],
+        )
         await self.host.notice_upsert(notice)
         await self.session_states.update(
             session_id=session_id,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
@@ -94,5 +95,28 @@ class ConnectorRpcChannel:
     async def send_json(self, payload: dict[str, Any]) -> None:
         if self._ws is None:
             raise RuntimeError("backend websocket is not connected")
+        frame_type = payload.get("type")
+        method = payload.get("method")
+        request_id = payload.get("id")
+        encode_started_at = time.monotonic()
+        encoded = json.dumps(payload, ensure_ascii=False)
+        encoded_bytes = len(encoded.encode("utf-8"))
+        encode_elapsed_ms = (time.monotonic() - encode_started_at) * 1000
+        wait_started_at = time.monotonic()
         async with self._send_lock:
-            await self._ws.send(json.dumps(payload, ensure_ascii=False))
+            wait_elapsed_ms = (time.monotonic() - wait_started_at) * 1000
+            send_started_at = time.monotonic()
+            await self._ws.send(encoded)
+            send_elapsed_ms = (time.monotonic() - send_started_at) * 1000
+        total_elapsed_ms = encode_elapsed_ms + wait_elapsed_ms + send_elapsed_ms
+        if encoded_bytes >= 512 * 1024 or total_elapsed_ms >= 250:
+            logger.info(
+                "connector websocket frame sent type={} method={} request_id={} bytes={} encode_elapsed_ms={:.1f} wait_elapsed_ms={:.1f} send_elapsed_ms={:.1f}",
+                frame_type,
+                method,
+                request_id,
+                encoded_bytes,
+                encode_elapsed_ms,
+                wait_elapsed_ms,
+                send_elapsed_ms,
+            )

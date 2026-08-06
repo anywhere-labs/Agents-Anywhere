@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -51,6 +52,7 @@ class RuntimeSyncRunner:
 
     async def sync_existing_once(self) -> None:
         for runtime_id in self.supervisor.runtimes:
+            runtime_started_at = time.monotonic()
             try:
                 runtime = self.supervisor.resolve_runtime(runtime_id)
                 logger.info("existing session sync runtime started runtime={}", runtime_id)
@@ -67,9 +69,10 @@ class RuntimeSyncRunner:
                 for session in sessions:
                     await self.sync_existing_session(runtime, session)
                 logger.info(
-                    "existing session sync runtime completed runtime={} sessions={}",
+                    "existing session sync runtime completed runtime={} sessions={} elapsed_ms={:.1f}",
                     runtime_id,
                     len(sessions),
+                    (time.monotonic() - runtime_started_at) * 1000,
                 )
             except RuntimeUnavailableError:
                 logger.info("existing session sync runtime unavailable runtime={}", runtime_id)
@@ -114,17 +117,21 @@ class RuntimeSyncRunner:
             session.session_id,
             session.external_session_id,
         )
+        read_started_at = time.monotonic()
         snapshot = await runtime.get_session_snapshot(
             session.session_id,
             session.external_session_id,
         )
+        read_elapsed_ms = (time.monotonic() - read_started_at) * 1000
         logger.info(
-            "existing session timeline sync read runtime={} session_id={} items={} complete={}",
+            "existing session timeline sync read runtime={} session_id={} items={} complete={} elapsed_ms={:.1f}",
             snapshot.runtime,
             snapshot.session_id,
             len(snapshot.items),
             snapshot.complete,
+            read_elapsed_ms,
         )
+        publish_started_at = time.monotonic()
         await self.host.timeline_sync(
             session_id=snapshot.session_id,
             runtime=snapshot.runtime,
@@ -133,6 +140,15 @@ class RuntimeSyncRunner:
             complete=snapshot.complete,
             metadata=snapshot.metadata,
         )
+        publish_elapsed_ms = (time.monotonic() - publish_started_at) * 1000
+        if publish_elapsed_ms >= 250 or len(snapshot.items) >= 100:
+            logger.info(
+                "existing session timeline sync published runtime={} session_id={} items={} elapsed_ms={:.1f}",
+                snapshot.runtime,
+                snapshot.session_id,
+                len(snapshot.items),
+                publish_elapsed_ms,
+            )
         state = await runtime.get_session_state(
             session.session_id,
             session.external_session_id,
@@ -155,11 +171,13 @@ class RuntimeSyncRunner:
         for notice in notices:
             await self.host.notice_upsert(notice)
         logger.info(
-            "existing session sync completed runtime={} session_id={} items={} notices={}",
+            "existing session sync completed runtime={} session_id={} items={} notices={} read_elapsed_ms={:.1f} publish_elapsed_ms={:.1f}",
             snapshot.runtime,
             snapshot.session_id,
             len(snapshot.items),
             len(notices),
+            read_elapsed_ms,
+            publish_elapsed_ms,
         )
 
     async def push_preferences_if_changed(self) -> None:

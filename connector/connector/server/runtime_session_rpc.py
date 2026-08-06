@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import time
 from typing import Any
 
+from connector.logging import logger
 from connector.runtime_protocol import AgentRuntime, RuntimeHostClient
 from connector.server.runtime_rpc_params import (
     SessionCapabilityParams,
@@ -22,6 +24,7 @@ async def discover_sessions(
     params: dict[str, Any],
 ) -> dict[str, Any]:
     parsed = SessionDiscoverParams.parse(params)
+    started_at = time.monotonic()
     sessions = await runtime.list_sessions(
         limit=parsed.limit,
         cursor=parsed.cursor,
@@ -37,6 +40,14 @@ async def discover_sessions(
             ordering_time=session.ordering_time,
             metadata=session.metadata,
         )
+    logger.info(
+        "runtime rpc session discover completed runtime={} limit={} force={} sessions={} elapsed_ms={:.1f}",
+        sessions[0].runtime if sessions else "unknown",
+        parsed.limit,
+        parsed.force,
+        len(sessions),
+        (time.monotonic() - started_at) * 1000,
+    )
     return {
         "sessions": [session_meta_payload(session) for session in sessions],
         "nextCursor": None,
@@ -49,11 +60,14 @@ async def sync_session_snapshot(
     params: dict[str, Any],
 ) -> dict[str, Any]:
     parsed = SessionReadParams.parse(params)
+    started_at = time.monotonic()
     snapshot = await runtime.get_session_snapshot(
         parsed.session_id,
         parsed.external_session_id,
         parsed.limit,
     )
+    read_elapsed_ms = (time.monotonic() - started_at) * 1000
+    publish_started_at = time.monotonic()
     await host.timeline_sync(
         session_id=snapshot.session_id,
         runtime=snapshot.runtime,
@@ -62,6 +76,7 @@ async def sync_session_snapshot(
         complete=snapshot.complete,
         metadata=snapshot.metadata,
     )
+    publish_elapsed_ms = (time.monotonic() - publish_started_at) * 1000
     state = await runtime.get_session_state(
         parsed.session_id, parsed.external_session_id
     )
@@ -80,6 +95,16 @@ async def sync_session_snapshot(
         parsed.session_id, parsed.external_session_id
     ):
         await host.notice_upsert(notice)
+    logger.info(
+        "runtime rpc session snapshot synced runtime={} session_id={} external_session_id={} limit={} items={} read_elapsed_ms={:.1f} publish_elapsed_ms={:.1f}",
+        snapshot.runtime,
+        snapshot.session_id,
+        snapshot.external_session_id,
+        parsed.limit,
+        len(snapshot.items),
+        read_elapsed_ms,
+        publish_elapsed_ms,
+    )
     return {
         "sessionId": snapshot.session_id,
         "externalSessionId": snapshot.external_session_id,
