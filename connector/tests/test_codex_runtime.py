@@ -72,6 +72,7 @@ from connector.runtimes.codex.timeline.items import (
     CodexCommandExecutionItem,
     CodexContextCompactionItem,
     CodexFileChangeItem,
+    CodexMcpToolCallItem,
     CodexReasoningItem,
     CodexRuntimeMessageItem,
     CodexTimelineItem,
@@ -79,6 +80,7 @@ from connector.runtimes.codex.timeline.items import (
     CodexTurnStartItem,
     CodexUnknownItem,
     CodexUserMessageItem,
+    CodexWebSearchItem,
     codex_timeline_item_class,
 )
 from connector.runtimes.codex.timeline.projection import (
@@ -132,6 +134,8 @@ def test_codex_timeline_native_item_classes_are_explicitly_mapped() -> None:
     assert codex_timeline_item_class("reasoning") is CodexReasoningItem
     assert codex_timeline_item_class("runtimeMessage") is CodexRuntimeMessageItem
     assert codex_timeline_item_class("commandExecution") is CodexCommandExecutionItem
+    assert codex_timeline_item_class("mcpToolCall") is CodexMcpToolCallItem
+    assert codex_timeline_item_class("webSearch") is CodexWebSearchItem
     assert (
         codex_timeline_item_class("contextCompaction")
         is CodexContextCompactionItem
@@ -1539,6 +1543,84 @@ async def _test_codex_runtime_typed_snapshot_preserves_messages_after_compaction
         "turn_compacted",
         "turn_compacted",
     ]
+
+
+def test_codex_runtime_reads_typed_tool_items_from_snapshot() -> None:
+    asyncio.run(_test_codex_runtime_reads_typed_tool_items_from_snapshot())
+
+
+async def _test_codex_runtime_reads_typed_tool_items_from_snapshot() -> None:
+    client = FakeCodexClient()
+    client.results["thread/read"] = {
+        "thread": Thread.model_validate(
+            {
+                "id": "thread_1",
+                "cliVersion": "0.1.0",
+                "createdAt": 1,
+                "cwd": "/repo",
+                "ephemeral": False,
+                "modelProvider": "openai",
+                "preview": "hello",
+                "sessionId": "codex_session_1",
+                "source": "appServer",
+                "status": {"type": "notLoaded"},
+                "turns": [
+                    {
+                        "id": "turn_tools",
+                        "status": "completed",
+                        "items": [
+                            {
+                                "id": "mcp_1",
+                                "type": "mcpToolCall",
+                                "server": "filesystem",
+                                "tool": "read_file",
+                                "arguments": {"path": "/repo/README.md"},
+                                "status": "completed",
+                                "result": {
+                                    "content": [],
+                                    "structuredContent": {"ok": True},
+                                },
+                            },
+                            {
+                                "id": "web_1",
+                                "type": "webSearch",
+                                "query": "Agents Anywhere",
+                                "action": {"type": "search"},
+                            },
+                        ],
+                    }
+                ],
+                "updatedAt": 2,
+            }
+        )
+    }
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=client)
+
+    snapshot = await runtime.get_session_snapshot(
+        "sess_1",
+        external_session_id="thread_1",
+    )
+
+    assert [item.id for item in snapshot.items] == ["mcp_1", "web_1"]
+    assert [item.type for item in snapshot.items] == ["tool", "tool"]
+    assert [item.turn_id for item in snapshot.items] == ["turn_tools", "turn_tools"]
+    assert snapshot.items[0].source["itemId"] == "mcp_1"
+    assert snapshot.items[0].source["rawType"] == "mcpToolCall"
+    assert snapshot.items[0].content == {
+        "kind": "mcp",
+        "server": "filesystem",
+        "tool": "read_file",
+        "arguments": {"path": "/repo/README.md"},
+        "output": {"ok": True},
+        "error": None,
+    }
+    assert snapshot.items[1].source["itemId"] == "web_1"
+    assert snapshot.items[1].source["rawType"] == "webSearch"
+    assert snapshot.items[1].content == {
+        "kind": "web_search",
+        "query": "Agents Anywhere",
+        "action": "search",
+    }
 
 
 def test_codex_snapshot_reuses_live_assistant_identity() -> None:

@@ -53,6 +53,7 @@ class CodexTimelineProjection:
     text: str | None = None
     input_value: Any = None
     message: str | None = None
+    server: str | None = None
     name: str | None = None
     arguments: Any = None
     command: str | None = None
@@ -182,6 +183,10 @@ class CodexTimelineProjection:
             }
         if self.text:
             return {"text": self.text, "format": "markdown"}
+        if self.raw_type == "mcpToolCall":
+            return self.mcp_tool_call_content()
+        if self.raw_type == "webSearch":
+            return self.web_search_content()
         if self.raw_type == "function_call":
             return self.function_call_content()
         if self.raw_type == "custom_tool_call":
@@ -235,6 +240,23 @@ class CodexTimelineProjection:
             "error": None,
         }
 
+    def mcp_tool_call_content(self) -> Mapping[str, Any]:
+        return {
+            "kind": "mcp",
+            "server": self.server or "",
+            "tool": self.name or "tool",
+            "arguments": self.arguments,
+            "result": self.output,
+            "error": self.message,
+        }
+
+    def web_search_content(self) -> Mapping[str, Any]:
+        return {
+            "kind": "web_search",
+            "query": self.message,
+            "action": self.arguments,
+        }
+
     def custom_tool_call_content(self) -> Mapping[str, Any]:
         name = self.name or "custom_tool"
         if name in {"apply_patch", "file_change"}:
@@ -279,6 +301,7 @@ class CodexTimelineProjection:
             **({"text": self.text} if self.text is not None else {}),
             **({"input": self.input_value} if self.input_value is not None else {}),
             **({"message": self.message} if self.message else {}),
+            **({"server": self.server} if self.server else {}),
             **({"name": self.name} if self.name else {}),
             **({"arguments": self.arguments} if self.arguments is not None else {}),
             **({"command": self.command} if self.command is not None else {}),
@@ -324,6 +347,7 @@ def timeline_projection_from_raw(raw: Mapping[str, Any]) -> CodexTimelineProject
         input_value=raw_dict.get("input"),
         message=first_string_from_mapping(raw_dict, "message"),
         name=first_string_from_mapping(raw_dict, "name", "function", "tool"),
+        server=first_string_from_mapping(raw_dict, "server"),
         arguments=raw_dict.get("arguments") or raw_dict.get("input"),
         command=first_string_from_mapping(raw_dict, "command", "cmd"),
         aggregated_output=first_string_from_mapping(raw_dict, "aggregatedOutput"),

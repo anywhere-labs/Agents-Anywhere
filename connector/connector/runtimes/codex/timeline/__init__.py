@@ -24,6 +24,7 @@ from connector.runtimes.codex.timeline.items import (
     CodexFileChangeItem,
     CodexFunctionCallItem,
     CodexFunctionCallOutputItem,
+    CodexMcpToolCallItem,
     CodexMessageItem,
     CodexReasoningItem,
     CodexRuntimeMessageItem,
@@ -36,6 +37,7 @@ from connector.runtimes.codex.timeline.items import (
     CodexTurnStartItem,
     CodexUnknownItem,
     CodexUserMessageItem,
+    CodexWebSearchItem,
     codex_timeline_item_class,
 )
 from connector.runtimes.codex.timeline.projection import (
@@ -79,6 +81,7 @@ __all__ = [
     "CodexFileChangeItem",
     "CodexFunctionCallItem",
     "CodexFunctionCallOutputItem",
+    "CodexMcpToolCallItem",
     "CodexMessageItem",
     "CodexReasoningItem",
     "CodexRuntimeMessageItem",
@@ -92,6 +95,7 @@ __all__ = [
     "CodexTurnStartItem",
     "CodexUnknownItem",
     "CodexUserMessageItem",
+    "CodexWebSearchItem",
     "MappingTimelineContent",
     "client_message_id_from_raw",
     "codex_timeline_content_from_mapping",

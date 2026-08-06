@@ -21,6 +21,7 @@ from openai_codex.generated.v2_all import (
     ItemCompletedNotification,
     ItemStartedNotification,
     LocalImageUserInput,
+    McpToolCallThreadItem,
     MentionUserInput,
     MessageResponseItem,
     OutputTextContentItem,
@@ -40,6 +41,7 @@ from openai_codex.generated.v2_all import (
     TurnStartedNotification,
     UserInput,
     UserMessageThreadItem,
+    WebSearchThreadItem,
 )
 
 from connector.runtimes.codex.sdk.events import CodexSdkEvent
@@ -230,6 +232,29 @@ def timeline_projection_from_thread_item(
             aggregated_output=root.aggregated_output,
             exit_code=root.exit_code,
         )
+    if isinstance(root, McpToolCallThreadItem):
+        return CodexTimelineProjection(
+            native_id=root.id,
+            raw_type="mcpToolCall",
+            status=enum_value(root.status) or event_status,
+            role="tool",
+            turn_id=turn_id,
+            server=root.server,
+            name=root.tool,
+            arguments=root.arguments,
+            output=mcp_tool_call_result(root),
+            message=mcp_tool_call_error_message(root),
+        )
+    if isinstance(root, WebSearchThreadItem):
+        return CodexTimelineProjection(
+            native_id=root.id,
+            raw_type="webSearch",
+            status=event_status,
+            role="tool",
+            turn_id=turn_id,
+            message=root.query,
+            arguments=web_search_action_value(root),
+        )
     if isinstance(root, FileChangeThreadItem):
         return CodexTimelineProjection(
             native_id=root.id,
@@ -303,6 +328,26 @@ def file_update_change_mapping(change: FileUpdateChange) -> dict[str, str]:
         "path": change.path,
         "diff": change.diff,
     }
+
+
+def mcp_tool_call_result(item: McpToolCallThreadItem) -> object | None:
+    if item.result is None:
+        return None
+    if item.result.structured_content is not None:
+        return item.result.structured_content
+    return list(item.result.content)
+
+
+def mcp_tool_call_error_message(item: McpToolCallThreadItem) -> str | None:
+    if item.error is None:
+        return None
+    return item.error.message
+
+
+def web_search_action_value(item: WebSearchThreadItem) -> object | None:
+    if item.action is None:
+        return None
+    return item.action.root.type
 
 
 def user_input_text(items: Sequence[UserInput]) -> str | None:
