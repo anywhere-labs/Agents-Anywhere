@@ -6040,7 +6040,7 @@ def test_timeline_sync_without_changes_does_not_rearm_unread(tmp_path):
         wait_for_item_update(client, session_id, headers, 0)
 
         session = client.get("/sessions", headers=headers).json()["sessions"][0]
-        assert session["unread"] is True
+        assert session["unread"] is False
         read_session = client.post("/sessions/read", headers=headers, json=[session_id]).json()["sessions"][0]
         assert read_session["unread"] is False
         read_seq = read_session["lastReadSeq"]
@@ -6065,6 +6065,56 @@ def test_timeline_sync_without_changes_does_not_rearm_unread(tmp_path):
         session = wait_for(read_sessions)
         assert session["lastReadSeq"] == read_seq
         assert session["unread"] is False
+
+
+def test_connector_timeline_item_upsert_does_not_rearm_unread(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    read_session = client.post("/sessions/read", headers=headers, json=[session_id]).json()["sessions"][0]
+    assert read_session["unread"] is False
+
+    with client.websocket_connect(
+        "/connector/ws",
+        headers={"Authorization": f"Bearer {access_token}"},
+    ) as ws:
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "timeline.itemUpsert",
+                "params": {
+                    "sessionId": session_id,
+                    "item": {
+                        "id": "tl_tool_1",
+                        "sessionId": session_id,
+                        "turnId": "turn_1",
+                        "type": "tool",
+                        "status": "done",
+                        "role": None,
+                        "content": {"kind": "command", "command": "echo hello"},
+                        "source": {
+                            "runtime": "codex",
+                            "sessionId": "thr_1",
+                            "turnId": "turn_1",
+                            "itemId": "tool_1",
+                            "itemType": "commandExecution",
+                        },
+                        "orderSeq": 1,
+                        "revision": 1,
+                        "contentHash": "sha256:tool-1",
+                    },
+                },
+            }
+        )
+
+        def read_sessions():
+            sessions = client.get("/sessions", headers=headers).json()["sessions"]
+            current = next(session for session in sessions if session["id"] == session_id)
+            return current if current["lastItemOrderSeq"] == 1 else None
+
+        session = wait_for(read_sessions)
+
+    assert session["unread"] is False
+    assert session["lastReadSeq"] == session["updatedSeq"]
 
 
 def test_timeline_sync_completed_at_drift_does_not_rearm_unread(tmp_path):

@@ -684,6 +684,7 @@ class SessionRepositoryMixin:
         status: str,
         *,
         expected_status: str | None = None,
+        mark_read_on_change: bool = False,
     ) -> SessionView:
         async with self._engine.begin() as conn:
             statement = select(sessions_t.c.status).where(sessions_t.c.id == session_id)
@@ -697,7 +698,11 @@ class SessionRepositoryMixin:
             if expected_status is not None and row.status != expected_status:
                 raise ValueError("session status changed")
             if row.status != status:
-                await self._bump_session(conn, session_id)
+                await self._bump_session(
+                    conn,
+                    session_id,
+                    mark_read=mark_read_on_change,
+                )
                 update_statement = update(sessions_t).where(
                     sessions_t.c.id == session_id
                 )
@@ -722,6 +727,7 @@ class SessionRepositoryMixin:
         last_synced_at: str | None = None,
         source_observed_at: str | None = None,
         last_activity_at: str | None = None,
+        mark_read_on_change: bool = False,
     ) -> SessionView:
         values: dict[str, Any] = {}
         if status is not None:
@@ -759,7 +765,11 @@ class SessionRepositoryMixin:
                 "external_session_id",
             }
             if any(field in values and values[field] != getattr(row, field) for field in semantic_fields):
-                await self._bump_session(conn, session_id)
+                await self._bump_session(
+                    conn,
+                    session_id,
+                    mark_read=mark_read_on_change,
+                )
             if values:
                 await conn.execute(
                     update(sessions_t).where(sessions_t.c.id == session_id).values(**values)

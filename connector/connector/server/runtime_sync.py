@@ -38,7 +38,12 @@ class RuntimeSyncRunner:
 
     async def sync_existing_loop(self) -> None:
         if not self.config.sync_existing_on_connect:
+            logger.info("existing session sync disabled")
             return
+        logger.info(
+            "existing session sync loop started interval_seconds={}",
+            self.config.sync_interval_seconds,
+        )
         while True:
             await self.sync_existing_once()
             await self.push_preferences_if_changed()
@@ -48,10 +53,26 @@ class RuntimeSyncRunner:
         for runtime_id in self.supervisor.runtimes:
             try:
                 runtime = self.supervisor.resolve_runtime(runtime_id)
+                logger.info("existing session sync runtime started runtime={}", runtime_id)
                 sessions = await runtime.list_sessions(limit=100, force=False)
+                timeline_sync_count = sum(
+                    1 for session in sessions if session_requires_timeline_sync(session)
+                )
+                logger.info(
+                    "existing session sync runtime discovered runtime={} sessions={} timeline_syncs={}",
+                    runtime_id,
+                    len(sessions),
+                    timeline_sync_count,
+                )
                 for session in sessions:
                     await self.sync_existing_session(runtime, session)
+                logger.info(
+                    "existing session sync runtime completed runtime={} sessions={}",
+                    runtime_id,
+                    len(sessions),
+                )
             except RuntimeUnavailableError:
+                logger.info("existing session sync runtime unavailable runtime={}", runtime_id)
                 continue
             except TimeoutError:
                 logger.warning("existing {} session sync timed out", runtime_id)
@@ -80,10 +101,29 @@ class RuntimeSyncRunner:
             metadata=session.metadata,
         )
         if not session_requires_timeline_sync(session):
+            logger.info(
+                "existing session sync skipped unchanged timeline runtime={} session_id={} external_session_id={}",
+                session.runtime,
+                session.session_id,
+                session.external_session_id,
+            )
             return
+        logger.info(
+            "existing session timeline sync started runtime={} session_id={} external_session_id={}",
+            session.runtime,
+            session.session_id,
+            session.external_session_id,
+        )
         snapshot = await runtime.get_session_snapshot(
             session.session_id,
             session.external_session_id,
+        )
+        logger.info(
+            "existing session timeline sync read runtime={} session_id={} items={} complete={}",
+            snapshot.runtime,
+            snapshot.session_id,
+            len(snapshot.items),
+            snapshot.complete,
         )
         await self.host.timeline_sync(
             session_id=snapshot.session_id,
@@ -114,6 +154,13 @@ class RuntimeSyncRunner:
         )
         for notice in notices:
             await self.host.notice_upsert(notice)
+        logger.info(
+            "existing session sync completed runtime={} session_id={} items={} notices={}",
+            snapshot.runtime,
+            snapshot.session_id,
+            len(snapshot.items),
+            len(notices),
+        )
 
     async def push_preferences_if_changed(self) -> None:
         try:

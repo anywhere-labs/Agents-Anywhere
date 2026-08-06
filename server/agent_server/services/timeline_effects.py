@@ -47,7 +47,10 @@ async def apply_approval_resolution_to_target_item(
 
 
 async def close_waiting_approval_items_for_finished_turn(
-    db: TimelineEffectRepository, session_id: str, turn_end: TimelineItemIn
+    db: TimelineEffectRepository,
+    session_id: str,
+    turn_end: TimelineItemIn,
+    mark_read_on_change: bool = False,
 ) -> None:
     if turn_end.turnId is None:
         return
@@ -79,4 +82,8 @@ async def close_waiting_approval_items_for_finished_turn(
                 "contentHash": f"sha256:{timeline_content_hash('cancelled', content, turn_end.id)}",
             }
         )
-        await db.upsert_timeline_item(session_id=session_id, item=updated)
+        await db.upsert_timeline_item(
+            session_id=session_id,
+            item=updated,
+            mark_read_on_change=mark_read_on_change,
+        )

@@ -179,6 +179,7 @@ class BackendRpcClient:
             )
             heartbeat_task = asyncio.create_task(self._heartbeat_loop())
             sync_task = asyncio.create_task(self._runtime_sync.sync_existing_loop())
+            logger.info("connector startup complete; runtime sync started in background")
             try:
                 async for raw_message in ws:
                     message = json.loads(raw_message)

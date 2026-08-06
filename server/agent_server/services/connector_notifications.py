@@ -213,6 +213,7 @@ class SessionNotificationHandler:
                 last_synced_at=params.get("lastSyncedAt"),
                 source_observed_at=params.get("sourceObservedAt"),
                 last_activity_at=params.get("lastActivityAt"),
+                mark_read_on_change=True,
             )
             if archived is not None and session.archived != archived:
                 session = await self._store.set_session_archived(session.id, archived)
@@ -328,12 +329,14 @@ class TimelineNotificationHandler:
                 session_id=session_id,
                 source_observed_at=params.get("sourceObservedAt"),
                 items=items,
+                mark_read_on_change=True,
             )
         else:
             stored_items = await self._store.sync_timeline_items(
                 session_id=session_id,
                 source_observed_at=params.get("sourceObservedAt"),
                 items=items,
+                mark_read_on_change=True,
             )
         await _reconcile_active_run_from_timeline(self._store, session_id, items)
         for item in items:
@@ -343,6 +346,7 @@ class TimelineNotificationHandler:
                 self._store,
                 session_id,
                 item,
+                mark_read_on_change=True,
             )
         changed_items = (
             stored_items
@@ -380,6 +384,7 @@ class TimelineNotificationHandler:
             session_id=session_id,
             source_observed_at=params.get("sourceObservedAt"),
             item=item,
+            mark_read_on_change=True,
         )
         if item.type == "turn.start" and item.turnId:
             await self._store.update_active_run_turn_id(session_id, item.turnId)
@@ -388,6 +393,7 @@ class TimelineNotificationHandler:
                 self._store,
                 session_id,
                 item,
+                mark_read_on_change=True,
             )
             await self._store.clear_active_run(session_id)
         affects_run_state = _timeline_item_affects_run_state(item)

@@ -229,6 +229,7 @@ class ConnectorIngestService:
                 persisted_session = await self._store.set_session_status(
                     session_id,
                     runtime_state.status,
+                    mark_read_on_change=True,
                 )
                 next_seq = max(
                     await self._store.get_session_seq(session_id),

@@ -110,6 +110,7 @@ class TimelineRepositoryMixin:
         session_id: str,
         items: list[TimelineItemIn],
         source_observed_at: str | None = None,
+        mark_read_on_change: bool = False,
     ) -> list[TimelineItem]:
         async with self._timeline_lock(session_id):
             current = {existing.id: existing for existing in await self.timeline.read(session_id)}
@@ -148,7 +149,11 @@ class TimelineRepositoryMixin:
                     if isinstance(item, TimelineItem):
                         normalized_by_id[item_id] = item
                         continue
-                    updated_seq = await self._bump_session(conn, session_id)
+                    updated_seq = await self._bump_session(
+                        conn,
+                        session_id,
+                        mark_read=mark_read_on_change,
+                    )
                     existing = current.get(item_id)
                     if existing is not None:
                         order_seq = existing.orderSeq
@@ -174,6 +179,7 @@ class TimelineRepositoryMixin:
         session_id: str,
         items: list[TimelineItemIn],
         source_observed_at: str | None = None,
+        mark_read_on_change: bool = False,
     ) -> list[TimelineItem]:
         async with self._timeline_lock(session_id):
             now = utc_now()
@@ -184,7 +190,11 @@ class TimelineRepositoryMixin:
                         .where(sessions_t.c.id == session_id)
                         .values(source_observed_at=source_observed_at)
                     )
-                updated_seq = await self._bump_session(conn, session_id)
+                updated_seq = await self._bump_session(
+                    conn,
+                    session_id,
+                    mark_read=mark_read_on_change,
+                )
                 normalized = [
                     _timeline_item_from_input(item, updated_seq=updated_seq, now=now)
                     for item in items
@@ -199,6 +209,7 @@ class TimelineRepositoryMixin:
         session_id: str,
         item: TimelineItemIn,
         source_observed_at: str | None = None,
+        mark_read_on_change: bool = False,
     ) -> TimelineItem:
         """Single-row upsert. Hot path for streaming Codex deltas.
 
@@ -239,7 +250,11 @@ class TimelineRepositoryMixin:
                 if unchanged and not needs_order_rebase:
                     result = existing
                 else:
-                    updated_seq = await self._bump_session(conn, session_id)
+                    updated_seq = await self._bump_session(
+                        conn,
+                        session_id,
+                        mark_read=mark_read_on_change,
+                    )
                     order_seq = await self._live_order_seq_for_upsert(
                         conn,
                         session_id,
@@ -297,7 +312,13 @@ class TimelineRepositoryMixin:
             yield
 
 
-    async def _bump_session(self, conn: AsyncConnection, session_id: str) -> int:
+    async def _bump_session(
+        self,
+        conn: AsyncConnection,
+        session_id: str,
+        *,
+        mark_read: bool = False,
+    ) -> int:
         now = utc_now()
         row = (
             await conn.execute(
@@ -307,10 +328,15 @@ class TimelineRepositoryMixin:
         if row is None:
             raise KeyError(session_id)
         next_seq = int(row.seq) + 1
+        values: dict[str, Any] = {
+            "seq": next_seq,
+            "updated_seq": next_seq,
+            "updated_at": now,
+        }
+        if mark_read:
+            values["last_read_seq"] = next_seq
         await conn.execute(
-            update(sessions_t)
-            .where(sessions_t.c.id == session_id)
-            .values(seq=next_seq, updated_seq=next_seq, updated_at=now)
+            update(sessions_t).where(sessions_t.c.id == session_id).values(**values)
         )
         return next_seq
 

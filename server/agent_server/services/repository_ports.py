@@ -60,6 +60,7 @@ class SessionStateRepository(SessionLookupRepository, Protocol):
         status: SessionStatus,
         *,
         expected_status: SessionStatus | None = None,
+        mark_read_on_change: bool = False,
     ) -> SessionView: ...
 
     async def get_session_runtime_state(
@@ -96,6 +97,7 @@ class TimelineEffectRepository(Protocol):
         session_id: str,
         item: TimelineItemIn,
         source_observed_at: str | None = None,
+        mark_read_on_change: bool = False,
     ) -> TimelineItem: ...
 
 class InteractionResolutionRepository(
@@ -124,6 +126,7 @@ class ConnectorIngestRepository(DashboardEventRepository, Protocol):
         status: SessionStatus,
         *,
         expected_status: SessionStatus | None = None,
+        mark_read_on_change: bool = False,
     ) -> SessionView: ...
 
     async def list_sessions_for_connector(
@@ -164,6 +167,7 @@ class ConnectorNotificationRepository(
         session_id: str,
         items: list[TimelineItemIn],
         source_observed_at: str | None = None,
+        mark_read_on_change: bool = False,
     ) -> list[TimelineItem]: ...
 
     async def sync_timeline_items(
@@ -172,6 +176,7 @@ class ConnectorNotificationRepository(
         session_id: str,
         items: list[TimelineItemIn],
         source_observed_at: str | None = None,
+        mark_read_on_change: bool = False,
     ) -> list[TimelineItem]: ...
 
     async def resolve_connector_session_id(
