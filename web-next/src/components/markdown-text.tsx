@@ -3,8 +3,9 @@
 import * as React from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import { Copy, Check, ExternalLink } from "lucide-react"
+import { Copy, Check, ExternalLink, GitBranch } from "lucide-react"
 
+import { Badge } from "@/components/ui/badge"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
 import { highlightCode } from "@/lib/code-highlight"
@@ -13,6 +14,20 @@ import type { SessionView } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
 
 export function MarkdownText({
+  text,
+  token,
+  session,
+  inverted,
+}: {
+  text: string
+  token?: string
+  session?: SessionView
+  inverted?: boolean
+}) {
+  return <MarkdownBody text={text} token={token} session={session} inverted={inverted} />
+}
+
+function MarkdownBody({
   text,
   token,
   session,
@@ -33,7 +48,7 @@ export function MarkdownText({
       )}
     >
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkGitDirectiveBadges]}
         components={{
           code({ className, children, ...props }) {
             const match = /language-(\w+)/.exec(className ?? "")
@@ -138,12 +153,172 @@ export function MarkdownText({
               </td>
             )
           },
+          span({ children, ...props }) {
+            const directiveProps = props as React.HTMLAttributes<HTMLSpanElement> & {
+              "data-git-actions"?: string
+              "data-git-directive"?: string
+            }
+            if (directiveProps["data-git-directive"] === "true") {
+              return <GitDirectiveBadge actions={directiveProps["data-git-actions"]} />
+            }
+            return <span {...props}>{children}</span>
+          },
         }}
       >
         {text}
       </ReactMarkdown>
     </div>
   )
+}
+
+type GitDirective = {
+  action: "stage" | "commit" | "push"
+  attrs: Record<string, string>
+}
+
+type MarkdownAstNode = {
+  type: string
+  value?: string
+  children?: MarkdownAstNode[]
+  data?: {
+    hName?: string
+    hProperties?: Record<string, string>
+  }
+}
+
+function remarkGitDirectiveBadges() {
+  return (tree: MarkdownAstNode) => {
+    replaceGitDirectivesInTextChildren(tree)
+  }
+}
+
+function replaceGitDirectivesInTextChildren(node: MarkdownAstNode) {
+  if (!node.children) return
+
+  const nextChildren: MarkdownAstNode[] = []
+  for (const child of node.children) {
+    if (child.type === "text" && typeof child.value === "string") {
+      nextChildren.push(...splitGitDirectiveTextNode(child.value))
+      continue
+    }
+    replaceGitDirectivesInTextChildren(child)
+    nextChildren.push(child)
+  }
+  node.children = nextChildren
+}
+
+function splitGitDirectiveTextNode(text: string): MarkdownAstNode[] {
+  const directivePattern = /::git-(stage|commit|push)\{([^}]*)\}/g
+  const matches = Array.from(text.matchAll(directivePattern))
+  if (matches.length === 0) return [{ type: "text", value: text }]
+
+  const nodes: MarkdownAstNode[] = []
+  let cursor = 0
+  let pendingDirectives: GitDirective[] = []
+
+  const flushDirectives = () => {
+    if (pendingDirectives.length === 0) return
+    nodes.push(gitDirectiveNode(pendingDirectives))
+    pendingDirectives = []
+  }
+
+  for (const match of matches) {
+    const start = match.index ?? 0
+    const before = text.slice(cursor, start)
+    if (before) {
+      if (before.trim()) flushDirectives()
+      nodes.push({ type: "text", value: before })
+    }
+    const directive: GitDirective = {
+      action: gitDirectiveAction(match[1] ?? "stage"),
+      attrs: parseDirectiveAttributes(match[2] ?? ""),
+    }
+    pendingDirectives.push(directive)
+    cursor = start + match[0].length
+  }
+
+  const after = text.slice(cursor)
+  if (after) {
+    if (after.trim()) flushDirectives()
+    nodes.push({ type: "text", value: after })
+  }
+  flushDirectives()
+  return nodes
+}
+
+function gitDirectiveNode(directives: GitDirective[]): MarkdownAstNode {
+  return {
+    type: "gitDirective",
+    data: {
+      hName: "span",
+      hProperties: {
+        "data-git-directive": "true",
+        "data-git-actions": serializeGitDirectives(directives),
+      },
+    },
+  }
+}
+
+function serializeGitDirectives(directives: GitDirective[]): string {
+  return directives
+    .map((directive) => {
+      const branch = directive.attrs.branch
+      return branch ? `${directive.action}:${encodeURIComponent(branch)}` : directive.action
+    })
+    .join(",")
+}
+
+function parseGitDirectives(input?: string): GitDirective[] {
+  if (!input) return []
+  return input
+    .split(",")
+    .map(parseGitDirective)
+    .filter((directive): directive is GitDirective => directive !== null)
+}
+
+function parseGitDirective(input: string): GitDirective | null {
+  const [actionInput, branchInput] = input.split(":", 2)
+  if (!actionInput) return null
+  const action = gitDirectiveAction(actionInput)
+  const branch = branchInput ? decodeURIComponent(branchInput) : ""
+  return { action, attrs: branch ? { branch } : {} }
+}
+
+function gitDirectiveAction(action: string): GitDirective["action"] {
+  if (action === "commit" || action === "push") return action
+  return "stage"
+}
+
+function parseDirectiveAttributes(input: string): Record<string, string> {
+  const attrs: Record<string, string> = {}
+  for (const match of input.matchAll(/([A-Za-z_][A-Za-z0-9_]*)="([^"]*)"/g)) {
+    const key = match[1]
+    if (key) attrs[key] = match[2] ?? ""
+  }
+  return attrs
+}
+
+function GitDirectiveBadge({ actions }: { actions?: string }) {
+  const tSession = useTranslations("dashboard.session")
+  const directives = parseGitDirectives(actions)
+  if (directives.length === 0) return null
+  return (
+    <Badge variant="secondary" className="mx-0.5 inline-flex h-6 gap-1.5 rounded-md align-baseline font-normal">
+      <GitBranch data-icon="inline-start" />
+      <span>{directives.map((directive) => gitDirectiveLabel(directive, tSession)).join(" · ")}</span>
+    </Badge>
+  )
+}
+
+function gitDirectiveLabel(
+  directive: GitDirective,
+  tSession: (key: string, values?: Record<string, string | number>) => string,
+): string {
+  if (directive.action === "stage") return tSession("gitOperationStaged")
+  if (directive.action === "commit") return tSession("gitOperationCommitted")
+  const branch = directive.attrs.branch
+  if (branch) return tSession("gitOperationPushedBranch", { branch })
+  return tSession("gitOperationPushed")
 }
 
 function MarkdownCodeBlock({ code, language }: { code: string; language: string }) {
