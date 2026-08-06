@@ -7,6 +7,8 @@ from typing import Any
 from connector.runtime_protocol.models import (
     RuntimeAttachmentContent,
     RuntimeCapabilitySet,
+    RuntimeModelCatalog,
+    RuntimePermissionCatalog,
     RuntimeStatus,
     RuntimeTimelineItem,
     SessionNotice,
@@ -55,6 +57,18 @@ class RuntimeHostClient(ABC):
     async def session_capabilities_update(
         self,
         capabilities: RuntimeCapabilitySet,
+    ) -> None:
+        raise NotImplementedError
+
+    async def model_catalog_update(
+        self,
+        catalog: RuntimeModelCatalog,
+    ) -> None:
+        raise NotImplementedError
+
+    async def permission_catalog_update(
+        self,
+        catalog: RuntimePermissionCatalog,
     ) -> None:
         raise NotImplementedError
 

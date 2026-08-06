@@ -8,6 +8,8 @@ from connector.logging import logger
 from connector.runtime_protocol import (
     RuntimeAttachmentContent,
     RuntimeCapabilitySet,
+    RuntimeModelCatalog,
+    RuntimePermissionCatalog,
     RuntimeStatus,
     RuntimeTimelineItem,
     SessionNotice,
@@ -15,6 +17,8 @@ from connector.runtime_protocol import (
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.server.runtime_rpc_payloads import (
     capability_set_payload,
+    model_catalog_payload,
+    permission_catalog_payload,
     session_notice_payload,
 )
 from connector.server.sync_state import RuntimeSyncState, SyncStateStore
@@ -117,6 +121,42 @@ class ConnectorRuntimeHost(RuntimeHostClient):
         await self._notifier(
             "runtime.capability.updated",
             capability_set_payload(capabilities),
+        )
+
+    async def model_catalog_update(
+        self,
+        catalog: RuntimeModelCatalog,
+    ) -> None:
+        """Publish the latest runtime model catalog to the platform.
+
+        Side effects:
+        - sends `runtime.catalog.updated` through the backend notifier
+        """
+
+        await self._notifier(
+            "runtime.catalog.updated",
+            {
+                "catalogType": "model",
+                "catalog": model_catalog_payload(catalog),
+            },
+        )
+
+    async def permission_catalog_update(
+        self,
+        catalog: RuntimePermissionCatalog,
+    ) -> None:
+        """Publish the latest runtime permission catalog to the platform.
+
+        Side effects:
+        - sends `runtime.catalog.updated` through the backend notifier
+        """
+
+        await self._notifier(
+            "runtime.catalog.updated",
+            {
+                "catalogType": "permission",
+                "catalog": permission_catalog_payload(catalog),
+            },
         )
 
     async def timeline_sync(

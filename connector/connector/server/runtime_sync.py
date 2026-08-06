@@ -10,6 +10,7 @@ from connector.logging import logger
 from connector.runtime_protocol import (
     AgentRuntime,
     RuntimeHostClient,
+    RuntimeUnsupportedError,
     RuntimeSupervisor,
     RuntimeUnavailableError,
 )
@@ -56,6 +57,7 @@ class RuntimeSyncRunner:
             try:
                 runtime = self.supervisor.resolve_runtime(runtime_id)
                 logger.info("existing session sync runtime started runtime={}", runtime_id)
+                await self.push_runtime_catalogs(runtime)
                 sessions = await runtime.list_sessions(limit=100, force=False)
                 timeline_sync_count = sum(
                     1 for session in sessions if session_requires_timeline_sync(session)
@@ -177,6 +179,28 @@ class RuntimeSyncRunner:
             read_elapsed_ms,
             publish_elapsed_ms,
         )
+
+    async def push_runtime_catalogs(
+        self,
+        runtime: AgentRuntime,
+    ) -> None:
+        """Read and publish runtime-level catalogs before session sync.
+
+        Side effects:
+        - reads model and permission catalogs from the runtime
+        - sends catalog updates through the runtime host when available
+        """
+
+        try:
+            model_catalog = await runtime.list_model_catalog(query=None, limit=200)
+            await self.host.model_catalog_update(model_catalog)
+        except RuntimeUnsupportedError:
+            pass
+        try:
+            permission_catalog = await runtime.list_permission_catalog(query=None, limit=200)
+            await self.host.permission_catalog_update(permission_catalog)
+        except RuntimeUnsupportedError:
+            pass
 
     async def push_preferences_if_changed(self) -> None:
         try:

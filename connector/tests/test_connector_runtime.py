@@ -796,6 +796,18 @@ class RecordingRuntimeHost(RuntimeHostClient):
     ) -> None:
         self.events.append(("session_capabilities", capabilities.session_id or ""))
 
+    async def model_catalog_update(
+        self,
+        catalog: RuntimeModelCatalog,
+    ) -> None:
+        self.events.append(("model_catalog", catalog.runtime))
+
+    async def permission_catalog_update(
+        self,
+        catalog: RuntimePermissionCatalog,
+    ) -> None:
+        self.events.append(("permission_catalog", catalog.runtime))
+
     async def timeline_sync(
         self,
         session_id: str,
@@ -1154,6 +1166,8 @@ async def _exercise_runtime_sync_pushes_each_session_snapshot_before_next_meta()
     await runner.sync_existing_once()
 
     assert host.events == [
+        ("model_catalog", "codex"),
+        ("permission_catalog", "codex"),
         ("meta", "sess_changed"),
         ("timeline", "sess_changed"),
         ("state", "sess_changed"),
@@ -1161,6 +1175,8 @@ async def _exercise_runtime_sync_pushes_each_session_snapshot_before_next_meta()
         ("meta", "sess_unchanged"),
     ]
     assert [call[0] for call in runtime.calls] == [
+        "runtime.modelCatalog",
+        "runtime.permissionCatalog",
         "session.discover",
         "session.sync",
         "session.state",

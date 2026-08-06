@@ -9,6 +9,10 @@ from connector.runtime_protocol import (
     CAPABILITY_SESSION_SEND_MESSAGE,
     RuntimeCapability,
     RuntimeCapabilitySet,
+    RuntimeModelCatalog,
+    RuntimeModelItem,
+    RuntimePermissionCatalog,
+    RuntimePermissionItem,
     RuntimeTimelineItem,
     SessionNotice,
 )
@@ -34,6 +38,10 @@ def test_connector_runtime_host_maps_runtime_capabilities_to_backend_notificatio
 
 def test_connector_runtime_host_maps_session_capabilities_to_backend_notification() -> None:
     asyncio.run(_exercise_session_capability_notification())
+
+
+def test_connector_runtime_host_maps_catalogs_to_backend_notifications() -> None:
+    asyncio.run(_exercise_runtime_catalog_notifications())
 
 
 async def _exercise_timeline_item_notification() -> None:
@@ -160,6 +168,94 @@ async def _exercise_runtime_capability_notification() -> None:
                 "metadata": {"source": "codex.runtime"},
             },
         )
+    ]
+
+
+async def _exercise_runtime_catalog_notifications() -> None:
+    notifications: list[tuple[str, dict[str, Any]]] = []
+
+    async def notify(method: str, params: dict[str, Any]) -> None:
+        notifications.append((method, params))
+
+    async def download(session_id: str, file_id: str) -> tuple[bytes, str, str]:
+        _ = session_id
+        return b"data", f"{file_id}.txt", "text/plain"
+
+    host = ConnectorRuntimeHost(
+        connector_id="conn_1",
+        notifier=notify,
+        attachment_downloader=download,
+    )
+
+    await host.model_catalog_update(
+        RuntimeModelCatalog(
+            runtime="codex",
+            revision=1,
+            models=(
+                RuntimeModelItem(
+                    id="gpt-test",
+                    title="GPT Test",
+                    selection_id="sel_model_test",
+                ),
+            ),
+        )
+    )
+    await host.permission_catalog_update(
+        RuntimePermissionCatalog(
+            runtime="codex",
+            revision=2,
+            permissions=(
+                RuntimePermissionItem(
+                    id="full-access",
+                    title="Full access",
+                    selection_id="sel_permission_full",
+                ),
+            ),
+        )
+    )
+
+    assert notifications == [
+        (
+            "runtime.catalog.updated",
+            {
+                "catalogType": "model",
+                "catalog": {
+                    "runtime": "codex",
+                    "revision": 1,
+                    "models": [
+                        {
+                            "id": "gpt-test",
+                            "displayName": "GPT Test",
+                            "selectionId": "sel_model_test",
+                            "description": None,
+                            "default": False,
+                            "reasoningItems": [],
+                            "metadata": {"enabled": True},
+                        }
+                    ],
+                },
+            },
+        ),
+        (
+            "runtime.catalog.updated",
+            {
+                "catalogType": "permission",
+                "catalog": {
+                    "runtime": "codex",
+                    "revision": 2,
+                    "permissions": [
+                        {
+                            "id": "full-access",
+                            "displayName": "Full access",
+                            "selectionId": "sel_permission_full",
+                            "description": None,
+                            "default": False,
+                            "metadata": {"enabled": True},
+                        }
+                    ],
+                },
+            },
+        ),
     ]
 
 
