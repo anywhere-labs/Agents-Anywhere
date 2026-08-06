@@ -45,7 +45,7 @@ def codex_permission_catalog_items() -> list[dict[str, Any]]:
             "identity": {"permission_mode": "request_approval"},
             "runtimeSettings": {"permissionMode": "request_approval"},
             "nativeSettings": {
-                "approvalPolicy": "untrusted",
+                "approvalPolicy": "on-request",
                 "approvalsReviewer": "user",
                 "sandbox": "workspace-write",
                 "sandboxPolicy": {"type": "workspaceWrite", "networkAccess": False},

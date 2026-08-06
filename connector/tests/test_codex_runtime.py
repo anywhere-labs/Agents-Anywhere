@@ -1061,7 +1061,7 @@ async def _test_codex_runtime_permission_catalog() -> None:
     request_permission = all_permissions.permissions[0]
     auto_review_permission = all_permissions.permissions[1]
     assert request_permission.metadata["nativeSettings"]["approvalPolicy"] == (
-        "untrusted"
+        "on-request"
     )
     assert request_permission.metadata["nativeSettings"]["approvalsReviewer"] == "user"
     assert auto_review_permission.metadata["nativeSettings"]["approvalPolicy"] == (
@@ -1338,7 +1338,7 @@ async def _test_codex_runtime_reads_current_session_selections_from_thread() -> 
             "model": "gpt-example",
             "reasoningEffort": "high",
             "threadSettings": {
-                "approvalPolicy": "untrusted",
+                "approvalPolicy": "on-request",
                 "approvalsReviewer": "user",
                 "sandboxPolicy": {"type": "workspaceWrite"},
             },
@@ -1754,7 +1754,7 @@ async def _test_codex_runtime_create_and_start_session_reports_meta_and_state() 
     )
     assert thread_start[1]["cwd"] == "/repo"
     assert thread_start[1]["model"] == "gpt-example"
-    assert thread_start[1]["approvalPolicy"] == "untrusted"
+    assert thread_start[1]["approvalPolicy"] == "on-request"
     assert thread_start[1]["sandbox"] == "workspace-write"
     assert host.meta_upserts[0]["session_id"] == "sess_new"
     assert host.meta_upserts[0]["external_session_id"] == "thread_new"

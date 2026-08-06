@@ -533,15 +533,15 @@ def codex_approval_settings(
     approval_policy: str | None,
     approvals_reviewer: str | None = None,
 ) -> CodexApprovalSettings:
-    if approval_policy in {"request_approval", "untrusted", "ask_untrusted"}:
+    if approval_policy in {"request_approval", "on-request", "on_request"}:
+        return (
+            AskForApproval(root=AskForApprovalValue.on_request),
+            codex_approvals_reviewer(approvals_reviewer) or ApprovalsReviewer.user,
+        )
+    if approval_policy in {"untrusted", "ask_untrusted"}:
         return AskForApproval(
             root=AskForApprovalValue.untrusted
         ), ApprovalsReviewer.user
-    if approval_policy in {"on-request", "on_request"}:
-        return (
-            AskForApproval(root=AskForApprovalValue.on_request),
-            codex_approvals_reviewer(approvals_reviewer),
-        )
     if approval_policy in {"auto_review", "auto-review"}:
         return (
             AskForApproval(root=AskForApprovalValue.on_request),
