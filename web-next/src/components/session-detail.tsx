@@ -1034,7 +1034,7 @@ export function SessionDetail({
     updateScrollBottomState()
   }, [runtimeStatus, scrollToBottomThrottled, state?.items.length, state?.notices.length, updateScrollBottomState])
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     if (initialScrollDoneRef.current || !hasInitialSessionState) return
 
     let cancelled = false
@@ -1087,22 +1087,21 @@ export function SessionDetail({
       }, INITIAL_SCROLL_LAYOUT_QUIET_MS)
     }
 
-    initialScrollFrameRef.current = window.requestAnimationFrame(() => {
-      initialScrollFrameRef.current = window.requestAnimationFrame(() => {
-        initialScrollFrameRef.current = null
-        const content = timelineContentRef.current
-        const viewport = timelineRef.current
-        if (viewport) {
-          scrollNearBottomForInitialAnimation(viewport)
-          setShowScrollBottom(false)
-        }
-        if (content) {
-          resizeObserver = new ResizeObserver(scheduleCompleteAfterQuietLayout)
-          resizeObserver.observe(content)
-        }
+    const viewport = timelineRef.current
+    const content = timelineContentRef.current
+    if (viewport) {
+      scrollNearBottomForInitialAnimation(viewport)
+      setShowScrollBottom(false)
+    }
+    if (content) {
+      resizeObserver = new ResizeObserver(() => {
+        const latestViewport = timelineRef.current
+        if (latestViewport) scrollNearBottomForInitialAnimation(latestViewport)
         scheduleCompleteAfterQuietLayout()
       })
-    })
+      resizeObserver.observe(content)
+    }
+    scheduleCompleteAfterQuietLayout()
     initialScrollFallbackTimerRef.current = window.setTimeout(
       completeInitialLayout,
       INITIAL_SCROLL_LAYOUT_FALLBACK_MS,
