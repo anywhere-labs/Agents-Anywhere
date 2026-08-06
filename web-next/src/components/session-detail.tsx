@@ -1038,9 +1038,22 @@ export function SessionDetail({
 
       if (stableFrames >= 4 || attempts >= 45) {
         initialScrollDoneRef.current = true
-        initialScrollFrameRef.current = null
-        viewport.scrollTop = viewport.scrollHeight
+        viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" })
         setShowScrollBottom(false)
+        let settleAnimationFrames = 0
+        const finalizeInitialScroll = () => {
+          if (cancelled) return
+          const nextViewport = timelineRef.current
+          if (!nextViewport) return
+          settleAnimationFrames += 1
+          if (settleAnimationFrames >= 24) {
+            nextViewport.scrollTop = nextViewport.scrollHeight
+            initialScrollFrameRef.current = null
+            return
+          }
+          initialScrollFrameRef.current = window.requestAnimationFrame(finalizeInitialScroll)
+        }
+        initialScrollFrameRef.current = window.requestAnimationFrame(finalizeInitialScroll)
         return
       }
 
