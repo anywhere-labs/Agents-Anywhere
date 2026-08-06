@@ -32,6 +32,7 @@ def timeline_item_type_from_raw_type(value: str) -> str:
         "commandExecution",
         "mcpToolCall",
         "dynamicToolCall",
+        "collabAgentToolCall",
         "webSearch",
         "function_call",
         "function_call_output",

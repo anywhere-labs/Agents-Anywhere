@@ -183,7 +183,11 @@ class CodexTimelineProjection:
             }
         if self.text:
             return {"text": self.text, "format": "markdown"}
-        if self.raw_type in {"mcpToolCall", "dynamicToolCall"}:
+        if self.raw_type in {
+            "mcpToolCall",
+            "dynamicToolCall",
+            "collabAgentToolCall",
+        }:
             return self.mcp_tool_call_content()
         if self.raw_type == "webSearch":
             return self.web_search_content()

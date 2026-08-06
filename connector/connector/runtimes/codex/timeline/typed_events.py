@@ -6,6 +6,8 @@ from enum import Enum
 from openai_codex.generated.v2_all import (
     AgentMessageDeltaNotification,
     AgentMessageThreadItem,
+    CollabAgentState,
+    CollabAgentToolCallThreadItem,
     CommandExecutionOutputDeltaNotification,
     CommandExecutionThreadItem,
     ContentItem,
@@ -261,6 +263,18 @@ def timeline_projection_from_thread_item(
             arguments=root.arguments,
             output=dynamic_tool_call_output(root.content_items),
         )
+    if isinstance(root, CollabAgentToolCallThreadItem):
+        return CodexTimelineProjection(
+            native_id=root.id,
+            raw_type="collabAgentToolCall",
+            status=enum_value(root.status) or event_status,
+            role="tool",
+            turn_id=turn_id,
+            server="codex.collab",
+            name=enum_value(root.tool) or "agent",
+            arguments=collab_agent_tool_arguments(root),
+            output=collab_agent_tool_output(root.agents_states),
+        )
     if isinstance(root, WebSearchThreadItem):
         return CodexTimelineProjection(
             native_id=root.id,
@@ -373,6 +387,26 @@ def dynamic_tool_call_output(
         elif isinstance(root, InputImageDynamicToolCallOutputContentItem):
             parts.append(root.image_url)
     return "\n".join(parts) if parts else None
+
+
+def collab_agent_tool_arguments(item: CollabAgentToolCallThreadItem) -> dict[str, object]:
+    return {
+        "senderThreadId": item.sender_thread_id,
+        "receiverThreadIds": list(item.receiver_thread_ids),
+        "prompt": item.prompt,
+        "model": item.model,
+        "reasoningEffort": enum_value(item.reasoning_effort),
+    }
+
+
+def collab_agent_tool_output(states: dict[str, CollabAgentState]) -> dict[str, object]:
+    return {
+        agent_id: {
+            "status": enum_value(state.status),
+            "message": state.message,
+        }
+        for agent_id, state in states.items()
+    }
 
 
 def web_search_action_value(item: WebSearchThreadItem) -> object | None:
