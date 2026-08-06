@@ -16,6 +16,7 @@ import { MessageAttachments } from "@/components/session/message-attachments"
 import { CollapsibleUserMessage } from "@/components/session/collapsible-user-message"
 
 const MarkdownText = dynamic(() => import("../markdown-text").then((mod) => ({ default: mod.MarkdownText })), { ssr: false })
+const INLINE_REASONING_SUMMARY_MAX_CHARS = 80
 
 export function TimelineEntry({
   token,
@@ -193,11 +194,13 @@ function ReasoningEntry({ token, session, item }: { token: string; session: Sess
     .filter((text): text is string => Boolean(text))
   const rawText = textOf(item.content.rawText) || textOf(item.content.text)
   const lines = summaries.length > 0 ? summaries : rawText ? [rawText] : []
-  const singleSummary = lines[0] ?? ""
-  const title = lines.length === 1
-    ? tSession("reasoningSingleSummary", { summary: singleSummary })
+  const inlineSummary = lines.length === 1 ? inlineReasoningSummary(lines[0] ?? "") : null
+  const title = inlineSummary
+    ? tSession("reasoningSingleSummary", { summary: inlineSummary })
     : lines.length > 1
     ? tSession("reasoningSummary", { count: lines.length })
+    : lines.length === 1
+    ? tSession("reasoningSummary", { count: 1 })
     : tSession("reasoning")
   const marker = (
     <Marker className="w-full">
@@ -208,7 +211,7 @@ function ReasoningEntry({ token, session, item }: { token: string; session: Sess
     </Marker>
   )
 
-  if (lines.length <= 1) return marker
+  if (lines.length === 0 || inlineSummary) return marker
   const markdown = lines.join("\n\n")
 
   return (
@@ -233,6 +236,24 @@ function ReasoningEntry({ token, session, item }: { token: string; session: Sess
       </div>
     </Collapsible>
   )
+}
+
+function inlineReasoningSummary(text: string): string | null {
+  if (text.includes("\n") || text.includes("\r")) return null
+  const plain = stripMarkdownForInlineSummary(text)
+  if (!plain || plain.length > INLINE_REASONING_SUMMARY_MAX_CHARS) return null
+  return plain
+}
+
+function stripMarkdownForInlineSummary(text: string): string {
+  return text
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/[*_~#>]+/g, "")
+    .replace(/\\([\\`*_{}\[\]()#+\-.!|])/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim()
 }
 
 function ArtifactCard({ token, session, item }: { token: string; session: SessionView; item: TimelineItem }) {
