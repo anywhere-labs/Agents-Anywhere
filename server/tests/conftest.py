@@ -32,7 +32,7 @@ _API_ROOTS = (
 )
 _TRUNCATE_SQL = (
     "TRUNCATE TABLE dashboard_daily_metrics, dashboard_user_daily_facts, dashboard_settings, "
-    "timeline_items, notices, session_active_runs, "
+    "timeline_items, session_active_runs, "
     "sessions, "
     "connector_runtime_catalogs, connector_protocol_capabilities, device_runtimes, "
     "pairing_codes, connectors, users, instance_settings "

@@ -5,8 +5,6 @@ from typing import Any, Protocol
 from agent_server.core.catalogs import CatalogType, CatalogUpdateOutcome
 from agent_server.core.models import (
     ConnectorView,
-    Notice,
-    NoticeIn,
     SessionRuntimeState,
     SessionStatus,
     SessionView,
@@ -49,24 +47,7 @@ class CatalogRepository(Protocol):
     ) -> CatalogUpdateOutcome: ...
 
 
-class NoticeRepository(Protocol):
-    async def get_notice(self, notice_id: str) -> Notice: ...
-
-    async def upsert_notice(self, notice: NoticeIn) -> Notice: ...
-
-    async def update_notice_status(
-        self,
-        notice_id: str,
-        status: str,
-        *,
-        expected_status: str | None = None,
-        context_patch: dict[str, Any] | None = None,
-    ) -> Notice: ...
-
-    async def list_open_blocking_notices(self, session_id: str) -> list[Notice]: ...
-
-
-class SessionStateRepository(SessionLookupRepository, NoticeRepository, Protocol):
+class SessionStateRepository(SessionLookupRepository, Protocol):
     async def get_active_run(self, session_id: str) -> dict[str, Any] | None: ...
 
     async def has_active_timeline_item(self, session_id: str) -> bool: ...
@@ -117,14 +98,6 @@ class TimelineEffectRepository(Protocol):
         source_observed_at: str | None = None,
     ) -> TimelineItem: ...
 
-class InteractionRepository(SessionStateRepository, Protocol):
-    pass
-
-
-class InteractionProjectionRepository(SessionStateRepository, Protocol):
-    pass
-
-
 class InteractionResolutionRepository(
     SessionLookupRepository,
     TimelineEffectRepository,
@@ -145,13 +118,18 @@ class ConnectorIngestRepository(DashboardEventRepository, Protocol):
 
     async def get_session_seq(self, session_id: str) -> int: ...
 
+    async def set_session_status(
+        self,
+        session_id: str,
+        status: SessionStatus,
+        *,
+        expected_status: SessionStatus | None = None,
+    ) -> SessionView: ...
+
     async def list_sessions_for_connector(
         self,
         connector_id: str,
     ) -> list[SessionView]: ...
-
-    async def list_open_notices(self, session_id: str) -> list[Notice]: ...
-
 
 class ConnectorNotificationRepository(
     CatalogRepository,

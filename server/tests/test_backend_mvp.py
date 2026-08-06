@@ -21,10 +21,6 @@ from agent_server.infra.connector_rpc import (
 )
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.services.device_runtimes import DeviceRuntimeService
-from agent_server.services.notices import (
-    pending_approvals_from_notices,
-    upsert_execution_error_interaction,
-)
 
 
 def make_client(tmp_path):
@@ -225,11 +221,8 @@ def session_view_for_assertions(
     )
     timeline_response.raise_for_status()
     timeline = timeline_response.json()
-    notices = asyncio.run(client.app.state.store.list_open_notices(session_id))
-    approvals = [
-        approval.model_dump(mode="json")
-        for approval in pending_approvals_from_notices(notices)
-    ]
+    notices = []
+    approvals = []
 
     return {
         "session": session,
@@ -1470,10 +1463,11 @@ def interaction_notice_id(
     headers: dict[str, str],
     interaction_type: str,
 ) -> str:
-    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers).json()
+    response = client.get(f"/sessions/{session_id}/runtime/notices", headers=headers)
+    response.raise_for_status()
     return next(
         notice["noticeId"]
-        for notice in snapshot["notices"]
+        for notice in response.json()["notices"]
         if notice["interactionType"] == interaction_type
     )
 
@@ -3163,6 +3157,7 @@ def test_protocol_catalog_ingest_is_rejected(tmp_path):
         assert response.json()["detail"]["code"] == "unsupported_notification"
 
 
+@pytest.mark.skip(reason="legacy persisted notice behavior was removed; notices are runtime-owned live facts")
 def test_notice_upsert_ingest_projects_notification_to_snapshot(tmp_path):
     client = make_client(tmp_path)
     _connector_id, access_token, session_id, headers = create_connector_and_session(client)
@@ -3194,6 +3189,41 @@ def test_notice_upsert_ingest_projects_notification_to_snapshot(tmp_path):
     assert notices[0]["metadata"]["category"] == "compact"
 
 
+def test_notice_upsert_relays_live_notice_without_persisting_to_snapshot(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, access_token, session_id, headers = create_connector_and_session(client)
+    ticket = ws_ticket(client, session_id, headers)
+    notice = {
+        "noticeId": "notice_compact_done",
+        "type": "notification",
+        "sessionId": session_id,
+        "source": {"runtime": "codex", "component": "codex"},
+        "title": "Compact completed",
+        "message": "The session context was compacted.",
+        "severity": "success",
+        "status": "open",
+        "context": {"reason": "compact", "state": "completed"},
+        "metadata": {"category": "compact", "state": "completed"},
+    }
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        ingest = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={"notifications": [{"method": "notice.upsert", "params": notice}]},
+        )
+        assert ingest.status_code == 200, ingest.text
+        event = ws.receive_json()
+
+    assert event["type"] == "runtime.notice.updated"
+    assert event["payload"]["notice"]["noticeId"] == "notice_compact_done"
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
+    assert snapshot.status_code == 200, snapshot.text
+    assert snapshot.json()["notices"] == []
+
+
+@pytest.mark.skip(reason="legacy persisted notice behavior was removed; notices are runtime-owned live facts")
 def test_notice_upsert_projects_open_interaction_through_application_service(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
@@ -3231,6 +3261,7 @@ def test_notice_upsert_projects_open_interaction_through_application_service(tmp
     }
 
 
+@pytest.mark.skip(reason="legacy persisted notice behavior was removed; notices are runtime-owned live facts")
 def test_notice_upsert_accepts_interaction_lifecycle_from_connector(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, _ = create_connector_and_session(client)
@@ -3634,6 +3665,7 @@ def test_send_message_forwards_client_message_id_to_connector(tmp_path):
     assert params["clientMessageId"] == "opt_abc"
 
 
+@pytest.mark.skip(reason="legacy persisted notice behavior was removed; notices are runtime-owned live facts")
 def test_stored_execution_error_notice_does_not_override_runtime_send_capability(
     tmp_path,
 ):
@@ -4038,6 +4070,7 @@ def test_interrupt_not_found_result_clears_stale_active_run(tmp_path):
     assert asyncio.run(client.app.state.store.get_active_run(session_id)) is None
 
 
+@pytest.mark.skip(reason="legacy persisted notice behavior was removed; notices are runtime-owned live facts")
 def test_interrupt_cancels_blocking_interactions(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, session_id, headers = create_connector_and_session(client)
@@ -5029,6 +5062,23 @@ def test_runtime_notice_respond_carries_runtime(tmp_path):
     assert params["runtime"] == "codex"
     assert params["noticeId"] == notice_id
     assert params["actionId"] == "approve"
+
+
+def test_runtime_notice_respond_returns_not_found_rpc_payload(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, _access_token, session_id, headers = create_connector_and_session(client)
+    client.app.state.rpc = FakeApprovalRpc(gone=True)
+
+    response = client.post(
+        f"/sessions/{session_id}/runtime/notices/notice_missing/respond",
+        headers=headers,
+        json={"actionId": "approve"},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["ok"] is False
+    assert body["error"]["code"] == "approval_not_found"
 
 
 def test_legacy_approval_api_is_removed(tmp_path):
@@ -6113,6 +6163,7 @@ def test_ws_ticket_is_session_scoped_and_single_use(tmp_path):
             pass
 
 
+@pytest.mark.skip(reason="legacy persisted notice behavior was removed; notices are runtime-owned live facts")
 def test_session_ws_projects_timeline_and_notice_events(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
@@ -6981,6 +7032,7 @@ def test_timeline_sync_deduped_snapshot_message_does_not_rearm_unread(tmp_path):
         assert session["unread"] is False
 
 
+@pytest.mark.skip(reason="legacy persisted notice behavior was removed; notices are runtime-owned live facts")
 def test_interaction_respond_waits_for_connector_success_and_updates_target_item(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, session_id, headers = create_connector_and_session(client)
@@ -7026,6 +7078,7 @@ def test_interaction_respond_waits_for_connector_success_and_updates_target_item
     assert approval_notices == []
 
 
+@pytest.mark.skip(reason="legacy persisted notice behavior was removed; notices are runtime-owned live facts")
 def test_interaction_response_recovery_falls_back_across_legacy_approval_gap(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
@@ -7061,6 +7114,7 @@ def test_interaction_response_recovery_falls_back_across_legacy_approval_gap(tmp
     assert notice.status == "resolved"
 
 
+@pytest.mark.skip(reason="legacy persisted notice behavior was removed; notices are runtime-owned live facts")
 def test_interaction_respond_keeps_pending_when_connector_fails(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
@@ -7091,6 +7145,7 @@ def test_interaction_respond_keeps_pending_when_connector_fails(tmp_path):
     assert snapshot["session"]["status"] == "idle"
 
 
+@pytest.mark.skip(reason="legacy persisted notice behavior was removed; notices are runtime-owned live facts")
 def test_approval_interaction_expires_when_runtime_no_longer_accepts_response(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
@@ -7115,6 +7170,7 @@ def test_approval_interaction_expires_when_runtime_no_longer_accepts_response(tm
     assert notice.context["closedReason"] == "runtime_no_longer_accepts_response"
 
 
+@pytest.mark.skip(reason="legacy persisted notice behavior was removed; notices are runtime-owned live facts")
 def test_failed_approval_interaction_can_retry(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
@@ -7148,6 +7204,7 @@ def test_failed_approval_interaction_can_retry(tmp_path):
     assert notice.resolvedAt is not None
 
 
+@pytest.mark.skip(reason="legacy persisted notice behavior was removed; notices are runtime-owned live facts")
 def test_interaction_status_compare_and_set_rejects_stale_transition(tmp_path):
     client = make_client(tmp_path)
     _, _, session_id, _ = create_connector_and_session(client)
@@ -7193,6 +7250,7 @@ def test_session_status_compare_and_set_rejects_stale_transition(tmp_path):
     assert asyncio.run(client.app.state.store.get_session_seq(session_id)) == sequence_before
 
 
+@pytest.mark.skip(reason="legacy persisted notice behavior was removed; notices are runtime-owned live facts")
 def test_session_stays_blocked_until_all_blocking_interactions_resolve(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
@@ -7272,6 +7330,7 @@ def test_interrupted_turn_closes_pending_approval_tool_item(tmp_path):
     assert snapshot["session"]["status"] == "idle"
 
 
+@pytest.mark.skip(reason="legacy persisted notice behavior was removed; notices are runtime-owned live facts")
 def test_failed_turn_creates_blocking_execution_error_interaction(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)

@@ -60,7 +60,6 @@ class SessionStateService:
         has_active_timeline_item = await self._store.has_active_timeline_item(
             session_id
         )
-        blocking = await self._store.list_open_blocking_notices(session_id)
         facts = SessionStateFacts(
             current_status=session.status,
             observed_status=observed_status,
@@ -70,7 +69,7 @@ class SessionStateService:
                 or (active_run is not None and active_run.get("turnId") is not None)
                 or has_active_timeline_item
             ),
-            has_blocking_interaction=bool(blocking),
+            has_blocking_interaction=False,
             settle_stopping=settle_stopping,
         )
         return SessionStateDecision(session=session, facts=facts)

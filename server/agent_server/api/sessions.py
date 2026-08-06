@@ -30,6 +30,7 @@ from agent_server.core.models import (
     InteractionRespondRequest,
     MessageCreateRequest,
     NoticeIn,
+    RpcError,
     RpcResponsePayload,
     RuntimeNoticeListResponse,
     SessionCommandListResponse,
@@ -62,7 +63,6 @@ from agent_server.deps import (
     current_user_id,
     get_device_runtime_service,
     get_event_recovery_service,
-    get_interaction_service,
     get_rpc,
     get_session_run_service,
     get_session_runtime_state_cache,
@@ -90,11 +90,6 @@ from agent_server.services.effective_capabilities import (
     derive_session_effective_capabilities,
 )
 from agent_server.services.event_recovery import EventRecoveryService
-from agent_server.services.interactions import (
-    InteractionService,
-    InteractionServiceError,
-)
-from agent_server.services.notices import pending_approvals_from_notices
 from agent_server.services.session_meta_projection import (
     project_session_meta_for_dashboard,
 )
@@ -127,34 +122,14 @@ def _raise_session_run_error(exc: SessionRunError) -> None:
     raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
-def _raise_interaction_error(exc: InteractionServiceError) -> None:
-    status_code = {
-        "not_found": 404,
-        "conflict": 409,
-        "invalid": 422,
-        "upstream": 502,
-    }[exc.kind]
-    raise HTTPException(status_code=status_code, detail=exc.detail) from exc
-
-
 async def _publish_session_protocol_update(
     db: Store,
     broker: TimelineBroker,
     manager: ConnectorRpcManager,
     runtime_state_cache: SessionRuntimeStateCache,
     session_id: str,
-    *,
-    extra_notices: list[Any] | None = None,
 ) -> None:
     next_seq = await db.get_session_seq(session_id)
-    notices_by_id = {
-        notice.noticeId: notice.model_dump(mode="json")
-        for notice in await db.list_open_notices(session_id)
-    }
-    for notice in extra_notices or []:
-        notice_id = getattr(notice, "noticeId", None)
-        if isinstance(notice_id, str):
-            notices_by_id[notice_id] = notice.model_dump(mode="json")
     session = await db.get_session(session_id)
     runtime_state = await read_runtime_state_live(
         db,
@@ -181,7 +156,6 @@ async def _publish_session_protocol_update(
         "session": session.model_dump(mode="json"),
         "runtimeState": runtime_state.model_dump(mode="json"),
         "capabilitySet": effective_capabilities.model_dump(mode="json"),
-        "notices": list(notices_by_id.values()),
     }
     await broker.publish(session_id, envelope)
 
@@ -206,24 +180,6 @@ async def _best_effort_publish_session_protocol_update(
         )
     except Exception:
         return
-
-
-async def _publish_session_protocol_changes_since(
-    db: Store,
-    broker: TimelineBroker,
-    manager: ConnectorRpcManager,
-    runtime_state_cache: SessionRuntimeStateCache,
-    session_id: str,
-    before_seq: int,
-) -> None:
-    await _publish_session_protocol_update(
-        db,
-        broker,
-        manager,
-        runtime_state_cache,
-        session_id,
-        extra_notices=await db.list_notices_since(session_id, before_seq),
-    )
 
 
 @router.post("")
@@ -705,8 +661,7 @@ async def session_snapshot(
     try:
         session = await db.get_session(session_id, user_id=user_id)
         items, has_more = await db.list_timeline_latest(session_id=session_id, limit=limit)
-        notices = await db.list_open_notices(session_id)
-        approvals = pending_approvals_from_notices(notices)
+        notices = await read_session_notices_for_snapshot(manager, session)
         runtime_state = await read_runtime_state_live(
             db,
             manager,
@@ -733,7 +688,7 @@ async def session_snapshot(
         session=session,
         state=runtime_state,
         timeline=ProtocolTimelineSnapshot(items=items, nextSeq=next_seq, hasMore=has_more),
-        approvals=approvals,
+        approvals=[],
         notices=notices,
         effectiveCapabilities=effective_capabilities,
         runtimeCapabilities=runtime_capabilities,
@@ -1032,15 +987,13 @@ async def interrupt_session(
     ),
 ) -> RpcResponsePayload:
     try:
-        before_seq = await db.get_session_seq(session_id)
         result = await run_service.interrupt_session(session_id, user_id=user_id)
-        await _publish_session_protocol_changes_since(
+        await _publish_session_protocol_update(
             db,
             broker,
             manager,
             runtime_state_cache,
             session_id,
-            before_seq,
         )
         return result
     except SessionRunError as exc:
@@ -1121,43 +1074,62 @@ async def respond_interaction(
     db: Store = Depends(get_store),
     broker: TimelineBroker = Depends(get_timeline_broker),
     manager: ConnectorRpcManager = Depends(get_rpc),
-    interaction_service: InteractionService = Depends(get_interaction_service),
     runtime_state_cache: SessionRuntimeStateCache = Depends(
         get_session_runtime_state_cache
     ),
 ) -> RpcResponsePayload:
     try:
-        before_seq = await db.get_session_seq(session_id)
+        session = await db.get_session(session_id, user_id=user_id)
     except KeyError:
-        raise HTTPException(status_code=404, detail="interaction not found") from None
+        raise HTTPException(status_code=404, detail="session not found") from None
+    params: dict[str, Any] = {
+        "sessionId": session.id,
+        "runtime": session.runtime,
+        "noticeId": notice_id,
+        "actionId": payload.actionId,
+        "inputData": payload.input or {},
+    }
+    if session.externalSessionId:
+        params["externalSessionId"] = session.externalSessionId
     try:
-        result = await interaction_service.respond(
-            session_id,
-            notice_id,
-            action_id=payload.actionId,
-            input_data=payload.input,
-            user_id=user_id,
+        result = await manager.request(
+            session.connectorId,
+            "interaction.respond",
+            params,
+            timeout=30,
         )
-    except InteractionServiceError as exc:
-        if exc.changed:
-            await _publish_session_protocol_changes_since(
-                db,
-                broker,
-                manager,
-                runtime_state_cache,
-                session_id,
-                before_seq,
+    except ConnectorOfflineError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ConnectorRpcError as exc:
+        if exc.code in {
+            "not_found",
+            "notice_not_found",
+            "interaction_not_found",
+            "request_not_found",
+            "approval_not_found",
+        }:
+            return RpcResponsePayload(
+                ok=False,
+                error=RpcError(code=exc.code, message=exc.message or exc.code),
             )
-        _raise_interaction_error(exc)
-    await _publish_session_protocol_changes_since(
+        if exc.code == "conflict":
+            raise HTTPException(
+                status_code=409,
+                detail={"code": exc.code, "message": exc.message or exc.code},
+            ) from exc
+        raise HTTPException(
+            status_code=502,
+            detail={"code": exc.code, "message": exc.message or exc.code},
+        ) from exc
+    await _best_effort_publish_session_protocol_update(
         db,
         broker,
         manager,
         runtime_state_cache,
         session_id,
-        before_seq,
+        user_id=user_id,
     )
-    return result
+    return RpcResponsePayload(ok=True, result=result)
 
 
 @router.post("/{session_id}/sync", response_model=RpcResponsePayload)
@@ -1219,6 +1191,8 @@ async def read_runtime_state_live(
     if await manager.is_online(session.connectorId):
         state = await read_runtime_state_from_connector(manager, session)
         if state is not None:
+            persisted_session = await db.set_session_status(session.id, state.status)
+            state = state.model_copy(update={"updatedSeq": persisted_session.updatedSeq})
             await runtime_state_cache.put(state)
             return state
     cached_state = await runtime_state_cache.get(session.id)
@@ -1390,6 +1364,16 @@ async def read_session_notices_from_connector(
             status_code=502,
             detail={"code": "invalid_runtime_notices", "message": str(exc)},
         ) from exc
+
+
+async def read_session_notices_for_snapshot(
+    manager: ConnectorRpcManager,
+    session: SessionView,
+) -> list[NoticeIn]:
+    try:
+        return await read_session_notices_from_connector(manager, session)
+    except HTTPException:
+        return []
 
 
 def runtime_state_from_rpc_payload(

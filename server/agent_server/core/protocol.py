@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from agent_server.core.models import (
     Approval,
-    Notice,
+    NoticeIn,
     RuntimeName,
     SessionRuntimeState,
     SessionView,
@@ -138,7 +138,7 @@ class ProtocolSessionSnapshotResponse(ProtocolWireModel):
     state: SessionRuntimeState | None = None
     timeline: ProtocolTimelineSnapshot
     approvals: list[Approval] = Field(default_factory=list)
-    notices: list[Notice] = Field(default_factory=list)
+    notices: list[NoticeIn] = Field(default_factory=list)
     effectiveCapabilities: ProtocolCapabilitySet
     runtimeCapabilities: ProtocolCapabilitySet
     catalogs: dict[str, Any] = Field(default_factory=dict)

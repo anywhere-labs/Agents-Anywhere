@@ -207,7 +207,94 @@
       "title": "ApprovalSource",
       "type": "object"
     },
-    "Notice": {
+    "NoticeAction": {
+      "properties": {
+        "actionId": {
+          "title": "Actionid",
+          "type": "string"
+        },
+        "input": {
+          "$ref": "#/$defs/NoticeActionInput"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "style": {
+          "default": "secondary",
+          "enum": [
+            "primary",
+            "secondary",
+            "danger"
+          ],
+          "title": "Style",
+          "type": "string"
+        }
+      },
+      "required": [
+        "actionId",
+        "label"
+      ],
+      "title": "NoticeAction",
+      "type": "object"
+    },
+    "NoticeActionInput": {
+      "properties": {
+        "required": {
+          "default": false,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "schema": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Schema"
+        },
+        "uiSchema": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Uischema"
+        }
+      },
+      "title": "NoticeActionInput",
+      "type": "object"
+    },
+    "NoticeBlocking": {
+      "properties": {
+        "scope": {
+          "const": "session",
+          "title": "Scope",
+          "type": "string"
+        },
+        "targetId": {
+          "title": "Targetid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "scope",
+        "targetId"
+      ],
+      "title": "NoticeBlocking",
+      "type": "object"
+    },
+    "NoticeIn": {
       "properties": {
         "actions": {
           "items": {
@@ -233,8 +320,16 @@
           "type": "object"
         },
         "createdAt": {
-          "title": "Createdat",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Createdat"
         },
         "expiresAt": {
           "anyOf": [
@@ -332,9 +427,11 @@
           "default": "open",
           "enum": [
             "open",
+            "responding",
             "response_accepted",
             "resolving",
             "resolved",
+            "closed",
             "expired",
             "cancelled",
             "failed"
@@ -353,113 +450,15 @@
           ],
           "title": "Type",
           "type": "string"
-        },
-        "updatedAt": {
-          "title": "Updatedat",
-          "type": "string"
-        },
-        "updatedSeq": {
-          "title": "Updatedseq",
-          "type": "integer"
         }
       },
       "required": [
         "noticeId",
         "type",
         "sessionId",
-        "title",
-        "createdAt",
-        "updatedSeq",
-        "updatedAt"
+        "title"
       ],
-      "title": "Notice",
-      "type": "object"
-    },
-    "NoticeAction": {
-      "properties": {
-        "actionId": {
-          "title": "Actionid",
-          "type": "string"
-        },
-        "input": {
-          "$ref": "#/$defs/NoticeActionInput"
-        },
-        "label": {
-          "title": "Label",
-          "type": "string"
-        },
-        "style": {
-          "default": "secondary",
-          "enum": [
-            "primary",
-            "secondary",
-            "danger"
-          ],
-          "title": "Style",
-          "type": "string"
-        }
-      },
-      "required": [
-        "actionId",
-        "label"
-      ],
-      "title": "NoticeAction",
-      "type": "object"
-    },
-    "NoticeActionInput": {
-      "properties": {
-        "required": {
-          "default": false,
-          "title": "Required",
-          "type": "boolean"
-        },
-        "schema": {
-          "anyOf": [
-            {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Schema"
-        },
-        "uiSchema": {
-          "anyOf": [
-            {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Uischema"
-        }
-      },
-      "title": "NoticeActionInput",
-      "type": "object"
-    },
-    "NoticeBlocking": {
-      "properties": {
-        "scope": {
-          "const": "session",
-          "title": "Scope",
-          "type": "string"
-        },
-        "targetId": {
-          "title": "Targetid",
-          "type": "string"
-        }
-      },
-      "required": [
-        "scope",
-        "targetId"
-      ],
-      "title": "NoticeBlocking",
+      "title": "NoticeIn",
       "type": "object"
     },
     "NoticeSource": {
@@ -1268,7 +1267,7 @@
     },
     "notices": {
       "items": {
-        "$ref": "#/$defs/Notice"
+        "$ref": "#/$defs/NoticeIn"
       },
       "title": "Notices",
       "type": "array"

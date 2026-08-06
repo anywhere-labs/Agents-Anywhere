@@ -190,6 +190,7 @@ def create_app(
         app.state.rpc,
         app.state.timeline_broker,
         app.state.redis,
+        app.state.session_runtime_state_cache,
     )
     app.state.ws_tickets = ClientWsTicketManager(app.state.redis)
     app.state.setup_token = SetupToken()

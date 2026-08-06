@@ -5,7 +5,6 @@ from typing import Any, ClassVar
 from loguru import logger
 from pydantic import ValidationError
 
-from agent_server.core.interactions import InteractionDomainError
 from agent_server.core.models import NoticeIn, SessionStatus, TimelineItemIn
 from agent_server.core.protocol import (
     ProtocolCapability,
@@ -13,11 +12,6 @@ from agent_server.core.protocol import (
 )
 from agent_server.services.connector_realtime import ConnectorRealtimeService
 from agent_server.services.ingest_effects import IngestEffect
-from agent_server.services.interactions import InteractionProjectionService
-from agent_server.services.notices import (
-    cancel_turn_blocking_interactions,
-    upsert_execution_error_interaction,
-)
 from agent_server.services.repository_ports import ConnectorNotificationRepository
 from agent_server.services.timeline_effects import (
     close_waiting_approval_items_for_finished_turn,
@@ -45,10 +39,7 @@ class ConnectorNotificationService:
             SessionStateNotificationHandler(store),
             SessionNotificationHandler(store),
             TimelineNotificationHandler(store),
-            InteractionNotificationHandler(
-                store,
-                InteractionProjectionService(store),
-            ),
+            InteractionNotificationHandler(store),
         )
 
     async def apply(
@@ -348,20 +339,11 @@ class TimelineNotificationHandler:
         for item in items:
             if item.type != "turn.end":
                 continue
-            if _timeline_item_failed(item):
-                await upsert_execution_error_interaction(
-                    self._store,
-                    session_id=session_id,
-                    timeline_item=item,
-                )
-            else:
-                await cancel_turn_blocking_interactions(
-                    self._store,
-                    session_id=session_id,
-                    turn_id=item.turnId,
-                    reason="turn_finished",
-                    reconcile=False,
-                )
+            await close_waiting_approval_items_for_finished_turn(
+                self._store,
+                session_id,
+                item,
+            )
         changed_items = (
             stored_items
             if replace_snapshot
@@ -375,7 +357,6 @@ class TimelineNotificationHandler:
             else None,
             timeline_reset=replace_snapshot,
             session_changed=True,
-            notices_changed=any(item.type == "turn.end" for item in items),
             needs_refetch=not push_items,
         )
 
@@ -408,27 +389,12 @@ class TimelineNotificationHandler:
                 session_id,
                 item,
             )
-            if _timeline_item_failed(item):
-                await upsert_execution_error_interaction(
-                    self._store,
-                    session_id=session_id,
-                    timeline_item=item,
-                )
-            else:
-                await cancel_turn_blocking_interactions(
-                    self._store,
-                    session_id=session_id,
-                    turn_id=item.turnId,
-                    reason="turn_finished",
-                    reconcile=False,
-                )
             await self._store.clear_active_run(session_id)
         affects_run_state = _timeline_item_affects_run_state(item)
         return IngestEffect(
             session_id=session_id,
             item=stored.model_dump(mode="json"),
             session_changed=affects_run_state,
-            notices_changed=item.type == "turn.end",
         )
 
 
@@ -438,13 +404,8 @@ class InteractionNotificationHandler:
         "runtime.error",
     }
 
-    def __init__(
-        self,
-        store: ConnectorNotificationRepository,
-        projections: InteractionProjectionService,
-    ) -> None:
+    def __init__(self, store: ConnectorNotificationRepository) -> None:
         self._store = store
-        self._projections = projections
 
     async def apply(
         self,
@@ -466,23 +427,10 @@ class InteractionNotificationHandler:
             raise NotificationValidationError("invalid_notice", str(exc)) from exc
         if await _session_disabled(self._store, notice.sessionId):
             return IngestEffect()
-        if notice.type == "interaction":
-            existing = await _existing_notice(self._store, notice.noticeId)
-            try:
-                if existing is None and notice.status == "open":
-                    stored = await self._projections.project_interaction(notice)
-                else:
-                    stored = await self._store.upsert_notice(notice)
-            except InteractionDomainError as exc:
-                raise NotificationValidationError(
-                    "invalid_interaction",
-                    exc.detail,
-                ) from exc
-        else:
-            stored = await self._store.upsert_notice(notice)
         return IngestEffect(
-            session_id=stored.sessionId,
-            session_changed=notice.type == "interaction" or stored.blocking is not None,
+            session_id=notice.sessionId,
+            notices=[notice],
+            session_changed=notice.type == "interaction" or notice.blocking is not None,
             notices_changed=True,
         )
 
@@ -493,33 +441,37 @@ class InteractionNotificationHandler:
             session_id,
         ):
             return IngestEffect()
-        await upsert_execution_error_interaction(
-            self._store,
-            session_id=session_id,
-            title="Runtime error",
-            message=_string_or_none(params.get("message")),
-            error={
-                "code": "runtime_error",
-                "message": params.get("message") or "The runtime reported an error.",
-                "details": params,
-            },
-            reason="runtime_error",
+        notice = NoticeIn.model_validate(
+            {
+                "noticeId": params.get("noticeId") or f"runtime_error_{session_id}",
+                "type": "notification",
+                "sessionId": session_id,
+                "source": {
+                    "runtime": _string_or_none(params.get("runtime")),
+                    "component": "runtime",
+                    "operationId": _string_or_none(params.get("operationId")),
+                },
+                "title": params.get("title") or "Runtime error",
+                "message": _string_or_none(params.get("message")),
+                "severity": "error",
+                "status": params.get("status") or "open",
+                "context": {
+                    "error": {
+                        "code": "runtime_error",
+                        "message": params.get("message")
+                        or "The runtime reported an error.",
+                        "details": params,
+                    },
+                    "reason": "runtime_error",
+                },
+            }
         )
         return IngestEffect(
             session_id=session_id,
+            notices=[notice],
             session_changed=True,
             notices_changed=True,
         )
-
-
-async def _existing_notice(
-    store: ConnectorNotificationRepository,
-    notice_id: str,
-):
-    try:
-        return await store.get_notice(notice_id)
-    except KeyError:
-        return None
 
 
 def merge_capability_sets(

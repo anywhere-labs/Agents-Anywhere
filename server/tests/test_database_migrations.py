@@ -66,10 +66,11 @@ def test_empty_database_upgrades_to_current_schema(tmp_path) -> None:
     engine = create_engine(f"sqlite:///{path}")
     try:
         tables = set(inspect(engine).get_table_names())
-        assert {"alembic_version", "device_runtimes", "notices", "sessions"}.issubset(
+        assert {"alembic_version", "device_runtimes", "sessions"}.issubset(
             tables
         )
         assert "approvals" not in tables
+        assert "notices" not in tables
     finally:
         engine.dispose()
     async_engine = create_async_engine(_sqlite_url(path))
@@ -268,6 +269,9 @@ def test_v2_0_database_upgrades_through_current_revision(tmp_path) -> None:
         ("v2_1", "v2_2"),
         ("v2_2", "v2_3"),
         ("v2_3", "v2_4"),
+        ("v2_4", "v2_5"),
+        ("v2_5", "v2_6"),
+        ("v2_6", "v2_7"),
     ],
 )
 def test_every_adjacent_schema_upgrade(
@@ -290,7 +294,7 @@ def test_every_adjacent_schema_upgrade(
         engine.dispose()
 
 
-def test_v2_3_migrates_approval_response_context_to_notice(tmp_path) -> None:
+def test_current_schema_drops_legacy_approval_notice_storage(tmp_path) -> None:
     path = tmp_path / "approval-v2-2.sqlite3"
     upgrade_database(db_url=_sqlite_url(path), revision="v2_2")
     engine = create_engine(f"sqlite:///{path}")
@@ -382,25 +386,7 @@ def test_v2_3_migrates_approval_response_context_to_notice(tmp_path) -> None:
     try:
         inspector = inspect(engine)
         assert "approvals" not in inspector.get_table_names()
-        with engine.connect() as connection:
-            notice = connection.execute(
-                text(
-                    "SELECT interaction_type, status, source_json, context_json "
-                    "FROM notices WHERE session_id = 'sess_approval'"
-                )
-            ).mappings().one()
-            notice_count = connection.execute(
-                text(
-                    "SELECT COUNT(*) FROM notices WHERE session_id = 'sess_approval'"
-                )
-            ).scalar_one()
-        context = json.loads(notice["context_json"])
-        assert notice["interaction_type"] == "approval"
-        assert notice["status"] == "open"
-        assert context["approvalId"] == "appr_migrate"
-        assert context["approvalSource"]["requestId"] == 42
-        assert context["targetItemId"] == "tool_1"
-        assert notice_count == 1
+        assert "notices" not in inspector.get_table_names()
     finally:
         engine.dispose()
 
@@ -476,7 +462,7 @@ def _create_legacy_v1_database(path) -> None:
                 "updated_seq INTEGER NOT NULL, created_at TEXT NOT NULL, resolved_at TEXT)"
             )
         )
-        connection.execute(text("DROP TABLE notices"))
+        connection.execute(text("DROP TABLE IF EXISTS notices"))
         connection.execute(text("DROP TABLE connector_protocol_capabilities"))
         connection.execute(text("DROP TABLE connector_runtime_catalogs"))
         connection.execute(text("DROP TABLE device_runtimes"))

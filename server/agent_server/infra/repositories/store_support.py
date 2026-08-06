@@ -35,7 +35,6 @@ from agent_server.infra.db import (
     device_runtimes as device_runtimes_t,
     fs_preview_tokens as fs_preview_tokens_t,
     mobile_login_tokens as mobile_login_tokens_t,
-    notices as notices_t,
     oauth_accounts as oauth_accounts_t,
     oauth_authorization_codes as oauth_authorization_codes_t,
     oauth_clients as oauth_clients_t,
@@ -50,8 +49,6 @@ from agent_server.infra.files import FileStorage, build_file_storage
 from agent_server.core.models import (
     ConnectorConfigBundle,
     ConnectorView,
-    Notice,
-    NoticeIn,
     OAuthClientView,
     PairingPollResponse,
     SessionRuntimeState,

@@ -21,7 +21,6 @@ from agent_server.services.effective_capabilities import (
     publish_connector_session_capabilities,
 )
 from agent_server.services.ingest_effects import IngestEffect
-from agent_server.services.notices import pending_approvals_from_notices
 from agent_server.services.repository_ports import ConnectorIngestRepository
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 
@@ -185,7 +184,7 @@ class ConnectorIngestService:
                     "runtime_state": None,
                     "timeline_reset": False,
                     "session": False,
-                    "notices": False,
+                    "notices": [],
                     "refetch": False,
                 },
             )
@@ -200,7 +199,8 @@ class ConnectorIngestService:
             if effect.runtime_state is not None:
                 bucket["runtime_state"] = effect.runtime_state
             bucket["session"] = bucket["session"] or effect.session_changed
-            bucket["notices"] = bucket["notices"] or effect.notices_changed
+            if effect.notices:
+                bucket["notices"].extend(effect.notices)
             bucket["refetch"] = bucket["refetch"] or effect.needs_refetch
 
         for session_id, bucket in by_session.items():
@@ -208,9 +208,10 @@ class ConnectorIngestService:
                 next_seq = await self._store.get_session_seq(session_id)
             except KeyError:
                 continue
+            envelope_sequence = max(next_seq, 1) if bucket["notices"] else next_seq
             envelope: dict[str, Any] = {
                 "sessionId": session_id,
-                "nextSeq": next_seq,
+                "nextSeq": envelope_sequence,
             }
             if bucket["refetch"]:
                 envelope["refetch"] = True
@@ -218,19 +219,31 @@ class ConnectorIngestService:
                 envelope["timelineReset"] = True
             if bucket["items"]:
                 envelope["items"] = bucket["items"]
+            runtime_state: SessionRuntimeState | None = None
             if bucket["runtime_state"]:
                 runtime_state = runtime_state_from_ingest_effect(
                     session_id,
                     next_seq,
                     bucket["runtime_state"],
                 )
+                persisted_session = await self._store.set_session_status(
+                    session_id,
+                    runtime_state.status,
+                )
+                next_seq = max(
+                    await self._store.get_session_seq(session_id),
+                    persisted_session.updatedSeq,
+                )
+                envelope["nextSeq"] = max(envelope_sequence, next_seq)
+                runtime_state = runtime_state.model_copy(
+                    update={"updatedSeq": envelope["nextSeq"]}
+                )
                 await self._runtime_state_cache.put(runtime_state)
                 envelope["runtimeState"] = runtime_state.model_dump(mode="json")
             if bucket["session"]:
                 try:
                     session = await self._store.get_session(session_id)
-                    runtime_state = bucket["runtime_state"]
-                    if isinstance(runtime_state, SessionRuntimeState):
+                    if runtime_state is not None:
                         session = session.model_copy(
                             update={"status": runtime_state.status}
                         )
@@ -248,17 +261,9 @@ class ConnectorIngestService:
                 except KeyError:
                     pass
             if bucket["notices"]:
-                envelope["approvals"] = [
-                    approval.model_dump(mode="json")
-                    for approval in pending_approvals_from_notices(
-                        await self._store.list_open_notices(session_id)
-                    )
-                ]
-            if bucket["notices"]:
-                envelope["noticesReset"] = True
                 envelope["notices"] = [
                     notice.model_dump(mode="json")
-                    for notice in await self._store.list_open_notices(session_id)
+                    for notice in bucket["notices"]
                 ]
             await self._timeline_broker.publish(session_id, envelope)
             await publish_dashboard_changed(

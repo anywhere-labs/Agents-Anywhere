@@ -20,10 +20,6 @@ from agent_server.infra.connector_rpc import (
     ConnectorRpcError,
     ConnectorRpcManager,
 )
-from agent_server.services.notices import (
-    cancel_session_blocking_interactions,
-    upsert_execution_error_interaction,
-)
 from agent_server.services.repository_ports import SessionRunRepository
 
 
@@ -244,25 +240,9 @@ class SessionRunService:
             )
         except ConnectorOfflineError as exc:
             await self._store.clear_active_run(session_id)
-            await upsert_execution_error_interaction(
-                self._store,
-                session_id=session_id,
-                title="Dispatch failed",
-                message=str(exc),
-                error={"code": "connector_offline", "message": str(exc)},
-                reason="dispatch_failed",
-            )
             raise SessionRunConflictError(str(exc)) from exc
         except ConnectorRpcError as exc:
             await self._store.clear_active_run(session_id)
-            await upsert_execution_error_interaction(
-                self._store,
-                session_id=session_id,
-                title="Dispatch failed",
-                message=exc.message or exc.code,
-                error={"code": exc.code, "message": exc.message or exc.code},
-                reason="dispatch_failed",
-            )
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
         return RpcResponsePayload(ok=True, result=result)
 
@@ -488,11 +468,6 @@ class SessionRunService:
             raise SessionRunConflictError(str(exc)) from exc
         except ConnectorRpcError as exc:
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
-        await cancel_session_blocking_interactions(
-            self._store,
-            session_id=session_id,
-            reason="interrupt_requested",
-        )
         if _interrupt_target_not_found(result):
             await self._store.clear_active_run(session_id)
         return RpcResponsePayload(ok=True, result=result)

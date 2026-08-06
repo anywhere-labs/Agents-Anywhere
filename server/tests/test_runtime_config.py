@@ -10,7 +10,6 @@ from agent_server.infra.connector_rpc import ConnectorRpcError
 from agent_server.services.connector_ingest import ConnectorIngestService
 from agent_server.services.connector_notifications import ConnectorNotificationService
 from agent_server.services.device_runtimes import DeviceRuntimeService
-from agent_server.services.notices import upsert_execution_error_interaction
 
 ADMIN_USER = "user1"
 ADMIN_PASSWORD = "secret"
@@ -557,7 +556,7 @@ def test_delete_running_config_stops_then_returns_to_unconfigured(tmp_path):
     assert [request[1] for request in rpc.requests] == ["runtime.stop"]
 
 
-def test_deactivation_settles_sessions_and_cancels_blocking_interactions(tmp_path):
+def test_deactivation_settles_sessions_without_persisted_notices(tmp_path):
     client, _, connector_id, headers = _make_client(tmp_path)
     config_url = f"{_runtime_url(connector_id)}/config"
     active_url = f"{_runtime_url(connector_id)}/active"
@@ -575,19 +574,11 @@ def test_deactivation_settles_sessions_and_cancels_blocking_interactions(tmp_pat
         )
     )
     asyncio.run(store.set_session_status(session.id, "blocked"))
-    notice = asyncio.run(
-        upsert_execution_error_interaction(
-            store,
-            session_id=session.id,
-            message="runtime failed",
-        )
-    )
 
     response = client.put(active_url, headers=headers, json={"active": False})
 
     assert response.status_code == 200, response.text
     assert asyncio.run(store.get_session(session.id)).status == "idle"
-    assert asyncio.run(store.get_notice(notice.noticeId)).status == "cancelled"
 
 
 def test_explicit_discovery_stops_runtime_that_server_has_not_activated(tmp_path):

@@ -20,9 +20,8 @@ from agent_server.infra.connector_rpc import (
 from agent_server.infra.redis_coordinator import RedisCoordinator
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.services.dashboard_events import publish_dashboard_changed
-from agent_server.services.notices import cancel_session_blocking_interactions
 from agent_server.services.repository_ports import DeviceRuntimeRepository
-from agent_server.services.session_states import SessionStateService
+from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 
 
 class DeviceRuntimeError(RuntimeError):
@@ -69,12 +68,13 @@ class DeviceRuntimeService:
         manager: ConnectorRpcManager,
         timeline_broker: TimelineBroker | None = None,
         coordinator: RedisCoordinator | None = None,
+        runtime_state_cache: SessionRuntimeStateCache | None = None,
     ) -> None:
         self._store = store
         self._manager = manager
         self._timeline_broker = timeline_broker
         self._coordinator = coordinator
-        self._session_states = SessionStateService(store)
+        self._runtime_state_cache = runtime_state_cache
         self._locks: dict[tuple[str, str], asyncio.Lock] = {}
         self._locks_guard = asyncio.Lock()
 
@@ -422,16 +422,10 @@ class DeviceRuntimeService:
             runtime=runtime.runtimeId,
         )
         for session in sessions:
-            await cancel_session_blocking_interactions(
-                self._store,
-                session_id=session.id,
-                reason="runtime_stopped",
-            )
             await self._store.clear_active_run(session.id)
-            await self._session_states.reconcile(
-                session.id,
-                settle_stopping=True,
-            )
+            if self._runtime_state_cache is not None:
+                await self._runtime_state_cache.discard(session.id)
+            await self._store.set_session_status(session.id, "idle")
             if self._timeline_broker is not None:
                 await self._timeline_broker.publish(
                     session.id,
