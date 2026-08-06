@@ -99,7 +99,6 @@ const LOAD_OLDER_SCROLL_THRESHOLD = 96
 const AUTO_SCROLL_BOTTOM_DISTANCE = 180
 const INITIAL_SCROLL_LAYOUT_QUIET_MS = 120
 const INITIAL_SCROLL_LAYOUT_FALLBACK_MS = 900
-const INITIAL_SCROLL_FINALIZE_MS = 450
 const SCROLL_TO_BOTTOM_INTERVAL_MS = 1000
 const SCROLL_TO_BOTTOM_PRUNE_CHECK_MS = 120
 const COMMAND_QUERY_DEBOUNCE_MS = 120
@@ -269,7 +268,6 @@ export function SessionDetail({
   const initialScrollFrameRef = React.useRef<number | null>(null)
   const initialScrollQuietTimerRef = React.useRef<number | null>(null)
   const initialScrollFallbackTimerRef = React.useRef<number | null>(null)
-  const initialScrollFinalizeTimerRef = React.useRef<number | null>(null)
   const pruneAfterScrollTimerRef = React.useRef<number | null>(null)
   const streamConnectedRef = React.useRef(false)
   const processedEventIdsRef = React.useRef<Set<string>>(new Set())
@@ -575,9 +573,6 @@ export function SessionDetail({
       if (initialScrollFallbackTimerRef.current !== null) {
         window.clearTimeout(initialScrollFallbackTimerRef.current)
       }
-      if (initialScrollFinalizeTimerRef.current !== null) {
-        window.clearTimeout(initialScrollFinalizeTimerRef.current)
-      }
       if (pruneAfterScrollTimerRef.current !== null) {
         window.clearTimeout(pruneAfterScrollTimerRef.current)
       }
@@ -646,10 +641,6 @@ export function SessionDetail({
     if (initialScrollFallbackTimerRef.current !== null) {
       window.clearTimeout(initialScrollFallbackTimerRef.current)
       initialScrollFallbackTimerRef.current = null
-    }
-    if (initialScrollFinalizeTimerRef.current !== null) {
-      window.clearTimeout(initialScrollFinalizeTimerRef.current)
-      initialScrollFinalizeTimerRef.current = null
     }
     processedEventIdsRef.current = new Set()
     setSending(false)
@@ -1061,14 +1052,10 @@ export function SessionDetail({
         window.clearTimeout(initialScrollFallbackTimerRef.current)
         initialScrollFallbackTimerRef.current = null
       }
-      if (initialScrollFinalizeTimerRef.current !== null) {
-        window.clearTimeout(initialScrollFinalizeTimerRef.current)
-        initialScrollFinalizeTimerRef.current = null
-      }
     }
 
     // Side effects: observes timeline layout, closes the first-screen loading phase,
-    // performs the initial animated scroll, then corrects to the exact bottom.
+    // and performs the initial animated scroll once the layout has settled.
     const completeInitialLayout = () => {
       if (cancelled || initialScrollDoneRef.current) return
       const viewport = timelineRef.current
@@ -1081,14 +1068,6 @@ export function SessionDetail({
       setLoading(false)
       viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" })
       setShowScrollBottom(false)
-      initialScrollFinalizeTimerRef.current = window.setTimeout(() => {
-        if (cancelled) return
-        const latestViewport = timelineRef.current
-        if (!latestViewport) return
-        latestViewport.scrollTop = latestViewport.scrollHeight
-        initialScrollFinalizeTimerRef.current = null
-        setShowScrollBottom(false)
-      }, INITIAL_SCROLL_FINALIZE_MS)
     }
 
     const scheduleCompleteAfterQuietLayout = () => {
@@ -1106,6 +1085,11 @@ export function SessionDetail({
       initialScrollFrameRef.current = window.requestAnimationFrame(() => {
         initialScrollFrameRef.current = null
         const content = timelineContentRef.current
+        const viewport = timelineRef.current
+        if (viewport) {
+          viewport.scrollTop = viewport.scrollHeight
+          setShowScrollBottom(false)
+        }
         if (content) {
           resizeObserver = new ResizeObserver(scheduleCompleteAfterQuietLayout)
           resizeObserver.observe(content)
