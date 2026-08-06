@@ -3393,8 +3393,8 @@ def test_notice_upsert_accepts_interaction_lifecycle_from_connector(tmp_path):
 def test_session_snapshot_includes_effective_capabilities(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, session_id, headers = create_connector_and_session(client)
-    seed_codex_model_catalog(client.app, connector_id)
-    seed_codex_permission_catalog(client.app, connector_id)
+    model_selection_id = seed_codex_model_catalog(client.app, connector_id)
+    permission_selection_id = seed_codex_permission_catalog(client.app, connector_id)
     fake_rpc = FakeLocalRpc()
     client.app.state.rpc = fake_rpc
 
@@ -3448,7 +3448,8 @@ def test_session_snapshot_includes_effective_capabilities(tmp_path):
     assert idle_caps["session.interrupt"]["unavailableReason"] == "session_not_taken_over"
     assert idle_caps["session.steer"]["available"] is False
     assert idle_caps["catalog.model"]["available"] is True
-    assert idle_body["catalogs"] == {}
+    assert idle_body["catalogs"]["model"]["models"][0]["reasoningItems"][0]["selectionId"] == model_selection_id
+    assert idle_body["catalogs"]["permission"]["permissions"][0]["selectionId"] == permission_selection_id
     assert idle_body["eventCursor"].startswith("seq:")
 
     takeover = client.post(f"/sessions/{session_id}/takeover", headers=headers)
@@ -3479,16 +3480,18 @@ def test_session_snapshot_includes_effective_capabilities(tmp_path):
     assert running_caps["session.steer"]["available"] is True
 
 
-def test_session_snapshot_does_not_return_persisted_runtime_catalogs(tmp_path):
+def test_session_snapshot_returns_persisted_runtime_catalogs(tmp_path):
     client = make_client(tmp_path)
     connector_id, _access_token, session_id, headers = create_connector_and_session(client)
-    seed_codex_model_catalog(client.app, connector_id)
-    seed_codex_permission_catalog(client.app, connector_id)
+    model_selection_id = seed_codex_model_catalog(client.app, connector_id)
+    permission_selection_id = seed_codex_permission_catalog(client.app, connector_id)
 
     response = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
 
     assert response.status_code == 200, response.text
-    assert response.json()["catalogs"] == {}
+    catalogs = response.json()["catalogs"]
+    assert catalogs["model"]["models"][0]["reasoningItems"][0]["selectionId"] == model_selection_id
+    assert catalogs["permission"]["permissions"][0]["selectionId"] == permission_selection_id
 
 
 def test_running_tool_item_keeps_session_interruptible(tmp_path):

@@ -62,6 +62,7 @@ from agent_server.core.protocol import (
 from agent_server.core.utc import utc_now
 from agent_server.deps import (
     current_user_id,
+    get_catalog_service,
     get_device_runtime_service,
     get_event_recovery_service,
     get_rpc,
@@ -83,6 +84,7 @@ from agent_server.services.connector_presence import (
     with_effective_session_connector_statuses,
 )
 from agent_server.services.dashboard_events import publish_dashboard_changed
+from agent_server.services.catalogs import CatalogService
 from agent_server.services.device_runtimes import (
     DeviceRuntimeError,
     DeviceRuntimeService,
@@ -658,6 +660,7 @@ async def session_snapshot(
     runtime_state_cache: SessionRuntimeStateCache = Depends(
         get_session_runtime_state_cache
     ),
+    catalogs: CatalogService = Depends(get_catalog_service),
 ) -> ProtocolSessionSnapshotResponse:
     try:
         session = await db.get_session(session_id, user_id=user_id)
@@ -682,6 +685,16 @@ async def session_snapshot(
             session=session,
             runtime_capabilities=runtime_capabilities,
         )
+        model_catalog = await catalogs.model_catalog(
+            session.connectorId,
+            runtime=session.runtime,
+            user_id=user_id,
+        )
+        permission_catalog = await catalogs.permission_catalog(
+            session.connectorId,
+            runtime=session.runtime,
+            user_id=user_id,
+        )
         next_seq = await db.get_session_seq(session_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
@@ -693,7 +706,14 @@ async def session_snapshot(
         notices=notices,
         effectiveCapabilities=effective_capabilities,
         runtimeCapabilities=runtime_capabilities,
-        catalogs={},
+        catalogs={
+            key: catalog.model_dump(mode="json")
+            for key, catalog in (
+                ("model", model_catalog),
+                ("permission", permission_catalog),
+            )
+            if catalog is not None
+        },
         eventCursor=event_cursor(next_seq),
         serverTime=utc_now(),
     )

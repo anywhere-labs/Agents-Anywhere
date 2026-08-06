@@ -104,7 +104,7 @@ class ConnectorProtocolNotificationHandler:
         elif method == "connector.preferencesUpdated":
             await self._update_preferences(connector_id, params)
         elif method == "protocol.capabilitiesUpdated":
-            await self._update_capabilities(connector_id, params)
+            return await self._update_capabilities(connector_id, params)
         elif method == "runtime.capability.updated":
             return await self._merge_runtime_capability_update(connector_id, params)
         return IngestEffect()
@@ -126,7 +126,7 @@ class ConnectorProtocolNotificationHandler:
         self,
         connector_id: str,
         params: dict[str, Any],
-    ) -> None:
+    ) -> IngestEffect:
         try:
             capability_set = ProtocolCapabilitySet.model_validate(params)
         except ValidationError as exc:
@@ -135,15 +135,22 @@ class ConnectorProtocolNotificationHandler:
                 str(exc),
             ) from exc
         try:
+            current = ProtocolCapabilitySet.model_validate(
+                await self._store.get_protocol_capabilities(connector_id)
+            )
+            if capability_sets_semantically_equal(current, capability_set):
+                return IngestEffect()
             await self._store.update_protocol_capabilities(
                 connector_id,
                 capability_set.model_dump(mode="json"),
             )
+            return IngestEffect(protocol_changed=True)
         except KeyError:
             logger.warning(
                 "protocol capabilities update for unknown connector connector_id={}",
                 connector_id,
             )
+            return IngestEffect()
 
     async def _merge_runtime_capability_update(
         self,
@@ -162,6 +169,8 @@ class ConnectorProtocolNotificationHandler:
                 await self._store.get_protocol_capabilities(connector_id)
             )
             merged = merge_capability_sets(current, incoming)
+            if capability_sets_semantically_equal(current, merged):
+                return IngestEffect()
             await self._store.update_protocol_capabilities(
                 connector_id,
                 merged.model_dump(mode="json"),
@@ -176,6 +185,7 @@ class ConnectorProtocolNotificationHandler:
         return IngestEffect(
             session_id=session_id,
             session_changed=session_id is not None,
+            protocol_changed=True,
         )
 
 
@@ -279,7 +289,6 @@ class SessionStateNotificationHandler:
                 external_session_id=external_session_id,
                 params=params,
             ),
-            session_changed=True,
         )
 
 
@@ -360,7 +369,7 @@ class TimelineNotificationHandler:
             if push_items
             else None,
             timeline_reset=replace_snapshot,
-            session_changed=True,
+            session_changed=bool(changed_items),
             needs_refetch=not push_items,
         )
 
@@ -493,6 +502,25 @@ def merge_capability_sets(
     return ProtocolCapabilitySet(
         revision=max(current.revision, incoming.revision),
         capabilities=list(capabilities_by_key.values()),
+    )
+
+
+def capability_sets_semantically_equal(
+    left: ProtocolCapabilitySet,
+    right: ProtocolCapabilitySet,
+) -> bool:
+    return capability_set_fingerprint(left) == capability_set_fingerprint(right)
+
+
+def capability_set_fingerprint(value: ProtocolCapabilitySet) -> list[dict[str, Any]]:
+    return sorted(
+        (capability.model_dump(mode="json") for capability in value.capabilities),
+        key=lambda item: (
+            str(item.get("capabilityId") or ""),
+            str(item.get("runtime") or ""),
+            str(item.get("scope") or ""),
+            str(item.get("sessionId") or ""),
+        ),
     )
 
 

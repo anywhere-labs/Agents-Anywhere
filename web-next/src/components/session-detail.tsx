@@ -116,16 +116,7 @@ async function loadInitialSessionState(
   const snapshot = await dashboardApi.getSessionSnapshot(token, sessionId, INITIAL_TIMELINE_LIMIT, {
     reason: options.reason ?? "session-detail.initial-load",
   })
-  const state = sessionStateFromSnapshot(snapshot)
-  try {
-    const capabilities = await dashboardApi.getSessionRuntimeCapabilities(token, sessionId)
-    return {
-      ...state,
-      effectiveCapabilities: capabilities.capabilitySet,
-    }
-  } catch {
-    return state
-  }
+  return sessionStateFromSnapshot(snapshot)
 }
 
 function sessionStateFromSnapshot(snapshot: SessionSnapshotResponse): SessionRemoteState {
@@ -139,7 +130,7 @@ function sessionStateFromSnapshot(snapshot: SessionSnapshotResponse): SessionRem
     serverTime: snapshot.serverTime,
     eventCursor: snapshot.eventCursor,
     effectiveCapabilities: snapshot.effectiveCapabilities,
-    catalogs: {},
+    catalogs: snapshot.catalogs ?? {},
   }
 }
 
@@ -271,11 +262,24 @@ export function SessionDetail({
   const pruneAfterScrollTimerRef = React.useRef<number | null>(null)
   const streamConnectedRef = React.useRef(false)
   const processedEventIdsRef = React.useRef<Set<string>>(new Set())
+  const catalogFetchKeyRef = React.useRef<string | null>(null)
   const selectionUpdateSeqRef = React.useRef(0)
 
   const session = state?.session ?? fallbackSession
   const runtimeState = state?.state ?? null
   const runtimeStatus = effectiveRuntimeStatus(runtimeState, session)
+  const sessionRuntime = session?.runtime ?? null
+  const effectiveCapabilities = state?.effectiveCapabilities ?? null
+  const canUseModelCatalog = Boolean(
+    sessionRuntime &&
+      effectiveCapabilities &&
+      capabilityIsUsable(effectiveCapabilities, CAPABILITY.modelCatalog, sessionRuntime),
+  )
+  const canUsePermissionCatalog = Boolean(
+    sessionRuntime &&
+      effectiveCapabilities &&
+      capabilityIsUsable(effectiveCapabilities, CAPABILITY.permissionCatalog, sessionRuntime),
+  )
   const commandSessionId = session?.id ?? null
   const composerDraft = composerDraftState.sessionId === sessionId ? composerDraftState.value : ""
   const isLocalOptimisticSession = isOptimisticSession(sessionId)
@@ -357,6 +361,7 @@ export function SessionDetail({
   React.useEffect(() => {
     setTimelineGroupOpenByKey({})
     setTimelineItemOpenById({})
+    catalogFetchKeyRef.current = null
   }, [sessionId])
 
   React.useEffect(() => {
@@ -387,28 +392,26 @@ export function SessionDetail({
   }, [commandQuery !== null, commandSessionId, token])
 
   React.useEffect(() => {
-    const runtime = session?.runtime
-    const capabilitySet = state?.effectiveCapabilities ?? null
-    if (!runtime || !capabilitySet) return
-
-    const canUseModelCatalog = capabilityIsUsable(
-      capabilitySet,
-      CAPABILITY.modelCatalog,
+    const runtime = sessionRuntime
+    if (!runtime) return
+    const needsModelCatalog = canUseModelCatalog && !state?.catalogs.model
+    const needsPermissionCatalog = canUsePermissionCatalog && !state?.catalogs.permission
+    if (!needsModelCatalog && !needsPermissionCatalog) return
+    const catalogFetchKey = [
+      sessionId,
       runtime,
-    )
-    const canUsePermissionCatalog = capabilityIsUsable(
-      capabilitySet,
-      CAPABILITY.permissionCatalog,
-      runtime,
-    )
-    if (!canUseModelCatalog && !canUsePermissionCatalog) return
+      needsModelCatalog ? "model" : "no-model",
+      needsPermissionCatalog ? "permission" : "no-permission",
+    ].join(":")
+    if (catalogFetchKeyRef.current === catalogFetchKey) return
+    catalogFetchKeyRef.current = catalogFetchKey
 
     let cancelled = false
     void Promise.all([
-      canUseModelCatalog
+      needsModelCatalog
         ? dashboardApi.getSessionModelCatalog(token, sessionId)
         : Promise.resolve(null),
-      canUsePermissionCatalog
+      needsPermissionCatalog
         ? dashboardApi.getSessionPermissionCatalog(token, sessionId)
         : Promise.resolve(null),
     ])
@@ -429,6 +432,9 @@ export function SessionDetail({
         })
       })
       .catch(() => {
+        if (catalogFetchKeyRef.current === catalogFetchKey) {
+          catalogFetchKeyRef.current = null
+        }
         if (cancelled || process.env.NODE_ENV === "production") return
         console.debug("[AgentsAnywhere] session catalog refresh failed", {
           sessionId,
@@ -440,9 +446,12 @@ export function SessionDetail({
       cancelled = true
     }
   }, [
-    session?.runtime,
+    canUseModelCatalog,
+    canUsePermissionCatalog,
     sessionId,
-    state?.effectiveCapabilities?.revision,
+    sessionRuntime,
+    state?.catalogs.model,
+    state?.catalogs.permission,
     token,
   ])
 
@@ -1788,14 +1797,24 @@ function mergeSessionEvent(
       ? mergeTimelineItems(current.items, [item])
       : current.items
   const acceptsSession = Boolean(session && session.updatedSeq >= current.session.updatedSeq)
-  const nextSession = acceptsSession && session ? session : current.session
+  const nextSession = acceptsSession && session && !sessionSemanticallyEqual(current.session, session)
+    ? session
+    : current.session
   const acceptsRuntimeState = Boolean(
     runtimeState &&
       runtimeState.sessionId === current.session.id &&
       runtimeState.updatedSeq >= (current.state?.updatedSeq ?? 0),
   )
-  const nextRuntimeState = acceptsRuntimeState && runtimeState ? runtimeState : current.state
-  const nextEffectiveCapabilities = capabilitySet ?? current.effectiveCapabilities
+  const nextRuntimeState =
+    acceptsRuntimeState &&
+    runtimeState &&
+    !runtimeStatesSemanticallyEqual(current.state ?? null, runtimeState)
+      ? runtimeState
+      : current.state
+  const nextEffectiveCapabilities =
+    capabilitySet && !capabilitySetsSemanticallyEqual(current.effectiveCapabilities, capabilitySet)
+      ? capabilitySet
+      : current.effectiveCapabilities
   const nextSeq = Math.max(current.nextSeq, event.sequence)
   const nextEventCursor = event.sequence >= current.nextSeq ? event.cursor : current.eventCursor
 
@@ -1835,6 +1854,123 @@ function sessionEventCanUpdateState(event: ProtocolEventEnvelope): boolean {
     event.type === "timeline.item_updated" ||
     event.type === "timeline.snapshot"
   )
+}
+
+function sessionSemanticallyEqual(left: SessionView, right: SessionView): boolean {
+  return stableStringify({
+    id: left.id,
+    connectorId: left.connectorId,
+    connectorStatus: left.connectorStatus,
+    runtime: left.runtime,
+    externalSessionId: left.externalSessionId,
+    title: left.title,
+    cwd: left.cwd,
+    status: left.status,
+    takeover: left.takeover,
+    pinned: left.pinned,
+    pinnedAt: left.pinnedAt,
+    archived: left.archived,
+    archivedAt: left.archivedAt,
+    unread: left.unread,
+    lastReadSeq: left.lastReadSeq,
+    lastSyncedAt: left.lastSyncedAt,
+    sourceObservedAt: left.sourceObservedAt,
+    lastActivityAt: left.lastActivityAt,
+    lastItemAt: left.lastItemAt,
+    lastItemOrderSeq: left.lastItemOrderSeq,
+    sortAt: left.sortAt,
+    effectiveRunMode: left.effectiveRunMode,
+    runtimeSettings: left.runtimeSettings,
+    runtimeSettingsOverride: left.runtimeSettingsOverride,
+  }) === stableStringify({
+    id: right.id,
+    connectorId: right.connectorId,
+    connectorStatus: right.connectorStatus,
+    runtime: right.runtime,
+    externalSessionId: right.externalSessionId,
+    title: right.title,
+    cwd: right.cwd,
+    status: right.status,
+    takeover: right.takeover,
+    pinned: right.pinned,
+    pinnedAt: right.pinnedAt,
+    archived: right.archived,
+    archivedAt: right.archivedAt,
+    unread: right.unread,
+    lastReadSeq: right.lastReadSeq,
+    lastSyncedAt: right.lastSyncedAt,
+    sourceObservedAt: right.sourceObservedAt,
+    lastActivityAt: right.lastActivityAt,
+    lastItemAt: right.lastItemAt,
+    lastItemOrderSeq: right.lastItemOrderSeq,
+    sortAt: right.sortAt,
+    effectiveRunMode: right.effectiveRunMode,
+    runtimeSettings: right.runtimeSettings,
+    runtimeSettingsOverride: right.runtimeSettingsOverride,
+  })
+}
+
+function runtimeStatesSemanticallyEqual(
+  left: SessionRuntimeState | null,
+  right: SessionRuntimeState,
+): boolean {
+  if (!left) return false
+  return stableStringify({
+    sessionId: left.sessionId,
+    runtime: left.runtime,
+    externalSessionId: left.externalSessionId,
+    status: left.status,
+    selections: left.selections,
+    statusReason: left.statusReason,
+    error: left.error,
+  }) === stableStringify({
+    sessionId: right.sessionId,
+    runtime: right.runtime,
+    externalSessionId: right.externalSessionId,
+    status: right.status,
+    selections: right.selections,
+    statusReason: right.statusReason,
+    error: right.error,
+  })
+}
+
+function capabilitySetsSemanticallyEqual(
+  left: ProtocolCapabilitySet | null,
+  right: ProtocolCapabilitySet,
+): boolean {
+  if (!left) return false
+  return stableStringify(capabilitySetSemanticValue(left)) === stableStringify(capabilitySetSemanticValue(right))
+}
+
+function capabilitySetSemanticValue(value: ProtocolCapabilitySet) {
+  return value.capabilities
+    .map((capability) => ({
+      allowed: capability.allowed,
+      available: capability.available,
+      capabilityId: capability.capabilityId,
+      parameters: capability.parameters,
+      runtime: capability.runtime,
+      scope: capability.scope,
+      sessionId: capability.sessionId,
+      supported: capability.supported,
+      unavailableReason: capability.unavailableReason,
+      version: capability.version,
+    }))
+    .sort((left, right) => stableStringify(left).localeCompare(stableStringify(right)))
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(",")}]`
+  }
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
+      .join(",")}}`
+  }
+  return JSON.stringify(value)
 }
 
 function effectiveRuntimeStatus(

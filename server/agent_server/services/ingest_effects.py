@@ -15,5 +15,6 @@ class IngestEffect:
     notices: list[NoticeIn] | None = None
     timeline_reset: bool = False
     session_changed: bool = False
+    protocol_changed: bool = False
     notices_changed: bool = False
     needs_refetch: bool = False

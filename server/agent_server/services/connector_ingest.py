@@ -50,9 +50,8 @@ class ConnectorIngestService:
     ) -> ConnectorIngestResponse:
         await self._store.record_connector_activity(connector_id)
         effects = []
-        saw_protocol_capabilities = False
-        saw_runtime_capabilities = False
-        saw_runtime_scoped_capabilities = False
+        protocol_capabilities_changed = False
+        runtime_scoped_capabilities_changed = False
         saw_runtime_inventory = False
         for notification in payload.notifications:
             if notification.method == "runtime.inventoryUpdated":
@@ -64,44 +63,47 @@ class ConnectorIngestService:
             if notification.method == "runtime.statusChanged":
                 await self._apply_runtime_status(connector_id, notification.params)
                 continue
+            effect = await self._notifications.apply(
+                connector_id=connector_id,
+                method=notification.method,
+                params=notification.params,
+            )
+            effects.append(effect)
             if notification.method == "protocol.capabilitiesUpdated":
-                saw_protocol_capabilities = True
+                protocol_capabilities_changed = (
+                    protocol_capabilities_changed or effect.protocol_changed
+                )
             if notification.method == "runtime.capability.updated":
-                saw_runtime_capabilities = True
-                saw_runtime_scoped_capabilities = (
-                    saw_runtime_scoped_capabilities
-                    or not isinstance(notification.params.get("sessionId"), str)
+                runtime_scoped_capabilities_changed = (
+                    runtime_scoped_capabilities_changed
+                    or (
+                        effect.protocol_changed
+                        and not isinstance(notification.params.get("sessionId"), str)
+                    )
                 )
-            effects.append(
-                await self._notifications.apply(
-                    connector_id=connector_id,
-                    method=notification.method,
-                    params=notification.params,
-                )
-            )
         await self._publish_effects(effects)
-        if saw_protocol_capabilities:
+        if protocol_capabilities_changed:
             await publish_connector_session_capabilities(
                 self._store,
                 self._presence,
                 self._timeline_broker,
                 connector_id,
             )
-        if saw_runtime_capabilities and saw_runtime_scoped_capabilities:
+        if runtime_scoped_capabilities_changed:
             await publish_connector_session_capabilities(
                 self._store,
                 self._presence,
                 self._timeline_broker,
                 connector_id,
             )
-        if saw_protocol_capabilities:
+        if protocol_capabilities_changed:
             await publish_dashboard_changed(
                 self._store,
                 self._timeline_broker,
                 connector_id=connector_id,
                 reason="protocol.capabilities",
             )
-        if saw_runtime_capabilities and saw_runtime_scoped_capabilities:
+        if runtime_scoped_capabilities_changed:
             await publish_dashboard_changed(
                 self._store,
                 self._timeline_broker,
@@ -139,25 +141,25 @@ class ConnectorIngestService:
             params=params,
         )
         await self._publish_effects([effect])
-        if method == "protocol.capabilitiesUpdated":
+        if method == "protocol.capabilitiesUpdated" and effect.protocol_changed:
             await publish_connector_session_capabilities(
                 self._store,
                 self._presence,
                 self._timeline_broker,
                 connector_id,
             )
-        if method == "protocol.capabilitiesUpdated":
-            import asyncio
-
+            # Side effects: notifies dashboard clients that connector-scoped
+            # protocol capabilities changed.
             await publish_dashboard_changed(
                 self._store,
                 self._timeline_broker,
                 connector_id=connector_id,
                 reason="protocol.capabilities",
             )
-        if method == "runtime.capability.updated" and not isinstance(
-            params.get("sessionId"),
-            str,
+        if (
+            method == "runtime.capability.updated"
+            and effect.protocol_changed
+            and not isinstance(params.get("sessionId"), str)
         ):
             await publish_connector_session_capabilities(
                 self._store,
@@ -226,21 +228,29 @@ class ConnectorIngestService:
                     next_seq,
                     bucket["runtime_state"],
                 )
-                persisted_session = await self._store.set_session_status(
-                    session_id,
-                    runtime_state.status,
-                    mark_read_on_change=True,
-                )
-                next_seq = max(
-                    await self._store.get_session_seq(session_id),
-                    persisted_session.updatedSeq,
-                )
-                envelope["nextSeq"] = max(envelope_sequence, next_seq)
-                runtime_state = runtime_state.model_copy(
-                    update={"updatedSeq": envelope["nextSeq"]}
-                )
-                await self._runtime_state_cache.put(runtime_state)
-                envelope["runtimeState"] = runtime_state.model_dump(mode="json")
+                previous_runtime_state = await self._runtime_state_cache.get(session_id)
+                if runtime_states_semantically_equal(
+                    previous_runtime_state,
+                    runtime_state,
+                ):
+                    runtime_state = None
+                else:
+                    persisted_session = await self._store.set_session_status(
+                        session_id,
+                        runtime_state.status,
+                        mark_read_on_change=True,
+                    )
+                    next_seq = max(
+                        await self._store.get_session_seq(session_id),
+                        persisted_session.updatedSeq,
+                    )
+                    envelope["nextSeq"] = max(envelope_sequence, next_seq)
+                    runtime_state = runtime_state.model_copy(
+                        update={"updatedSeq": envelope["nextSeq"]}
+                    )
+                    await self._runtime_state_cache.put(runtime_state)
+                    envelope["runtimeState"] = runtime_state.model_dump(mode="json")
+                    bucket["session"] = True
             if bucket["session"]:
                 try:
                     session = await self._store.get_session(session_id)
@@ -266,6 +276,19 @@ class ConnectorIngestService:
                     notice.model_dump(mode="json")
                     for notice in bucket["notices"]
                 ]
+            if not any(
+                key in envelope
+                for key in (
+                    "refetch",
+                    "timelineReset",
+                    "items",
+                    "runtimeState",
+                    "session",
+                    "capabilitySet",
+                    "notices",
+                )
+            ):
+                continue
             await self._timeline_broker.publish(session_id, envelope)
             await publish_dashboard_changed(
                 self._store,
@@ -323,3 +346,24 @@ def runtime_state_from_ingest_effect(
             "updatedAt": now,
         }
     )
+
+
+def runtime_states_semantically_equal(
+    left: SessionRuntimeState | None,
+    right: SessionRuntimeState,
+) -> bool:
+    if left is None:
+        return False
+    return runtime_state_fingerprint(left) == runtime_state_fingerprint(right)
+
+
+def runtime_state_fingerprint(value: SessionRuntimeState) -> dict[str, Any]:
+    return {
+        "sessionId": value.sessionId,
+        "runtime": value.runtime,
+        "externalSessionId": value.externalSessionId,
+        "status": value.status,
+        "selections": value.selections,
+        "statusReason": value.statusReason,
+        "error": value.error,
+    }
