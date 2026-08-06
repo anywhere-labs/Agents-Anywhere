@@ -5,6 +5,7 @@ import base64
 import hashlib
 import json
 import sys
+from collections.abc import Mapping
 from typing import Any, Self
 
 import pytest
@@ -28,6 +29,7 @@ from connector.runtime_protocol import (
     MessageTimelineItem,
     PlatformTimelineItem,
     ReasoningSystemContent,
+    RuntimeAttachmentContent,
     RuntimeCapability,
     RuntimeCapabilitySet,
     RuntimeCommand,
@@ -63,6 +65,7 @@ from connector.server.auth import ConnectorAuthenticationError
 from connector.server.capabilities import protocol_capabilities_from_inventory
 from connector.server.client import BackendRpcClient
 from connector.server.ingest import coalesce_timeline_item_upserts
+from connector.server.runtime_sync import RuntimeSyncRunner
 
 
 def test_platform_timeline_item_converts_to_runtime_wire_item() -> None:
@@ -720,6 +723,111 @@ class FakeWebSocket:
         self.messages.append(json.loads(payload))
 
 
+class RecordingRuntimeHost(RuntimeHostClient):
+    def __init__(self) -> None:
+        self.events: list[tuple[str, str]] = []
+
+    @property
+    def connector_id(self) -> str:
+        return "conn_1"
+
+    async def session_meta_upsert(
+        self,
+        session_id: str,
+        runtime: str,
+        external_session_id: str | None = None,
+        title: str | None = None,
+        cwd: str | None = None,
+        ordering_time: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        self.events.append(("meta", session_id))
+
+    async def session_state_update(
+        self,
+        session_id: str,
+        runtime: str,
+        status: str | None = None,
+        selections: Mapping[str, str | None] | None = None,
+        external_session_id: str | None = None,
+        status_reason: str | None = None,
+        error: Mapping[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        self.events.append(("state", session_id))
+
+    async def runtime_capabilities_update(
+        self,
+        capabilities: RuntimeCapabilitySet,
+    ) -> None:
+        self.events.append(("runtime_capabilities", capabilities.runtime))
+
+    async def session_capabilities_update(
+        self,
+        capabilities: RuntimeCapabilitySet,
+    ) -> None:
+        self.events.append(("session_capabilities", capabilities.session_id or ""))
+
+    async def timeline_sync(
+        self,
+        session_id: str,
+        runtime: str,
+        items: tuple[RuntimeTimelineItem, ...],
+        external_session_id: str | None = None,
+        complete: bool = True,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        self.events.append(("timeline", session_id))
+
+    async def timeline_item_upsert(self, item: RuntimeTimelineItem) -> None:
+        self.events.append(("timeline_item", item.session_id))
+
+    async def notice_upsert(self, notice: SessionNotice) -> None:
+        self.events.append(("notice", notice.session_id))
+
+    async def runtime_error(
+        self,
+        runtime: str,
+        code: str,
+        message: str,
+        session_id: str | None = None,
+        external_session_id: str | None = None,
+        details: Mapping[str, Any] | None = None,
+    ) -> None:
+        self.events.append(("runtime_error", runtime))
+
+    async def attachment_download(
+        self,
+        session_id: str,
+        file_id: str,
+    ) -> RuntimeAttachmentContent:
+        raise NotImplementedError
+
+    async def sync_state_read(self, key: str) -> Mapping[str, Any] | None:
+        return None
+
+    async def sync_state_write(self, key: str, value: Mapping[str, Any]) -> None:
+        self.events.append(("sync_state_write", key))
+
+    async def sync_state_delete(self, key: str) -> None:
+        self.events.append(("sync_state_delete", key))
+
+
+class FakeRuntimeSupervisor:
+    def __init__(self, runtime: AgentRuntime) -> None:
+        self._runtime = runtime
+        self.runtimes = (runtime.identity.runtime,)
+
+    def resolve_runtime(self, runtime_id: str) -> AgentRuntime:
+        if runtime_id != self._runtime.identity.runtime:
+            raise RuntimeError(f"unknown runtime {runtime_id}")
+        return self._runtime
+
+
+async def unused_notification_sender(method: str, params: dict[str, Any]) -> None:
+    raise AssertionError(f"unexpected notification {method}: {params}")
+
+
 def _client(
     runtime: FakeAgentRuntime | None = None,
     providers: tuple[RuntimeProvider, ...] | None = None,
@@ -944,6 +1052,10 @@ def test_connector_runtime_host_notifications_fallback_to_ingest_without_websock
     asyncio.run(_exercise_runtime_host_notification_ingest_fallback())
 
 
+def test_runtime_sync_pushes_each_session_snapshot_before_next_meta() -> None:
+    asyncio.run(_exercise_runtime_sync_pushes_each_session_snapshot_before_next_meta())
+
+
 async def _exercise_runtime_host_notification_ingest_fallback() -> None:
     client = _client()
     enqueued: list[tuple[str, dict[str, Any]]] = []
@@ -956,6 +1068,72 @@ async def _exercise_runtime_host_notification_ingest_fallback() -> None:
     await client.send_backend_notification("session.meta.upsert", {"sessionId": "sess_1"})
 
     assert enqueued == [("session.meta.upsert", {"sessionId": "sess_1"})]
+
+
+async def _exercise_runtime_sync_pushes_each_session_snapshot_before_next_meta() -> None:
+    class SyncRuntime(FakeAgentRuntime):
+        async def list_sessions(
+            self,
+            limit: int = 100,
+            cursor: str | None = None,
+            force: bool = False,
+        ) -> tuple[SessionMeta, ...]:
+            self.calls.append(
+                (
+                    "session.discover",
+                    {"limit": limit, "cursor": cursor, "force": force},
+                )
+            )
+            return (
+                SessionMeta(
+                    session_id="sess_changed",
+                    external_session_id="thr_changed",
+                    runtime=self.runtime_id,
+                    title="Changed",
+                    cwd="/repo",
+                    ordering_time="2026-08-02T00:00:00Z",
+                    metadata={"sync": {"requires_timeline_sync": True}},
+                ),
+                SessionMeta(
+                    session_id="sess_unchanged",
+                    external_session_id="thr_unchanged",
+                    runtime=self.runtime_id,
+                    title="Unchanged",
+                    cwd="/repo",
+                    ordering_time="2026-08-01T00:00:00Z",
+                    metadata={"sync": {"requires_timeline_sync": False}},
+                ),
+            )
+
+    runtime = SyncRuntime()
+    host = RecordingRuntimeHost()
+    runner = RuntimeSyncRunner(
+        config=ConnectorConfig(
+            server_url="http://127.0.0.1:8000",
+            connector_id="conn_1",
+            connector_token="token",
+        ),
+        supervisor=FakeRuntimeSupervisor(runtime),  # type: ignore[arg-type]
+        host=host,
+        preferences_reader=dict,
+        send_notification=unused_notification_sender,
+    )
+
+    await runner.sync_existing_once()
+
+    assert host.events == [
+        ("meta", "sess_changed"),
+        ("timeline", "sess_changed"),
+        ("state", "sess_changed"),
+        ("notice", "sess_changed"),
+        ("meta", "sess_unchanged"),
+    ]
+    assert [call[0] for call in runtime.calls] == [
+        "session.discover",
+        "session.sync",
+        "session.state",
+        "session.notices",
+    ]
 
 
 def test_connector_refreshes_expiring_access_token_before_ingest() -> None:
