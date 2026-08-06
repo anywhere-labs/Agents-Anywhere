@@ -34,6 +34,7 @@ from openai_codex.generated.v2_all import (
     ResponseItem,
     SkillUserInput,
     TextUserInput,
+    Thread,
     ThreadItem,
     TurnCompletedNotification,
     TurnStartedNotification,
@@ -150,6 +151,23 @@ def timeline_projections_from_sdk_turn_event(
         if projection is not None:
             projections.append(projection)
     return tuple(projections)
+
+
+def timeline_projections_from_sdk_thread(
+    thread: Thread,
+    limit: int,
+) -> tuple[CodexTimelineProjection, ...]:
+    projections: list[CodexTimelineProjection] = []
+    for turn in thread.turns:
+        for item in turn.items:
+            projection = timeline_projection_from_thread_item(
+                item=item,
+                turn_id=turn.id,
+                event_status=None,
+            )
+            if projection is not None:
+                projections.append(projection)
+    return tuple(projections[:limit])
 
 
 def sdk_event_delta_text(event: CodexSdkEvent) -> str | None:

@@ -13,6 +13,7 @@ from openai_codex.generated.v2_all import (
     ContextCompactedNotification,
     ContextCompactionThreadItem,
     TextUserInput,
+    Thread,
     ThreadItem,
     Turn,
     TurnStatus,
@@ -1421,6 +1422,123 @@ async def _test_codex_runtime_reads_session_snapshot() -> None:
     assert snapshot.items[0].turn_id == "turn_1"
     assert snapshot.items[0].content == {"kind": "markdown", "text": "hello", "format": "markdown"}
     assert snapshot.items[1].content == {"kind": "markdown", "text": "hi", "format": "markdown"}
+
+
+def test_codex_runtime_reads_typed_sdk_snapshot_with_parent_turn_id() -> None:
+    asyncio.run(_test_codex_runtime_reads_typed_sdk_snapshot_with_parent_turn_id())
+
+
+async def _test_codex_runtime_reads_typed_sdk_snapshot_with_parent_turn_id() -> None:
+    client = FakeCodexClient()
+    client.results["thread/read"] = {
+        "thread": Thread.model_validate(
+            {
+                "id": "thread_1",
+                "cliVersion": "0.1.0",
+                "createdAt": 1,
+                "cwd": "/repo",
+                "ephemeral": False,
+                "modelProvider": "openai",
+                "preview": "hello",
+                "sessionId": "codex_session_1",
+                "source": "appServer",
+                "status": {"type": "notLoaded"},
+                "turns": [
+                    {
+                        "id": "turn_sdk",
+                        "status": "completed",
+                        "items": [
+                            {
+                                "id": "item_user",
+                                "type": "userMessage",
+                                "content": [{"type": "text", "text": "hello"}],
+                            },
+                            {
+                                "id": "item_assistant",
+                                "type": "agentMessage",
+                                "text": "hi",
+                            },
+                        ],
+                    }
+                ],
+                "updatedAt": 2,
+            }
+        )
+    }
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=client)
+
+    snapshot = await runtime.get_session_snapshot(
+        "sess_1",
+        external_session_id="thread_1",
+    )
+
+    assert [item.id for item in snapshot.items] == ["item_user", "item_assistant"]
+    assert [item.turn_id for item in snapshot.items] == ["turn_sdk", "turn_sdk"]
+    assert snapshot.items[0].source["itemId"] == "item_user"
+    assert snapshot.items[1].source["itemId"] == "item_assistant"
+
+
+def test_codex_runtime_typed_snapshot_preserves_messages_after_compaction() -> None:
+    asyncio.run(_test_codex_runtime_typed_snapshot_preserves_messages_after_compaction())
+
+
+async def _test_codex_runtime_typed_snapshot_preserves_messages_after_compaction() -> (
+    None
+):
+    client = FakeCodexClient()
+    client.results["thread/read"] = {
+        "thread": Thread.model_validate(
+            {
+                "id": "thread_1",
+                "cliVersion": "0.1.0",
+                "createdAt": 1,
+                "cwd": "/repo",
+                "ephemeral": False,
+                "modelProvider": "openai",
+                "preview": "hello",
+                "sessionId": "codex_session_1",
+                "source": "appServer",
+                "status": {"type": "notLoaded"},
+                "turns": [
+                    {
+                        "id": "turn_compacted",
+                        "status": "completed",
+                        "items": [
+                            {"id": "item_compact", "type": "contextCompaction"},
+                            {
+                                "id": "item_user",
+                                "type": "userMessage",
+                                "content": [{"type": "text", "text": "after compact"}],
+                            },
+                            {
+                                "id": "item_assistant",
+                                "type": "agentMessage",
+                                "text": "visible answer",
+                            },
+                        ],
+                    }
+                ],
+                "updatedAt": 2,
+            }
+        )
+    }
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=client)
+
+    snapshot = await runtime.get_session_snapshot(
+        "sess_1",
+        external_session_id="thread_1",
+    )
+
+    assert [item.id for item in snapshot.items] == [
+        "item_compact",
+        "item_user",
+        "item_assistant",
+    ]
+    assert [item.turn_id for item in snapshot.items] == [
+        "turn_compacted",
+        "turn_compacted",
+        "turn_compacted",
+    ]
 
 
 def test_codex_snapshot_reuses_live_assistant_identity() -> None:

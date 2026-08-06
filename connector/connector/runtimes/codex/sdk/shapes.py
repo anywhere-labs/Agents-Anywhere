@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from openai_codex.generated.v2_all import ThreadReadResponse
+
 from connector.runtimes.codex.sdk.events import CodexSdkEvent, sdk_event_mapping
 from connector.runtimes.codex.sdk.runtime_client import (
     CodexModelListResult,
@@ -33,6 +35,8 @@ def thread_list_result(result: Any) -> CodexThreadListResult:
 
 
 def thread_read_result(result: Any) -> CodexThreadReadResult:
+    if isinstance(result, ThreadReadResponse):
+        return CodexThreadReadResult(thread=result.thread)
     raw = _explicit_sdk_mapping(result)
     thread = raw.get("thread")
     if isinstance(thread, dict):

@@ -4,6 +4,8 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from openai_codex.generated.v2_all import Thread
+
 from connector.runtimes.codex.sdk.events import CodexSdkEvent
 
 CodexNotificationMessage = CodexSdkEvent | dict[str, Any]
@@ -60,7 +62,7 @@ class CodexThreadListResult:
 
 @dataclass(frozen=True, slots=True)
 class CodexThreadReadResult:
-    thread: Mapping[str, Any]
+    thread: Thread | Mapping[str, Any]
 
 
 @dataclass(frozen=True, slots=True)

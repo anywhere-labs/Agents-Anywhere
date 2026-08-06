@@ -4,6 +4,8 @@ import hashlib
 from collections.abc import Mapping
 from typing import Any
 
+from openai_codex.generated.v2_all import Thread
+
 from connector.runtime_protocol import RuntimeTimelineItem
 from connector.runtimes.codex import timeline as codex_timeline
 from connector.runtimes.codex.domain import sessions as codex_sessions
@@ -236,6 +238,44 @@ class CodexTimelineAccumulator:
                     raw=raw,
                 )
             projection = codex_timeline.timeline_projection_from_raw(raw)
+            projection = self.stabilize_projection_identity(
+                external_session_id=external_session_id,
+                projection=projection,
+                fallback_index=index,
+                prefer_native_identity=False,
+            )
+            item_id = projection.item_id(
+                external_session_id=external_session_id,
+                fallback_index=index,
+            )
+            self._projection_by_id[item_id] = projection
+            items.append(
+                self._runtime_item(
+                    session_id=session_id,
+                    external_session_id=external_session_id,
+                    projection=projection,
+                    event="thread/read",
+                    fallback_index=index,
+                )
+            )
+        return tuple(items)
+
+    def items_from_sdk_thread_snapshot(
+        self,
+        session_id: str,
+        external_session_id: str,
+        thread: Thread,
+        limit: int,
+    ) -> tuple[RuntimeTimelineItem, ...]:
+        items: list[RuntimeTimelineItem] = []
+        projections = codex_timeline.timeline_projections_from_sdk_thread(
+            thread=thread,
+            limit=limit,
+        )
+        for index, projection in enumerate(projections):
+            projection = self._attach_client_message_id(
+                session_id, external_session_id, projection
+            )
             projection = self.stabilize_projection_identity(
                 external_session_id=external_session_id,
                 projection=projection,

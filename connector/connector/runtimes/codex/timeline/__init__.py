@@ -65,6 +65,7 @@ from connector.runtimes.codex.timeline.snapshot import (
 from connector.runtimes.codex.timeline.typed_events import (
     sdk_event_delta_text,
     timeline_projection_from_sdk_event,
+    timeline_projections_from_sdk_thread,
     timeline_projections_from_sdk_turn_event,
 )
 
@@ -115,6 +116,7 @@ __all__ = [
     "timeline_projection_from_event",
     "timeline_projection_from_raw",
     "timeline_projection_from_sdk_event",
+    "timeline_projections_from_sdk_thread",
     "timeline_projections_from_sdk_turn_event",
     "timeline_raw_status",
     "timeline_raw_type",

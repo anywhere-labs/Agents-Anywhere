@@ -4,6 +4,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
+from openai_codex.generated.v2_all import Thread
+
 from connector.runtime_protocol import (
     RuntimeModelCatalog,
     RuntimePermissionCatalog,
@@ -150,11 +152,14 @@ class CodexSessionReader:
             thread_id=external_session_id,
             include_turns=False,
         )
-        thread = dict(result.thread)
-        if not thread:
+        if isinstance(result.thread, Thread):
+            thread_state = thread_state_from_sdk_thread(result.thread)
+        else:
+            thread_state = dict(result.thread)
+        if not thread_state:
             return {}
         return await selections_from_thread_state(
-            thread,
+            thread_state,
             lambda: self.list_model_catalog(None, 100),
             lambda: self.list_permission_catalog(None, 100),
         )
@@ -179,8 +184,15 @@ class CodexSessionReader:
             thread_id=external_session_id,
             include_turns=True,
         )
-        thread = dict(result.thread)
-        if self.timeline is not None:
+        if isinstance(result.thread, Thread) and self.timeline is not None:
+            items = self.timeline.items_from_sdk_thread_snapshot(
+                session_id=session_id,
+                external_session_id=external_session_id,
+                thread=result.thread,
+                limit=limit,
+            )
+        elif self.timeline is not None:
+            thread = dict(result.thread)
             items = self.timeline.items_from_thread_snapshot(
                 session_id=session_id,
                 external_session_id=external_session_id,
@@ -188,6 +200,7 @@ class CodexSessionReader:
                 limit=limit,
             )
         else:
+            thread = dict(result.thread)
             items = codex_timeline.timeline_items_from_thread(
                 session_id=session_id,
                 external_session_id=external_session_id,
@@ -203,3 +216,13 @@ class CodexSessionReader:
             complete=True,
             metadata={"source": "codex.thread/read"},
         )
+
+
+def thread_state_from_sdk_thread(thread: Thread) -> dict[str, Any]:
+    state: dict[str, Any] = {
+        "id": thread.id,
+        "modelProvider": thread.model_provider,
+    }
+    if thread.name is not None:
+        state["name"] = thread.name
+    return state

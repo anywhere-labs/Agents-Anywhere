@@ -7,7 +7,9 @@ from typing import Any, Self
 
 from openai_codex.generated.v2_all import (
     AgentMessageThreadItem,
+    Thread,
     ThreadItem,
+    ThreadReadResponse,
     ThreadResumeParams,
     ThreadStartParams,
     Turn,
@@ -33,7 +35,7 @@ from connector.runtimes.codex.sdk.runtime_client import (
     CodexStartTurnRequest,
     CodexSteerTurnRequest,
 )
-from connector.runtimes.codex.sdk.shapes import sdk_approval_mode
+from connector.runtimes.codex.sdk.shapes import sdk_approval_mode, thread_read_result
 
 
 def test_codex_sdk_client_delegates_runtime_protocol_methods() -> None:
@@ -49,6 +51,28 @@ def test_codex_sdk_approval_mode_maps_platform_permission_modes() -> None:
     assert sdk_approval_mode(sdk, "auto_review") == _FakeApprovalMode.auto_review
     assert sdk_approval_mode(sdk, "full_access") == _FakeApprovalMode.deny_all
     assert sdk_approval_mode(sdk, "never") == _FakeApprovalMode.deny_all
+
+
+def test_codex_sdk_thread_read_result_preserves_typed_thread() -> None:
+    thread = Thread.model_validate(
+        {
+            "id": "thread_1",
+            "cliVersion": "0.1.0",
+            "createdAt": 1,
+            "cwd": "/repo",
+            "ephemeral": False,
+            "modelProvider": "openai",
+            "preview": "hello",
+            "sessionId": "codex_session_1",
+            "source": "appServer",
+            "status": {"type": "notLoaded"},
+            "turns": [],
+            "updatedAt": 2,
+        }
+    )
+    result = thread_read_result(ThreadReadResponse(thread=thread))
+
+    assert result.thread is thread
 
 
 async def _test_codex_sdk_client_delegates_runtime_protocol_methods() -> None:
