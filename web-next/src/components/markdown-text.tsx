@@ -26,7 +26,7 @@ export function MarkdownText({
   return (
     <div
       className={cn(
-        "space-y-3 text-sm leading-relaxed [&_a]:underline [&_blockquote]:border-l [&_blockquote]:pl-3 [&_code]:code-mono [&_code]:text-[0.92em] [&_li]:ml-5 [&_ol]:list-decimal [&_pre]:m-0 [&_ul]:list-disc",
+        "space-y-3 text-sm leading-relaxed [&_a]:underline [&_blockquote]:border-l [&_blockquote]:pl-3 [&_code]:text-[0.92em] [&_li]:ml-5 [&_ol]:list-decimal [&_pre]:m-0 [&_ul]:list-disc",
         inverted
           ? "[&_pre]:border-primary-foreground/15"
           : "[&_pre]:border-border",
@@ -45,7 +45,7 @@ export function MarkdownText({
                   <span
                     role="button"
                     tabIndex={0}
-                    className="code-mono inline-flex max-w-full items-baseline gap-0.5 rounded-none bg-transparent p-0 align-baseline text-[0.92em] text-inherit underline underline-offset-2 hover:text-foreground"
+                    className="inline-flex max-w-full items-baseline gap-0.5 rounded-none bg-transparent p-0 align-baseline text-[0.92em] text-inherit underline underline-offset-2 hover:text-foreground"
                     onClick={() => openSessionFilePreview(token, session, previewPath)}
                     onKeyDown={(event) => {
                       if (event.key === "Enter" || event.key === " ") openSessionFilePreview(token, session, previewPath)
@@ -152,7 +152,7 @@ function MarkdownCodeBlock({ code, language }: { code: string; language: string 
   return (
     <div className="my-3 min-w-0 max-w-full overflow-hidden rounded-xl border border-border bg-background">
       <div className="flex h-9 items-center justify-between border-b bg-muted/25 px-3">
-        <span className="code-mono text-xs text-muted-foreground">{language || "text"}</span>
+        <span className="text-xs text-muted-foreground">{language || "text"}</span>
         <button
           type="button"
           className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -167,7 +167,7 @@ function MarkdownCodeBlock({ code, language }: { code: string; language: string 
         </button>
       </div>
       <ScrollArea contentWide className="max-h-96 min-w-0 max-w-full overflow-hidden">
-        <pre className="code-mono w-max min-w-full p-3 text-xs leading-relaxed">
+        <pre className="w-max min-w-full p-3 text-xs leading-relaxed">
           <code>{highlightCode(code, language)}</code>
         </pre>
         <ScrollBar orientation="horizontal" />

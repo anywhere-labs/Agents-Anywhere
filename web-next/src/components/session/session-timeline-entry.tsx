@@ -56,7 +56,7 @@ export function TimelineEntry({
     )
   }
   if (item.type === "marker") return <MarkerCard item={item} />
-  if (item.type === "system") return <SystemCard item={item} />
+  if (item.type === "system") return <SystemCard token={token} session={session} item={item} />
   if (item.type === "artifact") return <ArtifactCard token={token} session={session} item={item} />
   return <UnknownTimelineItem item={item} />
 }
@@ -117,10 +117,10 @@ function MessageCard({ token, session, item }: { token: string; session: Session
   )
 }
 
-function SystemCard({ item }: { item: TimelineItem }) {
+function SystemCard({ token, session, item }: { token: string; session: SessionView; item: TimelineItem }) {
   const tSession = useTranslations("dashboard.session")
   const kind = textOf(item.content.kind) || "system"
-  if (kind === "reasoning") return <ReasoningEntry item={item} />
+  if (kind === "reasoning") return <ReasoningEntry token={token} session={session} item={item} />
   if (kind === "compact") {
     const compactState = compactTimelineState(item)
     const active = compactState === "started"
@@ -186,7 +186,7 @@ function compactTimelineState(item: TimelineItem): "started" | "completed" | "fa
   return "completed"
 }
 
-function ReasoningEntry({ item }: { item: TimelineItem }) {
+function ReasoningEntry({ token, session, item }: { token: string; session: SessionView; item: TimelineItem }) {
   const tSession = useTranslations("dashboard.session")
   const summaries = recordsOf(item.content.summaries)
     .map((summary) => textOf(summary.text))
@@ -206,6 +206,7 @@ function ReasoningEntry({ item }: { item: TimelineItem }) {
   )
 
   if (lines.length === 0) return marker
+  const markdown = lines.join("\n\n")
 
   return (
     <Collapsible className="min-w-0 max-w-full overflow-hidden">
@@ -223,9 +224,7 @@ function ReasoningEntry({ item }: { item: TimelineItem }) {
         </CollapsibleTrigger>
         <CollapsibleContent className="min-w-0 max-w-full overflow-hidden">
           <div className="flex flex-col gap-2 pl-7 text-sm leading-relaxed text-muted-foreground">
-            {lines.map((line, index) => (
-              <p key={index}>{line}</p>
-            ))}
+            <MarkdownText text={markdown} token={token} session={session} />
           </div>
         </CollapsibleContent>
       </div>
