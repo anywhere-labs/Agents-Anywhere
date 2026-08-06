@@ -128,9 +128,9 @@ class CodexSdkClient:
         return thread_read_result(result)
 
     async def start_thread(self, request: CodexStartThreadRequest) -> CodexThreadResult:
+        await ensure_codex_initialized(self._client)
         low_level_client = codex_low_level_client(self._client)
         if low_level_client is not None:
-            await ensure_codex_initialized(self._client)
             started = await low_level_client.thread_start(
                 codex_thread_start_params(request)
             )
@@ -143,6 +143,10 @@ class CodexSdkClient:
             return CodexThreadResult(
                 thread_id=thread_id,
                 payload={"id": thread_id} if thread_id is not None else {},
+            )
+        if codex_request_requires_low_level_approval(request):
+            raise RuntimeInvalidRequestError(
+                "Codex low-level client is required for explicit approval settings"
             )
 
         thread_start = getattr(self._client, "thread_start", None)
@@ -165,9 +169,9 @@ class CodexSdkClient:
         return CodexThreadResult(thread_id=thread_id, payload=payload)
 
     async def start_turn(self, request: CodexStartTurnRequest) -> CodexTurnResult:
+        await ensure_codex_initialized(self._client)
         low_level_client = codex_low_level_client(self._client)
         if low_level_client is not None:
-            await ensure_codex_initialized(self._client)
             await self.ensure_thread_resumed_for_turn(low_level_client, request)
             started = await self.start_low_level_turn_with_resume_retry(
                 low_level_client,
@@ -196,6 +200,10 @@ class CodexSdkClient:
             return CodexTurnResult(
                 turn_id=turn_id,
                 payload={"id": turn_id} if turn_id is not None else {},
+            )
+        if codex_request_requires_low_level_approval(request):
+            raise RuntimeInvalidRequestError(
+                "Codex low-level client is required for explicit approval settings"
             )
 
         thread = self._thread_handle(request.thread_id)
@@ -481,6 +489,12 @@ def codex_low_level_client(client: Any) -> Any | None:
     if not callable(getattr(candidate, "turn_start", None)):
         return None
     return candidate
+
+
+def codex_request_requires_low_level_approval(
+    request: CodexStartThreadRequest | CodexStartTurnRequest,
+) -> bool:
+    return request.approval_policy is not None or request.approvals_reviewer is not None
 
 
 def codex_thread_start_params(request: CodexStartThreadRequest) -> ThreadStartParams:

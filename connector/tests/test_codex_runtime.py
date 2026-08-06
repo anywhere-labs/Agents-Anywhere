@@ -8,6 +8,8 @@ from typing import Any
 
 from openai_codex.generated.v2_all import (
     AgentMessageThreadItem,
+    ApprovalsReviewer,
+    AskForApprovalValue,
     ContextCompactedNotification,
     ContextCompactionThreadItem,
     TextUserInput,
@@ -3004,6 +3006,62 @@ async def _test_codex_sdk_stream_finally_emits_completed_when_sdk_omits_it() -> 
     assert emitted[-1]["params"]["metadata"] == {"source": "codex.sdk.stream.finally"}
 
 
+def test_codex_sdk_start_turn_initializes_before_low_level_detection() -> None:
+    asyncio.run(_test_codex_sdk_start_turn_initializes_before_low_level_detection())
+
+
+async def _test_codex_sdk_start_turn_initializes_before_low_level_detection() -> None:
+    sdk_client = _LazyLowLevelSdkClient()
+    client = CodexSdkClient(sdk_client, sdk=_SdkWithHandles())
+
+    result = await client.start_turn(
+        CodexStartTurnRequest(
+            thread_id="thread_1",
+            content="hello",
+            approval_policy="on-request",
+            approvals_reviewer="user",
+            sandbox="workspace-write",
+        )
+    )
+
+    assert sdk_client.initialized is True
+    assert sdk_client.low_level.thread_resumes
+    assert sdk_client.low_level.turn_starts
+    assert not sdk_client.high_level_turns
+    turn_params = sdk_client.low_level.turn_starts[0][2]
+    assert turn_params.approval_policy.root == AskForApprovalValue.on_request
+    assert turn_params.approvals_reviewer == ApprovalsReviewer.user
+    assert turn_params.sandbox_policy.root.type == "workspaceWrite"
+    assert result.turn_id == "turn_low"
+
+
+def test_codex_sdk_start_thread_initializes_before_low_level_detection() -> None:
+    asyncio.run(_test_codex_sdk_start_thread_initializes_before_low_level_detection())
+
+
+async def _test_codex_sdk_start_thread_initializes_before_low_level_detection() -> None:
+    sdk_client = _LazyLowLevelSdkClient()
+    client = CodexSdkClient(sdk_client, sdk=_SdkWithHandles())
+
+    result = await client.start_thread(
+        CodexStartThreadRequest(
+            cwd="/repo",
+            approval_policy="on-request",
+            approvals_reviewer="user",
+            sandbox="workspace-write",
+        )
+    )
+
+    assert sdk_client.initialized is True
+    assert sdk_client.low_level.thread_starts
+    assert not sdk_client.high_level_thread_starts
+    thread_params = sdk_client.low_level.thread_starts[0]
+    assert thread_params.approval_policy.root == AskForApprovalValue.on_request
+    assert thread_params.approvals_reviewer == ApprovalsReviewer.user
+    assert thread_params.sandbox.value == "workspace-write"
+    assert result.thread_id == "thread_low"
+
+
 def test_codex_runtime_approval_request_upserts_session_notice() -> None:
     asyncio.run(_test_codex_runtime_approval_request_upserts_session_notice())
 
@@ -3547,7 +3605,80 @@ class _FakeSdkTurn:
         }
 
 
+class _LazyLowLevelSdkClient:
+    def __init__(self) -> None:
+        self._client: _FakeLowLevelCodexServer | None = None
+        self.initialized = False
+        self.high_level_thread_starts: list[dict[str, Any]] = []
+        self.high_level_turns: list[dict[str, Any]] = []
+
+    @property
+    def low_level(self) -> _FakeLowLevelCodexServer:
+        if self._client is None:
+            raise AssertionError("low-level client was not initialized")
+        return self._client
+
+    async def _ensure_initialized(self) -> None:
+        self.initialized = True
+        self._client = _FakeLowLevelCodexServer()
+
+    def thread_resume(self, thread_id: str, **kwargs: Any) -> _SdkThreadHandle:
+        _ = kwargs
+        return _SdkThreadHandle(thread_id, self)
+
+    async def thread_start(self, **kwargs: Any) -> _SdkThreadHandle:
+        self.high_level_thread_starts.append(dict(kwargs))
+        return _SdkThreadHandle("thread_high", self)
+
+
+class _FakeLowLevelCodexServer:
+    def __init__(self) -> None:
+        self.thread_starts: list[Any] = []
+        self.thread_resumes: list[tuple[str, Any]] = []
+        self.turn_starts: list[tuple[str, str, Any]] = []
+
+    async def thread_start(self, params: Any) -> Any:
+        self.thread_starts.append(params)
+        return _SdkLowLevelThreadResult("thread_low")
+
+    async def thread_resume(self, thread_id: str, params: Any) -> Any:
+        self.thread_resumes.append((thread_id, params))
+        return _SdkLowLevelThreadResult(thread_id)
+
+    async def turn_start(self, thread_id: str, content: str, params: Any) -> Any:
+        self.turn_starts.append((thread_id, content, params))
+        return _SdkLowLevelTurnResult("turn_low")
+
+
 @dataclass
 class _SdkThreadHandle:
     id: str
     _client: Any
+
+
+class _SdkWithHandles:
+    AsyncThread = _SdkThreadHandle
+    AsyncTurnHandle = None
+
+
+@dataclass
+class _SdkLowLevelThreadResult:
+    thread_id: str
+
+    @property
+    def thread(self) -> Any:
+        return _SdkId(self.thread_id)
+
+
+@dataclass
+class _SdkLowLevelTurnResult:
+    turn_id: str
+
+    @property
+    def turn(self) -> Any:
+        return _SdkId(self.turn_id)
+
+
+@dataclass
+class _SdkId:
+    id: str
