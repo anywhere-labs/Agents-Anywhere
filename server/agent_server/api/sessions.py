@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Mapping
 from typing import Any
 
 from fastapi import (
@@ -1082,12 +1083,18 @@ async def respond_interaction(
         session = await db.get_session(session_id, user_id=user_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
+    input_data = await interaction_input_with_runtime_notice_context(
+        manager=manager,
+        session=session,
+        notice_id=notice_id,
+        user_input=payload.input or {},
+    )
     params: dict[str, Any] = {
         "sessionId": session.id,
         "runtime": session.runtime,
         "noticeId": notice_id,
         "actionId": payload.actionId,
-        "inputData": payload.input or {},
+        "inputData": input_data,
     }
     if session.externalSessionId:
         params["externalSessionId"] = session.externalSessionId
@@ -1364,6 +1371,74 @@ async def read_session_notices_from_connector(
             status_code=502,
             detail={"code": "invalid_runtime_notices", "message": str(exc)},
         ) from exc
+
+
+async def interaction_input_with_runtime_notice_context(
+    manager: ConnectorRpcManager,
+    session: SessionView,
+    notice_id: str,
+    user_input: Mapping[str, Any],
+) -> dict[str, Any]:
+    notice_context = await best_effort_runtime_notice_context(
+        manager,
+        session,
+        notice_id,
+    )
+    return merge_interaction_input(
+        notice_context=notice_context,
+        user_input=user_input,
+    )
+
+
+async def best_effort_runtime_notice_context(
+    manager: ConnectorRpcManager,
+    session: SessionView,
+    notice_id: str,
+) -> dict[str, Any]:
+    params: dict[str, Any] = {
+        "sessionId": session.id,
+        "runtime": session.runtime,
+    }
+    if session.externalSessionId:
+        params["externalSessionId"] = session.externalSessionId
+    try:
+        result = await manager.request(
+            session.connectorId,
+            "session.notices",
+            params,
+            timeout=10,
+        )
+    except (ConnectorOfflineError, ConnectorRpcError):
+        return {}
+    raw_notices = result.get("notices") if isinstance(result, dict) else None
+    if not isinstance(raw_notices, list):
+        return {}
+    for raw_notice in raw_notices:
+        try:
+            notice = NoticeIn.model_validate(raw_notice)
+        except ValueError:
+            continue
+        if notice.noticeId == notice_id:
+            return dict(notice.context)
+    return {}
+
+
+def merge_interaction_input(
+    notice_context: Mapping[str, Any],
+    user_input: Mapping[str, Any],
+) -> dict[str, Any]:
+    merged = {**notice_context, **user_input}
+    notice_approval_source = notice_context.get("approvalSource")
+    input_approval_source = user_input.get("approvalSource")
+    if isinstance(notice_approval_source, Mapping) and isinstance(
+        input_approval_source,
+        Mapping,
+    ):
+        merged["approvalSource"] = {
+            **notice_approval_source,
+            **input_approval_source,
+        }
+    return merged
 
 
 async def read_session_notices_for_snapshot(

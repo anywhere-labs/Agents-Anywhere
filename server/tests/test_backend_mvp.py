@@ -1048,7 +1048,15 @@ class FakeApprovalRpc:
                         "interactionType": "approval",
                         "responseRequired": True,
                         "actions": [{"actionId": "approve", "label": "Approve"}],
-                        "context": {},
+                        "context": {
+                            "approvalStatus": "pending",
+                            "approvalSource": {
+                                "requestId": "approval_runtime_1",
+                                "method": "item/commandExecution/requestApproval",
+                                "threadId": "thr_1",
+                                "itemId": "call_1",
+                            },
+                        },
                         "metadata": {},
                     }
                 ]
@@ -5085,6 +5093,10 @@ def test_interaction_respond_carries_runtime(tmp_path):
     assert params["runtime"] == "codex"
     assert params["noticeId"] == notice_id
     assert params["actionId"] == "approve"
+    assert params["inputData"]["approvalSource"]["requestId"] == "approval_runtime_1"
+    assert params["inputData"]["approvalSource"]["method"] == (
+        "item/commandExecution/requestApproval"
+    )
 
 
 def test_runtime_notice_respond_carries_runtime(tmp_path):
