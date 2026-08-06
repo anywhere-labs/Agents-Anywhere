@@ -225,7 +225,9 @@ class CodexTimelineAccumulator:
         limit: int,
     ) -> tuple[RuntimeTimelineItem, ...]:
         items: list[RuntimeTimelineItem] = []
-        for index, raw_item in enumerate(codex_timeline.raw_timeline_items(thread)[:limit]):
+        raw_items = codex_timeline.raw_timeline_items(thread)
+        snapshot_items = compact_filtered_thread_snapshot_items(raw_items)
+        for index, raw_item in enumerate(snapshot_items[:limit]):
             raw = dict(raw_item)
             if self._pending_messages is not None:
                 self._pending_messages.attach_to_raw_item(
@@ -478,3 +480,26 @@ def normalized_timeline_text(
 ) -> str:
     text = projection.pending_message_text()
     return "\n".join(line.rstrip() for line in text.strip().splitlines())
+
+
+def compact_filtered_thread_snapshot_items(
+    raw_items: list[dict[str, Any]],
+) -> tuple[dict[str, Any], ...]:
+    has_compaction_marker = any(
+        codex_timeline.timeline_raw_type(raw) == "contextCompaction"
+        for raw in raw_items
+    )
+    if not has_compaction_marker:
+        return tuple(raw_items)
+    return tuple(
+        raw
+        for raw in raw_items
+        if not is_compacted_assistant_transcript_mirror(raw)
+    )
+
+
+def is_compacted_assistant_transcript_mirror(raw: Mapping[str, Any]) -> bool:
+    return (
+        codex_timeline.timeline_raw_type(raw) == "agentMessage"
+        and codex_timeline.timeline_item_turn_id(raw) is None
+    )

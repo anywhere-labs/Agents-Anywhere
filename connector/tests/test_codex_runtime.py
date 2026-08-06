@@ -759,6 +759,56 @@ def test_codex_compaction_snapshot_reuses_started_timeline_item() -> None:
     assert snapshot_items[0].content["state"] == "completed"
 
 
+def test_codex_compaction_snapshot_skips_assistant_transcript_mirrors() -> None:
+    accumulator = CodexTimelineAccumulator()
+
+    snapshot_items = accumulator.items_from_thread_snapshot(
+        session_id="sess_1",
+        external_session_id="thread_1",
+        thread={
+            "items": [
+                {
+                    "id": "context_compaction_thread_1",
+                    "type": "contextCompaction",
+                    "status": "completed",
+                },
+                {
+                    "id": "item-2",
+                    "type": "agentMessage",
+                    "status": "completed",
+                    "text": "old assistant answer",
+                },
+                {
+                    "id": "file_1",
+                    "type": "fileChange",
+                    "status": "completed",
+                    "changes": [
+                        {
+                            "path": "app.py",
+                            "diff": "+print('hi')",
+                            "kind": {"type": "modify"},
+                        }
+                    ],
+                },
+                {
+                    "id": "msg_new",
+                    "type": "agentMessage",
+                    "status": "completed",
+                    "turnId": "turn_after_compact",
+                    "text": "new answer",
+                },
+            ]
+        },
+        limit=100,
+    )
+
+    assert [item.id for item in snapshot_items] == [
+        "context_compaction_thread_1",
+        "file_1",
+        "msg_new",
+    ]
+
+
 def test_codex_timeline_projects_typed_sdk_delta_without_params_dict() -> None:
     event = CodexSdkEvent.from_value(
         Notification(
