@@ -26,7 +26,7 @@ const PANEL_META: Record<PanelId, { titleKey: "panelFiles" | "panelShell"; icon:
 const HEADER_BLUR_LAYERS = buildBlurGradientLayers({
   height: 56,
   layerCount: 9,
-  maxBlur: 12,
+  maxBlur: 10,
   minBlur: 0,
   overlap: 8,
   gamma: 1.85,
