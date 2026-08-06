@@ -101,66 +101,9 @@ const SCROLL_TO_BOTTOM_INTERVAL_MS = 1000
 const SCROLL_TO_BOTTOM_PRUNE_CHECK_MS = 120
 const COMMAND_QUERY_DEBOUNCE_MS = 120
 const COMPOSER_DRAFT_STORAGE_PREFIX = "agents-anywhere.sessionComposerDraft.v1."
-const COMPOSER_BLUR_LAYERS = buildComposerBlurLayers({
-  height: 144,
-  layerCount: 10,
-  maxBlur: 14,
-  minBlur: 0,
-  overlap: 10,
-  gamma: 1.8,
-})
-
 type ComposerDraftState = {
   sessionId: string
   value: string
-}
-
-type ComposerBlurLayerStyle = React.CSSProperties & {
-  WebkitBackdropFilter?: string
-  WebkitMaskImage?: string
-}
-
-function buildComposerBlurLayers({
-  height,
-  layerCount,
-  maxBlur,
-  minBlur,
-  overlap,
-  gamma,
-}: {
-  height: number
-  layerCount: number
-  maxBlur: number
-  minBlur: number
-  overlap: number
-  gamma: number
-}) {
-  const step = height / layerCount
-  return Array.from({ length: layerCount }, (_, index) => {
-    const start = Math.max(0, Math.round(index * step - overlap * 0.5))
-    const end = Math.min(height, Math.round((index + 1) * step + overlap))
-    const progress = index / Math.max(1, layerCount - 1)
-    const blur = minBlur + (maxBlur - minBlur) * Math.pow(1 - progress, gamma)
-    const fadeIn = index === 0 ? 0 : 26
-    const fadeOut = index === layerCount - 1 ? 72 : 76
-    const mask =
-      index === 0
-        ? `linear-gradient(to top, black 0%, black ${fadeOut}%, transparent 100%)`
-        : `linear-gradient(to top, transparent 0%, black ${fadeIn}%, black ${fadeOut}%, transparent 100%)`
-
-    return {
-      key: `${index}-${start}-${end}-${blur.toFixed(2)}`,
-      className: "absolute inset-x-0",
-      style: {
-        bottom: `${start}px`,
-        height: `${Math.max(1, end - start)}px`,
-        backdropFilter: `blur(${blur.toFixed(2)}px)`,
-        WebkitBackdropFilter: `blur(${blur.toFixed(2)}px)`,
-        maskImage: mask,
-        WebkitMaskImage: mask,
-      } satisfies ComposerBlurLayerStyle,
-    }
-  })
 }
 
 async function loadInitialSessionState(
@@ -1265,7 +1208,7 @@ export function SessionDetail({
           <div
             aria-busy={runtimeStatus === "waiting" || runtimeStatus === "pending" || runtimeStatus === "running"}
             className={cn(
-              "mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-3 overflow-hidden px-4 pb-44 pt-20",
+              "mx-auto flex w-full min-w-0 max-w-[calc(48rem+2rem)] flex-col gap-3 overflow-hidden px-4 pb-44 pt-20",
             )}
             style={timelineBottomPadding ? { paddingBottom: timelineBottomPadding } : undefined}
           >
@@ -1359,11 +1302,7 @@ export function SessionDetail({
         ) : null}
       </div>
 
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 overflow-hidden">
-        <div className="absolute inset-x-0 bottom-0 h-36 bg-linear-to-t from-background/80 to-background/0" />
-        {COMPOSER_BLUR_LAYERS.map((layer) => (
-          <div key={layer.key} className={layer.className} style={layer.style} />
-        ))}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10">
         <BlockingInteractionStack
           notices={blockingInteractionList}
           resolvingNoticeId={resolvingNoticeId}
@@ -1467,7 +1406,7 @@ function BlockingInteractionStack({
   const backingNotices = notices.slice(1, 4).reverse()
 
   return (
-    <div ref={stackRef} className="pointer-events-auto mx-auto w-full max-w-3xl px-4 pb-1">
+    <div ref={stackRef} className="pointer-events-auto mx-auto w-full max-w-[calc(48rem+2rem)] px-4 pb-1">
       <div className={cn("relative", backingNotices.length > 0 && "pt-4")}>
         {backingNotices.map((notice, index) => {
           const depth = backingNotices.length - index
