@@ -139,7 +139,7 @@ class CodexErrorItem(CodexTimelineItem):
 
 @dataclass(frozen=True, slots=True)
 class CodexContextCompactionItem(CodexTimelineItem):
-    expected_type: ClassVar[TimelineItemType | None] = "system"
+    expected_type: ClassVar[TimelineItemType | None] = "marker"
     expected_native_item_types: ClassVar[tuple[str, ...]] = ("contextCompaction",)
 
 
@@ -256,7 +256,15 @@ def codex_timeline_item_class(native_item_type: str) -> type[CodexTimelineItem]:
 
 
 def timeline_item_type_from_string(value: str) -> TimelineItemType:
-    if value in {"turn.start", "turn.end", "message", "tool", "artifact", "system"}:
+    if value in {
+        "turn.start",
+        "turn.end",
+        "message",
+        "tool",
+        "artifact",
+        "marker",
+        "system",
+    }:
         return value
     return "system"
 

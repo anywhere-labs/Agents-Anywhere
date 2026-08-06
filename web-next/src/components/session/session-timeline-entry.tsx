@@ -55,6 +55,7 @@ export function TimelineEntry({
       />
     )
   }
+  if (item.type === "marker") return <MarkerCard item={item} />
   if (item.type === "system") return <SystemCard item={item} />
   if (item.type === "artifact") return <ArtifactCard token={token} session={session} item={item} />
   return <UnknownTimelineItem item={item} />
@@ -135,6 +136,34 @@ function SystemCard({ item }: { item: TimelineItem }) {
     <JsonMarker
       item={item}
       title={title}
+      icon={failed ? <CircleAlert /> : <Clock />}
+      destructive={failed}
+      detail={systemDetail(item.content)}
+    />
+  )
+}
+
+function MarkerCard({ item }: { item: TimelineItem }) {
+  const tSession = useTranslations("dashboard.session")
+  const kind = textOf(item.content.kind) || "system"
+  if (kind === "compact") {
+    const compactState = compactTimelineState(item)
+    const active = compactState === "started"
+    return (
+      <Marker variant="separator" className="w-full normal-case">
+        <MarkerContent className={cn("flex-none text-sm font-normal", active && "shimmer")}>
+          {active ? tSession("conversationCompacting") : tSession("conversationCompacted")}
+        </MarkerContent>
+      </Marker>
+    )
+  }
+
+  const label = textOf(item.content.label) || textOf(item.content.title) || kind
+  const failed = item.status === "failed" || kind === "error"
+  return (
+    <JsonMarker
+      item={item}
+      title={label}
       icon={failed ? <CircleAlert /> : <Clock />}
       destructive={failed}
       detail={systemDetail(item.content)}

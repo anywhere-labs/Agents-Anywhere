@@ -11,7 +11,15 @@ def timeline_item_type(raw: Mapping[str, Any]) -> str:
 def timeline_item_type_from_raw_type(value: str) -> str:
     if not value:
         return "system"
-    if value in {"turn.start", "turn.end", "message", "tool", "artifact", "system"}:
+    if value in {
+        "turn.start",
+        "turn.end",
+        "message",
+        "tool",
+        "artifact",
+        "marker",
+        "system",
+    }:
         return value
     if value in {"agentMessage", "userMessage", "steeringUserMessage"}:
         return "message"
@@ -24,10 +32,11 @@ def timeline_item_type_from_raw_type(value: str) -> str:
         "systemMessage",
         "runtimeMessage",
         "error",
-        "contextCompaction",
         "unknown",
     }:
         return "system"
+    if value == "contextCompaction":
+        return "marker"
     if value in {
         "commandExecution",
         "mcpToolCall",

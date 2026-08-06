@@ -8,7 +8,15 @@ RuntimeName = Literal["codex", "claude", "opencode", "acp"]
 ConnectorStatus = Literal["offline", "online"]
 ConnectorDeviceOs = Literal["macos", "windows", "linux"]
 SessionStatus = Literal["idle", "waiting", "pending", "running", "stopping", "blocked"]
-TimelineType = Literal["turn.start", "turn.end", "message", "tool", "artifact", "system"]
+TimelineType = Literal[
+    "turn.start",
+    "turn.end",
+    "message",
+    "tool",
+    "artifact",
+    "marker",
+    "system",
+]
 TimelineStatus = Literal[
     "pending",
     "running",

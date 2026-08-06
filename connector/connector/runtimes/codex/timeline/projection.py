@@ -169,18 +169,14 @@ class CodexTimelineProjection:
             "turnStart",
             "turnEnd",
             "error",
-            "contextCompaction",
         }:
             text = self.text or self.message
             return {
                 "kind": system_kind_from_raw_type(self.raw_type),
                 **({"text": text, "format": "markdown"} if text else {}),
-                **(
-                    {"state": compact_state_from_status(self.status)}
-                    if self.raw_type == "contextCompaction"
-                    else {}
-                ),
             }
+        if self.raw_type == "contextCompaction":
+            return self.context_compaction_content()
         if self.text:
             return {"text": self.text, "format": "markdown"}
         if self.raw_type in {
@@ -259,6 +255,17 @@ class CodexTimelineProjection:
             "kind": "web_search",
             "query": self.message,
             "action": self.arguments,
+        }
+
+    def context_compaction_content(self) -> Mapping[str, Any]:
+        state = compact_state_from_status(self.status)
+        label = "正在压缩上下文" if state == "started" else "对话已压缩"
+        text = self.text or self.message
+        return {
+            "kind": "compact",
+            "label": label,
+            "state": state,
+            **({"text": text, "format": "markdown"} if text else {}),
         }
 
     def custom_tool_call_content(self) -> Mapping[str, Any]:

@@ -21,7 +21,9 @@ from connector.runtime_protocol import (
     ErrorSystemContent,
     FileArtifactContent,
     FileChangeToolContent,
+    GenericMarkerContent,
     MarkdownMessageContent,
+    MarkerTimelineItem,
     MessageTimelineContent,
     MessageTimelineItem,
     PlatformTimelineItem,
@@ -189,6 +191,14 @@ def test_platform_timeline_item_subclasses_validate_parent_type() -> None:
         type="artifact",
         status="done",
         content=ArtifactTimelineContent(kind="file"),
+        source=source,
+    )
+    MarkerTimelineItem(
+        id="marker_1",
+        type="marker",
+        status="done",
+        role="system",
+        content=GenericMarkerContent(label="Checkpoint"),
         source=source,
     )
     SystemTimelineItem(

@@ -6,11 +6,13 @@ from typing import Any
 
 from connector.runtime_protocol import (
     CommandToolContent,
+    CompactMarkerContent,
     CompactSystemContent,
     ErrorSystemContent,
     FileArtifactContent,
     FileChangeArtifactContent,
     FileChangeToolContent,
+    GenericMarkerContent,
     GenericSystemContent,
     MarkdownMessageContent,
     McpToolContent,
@@ -41,6 +43,8 @@ def codex_timeline_content_from_mapping(
         return codex_tool_content_from_mapping(content)
     if platform_item_type == "artifact":
         return codex_artifact_content_from_mapping(content)
+    if platform_item_type == "marker":
+        return codex_marker_content_from_mapping(content)
     if platform_item_type in {"turn.start", "turn.end", "system"}:
         return codex_system_content_from_mapping(
             native_item_type=native_item_type,
@@ -108,6 +112,27 @@ def codex_artifact_content_from_mapping(content: Mapping[str, Any]) -> TimelineC
             metadata=mapping_without(content, ("kind", "path", "action")),
         )
     return UnknownArtifactContent(metadata=dict(content))
+
+
+def codex_marker_content_from_mapping(content: Mapping[str, Any]) -> TimelineContent:
+    kind = content_kind_from_mapping(content)
+    label = string_field(content, "label")
+    text = optional_string_field(content, "text")
+    severity = optional_string_field(content, "severity")
+    metadata = mapping_without(content, ("kind", "label", "text", "severity"))
+    if kind == "compact":
+        return CompactMarkerContent(
+            label=label or "Conversation compacted",
+            text=text,
+            severity=severity,
+            metadata=metadata,
+        )
+    return GenericMarkerContent(
+        label=label or kind,
+        text=text,
+        severity=severity,
+        metadata=metadata,
+    )
 
 
 def codex_system_content_from_mapping(

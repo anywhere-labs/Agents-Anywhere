@@ -15,6 +15,7 @@ TimelineItemType = Literal[
     "message",
     "tool",
     "artifact",
+    "marker",
     "system",
 ]
 TimelineItemStatus = Literal[
@@ -60,6 +61,14 @@ SystemContentKind = Literal[
     "error",
     "notice",
     "compact",
+    "unknown",
+]
+MarkerContentKind = Literal[
+    "compact",
+    "system",
+    "runtime",
+    "notice",
+    "error",
     "unknown",
 ]
 
@@ -300,6 +309,40 @@ class UnknownArtifactContent(ArtifactTimelineContent):
 
 
 @dataclass(frozen=True, slots=True)
+class MarkerTimelineContent(TimelineContent):
+    kind: MarkerContentKind
+    label: str = ""
+    text: str | None = None
+    severity: str | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def to_mapping(self) -> Mapping[str, Any]:
+        payload: dict[str, Any] = {
+            "kind": self.kind,
+            "label": self.label,
+        }
+        if self.text is not None:
+            payload["text"] = self.text
+        if self.severity is not None:
+            payload["severity"] = self.severity
+        payload.update(self.metadata)
+        return payload
+
+
+@dataclass(frozen=True, slots=True)
+class CompactMarkerContent(MarkerTimelineContent):
+    expected_kind: ClassVar[str | None] = "compact"
+    kind: MarkerContentKind = "compact"
+    label: str = "Conversation compacted"
+
+
+@dataclass(frozen=True, slots=True)
+class GenericMarkerContent(MarkerTimelineContent):
+    expected_kind: ClassVar[str | None] = "system"
+    kind: MarkerContentKind = "system"
+
+
+@dataclass(frozen=True, slots=True)
 class SystemTimelineContent(TimelineContent):
     kind: SystemContentKind
     text: str | None = None
@@ -448,6 +491,11 @@ class ToolTimelineItem(PlatformTimelineItem):
 @dataclass(frozen=True, slots=True)
 class ArtifactTimelineItem(PlatformTimelineItem):
     expected_type: ClassVar[TimelineItemType | None] = "artifact"
+
+
+@dataclass(frozen=True, slots=True)
+class MarkerTimelineItem(PlatformTimelineItem):
+    expected_type: ClassVar[TimelineItemType | None] = "marker"
 
 
 @dataclass(frozen=True, slots=True)

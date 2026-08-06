@@ -244,6 +244,7 @@ export type TimelineType =
   | "message"
   | "tool"
   | "artifact"
+  | "marker"
   | "system";
 
 export type TimelineStatus =

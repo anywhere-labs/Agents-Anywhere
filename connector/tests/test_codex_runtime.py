@@ -35,7 +35,7 @@ from connector.runtime_protocol import (
     CAPABILITY_SESSION_SEND_MESSAGE,
     CAPABILITY_SESSION_STEER,
     CommandToolContent,
-    CompactSystemContent,
+    CompactMarkerContent,
     MarkdownMessageContent,
     MessageTimelineContent,
     RuntimeCapabilitySet,
@@ -220,11 +220,12 @@ def test_codex_projection_maps_context_compaction_to_compact_content() -> None:
     platform_item = item.to_platform_item(session_id="sess_1", order_seq=0)
 
     assert isinstance(item, CodexContextCompactionItem)
-    assert isinstance(item.content, CompactSystemContent)
-    assert platform_item.type == "system"
+    assert isinstance(item.content, CompactMarkerContent)
+    assert platform_item.type == "marker"
     assert platform_item.role == "system"
     assert platform_item.content == {
         "kind": "compact",
+        "label": "对话已压缩",
         "text": "The session context was compacted.",
         "format": "markdown",
         "state": "completed",
@@ -732,10 +733,11 @@ async def _test_codex_runtime_thread_compacted_notification_upserts_timeline_ite
 
     assert len(host.timeline_item_upserts) == 1
     item = host.timeline_item_upserts[0]
-    assert item.type == "system"
+    assert item.type == "marker"
     assert item.status == "done"
     assert item.turn_id == "turn_compact"
     assert item.content["kind"] == "compact"
+    assert item.content["label"] == "对话已压缩"
     assert item.content["state"] == "completed"
     assert item.source["rawType"] == "contextCompaction"
     assert host.state_updates[-1]["status"] == "idle"
@@ -2341,9 +2343,10 @@ async def _test_codex_runtime_compact_command_calls_app_server() -> None:
     )
 
     assert len(host.timeline_item_upserts) == 1
-    assert host.timeline_item_upserts[-1].type == "system"
+    assert host.timeline_item_upserts[-1].type == "marker"
     assert host.timeline_item_upserts[-1].status == "running"
     assert host.timeline_item_upserts[-1].content["kind"] == "compact"
+    assert host.timeline_item_upserts[-1].content["label"] == "正在压缩上下文"
     assert host.timeline_item_upserts[-1].content["state"] == "started"
     started_item_id = host.timeline_item_upserts[-1].id
     assert host.state_updates == []

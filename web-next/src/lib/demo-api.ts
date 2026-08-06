@@ -140,7 +140,7 @@ export type TimelineItem = {
   id: string
   sessionId: string
   turnId?: string | null
-  type: "turn.start" | "turn.end" | "message" | "tool" | "artifact" | "system"
+  type: "turn.start" | "turn.end" | "message" | "tool" | "artifact" | "marker" | "system"
   status: "pending" | "running" | "waiting_approval" | "done" | "failed" | "cancelled" | "interrupted"
   role?: "user" | "assistant" | "system" | "tool" | null
   content: Record<string, unknown>
