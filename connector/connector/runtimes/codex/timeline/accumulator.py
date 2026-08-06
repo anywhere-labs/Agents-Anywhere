@@ -494,12 +494,13 @@ def compact_filtered_thread_snapshot_items(
     return tuple(
         raw
         for raw in raw_items
-        if not is_compacted_assistant_transcript_mirror(raw)
+        if not is_compacted_transcript_message_mirror(raw)
     )
 
 
-def is_compacted_assistant_transcript_mirror(raw: Mapping[str, Any]) -> bool:
+def is_compacted_transcript_message_mirror(raw: Mapping[str, Any]) -> bool:
     return (
-        codex_timeline.timeline_raw_type(raw) == "agentMessage"
+        codex_timeline.timeline_raw_type(raw)
+        in {"agentMessage", "userMessage", "steeringUserMessage", "message"}
         and codex_timeline.timeline_item_turn_id(raw) is None
     )

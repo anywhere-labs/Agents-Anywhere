@@ -759,7 +759,7 @@ def test_codex_compaction_snapshot_reuses_started_timeline_item() -> None:
     assert snapshot_items[0].content["state"] == "completed"
 
 
-def test_codex_compaction_snapshot_skips_assistant_transcript_mirrors() -> None:
+def test_codex_compaction_snapshot_skips_transcript_message_mirrors() -> None:
     accumulator = CodexTimelineAccumulator()
 
     snapshot_items = accumulator.items_from_thread_snapshot(
@@ -777,6 +777,12 @@ def test_codex_compaction_snapshot_skips_assistant_transcript_mirrors() -> None:
                     "type": "agentMessage",
                     "status": "completed",
                     "text": "old assistant answer",
+                },
+                {
+                    "id": "item-3",
+                    "type": "userMessage",
+                    "status": "completed",
+                    "text": "old user message",
                 },
                 {
                     "id": "file_1",
