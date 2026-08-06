@@ -2179,6 +2179,59 @@ def test_session_state_supports_latest_and_before_timeline_windows(tmp_path):
         assert oldest["hasMore"] is False
 
 
+def test_session_snapshot_and_timeline_default_to_latest_hundred_items(tmp_path):
+    client = make_client(tmp_path)
+    _, _, session_id, headers = create_connector_and_session(client)
+
+    async def seed_timeline_items() -> None:
+        from agent_server.core.models import TimelineItemIn
+
+        store = client.app.state.store
+        for order_seq in range(1, 102):
+            await store.upsert_timeline_item(
+                session_id=session_id,
+                item=TimelineItemIn.model_validate(
+                    {
+                        "id": f"tl_{order_seq}",
+                        "sessionId": session_id,
+                        "turnId": "turn_1",
+                        "type": "message",
+                        "status": "done",
+                        "role": "assistant",
+                        "content": {"text": f"item {order_seq}", "format": "markdown"},
+                        "source": {
+                            "runtime": "codex",
+                            "sessionId": "thr_1",
+                            "turnId": "turn_1",
+                            "itemId": f"item_{order_seq}",
+                            "itemType": "agentMessage",
+                        },
+                        "orderSeq": order_seq,
+                        "revision": 1,
+                        "contentHash": f"sha256:{order_seq}",
+                    },
+                ),
+            )
+
+    asyncio.run(seed_timeline_items())
+
+    timeline = client.get(f"/sessions/{session_id}/timeline", headers=headers)
+    assert timeline.status_code == 200, timeline.text
+    timeline_body = timeline.json()
+    assert len(timeline_body["items"]) == 100
+    assert timeline_body["items"][0]["id"] == "tl_2"
+    assert timeline_body["items"][-1]["id"] == "tl_101"
+    assert timeline_body["hasMore"] is True
+
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
+    assert snapshot.status_code == 200, snapshot.text
+    snapshot_timeline = snapshot.json()["timeline"]
+    assert len(snapshot_timeline["items"]) == 100
+    assert snapshot_timeline["items"][0]["id"] == "tl_2"
+    assert snapshot_timeline["items"][-1]["id"] == "tl_101"
+    assert snapshot_timeline["hasMore"] is True
+
+
 def test_session_state_update_drives_runtime_status_independently_from_timeline(
     tmp_path,
 ):

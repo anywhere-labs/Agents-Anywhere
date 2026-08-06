@@ -272,7 +272,7 @@ export class DashboardApi {
   getSessionSnapshot(
     token: string,
     sessionId: string,
-    limit = 200,
+    limit = 100,
     options: SessionSnapshotRequestOptions = {},
   ): Promise<SessionSnapshotResponse> {
     const reason = options.reason ?? "unspecified";

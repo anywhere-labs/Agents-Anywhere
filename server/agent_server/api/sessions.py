@@ -600,7 +600,7 @@ async def session_timeline(
     after_seq: int = Query(0, alias="afterSeq", ge=0),
     before_order_seq: int | None = Query(None, alias="beforeOrderSeq", ge=1),
     mode: str = Query("latest", pattern="^(latest|changes|history)$"),
-    limit: int = Query(200, ge=1, le=500),
+    limit: int = Query(100, ge=1, le=500),
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
 ) -> ProtocolTimelineResponse:
@@ -650,7 +650,7 @@ async def session_timeline(
 @router.get("/{session_id}/snapshot", response_model=ProtocolSessionSnapshotResponse)
 async def session_snapshot(
     session_id: str,
-    limit: int = Query(200, ge=1, le=500),
+    limit: int = Query(100, ge=1, le=500),
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
