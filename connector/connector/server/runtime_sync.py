@@ -104,12 +104,6 @@ class RuntimeSyncRunner:
             metadata=session.metadata,
         )
         if not session_requires_timeline_sync(session):
-            logger.info(
-                "existing session sync skipped unchanged timeline runtime={} session_id={} external_session_id={}",
-                session.runtime,
-                session.session_id,
-                session.external_session_id,
-            )
             return
         logger.info(
             "existing session timeline sync started runtime={} session_id={} external_session_id={}",
