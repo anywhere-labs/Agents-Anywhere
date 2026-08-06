@@ -1532,6 +1532,55 @@ def test_codex_runtime_typed_snapshot_preserves_messages_after_compaction() -> N
     asyncio.run(_test_codex_runtime_typed_snapshot_preserves_messages_after_compaction())
 
 
+def test_codex_runtime_default_snapshot_reads_more_than_hundred_items() -> None:
+    asyncio.run(_test_codex_runtime_default_snapshot_reads_more_than_hundred_items())
+
+
+async def _test_codex_runtime_default_snapshot_reads_more_than_hundred_items() -> None:
+    client = FakeCodexClient()
+    client.results["thread/read"] = {
+        "thread": Thread.model_validate(
+            {
+                "id": "thread_1",
+                "cliVersion": "0.1.0",
+                "createdAt": 1,
+                "cwd": "/repo",
+                "ephemeral": False,
+                "modelProvider": "openai",
+                "preview": "hello",
+                "sessionId": "codex_session_1",
+                "source": "appServer",
+                "status": {"type": "notLoaded"},
+                "turns": [
+                    {
+                        "id": "turn_many",
+                        "status": "completed",
+                        "items": [
+                            {
+                                "id": f"item_{index}",
+                                "type": "agentMessage",
+                                "text": f"message {index}",
+                            }
+                            for index in range(101)
+                        ],
+                    }
+                ],
+                "updatedAt": 2,
+            }
+        )
+    }
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=client)
+
+    snapshot = await runtime.get_session_snapshot(
+        "sess_1",
+        external_session_id="thread_1",
+    )
+
+    assert len(snapshot.items) == 101
+    assert snapshot.items[0].id == "item_0"
+    assert snapshot.items[-1].id == "item_100"
+
+
 async def _test_codex_runtime_typed_snapshot_preserves_messages_after_compaction() -> (
     None
 ):

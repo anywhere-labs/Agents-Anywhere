@@ -84,7 +84,6 @@ class RuntimeSyncRunner:
         snapshot = await runtime.get_session_snapshot(
             session.session_id,
             session.external_session_id,
-            limit=100,
         )
         await self.host.timeline_sync(
             session_id=snapshot.session_id,

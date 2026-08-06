@@ -41,10 +41,10 @@ def timeline_items_from_messages(
     external_session_id: str,
     session_info: Any,
     messages: list[Any],
-    limit: int,
+    limit: int | None,
 ) -> tuple[RuntimeTimelineItem, ...]:
     items: list[RuntimeTimelineItem] = []
-    for index, message in enumerate(messages[:limit]):
+    for index, message in enumerate(limit_messages(messages, limit)):
         item = _timeline_item_from_history_message(
             session_id=session_id,
             external_session_id=external_session_id,
@@ -55,6 +55,12 @@ def timeline_items_from_messages(
         if item is not None:
             items.append(item)
     return tuple(items)
+
+
+def limit_messages(messages: list[Any], limit: int | None) -> list[Any]:
+    if limit is None:
+        return messages
+    return messages[:limit]
 
 
 def timeline_items_from_live_message(

@@ -115,6 +115,17 @@ def int_param(params: dict[str, Any], key: str, default: int) -> int:
     raise ValueError(f"{key} must be an integer")
 
 
+def optional_int_param(params: dict[str, Any], key: str) -> int | None:
+    value = params.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise TypeError(f"{key} must be an integer")
+    if isinstance(value, int):
+        return value
+    raise ValueError(f"{key} must be an integer")
+
+
 def string_tuple(value: Any) -> tuple[str, ...]:
     if not isinstance(value, list | tuple):
         raise TypeError("args must be a list")
@@ -189,14 +200,14 @@ class SessionDiscoverParams:
 class SessionReadParams:
     session_id: str
     external_session_id: str | None
-    limit: int
+    limit: int | None
 
     @classmethod
     def parse(cls, params: dict[str, Any]) -> SessionReadParams:
         return cls(
             session_id=required_session_id(params),
             external_session_id=optional_string(params.get("externalSessionId")),
-            limit=int_param(params, "limit", 100),
+            limit=optional_int_param(params, "limit"),
         )
 
 

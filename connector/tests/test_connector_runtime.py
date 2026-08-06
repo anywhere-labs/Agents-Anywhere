@@ -319,7 +319,7 @@ class FakeAgentRuntime(AgentRuntime):
         self,
         session_id: str,
         external_session_id: str | None = None,
-        limit: int = 100,
+        limit: int | None = None,
     ) -> RuntimeTimelineSnapshot:
         self.calls.append(
             (
@@ -1134,6 +1134,8 @@ async def _exercise_runtime_sync_pushes_each_session_snapshot_before_next_meta()
         "session.state",
         "session.notices",
     ]
+    sync_call = next(call for call in runtime.calls if call[0] == "session.sync")
+    assert sync_call[1]["limit"] is None
 
 
 def test_connector_refreshes_expiring_access_token_before_ingest() -> None:

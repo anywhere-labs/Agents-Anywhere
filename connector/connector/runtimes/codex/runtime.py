@@ -225,7 +225,7 @@ class CodexRuntime(AgentRuntime):
         self,
         session_id: str,
         external_session_id: str | None = None,
-        limit: int = 100,
+        limit: int | None = None,
     ) -> RuntimeTimelineSnapshot:
         return await self._session_reader.get_session_snapshot(
             session_id,

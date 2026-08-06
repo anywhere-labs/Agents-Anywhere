@@ -168,7 +168,7 @@ class CodexSessionReader:
         self,
         session_id: str,
         external_session_id: str | None = None,
-        limit: int = 100,
+        limit: int | None = None,
     ) -> RuntimeTimelineSnapshot:
         if self.client is None or external_session_id is None:
             return RuntimeTimelineSnapshot(

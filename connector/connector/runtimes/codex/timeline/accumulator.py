@@ -224,12 +224,12 @@ class CodexTimelineAccumulator:
         session_id: str,
         external_session_id: str,
         thread: dict[str, Any],
-        limit: int,
+        limit: int | None,
     ) -> tuple[RuntimeTimelineItem, ...]:
         items: list[RuntimeTimelineItem] = []
         raw_items = codex_timeline.raw_timeline_items(thread)
         snapshot_items = compact_filtered_thread_snapshot_items(raw_items)
-        for index, raw_item in enumerate(snapshot_items[:limit]):
+        for index, raw_item in enumerate(limit_snapshot_items(snapshot_items, limit)):
             raw = dict(raw_item)
             if self._pending_messages is not None:
                 self._pending_messages.attach_to_raw_item(
@@ -265,7 +265,7 @@ class CodexTimelineAccumulator:
         session_id: str,
         external_session_id: str,
         thread: Thread,
-        limit: int,
+        limit: int | None,
     ) -> tuple[RuntimeTimelineItem, ...]:
         items: list[RuntimeTimelineItem] = []
         projections = codex_timeline.timeline_projections_from_sdk_thread(
@@ -536,6 +536,15 @@ def compact_filtered_thread_snapshot_items(
         for raw in raw_items
         if not is_compacted_transcript_message_mirror(raw)
     )
+
+
+def limit_snapshot_items(
+    raw_items: tuple[dict[str, Any], ...],
+    limit: int | None,
+) -> tuple[dict[str, Any], ...]:
+    if limit is None:
+        return raw_items
+    return raw_items[:limit]
 
 
 def is_compacted_transcript_message_mirror(raw: Mapping[str, Any]) -> bool:

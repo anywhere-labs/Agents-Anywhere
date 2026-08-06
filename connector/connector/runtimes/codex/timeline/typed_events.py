@@ -163,7 +163,7 @@ def timeline_projections_from_sdk_turn_event(
 
 def timeline_projections_from_sdk_thread(
     thread: Thread,
-    limit: int,
+    limit: int | None,
 ) -> tuple[CodexTimelineProjection, ...]:
     projections: list[CodexTimelineProjection] = []
     for turn in thread.turns:
@@ -175,6 +175,8 @@ def timeline_projections_from_sdk_thread(
             )
             if projection is not None:
                 projections.append(projection)
+    if limit is None:
+        return tuple(projections)
     return tuple(projections[:limit])
 
 

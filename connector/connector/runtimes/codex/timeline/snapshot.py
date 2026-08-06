@@ -13,12 +13,12 @@ def timeline_items_from_thread(
     session_id: str,
     external_session_id: str,
     thread: dict[str, Any],
-    limit: int,
+    limit: int | None,
     pending_messages: Any | None = None,
 ) -> tuple[RuntimeTimelineItem, ...]:
     raw_items = raw_timeline_items(thread)
     items: list[RuntimeTimelineItem] = []
-    for index, raw in enumerate(raw_items[:limit]):
+    for index, raw in enumerate(limit_items(raw_items, limit)):
         if pending_messages is not None:
             pending_messages.attach_to_raw_item(
                 session_id=session_id,
@@ -35,6 +35,12 @@ def timeline_items_from_thread(
             codex_item.to_platform_item(session_id=session_id, order_seq=index)
         )
     return tuple(items)
+
+
+def limit_items[T](items: list[T], limit: int | None) -> list[T]:
+    if limit is None:
+        return items
+    return items[:limit]
 
 
 def raw_timeline_items(thread: dict[str, Any]) -> list[dict[str, Any]]:
