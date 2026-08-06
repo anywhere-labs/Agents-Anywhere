@@ -95,6 +95,9 @@ from agent_server.services.interactions import (
     InteractionServiceError,
 )
 from agent_server.services.notices import pending_approvals_from_notices
+from agent_server.services.session_meta_projection import (
+    project_session_meta_for_dashboard,
+)
 from agent_server.services.session_run import SessionRunError, SessionRunService
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 
@@ -298,10 +301,17 @@ async def list_sessions(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
+    runtime_state_cache: SessionRuntimeStateCache = Depends(
+        get_session_runtime_state_cache
+    ),
 ) -> dict[str, Any]:
     sessions = await db.list_sessions(user_id=user_id)
     return {
-        "sessions": await with_effective_session_connector_statuses(manager, sessions),
+        "sessions": await project_session_meta_for_dashboard(
+            manager,
+            runtime_state_cache,
+            sessions,
+        ),
         "serverTime": utc_now(),
     }
 

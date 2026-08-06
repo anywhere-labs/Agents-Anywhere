@@ -858,6 +858,35 @@ def test_session_state_updated_pushes_ephemeral_runtime_state(tmp_path):
     assert state.json()["state"]["status"] == "running"
 
 
+def test_session_list_projects_cached_runtime_status(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, access_token, session_id, headers = create_connector_and_session(client)
+
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "session.state.updated",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "codex",
+                        "status": "running",
+                        "metadata": {"source": "test"},
+                    },
+                },
+            ],
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    listed = client.get("/sessions", headers=headers)
+    assert listed.status_code == 200, listed.text
+    session = next(item for item in listed.json()["sessions"] if item["id"] == session_id)
+    assert session["status"] == "running"
+
+
 def test_session_state_updated_pushes_blocked_then_idle(tmp_path):
     client = make_client(tmp_path)
     _connector_id, access_token, session_id, headers = create_connector_and_session(client)
@@ -1507,6 +1536,42 @@ def test_dashboard_ws_returns_connector_and_session_snapshot(tmp_path):
         assert snapshot["type"] == "dashboard.snapshot"
         assert [connector["id"] for connector in snapshot["connectors"]] == [connector_id]
         assert [session["id"] for session in snapshot["sessions"]] == [session_id]
+
+
+def test_dashboard_ws_projects_cached_runtime_status(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, access_token, session_id, headers = create_connector_and_session(client)
+    ticket = dashboard_ws_ticket(client, headers)
+
+    with client.websocket_connect(f"/dashboard/ws?ticket={ticket}") as ws:
+        snapshot = ws.receive_json()
+        assert snapshot["type"] == "dashboard.snapshot"
+        session = next(item for item in snapshot["sessions"] if item["id"] == session_id)
+        assert session["status"] == "idle"
+
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "notifications": [
+                    {
+                        "method": "session.state.updated",
+                        "params": {
+                            "sessionId": session_id,
+                            "runtime": "codex",
+                            "status": "running",
+                            "metadata": {"source": "test"},
+                        },
+                    },
+                ],
+            },
+        )
+        assert response.status_code == 200, response.text
+        pushed = ws.receive_json()
+
+    assert pushed["type"] == "dashboard.snapshot"
+    session = next(item for item in pushed["sessions"] if item["id"] == session_id)
+    assert session["status"] == "running"
 
 
 def test_dashboard_ws_pushes_snapshot_after_dashboard_change(tmp_path):

@@ -8,15 +8,23 @@ from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from starlette.requests import HTTPConnection
 
 from agent_server.core.utc import utc_now
-from agent_server.deps import get_rpc, get_store, get_timeline_broker
+from agent_server.deps import (
+    get_rpc,
+    get_session_runtime_state_cache,
+    get_store,
+    get_timeline_broker,
+)
 from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.infra.ws_tickets import ClientWsTicketManager
 from agent_server.services.connector_presence import (
     with_effective_connector_statuses,
-    with_effective_session_connector_statuses,
 )
+from agent_server.services.session_meta_projection import (
+    project_session_meta_for_dashboard,
+)
+from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -29,10 +37,16 @@ async def _dashboard_snapshot(
     *,
     db: Store,
     manager: ConnectorRpcManager,
+    runtime_state_cache: SessionRuntimeStateCache,
     user_id: str,
 ) -> dict[str, Any]:
     connectors = await db.list_connectors(user_id=user_id)
     sessions = await db.list_sessions(user_id=user_id)
+    sessions = await project_session_meta_for_dashboard(
+        manager,
+        runtime_state_cache,
+        sessions,
+    )
     return {
         "type": "dashboard.snapshot",
         "connectors": [
@@ -44,10 +58,7 @@ async def _dashboard_snapshot(
         ],
         "sessions": [
             session.model_dump(mode="json")
-            for session in await with_effective_session_connector_statuses(
-                manager,
-                sessions,
-            )
+            for session in sessions
         ],
         "serverTime": utc_now(),
     }
@@ -59,6 +70,10 @@ async def dashboard_ws(
     db: Annotated[Store, Depends(get_store)],
     broker: Annotated[TimelineBroker, Depends(get_timeline_broker)],
     manager: Annotated[ConnectorRpcManager, Depends(get_rpc)],
+    runtime_state_cache: Annotated[
+        SessionRuntimeStateCache,
+        Depends(get_session_runtime_state_cache),
+    ],
     tickets: Annotated[ClientWsTicketManager, Depends(_get_ws_tickets)],
 ) -> None:
     ticket_value = websocket.query_params.get("ticket")
@@ -77,6 +92,7 @@ async def dashboard_ws(
             await _dashboard_snapshot(
                 db=db,
                 manager=manager,
+                runtime_state_cache=runtime_state_cache,
                 user_id=ticket.user_id,
             )
         )
@@ -98,6 +114,7 @@ async def dashboard_ws(
                 await _dashboard_snapshot(
                     db=db,
                     manager=manager,
+                    runtime_state_cache=runtime_state_cache,
                     user_id=ticket.user_id,
                 )
             )
