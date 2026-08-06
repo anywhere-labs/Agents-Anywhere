@@ -7,6 +7,7 @@ from typing import Any, Self
 
 from openai_codex.generated.v2_all import (
     AgentMessageThreadItem,
+    ContextCompactedNotification,
     Thread,
     ThreadItem,
     ThreadReadResponse,
@@ -331,14 +332,30 @@ async def _test_codex_sdk_client_resumes_thread_before_compact() -> None:
     native = _FakeLowLevelAsyncCodex()
     client = CodexSdkClient(native, sdk=sdk)
 
+    handled: list[Any] = []
+
     async def handler(message: Any) -> None:
-        native.handled.append(message)
+        handled.append(message)
 
     await client.start(handler)
     result = await client.compact_thread("thread_existing")
+    await native.publish_global_notification(
+        Notification(
+            method="thread/compacted",
+            payload=ContextCompactedNotification(
+                threadId="thread_existing",
+                turnId="turn_compact",
+            ),
+        )
+    )
+    for _ in range(10):
+        await asyncio.sleep(0)
+        if handled:
+            break
     await client.stop()
 
     assert result.payload == {"compacted": True}
+    assert handled[0].method == "thread/compacted"
     assert native.low_level.request_order == [
         "thread/resume:thread_existing",
         "thread/compact/start:thread_existing",
@@ -532,6 +549,7 @@ class _FakeLowLevelAsyncCodex:
         self.entered = False
         self.exited = False
         self.handled: list[Any] = []
+        self.global_notifications: asyncio.Queue[Any] = asyncio.Queue()
 
     async def __aenter__(self) -> Self:
         self.entered = True
@@ -550,6 +568,12 @@ class _FakeLowLevelAsyncCodex:
 
     async def _ensure_initialized(self) -> None:
         self.initialized = True
+
+    async def next_notification(self) -> Any:
+        return await self.global_notifications.get()
+
+    async def publish_global_notification(self, notification: Any) -> None:
+        await self.global_notifications.put(notification)
 
 
 def generated_params_payload(

@@ -83,6 +83,7 @@ class CodexSdkClient:
         self._loaded_thread_ids: set[str] = set()
         self._turns: dict[str, Any] = {}
         self._stream_tasks: dict[str, asyncio.Task[None]] = {}
+        self._global_notification_task: asyncio.Task[None] | None = None
 
     async def start(self, handler: NotificationHandler) -> None:
         self._handler = handler
@@ -93,8 +94,16 @@ class CodexSdkClient:
             await maybe_await(call_with_optional_handler(start, handler))
         elif hasattr(self._client, "__aenter__"):
             self._entered_client = await self._client.__aenter__()
+        self.start_global_notification_task()
 
     async def stop(self) -> None:
+        if self._global_notification_task is not None:
+            self._global_notification_task.cancel()
+            await asyncio.gather(
+                self._global_notification_task,
+                return_exceptions=True,
+            )
+            self._global_notification_task = None
         for task in self._stream_tasks.values():
             task.cancel()
         if self._stream_tasks:
@@ -108,6 +117,41 @@ class CodexSdkClient:
             self._entered_client = None
         elif hasattr(self._client, "close"):
             await maybe_await(self._client.close())
+
+    def start_global_notification_task(self) -> None:
+        """Forward SDK global notifications to the runtime projector.
+
+        Side effects:
+        - starts one background task owned by this client
+        - emits non-turn-scoped SDK notifications such as thread/compacted
+        """
+
+        next_notification = getattr(self._client, "next_notification", None)
+        if not callable(next_notification) or self._handler is None:
+            return
+        if self._global_notification_task is not None:
+            return
+        self._global_notification_task = asyncio.create_task(
+            self.stream_global_notifications(next_notification)
+        )
+        self._global_notification_task.add_done_callback(
+            self.handle_global_notification_task_done
+        )
+
+    def handle_global_notification_task_done(self, task: asyncio.Task[None]) -> None:
+        if self._global_notification_task is task:
+            self._global_notification_task = None
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            logger.debug("codex sdk global notification task cancelled")
+        except Exception:
+            logger.exception("codex sdk global notification task failed")
+
+    async def stream_global_notifications(self, next_notification: Any) -> None:
+        while True:
+            notification = await maybe_await(next_notification())
+            await self._emit(notification)
 
     async def list_models(self) -> CodexModelListResult:
         models = getattr(self._client, "models", None)
