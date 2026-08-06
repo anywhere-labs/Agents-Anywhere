@@ -3154,6 +3154,80 @@ async def _test_codex_runtime_approval_request_upserts_session_notice() -> None:
     ]
 
 
+def test_codex_runtime_permission_approval_uses_permission_response_shape() -> None:
+    asyncio.run(_test_codex_runtime_permission_approval_uses_permission_response_shape())
+
+
+async def _test_codex_runtime_permission_approval_uses_permission_response_shape() -> (
+    None
+):
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    requested_permissions = {
+        "fileSystem": {
+            "write": ["/Users/t4wefan/code/github/Agents-Anywhere"],
+        },
+        "network": True,
+    }
+    await runtime.start()
+    await runtime._handle_notification(
+        {
+            "jsonrpc": "2.0",
+            "id": 43,
+            "method": "item/permissions/requestApproval",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_1",
+                "itemId": "item_permissions",
+                "approvalId": "appr_permissions",
+                "reason": "Need workspace write and network access",
+                "environmentId": "local",
+                "cwd": "/Users/t4wefan/code/github/Agents-Anywhere",
+                "permissions": requested_permissions,
+            },
+        }
+    )
+
+    notice = host.notice_upserts[-1]
+    assert notice.notice_id == "notice_approval_appr_permissions"
+    assert notice.message == "Need workspace write and network access"
+    assert notice.context["kind"] == "permissions"
+    assert notice.context["permissions"] == requested_permissions
+    assert notice.context["environmentId"] == "local"
+    assert [action["actionId"] for action in notice.actions] == [
+        "approve",
+        "approve_for_session",
+        "reject",
+    ]
+
+    result = await runtime.respond_interaction(
+        "sess_1",
+        "notice_approval_appr_permissions",
+        "approve_for_session",
+        {"approvalSource": {"requestId": 43}},
+    )
+
+    assert result.ok is True
+    assert result.result["decision"] == "session"
+    assert client.responses == [
+        (
+            43,
+            {
+                "scope": "session",
+                "permissions": requested_permissions,
+            },
+        )
+    ]
+    resolved = host.notice_upserts[-1]
+    assert resolved.context["responsePayload"] == {
+        "scope": "session",
+        "permissions": requested_permissions,
+    }
+
+
 def test_codex_runtime_steers_active_turn() -> None:
     asyncio.run(_test_codex_runtime_steers_active_turn())
 

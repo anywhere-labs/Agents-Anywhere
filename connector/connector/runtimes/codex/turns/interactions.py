@@ -10,7 +10,7 @@ from connector.runtime_protocol import (
     RuntimeUnsupportedError,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
-from connector.runtimes.codex.domain.approvals import approval_decision
+from connector.runtimes.codex.domain.approvals import approval_response_from_interaction
 from connector.runtimes.codex.domain.notices import CodexNoticeRegistry
 from connector.runtimes.codex.sdk.runtime_client import CodexRuntimeClient
 
@@ -44,28 +44,35 @@ class CodexInteractionController:
         if not isinstance(request_id, str | int):
             raise TypeError("requestId is required to respond to a Codex interaction")
         status = data.get("approvalStatus")
-        decision = approval_decision(status if isinstance(status, str) else action_id)
+        action_or_status = status if isinstance(status, str) else action_id
+        notice_context = self.notice_context_for_response(notice_id)
+        response_context = interaction_response_context(notice_context, data)
+        response = approval_response_from_interaction(
+            action_or_status,
+            response_context,
+        )
         await self.ensure_started()
         await self._notice_responding(
             notice_id=notice_id,
             action_id=action_id,
-            decision=decision,
+            decision=response.decision,
         )
         try:
-            await self.client.respond(request_id, {"decision": decision})
+            await self.client.respond(request_id, response.payload)
         except Exception as exc:
             await self._notice_response_failed(
                 session_id=session_id,
                 notice_id=notice_id,
                 action_id=action_id,
-                decision=decision,
+                decision=response.decision,
                 exc=exc,
             )
             raise
         await self._notice_resolved(
             notice_id=notice_id,
             action_id=action_id,
-            decision=decision,
+            decision=response.decision,
+            response_payload=response.payload,
         )
         cached_state = self.session_states.get(session_id)
         if cached_state is not None:
@@ -83,7 +90,7 @@ class CodexInteractionController:
                 metadata={
                     "source": "codex.approval/responded",
                     "notice_id": notice_id,
-                    "decision": decision,
+                    "decision": response.decision,
                 },
             )
         return RuntimeOperationResult(
@@ -92,9 +99,16 @@ class CodexInteractionController:
                 "resolved": True,
                 "noticeId": notice_id,
                 "sessionId": session_id,
-                "decision": decision,
+                "decision": response.decision,
+                "response": response.payload,
             },
         )
+
+    def notice_context_for_response(self, notice_id: str) -> Mapping[str, Any]:
+        notice = self.notices.get(notice_id)
+        if notice is None:
+            return {}
+        return notice.context
 
     async def _notice_responding(
         self,
@@ -120,6 +134,7 @@ class CodexInteractionController:
         notice_id: str,
         action_id: str,
         decision: str,
+        response_payload: Mapping[str, Any],
     ) -> None:
         notice = self.notices.transition(
             notice_id,
@@ -131,6 +146,7 @@ class CodexInteractionController:
                 "approvalStatus": "resolved",
                 "responseActionId": action_id,
                 "decision": decision,
+                "responsePayload": response_payload,
             },
             metadata={"source": "codex.approval/responded"},
         )
@@ -176,3 +192,22 @@ class CodexInteractionController:
                     "notice_id": notice_id,
                 },
             )
+
+
+def interaction_response_context(
+    notice_context: Mapping[str, Any],
+    input_data: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    notice_approval_source = notice_context.get("approvalSource")
+    input_approval_source = input_data.get("approvalSource")
+    if isinstance(notice_approval_source, Mapping) and isinstance(
+        input_approval_source,
+        Mapping,
+    ):
+        approval_source = {**notice_approval_source, **input_approval_source}
+        return {
+            **notice_context,
+            **input_data,
+            "approvalSource": approval_source,
+        }
+    return {**notice_context, **input_data}
