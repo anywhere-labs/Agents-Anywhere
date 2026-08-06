@@ -736,7 +736,7 @@ export function SessionDetail({
     const applyEvent = (event: ProtocolEventEnvelope) => {
       if (cancelled || event.sessionId !== sessionId) return
       if (event.type === "keepalive") return
-      if (event.sequence < nextSeqRef.current) return
+      if (event.sequence <= nextSeqRef.current) return
       if (processedEventIdsRef.current.has(event.eventId)) return
       processedEventIdsRef.current.add(event.eventId)
       if (processedEventIdsRef.current.size > 1000) {
@@ -752,7 +752,7 @@ export function SessionDetail({
       }
       markAutoScrollIfNearBottomRef.current()
       setState((current) => {
-        if (current && event.sequence < current.nextSeq) return current
+        if (current && event.sequence <= current.nextSeq) return current
         return mergeSessionEvent(current, event)
       })
       const item = readPayloadValue<TimelineItem>(event.payload.item)
