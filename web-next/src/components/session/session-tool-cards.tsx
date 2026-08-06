@@ -28,6 +28,7 @@ const FILE_CHANGE_MONACO_OPTIONS = {
     alwaysConsumeMouseWheel: false,
   },
 } satisfies import("monaco-editor").editor.IStandaloneEditorConstructionOptions
+const INLINE_FILE_CHANGE_PATH_MAX_CHARS = 60
 
 export function ToolCard({
   item,
@@ -59,7 +60,7 @@ export function ToolCard({
     textOf(item.content.outputText) ||
     textOf(item.content.error)
   const changes = recordsOf(item.content.changes)
-  const title = timelineToolTitle(item, tSession)
+  const title = timelineToolTitle(item, session, tSession)
   const hasDetail = Boolean(command || output || changes.length > 0 || interaction)
   const shouldOpenForInteraction = Boolean(interaction)
   const [localOpen, setLocalOpen] = React.useState(shouldOpenForInteraction)
@@ -184,12 +185,19 @@ export function timelineToolKind(item: TimelineItem): string {
 
 export function timelineToolTitle(
   item: TimelineItem,
+  session: SessionView,
   tSession: (key: string, values?: Record<string, string | number>) => string,
 ): string {
   const kind = timelineToolKind(item)
   const changes = recordsOf(item.content.changes)
   const createdFilesOnly = changes.length > 0 && changes.every(isCreatedFileChange)
   if (kind === "file_change") {
+    const singlePath = changes.length === 1
+      ? displayPathForSession(firstTextOf(changes[0]?.path, changes[0]?.filePath, changes[0]?.file, changes[0]?.uri), session.cwd)
+      : null
+    if (singlePath && singlePath.length <= INLINE_FILE_CHANGE_PATH_MAX_CHARS) {
+      return tSession(createdFilesOnly ? "toolCreatedFile" : "toolChangedFile", { path: singlePath })
+    }
     return tSession(createdFilesOnly ? "toolCreatedFiles" : "toolChangedFiles")
   }
   if (item.type === "artifact") {
@@ -356,6 +364,7 @@ function FileChangeRow({
 }) {
   const tSession = useTranslations("dashboard.session")
   const path = firstTextOf(change.path, change.filePath, change.file, change.uri) ?? "unknown path"
+  const displayPath = displayPathForSession(path, session.cwd) ?? path
   const diff = textOf(change.diff)
   const action = fileChangeAction(change)
   const displayDiff = fileChangeDisplayDiff(change, diff)
@@ -414,7 +423,7 @@ function FileChangeRow({
             if (canPreview) openSessionFilePreview(token, session, path)
           }}
         >
-          {path}
+          {displayPath}
         </button>
       </div>
       {diff ? (
@@ -580,6 +589,21 @@ function fileChangeActionLabelKey(action: FileChangeAction): string {
   if (action === "rename") return "fileChangeRenamed"
   if (action === "modify") return "fileChangeModified"
   return "fileChangeUnknown"
+}
+
+function displayPathForSession(path: string | null, cwd: string | null | undefined): string | null {
+  if (!path) return null
+  if (!cwd) return path
+  const normalizedPath = normalizeDisplayPath(path)
+  const normalizedCwd = normalizeDisplayPath(cwd)
+  if (normalizedPath === normalizedCwd) return "."
+  const cwdPrefix = normalizedCwd.endsWith("/") ? normalizedCwd : `${normalizedCwd}/`
+  if (!normalizedPath.startsWith(cwdPrefix)) return path
+  return normalizedPath.slice(cwdPrefix.length) || "."
+}
+
+function normalizeDisplayPath(path: string): string {
+  return path.replace(/\\/g, "/").replace(/\/+$/, "")
 }
 
 function fileChangeDisplayDiff(change: Record<string, unknown>, diff: string | null): string | null {
