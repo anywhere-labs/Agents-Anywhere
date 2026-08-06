@@ -267,11 +267,23 @@ class CodexTimelineAccumulator:
         thread: Thread,
         limit: int | None,
     ) -> tuple[RuntimeTimelineItem, ...]:
-        items: list[RuntimeTimelineItem] = []
         projections = codex_timeline.timeline_projections_from_sdk_thread(
             thread=thread,
             limit=limit,
         )
+        return self.items_from_snapshot_projections(
+            session_id=session_id,
+            external_session_id=external_session_id,
+            projections=projections,
+        )
+
+    def items_from_snapshot_projections(
+        self,
+        session_id: str,
+        external_session_id: str,
+        projections: tuple[codex_timeline.CodexTimelineProjection, ...],
+    ) -> tuple[RuntimeTimelineItem, ...]:
+        items: list[RuntimeTimelineItem] = []
         for index, projection in enumerate(projections):
             projection = self._attach_client_message_id(
                 session_id, external_session_id, projection

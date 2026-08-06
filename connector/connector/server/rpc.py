@@ -26,6 +26,8 @@ class ConnectorRpcChannel:
     def __init__(self) -> None:
         self._ws: WebSocketSender | None = None
         self._send_lock = asyncio.Lock()
+        self._request_tasks: set[asyncio.Task[None]] = set()
+        self._request_semaphore = asyncio.Semaphore(8)
 
     def set_connection(self, ws: WebSocketSender) -> None:
         self._ws = ws
@@ -73,6 +75,47 @@ class ConnectorRpcChannel:
                 ok=False,
                 error={"code": code, "message": str(exc)},
             )
+
+    def start_request(
+        self,
+        message: dict[str, Any],
+        dispatch: ConnectorDispatcher,
+    ) -> None:
+        """Start request processing without blocking the WebSocket read loop.
+
+        Side effects:
+        - schedules request dispatch in a background task
+        - sends the JSON-RPC response when the request finishes
+        - never cancels slow dispatch work because operation completion is
+          owned by the runtime method, not by a frontend timeout
+        """
+
+        if message.get("type") != "request":
+            return
+        request_id = message.get("id")
+        method = message.get("method")
+        if not isinstance(request_id, str) or not isinstance(method, str):
+            return
+        task = asyncio.create_task(self.process_request(message, dispatch))
+        self._request_tasks.add(task)
+        task.add_done_callback(self.handle_request_task_done)
+
+    async def process_request(
+        self,
+        message: dict[str, Any],
+        dispatch: ConnectorDispatcher,
+    ) -> None:
+        async with self._request_semaphore:
+            await self.handle_message(message, dispatch)
+
+    def handle_request_task_done(self, task: asyncio.Task[None]) -> None:
+        self._request_tasks.discard(task)
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("connector rpc request task failed")
 
     async def send_notification(self, method: str, params: dict[str, Any]) -> None:
         await self.send_json({"type": "notification", "method": method, "params": params})

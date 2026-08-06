@@ -884,6 +884,10 @@ def test_connector_runtime_dispatches_request_and_forwards_notifications() -> No
     asyncio.run(_exercise_runtime())
 
 
+def test_connector_rpc_start_message_does_not_block_later_requests() -> None:
+    asyncio.run(_exercise_nonblocking_runtime_rpc())
+
+
 def test_connector_config_saves_and_loads_local_json(tmp_path) -> None:
     path = tmp_path / "connector.json"
     config = ConnectorConfig(
@@ -1332,6 +1336,7 @@ async def _exercise_runtime() -> None:
             },
         }
     )
+    await asyncio.sleep(0)
     assert runtime.calls[-3][0] == "session.sync"
     assert runtime.calls[-2][0] == "session.state"
     assert runtime.calls[-1][0] == "session.notices"
@@ -1340,11 +1345,12 @@ async def _exercise_runtime() -> None:
         "session.state.updated",
         "notice.upsert",
     ]
-    assert ws.messages[-1]["result"] == {
+    sync_response = next(message for message in ws.messages if message.get("id") == "rpc_4")
+    assert sync_response["result"] == {
+        "accepted": True,
+        "background": True,
         "sessionId": "sess_1",
         "externalSessionId": "thr_1",
-        "items": 1,
-        "complete": True,
     }
 
     await client.handle_message(
@@ -1609,6 +1615,76 @@ async def _exercise_runtime() -> None:
     )
     assert runtime.calls[-1] == ("runtime.permissionCatalog", {"query": "read", "limit": 20})
     assert ws.messages[-1]["result"]["catalog"]["permissions"][0]["selectionId"] == "sel_permission_readonly"
+
+
+async def _exercise_nonblocking_runtime_rpc() -> None:
+    class SlowStateRuntime(FakeAgentRuntime):
+        def __init__(self) -> None:
+            super().__init__()
+            self.state_started = asyncio.Event()
+            self.state_release = asyncio.Event()
+
+        async def get_session_state(
+            self,
+            session_id: str,
+            external_session_id: str | None = None,
+        ) -> SessionState:
+            self.state_started.set()
+            await self.state_release.wait()
+            return await super().get_session_state(session_id, external_session_id)
+
+    runtime = SlowStateRuntime()
+    client = _client(runtime)
+    ws = FakeWebSocket()
+    client._rpc.set_connection(ws)  # type: ignore[arg-type]
+    await client.dispatch("runtime.start", {"runtimeId": "codex", "config": {}})
+
+    client.start_message(
+        {
+            "id": "rpc_slow",
+            "type": "request",
+            "method": "session.state",
+            "params": {
+                "runtime": "codex",
+                "sessionId": "sess_1",
+                "externalSessionId": "thr_1",
+            },
+        }
+    )
+    await asyncio.wait_for(runtime.state_started.wait(), timeout=1)
+
+    client.start_message(
+        {
+            "id": "rpc_fast",
+            "type": "request",
+            "method": "turn.start",
+            "params": {
+                "runtime": "codex",
+                "sessionId": "sess_1",
+                "externalSessionId": "thr_1",
+                "content": "hi",
+            },
+        }
+    )
+    fast_response = await wait_for_ws_response(ws, "rpc_fast")
+    assert fast_response["result"] == {"turnId": "turn_agent"}
+    assert not any(message.get("id") == "rpc_slow" for message in ws.messages)
+
+    runtime.state_release.set()
+    slow_response = await wait_for_ws_response(ws, "rpc_slow")
+    assert slow_response["result"]["state"]["sessionId"] == "sess_1"
+
+
+async def wait_for_ws_response(
+    ws: FakeWebSocket,
+    request_id: str,
+) -> dict[str, Any]:
+    for _ in range(100):
+        for message in ws.messages:
+            if message.get("id") == request_id:
+                return message
+        await asyncio.sleep(0.01)
+    raise AssertionError(f"websocket response not received: {request_id}")
 
 
 async def _exercise_websocket_close_reconnect(monkeypatch) -> None:

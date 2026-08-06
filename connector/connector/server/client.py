@@ -183,7 +183,7 @@ class BackendRpcClient:
             try:
                 async for raw_message in ws:
                     message = json.loads(raw_message)
-                    await self.handle_message(message)
+                    self.start_message(message)
             finally:
                 heartbeat_task.cancel()
                 sync_task.cancel()
@@ -197,6 +197,9 @@ class BackendRpcClient:
 
     async def handle_message(self, message: dict[str, Any]) -> None:
         await self._rpc.handle_message(message, self.dispatch)
+
+    def start_message(self, message: dict[str, Any]) -> None:
+        self._rpc.start_request(message, self.dispatch)
 
     async def dispatch(self, method: str, params: dict[str, Any]) -> Any:
         return await self._dispatcher.dispatch(method, params)
@@ -303,7 +306,7 @@ class BackendRpcClient:
         except asyncio.CancelledError:
             pass
         except Exception:
-            logger.exception("fs prepared download upload failed")
+            logger.exception("connector background task failed")
 
     def _get_http_client(self) -> httpx.AsyncClient | None:
         return self._http_client

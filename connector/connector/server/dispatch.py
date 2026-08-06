@@ -27,6 +27,7 @@ class ConnectorRequestDispatcher:
         self.runtime_rpc = RuntimeRpcHandler(
             agent_runtime_supervisor=agent_runtime_supervisor,
             agent_runtime_host=agent_runtime_host,
+            schedule_background=schedule_background,
         )
         self.local_rpc = LocalRpcHandler(
             local_ops=local_ops,

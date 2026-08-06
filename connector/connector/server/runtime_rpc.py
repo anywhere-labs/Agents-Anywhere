@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, ClassVar
 
 from connector.runtime_protocol import (
@@ -11,6 +12,7 @@ from connector.server.runtime_rpc_params import (
     RuntimeCatalogParams,
     RuntimeConfigParams,
     RuntimeIdParams,
+    SessionReadParams,
 )
 from connector.server.runtime_rpc_payloads import (
     agent_inventory_payload,
@@ -38,6 +40,8 @@ from connector.server.runtime_turn_rpc import (
     dispatch_turn_start,
     dispatch_turn_steer,
 )
+
+BackgroundScheduler = Callable[[Any], None]
 
 
 class RuntimeRpcHandler:
@@ -73,9 +77,11 @@ class RuntimeRpcHandler:
         self,
         agent_runtime_supervisor: RuntimeSupervisor,
         agent_runtime_host: RuntimeHostClient,
+        schedule_background: BackgroundScheduler | None = None,
     ) -> None:
         self.agent_runtime_supervisor = agent_runtime_supervisor
         self.agent_runtime_host = agent_runtime_host
+        self.schedule_background = schedule_background
 
     def supports(self, method: str) -> bool:
         return method in self.METHODS
@@ -155,11 +161,7 @@ class RuntimeRpcHandler:
                 params,
             )
         if method == "session.sync":
-            return await sync_session_snapshot(
-                self._resolve_agent_runtime(params),
-                self.agent_runtime_host,
-                params,
-            )
+            return self.accept_session_sync(params)
         if method == "session.state":
             return await read_session_state(
                 self._resolve_agent_runtime(params),
@@ -216,6 +218,28 @@ class RuntimeRpcHandler:
     async def discover_runtimes(self) -> dict[str, Any]:
         agent_items = await self.agent_runtime_supervisor.discover()
         return {"runtimes": [agent_inventory_payload(item) for item in agent_items]}
+
+    def accept_session_sync(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Accept a session sync request and finish it in the background.
+
+        Side effects:
+        - schedules snapshot read, timeline sync, state read, and notice read
+        - returns immediately so server RPC timeouts do not cancel large reads
+        """
+
+        if self.schedule_background is None:
+            raise RuntimeError("background scheduler is required for session.sync")
+        parsed = SessionReadParams.parse(params)
+        runtime = self._resolve_agent_runtime(params)
+        self.schedule_background(
+            sync_session_snapshot(runtime, self.agent_runtime_host, dict(params))
+        )
+        return {
+            "accepted": True,
+            "background": True,
+            "sessionId": parsed.session_id,
+            "externalSessionId": parsed.external_session_id,
+        }
 
     def _resolve_agent_runtime(self, params: dict[str, Any]) -> AgentRuntime:
         runtime_id = params.get("runtime") if isinstance(params, dict) else None
