@@ -400,7 +400,7 @@ class CodexSdkClient:
         try:
             return await low_level_client.turn_start(
                 request.thread_id,
-                request.content,
+                codex_turn_user_input_wire(request),
                 params=codex_turn_start_params(request),
             )
         except Exception as exc:
@@ -410,7 +410,7 @@ class CodexSdkClient:
             await self.force_thread_resume_for_turn(low_level_client, request)
             return await low_level_client.turn_start(
                 request.thread_id,
-                request.content,
+                codex_turn_user_input_wire(request),
                 params=codex_turn_start_params(request),
             )
 
@@ -772,7 +772,14 @@ def codex_turn_start_params(request: CodexStartTurnRequest) -> TurnStartParams:
 
 
 def codex_turn_user_input(request: CodexStartTurnRequest) -> list[UserInput]:
-    values: list[UserInput] = []
+    values: list[UserInput] = [
+        UserInput(
+            root=TextUserInput(
+                text=request.content,
+                type="text",
+            )
+        )
+    ]
     for attachment in request.attachments:
         if attachment.is_image:
             values.append(
@@ -793,16 +800,19 @@ def codex_turn_user_input(request: CodexStartTurnRequest) -> list[UserInput]:
                 )
             )
         )
-    if request.attachments:
-        values.append(
-            UserInput(
-                root=TextUserInput(
-                    text=codex_attachment_input_note(request),
-                    type="text",
-                )
-            )
-        )
     return values
+
+
+def codex_turn_user_input_wire(request: CodexStartTurnRequest) -> list[dict[str, Any]]:
+    return [
+        item.model_dump(
+            by_alias=True,
+            exclude_defaults=True,
+            exclude_none=True,
+            mode="json",
+        )
+        for item in codex_turn_user_input(request)
+    ]
 
 
 def codex_high_level_turn_content(request: CodexStartTurnRequest) -> str:

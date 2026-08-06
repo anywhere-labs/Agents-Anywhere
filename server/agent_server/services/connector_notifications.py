@@ -791,7 +791,11 @@ async def _tag_active_run_user_messages(
         if not source.get("clientMessageId"):
             next_source = {**next_source, "clientMessageId": client_message_id}
             changed = True
-        if attachments and not _content_has_attachments(content):
+        cleaned_text = _strip_codex_attachment_echo_text(content, expected_text)
+        if cleaned_text is not None and cleaned_text != content.get("text"):
+            next_content = {**next_content, "text": cleaned_text}
+            changed = True
+        if attachments and not _content_has_attachments(next_content):
             next_content = {**next_content, "attachments": attachments}
             changed = True
         if not changed:
@@ -821,7 +825,8 @@ def _active_run_user_message_matches(
     actual_text = content.get("text")
     if not isinstance(actual_text, str):
         return False
-    return _client_message_text_matches(actual_text, expected_text)
+    cleaned_text = _strip_codex_attachment_echo(actual_text, expected_text)
+    return _client_message_text_matches(cleaned_text, expected_text)
 
 
 def _timeline_attachments_from_active_run(
@@ -862,3 +867,30 @@ def _client_message_text_matches(actual: str, expected: str) -> bool:
     if actual == expected:
         return True
     return actual.startswith(expected) and actual[len(expected) :].startswith("\n\n[")
+
+
+def _strip_codex_attachment_echo_text(
+    content: dict[str, Any],
+    expected_text: str,
+) -> str | None:
+    actual = content.get("text")
+    if not isinstance(actual, str):
+        return None
+    return _strip_codex_attachment_echo(actual, expected_text)
+
+
+def _strip_codex_attachment_echo(actual: str, expected_text: str) -> str:
+    if actual == expected_text:
+        return actual
+    if actual.startswith(expected_text):
+        suffix = actual[len(expected_text) :].strip()
+        if suffix.startswith("Attached file: ") or " Attached file: " in suffix:
+            return expected_text
+        if _looks_like_codex_local_attachment_path(suffix):
+            return expected_text
+    return actual
+
+
+def _looks_like_codex_local_attachment_path(value: str) -> bool:
+    normalized = value.replace("\\", "/")
+    return "/.agents-anywhere/attachments/" in normalized

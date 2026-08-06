@@ -301,20 +301,26 @@ async def _test_codex_sdk_client_sends_attachments_as_user_input() -> None:
     )
     await client.stop()
 
-    turn_input = native.low_level.turn_start_params[0]["input"]
+    turn_input = native.low_level.turn_start_inputs[0]
     assert turn_input[0] == {
+        "text": "hello",
+        "type": "text",
+    }
+    assert turn_input[1] == {
         "name": "note.txt",
         "path": "/tmp/note.txt",
         "type": "mention",
     }
-    assert turn_input[1] == {
+    assert turn_input[2] == {
         "path": "/tmp/image.png",
         "type": "localImage",
     }
-    assert turn_input[2]["text"] == (
-        "Attached file: note.txt at /tmp/note.txt\n"
-        "Attached file: image.png at /tmp/image.png"
-    )
+    assert len(turn_input) == 3
+    params_input = native.low_level.turn_start_params[0]["input"]
+    assert params_input[0]["text"] == "hello"
+    assert params_input[1] == turn_input[1]
+    assert params_input[2] == turn_input[2]
+    assert len(params_input) == 3
 
 
 async def _test_codex_sdk_client_resumes_thread_before_low_level_turn_start() -> None:
@@ -551,6 +557,7 @@ class _FakeLowLevelClient:
         self.request_order: list[str] = []
         self.thread_resume_params: list[dict[str, Any]] = []
         self.thread_start_params: list[dict[str, Any]] = []
+        self.turn_start_inputs: list[list[dict[str, Any]]] = []
         self.turn_start_params: list[dict[str, Any]] = []
         self.fail_next_turn_start: Exception | None = None
 
@@ -571,11 +578,11 @@ class _FakeLowLevelClient:
     async def turn_start(
         self,
         thread_id: str,
-        content: str,
+        input_items: list[dict[str, Any]],
         params: TurnStartParams,
     ) -> Any:
-        _ = content
         self.request_order.append(f"turn/start:{thread_id}")
+        self.turn_start_inputs.append(input_items)
         self.turn_start_params.append(generated_params_payload(params))
         if self.fail_next_turn_start is not None:
             error = self.fail_next_turn_start

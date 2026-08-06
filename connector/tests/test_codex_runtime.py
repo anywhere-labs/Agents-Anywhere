@@ -14,6 +14,8 @@ from openai_codex.generated.v2_all import (
     AskForApprovalValue,
     ContextCompactedNotification,
     ContextCompactionThreadItem,
+    LocalImageUserInput,
+    MentionUserInput,
     TextUserInput,
     Thread,
     ThreadItem,
@@ -1076,6 +1078,71 @@ def test_codex_timeline_uses_typed_sdk_user_client_id_for_identity() -> None:
     assert items[0].id == "codex_client_msg_client_1"
     assert items[0].source["itemId"] == "item_user"
     assert items[0].source["clientMessageId"] == "msg_client_1"
+
+
+def test_codex_timeline_omits_attachment_inputs_from_user_message_text() -> None:
+    event = CodexSdkEvent.from_value(
+        Notification(
+            method="turn/completed",
+            payload=TurnCompletedNotification(
+                threadId="thread_1",
+                turn=Turn(
+                    id="turn_done",
+                    status=TurnStatus.completed,
+                    items=[
+                        ThreadItem(
+                            root=UserMessageThreadItem(
+                                id="item_user",
+                                type="userMessage",
+                                clientId="msg_client_1",
+                                content=[
+                                    UserInput(
+                                        root=TextUserInput(
+                                            type="text",
+                                            text="这个图里有什么",
+                                        )
+                                    ),
+                                    UserInput(
+                                        root=LocalImageUserInput(
+                                            type="localImage",
+                                            path="/tmp/image.png",
+                                        )
+                                    ),
+                                    UserInput(
+                                        root=MentionUserInput(
+                                            type="mention",
+                                            name="image.png",
+                                            path="/tmp/image.png",
+                                        )
+                                    ),
+                                    UserInput(
+                                        root=TextUserInput(
+                                            type="text",
+                                            text="Attached file: image.png at /tmp/image.png",
+                                        )
+                                    ),
+                                ],
+                            )
+                        )
+                    ],
+                    completedAt=None,
+                    durationMs=None,
+                    error=None,
+                    itemsView=None,
+                    startedAt=None,
+                ),
+            ),
+        ),
+    )
+    accumulator = CodexTimelineAccumulator()
+
+    items = accumulator.items_from_turn_event(
+        session_id="sess_1",
+        external_session_id="thread_1",
+        event=event,
+    )
+
+    assert items[0].content["text"] == "这个图里有什么"
 
 
 def test_codex_sdk_event_normalizes_explicit_dict_shape() -> None:

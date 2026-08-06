@@ -19,16 +19,13 @@ from openai_codex.generated.v2_all import (
     FileChangeThreadItem,
     FileUpdateChange,
     FunctionCallResponseItem,
-    ImageUserInput,
     InputImageContentItem,
     InputImageDynamicToolCallOutputContentItem,
     InputTextContentItem,
     InputTextDynamicToolCallOutputContentItem,
     ItemCompletedNotification,
     ItemStartedNotification,
-    LocalImageUserInput,
     McpToolCallThreadItem,
-    MentionUserInput,
     MessageResponseItem,
     OutputTextContentItem,
     PlanDeltaNotification,
@@ -39,7 +36,6 @@ from openai_codex.generated.v2_all import (
     ReasoningTextDeltaNotification,
     ReasoningThreadItem,
     ResponseItem,
-    SkillUserInput,
     TextUserInput,
     Thread,
     ThreadItem,
@@ -421,15 +417,14 @@ def user_input_text(items: Sequence[UserInput]) -> str | None:
     parts: list[str] = []
     for item in items:
         root = item.root
-        if isinstance(root, TextUserInput):
+        if isinstance(root, TextUserInput) and not is_attachment_note_text(root.text):
             parts.append(root.text)
-        elif isinstance(root, ImageUserInput):
-            parts.append(root.url)
-        elif isinstance(root, LocalImageUserInput):
-            parts.append(root.path)
-        elif isinstance(root, SkillUserInput | MentionUserInput):
-            parts.append(f"{root.name} {root.path}")
     return "\n".join(parts) if parts else None
+
+
+def is_attachment_note_text(text: str) -> bool:
+    lines = [line for line in text.splitlines() if line.strip()]
+    return bool(lines) and all(line.startswith("Attached file: ") for line in lines)
 
 
 def reasoning_text(

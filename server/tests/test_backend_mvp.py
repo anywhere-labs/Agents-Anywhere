@@ -3882,7 +3882,16 @@ def test_ingest_adds_active_run_attachments_to_user_message(tmp_path):
                             "type": "message",
                             "status": "done",
                             "role": "user",
-                            "content": {"text": "read attachment"},
+                            "content": {
+                                "text": (
+                                    "read attachment "
+                                    "/Users/t4wefan/.agents-anywhere/attachments/"
+                                    "sess_demo/file_demo-notes.md "
+                                    "Attached file: notes.md at "
+                                    "/Users/t4wefan/.agents-anywhere/attachments/"
+                                    "sess_demo/file_demo-notes.md"
+                                )
+                            },
                             "source": {
                                 "runtime": "codex",
                                 "sessionId": "thr_demo",
@@ -3902,6 +3911,7 @@ def test_ingest_adds_active_run_attachments_to_user_message(tmp_path):
     state = session_view_for_assertions(client, session_id, headers)
     item = next(item for item in state["items"] if item["id"] == "tl_user_file")
     assert item["source"]["clientMessageId"] == "opt_file"
+    assert item["content"]["text"] == "read attachment"
     assert item["content"]["attachments"] == [
         {
             "fileId": attachment["fileId"],
