@@ -34,15 +34,22 @@ from connector.runtime_protocol import (
     CAPABILITY_SESSION_INTERRUPT,
     CAPABILITY_SESSION_SEND_MESSAGE,
     CAPABILITY_SESSION_STEER,
+    ArtifactTimelineItem,
     CommandToolContent,
     CompactMarkerContent,
     MarkdownMessageContent,
+    MarkerTimelineItem,
     MessageTimelineContent,
+    MessageTimelineItem,
     RuntimeCapabilitySet,
     RuntimeConfig,
     RuntimeInvalidRequestError,
     SessionNotice,
+    SystemTimelineItem,
     TimelineSource,
+    ToolTimelineItem,
+    TurnEndTimelineItem,
+    TurnStartTimelineItem,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex.domain.catalogs import (
@@ -69,17 +76,24 @@ from connector.runtimes.codex.sdk.shapes import notification_dict, thread_ref
 from connector.runtimes.codex.timeline.accumulator import CodexTimelineAccumulator
 from connector.runtimes.codex.timeline.items import (
     CodexAgentMessageItem,
+    CodexArtifactTimelineItem,
     CodexCollabAgentToolCallItem,
     CodexCommandExecutionItem,
     CodexContextCompactionItem,
     CodexDynamicToolCallItem,
     CodexFileChangeItem,
+    CodexMarkerTimelineItem,
     CodexMcpToolCallItem,
+    CodexMessageTimelineItem,
     CodexReasoningItem,
     CodexRuntimeMessageItem,
+    CodexSystemTimelineItem,
     CodexTimelineItem,
+    CodexToolTimelineItem,
     CodexTurnEndItem,
+    CodexTurnEndTimelineItem,
     CodexTurnStartItem,
+    CodexTurnStartTimelineItem,
     CodexUnknownItem,
     CodexUserMessageItem,
     CodexWebSearchItem,
@@ -147,10 +161,33 @@ def test_codex_timeline_native_item_classes_are_explicitly_mapped() -> None:
         codex_timeline_item_class("contextCompaction")
         is CodexContextCompactionItem
     )
+    assert issubclass(CodexContextCompactionItem, MarkerTimelineItem)
     assert codex_timeline_item_class("fileChange") is CodexFileChangeItem
     assert codex_timeline_item_class("turnStart") is CodexTurnStartItem
     assert codex_timeline_item_class("turnEnd") is CodexTurnEndItem
     assert codex_timeline_item_class("futureNativeType") is CodexUnknownItem
+
+
+def test_codex_timeline_items_extend_protocol_parent_classes() -> None:
+    assert issubclass(CodexMessageTimelineItem, MessageTimelineItem)
+    assert issubclass(CodexToolTimelineItem, ToolTimelineItem)
+    assert issubclass(CodexArtifactTimelineItem, ArtifactTimelineItem)
+    assert issubclass(CodexMarkerTimelineItem, MarkerTimelineItem)
+    assert issubclass(CodexSystemTimelineItem, SystemTimelineItem)
+    assert issubclass(CodexTurnStartTimelineItem, TurnStartTimelineItem)
+    assert issubclass(CodexTurnEndTimelineItem, TurnEndTimelineItem)
+
+    assert issubclass(CodexAgentMessageItem, CodexMessageTimelineItem)
+    assert issubclass(CodexUserMessageItem, CodexMessageTimelineItem)
+    assert issubclass(CodexCommandExecutionItem, CodexToolTimelineItem)
+    assert issubclass(CodexMcpToolCallItem, CodexToolTimelineItem)
+    assert issubclass(CodexWebSearchItem, CodexToolTimelineItem)
+    assert issubclass(CodexFileChangeItem, CodexArtifactTimelineItem)
+    assert issubclass(CodexContextCompactionItem, CodexMarkerTimelineItem)
+    assert issubclass(CodexReasoningItem, CodexSystemTimelineItem)
+    assert issubclass(CodexUnknownItem, CodexSystemTimelineItem)
+    assert issubclass(CodexTurnStartItem, CodexTurnStartTimelineItem)
+    assert issubclass(CodexTurnEndItem, CodexTurnEndTimelineItem)
 
 
 def test_codex_projection_maps_message_content_to_specific_platform_content() -> None:
