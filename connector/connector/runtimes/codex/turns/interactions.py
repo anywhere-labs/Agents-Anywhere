@@ -44,12 +44,10 @@ class CodexInteractionController:
                 request_id = approval_source.get("requestId")
         if not isinstance(request_id, str | int):
             raise TypeError("requestId is required to respond to a Codex interaction")
-        status = data.get("approvalStatus")
-        action_or_status = status if isinstance(status, str) else action_id
         notice_context = self.notice_context_for_response(notice_id)
         response_context = interaction_response_context(notice_context, data)
         response = approval_response_from_interaction(
-            action_or_status,
+            action_id,
             response_context,
         )
         logger.info(

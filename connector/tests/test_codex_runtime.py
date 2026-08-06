@@ -3716,7 +3716,10 @@ async def _test_codex_runtime_responds_to_approval_interaction() -> None:
         "sess_1",
         "notice_1",
         "approve_for_session",
-        {"approvalSource": {"requestId": "42"}},
+        {
+            "approvalStatus": "pending",
+            "approvalSource": {"requestId": "42"},
+        },
     )
 
     assert result.ok is True
@@ -3724,6 +3727,29 @@ async def _test_codex_runtime_responds_to_approval_interaction() -> None:
     assert client.responses == [("42", {"decision": "acceptForSession"})]
     assert host.state_updates[-1]["status"] == "running"
     assert host.state_updates[-1]["metadata"]["notice_id"] == "notice_1"
+
+
+def test_codex_runtime_approval_response_ignores_pending_notice_status() -> None:
+    asyncio.run(_test_codex_runtime_approval_response_ignores_pending_notice_status())
+
+
+async def _test_codex_runtime_approval_response_ignores_pending_notice_status() -> None:
+    client = FakeCodexClient()
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=client)
+
+    result = await runtime.respond_interaction(
+        "sess_1",
+        "notice_1",
+        "approve",
+        {
+            "approvalStatus": "pending",
+            "approvalSource": {"requestId": "42"},
+        },
+    )
+
+    assert result.ok is True
+    assert result.result["decision"] == "accept"
+    assert client.responses == [("42", {"decision": "accept"})]
 
 
 def test_codex_runtime_approval_response_resolves_notice() -> None:
