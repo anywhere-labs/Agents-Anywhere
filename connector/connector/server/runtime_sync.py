@@ -75,7 +75,11 @@ class RuntimeSyncRunner:
                     (time.monotonic() - runtime_started_at) * 1000,
                 )
             except RuntimeUnavailableError:
-                logger.info("existing session sync runtime unavailable runtime={}", runtime_id)
+                if self.runtime_has_config(runtime_id):
+                    logger.info(
+                        "existing session sync runtime unavailable runtime={}",
+                        runtime_id,
+                    )
                 continue
             except TimeoutError:
                 logger.warning("existing {} session sync timed out", runtime_id)
@@ -190,6 +194,10 @@ class RuntimeSyncRunner:
             return
         self._last_preferences = current
         await self.send_notification("connector.preferencesUpdated", current)
+
+    def runtime_has_config(self, runtime_id: str) -> bool:
+        entry = self.supervisor.entry(runtime_id)
+        return entry.config is not None
 
 
 def _preferences_signature(prefs: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
