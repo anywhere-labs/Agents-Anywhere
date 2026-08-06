@@ -471,6 +471,10 @@ export type FsWriteResult = {
 export type RpcResponse<T> = {
   ok: boolean;
   result: T;
+  error?: {
+    code?: string;
+    message?: string;
+  };
 };
 
 export type TerminalView = {

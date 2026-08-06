@@ -736,8 +736,8 @@ export function SessionDetail({
     const applyEvent = (event: ProtocolEventEnvelope) => {
       if (cancelled || event.sessionId !== sessionId) return
       if (event.type === "keepalive") return
-      if (event.sequence <= nextSeqRef.current) return
       if (processedEventIdsRef.current.has(event.eventId)) return
+      if (event.sequence < nextSeqRef.current) return
       processedEventIdsRef.current.add(event.eventId)
       if (processedEventIdsRef.current.size > 1000) {
         processedEventIdsRef.current = new Set(Array.from(processedEventIdsRef.current).slice(-500))
@@ -752,7 +752,7 @@ export function SessionDetail({
       }
       markAutoScrollIfNearBottomRef.current()
       setState((current) => {
-        if (current && event.sequence <= current.nextSeq) return current
+        if (current && event.sequence < current.nextSeq) return current
         return mergeSessionEvent(current, event)
       })
       const item = readPayloadValue<TimelineItem>(event.payload.item)
@@ -1007,13 +1007,33 @@ export function SessionDetail({
     }
   }
 
+  const removeNoticeFromState = React.useCallback((noticeId: string) => {
+    setState((current) => {
+      if (!current || !current.notices.some((notice) => notice.noticeId === noticeId)) {
+        return current
+      }
+      return {
+        ...current,
+        notices: current.notices.filter((notice) => notice.noticeId !== noticeId),
+      }
+    })
+  }, [])
+
   const handleRespondInteraction = async (noticeId: string, actionId: string) => {
     if (resolvingNoticeId) return
     setResolvingNoticeId(noticeId)
     setResolvingActionId(actionId)
     try {
       if (!session) return
-      await dashboardApi.respondInteraction(token, session.id, noticeId, actionId)
+      const response = await dashboardApi.respondInteraction(token, session.id, noticeId, actionId)
+      if (response.ok) {
+        removeNoticeFromState(noticeId)
+        return
+      }
+      if (rpcErrorRemovesNotice(response.error?.code)) {
+        removeNoticeFromState(noticeId)
+      }
+      toast.error(response.error?.message || tSession("resolveInteractionFailed"))
     } catch (err) {
       toast.error(err instanceof Error ? err.message : tSession("resolveInteractionFailed"))
     } finally {
@@ -1845,6 +1865,16 @@ function blockingInteractions(notices: Notice[], sessionId: string): Notice[] {
 
 function isSessionBlockingInteraction(notice: Notice, sessionId: string): boolean {
   return notice.blocking?.scope === "session" && notice.blocking.targetId === sessionId
+}
+
+function rpcErrorRemovesNotice(code: string | undefined): boolean {
+  return (
+    code === "not_found" ||
+    code === "notice_not_found" ||
+    code === "interaction_not_found" ||
+    code === "request_not_found" ||
+    code === "approval_not_found"
+  )
 }
 
 function noticeTimelineTargetId(notice: Notice): string | null {
