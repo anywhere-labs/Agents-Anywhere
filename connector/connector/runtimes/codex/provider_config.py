@@ -48,7 +48,7 @@ def codex_capabilities() -> dict[str, bool]:
         "startTurn": True,
         "steerTurn": True,
         "interruptTurn": True,
-        "commands": True,
+        "commands": False,
         "interactions": True,
         "attachments": False,
         "ipc": False,

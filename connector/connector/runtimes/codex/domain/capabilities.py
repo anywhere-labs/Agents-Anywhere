@@ -73,7 +73,6 @@ def codex_runtime_capabilities(context: CodexCapabilityContext) -> RuntimeCapabi
 
 def codex_session_capabilities(context: CodexCapabilityContext) -> RuntimeCapabilitySet:
     send_available = session_can_send_message(context)
-    commands_available = session_can_execute_commands(context)
     interrupt_available = session_can_interrupt(context)
     steer_available = session_can_steer(context)
     return RuntimeCapabilitySet(
@@ -109,8 +108,9 @@ def codex_session_capabilities(context: CodexCapabilityContext) -> RuntimeCapabi
             session_capability(
                 context,
                 capability_id=CAPABILITY_SESSION_COMMANDS,
-                available=commands_available,
-                unavailable_reason=session_action_unavailable_reason(context),
+                supported=False,
+                available=False,
+                unavailable_reason="unsupported",
             ),
             session_capability(
                 context,
@@ -179,6 +179,7 @@ def session_capability(
     capability_id: str,
     available: bool,
     unavailable_reason: str | None = None,
+    supported: bool = True,
 ) -> RuntimeCapability:
     return RuntimeCapability(
         capability_id=capability_id,
@@ -186,16 +187,13 @@ def session_capability(
         runtime=CODEX_RUNTIME,
         session_id=context.session_id,
         connector_id=context.connector_id,
+        supported=supported,
         available=available,
         unavailable_reason=unavailable_reason,
     )
 
 
 def session_can_send_message(context: CodexCapabilityContext) -> bool:
-    return session_loaded(context) and context.status == "idle"
-
-
-def session_can_execute_commands(context: CodexCapabilityContext) -> bool:
     return session_loaded(context) and context.status == "idle"
 
 
