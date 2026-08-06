@@ -351,6 +351,7 @@ class SessionsApi(
             settings = (optJSONObject("runtimeSettings") ?: optJSONObject("settings")).toMap(),
             runtimeSettingsOverride = optJSONObject("runtimeSettingsOverride").toMap(),
             schemaVersion = optInt("schemaVersion", 0),
+            schema = optJSONObject("schema")?.toRemoteRuntimeConfigSchema(),
         )
     }
 
