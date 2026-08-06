@@ -303,7 +303,7 @@ function GitDirectiveBadge({ actions }: { actions?: string }) {
   const directives = parseGitDirectives(actions)
   if (directives.length === 0) return null
   return (
-    <Badge variant="secondary" className="mx-0.5 inline-flex h-6 gap-1.5 rounded-md align-baseline font-normal">
+    <Badge variant="secondary" className="mx-0.5 inline-flex h-6 gap-1.5 rounded-full px-2.5 align-baseline font-normal">
       <GitBranch data-icon="inline-start" />
       <span>{directives.map((directive) => gitDirectiveLabel(directive, tSession)).join(" · ")}</span>
     </Badge>

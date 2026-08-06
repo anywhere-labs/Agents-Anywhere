@@ -1,10 +1,18 @@
 "use client"
 
-import { ChevronDown, CircleAlert, Clock, FilePenLine, Sparkles } from "lucide-react"
+import * as React from "react"
+import { Braces, ChevronDown, CircleAlert, Clock, Copy, FilePenLine, Sparkles } from "lucide-react"
 import dynamic from "next/dynamic"
 import { useTranslations } from "next-intl"
 
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu"
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker"
 import { JsonBlock, TimelineStatusBadge, ToolCard } from "@/components/session/session-tool-cards"
 import { openSessionFilePreview } from "@/components/markdown-text"
@@ -40,9 +48,13 @@ export function TimelineEntry({
   onRespondInteraction: (noticeId: string, actionId: string) => void
 }) {
   if (item.type === "turn.start" || item.type === "turn.end") return null
-  if (item.type === "message") return <MessageCard token={token} session={session} item={item} />
+  let entry: React.ReactNode
+  if (item.type === "message") {
+    entry = <MessageCard token={token} session={session} item={item} />
+    return <TimelineEntryContextMenu item={item}>{entry}</TimelineEntryContextMenu>
+  }
   if (item.type === "tool" || isFileChangeArtifact(item)) {
-    return (
+    entry = (
       <ToolCard
         item={item}
         token={token}
@@ -55,15 +67,61 @@ export function TimelineEntry({
         onRespondInteraction={onRespondInteraction}
       />
     )
+    return <TimelineEntryContextMenu item={item}>{entry}</TimelineEntryContextMenu>
   }
-  if (item.type === "marker") return <MarkerCard item={item} />
-  if (item.type === "system") return <SystemCard token={token} session={session} item={item} />
-  if (item.type === "artifact") return <ArtifactCard token={token} session={session} item={item} />
-  return <UnknownTimelineItem item={item} />
+  if (item.type === "marker") entry = <MarkerCard item={item} />
+  else if (item.type === "system") entry = <SystemCard token={token} session={session} item={item} />
+  else if (item.type === "artifact") entry = <ArtifactCard token={token} session={session} item={item} />
+  else entry = <UnknownTimelineItem item={item} />
+  return <TimelineEntryContextMenu item={item}>{entry}</TimelineEntryContextMenu>
 }
 
 function isFileChangeArtifact(item: TimelineItem): boolean {
   return item.type === "artifact" && textOf(item.content.kind) === "file_change"
+}
+
+function TimelineEntryContextMenu({ item, children }: { item: TimelineItem; children: React.ReactNode }) {
+  const tSession = useTranslations("dashboard.session")
+  const text = timelineItemCopyText(item)
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div className="min-w-0 max-w-full select-text">{children}</div>
+      </ContextMenuTrigger>
+      <ContextMenuContent className="w-48">
+        <ContextMenuItem disabled={!text} onSelect={() => copyTimelineValue(text)}>
+          <Copy data-icon="inline-start" />
+          {tSession("copyItemText")}
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={() => copyTimelineValue(item.id)}>
+          <Copy data-icon="inline-start" />
+          {tSession("copyItemId")}
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem onSelect={() => copyTimelineValue(JSON.stringify(item, null, 2))}>
+          <Braces data-icon="inline-start" />
+          {tSession("copyItemJson")}
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  )
+}
+
+function timelineItemCopyText(item: TimelineItem): string {
+  if (item.type === "message") return stripInjectedAttachmentMentions(messageText(item)).trim()
+  return firstTextOf(
+    item.content.text,
+    item.content.message,
+    item.content.rawText,
+    item.content.command,
+    item.content.label,
+    item.content.title,
+  )?.trim() ?? ""
+}
+
+function copyTimelineValue(value: string) {
+  if (!value) return
+  navigator.clipboard.writeText(value).catch(() => undefined)
 }
 
 function MessageCard({ token, session, item }: { token: string; session: SessionView; item: TimelineItem }) {
