@@ -65,7 +65,6 @@ class CodexTurnController:
             client=self.client,
             session_states=self.session_states,
             ensure_started=self.ensure_started,
-            timeline=self.timeline,
         )
         self.interactions = CodexInteractionController(
             host=self.host,

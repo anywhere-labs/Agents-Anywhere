@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
 
 from connector.runtime_protocol import (
     RuntimeCommandResult,
@@ -14,7 +13,6 @@ from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex.domain.commands import list_codex_commands
 from connector.runtimes.codex.runtime_helpers import soft_codex_unavailable_reason
 from connector.runtimes.codex.sdk.runtime_client import CodexRuntimeClient
-from connector.runtimes.codex.timeline.accumulator import CodexTimelineAccumulator
 
 EnsureStarted = Callable[[], Awaitable[None]]
 
@@ -25,7 +23,6 @@ class CodexCommandController:
     client: CodexRuntimeClient | None
     session_states: RuntimeSessionStateCache
     ensure_started: EnsureStarted
-    timeline: CodexTimelineAccumulator
     compact_tasks: set[asyncio.Task[None]] = field(default_factory=set, init=False)
 
     async def execute_command(
@@ -64,11 +61,6 @@ class CodexCommandController:
                 message=disabled_reason,
             )
         await self.ensure_started()
-        await self._publish_compact_started(
-            session_id=session_id,
-            external_session_id=external_session_id,
-            result={},
-        )
         self._schedule_compact(
             session_id=session_id,
             external_session_id=external_session_id,
@@ -103,17 +95,20 @@ class CodexCommandController:
         session_id: str,
         external_session_id: str,
     ) -> None:
-        """Call the SDK compact operation and publish follow-up state updates.
+        """Call the SDK compact operation.
 
         Side effects:
         - sends the compact start request to the Codex app server
         - publishes idle/error state when the start request fails
-        - keeps the session blocked when the start request is accepted
+
+        Successful compact progress is intentionally not published here. The
+        Codex app server emits the same compact notifications as a normal
+        conversation flow; the notification reducer owns timeline/state updates.
         """
         if self.client is None:
             return
         try:
-            result = await self.client.compact_thread(external_session_id)
+            await self.client.compact_thread(external_session_id)
         except (RuntimeError, RuntimeInvalidRequestError) as exc:
             soft_reason = soft_codex_unavailable_reason(str(exc))
             if soft_reason is not None:
@@ -128,7 +123,7 @@ class CodexCommandController:
                     },
                 )
                 return
-            await self._publish_compact_failed(
+            await self.publish_compact_start_failure_state(
                 session_id=session_id,
                 external_session_id=external_session_id,
                 error_code=exc.__class__.__name__,
@@ -136,92 +131,28 @@ class CodexCommandController:
             )
             return
         except Exception as exc:
-            await self._publish_compact_failed(
+            await self.publish_compact_start_failure_state(
                 session_id=session_id,
                 external_session_id=external_session_id,
                 error_code=exc.__class__.__name__,
                 error_message=str(exc) or exc.__class__.__name__,
             )
-            return
-        await self._publish_compact_accepted(
-            session_id=session_id,
-            external_session_id=external_session_id,
-            result=dict(result.payload),
-        )
 
-    async def _publish_compact_started(
-        self,
-        session_id: str,
-        external_session_id: str,
-        result: dict[str, Any],
-    ) -> None:
-        """Publish compact progress through timeline and block session input.
-
-        Side effects:
-        - upserts the compact progress timeline item
-        - updates SessionState.status to blocked
-        """
-        item = self.timeline.item_from_notification(
-            session_id=session_id,
-            external_session_id=external_session_id,
-            method="thread/compact/started",
-            params={"threadId": external_session_id},
-        )
-        if item is not None:
-            await self.host.timeline_item_upsert(item)
-        cached = self.session_states.get(session_id)
-        await self.session_states.update(
-            session_id=session_id,
-            external_session_id=external_session_id,
-            status="blocked",
-            error=cached.error if cached is not None else None,
-            metadata={
-                "source": "codex.command.compact",
-                "command": "compact",
-                "result": result,
-            },
-        )
-
-    async def _publish_compact_accepted(
-        self,
-        session_id: str,
-        external_session_id: str,
-        result: dict[str, Any],
-    ) -> None:
-        item = self.timeline.item_from_notification(
-            session_id=session_id,
-            external_session_id=external_session_id,
-            method="thread/compacted",
-            params={"threadId": external_session_id},
-        )
-        if item is not None:
-            await self.host.timeline_item_upsert(item)
-        await self.session_states.update(
-            session_id=session_id,
-            external_session_id=external_session_id,
-            status="idle",
-            metadata={
-                "source": "codex.command.compact.accepted",
-                "command": "compact",
-                "result": result,
-            },
-        )
-
-    async def _publish_compact_failed(
+    async def publish_compact_start_failure_state(
         self,
         session_id: str,
         external_session_id: str,
         error_code: str,
         error_message: str,
     ) -> None:
-        item = self.timeline.item_from_notification(
-            session_id=session_id,
-            external_session_id=external_session_id,
-            method="thread/compact/failed",
-            params={"threadId": external_session_id},
-        )
-        if item is not None:
-            await self.host.timeline_item_upsert(item)
+        """Publish command-trigger failure as transient session state.
+
+        Side effects:
+        - updates SessionState.status to idle with an explicit error payload
+
+        This does not write timeline because no Codex compact event was emitted.
+        Compact timeline is owned by the Codex notification reducer.
+        """
         await self.session_states.update(
             session_id=session_id,
             external_session_id=external_session_id,

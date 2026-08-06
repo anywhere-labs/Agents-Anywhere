@@ -1950,20 +1950,9 @@ async def _test_codex_runtime_compact_command_calls_app_server() -> None:
         "scheduled": True,
     }
     assert host.notice_upserts == []
-    assert host.timeline_item_upserts[-1].type == "system"
-    assert host.timeline_item_upserts[-1].status == "running"
-    assert host.timeline_item_upserts[-1].content["kind"] == "compact"
-    assert host.timeline_item_upserts[-1].content["state"] == "started"
-    started_item_id = host.timeline_item_upserts[-1].id
-    assert host.state_updates[-1]["status"] == "blocked"
-    assert host.state_updates[-1]["metadata"] == {
-        "source": "codex.command.compact",
-        "command": "compact",
-        "result": {},
-    }
-    blocked_capabilities = capability_map(host.session_capability_updates[-1])
-    assert blocked_capabilities[CAPABILITY_SESSION_SEND_MESSAGE].available is False
-    assert blocked_capabilities[CAPABILITY_SESSION_COMMANDS].available is False
+    assert host.timeline_item_upserts == []
+    assert host.state_updates == []
+    assert host.session_capability_updates == []
 
     await wait_for_compact_tasks(runtime)
 
@@ -1972,15 +1961,37 @@ async def _test_codex_runtime_compact_command_calls_app_server() -> None:
         {"threadId": "thread_1"},
     )
     assert all(request[0] != "turn/start" for request in client.requests)
-    assert host.timeline_item_upserts[-1].id == started_item_id
-    assert host.timeline_item_upserts[-1].status == "done"
+    assert host.timeline_item_upserts == []
+    assert host.state_updates == []
+    assert host.session_capability_updates == []
+
+    await runtime._handle_notification(
+        CodexSdkEvent(
+            event_type="thread/compact/started",
+            thread_id="thread_1",
+            platform_session_id=None,
+            turn_id=None,
+            item_id=None,
+            item_type=None,
+            role=None,
+            status=None,
+            content=None,
+            raw={
+                "method": "thread/compact/started",
+                "params": {"threadId": "thread_1"},
+            },
+            params={"threadId": "thread_1"},
+        )
+    )
+
+    assert len(host.timeline_item_upserts) == 1
+    assert host.timeline_item_upserts[-1].type == "system"
+    assert host.timeline_item_upserts[-1].status == "running"
     assert host.timeline_item_upserts[-1].content["kind"] == "compact"
-    assert host.timeline_item_upserts[-1].content["state"] == "completed"
-    assert host.state_updates[-1]["status"] == "idle"
-    assert host.state_updates[-1]["metadata"]["source"] == "codex.command.compact.accepted"
-    idle_capabilities = capability_map(host.session_capability_updates[-1])
-    assert idle_capabilities[CAPABILITY_SESSION_SEND_MESSAGE].available is True
-    assert idle_capabilities[CAPABILITY_SESSION_COMMANDS].available is True
+    assert host.timeline_item_upserts[-1].content["state"] == "started"
+    started_item_id = host.timeline_item_upserts[-1].id
+    assert host.state_updates == []
+    assert host.session_capability_updates == []
 
     await runtime._handle_notification(
         Notification(
@@ -1998,6 +2009,9 @@ async def _test_codex_runtime_compact_command_calls_app_server() -> None:
     assert host.timeline_item_upserts[-1].content["state"] == "completed"
     assert host.state_updates[-1]["status"] == "idle"
     assert host.state_updates[-1]["metadata"]["source"] == "codex.thread/compacted"
+    idle_capabilities = capability_map(host.session_capability_updates[-1])
+    assert idle_capabilities[CAPABILITY_SESSION_SEND_MESSAGE].available is True
+    assert idle_capabilities[CAPABILITY_SESSION_COMMANDS].available is True
 
 
 def test_codex_runtime_rejects_disabled_command_without_sdk_request() -> None:
@@ -2052,11 +2066,11 @@ def capability_map(capabilities: RuntimeCapabilitySet) -> dict[str, Any]:
     }
 
 
-def test_codex_runtime_command_failure_publishes_async_failure() -> None:
-    asyncio.run(_test_codex_runtime_command_failure_publishes_async_failure())
+def test_codex_runtime_command_failure_publishes_state_without_timeline() -> None:
+    asyncio.run(_test_codex_runtime_command_failure_publishes_state_without_timeline())
 
 
-async def _test_codex_runtime_command_failure_publishes_async_failure() -> None:
+async def _test_codex_runtime_command_failure_publishes_state_without_timeline() -> None:
     client = FakeCodexClient()
     client.results["thread/compact/start"] = RuntimeError("compact failed")
     host = FakeHost()
@@ -2075,8 +2089,7 @@ async def _test_codex_runtime_command_failure_publishes_async_failure() -> None:
     await wait_for_compact_tasks(runtime)
 
     assert host.notice_upserts == []
-    assert host.timeline_item_upserts[-1].content["kind"] == "compact"
-    assert host.timeline_item_upserts[-1].content["state"] == "failed"
+    assert host.timeline_item_upserts == []
     assert host.state_updates[-1]["status"] == "idle"
     assert host.state_updates[-1]["error"] == {
         "code": "RuntimeError",
@@ -2108,6 +2121,7 @@ async def _test_codex_runtime_compact_thread_not_found_sets_idle() -> None:
 
     await wait_for_compact_tasks(runtime)
 
+    assert host.timeline_item_upserts == []
     assert host.state_updates[-1]["status"] == "idle"
     assert host.state_updates[-1]["metadata"]["source"] == "codex.command.compact.soft-failed"
     assert host.state_updates[-1]["metadata"]["reason"] == "thread_not_found"
@@ -2138,6 +2152,7 @@ async def _test_codex_runtime_compact_thread_not_found_request_error_sets_idle()
 
     await wait_for_compact_tasks(runtime)
 
+    assert host.timeline_item_upserts == []
     assert host.state_updates[-1]["status"] == "idle"
 
 
