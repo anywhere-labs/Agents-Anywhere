@@ -170,6 +170,25 @@ def events_from_invalidation(payload: dict[str, Any]) -> list[ProtocolEventEnvel
                     )
                 )
 
+    catalogs = payload.get("catalogs")
+    if isinstance(catalogs, dict) and next_sequence > 0:
+        for catalog_type, catalog in catalogs.items():
+            if catalog_type not in {"model", "permission"}:
+                continue
+            if not isinstance(catalog, dict):
+                continue
+            events.append(
+                protocol_event(
+                    session_id,
+                    sequence=next_sequence,
+                    event_type="runtime.catalog.updated",
+                    payload={
+                        "catalogType": catalog_type,
+                        "catalog": catalog,
+                    },
+                )
+            )
+
     if payload.get("refetch") and next_sequence > 0:
         events.append(
             protocol_event(

@@ -3244,6 +3244,53 @@ def test_protocol_catalog_ingest_is_rejected(tmp_path):
         assert response.json()["detail"]["code"] == "unsupported_notification"
 
 
+def test_runtime_catalog_update_ingest_publishes_session_event(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    ticket = ws_ticket(client, session_id, headers)
+    selection_id = protocol_selection_id(
+        "codex",
+        "model",
+        {"model_id": "gpt-catalog-push"},
+    )
+    payload = {
+        "notifications": [
+            {
+                "method": "runtime.catalog.updated",
+                "params": {
+                    "catalogType": "model",
+                    "catalog": {
+                        "runtime": "codex",
+                        "revision": 1,
+                        "models": [
+                            {
+                                "id": "gpt-catalog-push",
+                                "displayName": "GPT Catalog Push",
+                                "selectionId": selection_id,
+                                "reasoningItems": [],
+                                "default": True,
+                            }
+                        ],
+                    },
+                },
+            }
+        ]
+    }
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json=payload,
+        )
+        assert response.status_code == 200, response.text
+        event = receive_session_ws_event(ws, "runtime.catalog.updated")
+
+    assert event["payload"]["catalogType"] == "model"
+    assert event["payload"]["catalog"]["models"][0]["selectionId"] == selection_id
+
+
 @pytest.mark.skip(reason="legacy persisted notice behavior was removed; notices are runtime-owned live facts")
 def test_notice_upsert_ingest_projects_notification_to_snapshot(tmp_path):
     client = make_client(tmp_path)

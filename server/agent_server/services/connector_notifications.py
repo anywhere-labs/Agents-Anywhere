@@ -5,10 +5,13 @@ from typing import Any, ClassVar
 from loguru import logger
 from pydantic import ValidationError
 
-from agent_server.core.models import NoticeIn, SessionStatus, TimelineItemIn
+from agent_server.core.catalogs import CatalogType, validate_model_catalog, validate_permission_catalog
+from agent_server.core.models import NoticeIn, SessionStatus, SessionView, TimelineItemIn
 from agent_server.core.protocol import (
     ProtocolCapability,
     ProtocolCapabilitySet,
+    ProtocolModelCatalog,
+    ProtocolPermissionCatalog,
 )
 from agent_server.services.connector_realtime import ConnectorRealtimeService
 from agent_server.services.ingest_effects import IngestEffect
@@ -36,6 +39,7 @@ class ConnectorNotificationService:
         self._realtime = realtime
         self._handlers = (
             ConnectorProtocolNotificationHandler(store),
+            RuntimeCatalogNotificationHandler(store),
             SessionStateNotificationHandler(store),
             SessionNotificationHandler(store),
             TimelineNotificationHandler(store),
@@ -186,6 +190,47 @@ class ConnectorProtocolNotificationHandler:
             session_id=session_id,
             session_changed=session_id is not None,
             protocol_changed=True,
+        )
+
+
+class RuntimeCatalogNotificationHandler:
+    METHODS: ClassVar[set[str]] = {"runtime.catalog.updated"}
+
+    def __init__(self, store: ConnectorNotificationRepository) -> None:
+        self._store = store
+
+    async def apply(
+        self,
+        *,
+        connector_id: str,
+        method: str,
+        params: dict[str, Any],
+    ) -> IngestEffect | None:
+        if method not in self.METHODS:
+            return None
+
+        catalog_type = runtime_catalog_type_from_params(params)
+        catalog = runtime_catalog_from_params(catalog_type, params)
+        outcome = await self._store.update_protocol_catalog(
+            connector_id,
+            runtime=catalog.runtime,
+            catalog_type=catalog_type,
+            revision=catalog.revision,
+            catalog=catalog.model_dump(mode="json"),
+        )
+        if outcome in {"idempotent", "stale"}:
+            return IngestEffect()
+        if outcome == "conflict":
+            raise NotificationValidationError(
+                "catalog_revision_conflict",
+                "catalog content changed without a revision increase",
+            )
+
+        sessions = await self._store.list_sessions_for_connector(connector_id)
+        session_ids = session_ids_for_runtime_catalog(sessions, catalog.runtime)
+        return IngestEffect(
+            session_ids=session_ids,
+            catalogs={catalog_type: catalog.model_dump(mode="json")},
         )
 
 
@@ -522,6 +567,47 @@ def capability_set_fingerprint(value: ProtocolCapabilitySet) -> list[dict[str, A
             str(item.get("sessionId") or ""),
         ),
     )
+
+
+def runtime_catalog_type_from_params(params: dict[str, Any]) -> CatalogType:
+    catalog_type = params.get("catalogType")
+    if catalog_type == "model" or catalog_type == "permission":
+        return catalog_type
+    raise NotificationValidationError(
+        "invalid_runtime_catalog",
+        "runtime.catalog.updated requires catalogType model or permission",
+    )
+
+
+def runtime_catalog_from_params(
+    catalog_type: CatalogType,
+    params: dict[str, Any],
+) -> ProtocolModelCatalog | ProtocolPermissionCatalog:
+    raw_catalog = params.get("catalog")
+    if not isinstance(raw_catalog, dict):
+        raise NotificationValidationError(
+            "invalid_runtime_catalog",
+            "runtime.catalog.updated requires catalog",
+        )
+    try:
+        if catalog_type == "model":
+            model_catalog = ProtocolModelCatalog.model_validate(raw_catalog)
+            validate_model_catalog(model_catalog)
+            return model_catalog
+        permission_catalog = ProtocolPermissionCatalog.model_validate(raw_catalog)
+        validate_permission_catalog(permission_catalog)
+        return permission_catalog
+    except ValidationError as exc:
+        raise NotificationValidationError("invalid_runtime_catalog", str(exc)) from exc
+    except ValueError as exc:
+        raise NotificationValidationError("invalid_runtime_catalog", str(exc)) from exc
+
+
+def session_ids_for_runtime_catalog(
+    sessions: list[SessionView],
+    runtime: str,
+) -> list[str]:
+    return [session.id for session in sessions if session.runtime == runtime]
 
 
 def capability_identity_key(

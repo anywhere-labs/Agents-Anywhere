@@ -177,40 +177,54 @@ class ConnectorIngestService:
     async def _publish_effects(self, effects: list[IngestEffect]) -> None:
         by_session: dict[str, dict[str, Any]] = {}
         for effect in effects:
-            if effect.session_id is None:
+            target_session_ids = []
+            if effect.session_id is not None:
+                target_session_ids.append(effect.session_id)
+            if effect.session_ids:
+                target_session_ids.extend(effect.session_ids)
+            if not target_session_ids:
                 continue
-            bucket = by_session.setdefault(
-                effect.session_id,
-                {
-                    "items": [],
-                    "runtime_state": None,
-                    "timeline_reset": False,
-                    "session": False,
-                    "notices": [],
-                    "refetch": False,
-                },
-            )
-            if effect.timeline_reset:
-                bucket["items"] = list(effect.items or [])
-                bucket["timeline_reset"] = True
-            else:
-                if effect.item is not None:
-                    bucket["items"].append(effect.item)
-                if effect.items:
-                    bucket["items"].extend(effect.items)
-            if effect.runtime_state is not None:
-                bucket["runtime_state"] = effect.runtime_state
-            bucket["session"] = bucket["session"] or effect.session_changed
-            if effect.notices:
-                bucket["notices"].extend(effect.notices)
-            bucket["refetch"] = bucket["refetch"] or effect.needs_refetch
+            for session_id in sorted(set(target_session_ids)):
+                bucket = by_session.setdefault(
+                    session_id,
+                    {
+                        "items": [],
+                        "runtime_state": None,
+                        "timeline_reset": False,
+                        "session": False,
+                        "notices": [],
+                        "catalogs": {},
+                        "refetch": False,
+                    },
+                )
+                if effect.session_id == session_id:
+                    if effect.timeline_reset:
+                        bucket["items"] = list(effect.items or [])
+                        bucket["timeline_reset"] = True
+                    else:
+                        if effect.item is not None:
+                            bucket["items"].append(effect.item)
+                        if effect.items:
+                            bucket["items"].extend(effect.items)
+                    if effect.runtime_state is not None:
+                        bucket["runtime_state"] = effect.runtime_state
+                    bucket["session"] = bucket["session"] or effect.session_changed
+                    if effect.notices:
+                        bucket["notices"].extend(effect.notices)
+                    bucket["refetch"] = bucket["refetch"] or effect.needs_refetch
+                if effect.catalogs:
+                    bucket["catalogs"].update(effect.catalogs)
 
         for session_id, bucket in by_session.items():
             try:
                 next_seq = await self._store.get_session_seq(session_id)
             except KeyError:
                 continue
-            envelope_sequence = max(next_seq, 1) if bucket["notices"] else next_seq
+            envelope_sequence = (
+                max(next_seq, 1)
+                if bucket["notices"] or bucket["catalogs"]
+                else next_seq
+            )
             envelope: dict[str, Any] = {
                 "sessionId": session_id,
                 "nextSeq": envelope_sequence,
@@ -276,6 +290,8 @@ class ConnectorIngestService:
                     notice.model_dump(mode="json")
                     for notice in bucket["notices"]
                 ]
+            if bucket["catalogs"]:
+                envelope["catalogs"] = bucket["catalogs"]
             if not any(
                 key in envelope
                 for key in (
@@ -286,6 +302,7 @@ class ConnectorIngestService:
                     "session",
                     "capabilitySet",
                     "notices",
+                    "catalogs",
                 )
             ):
                 continue

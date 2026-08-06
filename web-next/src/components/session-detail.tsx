@@ -1785,6 +1785,9 @@ function mergeSessionEvent(
   const capabilitySet = event.type === "runtime.capability.updated"
     ? readPayloadValue<ProtocolCapabilitySet>(event.payload.capabilitySet)
     : null
+  const catalogUpdate = event.type === "runtime.catalog.updated"
+    ? catalogUpdateFromEvent(event)
+    : null
 
   const nextNotices = noticeSnapshot
     ? noticeSnapshot
@@ -1815,6 +1818,12 @@ function mergeSessionEvent(
     capabilitySet && !capabilitySetsSemanticallyEqual(current.effectiveCapabilities, capabilitySet)
       ? capabilitySet
       : current.effectiveCapabilities
+  const nextCatalogs = catalogUpdate && !catalogsSemanticallyEqual(current.catalogs[catalogUpdate.catalogType], catalogUpdate.catalog)
+    ? {
+        ...current.catalogs,
+        [catalogUpdate.catalogType]: catalogUpdate.catalog,
+      }
+    : current.catalogs
   const nextSeq = Math.max(current.nextSeq, event.sequence)
   const nextEventCursor = event.sequence >= current.nextSeq ? event.cursor : current.eventCursor
 
@@ -1824,6 +1833,7 @@ function mergeSessionEvent(
     nextItems === current.items &&
     nextNotices === current.notices &&
     nextEffectiveCapabilities === current.effectiveCapabilities &&
+    nextCatalogs === current.catalogs &&
     nextSeq === current.nextSeq &&
     nextEventCursor === current.eventCursor
   ) {
@@ -1839,6 +1849,7 @@ function mergeSessionEvent(
     nextSeq,
     eventCursor: nextEventCursor,
     effectiveCapabilities: nextEffectiveCapabilities,
+    catalogs: nextCatalogs,
     serverTime: event.emittedAt ?? current.serverTime,
   }
 }
@@ -1848,12 +1859,35 @@ function sessionEventCanUpdateState(event: ProtocolEventEnvelope): boolean {
     event.type === "session.meta.updated" ||
     event.type === "runtime.state.updated" ||
     event.type === "runtime.capability.updated" ||
+    event.type === "runtime.catalog.updated" ||
     event.type === "runtime.notice.updated" ||
     event.type === "runtime.notice.snapshot" ||
     event.type === "timeline.item_created" ||
     event.type === "timeline.item_updated" ||
     event.type === "timeline.snapshot"
   )
+}
+
+function catalogUpdateFromEvent(
+  event: ProtocolEventEnvelope,
+): { catalogType: "model"; catalog: ProtocolModelCatalog } | { catalogType: "permission"; catalog: ProtocolPermissionCatalog } | null {
+  if (event.payload.catalogType === "model") {
+    const catalog = readPayloadValue<ProtocolModelCatalog>(event.payload.catalog)
+    return catalog ? { catalogType: "model", catalog } : null
+  }
+  if (event.payload.catalogType === "permission") {
+    const catalog = readPayloadValue<ProtocolPermissionCatalog>(event.payload.catalog)
+    return catalog ? { catalogType: "permission", catalog } : null
+  }
+  return null
+}
+
+function catalogsSemanticallyEqual(
+  left: unknown,
+  right: ProtocolModelCatalog | ProtocolPermissionCatalog,
+): boolean {
+  if (!left) return false
+  return stableStringify(left) === stableStringify(right)
 }
 
 function sessionSemanticallyEqual(left: SessionView, right: SessionView): boolean {
