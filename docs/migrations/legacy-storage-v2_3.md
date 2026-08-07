@@ -1,5 +1,10 @@
 # Legacy Storage Removal (`v2_3`)
 
+Historical note: `v2_3` was an intermediate schema where notices became the
+durable Interaction store. The current `v2_7` schema removes persisted runtime
+notices and treats them as runtime-owned live facts. Use
+[Main to v2](./main-to-v2/README.md) for a full deployment migration.
+
 Schema revision `v2_3` makes `notices` the only durable Interaction store.
 Connector approval prompts now enter the Server as `notice.upsert` interactions;
 `approval.requested` is rejected. The reverse response transport is the runtime

@@ -6,6 +6,8 @@ All Server HTTP, SSE, and WebSocket API documentation should live under this dir
 
 ## Documents
 
+- [Main to v2 migration](../migrations/main-to-v2/README.md): coordinated
+  deployment and client migration from the current `main` contracts.
 - [API v2 namespace](./namespace.md): `/api/v2` namespace and client/connector URL rules.
 - [Session API proposal](./session-api-proposal.md): authoritative target for the split `SessionMeta` / `SessionTimeline` / `RuntimeLive` client API.
 - [Session API current gap](./session-api-current-gap.md): current backend implementation gaps against the target session API.
