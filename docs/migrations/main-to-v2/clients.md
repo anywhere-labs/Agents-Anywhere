@@ -1,106 +1,89 @@
-# Client Migration
+# 客户端迁移
 
-All clients must migrate both URL construction and session behavior. Adding the
-`/api/v2` prefix alone does not make a `main` client compatible.
+所有客户端都必须同时迁移 URL 构造逻辑和 session 行为。只加 `/api/v2` 前缀，不能让 `main` 客户端变成兼容客户端。
 
-## Shared URL rule
+## 共享 URL 规则
 
-Store only the Server origin, then apply one idempotent namespace helper:
+配置里只存 Server origin，然后统一使用一个幂等的 namespace helper：
 
 ```text
 apiPath("/sessions") -> "/api/v2/sessions"
 apiPath("/api/v2/sessions") -> "/api/v2/sessions"
 ```
 
-Apply the same rule to direct browser links, SSE URLs, and WebSocket paths. Do
-not apply it to frontend pages or static assets.
+直接浏览器链接、SSE URL 和 WebSocket path 都使用同一条规则。不要把这条规则用到前端页面或静态资源上。
 
-## Session data boundaries
+## 会话数据边界
 
-Clients should load data by owner:
+客户端应该按归属方加载数据：
 
-| UI need | v2 source |
+| UI 需求 | v2 来源 |
 | --- | --- |
-| Title, archive/read state, runtime identity, Connector presence | `GET /api/v2/sessions/{id}/meta` or session list |
-| Durable conversation history | `GET /api/v2/sessions/{id}/timeline` |
-| Initial aggregate hydration or explicit recovery | `GET /api/v2/sessions/{id}/snapshot` |
-| Busy/error status and selections | `GET /api/v2/sessions/{id}/runtime/state` |
-| Action availability | `GET /api/v2/sessions/{id}/runtime/capabilities` |
-| Existing-session selectors | Session runtime catalog endpoints |
-| New-session selectors | Connector runtime catalog endpoints |
+| 标题、archive/read 状态、runtime 身份、Connector presence | `GET /api/v2/sessions/{id}/meta` 或 session list |
+| 持久化会话历史 | `GET /api/v2/sessions/{id}/timeline` |
+| 初始聚合 hydration 或显式恢复 | `GET /api/v2/sessions/{id}/snapshot` |
+| Busy/error 状态和 selections | `GET /api/v2/sessions/{id}/runtime/state` |
+| Action 可用性 | `GET /api/v2/sessions/{id}/runtime/capabilities` |
+| 已有 session 的 selectors | Session runtime catalog endpoints |
+| 新 session 的 selectors | Connector runtime catalog endpoints |
 | Approval/input UI | `GET /api/v2/sessions/{id}/runtime/notices` |
 | Slash commands | `GET /api/v2/sessions/{id}/runtime/commands` |
 
-Do not restore removed state by merging old `session.status`, persisted catalog,
-or persisted notice fields over a live runtime response.
+不要把旧的 `session.status`、持久化 catalog 或持久化 notice 字段覆盖到 live runtime response 上，以此恢复已经移除的状态。
 
-## Action migration
+## 操作迁移
 
-| User action | v2 request |
+| 用户动作 | v2 request |
 | --- | --- |
-| Create a new task and send first message | `POST /api/v2/sessions/create-and-start` |
-| Bind/import an existing external session | `POST /api/v2/sessions` |
-| Change model/permission | `PATCH /api/v2/sessions/{id}/runtime/selections` |
-| Send message | `POST /api/v2/sessions/{id}/runtime/messages` |
-| Steer active turn | `POST /api/v2/sessions/{id}/runtime/steer` |
-| Interrupt | `POST /api/v2/sessions/{id}/runtime/interrupt` |
-| Execute command | `POST /api/v2/sessions/{id}/runtime/commands` |
-| Respond to notice | `POST /api/v2/sessions/{id}/runtime/notices/{noticeId}/respond` |
-| Mark read | `POST /api/v2/sessions/read` with `string[]` body |
-| Archive/unarchive | `POST /api/v2/sessions/archive` or `/unarchive` with `string[]` body |
+| 创建新任务并发送第一条消息 | `POST /api/v2/sessions/create-and-start` |
+| 绑定或导入已有外部 session | `POST /api/v2/sessions` |
+| 修改 model/permission | `PATCH /api/v2/sessions/{id}/runtime/selections` |
+| 发送消息 | `POST /api/v2/sessions/{id}/runtime/messages` |
+| steer 当前 active turn | `POST /api/v2/sessions/{id}/runtime/steer` |
+| interrupt | `POST /api/v2/sessions/{id}/runtime/interrupt` |
+| 执行 command | `POST /api/v2/sessions/{id}/runtime/commands` |
+| 响应 notice | `POST /api/v2/sessions/{id}/runtime/notices/{noticeId}/respond` |
+| 标记已读 | `POST /api/v2/sessions/read`，body 是 `string[]` |
+| archive/unarchive | `POST /api/v2/sessions/archive` 或 `/unarchive`，body 是 `string[]` |
 
-Existing-session message payloads contain content, attachments, and an optional
-`clientMessageId`. They do not contain model or permission selection ids.
+已有 session 的 message payload 包含 content、attachments，以及可选的 `clientMessageId`。它不包含 model 或 permission selection id。
 
-The client should use `clientMessageId` to reconcile optimistic user messages
-with runtime echoes. Attachment-only inputs must remain valid; the UI must not
-inject display notes into message text as a transport mechanism.
+客户端应该用 `clientMessageId` 把 optimistic user message 和 runtime echo 对齐。只有 attachment 的输入必须仍然有效；UI 不能把展示用说明塞进 message text 里当作传输机制。
 
-## Selectors and commands
+## 选择器和命令
 
-Read model and permission catalogs when the selector opens. A locally remembered
-selection is a hint only; validate it against the live catalog and fall back to
-an enabled option when necessary.
+打开 selector 时读取 model 和 permission catalogs。本地记住的 selection 只能作为 hint；必须用 live catalog 校验，必要时 fallback 到一个 enabled option。
 
-When command mode opens, read the full command list and fuzzy-match locally. If
-the command read or execution fails, keep the input in command mode and show the
-error. Never send the slash-prefixed input as a normal message fallback.
+进入 command mode 时，读取完整 command list，然后在本地做 fuzzy-match。如果 command 读取或执行失败，input 要继续留在 command mode 并展示错误。永远不要把带 slash 前缀的输入 fallback 成普通消息发送。
 
-## Realtime migration
+## 实时迁移
 
 ### Dashboard
 
-1. Request a single-use ticket from `POST /api/v2/ws-ticket` for the dashboard
-   scope.
-2. Connect to `WS /api/v2/dashboard/ws?ticket=...`.
-3. Apply the initial connector/session snapshot.
-4. Reconnect with a new ticket after disconnect.
+1. 为 dashboard scope 从 `POST /api/v2/ws-ticket` 申请一次性 ticket。
+2. 连接 `WS /api/v2/dashboard/ws?ticket=...`。
+3. 应用初始 connector/session snapshot。
+4. 断开后使用新的 ticket 重连。
 
-Do not retain the `main` dashboard SSE plus 30-second list polling as the normal
-v2 lifecycle.
+不要把 `main` 的 dashboard SSE 加 30 秒列表轮询，保留为 v2 的正常生命周期。
 
 ### Session
 
-Use the ticketed session WebSocket for live meta, timeline, runtime state,
-notice, and capability events. Keep `GET /events` for durable event recovery.
+使用带 ticket 的 session WebSocket 接收 live meta、timeline、runtime state、notice 和 capability events。保留 `GET /events` 用于持久化事件恢复。
 
-Snapshot reads are allowed for:
+下面情况允许读取 snapshot：
 
-- initial hydration;
-- explicit `snapshotRequired`/refetch recovery;
-- user-requested refresh.
+- 初始 hydration；
+- 显式 `snapshotRequired`/refetch 恢复；
+- 用户主动刷新。
 
-They are not a polling API and should not run after every message, command,
-interaction, or sequence gap.
+快照不是轮询 API，不应该在每条 message、command、interaction 或 sequence gap 之后都运行。
 
-## Web status
+## 网页端状态
 
-`web-next` is the reference v2 client in this baseline. It already uses the v2
-namespace, create-and-start, runtime-scoped session actions, live catalogs and
-commands, optimistic `clientMessageId` reconciliation, and dashboard WebSocket
-lifecycle.
+`web-next` 是当前基线里的参考 v2 客户端。它已经使用 v2 namespace、create-and-start、runtime-scoped session actions、live catalogs and commands、optimistic `clientMessageId` reconciliation，以及 dashboard WebSocket lifecycle。
 
-Before release, still run:
+发布前仍然要运行：
 
 ```bash
 cd web-next
@@ -108,13 +91,11 @@ yarn typecheck
 yarn protocol:check
 ```
 
-`protocol:check` is a release gate. Generated TypeScript must match the JSON
-schemas under `contracts/protocol/1.0`.
+`protocol:check` 是发布门槛。生成的 TypeScript 必须匹配 `contracts/protocol/1.0` 下的 JSON schemas。
 
-## Android status
+## Android 状态
 
-Android has an `apiPath()` helper and namespaces HTTP/SSE/WebSocket URLs, but the
-current code still calls several removed `main` routes, including:
+Android 已经有 `apiPath()` helper，并且会给 HTTP/SSE/WebSocket URL 加 namespace，但当前代码仍然调用了几个已经移除的 `main` 路由，包括：
 
 - `/sessions/{id}` patch;
 - `/sessions/bulk-archive`;
@@ -124,13 +105,11 @@ current code still calls several removed `main` routes, including:
 - `/connectors/{id}/runtime-capabilities/*`;
 - `/connectors/{id}/agents/{runtime}/settings`.
 
-It also removes ACP runtimes from the add-agent UI. Android is not v2-compatible
-until those calls move to the API described above and its session event/rendering
-behavior passes the acceptance checklist.
+它还从 add-agent UI 里移除了 ACP runtimes。在这些调用迁移到上面描述的 API，并且 session event/rendering 行为通过验收 checklist 之前，Android 还不是 v2-compatible。
 
-## iOS status
+## iOS 状态
 
-iOS also applies `/api/v2`, but currently retains removed `main` calls such as:
+iOS 也会应用 `/api/v2`，但当前仍然保留了一些已移除的 `main` 调用，例如：
 
 - `/sessions/{id}`, `/read`, and `/state`;
 - `/sessions/{id}/runtime-settings`;
@@ -138,13 +117,8 @@ iOS also applies `/api/v2`, but currently retains removed `main` calls such as:
 - `/connectors/{id}/agents/{runtime}/settings`;
 - `/agents/{runtime}/config-schema` as the old configuration flow.
 
-iOS is not v2-compatible until those routes, payloads, live-state ownership, and
-realtime handling are migrated. Namespace-only changes must not be presented as
-client migration completion.
+iOS 需要迁移这些 routes、payloads、live-state ownership 和 realtime handling 后，才算 v2-compatible。只改 namespace 不能宣称客户端迁移完成。
 
-## Client release rule
+## 客户端发布规则
 
-Do not release a client as v2-compatible until an automated route inventory or
-integration test proves that it no longer calls removed `main` endpoints. Test
-HTTP, SSE, WebSocket, attachment open/download URLs, and terminal streams; the
-shared request wrapper does not cover every direct URL builder.
+在自动 route inventory 或 integration test 证明客户端不再调用已移除的 `main` endpoints 之前，不要把它作为 v2-compatible 发布。测试范围要覆盖 HTTP、SSE、WebSocket、attachment open/download URL 和 terminal streams；共享 request wrapper 并不能覆盖每一个直接构造 URL 的地方。

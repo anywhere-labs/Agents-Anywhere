@@ -1,22 +1,20 @@
-# Connector and Runtime Migration
+# 连接器和运行时迁移
 
-The v2 Connector replaces the `main` adapter registry with a typed runtime
-protocol and moves transport, runtime, and local-operation code into one-way
-layers.
+v2 Connector 用 typed runtime 协议替换了 `main` 的 adapter registry，并把 transport、runtime 和 local operation 代码拆成单向依赖的层。
 
-## Architecture mapping
+## 架构映射
 
-| `main` concept | v2 concept |
+| `main` 概念 | v2 概念 |
 | --- | --- |
-| Dict-shaped `Adapter` protocol | `AgentRuntime` abstract runtime contract |
-| `build_default_adapters()` | `RuntimeProvider` discovery and lifecycle composition |
+| dict 形态的 `Adapter` protocol | `AgentRuntime` 抽象 runtime 契约 |
+| `build_default_adapters()` | `RuntimeProvider` discovery 和 lifecycle composition |
 | Adapter `notification_sink` | `RuntimeHostClient` callbacks |
-| `BackendRpcClient` owns adapters and runtime details | Server-layer client coordinates `RuntimeSupervisor` and runtime RPC mapping |
-| Root `runtime.py`, `adapter.py`, and runtime-specific packages | `core/`, `server/`, `runtime_protocol/`, and `runtimes/*` |
-| SQLite sync-state store | Atomic JSON state through host sync-state methods |
-| Runtime-specific dict probing across layers | Typed dataclasses and SDK-specific parsing inside the runtime package |
+| `BackendRpcClient` 持有 adapters 和 runtime 细节 | Server-layer client 协调 `RuntimeSupervisor` 和 runtime RPC mapping |
+| 根目录下的 `runtime.py`、`adapter.py` 和 runtime-specific packages | `core/`、`server/`、`runtime_protocol/` 和 `runtimes/*` |
+| SQLite sync-state store | 通过 host sync-state methods 写入原子 JSON state |
+| Runtime-specific dict probing 跨层传递 | typed dataclasses，以及 runtime package 内部的 SDK-specific parsing |
 
-The dependency direction is:
+依赖方向是：
 
 ```text
 Connector app -> server transport -> runtime protocol
@@ -24,47 +22,44 @@ server transport -> runtime host mapping
 runtimes/* -> runtime protocol + native SDK details
 ```
 
-Generic Connector code must not import Codex or Claude implementation modules.
+通用 Connector 代码不能 import Codex 或 Claude 的实现模块。
 
-## Two protocol directions
+## 两个协议方向
 
-`AgentRuntime` represents Connector-to-runtime operations, including:
+`AgentRuntime` 表示 Connector 到 runtime 的操作，包括：
 
-- discovery/configuration lifecycle through `RuntimeProvider`;
-- live capabilities, model/permission catalogs, session state, and notices;
-- session discovery and timeline snapshots;
-- create-and-start, send, steer, interrupt, and selection updates;
-- runtime command listing/execution and interaction responses.
+- 通过 `RuntimeProvider` 进行 discovery/configuration lifecycle；
+- live capabilities、model/permission catalogs、session state 和 notices；
+- session discovery 和 timeline snapshots；
+- create-and-start、send、steer、interrupt 和 selection updates；
+- runtime command listing/execution 和 interaction responses。
 
-`RuntimeHostClient` represents runtime-to-platform effects, including:
+`RuntimeHostClient` 表示 runtime 到平台侧的 effect，包括：
 
-- session metadata and live-state updates;
-- capability and catalog updates;
-- timeline snapshot/item writes;
-- notice updates and explicit runtime errors;
-- attachment downloads and local sync-state reads/writes.
+- session metadata 和 live-state updates；
+- capability 和 catalog updates；
+- timeline snapshot/item writes；
+- notice updates 和显式 runtime errors；
+- attachment downloads 和本地 sync-state reads/writes。
 
-Runtime integrations should return explicit unsupported results or errors. They
-must not silently fall back to a different message path or restore the old
-adapter contract.
+Runtime 集成应该返回明确的 unsupported result 或 error。不能静默 fallback 到另一条 message path，也不能把旧 adapter contract 恢复回来。
 
-## Runtime support matrix
+## 运行时支持矩阵
 
-| Runtime | `main` | v2 baseline | Migration consequence |
+| Runtime | `main` | v2 基线 | 迁移影响 |
 | --- | --- | --- | --- |
-| Codex | Local CLI/app-server adapter with IPC-related integration | Native provider using `openai-codex`; active code is SDK-only | Remove `CODEX_BIN`, app-server, and IPC assumptions from deployment/configuration. |
-| Claude | Claude SDK adapter | Native `ClaudeProvider`/`ClaudeRuntime` | Revalidate the declared capability subset; unsupported behavior must remain visible. |
-| Gemini ACP | Built-in ACP manifest | No active provider | Block cutover for users who require it, or implement a v2 provider first. |
-| Cursor ACP | Built-in ACP manifest | No active provider | Same as above. |
-| Grok Build ACP | Built-in ACP manifest | No active provider | Same as above. |
-| CodeBuddy ACP | Built-in ACP manifest | No active provider | Same as above. |
+| Codex | 本地 CLI/app-server adapter，带 IPC 相关集成 | 使用 `openai-codex` 的原生 provider；active code 只走 SDK | 从部署和配置中移除 `CODEX_BIN`、app-server 和 IPC 假设。 |
+| Claude | Claude SDK adapter | 原生 `ClaudeProvider`/`ClaudeRuntime` | 重新验证声明的 capability 子集；不支持的行为必须保持可见。 |
+| Gemini ACP | 内置 ACP 清单 | 没有 active provider | 如果用户依赖它，就阻断正式切换；或者先实现 v2 provider。 |
+| Cursor ACP | 内置 ACP 清单 | 没有 active provider | 同上。 |
+| Grok Build ACP | 内置 ACP 清单 | 没有 active provider | 同上。 |
+| CodeBuddy ACP | 内置 ACP 清单 | 没有 active provider | 同上。 |
 
-The old implementations under `connector/_reference/` are reference material,
-not runtime fallbacks. Production code must not import them.
+`connector/_reference/` 下的旧实现只是参考材料，不是 runtime fallback。生产代码不能 import 它们。
 
-## Server URL and namespace
+## 服务端 URL 和命名空间
 
-Keep `serverUrl` as an origin:
+`serverUrl` 只保留 origin：
 
 ```json
 {
@@ -72,14 +67,11 @@ Keep `serverUrl` as an origin:
 }
 ```
 
-Do not store `https://agents.example.com/api/v2`. The Connector URL helpers add
-the namespace for auth, ingest, WebSocket, attachment, transfer, relay, pairing,
-and health calls.
+不要存 `https://agents.example.com/api/v2`。Connector URL helpers 会为 auth、ingest、WebSocket、attachment、transfer、relay、pairing 和 health 调用添加 namespace。
 
-## Local data migration
+## 本地数据迁移
 
-The default data location changes from `~/.agent-server` to
-`~/.agents-anywhere`.
+默认数据位置从 `~/.agent-server` 改为 `~/.agents-anywhere`。
 
 | `main` | v2 |
 | --- | --- |
@@ -87,59 +79,47 @@ The default data location changes from `~/.agent-server` to
 | `stateDbPath` | `statePath` |
 | `AGENT_CONNECTOR_STATE_DB` | `AGENT_CONNECTOR_STATE_FILE` |
 | `connector-state.sqlite3*` | `connector-state.json` |
-| no data-root override | `AGENT_CONNECTOR_DATA_DIR` |
+| 没有 data-root override | `AGENT_CONNECTOR_DATA_DIR` |
 
-On first access, v2 moves files from the legacy directory into the canonical
-directory, renames collisions with `.legacy-N`, deletes the obsolete Connector
-SQLite sync-state files, and removes the empty legacy directory.
+第一次访问时，v2 会把文件从 legacy directory 移到 canonical directory；如果有命名冲突，会加 `.legacy-N` 重命名；同时删除已经废弃的 Connector SQLite sync-state 文件，并移除空的 legacy directory。
 
-This is an automatic, destructive local migration. Before first v2 start:
+这是一个自动的、会改动本地文件的迁移。第一次启动 v2 前：
 
-1. Stop every Connector process that uses the legacy directory.
-2. Back up the complete `~/.agent-server` directory.
-3. Record any explicit `AGENT_CONNECTOR_CONFIG` or `stateDbPath` override.
-4. Start one v2 Connector and inspect `~/.agents-anywhere` before deploying it
-   broadly.
-5. Confirm the config file remains mode `0600` and the data directory mode
-   `0700` on platforms that support POSIX modes.
+1. 停止所有使用 legacy directory 的 Connector 进程。
+2. 备份完整的 `~/.agent-server` 目录。
+3. 记录任何显式的 `AGENT_CONNECTOR_CONFIG` 或 `stateDbPath` override。
+4. 先启动一个 v2 Connector，并检查 `~/.agents-anywhere`，再扩大部署。
+5. 在支持 POSIX mode 的平台上，确认 config 文件仍然是 `0600`，data directory 仍然是 `0700`。
 
-The old SQLite sync cursor is intentionally not imported. The v2 Connector can
-resynchronize session metadata/timeline from runtime and Server state.
+旧的 SQLite sync cursor 故意不导入。v2 Connector 可以从 runtime 和 Server state 重新同步 session metadata/timeline。
 
-## Runtime configuration migration
+## 运行时配置迁移
 
-Runtime configuration is Server-owned. The Connector validates provider config
-and starts/stops runtimes through the supervisor; it must not establish a second
-durable configuration source locally.
+Runtime configuration 归 Server 所有。Connector 通过 supervisor 校验 provider config，并启动或停止 runtimes；它不能在本地建立第二个持久化配置来源。
 
-For each Connector after upgrade:
+每个 Connector 升级后：
 
-1. Call runtime discovery.
-2. Confirm only expected native providers are listed.
-3. Read each runtime config schema from the Connector-scoped runtime endpoint.
-4. Reapply/validate migrated configuration.
-5. Activate the runtime and verify the reported effective config.
-6. Read runtime and session capabilities before enabling UI actions.
+1. 调用 runtime discovery。
+2. 确认只列出了预期的 native providers。
+3. 从 Connector-scoped runtime endpoint 读取每个 runtime config schema。
+4. 重新应用并验证迁移后的配置。
+5. 激活 runtime，并验证返回的 effective config。
+6. 启用 UI action 前，读取 runtime 和 session capabilities。
 
-Do not infer support from the runtime name. Use declared capabilities for
-attachments, catalogs, send, steer, interrupt, approvals, and commands.
+不要从 runtime 名字推断支持范围。attachments、catalogs、send、steer、interrupt、approvals 和 commands 都要看 declared capabilities。
 
-## Session behavior changes
+## 会话行为变化
 
-- `session.create` is a bind/import operation for an existing external session.
-- New user tasks use create-and-start so the Server allocates the platform
-  session id before the runtime emits timeline events.
-- Existing-session messages do not include model or permission fields.
-- Commands are separate runtime operations and must not become user messages on
-  lookup or execution failure.
-- Timeline items are platform types before leaving a runtime package. SDK method
-  names and objects stay inside that package.
-- Runtime state, selections, notices, catalogs, and capabilities are live facts.
-  Connector reconnect/discovery must republish or make them readable.
+- `session.create` 是对已有外部 session 的 bind/import 操作。
+- 新用户任务使用 create-and-start，这样 Server 会先分配 platform session id，然后 runtime 才发出 timeline events。
+- 已有 session 的 message 不包含 model 或 permission 字段。
+- Commands 是独立的 runtime operations；lookup 或 execution 失败时，不能把它们变成普通用户消息。
+- Timeline items 在离开 runtime package 前必须已经是 platform types。SDK method names 和 objects 留在对应 package 内部。
+- Runtime state、selections、notices、catalogs 和 capabilities 都是实时事实。Connector reconnect/discovery 后必须重新发布它们，或者让它们可读。
 
-## Connector verification
+## 连接器验证
 
-At minimum, verify:
+至少验证：
 
 ```bash
 cd connector
@@ -150,6 +130,4 @@ uv run pytest tests/test_runtime_protocol.py \
   tests/test_claude_runtime.py -q
 ```
 
-Then test against the actual runtime SDK versions installed on target Connector
-hosts. Unit tests do not prove local credentials, runtime binary/SDK discovery,
-workspace permissions, or headless behavior.
+然后再用目标 Connector host 上实际安装的 runtime SDK 版本测试。单元测试不能证明本地 credentials、runtime binary/SDK discovery、workspace permissions 或 headless 行为没问题。
