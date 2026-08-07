@@ -251,6 +251,7 @@ class SessionNotificationHandler:
             _reject_legacy_selection_fields(params, notification=method)
         session_id = params["sessionId"]
         external_session_id = params.get("externalSessionId")
+        should_archive = _session_meta_should_archive(params)
         try:
             if isinstance(external_session_id, str):
                 session_id = await self._store.resolve_connector_session_id(
@@ -268,6 +269,8 @@ class SessionNotificationHandler:
                 last_activity_at=params.get("lastActivityAt"),
                 mark_read_on_change=True,
             )
+            if should_archive and not session.archived:
+                session = await self._store.set_session_archived(session.id, True)
             return IngestEffect(session_id=session.id, session_changed=True)
         except KeyError:
             session = await self._store.upsert_connector_session(
@@ -281,6 +284,8 @@ class SessionNotificationHandler:
                 source_observed_at=params.get("sourceObservedAt"),
                 last_activity_at=params.get("lastActivityAt"),
             )
+            if should_archive and not session.archived:
+                session = await self._store.set_session_archived(session.id, True)
             return IngestEffect(session_id=session.id, session_changed=True)
 
 
@@ -660,6 +665,50 @@ def _v2_session_status(value: Any) -> SessionStatus | None:
     if value in {"waiting_approval", "error"}:
         return "blocked"
     return "idle"
+
+
+def _session_meta_should_archive(params: dict[str, Any]) -> bool:
+    metadata = params.get("metadata") if isinstance(params.get("metadata"), dict) else {}
+    if _bool_param(params, metadata, ("hidden",)):
+        return True
+    if _bool_param(params, metadata, ("localArchived", "local_archived")):
+        return True
+    if _bool_param(params, metadata, ("localDeleted", "local_deleted")):
+        return True
+    if params.get("resumeSupported") is False or params.get("resumable") is False:
+        return True
+    local_state = _string_param(
+        params,
+        metadata,
+        ("localState", "local_state"),
+    )
+    return local_state in {"archived", "deleted", "unresumable"}
+
+
+def _bool_param(
+    params: dict[str, Any],
+    metadata: dict[str, Any],
+    keys: tuple[str, ...],
+) -> bool:
+    for key in keys:
+        if params.get(key) is True or metadata.get(key) is True:
+            return True
+    return False
+
+
+def _string_param(
+    params: dict[str, Any],
+    metadata: dict[str, Any],
+    keys: tuple[str, ...],
+) -> str | None:
+    for key in keys:
+        value = params.get(key)
+        if isinstance(value, str) and value:
+            return value.lower()
+        metadata_value = metadata.get(key)
+        if isinstance(metadata_value, str) and metadata_value:
+            return metadata_value.lower()
+    return None
 
 
 def _string_or_none(value: Any) -> str | None:
