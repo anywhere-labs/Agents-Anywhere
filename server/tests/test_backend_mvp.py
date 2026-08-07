@@ -5523,7 +5523,7 @@ def test_connector_http_ingest_upserts_session_and_timeline(tmp_path):
     assert state["items"][0]["content"]["kind"] == "command"
 
 
-def test_connector_ingest_maps_local_hidden_session_meta(tmp_path):
+def test_connector_ingest_does_not_archive_local_hidden_session_meta(tmp_path):
     client = make_client(tmp_path)
     _, access_token, _, headers = create_connector_and_session(client)
 
@@ -5551,7 +5551,44 @@ def test_connector_ingest_maps_local_hidden_session_meta(tmp_path):
     assert response.json()["accepted"] == 1
     state = client.get("/sessions/sess_local_archived/snapshot", headers=headers)
     assert state.status_code == 200, state.text
-    assert state.json()["session"]["archived"] is True
+    assert state.json()["session"]["archived"] is False
+
+
+def test_connector_ingest_does_not_overwrite_platform_archive_state(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+
+    archive_response = client.post(
+        "/sessions/archive",
+        headers=headers,
+        json=[session_id],
+    )
+    assert archive_response.status_code == 200, archive_response.text
+
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "session.meta.upsert",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "codex",
+                        "externalSessionId": "thr_synced_active",
+                        "title": "Synced active",
+                        "cwd": "/repo",
+                        "metadata": {"local_state": "active", "hidden": False},
+                    },
+                },
+            ],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    state = session_view_for_assertions(client, session_id, headers)
+    assert state["session"]["archived"] is True
+    assert state["session"]["archivedAt"] is not None
 
 
 def test_connector_http_ingest_accepts_state_update_before_external_id(tmp_path):

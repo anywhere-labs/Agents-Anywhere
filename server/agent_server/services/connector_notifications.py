@@ -249,10 +249,8 @@ class SessionNotificationHandler:
             return None
         if method == "session.updated":
             _reject_legacy_selection_fields(params, notification=method)
-        local_state = _local_session_state(params)
         session_id = params["sessionId"]
         external_session_id = params.get("externalSessionId")
-        archived = _session_meta_archived(params, local_state)
         try:
             if isinstance(external_session_id, str):
                 session_id = await self._store.resolve_connector_session_id(
@@ -270,8 +268,6 @@ class SessionNotificationHandler:
                 last_activity_at=params.get("lastActivityAt"),
                 mark_read_on_change=True,
             )
-            if archived is not None and session.archived != archived:
-                session = await self._store.set_session_archived(session.id, archived)
             return IngestEffect(session_id=session.id, session_changed=True)
         except KeyError:
             session = await self._store.upsert_connector_session(
@@ -285,8 +281,6 @@ class SessionNotificationHandler:
                 source_observed_at=params.get("sourceObservedAt"),
                 last_activity_at=params.get("lastActivityAt"),
             )
-            if archived is not None and session.archived != archived:
-                session = await self._store.set_session_archived(session.id, archived)
             return IngestEffect(session_id=session.id, session_changed=True)
 
 
@@ -656,52 +650,6 @@ async def _resolve_timeline_session_id(
         )
     except KeyError:
         return session_id
-
-
-def _local_session_state(params: dict[str, Any]) -> str:
-    metadata = params.get("metadata") if isinstance(params.get("metadata"), dict) else {}
-    value = (
-        params.get("localState")
-        or params.get("local_state")
-        or metadata.get("localState")
-        or metadata.get("local_state")
-    )
-    if isinstance(value, str):
-        normalized = value.lower()
-        if normalized in {
-            "active",
-            "archived",
-            "deleted",
-            "unresumable",
-            "unknown",
-        }:
-            return normalized
-    if params.get("localArchived") is True or params.get("local_archived") is True:
-        return "archived"
-    if params.get("localDeleted") is True or params.get("local_deleted") is True:
-        return "deleted"
-    if params.get("resumeSupported") is False or params.get("resumable") is False:
-        return "unresumable"
-    if metadata.get("hidden") is True:
-        return "archived"
-    return "active"
-
-
-def _session_meta_archived(
-    params: dict[str, Any],
-    local_state: str,
-) -> bool | None:
-    metadata = params.get("metadata") if isinstance(params.get("metadata"), dict) else {}
-    hidden = params.get("hidden")
-    if hidden is None:
-        hidden = metadata.get("hidden")
-    if isinstance(hidden, bool):
-        return hidden
-    if local_state in {"archived", "deleted", "unresumable"}:
-        return True
-    if local_state == "active":
-        return False
-    return None
 
 
 def _v2_session_status(value: Any) -> SessionStatus | None:
