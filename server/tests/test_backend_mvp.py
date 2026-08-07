@@ -8038,13 +8038,13 @@ def test_client_uploads_attachment_and_connector_downloads_by_session(tmp_path):
     upload_response = client.post(
         f"/sessions/{session_id}/attachments",
         headers=headers,
-        files={"files": ("blob.bin", data, "application/octet-stream")},
+        files={"files": ("截图.png", data, "image/png")},
     )
 
     assert upload_response.status_code == 200
     upload_body = upload_response.json()["attachments"][0]
     assert upload_body["sessionId"] == session_id
-    assert upload_body["name"] == "blob.bin"
+    assert upload_body["name"] == "截图.png"
     assert upload_body["size"] == len(data)
     assert upload_body["sha256"] == hashlib.sha256(data).hexdigest()
     assert upload_body["downloadUrl"] == f"/api/v2/sessions/{session_id}/attachments/{upload_body['fileId']}"
@@ -8066,6 +8066,7 @@ def test_client_uploads_attachment_and_connector_downloads_by_session(tmp_path):
     raw_response = client.get(local_url)
     assert raw_response.status_code == 200
     assert raw_response.content == data
+    assert "filename*=UTF-8''%E6%88%AA%E5%9B%BE.png" in raw_response.headers["content-disposition"]
 
     user_token_open_response = client.get(
         f"{upload_body['openUrl']}?token={headers['Authorization'].removeprefix('Bearer ')}",

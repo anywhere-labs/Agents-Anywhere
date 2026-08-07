@@ -2997,6 +2997,48 @@ async def _test_codex_runtime_reduces_agent_message_snapshot_without_native_type
     assert item.source["rawType"] == "agentMessage"
 
 
+def test_codex_accumulator_merges_started_and_completed_agent_message_by_derived_key() -> None:
+    accumulator = CodexTimelineAccumulator()
+    started = accumulator.item_from_notification(
+        session_id="sess_1",
+        external_session_id="thread_1",
+        method="item/started",
+        params={
+            "threadId": "thread_1",
+            "turnId": "turn_1",
+            "item": {
+                "id": "msg_started",
+                "type": "agentMessage",
+                "_derivedKey": "agentMessage-assistant-turn_1-0",
+                "status": "inProgress",
+                "text": "",
+            },
+        },
+    )
+    completed = accumulator.item_from_notification(
+        session_id="sess_1",
+        external_session_id="thread_1",
+        method="item/completed",
+        params={
+            "threadId": "thread_1",
+            "turnId": "turn_1",
+            "item": {
+                "id": "msg_completed",
+                "type": "agentMessage",
+                "_derivedKey": "agentMessage-assistant-turn_1-0",
+                "status": "completed",
+                "text": "done",
+            },
+        },
+    )
+
+    assert started is not None
+    assert completed is not None
+    assert completed.id == started.id
+    assert completed.status == "done"
+    assert completed.content["text"] == "done"
+
+
 def test_codex_runtime_reduces_command_completion_and_failure() -> None:
     asyncio.run(_test_codex_runtime_reduces_command_completion_and_failure())
 

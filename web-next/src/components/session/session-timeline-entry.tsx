@@ -132,6 +132,7 @@ function MessageCard({ token, session, item }: { token: string; session: Session
   const hasAttachments = attachments.length > 0
   const showUserStatus = isUser && item.status === "failed"
   if (!text && !hasAttachments) {
+    if (item.role === "assistant") return null
     return (
       <JsonMarker
         item={item}

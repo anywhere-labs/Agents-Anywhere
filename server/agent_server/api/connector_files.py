@@ -322,7 +322,10 @@ async def connector_fs_transfer_download(
         downloads.stream(transfer_id=transfer_id, token=token),
         media_type=transfer.media_type or "application/octet-stream",
         headers={
-            "Content-Disposition": f"attachment; filename={_quoted_filename(transfer.name or transfer_id)}",
+            "Content-Disposition": _content_disposition(
+                "attachment",
+                transfer.name or transfer_id,
+            ),
             "X-File-Name": _safe_header_value(transfer.name or transfer_id),
             "X-File-Sha256": transfer.sha256,
             "X-File-Size": str(transfer.size),
@@ -380,6 +383,17 @@ async def connector_fs_write(
         manager, connector_id, "fs.writeFile", params, timeout=30
     )
     return RpcResponsePayload(ok=True, result=result)
+
+
+def _content_disposition(disposition: str, filename: str) -> str:
+    ascii_name = _ascii_filename_fallback(filename)
+    utf8_name = urllib.parse.quote(filename, safe="")
+    return f"{disposition}; filename={_quoted_filename(ascii_name)}; filename*=UTF-8''{utf8_name}"
+
+
+def _ascii_filename_fallback(value: str) -> str:
+    fallback = value.encode("ascii", errors="ignore").decode("ascii").strip()
+    return fallback or "attachment"
 
 
 def _quoted_filename(value: str) -> str:

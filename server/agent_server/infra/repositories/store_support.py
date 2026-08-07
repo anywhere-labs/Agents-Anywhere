@@ -170,10 +170,33 @@ def _dedupe_legacy_history_items(items: list[TimelineItem]) -> list[TimelineItem
 
 
 def _dedupe_source_items(items: list[TimelineItem]) -> list[TimelineItem]:
+    return _dedupe_derived_source_items(_dedupe_native_source_items(items))
+
+
+def _dedupe_native_source_items(items: list[TimelineItem]) -> list[TimelineItem]:
     result: list[TimelineItem] = []
     indexes: dict[tuple[str, str, str, str, str], int] = {}
     for item in items:
         key = _source_item_duplicate_key(item)
+        if key is None:
+            result.append(item)
+            continue
+        existing_index = indexes.get(key)
+        if existing_index is None:
+            indexes[key] = len(result)
+            result.append(item)
+            continue
+        existing = result[existing_index]
+        if _source_item_preference(item) > _source_item_preference(existing):
+            result[existing_index] = item
+    return result
+
+
+def _dedupe_derived_source_items(items: list[TimelineItem]) -> list[TimelineItem]:
+    result: list[TimelineItem] = []
+    indexes: dict[tuple[str, str, str, str, str], int] = {}
+    for item in items:
+        key = _source_derived_duplicate_key(item)
         if key is None:
             result.append(item)
             continue
@@ -205,6 +228,27 @@ def _source_item_duplicate_key(
         source.turnId,
         source.itemId,
         source.itemType,
+    )
+
+
+def _source_derived_duplicate_key(
+    item: TimelineItem,
+) -> tuple[str, str, str, str, str] | None:
+    source = item.source
+    if (
+        not source.sessionId
+        or not source.derivedKey
+        or source.derivedKey.startswith("history-")
+    ):
+        return None
+    if item.type not in {"message", "system", "tool", "artifact", "marker"}:
+        return None
+    return (
+        source.runtime,
+        source.sessionId,
+        str(item.turnId or ""),
+        item.type,
+        source.derivedKey,
     )
 
 
