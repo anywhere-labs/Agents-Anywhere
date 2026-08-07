@@ -359,8 +359,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const initialLoadDoneRef = React.useRef(false)
 
   const applyDashboardSnapshot = React.useCallback((message: DashboardSnapshotMessage) => {
-    setConnectors(message.connectors.map(mapConnector))
-    setSessions(sortSessionViews(message.sessions.map(mapSession)))
+    const nextConnectors = message.connectors.map(mapConnector)
+    const nextSessions = sortSessionViews(message.sessions.map(mapSession))
+    setConnectors((current) => sameStableValue(current, nextConnectors) ? current : nextConnectors)
+    setSessions((current) => sameStableValue(current, nextSessions) ? current : nextSessions)
     setIsLoading(false)
     initialLoadDoneRef.current = true
   }, [])
@@ -375,16 +377,19 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
           dashboardApi.listConnectors(authSession.accessToken),
           dashboardApi.listSessions(authSession.accessToken),
         ])
-        setConnectors(connRes.connectors.map(mapConnector))
-        setSessions(sortSessionViews(sessRes.sessions.map(mapSession)))
+        const nextConnectors = connRes.connectors.map(mapConnector)
+        const nextSessions = sortSessionViews(sessRes.sessions.map(mapSession))
+        setConnectors((current) => sameStableValue(current, nextConnectors) ? current : nextConnectors)
+        setSessions((current) => sameStableValue(current, nextSessions) ? current : nextSessions)
         return
       }
       const [connRes, sessRes] = await Promise.all([
         listMockConnectors("mock-token"),
         listMockSessions("mock-token"),
       ])
-      setConnectors(connRes.connectors)
-      setSessions(sortSessionViews(sessRes.sessions))
+      const nextSessions = sortSessionViews(sessRes.sessions)
+      setConnectors((current) => sameStableValue(current, connRes.connectors) ? current : connRes.connectors)
+      setSessions((current) => sameStableValue(current, nextSessions) ? current : nextSessions)
     } finally {
       setIsLoading(false)
       initialLoadDoneRef.current = true
@@ -861,4 +866,22 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   }
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>
+}
+
+function sameStableValue(left: unknown, right: unknown): boolean {
+  return stableJson(left) === stableJson(right)
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableJson(item)).join(",")}]`
+  }
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`)
+      .join(",")}}`
+  }
+  return JSON.stringify(value)
 }

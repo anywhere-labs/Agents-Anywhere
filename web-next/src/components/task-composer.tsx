@@ -161,16 +161,24 @@ export function TaskComposer() {
 
   const [runtimeInventory, setRuntimeInventory] = React.useState<Record<string, DeviceRuntimeView[]>>({})
   const [runtimeInventoryLoading, setRuntimeInventoryLoading] = React.useState(true)
+  const onlineConnectorKey = React.useMemo(
+    () => connectors
+      .filter((connector) => connector.status === "online")
+      .map((connector) => `${connector.id}:${connector.status}`)
+      .sort()
+      .join("|"),
+    [connectors],
+  )
 
   React.useEffect(() => {
     if (!authSession?.accessToken) {
-      setRuntimeInventory({})
+      setRuntimeInventory((current) => sameRuntimeInventory(current, {}) ? current : {})
       setRuntimeInventoryLoading(false)
       return
     }
     const online = connectors.filter((connector) => connector.status === "online")
     if (online.length === 0) {
-      setRuntimeInventory({})
+      setRuntimeInventory((current) => sameRuntimeInventory(current, {}) ? current : {})
       setRuntimeInventoryLoading(false)
       return
     }
@@ -187,13 +195,13 @@ export function TaskComposer() {
       for (const result of results) {
         if (result.status === "fulfilled") next[result.value.connectorId] = result.value.response.runtimes
       }
-      setRuntimeInventory(next)
+      setRuntimeInventory((current) => sameRuntimeInventory(current, next) ? current : next)
       setRuntimeInventoryLoading(false)
     })
     return () => {
       cancelled = true
     }
-  }, [authSession?.accessToken, connectors])
+  }, [authSession?.accessToken, onlineConnectorKey])
 
   // New sessions can only target runtimes that the Server has activated and the Connector reports as running.
   const onlineConnectors = React.useMemo(
@@ -870,6 +878,35 @@ function activeRuntimes(runtimes: DeviceRuntimeView[] | undefined) {
   return (runtimes ?? [])
     .filter((runtime) => runtime.configured && runtime.active && runtime.status === "running")
     .sort((a, b) => a.displayName.localeCompare(b.displayName))
+}
+
+function sameRuntimeInventory(
+  left: Record<string, DeviceRuntimeView[]>,
+  right: Record<string, DeviceRuntimeView[]>,
+): boolean {
+  return stableRuntimeInventoryKey(left) === stableRuntimeInventoryKey(right)
+}
+
+function stableRuntimeInventoryKey(value: Record<string, DeviceRuntimeView[]>): string {
+  return Object.keys(value)
+    .sort()
+    .map((connectorId) => {
+      const runtimes = [...(value[connectorId] ?? [])]
+        .sort((left, right) => left.runtimeId.localeCompare(right.runtimeId))
+        .map((runtime) => [
+          runtime.runtimeId,
+          runtime.runtimeType,
+          runtime.displayName,
+          runtime.present,
+          runtime.configured,
+          runtime.active,
+          runtime.status,
+          runtime.updatedAt,
+        ].join(":"))
+        .join(",")
+      return `${connectorId}=${runtimes}`
+    })
+    .join("|")
 }
 
 function ComposerSelectorLoading({ className }: { className?: string }) {
