@@ -170,7 +170,7 @@ def _dedupe_legacy_history_items(items: list[TimelineItem]) -> list[TimelineItem
 
 
 def _dedupe_source_items(items: list[TimelineItem]) -> list[TimelineItem]:
-    return _dedupe_derived_source_items(_dedupe_native_source_items(items))
+    return _drop_empty_assistant_started_items(_dedupe_native_source_items(items))
 
 
 def _dedupe_native_source_items(items: list[TimelineItem]) -> list[TimelineItem]:
@@ -192,22 +192,20 @@ def _dedupe_native_source_items(items: list[TimelineItem]) -> list[TimelineItem]
     return result
 
 
-def _dedupe_derived_source_items(items: list[TimelineItem]) -> list[TimelineItem]:
+def _drop_empty_assistant_started_items(items: list[TimelineItem]) -> list[TimelineItem]:
+    replacement_keys = {
+        key
+        for item in items
+        if (key := _non_empty_assistant_derived_key(item)) is not None
+    }
+    if not replacement_keys:
+        return items
     result: list[TimelineItem] = []
-    indexes: dict[tuple[str, str, str, str, str], int] = {}
     for item in items:
-        key = _source_derived_duplicate_key(item)
-        if key is None:
-            result.append(item)
+        placeholder_key = _empty_assistant_started_derived_key(item)
+        if placeholder_key is not None and placeholder_key in replacement_keys:
             continue
-        existing_index = indexes.get(key)
-        if existing_index is None:
-            indexes[key] = len(result)
-            result.append(item)
-            continue
-        existing = result[existing_index]
-        if _source_item_preference(item) > _source_item_preference(existing):
-            result[existing_index] = item
+        result.append(item)
     return result
 
 
@@ -231,7 +229,33 @@ def _source_item_duplicate_key(
     )
 
 
-def _source_derived_duplicate_key(
+def _non_empty_assistant_derived_key(
+    item: TimelineItem,
+) -> tuple[str, str, str, str, str] | None:
+    key = _assistant_derived_key(item)
+    if key is None:
+        return None
+    if item.status not in {"done", "failed", "cancelled", "interrupted"}:
+        return None
+    if _message_text_length(item.content) <= 0:
+        return None
+    return key
+
+
+def _empty_assistant_started_derived_key(
+    item: TimelineItem,
+) -> tuple[str, str, str, str, str] | None:
+    key = _assistant_derived_key(item)
+    if key is None:
+        return None
+    if item.status not in {"pending", "running"}:
+        return None
+    if _message_text_length(item.content) > 0:
+        return None
+    return key
+
+
+def _assistant_derived_key(
     item: TimelineItem,
 ) -> tuple[str, str, str, str, str] | None:
     source = item.source
@@ -241,7 +265,7 @@ def _source_derived_duplicate_key(
         or source.derivedKey.startswith("history-")
     ):
         return None
-    if item.type not in {"message", "system", "tool", "artifact", "marker"}:
+    if item.type != "message" or item.role != "assistant":
         return None
     return (
         source.runtime,

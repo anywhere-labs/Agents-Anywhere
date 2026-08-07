@@ -18,6 +18,7 @@ from connector.runtimes.codex.timeline.events import raw_item_from_notification
 from connector.runtimes.codex.timeline.identity import (
     client_message_id_from_raw,
     derived_key_from_values,
+    explicit_derived_key,
     native_item_id,
     timeline_item_id_from_values,
 )
@@ -67,6 +68,7 @@ class CodexTimelineProjection:
     patch: str | None = None
     changes: Any = None
     client_message_id: str | None = None
+    explicit_derived_key: str | None = None
     attachments: tuple[Mapping[str, Any], ...] = ()
     revision: int = 1
 
@@ -118,6 +120,8 @@ class CodexTimelineProjection:
         )
 
     def derived_key(self, fallback_index: int) -> str:
+        if self.explicit_derived_key is not None:
+            return self.explicit_derived_key
         return derived_key_from_values(
             raw_type=self.raw_type,
             role=self.effective_role(),
@@ -356,6 +360,11 @@ class CodexTimelineProjection:
                 if self.client_message_id
                 else {}
             ),
+            **(
+                {"_derivedKey": self.explicit_derived_key}
+                if self.explicit_derived_key
+                else {}
+            ),
             **({"revision": self.revision} if self.revision > 1 else {}),
         }
         return raw
@@ -400,6 +409,7 @@ def timeline_projection_from_raw(raw: Mapping[str, Any]) -> CodexTimelineProject
         patch=first_string_from_mapping(raw_dict, "patch", "diff"),
         changes=raw_dict.get("changes"),
         client_message_id=client_message_id_from_raw(raw_dict),
+        explicit_derived_key=explicit_derived_key(raw_dict),
         attachments=attachments_from_raw(raw_dict, raw_type),
         revision=timeline_item_revision(raw_dict),
     )

@@ -113,3 +113,54 @@ def test_derived_key_duplicate_keeps_completed_message() -> None:
     )
 
     assert _dedupe_legacy_history_items([running, completed]) == [completed]
+
+
+def test_derived_key_duplicate_keeps_multiple_completed_assistant_messages() -> None:
+    first = TimelineItem(
+        id="msg_1",
+        sessionId="sess_1",
+        turnId="turn_1",
+        type="message",
+        status="done",
+        role="assistant",
+        content={"text": "first", "format": "markdown", "kind": "markdown"},
+        source={
+            "runtime": "codex",
+            "sessionId": "thread_1",
+            "turnId": "turn_1",
+            "itemId": "msg_1",
+            "itemType": "agentMessage",
+            "derivedKey": "agentMessage-assistant-turn_1-0",
+        },
+        orderSeq=1,
+        revision=1,
+        contentHash="sha256:first",
+        updatedSeq=1,
+        createdAt="2026-08-07T00:00:00Z",
+        updatedAt="2026-08-07T00:00:00Z",
+    )
+    second = TimelineItem(
+        id="msg_2",
+        sessionId="sess_1",
+        turnId="turn_1",
+        type="message",
+        status="done",
+        role="assistant",
+        content={"text": "second", "format": "markdown", "kind": "markdown"},
+        source={
+            "runtime": "codex",
+            "sessionId": "thread_1",
+            "turnId": "turn_1",
+            "itemId": "msg_2",
+            "itemType": "agentMessage",
+            "derivedKey": "agentMessage-assistant-turn_1-0",
+        },
+        orderSeq=2,
+        revision=1,
+        contentHash="sha256:second",
+        updatedSeq=2,
+        createdAt="2026-08-07T00:00:00Z",
+        updatedAt="2026-08-07T00:00:00Z",
+    )
+
+    assert _dedupe_legacy_history_items([first, second]) == [first, second]

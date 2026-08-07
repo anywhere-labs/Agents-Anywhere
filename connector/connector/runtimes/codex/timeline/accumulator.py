@@ -324,11 +324,12 @@ class CodexTimelineAccumulator:
         )
         if not semantic_keys:
             return projection
-        for semantic_key in semantic_keys:
-            existing_item_id = self._item_id_by_semantic_key.get(semantic_key)
-            if existing_item_id is not None:
-                self.record_semantic_identity(semantic_keys, existing_item_id)
-                return projection.with_platform_id(existing_item_id)
+        if projection.explicit_derived_key is not None:
+            for semantic_key in semantic_keys:
+                existing_item_id = self._item_id_by_semantic_key.get(semantic_key)
+                if existing_item_id is not None:
+                    self.record_semantic_identity(semantic_keys, existing_item_id)
+                    return projection.with_platform_id(existing_item_id)
         if (
             prefer_native_identity
             and projection.native_id is not None
@@ -340,6 +341,11 @@ class CodexTimelineAccumulator:
             )
             self.record_semantic_identity(semantic_keys, item_id)
             return projection.with_platform_id(item_id)
+        for semantic_key in semantic_keys:
+            existing_item_id = self._item_id_by_semantic_key.get(semantic_key)
+            if existing_item_id is not None:
+                self.record_semantic_identity(semantic_keys, existing_item_id)
+                return projection.with_platform_id(existing_item_id)
         item_id = projection.item_id(
             external_session_id=external_session_id,
             fallback_index=fallback_index,
@@ -525,13 +531,14 @@ def semantic_identity_keys(
                 projection.native_id,
             )
         )
-        keys.append(
-            (
-                "derived-message",
-                external_session_id,
-                projection.derived_key(fallback_index),
+        if projection.explicit_derived_key is not None:
+            keys.append(
+                (
+                    "derived-message",
+                    external_session_id,
+                    projection.explicit_derived_key,
+                )
             )
-        )
     else:
         keys.append(
             (
@@ -541,7 +548,7 @@ def semantic_identity_keys(
             )
         )
     text = normalized_timeline_text(projection)
-    if text:
+    if text and projection.turn_id:
         text_digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
         keys.append(
             (
@@ -549,6 +556,7 @@ def semantic_identity_keys(
                 external_session_id,
                 projection.raw_type,
                 str(role or ""),
+                projection.turn_id,
                 text_digest,
             )
         )

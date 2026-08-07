@@ -64,7 +64,7 @@ def derived_key_from_values(
 
 
 def derived_key(raw: dict[str, Any], index: int) -> str:
-    explicit = raw.get("_derivedKey") or raw.get("derivedKey") or raw.get("derived_key")
+    explicit = explicit_derived_key(raw)
     if isinstance(explicit, str) and explicit:
         return explicit
     item_type = raw.get("type") or raw.get("kind") or "item"
@@ -80,6 +80,11 @@ def derived_key(raw: dict[str, Any], index: int) -> str:
     ]
     stable = "-".join(_safe_component(part) for part in parts if part)
     return stable or f"item-{index}"
+
+
+def explicit_derived_key(raw: dict[str, Any]) -> str | None:
+    value = raw.get("_derivedKey") or raw.get("derivedKey") or raw.get("derived_key")
+    return value if isinstance(value, str) and value else None
 
 
 def is_user_message_values(raw_type: str, role: str | None) -> bool:

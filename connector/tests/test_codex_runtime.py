@@ -2062,11 +2062,11 @@ async def _test_codex_runtime_reads_typed_collab_agent_item_from_snapshot() -> N
     }
 
 
-def test_codex_snapshot_reuses_live_assistant_identity() -> None:
-    asyncio.run(_test_codex_snapshot_reuses_live_assistant_identity())
+def test_codex_snapshot_keeps_assistant_native_identity_without_turn_id() -> None:
+    asyncio.run(_test_codex_snapshot_keeps_assistant_native_identity_without_turn_id())
 
 
-async def _test_codex_snapshot_reuses_live_assistant_identity() -> None:
+async def _test_codex_snapshot_keeps_assistant_native_identity_without_turn_id() -> None:
     client = FakeCodexClient()
     host = FakeHost()
     runtime = CodexRuntime(config=_config(), host=host, client=client)
@@ -2110,15 +2110,15 @@ async def _test_codex_snapshot_reuses_live_assistant_identity() -> None:
     )
 
     assert host.timeline_item_upserts[-1].id == "msg_live"
-    assert snapshot.items[0].id == "msg_live"
+    assert snapshot.items[0].id == "item-2"
     assert snapshot.items[0].source["itemId"] == "item-2"
 
 
-def test_codex_snapshot_reuses_live_user_identity_when_client_id_arrives_late() -> None:
-    asyncio.run(_test_codex_snapshot_reuses_live_user_identity_when_client_id_arrives_late())
+def test_codex_snapshot_keeps_late_user_client_message_identity() -> None:
+    asyncio.run(_test_codex_snapshot_keeps_late_user_client_message_identity())
 
 
-async def _test_codex_snapshot_reuses_live_user_identity_when_client_id_arrives_late() -> None:
+async def _test_codex_snapshot_keeps_late_user_client_message_identity() -> None:
     client = FakeCodexClient()
     host = FakeHost()
     runtime = CodexRuntime(config=_config(), host=host, client=client)
@@ -2163,7 +2163,7 @@ async def _test_codex_snapshot_reuses_live_user_identity_when_client_id_arrives_
     )
 
     assert host.timeline_item_upserts[-1].id == "live_user"
-    assert snapshot.items[0].id == "live_user"
+    assert snapshot.items[0].id == "codex_client_msg_late"
     assert snapshot.items[0].source["itemId"] == "item-1"
     assert snapshot.items[0].source["clientMessageId"] == "msg_late"
 
@@ -3037,6 +3037,90 @@ def test_codex_accumulator_merges_started_and_completed_agent_message_by_derived
     assert completed.id == started.id
     assert completed.status == "done"
     assert completed.content["text"] == "done"
+
+
+def test_codex_accumulator_preserves_multiple_native_agent_messages() -> None:
+    accumulator = CodexTimelineAccumulator()
+    first = accumulator.item_from_notification(
+        session_id="sess_1",
+        external_session_id="thread_1",
+        method="item/completed",
+        params={
+            "threadId": "thread_1",
+            "turnId": "turn_1",
+            "item": {
+                "id": "msg_1",
+                "type": "agentMessage",
+                "status": "completed",
+                "text": "first",
+            },
+        },
+    )
+    second = accumulator.item_from_notification(
+        session_id="sess_1",
+        external_session_id="thread_1",
+        method="item/completed",
+        params={
+            "threadId": "thread_1",
+            "turnId": "turn_1",
+            "item": {
+                "id": "msg_2",
+                "type": "agentMessage",
+                "status": "completed",
+                "text": "second",
+            },
+        },
+    )
+
+    assert first is not None
+    assert second is not None
+    assert first.id == "msg_1"
+    assert second.id == "msg_2"
+    assert first.id != second.id
+    assert first.content["text"] == "first"
+    assert second.content["text"] == "second"
+
+
+def test_codex_accumulator_preserves_repeated_user_message_text() -> None:
+    accumulator = CodexTimelineAccumulator()
+    first = accumulator.item_from_notification(
+        session_id="sess_1",
+        external_session_id="thread_1",
+        method="item/completed",
+        params={
+            "threadId": "thread_1",
+            "turnId": "turn_1",
+            "item": {
+                "id": "user_msg_1",
+                "type": "userMessage",
+                "status": "completed",
+                "text": "你好",
+            },
+        },
+    )
+    second = accumulator.item_from_notification(
+        session_id="sess_1",
+        external_session_id="thread_1",
+        method="item/completed",
+        params={
+            "threadId": "thread_1",
+            "turnId": "turn_2",
+            "item": {
+                "id": "user_msg_2",
+                "type": "userMessage",
+                "status": "completed",
+                "text": "你好",
+            },
+        },
+    )
+
+    assert first is not None
+    assert second is not None
+    assert first.id == "user_msg_1"
+    assert second.id == "user_msg_2"
+    assert first.id != second.id
+    assert first.content["text"] == "你好"
+    assert second.content["text"] == "你好"
 
 
 def test_codex_runtime_reduces_command_completion_and_failure() -> None:
