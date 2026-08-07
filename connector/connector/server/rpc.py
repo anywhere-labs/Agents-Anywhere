@@ -37,10 +37,31 @@ RPC_LOG_EXACT_SECRET_KEYS = frozenset(
 RPC_LOG_PARTIAL_SECRET_KEYS = frozenset(
     key for key in RPC_LOG_EXACT_SECRET_KEYS if key != "auth"
 )
+CONNECTOR_WS_MAX_NOTIFICATION_BYTES = 900 * 1024
 
 
 class WebSocketSender(Protocol):
     async def send(self, payload: str) -> None: ...
+
+
+class ConnectorWebSocketFrameTooLarge(RuntimeError):
+    def __init__(
+        self,
+        frame_type: str | None,
+        method: str | None,
+        request_id: str | None,
+        encoded_bytes: int,
+        max_frame_bytes: int,
+    ) -> None:
+        super().__init__(
+            f"connector websocket frame is too large: {encoded_bytes} bytes "
+            f"> {max_frame_bytes} bytes"
+        )
+        self.frame_type = frame_type
+        self.method = method
+        self.request_id = request_id
+        self.encoded_bytes = encoded_bytes
+        self.max_frame_bytes = max_frame_bytes
 
 
 class ConnectorRpcChannel:
@@ -174,7 +195,10 @@ class ConnectorRpcChannel:
             method,
             sanitize_rpc_log_value(params),
         )
-        await self.send_json({"type": "notification", "method": method, "params": params})
+        await self.send_json(
+            {"type": "notification", "method": method, "params": params},
+            max_frame_bytes=CONNECTOR_WS_MAX_NOTIFICATION_BYTES,
+        )
 
     async def send_response(
         self,
@@ -198,7 +222,11 @@ class ConnectorRpcChannel:
         )
         await self.send_json(payload)
 
-    async def send_json(self, payload: dict[str, Any]) -> None:
+    async def send_json(
+        self,
+        payload: dict[str, Any],
+        max_frame_bytes: int | None = None,
+    ) -> None:
         if self._ws is None:
             raise RuntimeError("backend websocket is not connected")
         frame_type = payload.get("type")
@@ -208,6 +236,22 @@ class ConnectorRpcChannel:
         encoded = json.dumps(payload, ensure_ascii=False)
         encoded_bytes = len(encoded.encode("utf-8"))
         encode_elapsed_ms = (time.monotonic() - encode_started_at) * 1000
+        if max_frame_bytes is not None and encoded_bytes > max_frame_bytes:
+            logger.warning(
+                "connector websocket frame too large before send type={} method={} request_id={} bytes={} max_bytes={}",
+                frame_type,
+                method,
+                request_id,
+                encoded_bytes,
+                max_frame_bytes,
+            )
+            raise ConnectorWebSocketFrameTooLarge(
+                frame_type=str(frame_type) if frame_type is not None else None,
+                method=str(method) if method is not None else None,
+                request_id=str(request_id) if request_id is not None else None,
+                encoded_bytes=encoded_bytes,
+                max_frame_bytes=max_frame_bytes,
+            )
         wait_started_at = time.monotonic()
         async with self._send_lock:
             wait_elapsed_ms = (time.monotonic() - wait_started_at) * 1000

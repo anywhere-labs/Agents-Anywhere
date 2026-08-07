@@ -66,6 +66,14 @@ from agent_server.core.utc import utc_now
 from agent_server.infra.timeline_store import SqlTimelineStore
 
 DERIVED_SESSION_TITLE_MAX_CHARS = 48
+CODEX_ATTACHMENT_ECHO_MARKERS = (
+    "\n\n[Attached file: ",
+    "\n\nAttached file: ",
+    " Attached file: ",
+    "[Attached file: ",
+    "Attached file: ",
+    "File content:",
+)
 
 # Username format: 3-32 chars, lowercase letters / digits / hyphen / underscore.
 # Stored lowercase regardless of input.
@@ -231,6 +239,14 @@ def _should_keep_existing_timeline_item(existing: TimelineItem, incoming: Timeli
     if existing.type == "tool":
         return _content_completeness_score(existing.content) > _content_completeness_score(incoming.content)
     if existing.type == "message":
+        if _message_has_attachment_echo(existing.content) and not _message_has_attachment_echo(
+            incoming.content
+        ):
+            return False
+        if _message_has_attachment_echo(incoming.content) and not _message_has_attachment_echo(
+            existing.content
+        ):
+            return True
         return _message_text_length(existing.content) > _message_text_length(incoming.content)
     return False
 
@@ -258,6 +274,15 @@ def _message_text_length(content: Any) -> int:
         return 0
     text = content.get("text")
     return len(text) if isinstance(text, str) else 0
+
+
+def _message_has_attachment_echo(content: Any) -> bool:
+    if not isinstance(content, dict):
+        return False
+    text = content.get("text")
+    if not isinstance(text, str):
+        return False
+    return any(marker in text for marker in CODEX_ATTACHMENT_ECHO_MARKERS)
 
 
 def _message_text(content: Any) -> str:

@@ -67,6 +67,12 @@ def runtime_attachments(params: dict[str, Any]) -> tuple[RuntimeAttachment, ...]
     for raw in raw_attachments:
         if not isinstance(raw, dict):
             raise TypeError("attachment must be an object")
+        has_inline_content = (
+            raw.get("contentBase64") is not None
+            or raw.get("content_base64") is not None
+        )
+        if has_inline_content:
+            raise ValueError("attachment content must be referenced by fileId, not sent as base64")
         file_id = raw.get("fileId") or raw.get("file_id")
         if not isinstance(file_id, str) or not file_id:
             raise ValueError("attachment fileId is required")
@@ -79,9 +85,6 @@ def runtime_attachments(params: dict[str, Any]) -> tuple[RuntimeAttachment, ...]
                 ),
                 size=raw.get("size") if isinstance(raw.get("size"), int) else None,
                 sha256=optional_string(raw.get("sha256")),
-                content_base64=optional_string(
-                    raw.get("contentBase64") or raw.get("content_base64")
-                ),
             )
         )
     return tuple(attachments)

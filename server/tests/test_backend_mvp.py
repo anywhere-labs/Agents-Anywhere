@@ -567,7 +567,7 @@ def test_session_create_and_start_preallocates_session_and_passes_selections(tmp
     assert attachment["fileId"].startswith("file_")
     assert attachment["name"] == "note.txt"
     assert attachment["mediaType"] == "text/plain"
-    assert attachment["contentBase64"] == "aGVsbG8="
+    assert "contentBase64" not in attachment
     assert attachment["size"] == 5
     assert attachment["sha256"] == "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
     timeline_attachment = create_params["timelineAttachments"][0]

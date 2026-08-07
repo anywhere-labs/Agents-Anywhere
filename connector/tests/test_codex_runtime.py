@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import threading
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
@@ -2330,22 +2329,28 @@ async def _test_codex_runtime_materializes_attachments_for_turn_start() -> None:
     assert attachment["byteSize"] == 5
 
 
-def test_codex_runtime_materializes_inline_attachments_for_create_and_start(tmp_path, monkeypatch) -> None:
+def test_codex_runtime_materializes_create_and_start_attachments_from_host(tmp_path, monkeypatch) -> None:
     asyncio.run(
-        _test_codex_runtime_materializes_inline_attachments_for_create_and_start(
+        _test_codex_runtime_materializes_create_and_start_attachments_from_host(
             tmp_path,
             monkeypatch,
         )
     )
 
 
-async def _test_codex_runtime_materializes_inline_attachments_for_create_and_start(
+async def _test_codex_runtime_materializes_create_and_start_attachments_from_host(
     tmp_path,
     monkeypatch,
 ) -> None:
     monkeypatch.setenv("AGENT_CONNECTOR_ATTACHMENTS_ROOT", str(tmp_path))
     client = FakeCodexClient()
     host = FakeHost()
+    host.attachments["file_inline"] = RuntimeAttachmentContent(
+        file_id="file_inline",
+        name="note.txt",
+        media_type="text/plain",
+        content=b"hello inline",
+    )
     runtime = CodexRuntime(config=_config(), host=host, client=client)
 
     result = await runtime.create_and_start_session(
@@ -2356,7 +2361,6 @@ async def _test_codex_runtime_materializes_inline_attachments_for_create_and_sta
                 file_id="file_inline",
                 name="note.txt",
                 media_type="text/plain",
-                content_base64=base64.b64encode(b"hello inline").decode("ascii"),
             ),
         ),
     )

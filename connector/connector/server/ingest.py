@@ -10,11 +10,11 @@ from connector.logging import logger
 from connector.server.auth import ConnectorAuthenticationError
 from connector.server.urls import api_v2_url
 
-# HTTP ingest is reserved for explicit bulk sync and disconnected WebSocket
-# fallback. Live runtime host notifications should normally travel over the
-# connector WebSocket so the server can publish frontend session events without
-# the extra HTTP batching hop. The queue still collapses fallback bursts into
-# bounded POST batches.
+# HTTP ingest owns explicit bulk sync and disconnected WebSocket fallback.
+# History-bearing notifications such as `timeline.sync` must use ingest even
+# when the WebSocket is connected; they can exceed the backend WebSocket frame
+# limit and are not latency-sensitive. Live small notifications still travel
+# over the connector WebSocket.
 FLUSH_WINDOW_SECONDS = 0.02
 FLUSH_MAX = 64
 

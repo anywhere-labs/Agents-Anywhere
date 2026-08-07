@@ -27,7 +27,7 @@ from connector.server.auth import ConnectorAuthenticationError, ConnectorAuthent
 from connector.server.capabilities import protocol_capabilities_from_inventory
 from connector.server.dispatch import ConnectorRequestDispatcher
 from connector.server.ingest import ConnectorIngestClient
-from connector.server.rpc import ConnectorRpcChannel
+from connector.server.rpc import ConnectorRpcChannel, ConnectorWebSocketFrameTooLarge
 from connector.server.runtime_host import ConnectorRuntimeHost
 from connector.server.runtime_sync import RuntimeSyncRunner
 from connector.server.sync_state import JsonSyncStateStore, SyncStateStore
@@ -42,6 +42,8 @@ from connector.server.urls import api_v2_path, device_os, is_loopback_url
 from connector.server.urls import (
     ws_url as build_ws_url,
 )
+
+INGEST_ONLY_NOTIFICATION_METHODS = frozenset({"timeline.sync"})
 
 
 class BackendRpcClient:
@@ -210,11 +212,14 @@ class BackendRpcClient:
     async def send_backend_notification(
         self, method: str, params: dict[str, Any]
     ) -> None:
+        if notification_requires_ingest(method):
+            await self._ingest.enqueue(method, params)
+            return
         if self._rpc.connected:
             try:
                 await self.send_notification(method, params)
                 return
-            except (RuntimeError, ConnectionClosed) as exc:
+            except (RuntimeError, ConnectionClosed, ConnectorWebSocketFrameTooLarge) as exc:
                 logger.warning(
                     "backend websocket notification failed; falling back to ingest method={} error={}",
                     method,
@@ -321,6 +326,10 @@ def _is_auth_close(exc: ConnectionClosed) -> bool:
     return (
         _close_code(exc) in {1008, 4001} and "connector" in _close_reason(exc).lower()
     )
+
+
+def notification_requires_ingest(method: str) -> bool:
+    return method in INGEST_ONLY_NOTIFICATION_METHODS
 
 
 def _close_code(exc: ConnectionClosed) -> int | None:

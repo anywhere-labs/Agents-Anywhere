@@ -199,7 +199,6 @@ class RuntimeAttachment:
     media_type: str | None = None
     size: int | None = None
     sha256: str | None = None
-    content_base64: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

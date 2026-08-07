@@ -59,7 +59,6 @@ class PersistedInlineAttachment:
     media_type: str
     size: int
     sha256: str
-    content_base64: str
 
 
 class SessionRunService:
@@ -142,7 +141,7 @@ class SessionRunService:
                 attachments=payload.attachments,
             )
             params["attachments"] = [
-                _inline_attachment_payload(attachment)
+                _connector_attachment_reference_payload(attachment)
                 for attachment in persisted_attachments
             ]
             params["timelineAttachments"] = [
@@ -479,7 +478,6 @@ class SessionRunService:
                     media_type=str(saved.get("mediaType") or ""),
                     size=int(saved["size"]),
                     sha256=str(saved["sha256"]),
-                    content_base64=attachment.contentBase64,
                 )
             )
         return persisted
@@ -603,12 +601,11 @@ def _timeline_attachment_payload(value: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _inline_attachment_payload(attachment: PersistedInlineAttachment) -> dict[str, Any]:
+def _connector_attachment_reference_payload(attachment: PersistedInlineAttachment) -> dict[str, Any]:
     return {
         "fileId": attachment.file_id,
         "name": attachment.name,
         "mediaType": attachment.media_type,
-        "contentBase64": attachment.content_base64,
         "size": attachment.size,
         "sha256": attachment.sha256,
     }
