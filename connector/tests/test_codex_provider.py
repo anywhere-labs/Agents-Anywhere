@@ -34,7 +34,7 @@ async def _test_codex_provider_requires_sdk_for_runnable_surface() -> None:
 
     assert item.available is False
     assert item.configured is False
-    assert item.capabilities["commands"] is True
+    assert item.capabilities["commands"] is False
     assert item.capabilities["ipc"] is False
     assert item.metadata["sdk"]["available"] is False
     assert "appServer" not in item.metadata
