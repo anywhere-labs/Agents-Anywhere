@@ -1,11 +1,7 @@
 {
   "$defs": {
-    "ProtocolAdapterIdentity": {
+    "ProtocolRuntimeIdentity": {
       "properties": {
-        "adapterVersion": {
-          "title": "Adapterversion",
-          "type": "string"
-        },
         "runtime": {
           "enum": [
             "codex",
@@ -15,26 +11,23 @@
           ],
           "title": "Runtime",
           "type": "string"
+        },
+        "runtimeVersion": {
+          "title": "Runtimeversion",
+          "type": "string"
         }
       },
       "required": [
         "runtime",
-        "adapterVersion"
+        "runtimeVersion"
       ],
-      "title": "ProtocolAdapterIdentity",
+      "title": "ProtocolRuntimeIdentity",
       "type": "object"
     }
   },
   "$id": "urn:agents-anywhere:protocol:1.0:handshake-request",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
-    "adapters": {
-      "items": {
-        "$ref": "#/$defs/ProtocolAdapterIdentity"
-      },
-      "title": "Adapters",
-      "type": "array"
-    },
     "connectorVersion": {
       "title": "Connectorversion",
       "type": "string"
@@ -45,6 +38,13 @@
       },
       "minItems": 1,
       "title": "Protocolversions",
+      "type": "array"
+    },
+    "runtimes": {
+      "items": {
+        "$ref": "#/$defs/ProtocolRuntimeIdentity"
+      },
+      "title": "Runtimes",
       "type": "array"
     }
   },

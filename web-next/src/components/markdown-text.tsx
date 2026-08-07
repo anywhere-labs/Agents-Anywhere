@@ -3,8 +3,9 @@
 import * as React from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import { Copy, Check, ExternalLink } from "lucide-react"
+import { Copy, Check, ExternalLink, GitBranch } from "lucide-react"
 
+import { Badge } from "@/components/ui/badge"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
 import { highlightCode } from "@/lib/code-highlight"
@@ -23,17 +24,31 @@ export function MarkdownText({
   session?: SessionView
   inverted?: boolean
 }) {
+  return <MarkdownBody text={text} token={token} session={session} inverted={inverted} />
+}
+
+function MarkdownBody({
+  text,
+  token,
+  session,
+  inverted,
+}: {
+  text: string
+  token?: string
+  session?: SessionView
+  inverted?: boolean
+}) {
   return (
     <div
       className={cn(
-        "space-y-3 text-sm leading-relaxed [&_a]:underline [&_blockquote]:border-l [&_blockquote]:pl-3 [&_code]:code-mono [&_code]:text-[0.92em] [&_li]:ml-5 [&_ol]:list-decimal [&_pre]:m-0 [&_ul]:list-disc",
+        "space-y-3 text-sm leading-relaxed [&_a]:underline [&_blockquote]:border-l [&_blockquote]:pl-3 [&_code]:text-[1em] [&_li]:ml-5 [&_ol]:list-decimal [&_pre]:m-0 [&_ul]:list-disc",
         inverted
           ? "[&_pre]:border-primary-foreground/15"
           : "[&_pre]:border-border",
       )}
     >
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkGitDirectiveBadges]}
         components={{
           code({ className, children, ...props }) {
             const match = /language-(\w+)/.exec(className ?? "")
@@ -45,7 +60,7 @@ export function MarkdownText({
                   <span
                     role="button"
                     tabIndex={0}
-                    className="code-mono inline-flex max-w-full items-baseline gap-0.5 rounded-none bg-transparent p-0 align-baseline text-[0.92em] text-inherit underline underline-offset-2 hover:text-foreground"
+                    className="inline-flex max-w-full items-baseline gap-0.5 rounded-none bg-transparent p-0 align-baseline text-[1em] text-inherit underline underline-offset-2 hover:text-foreground"
                     onClick={() => openSessionFilePreview(token, session, previewPath)}
                     onKeyDown={(event) => {
                       if (event.key === "Enter" || event.key === " ") openSessionFilePreview(token, session, previewPath)
@@ -138,6 +153,16 @@ export function MarkdownText({
               </td>
             )
           },
+          span({ children, ...props }) {
+            const directiveProps = props as React.HTMLAttributes<HTMLSpanElement> & {
+              "data-git-actions"?: string
+              "data-git-directive"?: string
+            }
+            if (directiveProps["data-git-directive"] === "true") {
+              return <GitDirectiveBadge actions={directiveProps["data-git-actions"]} />
+            }
+            return <span {...props}>{children}</span>
+          },
         }}
       >
         {text}
@@ -146,13 +171,163 @@ export function MarkdownText({
   )
 }
 
+type GitDirective = {
+  action: "stage" | "commit" | "push"
+  attrs: Record<string, string>
+}
+
+type MarkdownAstNode = {
+  type: string
+  value?: string
+  children?: MarkdownAstNode[]
+  data?: {
+    hName?: string
+    hProperties?: Record<string, string>
+  }
+}
+
+function remarkGitDirectiveBadges() {
+  return (tree: MarkdownAstNode) => {
+    replaceGitDirectivesInTextChildren(tree)
+  }
+}
+
+function replaceGitDirectivesInTextChildren(node: MarkdownAstNode) {
+  if (!node.children) return
+
+  const nextChildren: MarkdownAstNode[] = []
+  for (const child of node.children) {
+    if (child.type === "text" && typeof child.value === "string") {
+      nextChildren.push(...splitGitDirectiveTextNode(child.value))
+      continue
+    }
+    replaceGitDirectivesInTextChildren(child)
+    nextChildren.push(child)
+  }
+  node.children = nextChildren
+}
+
+function splitGitDirectiveTextNode(text: string): MarkdownAstNode[] {
+  const directivePattern = /::git-(stage|commit|push)\{([^}]*)\}/g
+  const matches = Array.from(text.matchAll(directivePattern))
+  if (matches.length === 0) return [{ type: "text", value: text }]
+
+  const nodes: MarkdownAstNode[] = []
+  let cursor = 0
+  let pendingDirectives: GitDirective[] = []
+
+  const flushDirectives = () => {
+    if (pendingDirectives.length === 0) return
+    nodes.push(gitDirectiveNode(pendingDirectives))
+    pendingDirectives = []
+  }
+
+  for (const match of matches) {
+    const start = match.index ?? 0
+    const before = text.slice(cursor, start)
+    if (before) {
+      if (before.trim()) flushDirectives()
+      nodes.push({ type: "text", value: before })
+    }
+    const directive: GitDirective = {
+      action: gitDirectiveAction(match[1] ?? "stage"),
+      attrs: parseDirectiveAttributes(match[2] ?? ""),
+    }
+    pendingDirectives.push(directive)
+    cursor = start + match[0].length
+  }
+
+  const after = text.slice(cursor)
+  if (after) {
+    if (after.trim()) flushDirectives()
+    nodes.push({ type: "text", value: after })
+  }
+  flushDirectives()
+  return nodes
+}
+
+function gitDirectiveNode(directives: GitDirective[]): MarkdownAstNode {
+  return {
+    type: "gitDirective",
+    data: {
+      hName: "span",
+      hProperties: {
+        "data-git-directive": "true",
+        "data-git-actions": serializeGitDirectives(directives),
+      },
+    },
+  }
+}
+
+function serializeGitDirectives(directives: GitDirective[]): string {
+  return directives
+    .map((directive) => {
+      const branch = directive.attrs.branch
+      return branch ? `${directive.action}:${encodeURIComponent(branch)}` : directive.action
+    })
+    .join(",")
+}
+
+function parseGitDirectives(input?: string): GitDirective[] {
+  if (!input) return []
+  return input
+    .split(",")
+    .map(parseGitDirective)
+    .filter((directive): directive is GitDirective => directive !== null)
+}
+
+function parseGitDirective(input: string): GitDirective | null {
+  const [actionInput, branchInput] = input.split(":", 2)
+  if (!actionInput) return null
+  const action = gitDirectiveAction(actionInput)
+  const branch = branchInput ? decodeURIComponent(branchInput) : ""
+  return { action, attrs: branch ? { branch } : {} }
+}
+
+function gitDirectiveAction(action: string): GitDirective["action"] {
+  if (action === "commit" || action === "push") return action
+  return "stage"
+}
+
+function parseDirectiveAttributes(input: string): Record<string, string> {
+  const attrs: Record<string, string> = {}
+  for (const match of input.matchAll(/([A-Za-z_][A-Za-z0-9_]*)="([^"]*)"/g)) {
+    const key = match[1]
+    if (key) attrs[key] = match[2] ?? ""
+  }
+  return attrs
+}
+
+function GitDirectiveBadge({ actions }: { actions?: string }) {
+  const tSession = useTranslations("dashboard.session")
+  const directives = parseGitDirectives(actions)
+  if (directives.length === 0) return null
+  return (
+    <Badge variant="secondary" className="mx-0.5 inline-flex h-6 gap-1.5 rounded-full px-2.5 align-baseline font-normal">
+      <GitBranch data-icon="inline-start" />
+      <span>{directives.map((directive) => gitDirectiveLabel(directive, tSession)).join(" · ")}</span>
+    </Badge>
+  )
+}
+
+function gitDirectiveLabel(
+  directive: GitDirective,
+  tSession: (key: string, values?: Record<string, string | number>) => string,
+): string {
+  if (directive.action === "stage") return tSession("gitOperationStaged")
+  if (directive.action === "commit") return tSession("gitOperationCommitted")
+  const branch = directive.attrs.branch
+  if (branch) return tSession("gitOperationPushedBranch", { branch })
+  return tSession("gitOperationPushed")
+}
+
 function MarkdownCodeBlock({ code, language }: { code: string; language: string }) {
   const tSession = useTranslations("dashboard.session")
   const [copied, setCopied] = React.useState(false)
   return (
     <div className="my-3 min-w-0 max-w-full overflow-hidden rounded-xl border border-border bg-background">
       <div className="flex h-9 items-center justify-between border-b bg-muted/25 px-3">
-        <span className="code-mono text-xs text-muted-foreground">{language || "text"}</span>
+        <span className="text-xs text-muted-foreground">{language || "text"}</span>
         <button
           type="button"
           className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -167,7 +342,7 @@ function MarkdownCodeBlock({ code, language }: { code: string; language: string 
         </button>
       </div>
       <ScrollArea contentWide className="max-h-96 min-w-0 max-w-full overflow-hidden">
-        <pre className="code-mono w-max min-w-full p-3 text-xs leading-relaxed">
+        <pre className="w-max min-w-full p-3 text-sm leading-relaxed">
           <code>{highlightCode(code, language)}</code>
         </pre>
         <ScrollBar orientation="horizontal" />

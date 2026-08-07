@@ -75,7 +75,7 @@ type DeviceSession = {
   runtime: string
   title?: string | null
   cwd?: string | null
-  status: "idle" | "pending" | "running" | "stopping" | "blocked"
+  status: "idle" | "waiting" | "pending" | "running" | "stopping" | "blocked"
   takeover: boolean
   pinned: boolean
   archived: boolean
@@ -170,7 +170,7 @@ function SessionRow({
             ? "border-emerald-500 bg-emerald-500"
             : session.status === "blocked"
               ? "border-amber-400/70"
-              : session.status === "pending" || session.status === "stopping"
+              : session.status === "waiting" || session.status === "pending" || session.status === "stopping"
                 ? "border-blue-400/70"
                 : "border-muted-foreground/40",
         )}

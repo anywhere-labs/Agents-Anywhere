@@ -126,7 +126,7 @@ class RuntimeHostClient(ABC):
 
 ## Notice entity
 
-`notice_upsert` accepts a dataclass because notice/action/interactions are complex and should stay close to the server `SessionNotice` model.
+`notice_upsert` accepts a dataclass because notice/action/interactions are complex and should stay close to the server `SessionNotice` model. Interaction notices must carry `interaction_type`, `blocking`, `actions`, and `context` when the runtime expects a later `respond_interaction` call.
 
 ```py
 @dataclass(frozen=True, slots=True)
@@ -139,8 +139,12 @@ class SessionNotice:
     message: str | None = None
     severity: Literal["info", "success", "warning", "error"] = "info"
     status: str = "open"
+    interaction_type: str | None = None
+    blocking: Mapping[str, Any] | None = None
     response_required: bool = False
     actions: tuple[Mapping[str, Any], ...] = ()
+    source: Mapping[str, Any] = field(default_factory=dict)
+    context: Mapping[str, Any] = field(default_factory=dict)
     metadata: Mapping[str, Any] = field(default_factory=dict)
 ```
 

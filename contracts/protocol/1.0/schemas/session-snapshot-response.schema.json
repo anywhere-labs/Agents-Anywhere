@@ -207,7 +207,94 @@
       "title": "ApprovalSource",
       "type": "object"
     },
-    "Notice": {
+    "NoticeAction": {
+      "properties": {
+        "actionId": {
+          "title": "Actionid",
+          "type": "string"
+        },
+        "input": {
+          "$ref": "#/$defs/NoticeActionInput"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "style": {
+          "default": "secondary",
+          "enum": [
+            "primary",
+            "secondary",
+            "danger"
+          ],
+          "title": "Style",
+          "type": "string"
+        }
+      },
+      "required": [
+        "actionId",
+        "label"
+      ],
+      "title": "NoticeAction",
+      "type": "object"
+    },
+    "NoticeActionInput": {
+      "properties": {
+        "required": {
+          "default": false,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "schema": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Schema"
+        },
+        "uiSchema": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Uischema"
+        }
+      },
+      "title": "NoticeActionInput",
+      "type": "object"
+    },
+    "NoticeBlocking": {
+      "properties": {
+        "scope": {
+          "const": "session",
+          "title": "Scope",
+          "type": "string"
+        },
+        "targetId": {
+          "title": "Targetid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "scope",
+        "targetId"
+      ],
+      "title": "NoticeBlocking",
+      "type": "object"
+    },
+    "NoticeIn": {
       "properties": {
         "actions": {
           "items": {
@@ -233,8 +320,16 @@
           "type": "object"
         },
         "createdAt": {
-          "title": "Createdat",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Createdat"
         },
         "expiresAt": {
           "anyOf": [
@@ -332,9 +427,11 @@
           "default": "open",
           "enum": [
             "open",
+            "responding",
             "response_accepted",
             "resolving",
             "resolved",
+            "closed",
             "expired",
             "cancelled",
             "failed"
@@ -353,129 +450,19 @@
           ],
           "title": "Type",
           "type": "string"
-        },
-        "updatedAt": {
-          "title": "Updatedat",
-          "type": "string"
-        },
-        "updatedSeq": {
-          "title": "Updatedseq",
-          "type": "integer"
         }
       },
       "required": [
         "noticeId",
         "type",
         "sessionId",
-        "title",
-        "createdAt",
-        "updatedSeq",
-        "updatedAt"
+        "title"
       ],
-      "title": "Notice",
-      "type": "object"
-    },
-    "NoticeAction": {
-      "properties": {
-        "actionId": {
-          "title": "Actionid",
-          "type": "string"
-        },
-        "input": {
-          "$ref": "#/$defs/NoticeActionInput"
-        },
-        "label": {
-          "title": "Label",
-          "type": "string"
-        },
-        "style": {
-          "default": "secondary",
-          "enum": [
-            "primary",
-            "secondary",
-            "danger"
-          ],
-          "title": "Style",
-          "type": "string"
-        }
-      },
-      "required": [
-        "actionId",
-        "label"
-      ],
-      "title": "NoticeAction",
-      "type": "object"
-    },
-    "NoticeActionInput": {
-      "properties": {
-        "required": {
-          "default": false,
-          "title": "Required",
-          "type": "boolean"
-        },
-        "schema": {
-          "anyOf": [
-            {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Schema"
-        },
-        "uiSchema": {
-          "anyOf": [
-            {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Uischema"
-        }
-      },
-      "title": "NoticeActionInput",
-      "type": "object"
-    },
-    "NoticeBlocking": {
-      "properties": {
-        "scope": {
-          "const": "session",
-          "title": "Scope",
-          "type": "string"
-        },
-        "targetId": {
-          "title": "Targetid",
-          "type": "string"
-        }
-      },
-      "required": [
-        "scope",
-        "targetId"
-      ],
-      "title": "NoticeBlocking",
+      "title": "NoticeIn",
       "type": "object"
     },
     "NoticeSource": {
       "properties": {
-        "adapter": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Adapter"
-        },
         "approvalId": {
           "anyOf": [
             {
@@ -487,6 +474,18 @@
           ],
           "default": null,
           "title": "Approvalid"
+        },
+        "component": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Component"
         },
         "operationId": {
           "anyOf": [
@@ -580,7 +579,6 @@
         "scope": {
           "default": "runtime",
           "enum": [
-            "adapter",
             "runtime",
             "session"
           ],
@@ -685,6 +683,114 @@
         "hasMore"
       ],
       "title": "ProtocolTimelineSnapshot",
+      "type": "object"
+    },
+    "SessionRuntimeState": {
+      "properties": {
+        "createdAt": {
+          "title": "Createdat",
+          "type": "string"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "externalSessionId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Externalsessionid"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        },
+        "runtime": {
+          "enum": [
+            "codex",
+            "claude",
+            "opencode",
+            "acp"
+          ],
+          "title": "Runtime",
+          "type": "string"
+        },
+        "selections": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": "Selections",
+          "type": "object"
+        },
+        "sessionId": {
+          "title": "Sessionid",
+          "type": "string"
+        },
+        "status": {
+          "default": "idle",
+          "enum": [
+            "idle",
+            "waiting",
+            "pending",
+            "running",
+            "stopping",
+            "blocked"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "statusReason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Statusreason"
+        },
+        "updatedAt": {
+          "title": "Updatedat",
+          "type": "string"
+        },
+        "updatedSeq": {
+          "title": "Updatedseq",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "sessionId",
+        "runtime",
+        "updatedSeq",
+        "createdAt",
+        "updatedAt"
+      ],
+      "title": "SessionRuntimeState",
       "type": "object"
     },
     "SessionView": {
@@ -799,30 +905,6 @@
           "default": null,
           "title": "Lastsyncedat"
         },
-        "modelSelectionId": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Modelselectionid"
-        },
-        "permissionSelectionId": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Permissionselectionid"
-        },
         "pinned": {
           "default": false,
           "title": "Pinned",
@@ -877,6 +959,7 @@
         "status": {
           "enum": [
             "idle",
+            "waiting",
             "pending",
             "running",
             "stopping",
@@ -1184,7 +1267,7 @@
     },
     "notices": {
       "items": {
-        "$ref": "#/$defs/Notice"
+        "$ref": "#/$defs/NoticeIn"
       },
       "title": "Notices",
       "type": "array"
@@ -1199,12 +1282,24 @@
     "session": {
       "$ref": "#/$defs/SessionView"
     },
+    "state": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SessionRuntimeState"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "timeline": {
       "$ref": "#/$defs/ProtocolTimelineSnapshot"
     }
   },
   "required": [
     "session",
+    "state",
     "timeline",
     "approvals",
     "notices",

@@ -25,7 +25,7 @@ class TimelineBroker:
         self,
         coordinator: RedisCoordinator | None = None,
         *,
-        dashboard_debounce_seconds: float = 1.0,
+        dashboard_debounce_seconds: float = 0.0,
     ) -> None:
         self._coordinator = coordinator or RedisCoordinator()
         self._subs: dict[str, set[asyncio.Queue[str]]] = {}
@@ -94,6 +94,23 @@ class TimelineBroker:
         return len(self._subs.get(session_id, ()))
 
     async def publish_dashboard(self, user_id: str, payload: dict) -> None:
+        if self._dashboard_debounce_seconds <= 0:
+            message = json.dumps(
+                {
+                    **payload,
+                    "type": "dashboard.changed",
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            if self._coordinator.distributed:
+                await self._coordinator.client.publish(
+                    self._coordinator.channel("dashboard", user_id),
+                    message,
+                )
+                return
+            await self._fan_out(self._dashboard_subs, user_id, message)
+            return
         async with self._lock:
             self._dashboard_pending[user_id] = {
                 **payload,

@@ -107,7 +107,7 @@ class CatalogService:
         except KeyError:
             raise CatalogServiceError(
                 "invalid_selection",
-                "invalid modelSelectionId",
+                "invalid model selection",
             ) from None
 
     async def resolve_permission(
@@ -128,7 +128,7 @@ class CatalogService:
         except KeyError:
             raise CatalogServiceError(
                 "invalid_selection",
-                "invalid permissionSelectionId",
+                "invalid permission selection",
             ) from None
 
     @staticmethod

@@ -15,15 +15,19 @@ import { dashboardApi } from "@/features/dashboard/api"
 import type {
   ConnectorView as RealConnectorView,
   DashboardSnapshotMessage,
-  SessionStateResponse,
+  SessionLocalTimelineState,
+  SessionRuntimeState,
   SessionView as RealSessionView,
   TimelineItem,
+  AttachmentRef,
 } from "@/features/dashboard/types"
 import {
   isOptimisticTimelineItem,
   markOptimisticItemFailed,
   mergeTimelineItems,
+  revokeOptimisticItemResources,
   timelineClientMessageId,
+  withServerAttachments,
 } from "@/components/session/optimistic-timeline"
 
 // ─── Panel / page types ───────────────────────────────────────
@@ -55,6 +59,7 @@ export type OptimisticSessionMessage = {
   sessionId: string
   item: TimelineItem
   session?: RealSessionView
+  state?: SessionRuntimeState
   localSessionId?: string
 }
 
@@ -134,19 +139,49 @@ function mapSession(session: RealSessionView): SessionView {
     connectorId: session.connectorId,
     connectorStatus: session.connectorStatus,
     runtime: runtimeLabel(session.runtime),
+    externalSessionId: session.externalSessionId,
     title: session.title || "Untitled session",
     cwd: session.cwd,
     status: session.status,
     takeover: session.takeover,
     pinned: session.pinned,
+    pinnedAt: session.pinnedAt,
     archived: session.archived,
+    archivedAt: session.archivedAt,
     unread: session.unread,
     lastReadSeq: session.lastReadSeq,
+    lastSyncedAt: session.lastSyncedAt,
+    sourceObservedAt: session.sourceObservedAt,
+    lastActivityAt: session.lastActivityAt,
+    lastItemAt: session.lastItemAt,
+    lastItemOrderSeq: session.lastItemOrderSeq,
+    sortAt: session.sortAt,
     updatedSeq: session.updatedSeq,
     effectiveRunMode: session.effectiveRunMode,
     runtimeSettings: session.runtimeSettings ?? null,
     updatedAt: relativeSessionTime(session),
   }
+}
+
+function sessionSortMillis(session: SessionView): number {
+  const raw =
+    session.sortAt ||
+    session.lastActivityAt ||
+    session.lastItemAt ||
+    session.lastSyncedAt ||
+    session.sourceObservedAt
+  if (!raw) return 0
+  const value = Date.parse(raw)
+  return Number.isFinite(value) ? value : 0
+}
+
+function sortSessionViews(sessions: SessionView[]): SessionView[] {
+  return [...sessions].sort((a, b) =>
+    sessionSortMillis(b) - sessionSortMillis(a) ||
+    (b.lastItemOrderSeq ?? -1) - (a.lastItemOrderSeq ?? -1) ||
+    b.updatedSeq - a.updatedSeq ||
+    a.id.localeCompare(b.id),
+  )
 }
 
 function isDashboardSnapshotMessage(value: unknown): value is DashboardSnapshotMessage {
@@ -233,10 +268,10 @@ type WorkspaceState = {
   markSessionRead: (id: string) => void
   upsertSession: (session: RealSessionView) => void
   addOptimisticMessage: (message: OptimisticSessionMessage) => void
-  bindOptimisticSession: (localSessionId: string, session: RealSessionView) => void
+  bindOptimisticSession: (localSessionId: string, session: RealSessionView, attachments?: AttachmentRef[]) => void
   clearResolvedOptimisticMessages: (sessionId: string, items: TimelineItem[]) => void
   getOptimisticItems: (sessionId: string) => TimelineItem[]
-  getOptimisticSessionState: (sessionId: string) => SessionStateResponse | null
+  getOptimisticSessionState: (sessionId: string) => SessionLocalTimelineState | null
   isOptimisticSession: (sessionId: string) => boolean
   markOptimisticMessageFailed: (clientMessageId: string, message: string) => void
   appendPathToComposer: (path: string) => boolean
@@ -326,6 +361,15 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   // ── Fetch data from mock API ──────────────────────────────
   const initialLoadDoneRef = React.useRef(false)
 
+  const applyDashboardSnapshot = React.useCallback((message: DashboardSnapshotMessage) => {
+    const nextConnectors = message.connectors.map(mapConnector)
+    const nextSessions = sortSessionViews(message.sessions.map(mapSession))
+    setConnectors((current) => sameStableValue(current, nextConnectors) ? current : nextConnectors)
+    setSessions((current) => sameStableValue(current, nextSessions) ? current : nextSessions)
+    setIsLoading(false)
+    initialLoadDoneRef.current = true
+  }, [])
+
   const fetchData = React.useCallback(async () => {
     if (!initialLoadDoneRef.current) {
       setIsLoading(true)
@@ -336,16 +380,19 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
           dashboardApi.listConnectors(authSession.accessToken),
           dashboardApi.listSessions(authSession.accessToken),
         ])
-        setConnectors(connRes.connectors.map(mapConnector))
-        setSessions(sessRes.sessions.map(mapSession))
+        const nextConnectors = connRes.connectors.map(mapConnector)
+        const nextSessions = sortSessionViews(sessRes.sessions.map(mapSession))
+        setConnectors((current) => sameStableValue(current, nextConnectors) ? current : nextConnectors)
+        setSessions((current) => sameStableValue(current, nextSessions) ? current : nextSessions)
         return
       }
       const [connRes, sessRes] = await Promise.all([
         listMockConnectors("mock-token"),
         listMockSessions("mock-token"),
       ])
-      setConnectors(connRes.connectors)
-      setSessions(sessRes.sessions)
+      const nextSessions = sortSessionViews(sessRes.sessions)
+      setConnectors((current) => sameStableValue(current, connRes.connectors) ? current : connRes.connectors)
+      setSessions((current) => sameStableValue(current, nextSessions) ? current : nextSessions)
     } finally {
       setIsLoading(false)
       initialLoadDoneRef.current = true
@@ -354,13 +401,15 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
   React.useEffect(() => {
     initialLoadDoneRef.current = false
+    setIsLoading(true)
   }, [authSession?.accessToken])
 
   React.useEffect(() => {
+    if (authSession?.accessToken) return
     fetchData()
-  }, [fetchData])
+  }, [authSession?.accessToken, fetchData])
 
-  // ── Dashboard WebSocket + disconnected fallback ────────────
+  // ── Dashboard WebSocket ────────────────────────────────────
   const tokenRef = React.useRef(authSession?.accessToken ?? null)
   tokenRef.current = authSession?.accessToken ?? null
   const sessionsRef = React.useRef(sessions)
@@ -371,12 +420,15 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     if (!authSession?.accessToken) return
     let cancelled = false
     let socket: WebSocket | null = null
-    let pollTimer: number | null = null
     let reconnectTimer: number | null = null
+    let fallbackTimer: number | null = null
 
-    const refetch = () => {
-      if (cancelled) return
-      fetchData()
+    const scheduleInitialFallback = () => {
+      if (cancelled || initialLoadDoneRef.current || fallbackTimer !== null) return
+      fallbackTimer = window.setTimeout(() => {
+        fallbackTimer = null
+        if (!cancelled && !initialLoadDoneRef.current) fetchData()
+      }, 2500)
     }
 
     const connect = async () => {
@@ -392,15 +444,17 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
           try {
             const message = JSON.parse(event.data) as unknown
             if (!isDashboardSnapshotMessage(message)) return
-            setConnectors(message.connectors.map(mapConnector))
-            setSessions(message.sessions.map(mapSession))
-            setIsLoading(false)
-            initialLoadDoneRef.current = true
+            if (fallbackTimer !== null) {
+              window.clearTimeout(fallbackTimer)
+              fallbackTimer = null
+            }
+            applyDashboardSnapshot(message)
           } catch { /* ignore malformed */ }
         }
         socket.onclose = () => {
           if (cancelled) return
           socket = null
+          scheduleInitialFallback()
           reconnectTimer = window.setTimeout(() => {
             reconnectTimer = null
             void connect()
@@ -411,6 +465,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         }
       } catch {
         if (cancelled) return
+        scheduleInitialFallback()
         reconnectTimer = window.setTimeout(() => {
           reconnectTimer = null
           void connect()
@@ -420,21 +475,13 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
     void connect()
 
-    // Fallback polling only while the dashboard WebSocket is disconnected.
-    pollTimer = window.setInterval(() => {
-      if (cancelled) return
-      if (!socket || socket.readyState !== WebSocket.OPEN) {
-        refetch()
-      }
-    }, 30_000)
-
     return () => {
       cancelled = true
       socket?.close()
-      if (pollTimer !== null) window.clearInterval(pollTimer)
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
+      if (fallbackTimer !== null) window.clearTimeout(fallbackTimer)
     }
-  }, [authSession?.accessToken, fetchData])
+  }, [applyDashboardSnapshot, authSession?.accessToken, fetchData])
 
   // ── Hash routing ──────────────────────────────────────────
   React.useEffect(() => {
@@ -480,10 +527,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         const mapped = mapSession(response.session)
         setSessions((prev) => {
           const index = prev.findIndex((item) => item.id === mapped.id)
-          if (index === -1) return [mapped, ...prev]
+          if (index === -1) return sortSessionViews([mapped, ...prev])
           const next = [...prev]
           next[index] = mapped
-          return next
+          return sortSessionViews(next)
         })
       })
       .catch(() => {
@@ -619,7 +666,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       if (authSession?.accessToken) {
         const response = await dashboardApi.patchSession(authSession.accessToken, id, { title: nextTitle })
         const mapped = mapSession(response.session)
-        setSessions((prev) => prev.map((s) => (s.id === id ? mapped : s)))
+        setSessions((prev) => sortSessionViews(prev.map((s) => (s.id === id ? mapped : s))))
       } else {
         await patchMockSession("mock-token", id, { title: nextTitle })
       }
@@ -636,10 +683,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     const mapped = mapSession(session)
     setSessions((prev) => {
       const index = prev.findIndex((item) => item.id === mapped.id)
-      if (index === -1) return [mapped, ...prev]
+      if (index === -1) return sortSessionViews([mapped, ...prev])
       const next = [...prev]
       next[index] = mapped
-      return next
+      return sortSessionViews(next)
     })
   }, [])
 
@@ -655,15 +702,15 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       const mapped = mapSession(message.session)
       setSessions((prev) => {
         const index = prev.findIndex((item) => item.id === mapped.id)
-        if (index === -1) return [mapped, ...prev]
+        if (index === -1) return sortSessionViews([mapped, ...prev])
         const next = [...prev]
         next[index] = mapped
-        return next
+        return sortSessionViews(next)
       })
     }
   }, [])
 
-  const bindOptimisticSession = React.useCallback((localSessionId: string, session: RealSessionView) => {
+  const bindOptimisticSession = React.useCallback((localSessionId: string, session: RealSessionView, attachments: AttachmentRef[] = []) => {
     setOptimisticMessages((prev) =>
       prev.map((message) =>
         message.sessionId === localSessionId || message.sessionId === session.id
@@ -671,7 +718,19 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
               ...message,
               sessionId: session.id,
               session,
-              item: { ...message.item, sessionId: session.id },
+              state: message.state
+                ? {
+                    ...message.state,
+                    sessionId: session.id,
+                    externalSessionId: session.externalSessionId,
+                  }
+                : undefined,
+              item: {
+                ...(attachments.length > 0
+                  ? withServerAttachments(message.item, attachments)
+                  : message.item),
+                sessionId: session.id,
+              },
             }
           : message,
       ),
@@ -680,10 +739,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     setSessions((prev) => {
       const withoutLocal = prev.filter((item) => item.id !== localSessionId)
       const index = withoutLocal.findIndex((item) => item.id === mapped.id)
-      if (index === -1) return [mapped, ...withoutLocal]
+      if (index === -1) return sortSessionViews([mapped, ...withoutLocal])
       const next = [...withoutLocal]
       next[index] = mapped
-      return next
+      return sortSessionViews(next)
     })
     const currentRoute = routeRef.current
     if (currentRoute.page === "session" && currentRoute.sessionId === localSessionId) {
@@ -709,11 +768,18 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         .filter((id): id is string => Boolean(id)),
     )
     if (resolvedClientMessageIds.size === 0) return
-    setOptimisticMessages((prev) =>
-      prev.filter(
-        (message) => message.sessionId !== sessionId || !resolvedClientMessageIds.has(message.clientMessageId),
-      ),
-    )
+    setOptimisticMessages((prev) => {
+      const next: OptimisticSessionMessage[] = []
+      for (const message of prev) {
+        const resolved = message.sessionId === sessionId && resolvedClientMessageIds.has(message.clientMessageId)
+        if (resolved) {
+          revokeOptimisticItemResources(message.item)
+          continue
+        }
+        next.push(message)
+      }
+      return next
+    })
   }, [])
 
   const getOptimisticItems = React.useCallback((sessionId: string) => {
@@ -722,16 +788,17 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       .map((message) => message.item)
   }, [optimisticMessages])
 
-  const getOptimisticSessionState = React.useCallback((sessionId: string): SessionStateResponse | null => {
+  const getOptimisticSessionState = React.useCallback((sessionId: string): SessionLocalTimelineState | null => {
     const messages = optimisticMessages.filter((message) => message.sessionId === sessionId)
     const session = messages.find((message) => message.session)?.session
+    const state = messages.find((message) => message.state)?.state
     if (!session) return null
     const items = mergeTimelineItems([], messages.map((message) => message.item))
     const nextSeq = items.reduce((max, item) => Math.max(max, item.updatedSeq), 0)
     return {
       session,
+      state: state ?? null,
       items,
-      approvals: [],
       nextSeq,
       hasMore: false,
       serverTime: new Date().toISOString(),
@@ -814,4 +881,22 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   }
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>
+}
+
+function sameStableValue(left: unknown, right: unknown): boolean {
+  return stableJson(left) === stableJson(right)
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableJson(item)).join(",")}]`
+  }
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`)
+      .join(",")}}`
+  }
+  return JSON.stringify(value)
 }

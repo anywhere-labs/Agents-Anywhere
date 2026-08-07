@@ -5,8 +5,7 @@ from typing import Any, Protocol
 from agent_server.core.catalogs import CatalogType, CatalogUpdateOutcome
 from agent_server.core.models import (
     ConnectorView,
-    Notice,
-    NoticeIn,
+    SessionRuntimeState,
     SessionStatus,
     SessionView,
     TimelineItem,
@@ -48,24 +47,7 @@ class CatalogRepository(Protocol):
     ) -> CatalogUpdateOutcome: ...
 
 
-class NoticeRepository(Protocol):
-    async def get_notice(self, notice_id: str) -> Notice: ...
-
-    async def upsert_notice(self, notice: NoticeIn) -> Notice: ...
-
-    async def update_notice_status(
-        self,
-        notice_id: str,
-        status: str,
-        *,
-        expected_status: str | None = None,
-        context_patch: dict[str, Any] | None = None,
-    ) -> Notice: ...
-
-    async def list_open_blocking_notices(self, session_id: str) -> list[Notice]: ...
-
-
-class SessionStateRepository(SessionLookupRepository, NoticeRepository, Protocol):
+class SessionStateRepository(SessionLookupRepository, Protocol):
     async def get_active_run(self, session_id: str) -> dict[str, Any] | None: ...
 
     async def has_active_timeline_item(self, session_id: str) -> bool: ...
@@ -78,7 +60,28 @@ class SessionStateRepository(SessionLookupRepository, NoticeRepository, Protocol
         status: SessionStatus,
         *,
         expected_status: SessionStatus | None = None,
+        mark_read_on_change: bool = False,
     ) -> SessionView: ...
+
+    async def get_session_runtime_state(
+        self,
+        session_id: str,
+        *,
+        user_id: str | None = None,
+    ) -> SessionRuntimeState: ...
+
+    async def upsert_session_runtime_state(
+        self,
+        *,
+        session_id: str,
+        runtime: str,
+        external_session_id: str | None = None,
+        status: str | None = None,
+        selections: dict[str, str | None] | None = None,
+        status_reason: str | None = None,
+        error: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> SessionRuntimeState: ...
 
 
 class TimelineReader(Protocol):
@@ -94,15 +97,8 @@ class TimelineEffectRepository(Protocol):
         session_id: str,
         item: TimelineItemIn,
         source_observed_at: str | None = None,
+        mark_read_on_change: bool = False,
     ) -> TimelineItem: ...
-
-class InteractionRepository(SessionStateRepository, Protocol):
-    pass
-
-
-class InteractionProjectionRepository(SessionStateRepository, Protocol):
-    pass
-
 
 class InteractionResolutionRepository(
     SessionLookupRepository,
@@ -124,13 +120,19 @@ class ConnectorIngestRepository(DashboardEventRepository, Protocol):
 
     async def get_session_seq(self, session_id: str) -> int: ...
 
+    async def set_session_status(
+        self,
+        session_id: str,
+        status: SessionStatus,
+        *,
+        expected_status: SessionStatus | None = None,
+        mark_read_on_change: bool = False,
+    ) -> SessionView: ...
+
     async def list_sessions_for_connector(
         self,
         connector_id: str,
     ) -> list[SessionView]: ...
-
-    async def list_open_notices(self, session_id: str) -> list[Notice]: ...
-
 
 class ConnectorNotificationRepository(
     CatalogRepository,
@@ -143,6 +145,13 @@ class ConnectorNotificationRepository(
     async def get_session_runtime(self, session_id: str) -> str | None: ...
 
     async def record_connector_activity(self, connector_id: str) -> None: ...
+
+    async def get_protocol_capabilities(
+        self,
+        connector_id: str,
+        *,
+        user_id: str | None = None,
+    ) -> dict[str, Any]: ...
 
     async def replace_timeline(
         self,
@@ -158,6 +167,16 @@ class ConnectorNotificationRepository(
         session_id: str,
         items: list[TimelineItemIn],
         source_observed_at: str | None = None,
+        mark_read_on_change: bool = False,
+    ) -> list[TimelineItem]: ...
+
+    async def sync_timeline_items(
+        self,
+        *,
+        session_id: str,
+        items: list[TimelineItemIn],
+        source_observed_at: str | None = None,
+        mark_read_on_change: bool = False,
     ) -> list[TimelineItem]: ...
 
     async def resolve_connector_session_id(
@@ -167,6 +186,14 @@ class ConnectorNotificationRepository(
         session_id: str,
         external_session_id: str | None = None,
     ) -> str: ...
+
+    async def set_session_archived(
+        self,
+        session_id: str,
+        archived: bool,
+        *,
+        user_id: str | None = None,
+    ) -> SessionView: ...
 
     async def update_active_run_turn_id(self, session_id: str, turn_id: str) -> None: ...
 
@@ -261,11 +288,22 @@ class SessionRunRepository(
 
     async def create_session(self, **values: Any) -> SessionView: ...
 
+    async def save_user_uploaded_file(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        name: str,
+        data: bytes,
+        media_type: str | None = None,
+    ) -> dict[str, Any]: ...
+
     async def read_uploaded_file(
         self,
         *,
         session_id: str,
         file_id: str,
+        user_id: str,
     ) -> dict[str, Any]: ...
 
     async def resolve_connector_session_id(

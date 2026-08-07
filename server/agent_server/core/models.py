@@ -7,8 +7,16 @@ from pydantic import BaseModel, ConfigDict, Field
 RuntimeName = Literal["codex", "claude", "opencode", "acp"]
 ConnectorStatus = Literal["offline", "online"]
 ConnectorDeviceOs = Literal["macos", "windows", "linux"]
-SessionStatus = Literal["idle", "pending", "running", "stopping", "blocked"]
-TimelineType = Literal["turn.start", "turn.end", "message", "tool", "artifact", "system"]
+SessionStatus = Literal["idle", "waiting", "pending", "running", "stopping", "blocked"]
+TimelineType = Literal[
+    "turn.start",
+    "turn.end",
+    "message",
+    "tool",
+    "artifact",
+    "marker",
+    "system",
+]
 TimelineStatus = Literal[
     "pending",
     "running",
@@ -511,8 +519,33 @@ class SessionCreateRequest(BaseModel):
     externalSessionId: str | None = None
     title: str | None = None
     cwd: str | None = None
-    modelSelectionId: str | None = None
-    permissionSelectionId: str | None = None
+    selections: dict[str, str | None] = Field(default_factory=dict)
+
+
+class AttachmentRef(BaseModel):
+    fileId: str = Field(min_length=1, max_length=64)
+
+
+class InlineAttachmentRef(BaseModel):
+    fileId: str = Field(min_length=1, max_length=64)
+    name: str = Field(min_length=1, max_length=512)
+    mediaType: str = Field(default="application/octet-stream", max_length=255)
+    size: int | None = Field(default=None, ge=0)
+    sha256: str | None = Field(default=None, max_length=128)
+    contentBase64: str = Field(min_length=1)
+
+
+class SessionCreateAndStartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    connectorId: str
+    runtime: RuntimeName = "codex"
+    title: str | None = None
+    cwd: str | None = None
+    content: str
+    selections: dict[str, str | None] = Field(default_factory=dict)
+    attachments: list[InlineAttachmentRef] = Field(default_factory=list, max_length=10)
+    clientMessageId: str | None = None
 
 
 class SessionView(BaseModel):
@@ -538,8 +571,38 @@ class SessionView(BaseModel):
     lastItemOrderSeq: int | None = None
     sortAt: str | None = None
     updatedSeq: int
-    modelSelectionId: str | None = None
-    permissionSelectionId: str | None = None
+
+
+class SessionRuntimeState(BaseModel):
+    sessionId: str
+    runtime: RuntimeName
+    externalSessionId: str | None = None
+    status: SessionStatus = "idle"
+    selections: dict[str, str | None] = Field(default_factory=dict)
+    statusReason: str | None = None
+    error: dict[str, Any] | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    updatedSeq: int
+    createdAt: str
+    updatedAt: str
+
+
+class SessionRuntimeStateResponse(BaseModel):
+    state: SessionRuntimeState
+    serverTime: str
+
+
+class SessionSelectionPatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    selections: dict[str, str | None] = Field(min_length=1, max_length=32)
+
+
+class SessionSelectionPatchResponse(BaseModel):
+    ok: bool
+    state: SessionRuntimeState | None = None
+    connectorResult: dict[str, Any] | None = None
+    serverTime: str
 
 
 class SessionPatchRequest(BaseModel):
@@ -551,10 +614,6 @@ class SessionPatchRequest(BaseModel):
 class BulkArchiveRequest(BaseModel):
     ids: list[str] = Field(min_length=1, max_length=200)
     archived: bool
-
-
-class BulkReadRequest(BaseModel):
-    ids: list[str] = Field(min_length=1, max_length=200)
 
 
 class BulkArchiveResponse(BaseModel):
@@ -650,9 +709,11 @@ NoticeType = Literal["notification", "interaction"]
 NoticeSeverity = Literal["info", "success", "warning", "error"]
 NoticeStatus = Literal[
     "open",
+    "responding",
     "response_accepted",
     "resolving",
     "resolved",
+    "closed",
     "expired",
     "cancelled",
     "failed",
@@ -683,7 +744,7 @@ class NoticeAction(BaseModel):
 
 class NoticeSource(BaseModel):
     runtime: RuntimeName | Literal["platform"] | None = None
-    adapter: str | None = None
+    component: str | None = None
     approvalId: str | None = None
     timelineItemId: str | None = None
     operationId: str | None = None
@@ -716,22 +777,19 @@ class Notice(NoticeIn):
     updatedAt: str
 
 
-class InteractionRespondRequest(BaseModel):
-    actionId: str
-    input: dict[str, Any] | None = None
-
-
-class SessionStateResponse(BaseModel):
-    session: SessionView
-    items: list[TimelineItem]
-    approvals: list[Approval]
-    nextSeq: int
-    hasMore: bool
+class RuntimeNoticeListResponse(BaseModel):
+    notices: list[NoticeIn] = Field(default_factory=list)
     serverTime: str
 
 
-class AttachmentRef(BaseModel):
-    fileId: str = Field(min_length=1, max_length=64)
+class NoticeListResponse(BaseModel):
+    notices: list[Notice] = Field(default_factory=list)
+    serverTime: str
+
+
+class InteractionRespondRequest(BaseModel):
+    actionId: str
+    input: dict[str, Any] | None = None
 
 
 class MessageCreateRequest(BaseModel):
@@ -739,8 +797,6 @@ class MessageCreateRequest(BaseModel):
 
     content: str
     attachments: list[AttachmentRef] = Field(default_factory=list, max_length=10)
-    modelSelectionId: str | None = None
-    permissionSelectionId: str | None = None
     # Client-generated id (e.g. optimistic temp id). Forwarded to the connector;
     # the connector tags the resulting timeline item so the frontend can
     # dedupe its optimistic placeholder against the real server item.
@@ -755,9 +811,34 @@ class SessionCommandRequest(BaseModel):
     raw: str | None = Field(default=None, max_length=4096)
 
 
+class RuntimeCommandView(BaseModel):
+    id: str
+    title: str
+    description: str | None = None
+    aliases: list[str] = Field(default_factory=list)
+    category: str | None = None
+    scope: str = "session"
+    enabled: bool = True
+    disabledReason: str | None = None
+    acceptsArgs: bool = False
+    argsSchema: dict[str, Any] | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class SessionCommandListResponse(BaseModel):
+    commands: list[RuntimeCommandView] = Field(default_factory=list)
+    serverTime: str
+
+
+class RuntimeCommandListResponse(BaseModel):
+    commands: list[RuntimeCommandView] = Field(default_factory=list)
+    serverTime: str
+
+
 class SessionCommandResponse(BaseModel):
     command: str
     ok: bool = True
+    code: str | None = None
     message: str | None = None
     result: Any = None
     session: SessionView | None = None

@@ -5,22 +5,17 @@ from typing import Any, ClassVar
 from loguru import logger
 from pydantic import ValidationError
 
-from agent_server.core.catalogs import CatalogType
-from agent_server.core.interactions import InteractionDomainError
-from agent_server.core.models import NoticeIn, SessionStatus, TimelineItemIn
+from agent_server.core.catalogs import CatalogType, validate_model_catalog, validate_permission_catalog
+from agent_server.core.models import NoticeIn, SessionStatus, SessionView, TimelineItemIn
 from agent_server.core.protocol import (
+    ProtocolCapability,
     ProtocolCapabilitySet,
+    ProtocolModelCatalog,
+    ProtocolPermissionCatalog,
 )
-from agent_server.services.catalogs import CatalogService, CatalogServiceError
 from agent_server.services.connector_realtime import ConnectorRealtimeService
 from agent_server.services.ingest_effects import IngestEffect
-from agent_server.services.interactions import InteractionProjectionService
-from agent_server.services.notices import (
-    cancel_turn_blocking_interactions,
-    upsert_execution_error_interaction,
-)
 from agent_server.services.repository_ports import ConnectorNotificationRepository
-from agent_server.services.session_states import SessionStateService
 from agent_server.services.timeline_effects import (
     close_waiting_approval_items_for_finished_turn,
 )
@@ -44,12 +39,11 @@ class ConnectorNotificationService:
         self._realtime = realtime
         self._handlers = (
             ConnectorProtocolNotificationHandler(store),
+            RuntimeCatalogNotificationHandler(store),
+            SessionStateNotificationHandler(store),
             SessionNotificationHandler(store),
             TimelineNotificationHandler(store),
-            InteractionNotificationHandler(
-                store,
-                InteractionProjectionService(store),
-            ),
+            InteractionNotificationHandler(store),
         )
 
     async def apply(
@@ -63,6 +57,14 @@ class ConnectorNotificationService:
             raise NotificationValidationError(
                 "unsupported_notification",
                 "approval.requested was replaced by notice.upsert interactions",
+            )
+        if method in {
+            "protocol.modelCatalogUpdated",
+            "protocol.permissionCatalogUpdated",
+        }:
+            raise NotificationValidationError(
+                "unsupported_notification",
+                "runtime catalogs are live Connector RPC reads and are no longer ingested",
             )
         if await self._realtime.apply(
             connector_id=connector_id,
@@ -86,13 +88,11 @@ class ConnectorProtocolNotificationHandler:
         "connector.heartbeat",
         "connector.preferencesUpdated",
         "protocol.capabilitiesUpdated",
-        "protocol.modelCatalogUpdated",
-        "protocol.permissionCatalogUpdated",
+        "runtime.capability.updated",
     }
 
     def __init__(self, store: ConnectorNotificationRepository) -> None:
         self._store = store
-        self._catalogs = CatalogService(store)
 
     async def apply(
         self,
@@ -108,11 +108,9 @@ class ConnectorProtocolNotificationHandler:
         elif method == "connector.preferencesUpdated":
             await self._update_preferences(connector_id, params)
         elif method == "protocol.capabilitiesUpdated":
-            await self._update_capabilities(connector_id, params)
-        elif method == "protocol.modelCatalogUpdated":
-            await self._update_catalog(connector_id, params, catalog_type="model")
-        elif method == "protocol.permissionCatalogUpdated":
-            await self._update_catalog(connector_id, params, catalog_type="permission")
+            return await self._update_capabilities(connector_id, params)
+        elif method == "runtime.capability.updated":
+            return await self._merge_runtime_capability_update(connector_id, params)
         return IngestEffect()
 
     async def _update_preferences(
@@ -132,7 +130,7 @@ class ConnectorProtocolNotificationHandler:
         self,
         connector_id: str,
         params: dict[str, Any],
-    ) -> None:
+    ) -> IngestEffect:
         try:
             capability_set = ProtocolCapabilitySet.model_validate(params)
         except ValidationError as exc:
@@ -141,47 +139,65 @@ class ConnectorProtocolNotificationHandler:
                 str(exc),
             ) from exc
         try:
+            current = ProtocolCapabilitySet.model_validate(
+                await self._store.get_protocol_capabilities(connector_id)
+            )
+            if capability_sets_semantically_equal(current, capability_set):
+                return IngestEffect()
             await self._store.update_protocol_capabilities(
                 connector_id,
                 capability_set.model_dump(mode="json"),
             )
+            return IngestEffect(protocol_changed=True)
         except KeyError:
             logger.warning(
                 "protocol capabilities update for unknown connector connector_id={}",
                 connector_id,
             )
+            return IngestEffect()
 
-    async def _update_catalog(
+    async def _merge_runtime_capability_update(
         self,
         connector_id: str,
         params: dict[str, Any],
-        *,
-        catalog_type: CatalogType,
-    ) -> None:
+    ) -> IngestEffect:
         try:
-            await self._catalogs.ingest(
-                connector_id,
-                catalog_type=catalog_type,
-                payload=params,
-            )
-        except CatalogServiceError as exc:
-            code = f"invalid_protocol_{catalog_type}_catalog" if exc.code == "invalid_catalog" else exc.code
+            incoming = ProtocolCapabilitySet.model_validate(params)
+        except ValidationError as exc:
             raise NotificationValidationError(
-                code,
-                exc.detail,
+                "invalid_runtime_capabilities",
+                str(exc),
             ) from exc
+        try:
+            current = ProtocolCapabilitySet.model_validate(
+                await self._store.get_protocol_capabilities(connector_id)
+            )
+            merged = merge_capability_sets(current, incoming)
+            if capability_sets_semantically_equal(current, merged):
+                return IngestEffect()
+            await self._store.update_protocol_capabilities(
+                connector_id,
+                merged.model_dump(mode="json"),
+            )
         except KeyError:
             logger.warning(
-                "{} catalog update for unknown connector connector_id={}",
-                catalog_type,
+                "runtime capability update for unknown connector connector_id={}",
                 connector_id,
             )
+            return IngestEffect()
+        session_id = runtime_capability_update_session_id(incoming)
+        return IngestEffect(
+            session_id=session_id,
+            session_changed=session_id is not None,
+            protocol_changed=True,
+        )
 
 
-class SessionNotificationHandler:
+class RuntimeCatalogNotificationHandler:
+    METHODS: ClassVar[set[str]] = {"runtime.catalog.updated"}
+
     def __init__(self, store: ConnectorNotificationRepository) -> None:
         self._store = store
-        self._session_states = SessionStateService(store)
 
     async def apply(
         self,
@@ -190,12 +206,53 @@ class SessionNotificationHandler:
         method: str,
         params: dict[str, Any],
     ) -> IngestEffect | None:
-        if method != "session.updated":
+        if method not in self.METHODS:
             return None
+
+        catalog_type = runtime_catalog_type_from_params(params)
+        catalog = runtime_catalog_from_params(catalog_type, params)
+        outcome = await self._store.update_protocol_catalog(
+            connector_id,
+            runtime=catalog.runtime,
+            catalog_type=catalog_type,
+            revision=catalog.revision,
+            catalog=catalog.model_dump(mode="json"),
+        )
+        if outcome in {"idempotent", "stale"}:
+            return IngestEffect()
+        if outcome == "conflict":
+            raise NotificationValidationError(
+                "catalog_revision_conflict",
+                "catalog content changed without a revision increase",
+            )
+
+        sessions = await self._store.list_sessions_for_connector(connector_id)
+        session_ids = session_ids_for_runtime_catalog(sessions, catalog.runtime)
+        return IngestEffect(
+            session_ids=session_ids,
+            catalogs={catalog_type: catalog.model_dump(mode="json")},
+        )
+
+
+class SessionNotificationHandler:
+    def __init__(self, store: ConnectorNotificationRepository) -> None:
+        self._store = store
+
+    async def apply(
+        self,
+        *,
+        connector_id: str,
+        method: str,
+        params: dict[str, Any],
+    ) -> IngestEffect | None:
+        if method not in {"session.meta.upsert", "session.updated"}:
+            return None
+        if method == "session.updated":
+            _reject_legacy_selection_fields(params, notification=method)
         local_state = _local_session_state(params)
-        observed_status = _v2_session_status(params.get("status"))
         session_id = params["sessionId"]
         external_session_id = params.get("externalSessionId")
+        archived = _session_meta_archived(params, local_state)
         try:
             if isinstance(external_session_id, str):
                 session_id = await self._store.resolve_connector_session_id(
@@ -203,7 +260,7 @@ class SessionNotificationHandler:
                     session_id=session_id,
                     external_session_id=external_session_id,
                 )
-            await self._store.update_session_snapshot(
+            session = await self._store.update_session_snapshot(
                 session_id=session_id,
                 title=params.get("title"),
                 cwd=params.get("cwd"),
@@ -211,25 +268,12 @@ class SessionNotificationHandler:
                 last_synced_at=params.get("lastSyncedAt"),
                 source_observed_at=params.get("sourceObservedAt"),
                 last_activity_at=params.get("lastActivityAt"),
-                model_selection_id=_string_or_none(params.get("modelSelectionId")),
-                permission_selection_id=_string_or_none(params.get("permissionSelectionId")),
+                mark_read_on_change=True,
             )
-            await self._session_states.reconcile(
-                session_id,
-                observed_status=observed_status,
-                settle_stopping=observed_status not in {None, "stopping"},
-            )
-            return IngestEffect(session_id=session_id, session_changed=True)
+            if archived is not None and session.archived != archived:
+                session = await self._store.set_session_archived(session.id, archived)
+            return IngestEffect(session_id=session.id, session_changed=True)
         except KeyError:
-            if local_state in {"archived", "deleted", "unresumable"}:
-                logger.info(
-                    "ignored local {} session discovery connector_id={} session_id={} external_session_id={}",
-                    local_state,
-                    connector_id,
-                    session_id,
-                    external_session_id,
-                )
-                return IngestEffect()
             session = await self._store.upsert_connector_session(
                 connector_id=connector_id,
                 session_id=session_id,
@@ -240,15 +284,57 @@ class SessionNotificationHandler:
                 last_synced_at=params.get("lastSyncedAt"),
                 source_observed_at=params.get("sourceObservedAt"),
                 last_activity_at=params.get("lastActivityAt"),
-                model_selection_id=_string_or_none(params.get("modelSelectionId")),
-                permission_selection_id=_string_or_none(params.get("permissionSelectionId")),
             )
-            await self._session_states.reconcile(
-                session.id,
-                observed_status=observed_status,
-                settle_stopping=observed_status not in {None, "stopping"},
-            )
+            if archived is not None and session.archived != archived:
+                session = await self._store.set_session_archived(session.id, archived)
             return IngestEffect(session_id=session.id, session_changed=True)
+
+
+class SessionStateNotificationHandler:
+    def __init__(self, store: ConnectorNotificationRepository) -> None:
+        self._store = store
+
+    async def apply(
+        self,
+        *,
+        connector_id: str,
+        method: str,
+        params: dict[str, Any],
+    ) -> IngestEffect | None:
+        if method != "session.state.updated":
+            return None
+        _reject_legacy_selection_fields(params, notification=method)
+        session_id = params["sessionId"]
+        runtime = params.get("runtime") or "codex"
+        external_session_id = _string_or_none(params.get("externalSessionId"))
+        if external_session_id is not None:
+            try:
+                session_id = await self._store.resolve_connector_session_id(
+                    connector_id=connector_id,
+                    session_id=session_id,
+                    external_session_id=external_session_id,
+                )
+            except KeyError:
+                pass
+        try:
+            await self._store.get_session(session_id)
+        except KeyError:
+            session = await self._store.upsert_connector_session(
+                connector_id=connector_id,
+                session_id=session_id,
+                runtime=runtime,
+                external_session_id=external_session_id,
+            )
+            session_id = session.id
+        return IngestEffect(
+            session_id=session_id,
+            runtime_state=runtime_state_from_session_state_params(
+                session_id=session_id,
+                runtime=runtime,
+                external_session_id=external_session_id,
+                params=params,
+            ),
+        )
 
 
 class TimelineNotificationHandler:
@@ -256,7 +342,6 @@ class TimelineNotificationHandler:
 
     def __init__(self, store: ConnectorNotificationRepository) -> None:
         self._store = store
-        self._session_states = SessionStateService(store)
 
     async def apply(
         self,
@@ -287,7 +372,6 @@ class TimelineNotificationHandler:
             return IngestEffect()
         items = [_timeline_item_for_session(item, session_id) for item in items]
         items = await _tag_active_run_user_messages(self._store, session_id, items)
-        previous_open_turn_id = await self._store.get_open_turn_id(session_id)
         previous_seq = await self._store.get_session_seq(session_id)
         replace_snapshot = await _should_replace_timeline_snapshot(
             self._store,
@@ -299,46 +383,24 @@ class TimelineNotificationHandler:
                 session_id=session_id,
                 source_observed_at=params.get("sourceObservedAt"),
                 items=items,
+                mark_read_on_change=True,
             )
         else:
-            stored_items, removed_items = await self._store.replace_timeline(
+            stored_items = await self._store.sync_timeline_items(
                 session_id=session_id,
                 source_observed_at=params.get("sourceObservedAt"),
                 items=items,
+                mark_read_on_change=True,
             )
-        if replace_snapshot:
-            removed_items = False
         await _reconcile_active_run_from_timeline(self._store, session_id, items)
         for item in items:
             if item.type != "turn.end":
                 continue
-            if _timeline_item_failed(item):
-                await upsert_execution_error_interaction(
-                    self._store,
-                    session_id=session_id,
-                    timeline_item=item,
-                )
-            else:
-                await cancel_turn_blocking_interactions(
-                    self._store,
-                    session_id=session_id,
-                    turn_id=item.turnId,
-                    reason="turn_finished",
-                    reconcile=False,
-                )
-        open_turn_id = await self._store.get_open_turn_id(session_id)
-        closed_previous_turn = previous_open_turn_id is not None and any(
-            item.type == "turn.end" and item.turnId == previous_open_turn_id
-            for item in items
-        )
-        if (
-            open_turn_id is not None
-            or closed_previous_turn
-            or any(_timeline_item_is_active_work(item) for item in items)
-        ):
-            await self._session_states.reconcile(
+            await close_waiting_approval_items_for_finished_turn(
+                self._store,
                 session_id,
-                settle_stopping=closed_previous_turn,
+                item,
+                mark_read_on_change=True,
             )
         changed_items = (
             stored_items
@@ -352,9 +414,8 @@ class TimelineNotificationHandler:
             if push_items
             else None,
             timeline_reset=replace_snapshot,
-            session_changed=True,
-            notices_changed=any(item.type == "turn.end" for item in items),
-            needs_refetch=removed_items or not push_items,
+            session_changed=bool(changed_items),
+            needs_refetch=not push_items,
         )
 
     async def _upsert(
@@ -377,6 +438,7 @@ class TimelineNotificationHandler:
             session_id=session_id,
             source_observed_at=params.get("sourceObservedAt"),
             item=item,
+            mark_read_on_change=True,
         )
         if item.type == "turn.start" and item.turnId:
             await self._store.update_active_run_turn_id(session_id, item.turnId)
@@ -385,33 +447,14 @@ class TimelineNotificationHandler:
                 self._store,
                 session_id,
                 item,
+                mark_read_on_change=True,
             )
-            if _timeline_item_failed(item):
-                await upsert_execution_error_interaction(
-                    self._store,
-                    session_id=session_id,
-                    timeline_item=item,
-                )
-            else:
-                await cancel_turn_blocking_interactions(
-                    self._store,
-                    session_id=session_id,
-                    turn_id=item.turnId,
-                    reason="turn_finished",
-                    reconcile=False,
-                )
             await self._store.clear_active_run(session_id)
         affects_run_state = _timeline_item_affects_run_state(item)
-        if affects_run_state:
-            await self._session_states.reconcile(
-                session_id,
-                settle_stopping=item.type == "turn.end",
-            )
         return IngestEffect(
             session_id=session_id,
             item=stored.model_dump(mode="json"),
             session_changed=affects_run_state,
-            notices_changed=item.type == "turn.end",
         )
 
 
@@ -421,14 +464,8 @@ class InteractionNotificationHandler:
         "runtime.error",
     }
 
-    def __init__(
-        self,
-        store: ConnectorNotificationRepository,
-        projections: InteractionProjectionService,
-    ) -> None:
+    def __init__(self, store: ConnectorNotificationRepository) -> None:
         self._store = store
-        self._projections = projections
-        self._session_states = SessionStateService(store)
 
     async def apply(
         self,
@@ -450,20 +487,10 @@ class InteractionNotificationHandler:
             raise NotificationValidationError("invalid_notice", str(exc)) from exc
         if await _session_disabled(self._store, notice.sessionId):
             return IngestEffect()
-        if notice.type == "interaction":
-            try:
-                stored = await self._projections.project_interaction(notice)
-            except InteractionDomainError as exc:
-                raise NotificationValidationError(
-                    "invalid_interaction",
-                    exc.detail,
-                ) from exc
-        else:
-            stored = await self._store.upsert_notice(notice)
-            await self._session_states.reconcile(stored.sessionId)
         return IngestEffect(
-            session_id=stored.sessionId,
-            session_changed=stored.blocking is not None,
+            session_id=notice.sessionId,
+            notices=[notice],
+            session_changed=notice.type == "interaction" or notice.blocking is not None,
             notices_changed=True,
         )
 
@@ -474,23 +501,137 @@ class InteractionNotificationHandler:
             session_id,
         ):
             return IngestEffect()
-        await upsert_execution_error_interaction(
-            self._store,
-            session_id=session_id,
-            title="Runtime error",
-            message=_string_or_none(params.get("message")),
-            error={
-                "code": "runtime_error",
-                "message": params.get("message") or "The runtime reported an error.",
-                "details": params,
-            },
-            reason="runtime_error",
+        notice = NoticeIn.model_validate(
+            {
+                "noticeId": params.get("noticeId") or f"runtime_error_{session_id}",
+                "type": "notification",
+                "sessionId": session_id,
+                "source": {
+                    "runtime": _string_or_none(params.get("runtime")),
+                    "component": "runtime",
+                    "operationId": _string_or_none(params.get("operationId")),
+                },
+                "title": params.get("title") or "Runtime error",
+                "message": _string_or_none(params.get("message")),
+                "severity": "error",
+                "status": params.get("status") or "open",
+                "context": {
+                    "error": {
+                        "code": "runtime_error",
+                        "message": params.get("message")
+                        or "The runtime reported an error.",
+                        "details": params,
+                    },
+                    "reason": "runtime_error",
+                },
+            }
         )
         return IngestEffect(
             session_id=session_id,
+            notices=[notice],
             session_changed=True,
             notices_changed=True,
         )
+
+
+def merge_capability_sets(
+    current: ProtocolCapabilitySet,
+    incoming: ProtocolCapabilitySet,
+) -> ProtocolCapabilitySet:
+    capabilities_by_key = {
+        capability_identity_key(capability): capability
+        for capability in current.capabilities
+    }
+    for capability in incoming.capabilities:
+        capabilities_by_key[capability_identity_key(capability)] = capability
+    return ProtocolCapabilitySet(
+        revision=max(current.revision, incoming.revision),
+        capabilities=list(capabilities_by_key.values()),
+    )
+
+
+def capability_sets_semantically_equal(
+    left: ProtocolCapabilitySet,
+    right: ProtocolCapabilitySet,
+) -> bool:
+    return capability_set_fingerprint(left) == capability_set_fingerprint(right)
+
+
+def capability_set_fingerprint(value: ProtocolCapabilitySet) -> list[dict[str, Any]]:
+    return sorted(
+        (capability.model_dump(mode="json") for capability in value.capabilities),
+        key=lambda item: (
+            str(item.get("capabilityId") or ""),
+            str(item.get("runtime") or ""),
+            str(item.get("scope") or ""),
+            str(item.get("sessionId") or ""),
+        ),
+    )
+
+
+def runtime_catalog_type_from_params(params: dict[str, Any]) -> CatalogType:
+    catalog_type = params.get("catalogType")
+    if catalog_type == "model" or catalog_type == "permission":
+        return catalog_type
+    raise NotificationValidationError(
+        "invalid_runtime_catalog",
+        "runtime.catalog.updated requires catalogType model or permission",
+    )
+
+
+def runtime_catalog_from_params(
+    catalog_type: CatalogType,
+    params: dict[str, Any],
+) -> ProtocolModelCatalog | ProtocolPermissionCatalog:
+    raw_catalog = params.get("catalog")
+    if not isinstance(raw_catalog, dict):
+        raise NotificationValidationError(
+            "invalid_runtime_catalog",
+            "runtime.catalog.updated requires catalog",
+        )
+    try:
+        if catalog_type == "model":
+            model_catalog = ProtocolModelCatalog.model_validate(raw_catalog)
+            validate_model_catalog(model_catalog)
+            return model_catalog
+        permission_catalog = ProtocolPermissionCatalog.model_validate(raw_catalog)
+        validate_permission_catalog(permission_catalog)
+        return permission_catalog
+    except ValidationError as exc:
+        raise NotificationValidationError("invalid_runtime_catalog", str(exc)) from exc
+    except ValueError as exc:
+        raise NotificationValidationError("invalid_runtime_catalog", str(exc)) from exc
+
+
+def session_ids_for_runtime_catalog(
+    sessions: list[SessionView],
+    runtime: str,
+) -> list[str]:
+    return [session.id for session in sessions if session.runtime == runtime]
+
+
+def capability_identity_key(
+    capability: ProtocolCapability,
+) -> tuple[str, str, str | None, str | None]:
+    return (
+        capability.capabilityId,
+        capability.scope,
+        capability.runtime,
+        capability.sessionId,
+    )
+
+
+def runtime_capability_update_session_id(
+    capability_set: ProtocolCapabilitySet,
+) -> str | None:
+    session_ids = {
+        capability.sessionId
+        for capability in capability_set.capabilities
+        if capability.scope == "session" and capability.sessionId is not None
+    }
+    if len(session_ids) == 1:
+        return next(iter(session_ids))
+    return None
 
 
 async def _session_disabled(store: ConnectorNotificationRepository, session_id: str) -> bool:
@@ -518,7 +659,13 @@ async def _resolve_timeline_session_id(
 
 
 def _local_session_state(params: dict[str, Any]) -> str:
-    value = params.get("localState") or params.get("local_state")
+    metadata = params.get("metadata") if isinstance(params.get("metadata"), dict) else {}
+    value = (
+        params.get("localState")
+        or params.get("local_state")
+        or metadata.get("localState")
+        or metadata.get("local_state")
+    )
     if isinstance(value, str):
         normalized = value.lower()
         if normalized in {
@@ -535,13 +682,32 @@ def _local_session_state(params: dict[str, Any]) -> str:
         return "deleted"
     if params.get("resumeSupported") is False or params.get("resumable") is False:
         return "unresumable"
+    if metadata.get("hidden") is True:
+        return "archived"
     return "active"
+
+
+def _session_meta_archived(
+    params: dict[str, Any],
+    local_state: str,
+) -> bool | None:
+    metadata = params.get("metadata") if isinstance(params.get("metadata"), dict) else {}
+    hidden = params.get("hidden")
+    if hidden is None:
+        hidden = metadata.get("hidden")
+    if isinstance(hidden, bool):
+        return hidden
+    if local_state in {"archived", "deleted", "unresumable"}:
+        return True
+    if local_state == "active":
+        return False
+    return None
 
 
 def _v2_session_status(value: Any) -> SessionStatus | None:
     if value is None:
         return None
-    if value in {"idle", "pending", "running", "stopping", "blocked"}:
+    if value in {"idle", "waiting", "pending", "running", "stopping", "blocked"}:
         return str(value)
     if value in {"waiting_approval", "error"}:
         return "blocked"
@@ -550,6 +716,61 @@ def _v2_session_status(value: Any) -> SessionStatus | None:
 
 def _string_or_none(value: Any) -> str | None:
     return value if isinstance(value, str) else None
+
+
+def _object_or_none(value: Any) -> dict[str, Any] | None:
+    return dict(value) if isinstance(value, dict) else None
+
+
+def _selections_param(params: dict[str, Any]) -> dict[str, str | None] | None:
+    raw = params.get("selections")
+    if not isinstance(raw, dict):
+        return None
+    selections: dict[str, str | None] = {}
+    for scope, selection_id in raw.items():
+        if not isinstance(scope, str) or not scope:
+            continue
+        if selection_id is not None and not isinstance(selection_id, str):
+            continue
+        selections[scope] = selection_id
+    return selections
+
+
+def _reject_legacy_selection_fields(params: dict[str, Any], *, notification: str) -> None:
+    if "modelSelectionId" not in params and "permissionSelectionId" not in params:
+        return
+    raise NotificationValidationError(
+        "unsupported_legacy_selection_fields",
+        f"{notification} accepts selections; modelSelectionId and permissionSelectionId are not supported",
+    )
+
+
+def _has_runtime_state_fields(params: dict[str, Any]) -> bool:
+    return any(
+        key in params
+        for key in (
+            "status",
+            "selections",
+        )
+    )
+
+
+def runtime_state_from_session_state_params(
+    session_id: str,
+    runtime: str,
+    external_session_id: str | None,
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "sessionId": session_id,
+        "runtime": runtime,
+        "externalSessionId": external_session_id,
+        "status": _v2_session_status(params.get("status")) or "idle",
+        "selections": _selections_param(params) or {},
+        "statusReason": _string_or_none(params.get("statusReason")),
+        "error": _object_or_none(params.get("error")),
+        "metadata": _object_or_none(params.get("metadata")) or {},
+    }
 
 
 def _timeline_item_for_session(
@@ -684,7 +905,11 @@ async def _tag_active_run_user_messages(
         if not source.get("clientMessageId"):
             next_source = {**next_source, "clientMessageId": client_message_id}
             changed = True
-        if attachments and not _content_has_attachments(content):
+        cleaned_text = _strip_codex_attachment_echo_text(content, expected_text)
+        if cleaned_text is not None and cleaned_text != content.get("text"):
+            next_content = {**next_content, "text": cleaned_text}
+            changed = True
+        if attachments and not _content_has_attachments(next_content):
             next_content = {**next_content, "attachments": attachments}
             changed = True
         if not changed:
@@ -714,7 +939,8 @@ def _active_run_user_message_matches(
     actual_text = content.get("text")
     if not isinstance(actual_text, str):
         return False
-    return _client_message_text_matches(actual_text, expected_text)
+    cleaned_text = _strip_codex_attachment_echo(actual_text, expected_text)
+    return _client_message_text_matches(cleaned_text, expected_text)
 
 
 def _timeline_attachments_from_active_run(
@@ -755,3 +981,30 @@ def _client_message_text_matches(actual: str, expected: str) -> bool:
     if actual == expected:
         return True
     return actual.startswith(expected) and actual[len(expected) :].startswith("\n\n[")
+
+
+def _strip_codex_attachment_echo_text(
+    content: dict[str, Any],
+    expected_text: str,
+) -> str | None:
+    actual = content.get("text")
+    if not isinstance(actual, str):
+        return None
+    return _strip_codex_attachment_echo(actual, expected_text)
+
+
+def _strip_codex_attachment_echo(actual: str, expected_text: str) -> str:
+    if actual == expected_text:
+        return actual
+    if actual.startswith(expected_text):
+        suffix = actual[len(expected_text) :].strip()
+        if suffix.startswith("Attached file: ") or " Attached file: " in suffix:
+            return expected_text
+        if _looks_like_codex_local_attachment_path(suffix):
+            return expected_text
+    return actual
+
+
+def _looks_like_codex_local_attachment_path(value: str) -> bool:
+    normalized = value.replace("\\", "/")
+    return "/.agents-anywhere/attachments/" in normalized

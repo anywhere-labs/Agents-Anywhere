@@ -5,11 +5,12 @@ from dataclasses import dataclass
 from agent_server.core.models import SessionStatus
 
 SESSION_TRANSITIONS: dict[SessionStatus, frozenset[SessionStatus]] = {
-    "idle": frozenset({"pending", "running", "blocked"}),
+    "idle": frozenset({"waiting", "pending", "running", "blocked"}),
+    "waiting": frozenset({"idle", "running", "stopping", "blocked"}),
     "pending": frozenset({"idle", "running", "stopping", "blocked"}),
-    "running": frozenset({"idle", "pending", "stopping", "blocked"}),
-    "stopping": frozenset({"idle", "pending", "running", "blocked"}),
-    "blocked": frozenset({"idle", "pending", "running", "stopping"}),
+    "running": frozenset({"idle", "waiting", "pending", "stopping", "blocked"}),
+    "stopping": frozenset({"idle", "waiting", "pending", "running", "blocked"}),
+    "blocked": frozenset({"idle", "waiting", "pending", "running", "stopping"}),
 }
 
 
@@ -43,9 +44,11 @@ def derive_session_status(facts: SessionStateFacts) -> SessionStatus:
     if facts.observed_status == "running":
         return "running"
     if facts.has_active_run:
-        return "pending"
+        return "waiting"
+    if facts.observed_status == "waiting":
+        return "waiting"
     if facts.observed_status == "pending":
-        return "pending"
+        return "waiting"
     return "idle"
 
 
@@ -70,7 +73,7 @@ def can_interrupt_turn(
     *,
     has_active_work: bool,
 ) -> bool:
-    return has_active_work or status in {"pending", "running", "blocked"}
+    return has_active_work or status in {"waiting", "pending", "running", "blocked"}
 
 
 def can_steer_turn(

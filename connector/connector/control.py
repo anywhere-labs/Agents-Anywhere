@@ -7,7 +7,15 @@ from typing import Any
 
 import httpx
 
-from connector.local_runtime import (
+from connector.core.config import ConnectorConfig
+from connector.core.control_config import (
+    config_from_params,
+    config_to_payload,
+    default_config_payload,
+    float_param,
+    str_param,
+)
+from connector.core.runtime_owner import (
     ConnectorAlreadyRunningError,
     assert_can_start,
     clear_runtime,
@@ -15,8 +23,13 @@ from connector.local_runtime import (
     write_runtime,
 )
 from connector.logging import logger
-from connector.runtime import BackendRpcClient, ConnectorAuthenticationError, ConnectorConfig
-
+from connector.server.auth import ConnectorAuthenticationError
+from connector.server.client import BackendRpcClient
+from connector.server.pairing import (
+    poll_pairing,
+    resolve_pair_server_url,
+    start_pairing,
+)
 
 ControlNotifier = Callable[[str, Any], Awaitable[None]]
 
@@ -27,9 +40,15 @@ class ConnectorController:
         *,
         config_path: str | Path | None = None,
         notifier: ControlNotifier | None = None,
-        client_factory: Callable[[ConnectorConfig], BackendRpcClient] = BackendRpcClient,
+        client_factory: Callable[
+            [ConnectorConfig], BackendRpcClient
+        ] = BackendRpcClient,
     ) -> None:
-        self.config_path = Path(config_path) if config_path is not None else ConnectorConfig.default_path()
+        self.config_path = (
+            Path(config_path)
+            if config_path is not None
+            else ConnectorConfig.default_path()
+        )
         self.notifier = notifier
         self.client_factory = client_factory
         self.runtime_path = runtime_path(self.config_path)
@@ -75,7 +94,11 @@ class ConnectorController:
         if self._runtime_task is not None and not self._runtime_task.done():
             return self.get_state()
 
-        config = config_from_params(params) if isinstance(params, dict) and params else ConnectorConfig.load(self.config_path)
+        config = (
+            config_from_params(params)
+            if isinstance(params, dict) and params
+            else ConnectorConfig.load(self.config_path)
+        )
         self._last_error = None
         self._auth_failed = False
         try:
@@ -111,10 +134,14 @@ class ConnectorController:
         if self._pairing_task is not None and not self._pairing_task.done():
             self._pairing_task.cancel()
         server = str_param(params, "server") or str_param(params, "serverUrl")
-        server_url = await resolve_pair_server_url(server, timeout=float_param(params, "resolveTimeout", 10))
+        server_url = await resolve_pair_server_url(
+            server, timeout=float_param(params, "resolveTimeout", 10)
+        )
         timeout = float_param(params, "timeout", 600)
         poll_interval = float_param(params, "pollInterval", 2)
-        self._pairing_task = asyncio.create_task(self._run_pairing(server_url, timeout=timeout, poll_interval=poll_interval))
+        self._pairing_task = asyncio.create_task(
+            self._run_pairing(server_url, timeout=timeout, poll_interval=poll_interval)
+        )
         payload = {"status": "starting", "serverUrl": server_url}
         await self._emit_pairing(payload)
         await self._emit_state()
@@ -152,15 +179,12 @@ class ConnectorController:
                 self._runtime_task = None
             await self._emit_state()
 
-    async def _run_pairing(self, server_url: str, *, timeout: float, poll_interval: float) -> None:
+    async def _run_pairing(
+        self, server_url: str, *, timeout: float, poll_interval: float
+    ) -> None:
         try:
             async with httpx.AsyncClient(timeout=30) as client:
-                start_response = await client.post(
-                    _api_v2_url(server_url, "/pairing/start"),
-                    json={"serverUrl": server_url, "ttlSeconds": int(timeout)},
-                )
-                start_response.raise_for_status()
-                pairing = start_response.json()
+                pairing = await start_pairing(client, server_url, timeout)
                 pairing_id = pairing["pairingId"]
                 code = pairing["code"]
                 await self._emit_pairing(
@@ -174,13 +198,13 @@ class ConnectorController:
 
                 deadline = asyncio.get_running_loop().time() + timeout
                 while asyncio.get_running_loop().time() < deadline:
-                    poll_response = await client.post(_api_v2_url(server_url, "/pairing/poll"), json={"pairingId": pairing_id})
-                    poll_response.raise_for_status()
-                    payload = poll_response.json()
+                    payload = await poll_pairing(client, server_url, str(pairing_id))
                     if payload["status"] == "claimed" and payload.get("config"):
                         config = ConnectorConfig.from_mapping(payload["config"])
                         config.save(self.config_path)
-                        await self._emit_pairing({"status": "claimed", "config": config_to_payload(config)})
+                        await self._emit_pairing(
+                            {"status": "claimed", "config": config_to_payload(config)}
+                        )
                         await self.start()
                         return
                     if payload["status"] in {"expired", "consumed"}:
@@ -214,94 +238,3 @@ class ConnectorController:
     async def _notify(self, method: str, params: Any) -> None:
         if self.notifier is not None:
             await self.notifier(method, params)
-
-
-def default_config_payload() -> dict[str, Any]:
-    return {
-        "serverUrl": "",
-        "connectorId": "",
-        "connectorToken": "",
-        "heartbeatSeconds": 20,
-        "reconnectSeconds": 3,
-        "syncExistingOnConnect": True,
-        "syncIntervalSeconds": 30,
-        "statePath": None,
-    }
-
-
-def config_to_payload(config: ConnectorConfig) -> dict[str, Any]:
-    return {
-        "serverUrl": config.server_url,
-        "connectorId": config.connector_id,
-        "connectorToken": config.connector_token,
-        "heartbeatSeconds": config.heartbeat_seconds,
-        "reconnectSeconds": config.reconnect_seconds,
-        "syncExistingOnConnect": config.sync_existing_on_connect,
-        "syncIntervalSeconds": config.sync_interval_seconds,
-        "statePath": config.state_path,
-    }
-
-
-def _api_v2_url(server_url: str, path: str) -> str:
-    normalized_path = path if path.startswith("/") else f"/{path}"
-    return f"{server_url.rstrip('/')}/api/v2{normalized_path}"
-
-
-def config_from_params(params: Any) -> ConnectorConfig:
-    if not isinstance(params, dict):
-        raise ValueError("config params must be an object")
-    server_url = str(params.get("serverUrl") or "").strip().rstrip("/")
-    connector_id = str(params.get("connectorId") or "").strip()
-    connector_token = str(params.get("connectorToken") or "").strip()
-    if not server_url or not connector_id or not connector_token:
-        raise ValueError("serverUrl, connectorId, and connectorToken are required")
-    return ConnectorConfig(
-        server_url=server_url,
-        connector_id=connector_id,
-        connector_token=connector_token,
-        heartbeat_seconds=float(params.get("heartbeatSeconds", 20)),
-        reconnect_seconds=float(params.get("reconnectSeconds", 3)),
-        sync_existing_on_connect=bool(params.get("syncExistingOnConnect", True)),
-        sync_interval_seconds=float(params.get("syncIntervalSeconds", 30)),
-        state_path=(
-            params.get("statePath")
-            if isinstance(params.get("statePath"), str)
-            else None
-        ),
-    )
-
-
-async def resolve_pair_server_url(value: str | None, *, timeout: float = 10) -> str:
-    normalized = str(value or "").strip().rstrip("/")
-    if not normalized:
-        raise ValueError("server is required")
-    if normalized.startswith(("http://", "https://")):
-        return normalized
-    candidates = [f"https://{normalized}", f"http://{normalized}"]
-    errors: list[str] = []
-    for candidate in candidates:
-        try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.get(f"{candidate}/api/v2/health")
-                if response.status_code < 500:
-                    return candidate
-                errors.append(f"{candidate}: HTTP {response.status_code}")
-        except httpx.RequestError as exc:
-            errors.append(f"{candidate}: {exc}")
-    raise ValueError(f"could not reach server over https or http ({'; '.join(errors)})")
-
-
-def str_param(params: Any, key: str) -> str | None:
-    if not isinstance(params, dict):
-        return None
-    value = params.get(key)
-    return value if isinstance(value, str) and value.strip() else None
-
-
-def float_param(params: Any, key: str, default: float) -> float:
-    if not isinstance(params, dict):
-        return default
-    try:
-        return float(params.get(key, default))
-    except (TypeError, ValueError):
-        return default

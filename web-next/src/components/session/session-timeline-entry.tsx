@@ -1,10 +1,18 @@
 "use client"
 
-import { ChevronDown, CircleAlert, Clock, FilePenLine, Sparkles } from "lucide-react"
+import * as React from "react"
+import { Braces, ChevronDown, CircleAlert, Clock, Copy, FilePenLine, Sparkles } from "lucide-react"
 import dynamic from "next/dynamic"
 import { useTranslations } from "next-intl"
 
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu"
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker"
 import { JsonBlock, TimelineStatusBadge, ToolCard } from "@/components/session/session-tool-cards"
 import { openSessionFilePreview } from "@/components/markdown-text"
@@ -16,6 +24,7 @@ import { MessageAttachments } from "@/components/session/message-attachments"
 import { CollapsibleUserMessage } from "@/components/session/collapsible-user-message"
 
 const MarkdownText = dynamic(() => import("../markdown-text").then((mod) => ({ default: mod.MarkdownText })), { ssr: false })
+const INLINE_REASONING_SUMMARY_MAX_CHARS = 80
 
 export function TimelineEntry({
   token,
@@ -24,6 +33,8 @@ export function TimelineEntry({
   interaction,
   resolvingNoticeId,
   resolvingActionId,
+  toolOpen,
+  onToolOpenChange,
   onRespondInteraction,
 }: {
   token: string
@@ -32,12 +43,18 @@ export function TimelineEntry({
   interaction?: Notice
   resolvingNoticeId: string | null
   resolvingActionId: string | null
+  toolOpen?: boolean
+  onToolOpenChange?: (open: boolean) => void
   onRespondInteraction: (noticeId: string, actionId: string) => void
 }) {
   if (item.type === "turn.start" || item.type === "turn.end") return null
-  if (item.type === "message") return <MessageCard token={token} session={session} item={item} />
-  if (item.type === "tool") {
-    return (
+  let entry: React.ReactNode
+  if (item.type === "message") {
+    entry = <MessageCard token={token} session={session} item={item} />
+    return <TimelineEntryContextMenu item={item}>{entry}</TimelineEntryContextMenu>
+  }
+  if (item.type === "tool" || isFileChangeArtifact(item)) {
+    entry = (
       <ToolCard
         item={item}
         token={token}
@@ -45,13 +62,66 @@ export function TimelineEntry({
         interaction={interaction}
         resolvingNoticeId={resolvingNoticeId}
         resolvingActionId={resolvingActionId}
+        open={toolOpen}
+        onOpenChange={onToolOpenChange}
         onRespondInteraction={onRespondInteraction}
       />
     )
+    return <TimelineEntryContextMenu item={item}>{entry}</TimelineEntryContextMenu>
   }
-  if (item.type === "system") return <SystemCard item={item} />
-  if (item.type === "artifact") return <ArtifactCard token={token} session={session} item={item} />
-  return <UnknownTimelineItem item={item} />
+  if (item.type === "marker") entry = <MarkerCard item={item} />
+  else if (item.type === "system") entry = <SystemCard token={token} session={session} item={item} />
+  else if (item.type === "artifact") entry = <ArtifactCard token={token} session={session} item={item} />
+  else entry = <UnknownTimelineItem item={item} />
+  return <TimelineEntryContextMenu item={item}>{entry}</TimelineEntryContextMenu>
+}
+
+function isFileChangeArtifact(item: TimelineItem): boolean {
+  return item.type === "artifact" && textOf(item.content.kind) === "file_change"
+}
+
+function TimelineEntryContextMenu({ item, children }: { item: TimelineItem; children: React.ReactNode }) {
+  const tSession = useTranslations("dashboard.session")
+  const text = timelineItemCopyText(item)
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div className="min-w-0 max-w-full select-text">{children}</div>
+      </ContextMenuTrigger>
+      <ContextMenuContent className="w-48">
+        <ContextMenuItem disabled={!text} onSelect={() => copyTimelineValue(text)}>
+          <Copy data-icon="inline-start" />
+          {tSession("copyItemText")}
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={() => copyTimelineValue(item.id)}>
+          <Copy data-icon="inline-start" />
+          {tSession("copyItemId")}
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem onSelect={() => copyTimelineValue(JSON.stringify(item, null, 2))}>
+          <Braces data-icon="inline-start" />
+          {tSession("copyItemJson")}
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  )
+}
+
+function timelineItemCopyText(item: TimelineItem): string {
+  if (item.type === "message") return stripInjectedAttachmentMentions(messageText(item)).trim()
+  return firstTextOf(
+    item.content.text,
+    item.content.message,
+    item.content.rawText,
+    item.content.command,
+    item.content.label,
+    item.content.title,
+  )?.trim() ?? ""
+}
+
+function copyTimelineValue(value: string) {
+  if (!value) return
+  navigator.clipboard.writeText(value).catch(() => undefined)
 }
 
 function MessageCard({ token, session, item }: { token: string; session: SessionView; item: TimelineItem }) {
@@ -62,6 +132,7 @@ function MessageCard({ token, session, item }: { token: string; session: Session
   const hasAttachments = attachments.length > 0
   const showUserStatus = isUser && item.status === "failed"
   if (!text && !hasAttachments) {
+    if (item.role === "assistant") return null
     return (
       <JsonMarker
         item={item}
@@ -83,8 +154,11 @@ function MessageCard({ token, session, item }: { token: string; session: Session
   )
 
   return (
-    <div className={cn("flex min-w-0 max-w-full overflow-hidden", isUser && "justify-end")}>
-      <div className={cn("flex min-w-0 max-w-[88%] flex-col gap-2 text-sm leading-relaxed", isUser && "items-end")}>
+    <div className={cn("flex min-w-0 w-full max-w-full overflow-hidden", isUser && "justify-end")}>
+      <div className={cn(
+        "flex min-w-0 w-full flex-col gap-2 text-sm leading-relaxed",
+        isUser ? "max-w-[88%] items-end" : "max-w-full",
+      )}>
         {isUser ? attachmentList : null}
         {content ? (
           <div
@@ -103,9 +177,21 @@ function MessageCard({ token, session, item }: { token: string; session: Session
   )
 }
 
-function SystemCard({ item }: { item: TimelineItem }) {
+function SystemCard({ token, session, item }: { token: string; session: SessionView; item: TimelineItem }) {
+  const tSession = useTranslations("dashboard.session")
   const kind = textOf(item.content.kind) || "system"
-  if (kind === "reasoning") return <ReasoningEntry item={item} />
+  if (kind === "reasoning") return <ReasoningEntry token={token} session={session} item={item} />
+  if (kind === "compact") {
+    const compactState = compactTimelineState(item)
+    const active = compactState === "started"
+    return (
+      <Marker variant="separator" className="w-full normal-case">
+        <MarkerContent className={cn("flex-none text-sm font-normal", active && "shimmer")}>
+          {active ? tSession("conversationCompacting") : tSession("conversationCompacted")}
+        </MarkerContent>
+      </Marker>
+    )
+  }
   const text = textOf(item.content.text) || textOf(item.content.message) || textOf(item.content.rawText)
   const failed = item.status === "failed" || kind === "error"
   const title = text ? `${kind}: ${text}` : `${kind}: ${item.status}`
@@ -120,15 +206,60 @@ function SystemCard({ item }: { item: TimelineItem }) {
   )
 }
 
-function ReasoningEntry({ item }: { item: TimelineItem }) {
+function MarkerCard({ item }: { item: TimelineItem }) {
+  const tSession = useTranslations("dashboard.session")
+  const kind = textOf(item.content.kind) || "system"
+  if (kind === "compact") {
+    const compactState = compactTimelineState(item)
+    const active = compactState === "started"
+    return (
+      <Marker variant="separator" className="w-full normal-case">
+        <MarkerContent className={cn("flex-none text-sm font-normal", active && "shimmer")}>
+          {active ? tSession("conversationCompacting") : tSession("conversationCompacted")}
+        </MarkerContent>
+      </Marker>
+    )
+  }
+
+  const label = textOf(item.content.label) || textOf(item.content.title) || kind
+  const failed = item.status === "failed" || kind === "error"
+  return (
+    <JsonMarker
+      item={item}
+      title={label}
+      icon={failed ? <CircleAlert /> : <Clock />}
+      destructive={failed}
+      detail={systemDetail(item.content)}
+    />
+  )
+}
+
+function compactTimelineState(item: TimelineItem): "started" | "completed" | "failed" {
+  const contentState = textOf(item.content.state)
+  if (contentState === "started" || contentState === "running" || contentState === "inProgress") {
+    return "started"
+  }
+  if (contentState === "failed" || item.status === "failed") return "failed"
+  if (item.status === "running" || item.status === "pending") {
+    return "started"
+  }
+  return "completed"
+}
+
+function ReasoningEntry({ token, session, item }: { token: string; session: SessionView; item: TimelineItem }) {
   const tSession = useTranslations("dashboard.session")
   const summaries = recordsOf(item.content.summaries)
     .map((summary) => textOf(summary.text))
     .filter((text): text is string => Boolean(text))
   const rawText = textOf(item.content.rawText) || textOf(item.content.text)
   const lines = summaries.length > 0 ? summaries : rawText ? [rawText] : []
-  const title = lines.length > 0
+  const inlineSummary = lines.length === 1 ? inlineReasoningSummary(lines[0] ?? "") : null
+  const title = inlineSummary
+    ? tSession("reasoningSingleSummary", { summary: inlineSummary })
+    : lines.length > 1
     ? tSession("reasoningSummary", { count: lines.length })
+    : lines.length === 1
+    ? tSession("reasoningSummary", { count: 1 })
     : tSession("reasoning")
   const marker = (
     <Marker className="w-full">
@@ -139,7 +270,8 @@ function ReasoningEntry({ item }: { item: TimelineItem }) {
     </Marker>
   )
 
-  if (lines.length === 0) return marker
+  if (lines.length === 0 || inlineSummary) return marker
+  const markdown = lines.join("\n\n")
 
   return (
     <Collapsible className="min-w-0 max-w-full overflow-hidden">
@@ -157,14 +289,30 @@ function ReasoningEntry({ item }: { item: TimelineItem }) {
         </CollapsibleTrigger>
         <CollapsibleContent className="min-w-0 max-w-full overflow-hidden">
           <div className="flex flex-col gap-2 pl-7 text-sm leading-relaxed text-muted-foreground">
-            {lines.map((line, index) => (
-              <p key={index}>{line}</p>
-            ))}
+            <MarkdownText text={markdown} token={token} session={session} />
           </div>
         </CollapsibleContent>
       </div>
     </Collapsible>
   )
+}
+
+function inlineReasoningSummary(text: string): string | null {
+  if (text.includes("\n") || text.includes("\r")) return null
+  const plain = stripMarkdownForInlineSummary(text)
+  if (!plain || plain.length > INLINE_REASONING_SUMMARY_MAX_CHARS) return null
+  return plain
+}
+
+function stripMarkdownForInlineSummary(text: string): string {
+  return text
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/[*_~#>]+/g, "")
+    .replace(/\\([\\`*_{}\[\]()#+\-.!|])/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim()
 }
 
 function ArtifactCard({ token, session, item }: { token: string; session: SessionView; item: TimelineItem }) {

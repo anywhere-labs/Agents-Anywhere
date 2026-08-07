@@ -104,12 +104,82 @@ class TimelineRepositoryMixin:
             await self.timeline.replace(session_id, normalized)
         return normalized, bool(removed_items)
 
+    async def sync_timeline_items(
+        self,
+        *,
+        session_id: str,
+        items: list[TimelineItemIn],
+        source_observed_at: str | None = None,
+        mark_read_on_change: bool = False,
+    ) -> list[TimelineItem]:
+        async with self._timeline_lock(session_id):
+            current = {existing.id: existing for existing in await self.timeline.read(session_id)}
+            candidate_by_id: dict[str, TimelineItem | TimelineItemIn] = {}
+            incoming_ids: set[str] = set()
+            now = utc_now()
+            for item in items:
+                incoming_ids.add(item.id)
+                existing = current.get(item.id)
+                if existing is not None and _should_keep_existing_timeline_item(existing, item):
+                    candidate_by_id[item.id] = existing
+                    continue
+                candidate_by_id[item.id] = item
+            for item_id, existing in current.items():
+                if item_id not in incoming_ids:
+                    candidate_by_id[item_id] = existing
+            candidate = [
+                item
+                if isinstance(item, TimelineItem)
+                else _timeline_item_from_input(item, updated_seq=0, now=now)
+                for item in candidate_by_id.values()
+            ]
+            deduped_ids = {item.id for item in _dedupe_legacy_history_items(candidate)}
+            normalized_by_id: dict[str, TimelineItem] = {}
+            max_order_seq = max((existing.orderSeq for existing in current.values()), default=0)
+            async with self._engine.begin() as conn:
+                if source_observed_at is not None:
+                    await conn.execute(
+                        update(sessions_t)
+                        .where(sessions_t.c.id == session_id)
+                        .values(source_observed_at=source_observed_at)
+                    )
+                for item_id, item in candidate_by_id.items():
+                    if item_id not in deduped_ids:
+                        continue
+                    if isinstance(item, TimelineItem):
+                        normalized_by_id[item_id] = item
+                        continue
+                    updated_seq = await self._bump_session(
+                        conn,
+                        session_id,
+                        mark_read=mark_read_on_change,
+                    )
+                    existing = current.get(item_id)
+                    if existing is not None:
+                        order_seq = existing.orderSeq
+                    elif item.orderSeq > max_order_seq:
+                        order_seq = item.orderSeq
+                    else:
+                        max_order_seq += 1
+                        order_seq = max_order_seq
+                    max_order_seq = max(max_order_seq, order_seq)
+                    normalized = _timeline_item_from_input(
+                        item,
+                        updated_seq=updated_seq,
+                        now=now,
+                        order_seq=order_seq,
+                    )
+                    normalized_by_id[item_id] = normalized
+                    await self.timeline.upsert_one(conn, normalized)
+        return list(normalized_by_id.values())
+
     async def replace_timeline_snapshot(
         self,
         *,
         session_id: str,
         items: list[TimelineItemIn],
         source_observed_at: str | None = None,
+        mark_read_on_change: bool = False,
     ) -> list[TimelineItem]:
         async with self._timeline_lock(session_id):
             now = utc_now()
@@ -120,7 +190,11 @@ class TimelineRepositoryMixin:
                         .where(sessions_t.c.id == session_id)
                         .values(source_observed_at=source_observed_at)
                     )
-                updated_seq = await self._bump_session(conn, session_id)
+                updated_seq = await self._bump_session(
+                    conn,
+                    session_id,
+                    mark_read=mark_read_on_change,
+                )
                 normalized = [
                     _timeline_item_from_input(item, updated_seq=updated_seq, now=now)
                     for item in items
@@ -135,6 +209,7 @@ class TimelineRepositoryMixin:
         session_id: str,
         item: TimelineItemIn,
         source_observed_at: str | None = None,
+        mark_read_on_change: bool = False,
     ) -> TimelineItem:
         """Single-row upsert. Hot path for streaming Codex deltas.
 
@@ -175,7 +250,11 @@ class TimelineRepositoryMixin:
                 if unchanged and not needs_order_rebase:
                     result = existing
                 else:
-                    updated_seq = await self._bump_session(conn, session_id)
+                    updated_seq = await self._bump_session(
+                        conn,
+                        session_id,
+                        mark_read=mark_read_on_change,
+                    )
                     order_seq = await self._live_order_seq_for_upsert(
                         conn,
                         session_id,
@@ -188,6 +267,7 @@ class TimelineRepositoryMixin:
                         updated_seq=updated_seq,
                         now=now,
                         order_seq=order_seq,
+                        revision=_upserted_timeline_revision(item, existing),
                     )
                     await self.timeline.upsert_one(conn, result)
         return result
@@ -232,7 +312,13 @@ class TimelineRepositoryMixin:
             yield
 
 
-    async def _bump_session(self, conn: AsyncConnection, session_id: str) -> int:
+    async def _bump_session(
+        self,
+        conn: AsyncConnection,
+        session_id: str,
+        *,
+        mark_read: bool = False,
+    ) -> int:
         now = utc_now()
         row = (
             await conn.execute(
@@ -242,10 +328,15 @@ class TimelineRepositoryMixin:
         if row is None:
             raise KeyError(session_id)
         next_seq = int(row.seq) + 1
+        values: dict[str, Any] = {
+            "seq": next_seq,
+            "updated_seq": next_seq,
+            "updated_at": now,
+        }
+        if mark_read:
+            values["last_read_seq"] = next_seq
         await conn.execute(
-            update(sessions_t)
-            .where(sessions_t.c.id == session_id)
-            .values(seq=next_seq, updated_seq=next_seq, updated_at=now)
+            update(sessions_t).where(sessions_t.c.id == session_id).values(**values)
         )
         return next_seq
 
@@ -345,3 +436,12 @@ class TimelineRepositoryMixin:
                     await conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": lock_key})
                 except Exception:  # noqa: BLE001, S110 — broad on purpose for cleanup
                     pass
+
+
+def _upserted_timeline_revision(
+    item: TimelineItemIn,
+    existing: TimelineItem | None,
+) -> int:
+    if existing is None:
+        return item.revision
+    return max(item.revision, existing.revision + 1)

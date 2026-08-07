@@ -40,21 +40,30 @@ export type ConnectorView = {
   lastSeenAt?: string | null
 }
 
-export type SessionStatus = "idle" | "pending" | "running" | "stopping" | "blocked"
+export type SessionStatus = "idle" | "waiting" | "pending" | "running" | "stopping" | "blocked"
 
 export type SessionView = {
   id: string
   connectorId: string
   connectorStatus: ConnectorStatus
   runtime: string
+  externalSessionId?: string | null
   title?: string | null
   cwd?: string | null
   status: SessionStatus
   takeover: boolean
   pinned: boolean
+  pinnedAt?: string | null
   archived: boolean
+  archivedAt?: string | null
   unread: boolean
   lastReadSeq: number
+  lastSyncedAt?: string | null
+  sourceObservedAt?: string | null
+  lastActivityAt?: string | null
+  lastItemAt?: string | null
+  lastItemOrderSeq?: number | null
+  sortAt?: string | null
   updatedSeq: number
   effectiveRunMode?: "chat" | "terminal" | null
   runtimeSettings?: Record<string, unknown> | null
@@ -131,7 +140,7 @@ export type TimelineItem = {
   id: string
   sessionId: string
   turnId?: string | null
-  type: "turn.start" | "turn.end" | "message" | "tool" | "artifact" | "system"
+  type: "turn.start" | "turn.end" | "message" | "tool" | "artifact" | "marker" | "system"
   status: "pending" | "running" | "waiting_approval" | "done" | "failed" | "cancelled" | "interrupted"
   role?: "user" | "assistant" | "system" | "tool" | null
   content: Record<string, unknown>

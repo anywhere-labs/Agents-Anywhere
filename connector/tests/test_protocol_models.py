@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from connector.protocol import (
+from connector.server.protocol import (
     PROTOCOL_VERSION_1,
     ProtocolCapability,
     ProtocolCapabilitySet,
@@ -101,7 +101,7 @@ def test_connector_notice_interaction_shape() -> None:
         noticeId="notice_1",
         type="interaction",
         sessionId="sess_1",
-        source=ProtocolNoticeSource(runtime="codex", adapter="codex"),
+        source=ProtocolNoticeSource(runtime="codex", component="codex"),
         title="Approve command execution",
         message="The runtime is blocked until the user responds.",
         severity="warning",

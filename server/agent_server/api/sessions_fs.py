@@ -1,23 +1,24 @@
 from __future__ import annotations
 
 import mimetypes
+import urllib.parse
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Header, Query
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
 from fastapi.responses import RedirectResponse, Response
 
-from agent_server.deps import current_user_id, get_attachment_service, get_store
+from agent_server.core.auth import verify_signed_token, verify_user_access_token
 from agent_server.core.models import (
     FsDownloadResponse,
     UploadedAttachment,
     UserUploadResponse,
 )
+from agent_server.core.utc import utc_now
+from agent_server.deps import current_user_id, get_attachment_service, get_store
+from agent_server.infra.repositories.facade import Store
 from agent_server.services.attachments import (
     AttachmentService,
     LOCAL_FILE_TOKEN_KIND,
 )
-from agent_server.infra.repositories.facade import Store
-from agent_server.core.auth import verify_signed_token, verify_user_access_token
-from agent_server.core.utc import utc_now
 
 
 router = APIRouter(prefix="/sessions", tags=["session-files"])
@@ -92,7 +93,10 @@ async def local_file_raw(
         content=data,
         media_type=metadata.get("mediaType") or "application/octet-stream",
         headers={
-            "Content-Disposition": f"inline; filename={_quoted_filename(metadata.get('name') or file_id)}",
+            "Content-Disposition": _content_disposition(
+                "inline",
+                metadata.get("name") or file_id,
+            ),
             "X-File-Name": _safe_header_value(metadata.get("name") or file_id),
             "X-File-Sha256": str(metadata.get("sha256") or ""),
         },
@@ -155,6 +159,17 @@ async def create_attachments(
             )
         )
     return UserUploadResponse(attachments=results, serverTime=utc_now())
+
+
+def _content_disposition(disposition: str, filename: str) -> str:
+    ascii_name = _ascii_filename_fallback(filename)
+    utf8_name = urllib.parse.quote(filename, safe="")
+    return f"{disposition}; filename={_quoted_filename(ascii_name)}; filename*=UTF-8''{utf8_name}"
+
+
+def _ascii_filename_fallback(value: str) -> str:
+    fallback = value.encode("ascii", errors="ignore").decode("ascii").strip()
+    return fallback or "attachment"
 
 
 def _quoted_filename(value: str) -> str:

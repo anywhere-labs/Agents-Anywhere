@@ -27,7 +27,7 @@ timeline state.
 
 Claude timeline data should have only two sources:
 
-- Live chat: SDK stream messages from `ClaudeSdkAdapter.start_turn()`.
+- Live chat: SDK stream messages from `ClaudeRuntime.start_turn()`.
 - History: SDK session APIs, `list_sessions()` and `get_session_messages()`.
 
 Terminal data should have one source:
@@ -51,13 +51,14 @@ Create a new history adapter that uses the installed `claude_agent_sdk` package:
 - reduce with `ClaudeTimelineReducer`,
 - emit `session.updated` and `timeline.sync`.
 
-This step should leave old JSONL files in place but stop `ClaudeSdkAdapter` from
-delegating history sync to the legacy JSONL adapter.
+This step should leave old JSONL files in place but stop the Claude runtime from
+delegating history sync to the legacy JSONL adapter path.
 
 Acceptance:
 
 - Claude Chat Mode still streams live timeline items.
-- `ClaudeSdkAdapter.sync_existing_sessions()` uses SDK history APIs.
+- `ClaudeRuntime.get_session_snapshot()` and `ClaudeRuntime.list_sessions()` use
+  SDK history APIs.
 - Live SDK chat sessions are skipped during scanner sync.
 - Existing focused connector tests pass after updates.
 
@@ -134,10 +135,9 @@ Implementation:
 - removed the `/connector/claude/transcript-cursors` endpoint,
 - removed the `claude_transcript_cursors` table and repository wrappers,
 - removed connector-side refresh of transcript cursors before Claude sync,
-- kept SDK history state local to `ClaudeHistoryAdapter`,
-- after a live SDK turn completes, `ClaudeSdkAdapter._mark_history_consumed()`
-  lets the history adapter observe the latest SDK messages so unchanged
-  sessions can be skipped,
+- keep SDK history state inside the Claude runtime/provider implementation,
+- after a live SDK turn completes, the runtime records enough local sync state
+  for later history scans to skip unchanged sessions,
 - history scans are allowed to run during live SDK streams; duplicate or stale
   snapshot items are handled by the same `timeline.sync` merge rules used by
   Codex.

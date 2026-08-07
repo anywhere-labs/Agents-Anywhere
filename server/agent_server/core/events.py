@@ -105,35 +105,52 @@ def events_from_invalidation(payload: dict[str, Any]) -> list[ProtocolEventEnvel
     else:
         events = timeline_events_from_items(session_id, items)
 
-    session = payload.get("session")
-    if isinstance(session, dict):
-        sequence = int(session.get("updatedSeq") or next_sequence or 0)
-        if sequence > 0:
-            event_payload: dict[str, Any] = {
-                "session": session,
-                "status": session.get("status"),
-            }
-            effective_capabilities = payload.get("effectiveCapabilities")
-            if isinstance(effective_capabilities, dict):
-                event_payload["effectiveCapabilities"] = effective_capabilities
+    runtime_state = payload.get("runtimeState")
+    if isinstance(runtime_state, dict):
+        sequence = int(runtime_state.get("updatedSeq") or next_sequence or 0)
+        if sequence >= 0:
             events.append(
                 protocol_event(
                     session_id,
                     sequence=sequence,
-                    event_type="session.status_changed",
-                    payload=event_payload,
+                    event_type="runtime.state.updated",
+                    payload={"state": runtime_state},
+                )
+            )
+
+    session = payload.get("session")
+    if isinstance(session, dict):
+        sequence = int(session.get("updatedSeq") or next_sequence or 0)
+        if sequence > 0:
+            events.append(
+                protocol_event(
+                    session_id,
+                    sequence=sequence,
+                    event_type="session.meta.updated",
+                    payload={"session": session},
+                )
+            )
+        capability_set = payload.get("capabilitySet")
+        if isinstance(capability_set, dict):
+            events.append(
+                protocol_event(
+                    session_id,
+                    sequence=sequence,
+                    event_type="runtime.capability.updated",
+                    payload={"capabilitySet": capability_set},
                 )
             )
 
     notices = payload.get("notices")
     if isinstance(notices, list):
         if payload.get("noticesReset") and next_sequence > 0:
+            snapshot_payload = {"notices": notices}
             events.append(
                 protocol_event(
                     session_id,
                     sequence=next_sequence,
-                    event_type="notice.snapshot",
-                    payload={"notices": notices},
+                    event_type="runtime.notice.snapshot",
+                    payload=snapshot_payload,
                 )
             )
         else:
@@ -143,20 +160,34 @@ def events_from_invalidation(payload: dict[str, Any]) -> list[ProtocolEventEnvel
                 sequence = int(notice.get("updatedSeq") or next_sequence or 0)
                 if sequence <= 0:
                     continue
-                status = notice.get("status")
-                event_type = (
-                    "notice.created"
-                    if status == "open" and int(notice.get("revision") or 1) == 1
-                    else "notice.updated"
-                )
+                notice_payload = {"notice": notice_with_event_sequence(notice, sequence)}
                 events.append(
                     protocol_event(
                         session_id,
                         sequence=sequence,
-                        event_type=event_type,
-                        payload={"notice": notice},
+                        event_type="runtime.notice.updated",
+                        payload=notice_payload,
                     )
                 )
+
+    catalogs = payload.get("catalogs")
+    if isinstance(catalogs, dict) and next_sequence > 0:
+        for catalog_type, catalog in catalogs.items():
+            if catalog_type not in {"model", "permission"}:
+                continue
+            if not isinstance(catalog, dict):
+                continue
+            events.append(
+                protocol_event(
+                    session_id,
+                    sequence=next_sequence,
+                    event_type="runtime.catalog.updated",
+                    payload={
+                        "catalogType": catalog_type,
+                        "catalog": catalog,
+                    },
+                )
+            )
 
     if payload.get("refetch") and next_sequence > 0:
         events.append(
@@ -169,6 +200,18 @@ def events_from_invalidation(payload: dict[str, Any]) -> list[ProtocolEventEnvel
         )
     events.sort(key=lambda event: (event.sequence, event.eventId))
     return events
+
+
+def notice_with_event_sequence(
+    notice: dict[str, Any],
+    sequence: int,
+) -> dict[str, Any]:
+    if isinstance(notice.get("updatedSeq"), int):
+        return notice
+    return {
+        **notice,
+        "updatedSeq": sequence,
+    }
 
 
 def revisions_are_complete(

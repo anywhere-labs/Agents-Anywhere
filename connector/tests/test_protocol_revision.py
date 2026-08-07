@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from connector.protocol_revision import ProtocolRevisionClock
+from connector.server.protocol_revision import ProtocolRevisionClock
 
 
 def test_protocol_revision_is_strictly_monotonic_when_clock_stalls() -> None:

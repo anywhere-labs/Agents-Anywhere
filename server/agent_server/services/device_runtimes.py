@@ -20,9 +20,8 @@ from agent_server.infra.connector_rpc import (
 from agent_server.infra.redis_coordinator import RedisCoordinator
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.services.dashboard_events import publish_dashboard_changed
-from agent_server.services.notices import cancel_session_blocking_interactions
 from agent_server.services.repository_ports import DeviceRuntimeRepository
-from agent_server.services.session_states import SessionStateService
+from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 
 
 class DeviceRuntimeError(RuntimeError):
@@ -69,12 +68,13 @@ class DeviceRuntimeService:
         manager: ConnectorRpcManager,
         timeline_broker: TimelineBroker | None = None,
         coordinator: RedisCoordinator | None = None,
+        runtime_state_cache: SessionRuntimeStateCache | None = None,
     ) -> None:
         self._store = store
         self._manager = manager
         self._timeline_broker = timeline_broker
         self._coordinator = coordinator
-        self._session_states = SessionStateService(store)
+        self._runtime_state_cache = runtime_state_cache
         self._locks: dict[tuple[str, str], asyncio.Lock] = {}
         self._locks_guard = asyncio.Lock()
 
@@ -94,7 +94,8 @@ class DeviceRuntimeService:
     ) -> list[DeviceRuntimeView]:
         inventory = RuntimeInventory.model_validate(raw)
         for runtime in inventory.runtimes:
-            validate_config_schema(runtime.schema_)
+            if runtime.schema_ is not None:
+                validate_config_schema(runtime.schema_)
         rows = await self._store.replace_device_runtime_inventory(
             connector_id, inventory.runtimes
         )
@@ -185,6 +186,38 @@ class DeviceRuntimeService:
             await self._publish(connector_id, "runtime.active")
             return runtime
 
+    async def ensure_active_running(
+        self,
+        connector_id: str,
+        runtime_id: str,
+        *,
+        user_id: str,
+    ) -> DeviceRuntimeView:
+        async with self._runtime_lock(connector_id, runtime_id):
+            runtime = await self._get_owned(connector_id, runtime_id, user_id=user_id)
+            if not runtime.active:
+                raise DeviceRuntimeConflictError("runtime is not active")
+            if not runtime.configured or runtime.config is None:
+                raise DeviceRuntimeConflictError(
+                    "runtime must be configured before use"
+                )
+            if not runtime.present:
+                raise DeviceRuntimeConflictError(
+                    "runtime is not currently reported by the connector"
+                )
+            if not await self._manager.is_online(connector_id):
+                raise DeviceRuntimeOfflineError("connector is offline")
+
+            current = DeviceRuntimeView.model_validate(
+                await self._store.get_device_runtime(connector_id, runtime_id)
+            )
+            if current.status == "running":
+                return current
+            self._validate(current.config, self._schema(current))
+            started = await self._start_locked(current)
+            await self._publish(connector_id, "runtime.ensure_running")
+            return started
+
     async def delete_config(
         self,
         connector_id: str,
@@ -224,6 +257,10 @@ class DeviceRuntimeService:
     ) -> DeviceRuntimeView:
         if status not in {
             "stopped",
+            "discovering",
+            "available",
+            "unavailable",
+            "validating",
             "starting",
             "running",
             "stopping",
@@ -385,16 +422,10 @@ class DeviceRuntimeService:
             runtime=runtime.runtimeId,
         )
         for session in sessions:
-            await cancel_session_blocking_interactions(
-                self._store,
-                session_id=session.id,
-                reason="runtime_stopped",
-            )
             await self._store.clear_active_run(session.id)
-            await self._session_states.reconcile(
-                session.id,
-                settle_stopping=True,
-            )
+            if self._runtime_state_cache is not None:
+                await self._runtime_state_cache.discard(session.id)
+            await self._store.set_session_status(session.id, "idle")
             if self._timeline_broker is not None:
                 await self._timeline_broker.publish(
                     session.id,

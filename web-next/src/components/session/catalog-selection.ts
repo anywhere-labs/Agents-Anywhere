@@ -2,7 +2,27 @@
 
 import type { ProtocolModelCatalog, ProtocolPermissionCatalog } from "@/features/dashboard/types"
 
-export function modelSelectionIdForCatalog(
+export function catalogI18nText(
+  translate: (key: string) => string,
+  metadata: Record<string, unknown> | null | undefined,
+  field: "labelKey" | "descriptionKey",
+  fallback: string | null | undefined,
+): string {
+  const i18n = metadata?.i18n
+  if (!isRecord(i18n)) return fallback ?? ""
+  const rawKey = i18n[field]
+  if (typeof rawKey !== "string" || !rawKey) return fallback ?? ""
+  const key = rawKey.startsWith("dashboard.new.")
+    ? rawKey.slice("dashboard.new.".length)
+    : rawKey
+  try {
+    return translate(key)
+  } catch {
+    return fallback ?? ""
+  }
+}
+
+export function selectionIdForModelCatalog(
   catalog: ProtocolModelCatalog | null,
   modelId: string,
   reasoningId: string,
@@ -29,7 +49,7 @@ export function modelIdsForSelectionId(
   return null
 }
 
-export function permissionSelectionIdForCatalog(
+export function selectionIdForPermissionCatalog(
   catalog: ProtocolPermissionCatalog | null,
   permissionId: string,
 ): string | null {
@@ -43,4 +63,8 @@ export function permissionIdForSelectionId(
 ): string {
   if (!catalog || !selectionId) return ""
   return catalog.permissions.find((item) => item.selectionId === selectionId)?.id ?? ""
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
 }

@@ -58,6 +58,7 @@ from agent_server.services.device_runtimes import DeviceRuntimeService
 from agent_server.services.effective_capabilities import (
     publish_connector_session_capabilities,
 )
+from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 from agent_server.services.shell_tasks import ShellTaskManager
 from agent_server.services.workspace import WorkspaceServiceError
 
@@ -183,11 +184,13 @@ def create_app(
     )
     app.state.terminal_stream_hub = TerminalStreamHub(app.state.redis)
     app.state.timeline_broker = TimelineBroker(app.state.redis)
+    app.state.session_runtime_state_cache = SessionRuntimeStateCache()
     app.state.device_runtime_service = DeviceRuntimeService(
         app.state.store,
         app.state.rpc,
         app.state.timeline_broker,
         app.state.redis,
+        app.state.session_runtime_state_cache,
     )
     app.state.ws_tickets = ClientWsTicketManager(app.state.redis)
     app.state.setup_token = SetupToken()

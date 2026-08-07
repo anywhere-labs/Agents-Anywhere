@@ -1,58 +1,68 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 
 from agent_server.core.models import RuntimeName
 from agent_server.core.protocol import (
-    ProtocolModelCatalog,
     ProtocolModelCatalogResponse,
-    ProtocolPermissionCatalog,
     ProtocolPermissionCatalogResponse,
 )
-from agent_server.core.utc import utc_now
-from agent_server.deps import current_user_id, get_catalog_service
-from agent_server.services.catalogs import CatalogService
+from agent_server.deps import current_user_id
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 
 
-@router.get("/{runtime}/model-catalog", response_model=ProtocolModelCatalogResponse)
+def removed_agent_catalog_detail(runtime: RuntimeName, catalog: str) -> dict[str, str]:
+    return {
+        "code": "agent_catalog_route_removed",
+        "message": "Agent catalog query routes were removed from the v2 target API.",
+        "use": f"/connectors/{{connectorId}}/runtimes/{runtime}/catalogs/{catalog}",
+    }
+
+
+@router.get(
+    "/{runtime}/model-catalog",
+    response_model=ProtocolModelCatalogResponse,
+    include_in_schema=False,
+)
 async def get_agent_model_catalog(
     runtime: RuntimeName,
-    connector_id: str = Query(alias="connectorId", min_length=1),
     user_id: str = Depends(current_user_id),
-    catalogs: CatalogService = Depends(get_catalog_service),
 ) -> ProtocolModelCatalogResponse:
-    try:
-        catalog = await catalogs.model_catalog(
-            connector_id,
-            runtime=runtime,
-            user_id=user_id,
-        )
-    except KeyError:
-        raise HTTPException(status_code=404, detail="connector not found") from None
-    return ProtocolModelCatalogResponse(
-        catalog=catalog or ProtocolModelCatalog(runtime=runtime, revision=0, models=[]),
-        serverTime=utc_now(),
+    """Reject the removed agent catalog route.
+
+    Side effects:
+    - authenticates the caller through the standard dependency;
+    - does not start runtimes or perform connector RPC.
+    """
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="unauthorized")
+    raise HTTPException(
+        status_code=410,
+        detail=removed_agent_catalog_detail(runtime, "model"),
     )
 
 
-@router.get("/{runtime}/permission-catalog", response_model=ProtocolPermissionCatalogResponse)
+@router.get(
+    "/{runtime}/permission-catalog",
+    response_model=ProtocolPermissionCatalogResponse,
+    include_in_schema=False,
+)
 async def get_agent_permission_catalog(
     runtime: RuntimeName,
-    connector_id: str = Query(alias="connectorId", min_length=1),
     user_id: str = Depends(current_user_id),
-    catalogs: CatalogService = Depends(get_catalog_service),
 ) -> ProtocolPermissionCatalogResponse:
-    try:
-        catalog = await catalogs.permission_catalog(
-            connector_id,
-            runtime=runtime,
-            user_id=user_id,
-        )
-    except KeyError:
-        raise HTTPException(status_code=404, detail="connector not found") from None
-    return ProtocolPermissionCatalogResponse(
-        catalog=catalog or ProtocolPermissionCatalog(runtime=runtime, revision=0, permissions=[]),
-        serverTime=utc_now(),
+    """Reject the removed agent catalog route.
+
+    Side effects:
+    - authenticates the caller through the standard dependency;
+    - does not start runtimes or perform connector RPC.
+    """
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="unauthorized")
+    raise HTTPException(
+        status_code=410,
+        detail=removed_agent_catalog_detail(runtime, "permission"),
     )

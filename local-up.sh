@@ -12,7 +12,7 @@ ENV_FILE_EXPLICIT=false
 CONNECTOR_CONFIG_EXPLICIT=false
 SKIP_INSTALL=false
 WITH_CONNECTOR=false
-SERVER_RELOAD=true
+SERVER_RELOAD=false
 SHUTTING_DOWN=false
 DEPENDENCIES_STARTED=false
 
@@ -32,7 +32,8 @@ Options:
   --skip-install        Skip uv sync and yarn install
   --with-connector      Also start the local Connector
   --connector-config P  Connector config used with --with-connector
-  --no-reload           Disable uvicorn source reload
+  --reload              Enable uvicorn source reload
+  --no-reload           Disable uvicorn source reload (default)
   -h, --help            Show this help
 
 The stack starts PostgreSQL and Redis with Docker Compose, then runs the Server
@@ -70,6 +71,10 @@ while [[ $# -gt 0 ]]; do
       CONNECTOR_CONFIG="$2"
       CONNECTOR_CONFIG_EXPLICIT=true
       shift 2
+      ;;
+    --reload)
+      SERVER_RELOAD=true
+      shift
       ;;
     --no-reload)
       SERVER_RELOAD=false

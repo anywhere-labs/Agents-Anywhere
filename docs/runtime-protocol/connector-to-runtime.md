@@ -41,7 +41,127 @@ class RuntimeIdentity:
     adapter_version: str
     display_name: str | None = None
     protocol_version: str = "1.0"
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeConfig:
+    runtime: str
+    revision: int
+    values: Mapping[str, Any] = field(default_factory=dict)
+    schema: Mapping[str, Any] | None = None
+    ui_schema: Mapping[str, Any] | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeConfigSchema:
+    runtime: str
+    revision: int
+    schema: Mapping[str, Any]
+    ui_schema: Mapping[str, Any] | None = None
+    defaults: Mapping[str, Any] = field(default_factory=dict)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeInventoryItem:
+    runtime: str
+    runtime_type: str
+    display_name: str
+    available: bool
+    configured: bool = False
+    capabilities: Mapping[str, bool] = field(default_factory=dict)
+    reason: str | None = None
+    config_schema: RuntimeConfigSchema | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 ```
+
+`RuntimeConfig` is Server-owned runtime configuration, not Connector app
+configuration. `ConnectorConfig` answers how this Connector talks to the
+Server. `RuntimeConfig` answers how one local runtime should be started:
+environment profile, executable/runtime flags when a provider supports them,
+and other runtime-specific options.
+
+The Server is the durable source of truth for runtime config values and
+activation intent. Runtime providers report config schemas/defaults and validate
+raw config values supplied by Server RPC. A running `AgentRuntime` exposes only
+its current effective config projection; Connector must not persist runtime
+config values locally or restart runtimes from local saved config after process
+restart.
+
+A running `AgentRuntime` must not accept config mutation directly. Runtime
+config changes flow through Server-owned config updates followed by provider
+validation and explicit Server-driven restart/recreate when necessary. This
+avoids hidden in-place reconfiguration semantics and keeps runtime instances
+stable.
+
+`schema` and `ui_schema` are optional because some runtimes may expose a fixed form in Web/CLI while others need runtime-provided fields. The protocol carries them as data so the upper Connector layer does not need Codex- or Claude-specific config conditionals.
+
+`RuntimeConfigSchema` is the provider's live configuration form contract. `RuntimeInventoryItem` is the provider's discovery result. A runtime may be available but not configured, unavailable because an executable or SDK is missing, or configured but currently stopped.
+
+`RuntimeInventoryItem.capabilities` declares runtime capability differences as
+data. Upper Connector and UI layers should use this map instead of inferring
+behavior from runtime names. Capability keys are intentionally extensible; the
+current connector providers use keys such as `modelCatalog`,
+`permissionCatalog`, `sessionState`, `sessionNotices`, `createAndStartSession`,
+`startTurn`, `steerTurn`, `interruptTurn`, `commands`, `interactions`,
+`attachments`, and `ipc`.
+
+## Runtime providers
+
+Providers own startup-time lifecycle and config validation. They are deliberately separate from running `AgentRuntime` instances.
+
+```py
+class RuntimeProvider(ABC):
+    @property
+    @abstractmethod
+    def runtime(self) -> str:
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def runtime_type(self) -> str:
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def display_name(self) -> str:
+        raise NotImplementedError
+
+    async def discover(self) -> RuntimeInventoryItem:
+        raise RuntimeUnsupportedError("discover")
+
+    async def get_config_schema(self) -> RuntimeConfigSchema:
+        raise RuntimeUnsupportedError("get_config_schema")
+
+    async def validate_config(
+        self,
+        values: Mapping[str, Any],
+    ) -> RuntimeConfig:
+        raise RuntimeUnsupportedError("validate_config")
+
+    async def create_runtime(
+        self,
+        config: RuntimeConfig,
+        host: RuntimeHostClient,
+    ) -> AgentRuntime:
+        raise RuntimeUnsupportedError("create_runtime")
+
+    async def stop_runtime(self, runtime: AgentRuntime) -> None:
+        await runtime.stop()
+```
+
+Startup must flow through validation:
+
+```text
+raw runtime config values
+  -> RuntimeProvider.validate_config(values)
+  -> effective RuntimeConfig
+  -> RuntimeProvider.create_runtime(config, host)
+  -> AgentRuntime.start()
+```
+
+`get_config_schema()` can help UI/CLI render a form, but it is not the only validator. `validate_config()` must perform semantic checks and return the normalized effective config used to create the runtime.
 
 ## Runtime-level catalogs
 
@@ -128,9 +248,9 @@ class SessionState:
     metadata: Mapping[str, Any] = field(default_factory=dict)
 ```
 
-`SessionMeta.ordering_time` is the session ordering/display time. `SessionState` deliberately does not include ordering time, active turn id, runtime catalog data, command lists, notices, or timeline items. Model and permission selections belong in `SessionState` because they are current session state, not session metadata.
+`SessionMeta.ordering_time` is the session ordering/display time. Runtime state deliberately does not include ordering time, active turn id, runtime catalog data, command lists, notices, or timeline items. Model and permission selections belong in RuntimeLive state because they are current session state, not session metadata.
 
-`SessionState.status` is the sole UI running-state source. Legacy `sessions.status` fields should become migration projections only. Tool calls keep status as `running`; tool details belong in timeline items or state metadata.
+RuntimeLive state is the display state source. Session-scoped effective capability is the action availability source. Legacy `sessions.status` fields should become migration projections only. Tool calls keep runtime state as `running`; tool details belong in timeline items or state metadata.
 
 Runtime state updates are partial updates. A runtime may update only status, only selections, only error, or only metadata. The host/server merges non-empty fields and rejects completely empty updates. Selection updates merge by scope, so future scopes can be added without replacing unrelated selections.
 
@@ -158,6 +278,7 @@ class RuntimeCommand:
 class RuntimeCommandResult:
     command: str
     ok: bool = True
+    code: str | None = None
     message: str | None = None
     result: Mapping[str, Any] = field(default_factory=dict)
 ```
@@ -223,14 +344,19 @@ class SessionNotice:
     message: str | None = None
     severity: Literal["info", "success", "warning", "error"] = "info"
     status: str = "open"
+    interaction_type: str | None = None
+    blocking: Mapping[str, Any] | None = None
     response_required: bool = False
     actions: tuple[Mapping[str, Any], ...] = ()
+    source: Mapping[str, Any] = field(default_factory=dict)
+    context: Mapping[str, Any] = field(default_factory=dict)
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
 class RuntimeOperationResult:
     ok: bool = True
+    code: str | None = None
     message: str | None = None
     result: Mapping[str, Any] = field(default_factory=dict)
 ```
@@ -253,6 +379,9 @@ class AgentRuntime(ABC):
 
     async def stop(self) -> None:
         pass
+
+    async def get_config(self) -> RuntimeConfig:
+        raise RuntimeUnsupportedError("get_config")
 
     async def list_model_catalog(
         self,
@@ -315,6 +444,7 @@ class AgentRuntime(ABC):
         session_id: str,
         external_session_id: str | None,
         content: str,
+        selections: Mapping[str, str | None] | None = None,
         attachments: tuple[RuntimeAttachment, ...] = (),
         client_message_id: str | None = None,
     ) -> RuntimeOperationResult:

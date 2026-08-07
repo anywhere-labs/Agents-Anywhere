@@ -7,8 +7,12 @@ All Server HTTP, SSE, and WebSocket API documentation should live under this dir
 ## Documents
 
 - [API v2 namespace](./namespace.md): `/api/v2` namespace and client/connector URL rules.
-- [Session API proposal](./session-api-proposal.md): proposed client-facing session API redesign for Agent Runtime Protocol v1.
+- [Session API proposal](./session-api-proposal.md): authoritative target for the split `SessionMeta` / `SessionTimeline` / `RuntimeLive` client API.
+- [Session API current gap](./session-api-current-gap.md): current backend implementation gaps against the target session API.
+- [Session service architecture](./session-service-architecture.md): Server, Connector, Runtime, and Web ownership boundaries for session data and realtime updates.
+- [Effective capability API](./capabilities.md): global and session-scoped effective capability semantics, paths, and realtime events.
 - [Realtime API](./realtime.md): session, dashboard, connector, and terminal realtime channel semantics.
+- [Frontend migration checklist](./frontend-migration-checklist.md): frontend API call-site replacements and behavior changes to apply after backend cleanup.
 
 ## Current API groups
 
@@ -34,23 +38,41 @@ The connector channel endpoints are intentionally stable. Runtime protocol refac
 /connectors
 /connectors/{connectorId}
 /connectors/{connectorId}/preferences
-/connectors/{connectorId}/protocol/capabilities
 /connectors/{connectorId}/runtimes
 /connectors/{connectorId}/runtimes/discover
+/connectors/{connectorId}/runtimes/{runtimeId}/capabilities
 /connectors/{connectorId}/runtimes/{runtimeId}/config
 /connectors/{connectorId}/runtimes/{runtimeId}/active
+/connectors/{connectorId}/runtimes/{runtimeId}/catalogs/model
+/connectors/{connectorId}/runtimes/{runtimeId}/catalogs/permission
 ```
 
-Target runtime catalog reads should live under connector runtime resources:
+Runtime-scoped capability and catalog reads live under runtime resources. If a
+specific connector must be selected, the connector is part of the path, not a
+query parameter.
+
+Generic runtime routes may exist only when the server can select the runtime
+unambiguously:
 
 ```text
-/connectors/{connectorId}/runtimes/{runtimeId}/catalogs/models
-/connectors/{connectorId}/runtimes/{runtimeId}/catalogs/permissions
+/runtimes/{runtimeId}/capabilities
+/runtimes/{runtimeId}/catalogs/model
+/runtimes/{runtimeId}/catalogs/permission
 ```
 
 ### Session API
 
-Session API is the main area that needs redesign. See [Session API proposal](./session-api-proposal.md).
+Session API is the main area that needs redesign. The current target splits
+durable Server facts from live Runtime facts:
+
+```text
+SessionMeta      -> durable Server DB
+SessionTimeline  -> durable Server DB, written by Runtime updates
+RuntimeLive      -> non-durable Runtime state/notices/catalogs/capabilities
+```
+
+See [Session API proposal](./session-api-proposal.md) and
+[Session service architecture](./session-service-architecture.md).
 
 ### Realtime API
 
@@ -65,19 +87,38 @@ terminal lifecycle         -> session/connector terminal streams
 
 See [Realtime API](./realtime.md).
 
-## Deprecated or transitional API areas
+## Removed legacy API areas
 
-These routes may remain for compatibility, but should not be used as the target design for new work:
+The old legacy API list is intentionally removed from the target docs.
+If a migration build still exposes those routes, they are compatibility shims
+only. Old agent catalog query routes and connector protocol capability reads
+should return a migration error instead of starting runtimes, forwarding RPC, or
+serving UI facts. Other temporary shims should point callers to the scoped APIs
+documented here.
 
-```text
-GET  /api/v2/agents/{runtime}/model-catalog
-GET  /api/v2/agents/{runtime}/permission-catalog
-GET  /api/v2/sessions/events/dashboard
-POST /api/v2/sessions
-GET  /api/v2/sessions/{sessionId}/state with timeline query params
-POST /api/v2/sessions/{sessionId}/sync
-POST /api/v2/sessions/{sessionId}/interactions/{noticeId}/respond
-message/create modelSelectionId and permissionSelectionId fields
-snapshot.catalogs
-hardcoded session commands
-```
+Migration guide:
+
+- Agent catalog routes with `connectorId` query parameters move to connector
+  runtime catalog paths.
+- Connector protocol capability routes move to runtime-scoped or session-scoped
+  effective capability paths.
+- Session state routes move to `/sessions/{sessionId}/runtime/state`.
+- Session selection routes move to `/sessions/{sessionId}/runtime/selections`.
+- Session message and command routes move under
+  `/sessions/{sessionId}/runtime/*`.
+- Session read/archive bulk aliases move to `POST /sessions/read`,
+  `POST /sessions/archive`, and `POST /sessions/unarchive`. Each accepts a
+  direct JSON array of session ids.
+- `snapshot.catalogs` is not a primary catalog source.
+- Server-persisted notices, catalogs, and capabilities are not runtime truth.
+- Hardcoded session commands are removed; command lists come from runtime live
+  reads.
+
+`snapshot.catalogs` is now a compatibility shell and should be empty in the
+target flow. Model and permission catalogs are read from live runtime catalog
+endpoints when the selector is opened.
+
+`POST /api/v2/sessions` is bind-only during the migration: callers must provide
+an existing `externalSessionId` and pass selections through `selections`.
+New user tasks must use
+`POST /api/v2/sessions/create-and-start`.

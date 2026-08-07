@@ -74,10 +74,13 @@ export type DeviceRuntimeListResponse = {
 
 export type SessionStatusValue =
   | "idle"
+  | "waiting"
   | "pending"
   | "running"
   | "stopping"
   | "blocked";
+
+export type RuntimeStatusValue = SessionStatusValue | "error" | "disconnected";
 
 export type SessionView = {
   id: string;
@@ -105,8 +108,6 @@ export type SessionView = {
   effectiveRunMode?: "chat" | "terminal" | null;
   runtimeSettings?: Record<string, unknown> | null;
   runtimeSettingsOverride?: Record<string, unknown> | null;
-  modelSelectionId?: string | null;
-  permissionSelectionId?: string | null;
 };
 
 export type ConnectorListResponse = {
@@ -162,9 +163,29 @@ export type SessionListResponse = {
 export type SessionCommandResponse = {
   command: string;
   ok: boolean;
+  code: string | null;
   message: string | null;
   result: unknown;
   session: SessionView | null;
+  serverTime: string;
+};
+
+export type RuntimeCommand = {
+  id: string;
+  title: string;
+  description: string | null;
+  aliases: string[];
+  category: string | null;
+  scope: "runtime" | "session" | "turn" | string;
+  enabled: boolean;
+  disabledReason: string | null;
+  acceptsArgs: boolean;
+  argsSchema: Record<string, unknown> | null;
+  metadata: Record<string, unknown>;
+};
+
+export type SessionCommandListResponse = {
+  commands: RuntimeCommand[];
   serverTime: string;
 };
 
@@ -191,15 +212,27 @@ export type SessionResponse = {
 export type SessionCreateRequest = {
   connectorId: string;
   runtime: string;
+  externalSessionId?: string | null;
   title?: string;
   cwd?: string;
-  modelSelectionId?: string | null;
-  permissionSelectionId?: string | null;
+  selections?: Record<string, string | null>;
+};
+
+export type SessionCreateAndStartRequest = {
+  connectorId: string;
+  runtime: string;
+  title?: string;
+  cwd?: string;
+  content: string;
+  selections?: Record<string, string | null>;
+  attachments?: InlineAttachmentRef[];
+  clientMessageId?: string | null;
 };
 
 export type SessionCreateResponse = {
   session: SessionView;
   connectorResult: unknown;
+  attachments?: AttachmentRef[];
 };
 
 export type TakeoverResponse = {
@@ -213,6 +246,7 @@ export type TimelineType =
   | "message"
   | "tool"
   | "artifact"
+  | "marker"
   | "system";
 
 export type TimelineStatus =
@@ -286,9 +320,11 @@ export type ProtocolCapabilityScope = ProtocolCapability["scope"];
 
 export type NoticeStatus =
   | "open"
+  | "responding"
   | "response_accepted"
   | "resolving"
   | "resolved"
+  | "closed"
   | "expired"
   | "cancelled"
   | "failed";
@@ -335,11 +371,17 @@ export type SessionTimelineSnapshot = {
   hasMore: boolean;
 };
 
+export type SessionTimelineResponse = SessionTimelineSnapshot & {
+  sessionId: string;
+  serverTime: string;
+};
+
 export type SessionSnapshotResponse = Pick<
   ProtocolSessionSnapshotResponse,
   "eventCursor" | "serverTime"
 > & {
   session: SessionView;
+  state?: SessionRuntimeState | null;
   timeline: SessionTimelineSnapshot;
   notices: Notice[];
   effectiveCapabilities: ProtocolCapabilitySet;
@@ -353,10 +395,10 @@ export type SessionSnapshotResponse = Pick<
 
 export type WsTicketResponse = ProtocolWsTicketResponse;
 
-export type SessionStateResponse = {
+export type SessionLocalTimelineState = {
   session: SessionView;
+  state?: SessionRuntimeState | null;
   items: TimelineItem[];
-  approvals: Approval[];
   notices?: Notice[];
   nextSeq: number;
   hasMore: boolean;
@@ -431,6 +473,10 @@ export type FsWriteResult = {
 export type RpcResponse<T> = {
   ok: boolean;
   result: T;
+  error?: {
+    code?: string;
+    message?: string;
+  };
 };
 
 export type TerminalView = {
@@ -492,11 +538,40 @@ export type AttachmentRef = {
   sha256?: string;
 };
 
+export type InlineAttachmentRef = AttachmentRef & {
+  name: string;
+  contentBase64: string;
+};
+
 export type MessageSendOptions = {
   attachments?: AttachmentRef[];
   clientMessageId?: string;
-  modelSelectionId?: string | null;
-  permissionSelectionId?: string | null;
+};
+
+export type SessionRuntimeState = {
+  sessionId: string;
+  runtime: string;
+  externalSessionId?: string | null;
+  status: RuntimeStatusValue;
+  selections: Record<string, string | null>;
+  statusReason?: string | null;
+  error?: Record<string, unknown> | null;
+  metadata: Record<string, unknown>;
+  updatedSeq: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type SessionRuntimeStateResponse = {
+  state: SessionRuntimeState;
+  serverTime: string;
+};
+
+export type SessionSelectionPatchResponse = {
+  ok: boolean;
+  state?: SessionRuntimeState | null;
+  connectorResult?: Record<string, unknown> | null;
+  serverTime: string;
 };
 
 export type UploadedAttachment = {

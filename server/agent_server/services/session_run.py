@@ -1,13 +1,22 @@
 from __future__ import annotations
 
+import base64
+import binascii
+import hashlib
+from dataclasses import dataclass
 from typing import Any
 
 from agent_server.core.api_namespace import api_v2_path
 from agent_server.core.models import (
+    InlineAttachmentRef,
     MessageCreateRequest,
     RpcResponsePayload,
-    RuntimeName,
+    SessionCreateAndStartRequest,
     SessionCreateRequest,
+    SessionRuntimeState,
+    SessionSelectionPatchRequest,
+    SessionStatus,
+    SessionView,
     SteerTurnRequest,
 )
 from agent_server.core.utc import utc_now
@@ -16,13 +25,7 @@ from agent_server.infra.connector_rpc import (
     ConnectorRpcError,
     ConnectorRpcManager,
 )
-from agent_server.services.catalogs import CatalogService, CatalogServiceError
-from agent_server.services.notices import (
-    cancel_session_blocking_interactions,
-    upsert_execution_error_interaction,
-)
 from agent_server.services.repository_ports import SessionRunRepository
-from agent_server.services.session_states import SessionStateService
 
 
 class SessionRunError(RuntimeError):
@@ -49,12 +52,19 @@ class SessionRunInvalidConfigError(SessionRunError):
     status_code = 422
 
 
+@dataclass(frozen=True, slots=True)
+class PersistedInlineAttachment:
+    file_id: str
+    name: str
+    media_type: str
+    size: int
+    sha256: str
+
+
 class SessionRunService:
     def __init__(self, store: SessionRunRepository, manager: ConnectorRpcManager) -> None:
         self._store = store
         self._manager = manager
-        self._catalogs = CatalogService(store)
-        self._session_states = SessionStateService(store)
 
     async def create_session(
         self,
@@ -70,12 +80,6 @@ class SessionRunService:
             raise SessionRunNotFoundError("connector not found") from None
 
         connector_result = None
-        await self._validate_selections(
-            connector_id=payload.connectorId,
-            runtime=payload.runtime,
-            model_selection_id=payload.modelSelectionId,
-            permission_selection_id=payload.permissionSelectionId,
-        )
         if payload.externalSessionId is not None:
             session = await self._store.create_session(
                 connector_id=payload.connectorId,
@@ -84,73 +88,138 @@ class SessionRunService:
                 external_session_id=payload.externalSessionId,
                 title=payload.title,
                 cwd=payload.cwd,
-                model_selection_id=payload.modelSelectionId,
-                permission_selection_id=payload.permissionSelectionId,
             )
             return {"session": session, "connectorResult": connector_result}
 
+        raise SessionRunInvalidConfigError(
+            "new sessions must use /sessions/create-and-start"
+        )
+
+    async def create_and_start_session(
+        self,
+        payload: SessionCreateAndStartRequest,
+        *,
+        user_id: str,
+    ) -> dict[str, Any]:
+        try:
+            connector = await self._store.get_connector(payload.connectorId)
+            if connector.userId != user_id:
+                raise KeyError(payload.connectorId)
+        except KeyError:
+            raise SessionRunNotFoundError("connector not found") from None
         if not await self._manager.is_online(payload.connectorId):
             raise SessionRunConflictError("connector is offline")
-        connector_params = {
+
+        selections = _selections_from_mapping(payload.selections)
+        session = await self._store.create_session(
+            connector_id=payload.connectorId,
+            user_id=user_id,
+            runtime=payload.runtime,
+            external_session_id=None,
+            title=payload.title,
+            cwd=payload.cwd,
+            selections=selections,
+            takeover=True,
+        )
+        params: dict[str, Any] = {
             "runtime": payload.runtime,
-            "title": payload.title,
-            "cwd": payload.cwd,
+            "sessionId": session.id,
+            "content": payload.content,
         }
-        if payload.modelSelectionId is not None:
-            connector_params["modelSelectionId"] = payload.modelSelectionId
-        if payload.permissionSelectionId is not None:
-            connector_params["permissionSelectionId"] = payload.permissionSelectionId
+        if payload.title is not None:
+            params["title"] = payload.title
+        if payload.cwd is not None:
+            params["cwd"] = payload.cwd
+        if selections:
+            params["selections"] = selections
+        if payload.clientMessageId:
+            params["clientMessageId"] = payload.clientMessageId
+        persisted_attachment_refs: list[dict[str, Any]] = []
+        if payload.attachments:
+            persisted_attachments = await self._persist_inline_attachments(
+                session_id=session.id,
+                user_id=user_id,
+                attachments=payload.attachments,
+            )
+            persisted_attachment_refs = [
+                _timeline_payload_from_persisted_inline_attachment(attachment)
+                for attachment in persisted_attachments
+            ]
+            params["attachments"] = [
+                _connector_attachment_reference_payload(attachment)
+                for attachment in persisted_attachments
+            ]
+            params["timelineAttachments"] = persisted_attachment_refs
+
+        await self._store.start_active_run(
+            session_id=session.id,
+            runtime=payload.runtime,
+            params=params,
+        )
         try:
             connector_result = await self._manager.request(
                 payload.connectorId,
                 "session.create",
-                connector_params,
+                params,
                 timeout=60,
             )
         except ConnectorOfflineError as exc:
+            await self._store.clear_active_run(session.id)
             raise SessionRunConflictError(str(exc)) from exc
         except ConnectorRpcError as exc:
+            await self._store.clear_active_run(session.id)
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
 
-        session_id = connector_result.get("sessionId") if isinstance(connector_result, dict) else None
-        external_session_id = connector_result.get("externalSessionId") if isinstance(connector_result, dict) else None
-        if not isinstance(session_id, str):
-            raise SessionRunUpstreamError("connector did not return a session id")
+        if not isinstance(connector_result, dict):
+            await self._mark_create_and_start_failed(
+                session.id,
+                runtime=payload.runtime,
+                code="invalid_connector_result",
+                message="connector did not return a session result",
+            )
+            raise SessionRunUpstreamError("connector did not return a session result")
+        external_session_id = connector_result.get("externalSessionId")
         if payload.runtime != "claude" and not isinstance(external_session_id, str):
+            await self._mark_create_and_start_failed(
+                session.id,
+                runtime=payload.runtime,
+                code="missing_external_session_id",
+                message="connector did not return an external session id",
+            )
             raise SessionRunUpstreamError("connector did not return an external session id")
-        if isinstance(external_session_id, str):
-            try:
-                session_id = await self._store.resolve_connector_session_id(
-                    connector_id=payload.connectorId,
-                    session_id=session_id,
-                    external_session_id=external_session_id,
-                )
-            except KeyError:
-                pass
-        connector_model_selection_id = (
-            connector_result.get("modelSelectionId") if isinstance(connector_result, dict) else None
-        )
-        connector_permission_selection_id = (
-            connector_result.get("permissionSelectionId") if isinstance(connector_result, dict) else None
+        turn_id = connector_result.get("turnId")
+        await self._store.start_active_run(
+            session_id=session.id,
+            runtime=payload.runtime,
+            external_session_id=external_session_id if isinstance(external_session_id, str) else None,
+            turn_id=turn_id if isinstance(turn_id, str) else None,
+            params=params,
         )
         session = await self._store.upsert_connector_session(
             connector_id=payload.connectorId,
-            session_id=session_id,
+            session_id=session.id,
             runtime=payload.runtime,
-            external_session_id=external_session_id,
+            external_session_id=external_session_id if isinstance(external_session_id, str) else None,
             title=payload.title,
             cwd=payload.cwd,
-            status="idle",
             last_synced_at=utc_now(),
-            model_selection_id=connector_model_selection_id
-            if isinstance(connector_model_selection_id, str)
-            else payload.modelSelectionId,
-            permission_selection_id=connector_permission_selection_id
-            if isinstance(connector_permission_selection_id, str)
-            else payload.permissionSelectionId,
             origin="platform",
         )
-        return {"session": session, "connectorResult": connector_result}
+        return {
+            "session": session,
+            "connectorResult": connector_result,
+            "attachments": persisted_attachment_refs,
+        }
+
+    async def _mark_create_and_start_failed(
+        self,
+        session_id: str,
+        *,
+        runtime: str,
+        code: str,
+        message: str,
+    ) -> None:
+        await self._store.clear_active_run(session_id)
 
     async def send_message(
         self,
@@ -163,36 +232,14 @@ class SessionRunService:
             session = await self._store.get_session(session_id, user_id=user_id)
         except KeyError:
             raise SessionRunNotFoundError("session not found") from None
-        session = await self._session_states.reconcile(session_id)
 
         if not session.takeover:
             raise SessionRunConflictError("session is read-only until takeover is enabled")
         if not await self._manager.is_online(session.connectorId):
             raise SessionRunConflictError("connector is offline")
-        if not (await self._session_states.inspect(session_id)).can_start_turn:
-            raise SessionRunConflictError(f"session is {session.status}")
-        try:
-            if payload.permissionSelectionId is not None:
-                await self._validate_permission_selection(
-                    connector_id=session.connectorId,
-                    runtime=session.runtime,
-                    permission_selection_id=payload.permissionSelectionId,
-                )
-            if payload.modelSelectionId is not None:
-                await self._validate_model_selection(
-                    connector_id=session.connectorId,
-                    runtime=session.runtime,
-                    model_selection_id=payload.modelSelectionId,
-                )
-            if payload.modelSelectionId is not None or payload.permissionSelectionId is not None:
-                await self._store.update_session_snapshot(
-                    session_id=session_id,
-                    model_selection_id=payload.modelSelectionId,
-                    permission_selection_id=payload.permissionSelectionId,
-                )
-        except ValueError as exc:
-            raise SessionRunInvalidConfigError(str(exc)) from exc
-
+        runtime_status = await self._read_runtime_status(session)
+        if runtime_status != "idle":
+            raise SessionRunConflictError(f"session is {runtime_status}")
         params: dict[str, Any] = {
             "sessionId": session_id,
             "runtime": session.runtime,
@@ -204,10 +251,6 @@ class SessionRunService:
             params["externalSessionId"] = session.externalSessionId
         if payload.clientMessageId:
             params["clientMessageId"] = payload.clientMessageId
-        if payload.modelSelectionId is not None:
-            params["modelSelectionId"] = payload.modelSelectionId
-        if payload.permissionSelectionId is not None:
-            params["permissionSelectionId"] = payload.permissionSelectionId
         if payload.attachments:
             attachment_payloads = await self._attachment_payloads(
                 session_id=session_id,
@@ -223,7 +266,6 @@ class SessionRunService:
             external_session_id=session.externalSessionId,
             params=params,
         )
-        await self._session_states.reconcile(session_id)
         try:
             result = await self._manager.request(
                 session.connectorId,
@@ -232,27 +274,85 @@ class SessionRunService:
             )
         except ConnectorOfflineError as exc:
             await self._store.clear_active_run(session_id)
-            await upsert_execution_error_interaction(
-                self._store,
-                session_id=session_id,
-                title="Dispatch failed",
-                message=str(exc),
-                error={"code": "connector_offline", "message": str(exc)},
-                reason="dispatch_failed",
-            )
             raise SessionRunConflictError(str(exc)) from exc
         except ConnectorRpcError as exc:
             await self._store.clear_active_run(session_id)
-            await upsert_execution_error_interaction(
-                self._store,
-                session_id=session_id,
-                title="Dispatch failed",
-                message=exc.message or exc.code,
-                error={"code": exc.code, "message": exc.message or exc.code},
-                reason="dispatch_failed",
-            )
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
         return RpcResponsePayload(ok=True, result=result)
+
+    async def _read_runtime_status(self, session: SessionView) -> SessionStatus:
+        params: dict[str, Any] = {
+            "sessionId": session.id,
+            "runtime": session.runtime,
+        }
+        if session.externalSessionId:
+            params["externalSessionId"] = session.externalSessionId
+        try:
+            result = await self._manager.request(
+                session.connectorId,
+                "session.state",
+                params,
+                timeout=10,
+            )
+        except ConnectorOfflineError as exc:
+            raise SessionRunConflictError(str(exc)) from exc
+        except ConnectorRpcError as exc:
+            raise SessionRunUpstreamError(exc.message or exc.code) from exc
+        if not isinstance(result, dict):
+            return "idle"
+        state = result.get("state")
+        if not isinstance(state, dict):
+            return "idle"
+        status = state.get("status")
+        if status in {"idle", "waiting", "pending", "running", "stopping", "blocked"}:
+            return status
+        return "idle"
+
+    async def update_session_selections(
+        self,
+        session_id: str,
+        payload: SessionSelectionPatchRequest,
+        *,
+        user_id: str,
+    ) -> tuple[SessionRuntimeState, dict[str, Any] | None]:
+        try:
+            session = await self._store.get_session(session_id, user_id=user_id)
+        except KeyError:
+            raise SessionRunNotFoundError("session not found") from None
+        if not session.takeover:
+            raise SessionRunConflictError("session is read-only until takeover is enabled")
+        if not await self._manager.is_online(session.connectorId):
+            raise SessionRunConflictError("connector is offline")
+        params: dict[str, Any] = {
+            "sessionId": session_id,
+            "runtime": session.runtime,
+            "selections": payload.selections,
+        }
+        if session.externalSessionId:
+            params["externalSessionId"] = session.externalSessionId
+        try:
+            result = await self._manager.request(
+                session.connectorId,
+                "session.selections.update",
+                params,
+                timeout=30,
+            )
+        except ConnectorOfflineError as exc:
+            raise SessionRunConflictError(str(exc)) from exc
+        except ConnectorRpcError as exc:
+            raise SessionRunUpstreamError(exc.message or exc.code) from exc
+        if isinstance(result, dict) and result.get("ok") is False:
+            code = result.get("code")
+            message = result.get("message")
+            raise SessionRunUpstreamError(
+                str(message or code or "runtime rejected selection update")
+            )
+        state = _runtime_state_from_selection_result(
+            session,
+            payload.selections,
+            result,
+        )
+        return state, result if isinstance(result, dict) else None
 
     async def steer_session(
         self,
@@ -265,7 +365,6 @@ class SessionRunService:
             session = await self._store.get_session(session_id, user_id=user_id)
         except KeyError:
             raise SessionRunNotFoundError("session not found") from None
-        session = await self._session_states.reconcile(session_id)
         if not session.takeover:
             raise SessionRunConflictError(
                 "session is read-only until takeover is enabled"
@@ -279,8 +378,7 @@ class SessionRunService:
         turn_id = active_run.get("turnId") if active_run else None
         if turn_id is None:
             turn_id = await self._store.get_open_turn_id(session_id)
-        decision = await self._session_states.inspect(session_id)
-        if turn_id is None or not decision.can_steer_turn:
+        if turn_id is None:
             raise SessionRunConflictError("no active turn to steer")
 
         params: dict[str, Any] = {
@@ -323,66 +421,13 @@ class SessionRunService:
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
         return RpcResponsePayload(ok=True, result=result)
 
-    async def _validate_selections(
-        self,
-        *,
-        connector_id: str,
-        runtime: RuntimeName,
-        model_selection_id: str | None,
-        permission_selection_id: str | None,
-    ) -> None:
-        if model_selection_id is not None:
-            await self._validate_model_selection(
-                connector_id=connector_id,
-                runtime=runtime,
-                model_selection_id=model_selection_id,
-            )
-        if permission_selection_id is not None:
-            await self._validate_permission_selection(
-                connector_id=connector_id,
-                runtime=runtime,
-                permission_selection_id=permission_selection_id,
-            )
-
-    async def _validate_model_selection(
-        self,
-        *,
-        connector_id: str,
-        runtime: RuntimeName,
-        model_selection_id: str,
-    ) -> tuple[str, str | None]:
-        try:
-            return await self._catalogs.resolve_model(
-                connector_id,
-                runtime=runtime,
-                selection_id=model_selection_id,
-            )
-        except CatalogServiceError as exc:
-            raise SessionRunInvalidConfigError(exc.detail) from exc
-
-    async def _validate_permission_selection(
-        self,
-        *,
-        connector_id: str,
-        runtime: RuntimeName,
-        permission_selection_id: str,
-    ) -> dict[str, object]:
-        try:
-            return await self._catalogs.resolve_permission(
-                connector_id,
-                runtime=runtime,
-                selection_id=permission_selection_id,
-            )
-        except CatalogServiceError as exc:
-            raise SessionRunInvalidConfigError(exc.detail) from exc
-
     async def _attachment_payloads(
         self,
         *,
         session_id: str,
         user_id: str,
         file_ids: list[str],
-    ) -> list[dict[str, Any]]:
+    ) -> list[PersistedInlineAttachment]:
         payloads: list[dict[str, Any]] = []
         for file_id in file_ids:
             try:
@@ -407,6 +452,41 @@ class SessionRunService:
                 }
             )
         return payloads
+
+    async def _persist_inline_attachments(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        attachments: list[InlineAttachmentRef],
+    ) -> list[dict[str, Any]]:
+        """Persist create-and-start inline attachments into session file storage.
+
+        Side effects:
+        - decodes request base64
+        - writes each attachment into the server session-scoped file store
+        """
+
+        persisted: list[PersistedInlineAttachment] = []
+        for attachment in attachments:
+            data = _decode_inline_attachment(attachment)
+            saved = await self._store.save_user_uploaded_file(
+                session_id=session_id,
+                user_id=user_id,
+                name=attachment.name,
+                data=data,
+                media_type=attachment.mediaType,
+            )
+            persisted.append(
+                PersistedInlineAttachment(
+                    file_id=str(saved["fileId"]),
+                    name=str(saved["name"]),
+                    media_type=str(saved.get("mediaType") or ""),
+                    size=int(saved["size"]),
+                    sha256=str(saved["sha256"]),
+                )
+            )
+        return persisted
 
     async def interrupt_session(
         self,
@@ -435,16 +515,12 @@ class SessionRunService:
             session = await self._store.get_session(session_id, user_id=user_id)
         except KeyError:
             raise SessionRunNotFoundError("session not found") from None
-        session = await self._session_states.reconcile(session_id)
         if require_takeover and not session.takeover:
             raise SessionRunConflictError("session is read-only until takeover is enabled")
         active_run = await self._store.get_active_run(session_id)
         turn_id = active_run.get("turnId") if active_run else None
         if turn_id is None:
             turn_id = await self._store.get_open_turn_id(session_id)
-        decision = await self._session_states.inspect(session_id)
-        if not decision.can_interrupt_turn:
-            raise SessionRunConflictError("no active turn to interrupt")
 
         params: dict[str, Any] = {
             "sessionId": session_id,
@@ -455,27 +531,14 @@ class SessionRunService:
         external_session_id = active_run.get("externalSessionId") if active_run else session.externalSessionId
         if external_session_id:
             params["externalSessionId"] = external_session_id
-        previous_status = session.status
-        await self._session_states.transition(session_id, "stopping")
         try:
             result = await self._manager.request(session.connectorId, "turn.interrupt", params)
         except ConnectorOfflineError as exc:
-            await self._session_states.transition(session_id, previous_status)
             raise SessionRunConflictError(str(exc)) from exc
         except ConnectorRpcError as exc:
-            await self._session_states.transition(session_id, previous_status)
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
-        await cancel_session_blocking_interactions(
-            self._store,
-            session_id=session_id,
-            reason="interrupt_requested",
-        )
         if _interrupt_target_not_found(result):
             await self._store.clear_active_run(session_id)
-        await self._session_states.reconcile(
-            session_id,
-            settle_stopping=_interrupt_target_not_found(result),
-        )
         return RpcResponsePayload(ok=True, result=result)
 
 
@@ -488,6 +551,52 @@ def _interrupt_target_not_found(result: object) -> bool:
     return reason in {"thread_not_found", "turn_not_found"}
 
 
+def _selections_from_mapping(value: dict[str, str | None]) -> dict[str, str]:
+    return {key: item for key, item in value.items() if isinstance(item, str) and item}
+
+
+def _runtime_state_from_selection_result(
+    session: SessionView,
+    selections: dict[str, str | None],
+    result: object,
+) -> SessionRuntimeState:
+    now = utc_now()
+    raw_state = result.get("state") if isinstance(result, dict) else None
+    if isinstance(raw_state, dict):
+        return SessionRuntimeState.model_validate(
+            {
+                "sessionId": raw_state.get("sessionId") or session.id,
+                "runtime": raw_state.get("runtime") or session.runtime,
+                "externalSessionId": raw_state.get("externalSessionId")
+                or session.externalSessionId,
+                "status": raw_state.get("status") or "idle",
+                "selections": raw_state.get("selections")
+                if isinstance(raw_state.get("selections"), dict)
+                else selections,
+                "statusReason": raw_state.get("statusReason"),
+                "error": raw_state.get("error")
+                if isinstance(raw_state.get("error"), dict)
+                else None,
+                "metadata": raw_state.get("metadata")
+                if isinstance(raw_state.get("metadata"), dict)
+                else {},
+                "updatedSeq": session.updatedSeq,
+                "createdAt": now,
+                "updatedAt": now,
+            }
+        )
+    return SessionRuntimeState(
+        sessionId=session.id,
+        runtime=session.runtime,
+        externalSessionId=session.externalSessionId,
+        status="idle",
+        selections=selections,
+        updatedSeq=session.updatedSeq,
+        createdAt=now,
+        updatedAt=now,
+    )
+
+
 def _timeline_attachment_payload(value: dict[str, Any]) -> dict[str, Any]:
     return {
         "fileId": value.get("fileId"),
@@ -496,3 +605,45 @@ def _timeline_attachment_payload(value: dict[str, Any]) -> dict[str, Any]:
         "size": value.get("size"),
         "sha256": value.get("sha256"),
     }
+
+
+def _connector_attachment_reference_payload(attachment: PersistedInlineAttachment) -> dict[str, Any]:
+    return {
+        "fileId": attachment.file_id,
+        "name": attachment.name,
+        "mediaType": attachment.media_type,
+        "size": attachment.size,
+        "sha256": attachment.sha256,
+    }
+
+
+def _timeline_payload_from_persisted_inline_attachment(
+    attachment: PersistedInlineAttachment,
+) -> dict[str, Any]:
+    return {
+        "fileId": attachment.file_id,
+        "name": attachment.name,
+        "mediaType": attachment.media_type,
+        "size": attachment.size,
+        "sha256": attachment.sha256,
+    }
+
+
+def _decode_inline_attachment(attachment: InlineAttachmentRef) -> bytes:
+    try:
+        data = base64.b64decode(attachment.contentBase64, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise SessionRunInvalidConfigError(
+            f"attachment {attachment.fileId} contentBase64 is invalid"
+        ) from exc
+    if attachment.size is not None and attachment.size != len(data):
+        raise SessionRunInvalidConfigError(
+            f"attachment {attachment.fileId} size does not match content"
+        )
+    if attachment.sha256 is not None:
+        actual_sha256 = hashlib.sha256(data).hexdigest()
+        if attachment.sha256 != actual_sha256:
+            raise SessionRunInvalidConfigError(
+                f"attachment {attachment.fileId} sha256 does not match content"
+            )
+    return data

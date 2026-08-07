@@ -9,11 +9,14 @@ back to the backend.
 
 ```text
 connector/
-  claude/       Claude Code discovery, adapter, reducer, and transcript logic
-  codex/        Codex app-server discovery, RPC, adapter, and reducer logic
-  local/        Local filesystem, shell, and terminal backends
-  cli.py        anywhere-cli CLI
-  runtime.py    Connector config, auth, WebSocket loop, and RPC dispatch
+  runtime_protocol/  AgentRuntime, RuntimeProvider, RuntimeHostClient contracts
+  runtimes/          Native Codex and Claude RuntimeProvider/AgentRuntime packages
+  server/            Backend auth, ingest, RPC channel, request dispatch, host mapping
+  core/              Connector config, JSON-RPC, runtime owner, runtime config storage
+  local/             Local filesystem, shell, and terminal backends
+  _reference/        Old adapter implementations retained only as migration references
+  cli.py             anywhere-cli CLI
+  control.py         Local desktop/control JSON-RPC entrypoint
 tests/          Connector tests
 pyproject.toml  Connector dependencies and console script
 run.sh          Local helper for saved-config startup
@@ -53,16 +56,19 @@ The default config path is `~/.agents-anywhere/connector.json`. Override it with
 Connector configuration, runtime ownership, sync state, and attachments all
 live under `~/.agents-anywhere` by default. Runtime sync cursors are stored as
 atomic JSON in `connector-state.json`; Connector does not use SQLite. On first
-use, files from the old `~/.agent-server` directory are merged into this
-directory and obsolete SQLite sync state is discarded.
+use, the v2 connector performs a one-time local data migration from the old
+`~/.agent-server` directory into `~/.agents-anywhere` and discards obsolete
+SQLite sync state.
 
 ## Runtime Discovery
 
 The connector discovers Codex and Claude locally and reports attached runtime
-capabilities to the server. If a runtime is not on `PATH`, set one of:
+capabilities to the server. Codex is discovered through the official
+`openai-codex` SDK package; the connector does not use a Codex CLI/app-server
+path or IPC switch as an active runtime surface. If Claude Code is not on
+`PATH`, set:
 
 ```bash
-CODEX_BIN=/path/to/codex
 CLAUDE_BIN=/path/to/claude
 ```
 
@@ -99,7 +105,6 @@ The server can ask an online connector to perform local work:
 | `AGENT_CONNECTOR_TOKEN` | Connector token used when `--connector-token` is omitted. |
 | `AGENT_CONNECTOR_STATE_FILE` | Runtime sync state JSON path. Defaults to `~/.agents-anywhere/connector-state.json`. |
 | `AGENT_CONNECTOR_ATTACHMENTS_ROOT` | Runtime attachment download directory. Defaults to `~/.agents-anywhere/attachments`. |
-| `CODEX_BIN` | Explicit Codex CLI/app-server path. |
 | `CLAUDE_BIN` | Explicit Claude Code CLI path. |
 
 ## Verify

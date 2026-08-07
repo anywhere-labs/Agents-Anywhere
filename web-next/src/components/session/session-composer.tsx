@@ -27,14 +27,18 @@ import type {
   ProtocolCapabilitySet,
   ProtocolModelCatalog,
   ProtocolPermissionCatalog,
+  RuntimeCommand,
+  RuntimeStatusValue,
+  SessionRuntimeState,
   SessionView,
 } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
 import {
+  catalogI18nText,
   modelIdsForSelectionId,
-  modelSelectionIdForCatalog,
   permissionIdForSelectionId,
-  permissionSelectionIdForCatalog,
+  selectionIdForModelCatalog,
+  selectionIdForPermissionCatalog,
 } from "@/components/session/catalog-selection"
 import { SelectionSettingsDrawer } from "@/components/session/selection-settings-drawer"
 import { CAPABILITY, capabilityIsUsable, findCapability } from "@/components/session/capabilities"
@@ -42,10 +46,9 @@ import { useElementWidth } from "@/hooks/use-element-width"
 
 export type { AttachedFile }
 
-export type SessionCommandId = "help" | "interrupt" | "release" | "takeover"
-
 export function SessionComposer({
   session,
+  runtimeState,
   pendingInteractionCount,
   creatingSession = false,
   sending,
@@ -55,13 +58,18 @@ export function SessionComposer({
   effectiveCapabilities,
   modelCatalog,
   permissionCatalog,
+  runtimeCommands,
+  commandsLoading = false,
+  onCommandQueryChange,
   onValueChange,
+  onSelectionChange,
   onSend,
   onInterrupt,
   onCommand,
   onToggleTakeover,
 }: {
   session: SessionView
+  runtimeState?: SessionRuntimeState | null
   pendingInteractionCount: number
   creatingSession?: boolean
   sending: boolean
@@ -71,14 +79,18 @@ export function SessionComposer({
   effectiveCapabilities: ProtocolCapabilitySet | null
   modelCatalog: ProtocolModelCatalog | null
   permissionCatalog: ProtocolPermissionCatalog | null
+  runtimeCommands: RuntimeCommand[]
+  commandsLoading?: boolean
+  onCommandQueryChange: (query: string | null) => void
   onValueChange: (value: string) => void
+  onSelectionChange: (selections: { model?: string; permission?: string }) => Promise<boolean>
   onSend: (
     content: string,
     attachments: AttachedFile[],
-    selections: { modelSelectionId?: string; permissionSelectionId?: string },
+    selections: { model?: string; permission?: string },
   ) => Promise<boolean>
   onInterrupt: () => void
-  onCommand: (command: SessionCommandId, options: { args: string[]; raw: string }) => void
+  onCommand: (command: string, options: { args: string[]; raw: string }) => void
   onToggleTakeover: () => void
 }) {
   const tSession = useTranslations("dashboard.session")
@@ -87,10 +99,23 @@ export function SessionComposer({
     useAttachments()
   const composerRef = React.useRef<HTMLDivElement | null>(null)
   const composerWidth = useElementWidth(composerRef)
-  const isBusy = session.status === "running" || session.status === "blocked"
-  const isStopping = session.status === "stopping"
-  const isPending = session.status === "pending"
+  const runtimeStatus = effectiveRuntimeStatus(runtimeState, session.connectorStatus)
+  const runtimeSelections = runtimeState?.selections ?? {}
+  const isRunning = runtimeStatus === "running"
+  const isBlocked = runtimeStatus === "blocked"
+  const isStopping = runtimeStatus === "stopping"
+  const isWaiting = runtimeStatus === "waiting" || runtimeStatus === "pending"
+  const isError = runtimeStatus === "error"
+  const isDisconnected = runtimeStatus === "disconnected"
   const connectorOnline = session.connectorStatus === "online"
+  const acceptsUserInput =
+    connectorOnline &&
+    !isDisconnected &&
+    !isWaiting &&
+    !isRunning &&
+    !isStopping &&
+    !isBlocked &&
+    !isError
   const canUseSendMessage = capabilityIsUsable(effectiveCapabilities, CAPABILITY.sendMessage)
   const canUseInterrupt = capabilityIsUsable(effectiveCapabilities, CAPABILITY.interrupt)
   const interruptCapability = findCapability(effectiveCapabilities, CAPABILITY.interrupt)
@@ -101,41 +126,43 @@ export function SessionComposer({
     canUseSendMessage &&
     !creatingSession &&
     !sending &&
-    !interrupting
-  const canRunCommand = !creatingSession && !sending && !interrupting && connectorOnline
+    !interrupting &&
+    acceptsUserInput
+  const canRunCommand = !creatingSession && !sending && !interrupting && acceptsUserInput
   const hasInput = value.trim().length > 0 || attachments.length > 0
   const activeSessionCanInterrupt = Boolean(
     connectorOnline &&
     interruptCapability?.supported &&
     interruptCapability.allowed &&
-    (isPending || isBusy),
+    (isWaiting || isRunning || isStopping),
   )
-  const showInterrupt = !creatingSession && (canUseInterrupt || activeSessionCanInterrupt)
+  const showInterrupt = !creatingSession && canUseInterrupt && activeSessionCanInterrupt
   const [selectedPermissionMode, setSelectedPermissionMode] = React.useState("")
   const [selectedModel, setSelectedModel] = React.useState("")
   const [selectedReasoning, setSelectedReasoning] = React.useState("")
   const permissionItems = permissionCatalog?.permissions.map((item) => ({
     id: item.id,
-    label: item.displayName,
+    label: catalogI18nText(tNew, item.metadata, "labelKey", item.displayName),
+    description: catalogI18nText(tNew, item.metadata, "descriptionKey", item.description),
     default: item.default,
     selectionId: item.selectionId,
   })) ?? []
   const modelItems = modelCatalog?.models.map((item) => ({
     id: item.id,
-    label: item.displayName,
+    label: catalogI18nText(tNew, item.metadata, "labelKey", item.displayName),
     default: item.default,
     selectionId: item.selectionId,
     reasoningItems: item.reasoningItems.map((reasoning) => ({
       id: reasoning.id,
-      label: reasoning.displayName,
+      label: catalogI18nText(tNew, reasoning.metadata, "labelKey", reasoning.displayName),
       default: reasoning.default,
       selectionId: reasoning.selectionId,
     })),
   })) ?? []
   const selectedModelItem = modelItems.find((item) => item.id === selectedModel)
   const effortItems = selectedModelItem?.reasoningItems ?? []
-  const modelSelectionValue = modelIdsForSelectionId(modelCatalog, session.modelSelectionId)
-  const permissionSelectionValue = permissionIdForSelectionId(permissionCatalog, session.permissionSelectionId)
+  const modelSelectionValue = modelIdsForSelectionId(modelCatalog, runtimeSelections.model ?? null)
+  const permissionSelectionValue = permissionIdForSelectionId(permissionCatalog, runtimeSelections.permission ?? null)
   const permissionValue = permissionSelectionValue
   const modelValue = modelSelectionValue?.modelId ?? ""
   const effortValue = modelSelectionValue?.reasoningId ?? ""
@@ -151,69 +178,89 @@ export function SessionComposer({
   const selectorsDisabled = permissionSelectorDisabled && modelSelectorDisabled
 
   React.useEffect(() => {
-    const nextPermission = permissionItems.some((item) => item.id === permissionValue)
+    const hasRuntimePermission = permissionItems.some((item) => item.id === permissionValue)
+    const nextPermission = hasRuntimePermission
       ? permissionValue
       : permissionItems.find((item) => item.default)?.id ?? permissionItems[0]?.id ?? ""
     setSelectedPermissionMode((current) =>
-      current && permissionItems.some((item) => item.id === current) ? current : nextPermission,
+      hasRuntimePermission || !current || !permissionItems.some((item) => item.id === current)
+        ? nextPermission
+        : current,
     )
   }, [permissionItems, permissionValue])
 
   React.useEffect(() => {
-    const nextModel = modelItems.some((item) => item.id === modelValue)
+    const hasRuntimeModel = modelItems.some((item) => item.id === modelValue)
+    const nextModel = hasRuntimeModel
       ? modelValue
       : modelItems.find((item) => item.default)?.id ?? modelItems[0]?.id ?? ""
-    setSelectedModel((current) => current && modelItems.some((item) => item.id === current) ? current : nextModel)
+    setSelectedModel((current) =>
+      hasRuntimeModel || !current || !modelItems.some((item) => item.id === current) ? nextModel : current,
+    )
   }, [modelItems, modelValue])
 
   React.useEffect(() => {
-    const nextEffort = effortItems.some((item) => item.id === effortValue)
+    const hasRuntimeEffort = effortItems.some((item) => item.id === effortValue)
+    const nextEffort = hasRuntimeEffort
       ? effortValue
       : effortItems.find((item) => item.default)?.id ?? effortItems[0]?.id ?? ""
-    setSelectedReasoning((current) => current && effortItems.some((item) => item.id === current) ? current : nextEffort)
+    setSelectedReasoning((current) =>
+      hasRuntimeEffort || !current || !effortItems.some((item) => item.id === current) ? nextEffort : current,
+    )
   }, [effortItems, effortValue])
-  const modelSelectionId = modelSelectionIdForCatalog(modelCatalog, selectedModel, selectedReasoning)
-  const permissionSelectionId = permissionSelectionIdForCatalog(permissionCatalog, selectedPermissionMode)
+  const selectedModelSelection = selectionIdForModelCatalog(modelCatalog, selectedModel, selectedReasoning)
+  const selectedPermissionSelection = selectionIdForPermissionCatalog(permissionCatalog, selectedPermissionMode)
+  const choosePermission = (permissionId: string) => {
+    if (permissionId === selectedPermissionMode) return
+    const previousPermission = selectedPermissionMode
+    const nextSelection = selectionIdForPermissionCatalog(permissionCatalog, permissionId)
+    if (!nextSelection) return
+    setSelectedPermissionMode(permissionId)
+    void onSelectionChange({ permission: nextSelection }).then((ok) => {
+      if (!ok) setSelectedPermissionMode(previousPermission)
+    })
+  }
+  const chooseModel = (modelId: string, reasoningId: string) => {
+    if (modelId === selectedModel && reasoningId === selectedReasoning) return
+    const previousModel = selectedModel
+    const previousReasoning = selectedReasoning
+    const nextSelection = selectionIdForModelCatalog(modelCatalog, modelId, reasoningId)
+    if (!nextSelection) return
+    setSelectedModel(modelId)
+    setSelectedReasoning(reasoningId)
+    void onSelectionChange({ model: nextSelection }).then((ok) => {
+      if (!ok) {
+        setSelectedModel(previousModel)
+        setSelectedReasoning(previousReasoning)
+      }
+    })
+  }
   const placeholder = creatingSession
     ? tSession("creatingPlaceholder")
     : !session.takeover
     ? tSession("readOnlyPlaceholder")
-    : !connectorOnline
+    : isDisconnected || !connectorOnline
       ? tSession("deviceOfflinePlaceholder")
       : pendingInteractionCount > 0
         ? tSession("waitingApprovalPlaceholder")
-        : isPending
+        : isWaiting
           ? tSession("pendingPlaceholder")
-          : isStopping || isBusy
+          : isStopping || isRunning
             ? tSession("busyPlaceholder")
+            : isBlocked
+              ? tSession("waitingApprovalPlaceholder")
+              : isError
+                ? tSession("errorPlaceholder")
             : tSession("replyPlaceholder")
   const commandQuery = commandQueryFromValue(value)
-  const commandSuggestions = React.useMemo(
-    () =>
-      sessionCommands({
-        canInterrupt: showInterrupt && !interrupting,
-        canRelease: session.takeover,
-        canTakeover: !session.takeover && connectorOnline && !takeoverBusy && !creatingSession,
-        t: tSession,
-      }).filter((command) =>
-        commandQuery === null
-          ? false
-          : command.id.includes(commandQuery) ||
-            command.label.toLowerCase().includes(commandQuery) ||
-            command.aliases.some((alias) => alias.includes(commandQuery)),
-      ),
-    [
-      commandQuery,
-      connectorOnline,
-      creatingSession,
-      interrupting,
-      session.takeover,
-      showInterrupt,
-      tSession,
-      takeoverBusy,
-    ],
-  )
   const showCommandMenu = commandQuery !== null && attachments.length === 0
+  const commandSuggestions = React.useMemo(
+    () => runtimeCommands.filter((command) => commandMatchesQuery(command, commandQuery)),
+    [commandQuery, runtimeCommands],
+  )
+  React.useEffect(() => {
+    onCommandQueryChange(showCommandMenu ? commandQuery : null)
+  }, [commandQuery, onCommandQueryChange, showCommandMenu])
   const canSubmitCommand = commandQuery !== null && attachments.length === 0 && canRunCommand
   const canSubmitMessage = canSend && session.takeover && hasInput
 
@@ -234,8 +281,8 @@ export function SessionComposer({
     onValueChange("")
     clear()
     await onSend(text, files, {
-      ...(modelSelectionId ? { modelSelectionId } : {}),
-      ...(permissionSelectionId ? { permissionSelectionId } : {}),
+      ...(selectedModelSelection ? { model: selectedModelSelection } : {}),
+      ...(selectedPermissionSelection ? { permission: selectedPermissionSelection } : {}),
     })
   }
 
@@ -280,22 +327,26 @@ export function SessionComposer({
                       type="button"
                       className={cn(
                         "flex w-full items-start gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-accent hover:text-accent-foreground",
-                        command.disabled && "cursor-not-allowed opacity-50 hover:bg-transparent hover:text-current",
+                        !command.enabled && "cursor-not-allowed opacity-50 hover:bg-transparent hover:text-current",
                       )}
-                      disabled={command.disabled}
+                      disabled={!command.enabled}
                       onClick={() => {
-                        if (command.disabled) return
+                        if (!command.enabled) return
                         onValueChange("")
                         onCommand(command.id, { args: [], raw: `/${command.id}` })
                       }}
                     >
                       <span className="code-mono shrink-0 text-xs text-primary">/{command.id}</span>
                       <span className="min-w-0">
-                        <span className="block font-medium">{command.label}</span>
-                        <span className="block text-xs text-muted-foreground">{command.description}</span>
+                        <span className="block font-medium">{command.title}</span>
+                        <span className="block text-xs text-muted-foreground">
+                          {command.disabledReason || command.description}
+                        </span>
                       </span>
                     </button>
                   ))
+                ) : commandsLoading ? (
+                  <div className="px-3 py-2 text-xs text-muted-foreground">{tSession("commandLoading")}</div>
                 ) : (
                   <div className="px-3 py-2 text-xs text-muted-foreground">{tSession("commandNoMatches")}</div>
                 )}
@@ -338,14 +389,11 @@ export function SessionComposer({
                   reasoningLabel={tNew("reasoning")}
                   permissionItems={permissionItems}
                   selectedPermission={selectedPermissionMode}
-                  onPermissionChange={setSelectedPermissionMode}
+                  onPermissionChange={choosePermission}
                   modelItems={modelItems}
                   selectedModel={selectedModel}
                   selectedReasoning={selectedReasoning}
-                  onModelChange={(modelId, reasoningId) => {
-                    setSelectedModel(modelId)
-                    setSelectedReasoning(reasoningId)
-                  }}
+                  onModelChange={chooseModel}
                 />
               ) : (
                 <>
@@ -368,11 +416,21 @@ export function SessionComposer({
                       {permissionItems.map((item) => (
                         <DropdownMenuItem
                           key={item.id}
-                          className="gap-2"
-                          onSelect={() => setSelectedPermissionMode(item.id)}
+                          className={cn(
+                            "items-start gap-2 py-2.5",
+                            selectedPermissionMode === item.id && "text-primary focus:text-primary",
+                          )}
+                          onSelect={() => choosePermission(item.id)}
                         >
-                          <Check className={cn("size-3.5", selectedPermissionMode === item.id ? "opacity-100" : "opacity-0")} />
-                          <span>{item.label}</span>
+                          <Check className={cn("mt-0.5 size-3.5", selectedPermissionMode === item.id ? "opacity-100" : "opacity-0")} />
+                          <span className="min-w-0 flex-1">
+                            <span className="block font-medium leading-none">{item.label}</span>
+                            {item.description ? (
+                              <span className="mt-1 block whitespace-normal text-xs leading-snug text-muted-foreground">
+                                {item.description}
+                              </span>
+                            ) : null}
+                          </span>
                         </DropdownMenuItem>
                       ))}
                     </DropdownMenuContent>
@@ -403,10 +461,7 @@ export function SessionComposer({
                               <DropdownMenuItem
                                 key={modelItem.id}
                                 className="gap-2"
-                                onSelect={() => {
-                                  setSelectedModel(modelItem.id)
-                                  setSelectedReasoning("")
-                                }}
+                                onSelect={() => chooseModel(modelItem.id, "")}
                               >
                                 <Check className={cn("size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
                                 <span className="truncate">{modelItem.label}</span>
@@ -424,10 +479,7 @@ export function SessionComposer({
                                   <DropdownMenuItem
                                     key={item.id}
                                     className="gap-2"
-                                    onSelect={() => {
-                                      setSelectedModel(modelItem.id)
-                                      setSelectedReasoning(item.id)
-                                    }}
+                                    onSelect={() => chooseModel(modelItem.id, item.id)}
                                   >
                                     <Check className={cn(
                                       "size-3.5",
@@ -507,70 +559,46 @@ export function SessionComposer({
   )
 }
 
-type SessionCommand = {
-  id: SessionCommandId
-  label: string
-  description: string
-  aliases: string[]
-  disabled?: boolean
-}
-
-function sessionCommands({
-  canInterrupt,
-  canRelease,
-  canTakeover,
-  t,
-}: {
-  canInterrupt: boolean
-  canRelease: boolean
-  canTakeover: boolean
-  t: ReturnType<typeof useTranslations>
-}): SessionCommand[] {
-  return [
-    {
-      id: "help",
-      label: t("commandHelp"),
-      description: t("commandHelpDescription"),
-      aliases: ["commands", "?"],
-    },
-    {
-      id: "interrupt",
-      label: t("commandInterrupt"),
-      description: t("commandInterruptDescription"),
-      aliases: ["stop", "cancel"],
-      disabled: !canInterrupt,
-    },
-    {
-      id: "takeover",
-      label: t("commandTakeover"),
-      description: t("commandTakeoverDescription"),
-      aliases: ["control"],
-      disabled: !canTakeover,
-    },
-    {
-      id: "release",
-      label: t("commandRelease"),
-      description: t("commandReleaseDescription"),
-      aliases: ["readonly", "read-only"],
-      disabled: !canRelease,
-    },
-  ]
-}
-
 function commandQueryFromValue(value: string): string | null {
   const parsed = parseCommandValue(value)
   return parsed.command
 }
 
-function commandFromValue(value: string, suggestions: SessionCommand[]): SessionCommand | null {
+function commandFromValue(value: string, suggestions: RuntimeCommand[]): RuntimeCommand | null {
   const parsed = parseCommandValue(value)
   const query = parsed.command
   if (query === null) return null
+  if (!query) return null
   const exact = suggestions.find((command) => command.id === query || command.aliases.includes(query))
-  if (exact && !exact.disabled) return exact
+  if (exact && exact.enabled && (commandAcceptsParsedArgs(exact, parsed.args))) return exact
   if (parsed.args.length > 0) return null
-  const onlyEnabled = suggestions.filter((command) => !command.disabled)
+  const onlyEnabled = suggestions.filter((command) => command.enabled)
   return onlyEnabled.length === 1 ? onlyEnabled[0] ?? null : null
+}
+
+function commandMatchesQuery(command: RuntimeCommand, query: string | null): boolean {
+  if (query === null) return false
+  const normalized = query.toLowerCase()
+  if (!normalized) return true
+  return (
+    fuzzyIncludes(command.id.toLowerCase(), normalized) ||
+    fuzzyIncludes(command.title.toLowerCase(), normalized) ||
+    command.aliases.some((alias) => fuzzyIncludes(alias.toLowerCase(), normalized))
+  )
+}
+
+function fuzzyIncludes(value: string, query: string): boolean {
+  if (value.includes(query)) return true
+  let index = 0
+  for (const char of value) {
+    if (char === query[index]) index += 1
+    if (index === query.length) return true
+  }
+  return query.length === 0
+}
+
+function commandAcceptsParsedArgs(command: RuntimeCommand, args: string[]): boolean {
+  return args.length === 0 || command.acceptsArgs
 }
 
 function parseCommandValue(value: string): { command: string | null; args: string[]; raw: string } {
@@ -579,8 +607,16 @@ function parseCommandValue(value: string): { command: string | null; args: strin
   const parts = raw.slice(1).split(/\s+/).filter(Boolean)
   const command = parts[0]?.toLowerCase() ?? ""
   return {
-    command: command || null,
+    command,
     args: parts.slice(1),
     raw,
   }
+}
+
+function effectiveRuntimeStatus(
+  runtimeState: SessionRuntimeState | null | undefined,
+  connectorStatus: SessionView["connectorStatus"],
+): RuntimeStatusValue {
+  if (runtimeState) return runtimeState.status
+  return connectorStatus === "offline" ? "disconnected" : "idle"
 }

@@ -1,3 +1,5 @@
+# ruff: noqa: F403, F405, I001
+
 from __future__ import annotations
 
 from agent_server.infra.repositories.store_support import *
@@ -5,6 +7,18 @@ from agent_server.infra.repositories.store_support import *
 
 def _normalize_session_origin(value: str | None) -> str:
     return "platform" if value == "platform" else "connector_import"
+
+
+def _selection_map(
+    model_selection_id: str | None,
+    permission_selection_id: str | None,
+) -> dict[str, str]:
+    selections: dict[str, str] = {}
+    if model_selection_id:
+        selections["model"] = model_selection_id
+    if permission_selection_id:
+        selections["permission"] = permission_selection_id
+    return selections
 
 
 class SessionRepositoryMixin:
@@ -28,6 +42,8 @@ class SessionRepositoryMixin:
         cwd: str | None,
         model_selection_id: str | None = None,
         permission_selection_id: str | None = None,
+        selections: dict[str, str | None] | None = None,
+        takeover: bool = False,
     ) -> SessionView:
         session_id = f"sess_{secrets.token_urlsafe(10)}"
         now = utc_now()
@@ -52,7 +68,7 @@ class SessionRepositoryMixin:
                     title=title,
                     cwd=cwd,
                     status="idle",
-                    takeover=0,
+                    takeover=int(takeover),
                     seq=0,
                     updated_seq=0,
                     created_at=now,
@@ -260,7 +276,7 @@ class SessionRepositoryMixin:
             .where(
                 sessions_t.c.connector_id == connector_id,
                 sessions_t.c.runtime == runtime,
-                sessions_t.c.status.in_(("pending", "running", "blocked", "stopping")),
+                sessions_t.c.status.in_(("waiting", "pending", "running", "blocked", "stopping")),
                 connectors_t.c.revoked == 0,
             )
             .order_by(sessions_t.c.updated_at.asc())
@@ -302,6 +318,57 @@ class SessionRepositoryMixin:
         if row is None:
             raise KeyError(session_id)
         return await self._session_from_row(row)
+
+
+    async def get_session_runtime_state(
+        self,
+        session_id: str,
+        *,
+        user_id: str | None = None,
+    ) -> SessionRuntimeState:
+        query = (
+            select(
+                sessions_t.c.id,
+                sessions_t.c.runtime,
+                sessions_t.c.external_session_id,
+                sessions_t.c.updated_seq,
+                sessions_t.c.created_at,
+                sessions_t.c.updated_at,
+            )
+            .join(connectors_t, connectors_t.c.id == sessions_t.c.connector_id)
+            .where(sessions_t.c.id == session_id, connectors_t.c.revoked == 0)
+        )
+        if user_id is not None:
+            query = query.where(connectors_t.c.user_id == user_id)
+        async with self._engine.connect() as conn:
+            row = (await conn.execute(query)).mappings().first()
+        if row is None:
+            raise KeyError(session_id)
+        return SessionRuntimeState(
+            sessionId=row["id"],
+            runtime=row["runtime"],
+            externalSessionId=row["external_session_id"],
+            status="idle",
+            selections={},
+            updatedSeq=int(row["updated_seq"] or 0),
+            createdAt=row["created_at"],
+            updatedAt=row["updated_at"],
+        )
+
+
+    async def upsert_session_runtime_state(
+        self,
+        *,
+        session_id: str,
+        runtime: str,
+        external_session_id: str | None = None,
+        status: str | None = None,
+        selections: dict[str, str | None] | None = None,
+        status_reason: str | None = None,
+        error: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> SessionRuntimeState:
+        return await self.get_session_runtime_state(session_id)
 
 
     async def session_owned_by_connector(self, session_id: str, connector_id: str) -> bool:
@@ -617,6 +684,7 @@ class SessionRepositoryMixin:
         status: str,
         *,
         expected_status: str | None = None,
+        mark_read_on_change: bool = False,
     ) -> SessionView:
         async with self._engine.begin() as conn:
             statement = select(sessions_t.c.status).where(sessions_t.c.id == session_id)
@@ -630,7 +698,11 @@ class SessionRepositoryMixin:
             if expected_status is not None and row.status != expected_status:
                 raise ValueError("session status changed")
             if row.status != status:
-                await self._bump_session(conn, session_id)
+                await self._bump_session(
+                    conn,
+                    session_id,
+                    mark_read=mark_read_on_change,
+                )
                 update_statement = update(sessions_t).where(
                     sessions_t.c.id == session_id
                 )
@@ -655,8 +727,7 @@ class SessionRepositoryMixin:
         last_synced_at: str | None = None,
         source_observed_at: str | None = None,
         last_activity_at: str | None = None,
-        model_selection_id: str | None = None,
-        permission_selection_id: str | None = None,
+        mark_read_on_change: bool = False,
     ) -> SessionView:
         values: dict[str, Any] = {}
         if status is not None:
@@ -673,10 +744,6 @@ class SessionRepositoryMixin:
             values["source_observed_at"] = source_observed_at
         if last_activity_at is not None:
             values["last_activity_at"] = last_activity_at
-        if model_selection_id is not None:
-            values["model_selection_id"] = model_selection_id
-        if permission_selection_id is not None:
-            values["permission_selection_id"] = permission_selection_id
         async with self._engine.begin() as conn:
             row = (
                 await conn.execute(
@@ -685,8 +752,6 @@ class SessionRepositoryMixin:
                         sessions_t.c.title,
                         sessions_t.c.cwd,
                         sessions_t.c.external_session_id,
-                        sessions_t.c.model_selection_id,
-                        sessions_t.c.permission_selection_id,
                         sessions_t.c.last_activity_at,
                     ).where(sessions_t.c.id == session_id)
                 )
@@ -698,11 +763,13 @@ class SessionRepositoryMixin:
                 "title",
                 "cwd",
                 "external_session_id",
-                "model_selection_id",
-                "permission_selection_id",
             }
             if any(field in values and values[field] != getattr(row, field) for field in semantic_fields):
-                await self._bump_session(conn, session_id)
+                await self._bump_session(
+                    conn,
+                    session_id,
+                    mark_read=mark_read_on_change,
+                )
             if values:
                 await conn.execute(
                     update(sessions_t).where(sessions_t.c.id == session_id).values(**values)
@@ -756,7 +823,7 @@ class SessionRepositoryMixin:
                 title = derived
                 await self._lock_in_derived_title(session_id, derived)
         last_item_at = (latest.updatedAt or latest.completedAt or latest.createdAt) if latest else None
-        sort_at = row["last_activity_at"] or last_item_at or row["created_at"]
+        sort_at = last_item_at or row["last_activity_at"] or row["created_at"]
         last_read_seq = int(row["last_read_seq"] or 0)
         updated_seq = int(row["updated_seq"] or 0)
         return SessionView(
@@ -782,6 +849,4 @@ class SessionRepositoryMixin:
             lastItemOrderSeq=latest.orderSeq if latest else None,
             sortAt=sort_at,
             updatedSeq=updated_seq,
-            modelSelectionId=row["model_selection_id"],
-            permissionSelectionId=row["permission_selection_id"],
         )

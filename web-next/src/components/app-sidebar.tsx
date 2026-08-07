@@ -406,7 +406,7 @@ function SessionSidebarItem({
                       ? "border-emerald-500 bg-emerald-500"
                       : item.status === "blocked"
                         ? "border-amber-400/70"
-                        : item.status === "pending" || item.status === "stopping"
+                        : item.status === "waiting" || item.status === "pending" || item.status === "stopping"
                           ? "border-blue-400/70"
                           : "border-muted-foreground/50",
                   )}

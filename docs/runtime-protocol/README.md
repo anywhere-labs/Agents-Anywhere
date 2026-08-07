@@ -1,6 +1,8 @@
 # Agent Runtime Protocol v1
 
-Status: draft, authoritative for the next v2 runtime refactor.
+Status: draft for Connector runtime protocol. The current Server/Web session
+boundary is defined in [Session API Proposal](../api/session-api-proposal.md)
+and [Session Service Architecture](../api/session-service-architecture.md).
 
 This directory replaces the older v2 catalog/session/command planning notes as the source of truth for the next breaking runtime refactor. Older migration documents may describe the current implementation or an earlier plan, but new work should follow this protocol unless this directory is updated.
 
@@ -46,23 +48,27 @@ The Connector application layer must not know Codex IPC, Claude SDK, or runtime-
 
 ## Domain model
 
-The protocol separates session data into four domain objects:
+The protocol separates session-facing data into durable session facts and live
+runtime facts:
 
 - `SessionMeta`: what this session is.
-- `SessionState`: what this session is currently doing and which runtime options it currently selected.
 - `SessionTimeline`: what happened in this session.
-- `SessionNotice`: what currently needs user attention or records notification/interaction state.
+- `SessionState`: what this session is currently doing and which runtime options it currently selected.
+- `SessionNotice`: what currently needs user attention.
 
-Runtime-level catalogs and command lists are live reads, not session state.
+`SessionMeta` and `SessionTimeline` are durable Server facts. `SessionState`,
+`SessionNotice`, runtime catalogs, capabilities, command lists, and selections
+are RuntimeLive facts: runtime-owned, non-durable, and read live through RPC or
+pushed through the session WebSocket.
 
 | Concept | Scope | Source of truth | Durable on Server | Notes |
 | --- | --- | --- | --- | --- |
 | Session meta | Session | Platform and runtime metadata projection | Yes | Identity, connector/runtime binding, title, cwd, archive/pin/read metadata. |
-| Session state | Session | Runtime projection | Yes | Status, selections, status reason, error, metadata. |
+| Session state | Session | Runtime live projection | No | Status, selections, status reason, error, metadata. Server may project disconnected when runtime is unreachable. |
 | Session timeline | Session | Runtime normalized projection | Yes | Timeline items and recovery cursor. |
-| Session notice | Session | Runtime/platform projection | Yes | Notifications, interactions, approvals, input requests, and errors needing user attention. |
-| Model catalog | Runtime | Runtime local read | No, except transitional code | Read on demand when the UI opens the selector. |
-| Permission catalog | Runtime | Runtime local read | No, except transitional code | Read on demand when the UI opens the selector. |
+| Session notice | Session | Runtime live projection | No | Notifications, interactions, approvals, and input requests. Historical display belongs in timeline. |
+| Model catalog | Runtime | Runtime local read | No | Read on demand when the UI opens the selector. |
+| Permission catalog | Runtime | Runtime local read | No | Read on demand when the UI opens the selector. |
 | Command list | Session | Runtime local read | No | Read on demand when the user types `/`. |
 | Command execution | Session | Runtime RPC result | No | Side effects are reported separately through host events. |
 
@@ -70,7 +76,7 @@ Runtime-level catalogs and command lists are live reads, not session state.
 
 This refactor is allowed to be breaking. The target design removes model and permission selections from message/session request payloads and from durable `SessionView` fields.
 
-Remove or deprecate these as protocol truth:
+Already removed from active request/view contracts:
 
 - `SessionView.modelSelectionId`
 - `SessionView.permissionSelectionId`
@@ -78,6 +84,12 @@ Remove or deprecate these as protocol truth:
 - `MessageCreateRequest.permissionSelectionId`
 - `SessionCreateRequest.modelSelectionId`
 - `SessionCreateRequest.permissionSelectionId`
+
+Bind-only session creation uses `SessionCreateRequest.selections`; new user
+tasks use `SessionCreateAndStartRequest.selections`.
+
+Remove or deprecate these as protocol truth:
+
 - Server-persisted model/permission catalogs as the primary read path
 - frontend-built command lists
 
@@ -129,10 +141,13 @@ For an existing session, sending a message only sends message content and attach
 
 ```text
 update_session_selections(...)
-start_turn(content, attachments, client_message_id)
+start_turn(content, selections, attachments, client_message_id)
 ```
 
-Model and permission state must be updated before sending. `start_turn` must not carry one-off model or permission selection fields.
+Model and permission state must be updated before sending. The public message
+send request must not carry one-off model or permission fields; Server may pass
+current `SessionState.selections` to runtime `start_turn` so runtimes that only
+support per-turn SDK options can apply current state at dispatch time.
 
 ## Documents
 
@@ -143,4 +158,5 @@ Model and permission state must be updated before sending. `start_turn` must not
 - [Web behavior](./web-behavior.md)
 - [Migration sequence](./migration-sequence.md)
 - [Implementation order](./implementation-order.md)
+- [Behavior migration targets](./behavior-migration-targets.md)
 - [API documentation](../api/README.md)

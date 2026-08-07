@@ -26,6 +26,7 @@ import {
   AttachmentButton,
   AttachmentPreviewList,
   DragOverlay,
+  type AttachedFile,
   useAttachments,
 } from "@/components/attachment-input"
 import { buildOptimisticUserMessage } from "@/components/session/optimistic-timeline"
@@ -38,6 +39,7 @@ import { cn } from "@/lib/utils"
 import { useElementWidth } from "@/hooks/use-element-width"
 import type {
   DeviceRuntimeView,
+  InlineAttachmentRef,
   ProtocolCapabilitySet,
   ProtocolModelCatalog,
   ProtocolPermissionCatalog,
@@ -45,10 +47,11 @@ import type {
 } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
 import {
+  catalogI18nText,
   modelIdsForSelectionId,
-  modelSelectionIdForCatalog,
   permissionIdForSelectionId,
-  permissionSelectionIdForCatalog,
+  selectionIdForModelCatalog,
+  selectionIdForPermissionCatalog,
 } from "@/components/session/catalog-selection"
 import { CAPABILITY, capabilityIsUsable } from "@/components/session/capabilities"
 
@@ -76,6 +79,50 @@ const NEW_SESSION_TITLE_KEYS = [
   "typewriter.chooseTarget",
   "typewriter.changingToday",
 ] as const
+const MOBILE_NEW_SESSION_TITLE_KEYS = [
+  "typewriter.workOn",
+  "typewriter.giveTask",
+  "typewriter.needsAttention",
+  "typewriter.nextChange",
+  "typewriter.inspect",
+  "typewriter.changingToday",
+] as const
+
+async function inlineAttachmentsFromFiles(files: AttachedFile[]): Promise<InlineAttachmentRef[]> {
+  const inlineAttachments: InlineAttachmentRef[] = []
+  for (const attachment of files) {
+    const content = await attachment.file.arrayBuffer()
+    const contentBase64 = arrayBufferToBase64(content)
+    const sha256 = await sha256Hex(content)
+    inlineAttachments.push({
+      fileId: attachment.id.slice(0, 64),
+      name: attachment.name,
+      mediaType: attachment.file.type || "application/octet-stream",
+      size: attachment.size,
+      sha256,
+      contentBase64,
+    })
+  }
+  return inlineAttachments
+}
+
+function arrayBufferToBase64(value: ArrayBuffer): string {
+  const bytes = new Uint8Array(value)
+  const chunkSize = 0x8000
+  let binary = ""
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    const chunk = bytes.subarray(index, index + chunkSize)
+    binary += String.fromCharCode(...chunk)
+  }
+  return btoa(binary)
+}
+
+async function sha256Hex(value: ArrayBuffer): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", value)
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("")
+}
 
 type NewSessionPreference = {
   connectorId: string
@@ -84,11 +131,12 @@ type NewSessionPreference = {
 }
 
 type NewSessionSelectionPreference = {
-  modelSelectionId?: string | null
-  permissionSelectionId?: string | null
+  model?: string | null
+  permission?: string | null
 }
 
 type NewSessionTitleKey = (typeof NEW_SESSION_TITLE_KEYS)[number]
+type MobileNewSessionTitleKey = (typeof MOBILE_NEW_SESSION_TITLE_KEYS)[number]
 
 export function TaskComposer() {
   const { session: authSession } = useAuth()
@@ -101,26 +149,36 @@ export function TaskComposer() {
     markOptimisticMessageFailed,
     openSession,
     upsertSession,
-    refreshData,
   } = useWorkspace()
   const t = useTranslations("dashboard.new")
   const typewriterTitles = React.useMemo(
-    () => NEW_SESSION_TITLE_KEYS.map((key) => t(key as NewSessionTitleKey)),
-    [t],
+    () => {
+      const keys = isMobile ? MOBILE_NEW_SESSION_TITLE_KEYS : NEW_SESSION_TITLE_KEYS
+      return keys.map((key) => t(key as NewSessionTitleKey | MobileNewSessionTitleKey))
+    },
+    [isMobile, t],
   )
 
   const [runtimeInventory, setRuntimeInventory] = React.useState<Record<string, DeviceRuntimeView[]>>({})
   const [runtimeInventoryLoading, setRuntimeInventoryLoading] = React.useState(true)
+  const onlineConnectorKey = React.useMemo(
+    () => connectors
+      .filter((connector) => connector.status === "online")
+      .map((connector) => `${connector.id}:${connector.status}`)
+      .sort()
+      .join("|"),
+    [connectors],
+  )
 
   React.useEffect(() => {
     if (!authSession?.accessToken) {
-      setRuntimeInventory({})
+      setRuntimeInventory((current) => sameRuntimeInventory(current, {}) ? current : {})
       setRuntimeInventoryLoading(false)
       return
     }
     const online = connectors.filter((connector) => connector.status === "online")
     if (online.length === 0) {
-      setRuntimeInventory({})
+      setRuntimeInventory((current) => sameRuntimeInventory(current, {}) ? current : {})
       setRuntimeInventoryLoading(false)
       return
     }
@@ -137,13 +195,13 @@ export function TaskComposer() {
       for (const result of results) {
         if (result.status === "fulfilled") next[result.value.connectorId] = result.value.response.runtimes
       }
-      setRuntimeInventory(next)
+      setRuntimeInventory((current) => sameRuntimeInventory(current, next) ? current : next)
       setRuntimeInventoryLoading(false)
     })
     return () => {
       cancelled = true
     }
-  }, [authSession?.accessToken, connectors])
+  }, [authSession?.accessToken, onlineConnectorKey])
 
   // New sessions can only target runtimes that the Server has activated and the Connector reports as running.
   const onlineConnectors = React.useMemo(
@@ -288,9 +346,10 @@ export function TaskComposer() {
     setModelCatalog(null)
     setPermissionCatalog(null)
     setRuntimeCapabilities(null)
-    dashboardApi.getConnectorProtocolCapabilities(
+    dashboardApi.getConnectorRuntimeCapabilities(
       authSession.accessToken,
       selectedConnectorId,
+      selectedAgent,
     )
       .then(async (capabilitiesResponse) => {
         const capabilitySet = capabilitiesResponse.capabilitySet
@@ -306,17 +365,17 @@ export function TaskComposer() {
         )
         const [modelCatalogResponse, permissionCatalogResponse] = await Promise.all([
           canUseModelCatalog
-            ? dashboardApi.getAgentModelCatalog(
+            ? dashboardApi.getConnectorRuntimeModelCatalog(
                 authSession.accessToken,
-                selectedAgent,
                 selectedConnectorId,
+                selectedAgent,
               )
             : Promise.resolve(null),
           canUsePermissionCatalog
-            ? dashboardApi.getAgentPermissionCatalog(
+            ? dashboardApi.getConnectorRuntimePermissionCatalog(
                 authSession.accessToken,
-                selectedAgent,
                 selectedConnectorId,
+                selectedAgent,
               )
             : Promise.resolve(null),
         ])
@@ -356,28 +415,29 @@ export function TaskComposer() {
   const models = React.useMemo(
     () => modelCatalog?.models.map((item) => ({
       id: item.id,
-      label: item.displayName,
+      label: catalogI18nText(t, item.metadata, "labelKey", item.displayName),
       default: item.default,
       selectionId: item.selectionId,
       reasoningItems: item.reasoningItems.map((reasoning) => ({
         id: reasoning.id,
-        label: reasoning.displayName,
+        label: catalogI18nText(t, reasoning.metadata, "labelKey", reasoning.displayName),
         default: reasoning.default,
         selectionId: reasoning.selectionId,
       })),
     })) ?? [],
-    [modelCatalog],
+    [modelCatalog, t],
   )
   const selectedModelItem = models.find((item) => item.id === selectedModel)
   const reasoningOptions = selectedModelItem?.reasoningItems ?? []
   const permissionOptions = React.useMemo(
     () => permissionCatalog?.permissions.map((item) => ({
       id: item.id,
-      label: item.displayName,
+      label: catalogI18nText(t, item.metadata, "labelKey", item.displayName),
+      description: catalogI18nText(t, item.metadata, "descriptionKey", item.description),
       default: item.default,
       selectionId: item.selectionId,
     })) ?? [],
-    [permissionCatalog],
+    [permissionCatalog, t],
   )
 
   React.useEffect(() => {
@@ -415,7 +475,7 @@ export function TaskComposer() {
     selectionPreferenceAppliedForScopeRef.current = scope
     if (!selectionPreference) return
 
-    const modelSelection = modelIdsForSelectionId(modelCatalog, selectionPreference.modelSelectionId)
+    const modelSelection = modelIdsForSelectionId(modelCatalog, selectionPreference.model)
     if (modelSelection && models.some((option) => option.id === modelSelection.modelId)) {
       setSelectedModel(modelSelection.modelId)
       setSelectedReasoning(modelSelection.reasoningId)
@@ -423,7 +483,7 @@ export function TaskComposer() {
 
     const permissionSelection = permissionIdForSelectionId(
       permissionCatalog,
-      selectionPreference.permissionSelectionId,
+      selectionPreference.permission,
     )
     if (permissionSelection && permissionOptions.some((option) => option.id === permissionSelection)) {
       setSelectedPermissionMode(permissionSelection)
@@ -446,8 +506,8 @@ export function TaskComposer() {
   const effortLabel = selectedReasoningOption?.label ?? t("defaultReasoning")
   const permissionLabel = selectedPermissionOption?.label ?? t("permissionMode")
   const permissionDrawerItems = permissionOptions
-  const modelSelectionId = modelSelectionIdForCatalog(modelCatalog, selectedModel, selectedReasoning)
-  const permissionSelectionId = permissionSelectionIdForCatalog(permissionCatalog, selectedPermissionMode)
+  const selectedModelSelection = selectionIdForModelCatalog(modelCatalog, selectedModel, selectedReasoning)
+  const selectedPermissionSelection = selectionIdForPermissionCatalog(permissionCatalog, selectedPermissionMode)
   const requiresModelSelection = canUseModelCatalog && models.length > 0
   const requiresPermissionSelection = canUsePermissionCatalog && permissionOptions.length > 0
   const hasSelectionSettings = models.length > 0 || permissionOptions.length > 0
@@ -455,8 +515,8 @@ export function TaskComposer() {
     Boolean(authSession?.accessToken && selectedConnector && selectedAgent) &&
     !creating &&
     !catalogsLoading &&
-    (!requiresModelSelection || Boolean(modelSelectionId)) &&
-    (!requiresPermissionSelection || Boolean(permissionSelectionId)) &&
+    (!requiresModelSelection || Boolean(selectedModelSelection)) &&
+    (!requiresPermissionSelection || Boolean(selectedPermissionSelection)) &&
     (prompt.trim().length > 0 || attachments.length > 0)
   const selectorsLoading =
     runtimeInventoryLoading || (
@@ -469,8 +529,8 @@ export function TaskComposer() {
     if (!authSession?.accessToken || !selectedConnector || !selectedAgent || creating) return
     if (!prompt.trim() && attachments.length === 0) return
     if (catalogsLoading) return
-    if (requiresModelSelection && !modelSelectionId) return
-    if (requiresPermissionSelection && !permissionSelectionId) return
+    if (requiresModelSelection && !selectedModelSelection) return
+    if (requiresPermissionSelection && !selectedPermissionSelection) return
     const localSessionId = createClientId("session")
     const clientMessageId = createClientId("msg")
     const messageText = prompt.trim() || t("attachmentOnlyPrompt")
@@ -484,7 +544,7 @@ export function TaskComposer() {
       externalSessionId: null,
       title: prompt.trim() || null,
       cwd: workspace?.path || null,
-      status: "pending",
+      status: "waiting",
       takeover: true,
       pinned: false,
       pinnedAt: null,
@@ -500,14 +560,29 @@ export function TaskComposer() {
       sortAt: now,
       updatedSeq: 1,
       effectiveRunMode: "chat",
-      modelSelectionId,
-      permissionSelectionId,
+    }
+    const optimisticState = {
+      sessionId: localSessionId,
+      runtime: selectedAgent,
+      externalSessionId: null,
+      status: "waiting" as const,
+      selections: {
+        ...(selectedModelSelection ? { model: selectedModelSelection } : {}),
+        ...(selectedPermissionSelection ? { permission: selectedPermissionSelection } : {}),
+      },
+      statusReason: null,
+      error: null,
+      metadata: {},
+      updatedSeq: 1,
+      createdAt: now,
+      updatedAt: now,
     }
     addOptimisticMessage({
       clientMessageId,
       sessionId: localSessionId,
       localSessionId,
       session: optimisticSession,
+      state: optimisticState,
       item: buildOptimisticUserMessage({
         sessionId: localSessionId,
         clientMessageId,
@@ -522,47 +597,38 @@ export function TaskComposer() {
     openSession(localSessionId)
     setCreating(true)
     try {
-      const created = await dashboardApi.createSession(authSession.accessToken, {
+      const selections = {
+        ...(selectedModelSelection ? { model: selectedModelSelection } : {}),
+        ...(selectedPermissionSelection ? { permission: selectedPermissionSelection } : {}),
+      }
+      const createBody = {
         connectorId: selectedConnector.id,
         runtime: selectedAgent,
         title: prompt.trim() || undefined,
         cwd: workspace?.path || undefined,
-        modelSelectionId,
-        permissionSelectionId,
-      })
+      }
       const nextPreference = withNewSessionSelectionPreference(
         preference,
         selectedConnector.id,
         selectedAgent,
         {
-          modelSelectionId,
-          permissionSelectionId,
+          model: selectedModelSelection,
+          permission: selectedPermissionSelection,
         },
       )
       writeNewSessionPreference(nextPreference)
       setPreference(nextPreference)
-      bindOptimisticSession(localSessionId, created.session)
-      const takeover = await dashboardApi.enableTakeover(authSession.accessToken, created.session.id)
-      const sessionId = takeover.session.id
-      bindOptimisticSession(localSessionId, takeover.session)
-      const files = selectedAttachments.map((attachment) => attachment.file)
-      const upload = files.length > 0
-        ? await dashboardApi.uploadSessionAttachments(authSession.accessToken, sessionId, files)
-        : null
-      const attachmentRefs = upload?.attachments.map((attachment) => ({ fileId: attachment.fileId })) ?? []
-      await dashboardApi.sendSessionMessage(
-        authSession.accessToken,
-        sessionId,
-        messageText,
-        {
-          attachments: attachmentRefs,
-          clientMessageId,
-          modelSelectionId,
-          permissionSelectionId,
-        },
-      )
-      upsertSession(takeover.session)
-      refreshData()
+      const created = await dashboardApi.createAndStartSession(authSession.accessToken, {
+        ...createBody,
+        content: messageText,
+        selections,
+        attachments: selectedAttachments.length > 0
+          ? await inlineAttachmentsFromFiles(selectedAttachments)
+          : undefined,
+        clientMessageId,
+      })
+      bindOptimisticSession(localSessionId, created.session, created.attachments)
+      upsertSession(created.session)
     } catch (err) {
       const message = err instanceof Error ? err.message : t("createFailed")
       markOptimisticMessageFailed(clientMessageId, message)
@@ -595,8 +661,8 @@ export function TaskComposer() {
       </div>
 
       <div className="w-full max-w-3xl">
-        <h1 className="mb-6 min-h-[3rem] text-balance text-center text-4xl font-semibold leading-tight tracking-tight" aria-live="polite">
-          <span>{creating ? `${t("creatingBase")}${".".repeat((createTick % 3) + 1)}` : typedTitle}</span>
+        <h1 className="mb-6 flex h-10 items-center justify-center overflow-hidden text-center text-3xl font-semibold leading-tight tracking-tight sm:h-auto sm:min-h-[3rem] sm:text-4xl" aria-live="polite">
+          <span className="min-w-0 truncate">{creating ? `${t("creatingBase")}${".".repeat((createTick % 3) + 1)}` : typedTitle}</span>
           <span className="ml-1 inline-block h-[0.9em] w-0.5 translate-y-[0.1em] rounded-full bg-muted-foreground motion-safe:animate-[composer-caret_1s_steps(1,end)_infinite]" aria-hidden="true" />
         </h1>
 
@@ -701,11 +767,21 @@ export function TaskComposer() {
                         {permissionOptions.map((item) => (
                           <DropdownMenuItem
                             key={item.id}
-                            className="gap-2"
+                            className={cn(
+                              "items-start gap-2 py-2.5",
+                              selectedPermissionMode === item.id && "text-primary focus:text-primary",
+                            )}
                             onSelect={() => setSelectedPermissionMode(item.id)}
                           >
-                            <Check className={cn("size-3.5", selectedPermissionMode === item.id ? "opacity-100" : "opacity-0")} />
-                            <span>{item.label}</span>
+                            <Check className={cn("mt-0.5 size-3.5", selectedPermissionMode === item.id ? "opacity-100" : "opacity-0")} />
+                            <span className="min-w-0 flex-1">
+                              <span className="block font-medium leading-none">{item.label}</span>
+                              {item.description ? (
+                                <span className="mt-1 block whitespace-normal text-xs leading-snug text-muted-foreground">
+                                  {item.description}
+                                </span>
+                              ) : null}
+                            </span>
                           </DropdownMenuItem>
                         ))}
                       </DropdownMenuContent>
@@ -804,6 +880,35 @@ function activeRuntimes(runtimes: DeviceRuntimeView[] | undefined) {
     .sort((a, b) => a.displayName.localeCompare(b.displayName))
 }
 
+function sameRuntimeInventory(
+  left: Record<string, DeviceRuntimeView[]>,
+  right: Record<string, DeviceRuntimeView[]>,
+): boolean {
+  return stableRuntimeInventoryKey(left) === stableRuntimeInventoryKey(right)
+}
+
+function stableRuntimeInventoryKey(value: Record<string, DeviceRuntimeView[]>): string {
+  return Object.keys(value)
+    .sort()
+    .map((connectorId) => {
+      const runtimes = [...(value[connectorId] ?? [])]
+        .sort((left, right) => left.runtimeId.localeCompare(right.runtimeId))
+        .map((runtime) => [
+          runtime.runtimeId,
+          runtime.runtimeType,
+          runtime.displayName,
+          runtime.present,
+          runtime.configured,
+          runtime.active,
+          runtime.status,
+          runtime.updatedAt,
+        ].join(":"))
+        .join(",")
+      return `${connectorId}=${runtimes}`
+    })
+    .join("|")
+}
+
 function ComposerSelectorLoading({ className }: { className?: string }) {
   return (
     <Button
@@ -894,16 +999,16 @@ function readNewSessionSelectionPreferences(value: unknown): Record<string, NewS
   for (const [scope, rawSelection] of Object.entries(value)) {
     if (!scope || !rawSelection || typeof rawSelection !== "object" || Array.isArray(rawSelection)) continue
     const selection = rawSelection as Partial<NewSessionSelectionPreference>
-    const modelSelectionId = typeof selection.modelSelectionId === "string" && selection.modelSelectionId
-      ? selection.modelSelectionId
+    const model = typeof selection.model === "string" && selection.model
+      ? selection.model
       : null
-    const permissionSelectionId = typeof selection.permissionSelectionId === "string" && selection.permissionSelectionId
-      ? selection.permissionSelectionId
+    const permission = typeof selection.permission === "string" && selection.permission
+      ? selection.permission
       : null
-    if (!modelSelectionId && !permissionSelectionId) continue
+    if (!model && !permission) continue
     result[scope] = {
-      modelSelectionId,
-      permissionSelectionId,
+      model,
+      permission,
     }
   }
   return Object.keys(result).length > 0 ? result : undefined
@@ -922,8 +1027,8 @@ function withNewSessionSelectionPreference(
     selections: {
       ...(current?.selections ?? {}),
       [scope]: {
-        modelSelectionId: selection.modelSelectionId ?? null,
-        permissionSelectionId: selection.permissionSelectionId ?? null,
+        model: selection.model ?? null,
+        permission: selection.permission ?? null,
       },
     },
   }

@@ -60,9 +60,98 @@ def test_notice_reset_invalidation_becomes_one_snapshot_event() -> None:
         }
     )
 
+    event_types = {event.type for event in events}
+    assert event_types == {"runtime.notice.snapshot"}
+    for event in events:
+        assert event.payload["notices"] == []
+
+
+def test_runtime_state_invalidation_emits_runtime_state_event() -> None:
+    events = events_from_invalidation(
+        {
+            "sessionId": "session-1",
+            "nextSeq": 7,
+            "runtimeState": {
+                "sessionId": "session-1",
+                "runtime": "codex",
+                "status": "running",
+                "selections": {"model": "sel_model"},
+                "updatedSeq": 7,
+            },
+        }
+    )
+
     assert len(events) == 1
-    assert events[0].type == "notice.snapshot"
-    assert events[0].payload["notices"] == []
+    assert events[0].type == "runtime.state.updated"
+    assert events[0].payload["state"]["status"] == "running"
+
+
+def test_session_invalidation_emits_meta_event() -> None:
+    events = events_from_invalidation(
+        {
+            "sessionId": "session-1",
+            "nextSeq": 9,
+            "session": {
+                "id": "session-1",
+                "title": "Updated",
+                "status": "idle",
+                "updatedSeq": 9,
+            },
+        }
+    )
+
+    event_types = {event.type for event in events}
+    assert "session.meta.updated" in event_types
+    assert "session.status_changed" not in event_types
+    meta_event = next(event for event in events if event.type == "session.meta.updated")
+    assert meta_event.payload["session"]["title"] == "Updated"
+
+
+def test_notice_invalidation_emits_runtime_notice_update() -> None:
+    events = events_from_invalidation(
+        {
+            "sessionId": "session-1",
+            "nextSeq": 8,
+            "notices": [
+                {
+                    "id": "notice-1",
+                    "status": "answered",
+                    "revision": 2,
+                    "updatedSeq": 8,
+                }
+            ],
+        }
+    )
+
+    event_types = {event.type for event in events}
+    assert event_types == {"runtime.notice.updated"}
+    runtime_event = next(
+        event for event in events if event.type == "runtime.notice.updated"
+    )
+    assert runtime_event.payload["notice"]["id"] == "notice-1"
+
+
+def test_notice_invalidation_adds_event_sequence_for_live_notice() -> None:
+    events = events_from_invalidation(
+        {
+            "sessionId": "session-1",
+            "nextSeq": 8,
+            "notices": [
+                {
+                    "noticeId": "notice-1",
+                    "type": "interaction",
+                    "sessionId": "session-1",
+                    "title": "Approve command",
+                    "status": "open",
+                }
+            ],
+        }
+    )
+
+    assert len(events) == 1
+    assert events[0].type == "runtime.notice.updated"
+    assert events[0].sequence == 8
+    assert events[0].payload["notice"]["updatedSeq"] == 8
 
 
 def test_recovery_requires_every_durable_revision_to_be_projected() -> None:

@@ -38,8 +38,6 @@ export function compareTimelineItems(
     if (a.turnId && a.turnId === b.turnId) {
       const boundaryOrder = timelineBoundaryOrder(a) - timelineBoundaryOrder(b)
       if (boundaryOrder !== 0) return boundaryOrder
-      const createdOrder = a.createdAt.localeCompare(b.createdAt)
-      if (createdOrder !== 0) return createdOrder
     }
   }
   return a.orderSeq - b.orderSeq || a.updatedSeq - b.updatedSeq || a.id.localeCompare(b.id)

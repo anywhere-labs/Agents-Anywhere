@@ -28,6 +28,7 @@ const FILE_CHANGE_MONACO_OPTIONS = {
     alwaysConsumeMouseWheel: false,
   },
 } satisfies import("monaco-editor").editor.IStandaloneEditorConstructionOptions
+const INLINE_FILE_CHANGE_PATH_MAX_CHARS = 60
 
 export function ToolCard({
   item,
@@ -36,6 +37,8 @@ export function ToolCard({
   interaction,
   resolvingNoticeId,
   resolvingActionId,
+  open,
+  onOpenChange,
   onRespondInteraction,
 }: {
   item: TimelineItem
@@ -44,41 +47,58 @@ export function ToolCard({
   interaction?: Notice
   resolvingNoticeId: string | null
   resolvingActionId: string | null
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
   onRespondInteraction: (noticeId: string, actionId: string) => void
 }) {
   const tSession = useTranslations("dashboard.session")
   const kind = timelineToolKind(item)
   const command = commandText(item.content.command)
-  const output = textOf(item.content.outputPreview) || textOf(item.content.outputText) || textOf(item.content.error)
+  const output =
+    textOf(item.content.output) ||
+    textOf(item.content.outputPreview) ||
+    textOf(item.content.outputText) ||
+    textOf(item.content.error)
   const changes = recordsOf(item.content.changes)
-  const title = timelineToolTitle(item, tSession)
+  const title = timelineToolTitle(item, session, tSession)
   const hasDetail = Boolean(command || output || changes.length > 0 || interaction)
-  const defaultOpen = Boolean(interaction)
+  const shouldOpenForInteraction = Boolean(interaction)
+  const [localOpen, setLocalOpen] = React.useState(shouldOpenForInteraction)
+  const actualOpen = open ?? localOpen
+  const updateOpen = React.useCallback((nextOpen: boolean) => {
+    if (onOpenChange) {
+      onOpenChange(nextOpen)
+      return
+    }
+    setLocalOpen(nextOpen)
+  }, [onOpenChange])
+
+  React.useEffect(() => {
+    if (shouldOpenForInteraction) updateOpen(true)
+  }, [shouldOpenForInteraction, updateOpen])
 
   if (!hasDetail) {
     return (
-      <Marker className="w-full">
-        <MarkerIcon>
-          <ToolIcon kind={kind} status={item.status} />
-        </MarkerIcon>
-        <ToolStatusIcon status={item.status} />
-        <MarkerContent className="code-mono text-sm">{title}</MarkerContent>
-      </Marker>
+      <ToolMarkerRow
+        kind={kind}
+        status={item.status}
+        title={title}
+      />
     )
   }
 
   return (
-    <Collapsible defaultOpen={defaultOpen} className="min-w-0 max-w-full overflow-hidden">
+    <Collapsible open={actualOpen} onOpenChange={updateOpen} className="min-w-0 max-w-full overflow-hidden">
       <div className="flex min-w-0 max-w-full flex-col gap-2 overflow-hidden">
         <CollapsibleTrigger asChild>
           <Marker asChild className="w-full">
             <button type="button" className="text-left">
-              <ChevronDown className="shrink-0 -rotate-90 transition-transform group-data-[state=open]/marker:rotate-0" />
-              <MarkerIcon>
-                <ToolIcon kind={kind} status={item.status} />
-              </MarkerIcon>
-              <ToolStatusIcon status={item.status} />
-              <MarkerContent className="code-mono text-sm">{title}</MarkerContent>
+              <ToolMarkerRowContent
+                collapsible
+                kind={kind}
+                status={item.status}
+                title={title}
+              />
             </button>
           </Marker>
         </CollapsibleTrigger>
@@ -107,6 +127,57 @@ export function ToolCard({
   )
 }
 
+function ToolMarkerRow({
+  kind,
+  status,
+  title,
+}: {
+  kind: string
+  status: TimelineItem["status"]
+  title: string
+}) {
+  return (
+    <Marker className="w-full">
+      <ToolMarkerRowContent kind={kind} status={status} title={title} />
+    </Marker>
+  )
+}
+
+export function ToolMarkerRowContent({
+  kind,
+  status,
+  title,
+  collapsible = false,
+}: {
+  kind: string
+  status: TimelineItem["status"]
+  title: string
+  collapsible?: boolean
+}) {
+  const active = timelineItemStatusIsActive(status)
+  const failed = timelineItemStatusIsFailure(status)
+  return (
+    <>
+      {collapsible ? (
+        <ChevronDown className="shrink-0 -rotate-90 transition-transform group-data-[state=open]/marker:rotate-0" />
+      ) : null}
+      <MarkerIcon>
+        <ToolIcon kind={kind} status={status} />
+      </MarkerIcon>
+      <MarkerContent
+        className={cn(
+          "code-mono text-sm",
+          active && "shimmer",
+          failed && "text-destructive",
+        )}
+      >
+        {title}
+      </MarkerContent>
+      {failed ? <X className="shrink-0 text-destructive" /> : null}
+    </>
+  )
+}
+
 export function timelineToolKind(item: TimelineItem): string {
   if (item.type === "artifact") return textOf(item.content.kind) || "artifact"
   return textOf(item.content.kind) || "tool"
@@ -114,19 +185,27 @@ export function timelineToolKind(item: TimelineItem): string {
 
 export function timelineToolTitle(
   item: TimelineItem,
+  session: SessionView,
   tSession: (key: string, values?: Record<string, string | number>) => string,
 ): string {
-  if (item.type === "artifact") {
-    return firstTextOf(item.content.path, item.content.filePath, item.content.file, item.content.uri) ?? (textOf(item.content.kind) || "artifact")
-  }
   const kind = timelineToolKind(item)
   const changes = recordsOf(item.content.changes)
   const createdFilesOnly = changes.length > 0 && changes.every(isCreatedFileChange)
+  if (kind === "file_change") {
+    const singlePath = changes.length === 1
+      ? displayPathForSession(firstTextOf(changes[0]?.path, changes[0]?.filePath, changes[0]?.file, changes[0]?.uri), session.cwd)
+      : null
+    if (singlePath && singlePath.length <= INLINE_FILE_CHANGE_PATH_MAX_CHARS) {
+      return tSession(createdFilesOnly ? "toolCreatedFile" : "toolChangedFile", { path: singlePath })
+    }
+    return tSession(createdFilesOnly ? "toolCreatedFiles" : "toolChangedFiles")
+  }
+  if (item.type === "artifact") {
+    return firstTextOf(item.content.path, item.content.filePath, item.content.file, item.content.uri) ?? kind
+  }
   return kind === "command"
     ? tSession("toolRan", { command: commandText(item.content.command) || tSession("toolCommandFallback") })
-    : kind === "file_change"
-      ? tSession(createdFilesOnly ? "toolCreatedFiles" : "toolChangedFiles")
-      : kind === "web_search"
+    : kind === "web_search"
         ? tSession("toolSearched", { query: textOf(item.content.query) || tSession("toolWebFallback") })
         : kind === "mcp"
           ? `${textOf(item.content.server) || tSession("toolMcpFallback")} / ${
@@ -285,10 +364,13 @@ function FileChangeRow({
 }) {
   const tSession = useTranslations("dashboard.session")
   const path = firstTextOf(change.path, change.filePath, change.file, change.uri) ?? "unknown path"
+  const displayPath = displayPathForSession(path, session.cwd) ?? path
   const diff = textOf(change.diff)
+  const action = fileChangeAction(change)
+  const displayDiff = fileChangeDisplayDiff(change, diff)
   const canPreview = path !== "unknown path"
-  const renderAsDiff = diff ? isUnifiedDiffLike(diff) : false
-  const editorHeight = diff ? codePanelHeight(diff) : 0
+  const renderAsDiff = Boolean(displayDiff)
+  const editorHeight = displayDiff ? codePanelHeight(displayDiff) : diff ? codePanelHeight(diff) : 0
   const [codeOpen, setCodeOpen] = React.useState(false)
   const [codeLoading, setCodeLoading] = React.useState(false)
   const [codeError, setCodeError] = React.useState<string | null>(null)
@@ -330,6 +412,9 @@ function FileChangeRow({
     <div className="min-w-0 max-w-full overflow-hidden border-b last:border-b-0">
       <div className="flex h-9 items-center gap-2 bg-muted/20 px-3 text-sm">
         <FilePenLine className="size-4 text-muted-foreground" />
+        <Badge variant="secondary" className="h-5 shrink-0 rounded-md px-1.5 text-[11px] font-normal">
+          {tSession(fileChangeActionLabelKey(action))}
+        </Badge>
         <button
           type="button"
           className="code-mono min-w-0 truncate rounded-sm text-left text-xs underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
@@ -338,14 +423,14 @@ function FileChangeRow({
             if (canPreview) openSessionFilePreview(token, session, path)
           }}
         >
-          {path}
+          {displayPath}
         </button>
       </div>
       {diff ? (
         renderAsDiff ? (
           <>
-            <CodePanelFrame label="diff" code={diff} flush action={showCodeAction}>
-              <DiffPanel code={diff} maxHeight={editorHeight} />
+            <CodePanelFrame label="diff" code={displayDiff ?? diff} flush action={showCodeAction}>
+              <DiffPanel code={displayDiff ?? diff} maxHeight={editorHeight} />
             </CodePanelFrame>
             {codeOpen ? (
               <div className="border-t">
@@ -393,31 +478,6 @@ function ToolIcon({ kind, status }: { kind: string; status: TimelineItem["status
   return <Hammer className={className} />
 }
 
-function ToolStatusIcon({ status }: { status: TimelineItem["status"] }) {
-  if (status === "pending" || status === "running" || status === "waiting_approval") {
-    return (
-      <span aria-label={status} className="flex shrink-0 items-center justify-center text-muted-foreground">
-        <Loader2 className="size-3.5 animate-spin" />
-      </span>
-    )
-  }
-  if (status === "done") {
-    return (
-      <span aria-label={status} className="flex shrink-0 items-center justify-center text-muted-foreground">
-        <Check className="size-3.5" />
-      </span>
-    )
-  }
-  if (status === "failed" || status === "cancelled" || status === "interrupted") {
-    return (
-      <span aria-label={status} className="flex shrink-0 items-center justify-center text-destructive">
-        <X className="size-3.5" />
-      </span>
-    )
-  }
-  return null
-}
-
 export function TimelineStatusBadge({ status }: { status: TimelineItem["status"] }) {
   const variant = status === "failed" ? "destructive" : "secondary"
   return (
@@ -425,6 +485,14 @@ export function TimelineStatusBadge({ status }: { status: TimelineItem["status"]
       {status}
     </Badge>
   )
+}
+
+export function timelineItemStatusIsActive(status: TimelineItem["status"]): boolean {
+  return status === "pending" || status === "running" || status === "waiting_approval"
+}
+
+export function timelineItemStatusIsFailure(status: TimelineItem["status"]): boolean {
+  return status === "failed" || status === "cancelled" || status === "interrupted"
 }
 
 type DiffRow = {
@@ -500,7 +568,54 @@ function isUnifiedDiffLike(value: string) {
   })
 }
 
+type FileChangeAction = "add" | "modify" | "delete" | "rename" | "unknown"
+
+function fileChangeAction(change: Record<string, unknown>): FileChangeAction {
+  const direct = textOf(change.action) || textOf(change.type) || textOf(change.status)
+  const nestedKind = change.kind && typeof change.kind === "object" && !Array.isArray(change.kind)
+    ? textOf((change.kind as Record<string, unknown>).type)
+    : null
+  const value = (nestedKind || direct || "").toLowerCase()
+  if (value === "add" || value === "added" || value === "create" || value === "created") return "add"
+  if (value === "delete" || value === "deleted" || value === "remove" || value === "removed") return "delete"
+  if (value === "rename" || value === "renamed" || value === "move" || value === "moved") return "rename"
+  if (value === "modify" || value === "modified" || value === "change" || value === "changed" || value === "edit" || value === "edited") return "modify"
+  return "unknown"
+}
+
+function fileChangeActionLabelKey(action: FileChangeAction): string {
+  if (action === "add") return "fileChangeAdded"
+  if (action === "delete") return "fileChangeDeleted"
+  if (action === "rename") return "fileChangeRenamed"
+  if (action === "modify") return "fileChangeModified"
+  return "fileChangeUnknown"
+}
+
+function displayPathForSession(path: string | null, cwd: string | null | undefined): string | null {
+  if (!path) return null
+  if (!cwd) return path
+  const normalizedPath = normalizeDisplayPath(path)
+  const normalizedCwd = normalizeDisplayPath(cwd)
+  if (normalizedPath === normalizedCwd) return "."
+  const cwdPrefix = normalizedCwd.endsWith("/") ? normalizedCwd : `${normalizedCwd}/`
+  if (!normalizedPath.startsWith(cwdPrefix)) return path
+  return normalizedPath.slice(cwdPrefix.length) || "."
+}
+
+function normalizeDisplayPath(path: string): string {
+  return path.replace(/\\/g, "/").replace(/\/+$/, "")
+}
+
+function fileChangeDisplayDiff(change: Record<string, unknown>, diff: string | null): string | null {
+  if (!diff) return null
+  if (isUnifiedDiffLike(diff)) return diff
+  const action = fileChangeAction(change)
+  if (action === "add") return diff.split("\n").map((line) => `+${line}`).join("\n")
+  if (action === "delete") return diff.split("\n").map((line) => `-${line}`).join("\n")
+  return null
+}
+
 export function isCreatedFileChange(change: Record<string, unknown>) {
   const diff = textOf(change.diff)
-  return Boolean(diff && !isUnifiedDiffLike(diff))
+  return fileChangeAction(change) === "add" || Boolean(diff && !isUnifiedDiffLike(diff))
 }

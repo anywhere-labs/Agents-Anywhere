@@ -15,10 +15,7 @@ from agent_server.core.models import (
     ConnectorUpdateRequest,
     ConnectorView,
 )
-from agent_server.core.protocol import (
-    ProtocolCapabilitiesResponse,
-    ProtocolCapabilitySet,
-)
+from agent_server.core.protocol import ProtocolCapabilitiesResponse
 from agent_server.core.utc import utc_now
 from agent_server.deps import (
     current_user_id,
@@ -94,7 +91,9 @@ async def get_connector(
 
 
 @router.get(
-    "/{connector_id}/protocol/capabilities", response_model=ProtocolCapabilitiesResponse
+    "/{connector_id}/protocol/capabilities",
+    response_model=ProtocolCapabilitiesResponse,
+    include_in_schema=False,
 )
 async def get_connector_protocol_capabilities(
     connector_id: str,
@@ -102,15 +101,23 @@ async def get_connector_protocol_capabilities(
     store: Store = Depends(get_store),
 ) -> ProtocolCapabilitiesResponse:
     try:
-        capability_set = await store.get_protocol_capabilities(
-            connector_id, user_id=user_id
-        )
+        connector = await store.get_connector(connector_id)
+        if connector.userId != user_id:
+            raise KeyError(connector_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="connector not found") from None
-    return ProtocolCapabilitiesResponse(
-        connectorId=connector_id,
-        capabilitySet=ProtocolCapabilitySet.model_validate(capability_set),
-        serverTime=utc_now(),
+    raise HTTPException(
+        status_code=410,
+        detail={
+            "code": "connector_protocol_capabilities_route_removed",
+            "message": (
+                "Connector protocol capability reads were removed from the "
+                "v2 target API."
+            ),
+            "use": (
+                f"/connectors/{connector_id}/runtimes/{{runtimeId}}/capabilities"
+            ),
+        },
     )
 
 

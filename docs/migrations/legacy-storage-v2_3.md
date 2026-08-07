@@ -2,8 +2,8 @@
 
 Schema revision `v2_3` makes `notices` the only durable Interaction store.
 Connector approval prompts now enter the Server as `notice.upsert` interactions;
-`approval.requested` is rejected. The reverse `approval.resolve` Connector RPC
-remains the response transport and is not a persistence contract.
+`approval.requested` is rejected. The reverse response transport is the runtime
+protocol `interaction.respond` Connector RPC and is not a persistence contract.
 
 ## Upgrade behavior
 

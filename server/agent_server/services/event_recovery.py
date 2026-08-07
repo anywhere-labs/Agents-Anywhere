@@ -8,7 +8,7 @@ from agent_server.core.events import (
     protocol_event,
     timeline_events_from_items,
 )
-from agent_server.core.models import Notice, SessionView, TimelineItem
+from agent_server.core.models import SessionView, TimelineItem
 from agent_server.core.protocol import ProtocolEventRecoveryResponse
 from agent_server.core.utc import utc_now
 from agent_server.services.connector_presence import ConnectorPresencePort
@@ -36,12 +36,6 @@ class EventRecoveryRepository(SessionCapabilityRepository, Protocol):
         after_seq: int,
         limit: int,
     ) -> tuple[list[TimelineItem], bool]: ...
-
-    async def list_notices_since(
-        self,
-        session_id: str,
-        after_seq: int,
-    ) -> list[Notice]: ...
 
 
 class EventRecoveryService:
@@ -94,10 +88,6 @@ class EventRecoveryService:
                 after_seq=after_sequence,
                 limit=self._limit,
             )
-            notices = await self._store.list_notices_since(
-                session_id,
-                after_sequence,
-            )
             current_sequence = await self._store.get_session_seq(session_id)
             if start_sequence == current_sequence:
                 break
@@ -112,29 +102,21 @@ class EventRecoveryService:
             [item.model_dump(mode="json") for item in items],
         )
         if session.updatedSeq > after_sequence:
+            session_payload = session.model_dump(mode="json")
             events.append(
                 protocol_event(
                     session_id,
                     sequence=session.updatedSeq,
-                    event_type="session.status_changed",
-                    payload={
-                        "session": session.model_dump(mode="json"),
-                        "status": session.status,
-                        "effectiveCapabilities": effective_capabilities.model_dump(
-                            mode="json"
-                        ),
-                    },
+                    event_type="session.meta.updated",
+                    payload={"session": session_payload},
                 )
             )
-        for notice in notices:
-            if notice.updatedSeq <= after_sequence:
-                continue
             events.append(
                 protocol_event(
                     session_id,
-                    sequence=notice.updatedSeq,
-                    event_type="notice.updated",
-                    payload={"notice": notice.model_dump(mode="json")},
+                    sequence=session.updatedSeq,
+                    event_type="runtime.capability.updated",
+                    payload={"capabilitySet": effective_capabilities.model_dump(mode="json")},
                 )
             )
         events.sort(key=lambda event: (event.sequence, event.eventId))

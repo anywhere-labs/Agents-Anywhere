@@ -19,11 +19,8 @@ from agent_server.services.connector_realtime import ConnectorRealtimeService
 from agent_server.services.connector_shell import ConnectorShellService
 from agent_server.services.device_runtimes import DeviceRuntimeService
 from agent_server.services.event_recovery import EventRecoveryService
-from agent_server.services.interactions import (
-    ApprovalInteractionResolver,
-    InteractionService,
-)
 from agent_server.services.session_run import SessionRunService
+from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 from agent_server.services.terminal import TerminalService
 
 
@@ -43,13 +40,6 @@ def get_event_recovery_service(conn: HTTPConnection) -> EventRecoveryService:
     return EventRecoveryService(conn.app.state.store, conn.app.state.rpc)
 
 
-def get_interaction_service(conn: HTTPConnection) -> InteractionService:
-    return InteractionService(
-        conn.app.state.store,
-        ApprovalInteractionResolver(conn.app.state.store, conn.app.state.rpc),
-    )
-
-
 def get_connector_ingest_service(conn: HTTPConnection) -> ConnectorIngestService:
     realtime = get_connector_realtime_service(conn)
     return ConnectorIngestService(
@@ -58,6 +48,7 @@ def get_connector_ingest_service(conn: HTTPConnection) -> ConnectorIngestService
         conn.app.state.timeline_broker,
         conn.app.state.device_runtime_service,
         conn.app.state.rpc,
+        conn.app.state.session_runtime_state_cache,
     )
 
 
@@ -109,6 +100,12 @@ def get_fs_downloads(conn: HTTPConnection) -> FsDownloadRelayManager:
 
 def get_timeline_broker(conn: HTTPConnection) -> TimelineBroker:
     return conn.app.state.timeline_broker
+
+
+def get_session_runtime_state_cache(
+    conn: HTTPConnection,
+) -> SessionRuntimeStateCache:
+    return conn.app.state.session_runtime_state_cache
 
 
 def current_user_id(

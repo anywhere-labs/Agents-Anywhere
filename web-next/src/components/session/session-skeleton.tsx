@@ -5,7 +5,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 export function SessionSkeleton() {
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="mx-auto w-full max-w-4xl space-y-4 px-5 pb-44 pt-20">
+      <div className="mx-auto w-full max-w-[calc(48rem+2rem)] space-y-4 px-4 pb-44 pt-20">
         <SessionSkeletonInline />
       </div>
       <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 px-4 pb-4 pt-2">

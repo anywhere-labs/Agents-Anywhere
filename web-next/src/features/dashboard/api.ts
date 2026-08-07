@@ -29,14 +29,18 @@ import type {
   ProtocolModelCatalogResponse,
   ProtocolPermissionCatalogResponse,
   RpcResponse,
+  SessionCommandListResponse,
+  SessionCreateAndStartRequest,
   SessionCreateRequest,
   SessionCreateResponse,
   SessionCommandResponse,
   SessionListResponse,
   SessionPatchRequest,
   SessionResponse,
+  SessionRuntimeStateResponse,
+  SessionSelectionPatchResponse,
   SessionSnapshotResponse,
-  SessionStateResponse,
+  SessionTimelineResponse,
   TakeoverResponse,
   TerminalCreateRequest,
   TerminalListResult,
@@ -49,7 +53,7 @@ import type {
 export type SessionStateQuery = {
   afterSeq?: number;
   beforeOrderSeq?: number;
-  mode?: "since" | "latest" | "before";
+  mode?: "changes" | "latest" | "history";
   limit?: number;
 };
 
@@ -182,20 +186,27 @@ export class DashboardApi {
     return this.client.post<SessionCreateResponse>("/sessions", body, { token });
   }
 
+  createAndStartSession(
+    token: string,
+    body: SessionCreateAndStartRequest,
+  ): Promise<SessionCreateResponse> {
+    return this.client.post<SessionCreateResponse>("/sessions/create-and-start", body, { token });
+  }
+
   patchSession(
     token: string,
     sessionId: string,
     body: SessionPatchRequest,
   ): Promise<SessionResponse> {
     return this.client.patch<SessionResponse>(
-      `/sessions/${encodeURIComponent(sessionId)}`,
+      `/sessions/${encodeURIComponent(sessionId)}/meta`,
       body,
       { token },
     );
   }
 
   bulkMarkSessionsRead(token: string, ids: string[]): Promise<BulkArchiveResponse> {
-    return this.client.post<BulkArchiveResponse>("/sessions/bulk-read", { ids }, { token });
+    return this.client.post<BulkArchiveResponse>("/sessions/read", ids, { token });
   }
 
   bulkArchiveSessions(
@@ -203,53 +214,56 @@ export class DashboardApi {
     ids: string[],
     archived: boolean,
   ): Promise<BulkArchiveResponse> {
+    const path = archived ? "/sessions/archive" : "/sessions/unarchive";
     return this.client.post<BulkArchiveResponse>(
-      "/sessions/bulk-archive",
-      { ids, archived },
+      path,
+      ids,
       { token },
     );
   }
 
   markSessionRead(token: string, sessionId: string): Promise<SessionResponse> {
-    return this.client.post<SessionResponse>(
-      `/sessions/${encodeURIComponent(sessionId)}/read`,
-      {},
-      { token },
-    );
+    return this.client
+      .post<BulkArchiveResponse>("/sessions/read", [sessionId], { token })
+      .then((response) => {
+        const session = response.sessions.find((item) => item.id === sessionId);
+        if (!session) throw new Error("session read response did not include session");
+        return { session, serverTime: response.serverTime };
+      });
   }
 
-  getSessionState(
+  getSessionTimeline(
     token: string,
     sessionId: string,
     afterSeqOrQuery: number | SessionStateQuery = 0,
     limit = 500,
-  ): Promise<SessionStateResponse> {
+  ): Promise<SessionTimelineResponse> {
     const query =
       typeof afterSeqOrQuery === "number"
-        ? { afterSeq: afterSeqOrQuery, limit }
+        ? { mode: "changes", afterSeq: afterSeqOrQuery, limit }
         : { ...afterSeqOrQuery, limit: afterSeqOrQuery.limit ?? limit };
-    return this.client.get<SessionStateResponse>(
-      `/sessions/${encodeURIComponent(sessionId)}/state`,
+    return this.client.get<SessionTimelineResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/timeline`,
       { token, query },
     );
   }
 
-  getLatestSessionState(
+  getLatestSessionTimeline(
     token: string,
     sessionId: string,
     limit = 100,
-  ): Promise<SessionStateResponse> {
-    return this.getSessionState(token, sessionId, { mode: "latest", limit });
+  ): Promise<SessionTimelineResponse> {
+    return this.getSessionTimeline(token, sessionId, { mode: "latest", limit });
   }
 
-  getSessionStateBefore(
+  getSessionTimelineBefore(
     token: string,
     sessionId: string,
     beforeOrderSeq: number,
     limit = 100,
-  ): Promise<SessionStateResponse> {
-    return this.getSessionState(token, sessionId, {
-      mode: "before",
+  ): Promise<SessionTimelineResponse> {
+    return this.getSessionTimeline(token, sessionId, {
+      mode: "history",
       beforeOrderSeq,
       limit,
     });
@@ -258,7 +272,7 @@ export class DashboardApi {
   getSessionSnapshot(
     token: string,
     sessionId: string,
-    limit = 200,
+    limit = 100,
     options: SessionSnapshotRequestOptions = {},
   ): Promise<SessionSnapshotResponse> {
     const reason = options.reason ?? "unspecified";
@@ -328,10 +342,6 @@ export class DashboardApi {
     const url = new URL(path, window.location.origin);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     return url.toString();
-  }
-
-  dashboardEventsUrl(token: string): string {
-    return `${apiPath("/sessions/events/dashboard")}?token=${encodeURIComponent(token)}`;
   }
 
   connectorFsList(
@@ -591,8 +601,20 @@ export class DashboardApi {
 
   interruptSession(token: string, sessionId: string): Promise<RpcResponse<unknown>> {
     return this.client.post<RpcResponse<unknown>>(
-      `/sessions/${encodeURIComponent(sessionId)}/interrupt`,
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/interrupt`,
       {},
+      { token },
+    );
+  }
+
+  getSessionCommands(
+    token: string,
+    sessionId: string,
+    options: { query?: string; limit?: number } = {},
+  ): Promise<SessionCommandListResponse> {
+    void options;
+    return this.client.get<SessionCommandListResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/commands`,
       { token },
     );
   }
@@ -604,7 +626,7 @@ export class DashboardApi {
     options: { args?: string[]; raw?: string } = {},
   ): Promise<SessionCommandResponse> {
     return this.client.post<SessionCommandResponse>(
-      `/sessions/${encodeURIComponent(sessionId)}/commands`,
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/commands`,
       {
         command,
         ...(options.args && options.args.length > 0 ? { args: options.args } : {}),
@@ -622,7 +644,7 @@ export class DashboardApi {
     input?: Record<string, unknown> | null,
   ): Promise<RpcResponse<unknown>> {
     return this.client.post<RpcResponse<unknown>>(
-      `/sessions/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(noticeId)}/respond`,
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/notices/${encodeURIComponent(noticeId)}/respond`,
       { actionId, ...(input ? { input } : {}) },
       { token },
     );
@@ -634,16 +656,66 @@ export class DashboardApi {
     content: string,
     options: MessageSendOptions = {},
   ): Promise<RpcResponse<unknown>> {
-    const { attachments, clientMessageId, modelSelectionId, permissionSelectionId } = options;
+    const { attachments, clientMessageId } = options;
     return this.client.post<RpcResponse<unknown>>(
-      `/sessions/${encodeURIComponent(sessionId)}/messages`,
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/messages`,
       {
         content,
         ...(attachments && attachments.length > 0 ? { attachments } : {}),
         ...(clientMessageId ? { clientMessageId } : {}),
-        ...(modelSelectionId ? { modelSelectionId } : {}),
-        ...(permissionSelectionId ? { permissionSelectionId } : {}),
       },
+      { token },
+    );
+  }
+
+  getSessionRuntimeState(
+    token: string,
+    sessionId: string,
+  ): Promise<SessionRuntimeStateResponse> {
+    return this.client.get<SessionRuntimeStateResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/state`,
+      { token },
+    );
+  }
+
+  getSessionRuntimeCapabilities(
+    token: string,
+    sessionId: string,
+  ): Promise<ProtocolCapabilitiesResponse> {
+    return this.client.get<ProtocolCapabilitiesResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/capabilities`,
+      { token },
+    );
+  }
+
+  updateSessionSelections(
+    token: string,
+    sessionId: string,
+    selections: Record<string, string | null>,
+  ): Promise<SessionSelectionPatchResponse> {
+    return this.client.patch<SessionSelectionPatchResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/selections`,
+      { selections },
+      { token },
+    );
+  }
+
+  getSessionModelCatalog(
+    token: string,
+    sessionId: string,
+  ): Promise<ProtocolModelCatalogResponse> {
+    return this.client.get<ProtocolModelCatalogResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/catalogs/model`,
+      { token },
+    );
+  }
+
+  getSessionPermissionCatalog(
+    token: string,
+    sessionId: string,
+  ): Promise<ProtocolPermissionCatalogResponse> {
+    return this.client.get<ProtocolPermissionCatalogResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/catalogs/permission`,
       { token },
     );
   }
@@ -662,34 +734,35 @@ export class DashboardApi {
     );
   }
 
-  getAgentModelCatalog(
-    token: string,
-    runtime: string,
-    connectorId: string,
-  ): Promise<ProtocolModelCatalogResponse> {
-    return this.client.get<ProtocolModelCatalogResponse>(
-      `/agents/${encodeURIComponent(runtime)}/model-catalog?connectorId=${encodeURIComponent(connectorId)}`,
-      { token },
-    );
-  }
-
-  getConnectorProtocolCapabilities(
+  getConnectorRuntimeCapabilities(
     token: string,
     connectorId: string,
+    runtimeId: string,
   ): Promise<ProtocolCapabilitiesResponse> {
     return this.client.get<ProtocolCapabilitiesResponse>(
-      `/connectors/${encodeURIComponent(connectorId)}/protocol/capabilities`,
+      `/connectors/${encodeURIComponent(connectorId)}/runtimes/${encodeURIComponent(runtimeId)}/capabilities`,
       { token },
     );
   }
 
-  getAgentPermissionCatalog(
+  getConnectorRuntimeModelCatalog(
     token: string,
-    runtime: string,
     connectorId: string,
+    runtimeId: string,
+  ): Promise<ProtocolModelCatalogResponse> {
+    return this.client.get<ProtocolModelCatalogResponse>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtimes/${encodeURIComponent(runtimeId)}/catalogs/model`,
+      { token },
+    );
+  }
+
+  getConnectorRuntimePermissionCatalog(
+    token: string,
+    connectorId: string,
+    runtimeId: string,
   ): Promise<ProtocolPermissionCatalogResponse> {
     return this.client.get<ProtocolPermissionCatalogResponse>(
-      `/agents/${encodeURIComponent(runtime)}/permission-catalog?connectorId=${encodeURIComponent(connectorId)}`,
+      `/connectors/${encodeURIComponent(connectorId)}/runtimes/${encodeURIComponent(runtimeId)}/catalogs/permission`,
       { token },
     );
   }

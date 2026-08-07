@@ -42,7 +42,6 @@
         "scope": {
           "default": "runtime",
           "enum": [
-            "adapter",
             "runtime",
             "session"
           ],

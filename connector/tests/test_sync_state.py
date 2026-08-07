@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from connector.sync_state import JsonSyncStateStore
+from connector.server.sync_state import JsonSyncStateStore
 
 
 def test_json_sync_state_round_trip_and_delete(tmp_path) -> None:
@@ -28,6 +28,18 @@ def test_json_sync_state_round_trip_and_delete(tmp_path) -> None:
 
     store.delete_runtime("codex", "connector-1")
     assert store.get("codex", "connector-1", "thread-1") is None
+
+
+def test_json_sync_state_deletes_one_key(tmp_path) -> None:
+    path = tmp_path / "connector-state.json"
+    store = JsonSyncStateStore(path)
+    store.set("codex", "connector-1", "thread-1", cursor={"position": 1})
+    store.set("codex", "connector-1", "thread-2", cursor={"position": 2})
+
+    store.delete("codex", "connector-1", "thread-1")
+
+    assert store.get("codex", "connector-1", "thread-1") is None
+    assert store.get("codex", "connector-1", "thread-2") is not None
 
 
 def test_json_sync_state_rejects_invalid_document(tmp_path) -> None:

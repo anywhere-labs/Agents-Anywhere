@@ -35,7 +35,6 @@ from agent_server.infra.db import (
     device_runtimes as device_runtimes_t,
     fs_preview_tokens as fs_preview_tokens_t,
     mobile_login_tokens as mobile_login_tokens_t,
-    notices as notices_t,
     oauth_accounts as oauth_accounts_t,
     oauth_authorization_codes as oauth_authorization_codes_t,
     oauth_clients as oauth_clients_t,
@@ -50,10 +49,9 @@ from agent_server.infra.files import FileStorage, build_file_storage
 from agent_server.core.models import (
     ConnectorConfigBundle,
     ConnectorView,
-    Notice,
-    NoticeIn,
     OAuthClientView,
     PairingPollResponse,
+    SessionRuntimeState,
     SessionView,
     TimelineItem,
     TimelineItemIn,
@@ -68,6 +66,14 @@ from agent_server.core.utc import utc_now
 from agent_server.infra.timeline_store import SqlTimelineStore
 
 DERIVED_SESSION_TITLE_MAX_CHARS = 48
+CODEX_ATTACHMENT_ECHO_MARKERS = (
+    "\n\n[Attached file: ",
+    "\n\nAttached file: ",
+    " Attached file: ",
+    "[Attached file: ",
+    "Attached file: ",
+    "File content:",
+)
 
 # Username format: 3-32 chars, lowercase letters / digits / hyphen / underscore.
 # Stored lowercase regardless of input.
@@ -164,6 +170,10 @@ def _dedupe_legacy_history_items(items: list[TimelineItem]) -> list[TimelineItem
 
 
 def _dedupe_source_items(items: list[TimelineItem]) -> list[TimelineItem]:
+    return _drop_empty_assistant_started_items(_dedupe_native_source_items(items))
+
+
+def _dedupe_native_source_items(items: list[TimelineItem]) -> list[TimelineItem]:
     result: list[TimelineItem] = []
     indexes: dict[tuple[str, str, str, str, str], int] = {}
     for item in items:
@@ -179,6 +189,23 @@ def _dedupe_source_items(items: list[TimelineItem]) -> list[TimelineItem]:
         existing = result[existing_index]
         if _source_item_preference(item) > _source_item_preference(existing):
             result[existing_index] = item
+    return result
+
+
+def _drop_empty_assistant_started_items(items: list[TimelineItem]) -> list[TimelineItem]:
+    replacement_keys = {
+        key
+        for item in items
+        if (key := _non_empty_assistant_derived_key(item)) is not None
+    }
+    if not replacement_keys:
+        return items
+    result: list[TimelineItem] = []
+    for item in items:
+        placeholder_key = _empty_assistant_started_derived_key(item)
+        if placeholder_key is not None and placeholder_key in replacement_keys:
+            continue
+        result.append(item)
     return result
 
 
@@ -199,6 +226,53 @@ def _source_item_duplicate_key(
         source.turnId,
         source.itemId,
         source.itemType,
+    )
+
+
+def _non_empty_assistant_derived_key(
+    item: TimelineItem,
+) -> tuple[str, str, str, str, str] | None:
+    key = _assistant_derived_key(item)
+    if key is None:
+        return None
+    if item.status not in {"done", "failed", "cancelled", "interrupted"}:
+        return None
+    if _message_text_length(item.content) <= 0:
+        return None
+    return key
+
+
+def _empty_assistant_started_derived_key(
+    item: TimelineItem,
+) -> tuple[str, str, str, str, str] | None:
+    key = _assistant_derived_key(item)
+    if key is None:
+        return None
+    if item.status not in {"pending", "running"}:
+        return None
+    if _message_text_length(item.content) > 0:
+        return None
+    return key
+
+
+def _assistant_derived_key(
+    item: TimelineItem,
+) -> tuple[str, str, str, str, str] | None:
+    source = item.source
+    if (
+        not source.sessionId
+        or not source.derivedKey
+        or source.derivedKey.startswith("history-")
+    ):
+        return None
+    if item.type != "message" or item.role != "assistant":
+        return None
+    return (
+        source.runtime,
+        source.sessionId,
+        str(item.turnId or ""),
+        item.type,
+        source.derivedKey,
     )
 
 
@@ -233,6 +307,14 @@ def _should_keep_existing_timeline_item(existing: TimelineItem, incoming: Timeli
     if existing.type == "tool":
         return _content_completeness_score(existing.content) > _content_completeness_score(incoming.content)
     if existing.type == "message":
+        if _message_has_attachment_echo(existing.content) and not _message_has_attachment_echo(
+            incoming.content
+        ):
+            return False
+        if _message_has_attachment_echo(incoming.content) and not _message_has_attachment_echo(
+            existing.content
+        ):
+            return True
         return _message_text_length(existing.content) > _message_text_length(incoming.content)
     return False
 
@@ -262,6 +344,15 @@ def _message_text_length(content: Any) -> int:
     return len(text) if isinstance(text, str) else 0
 
 
+def _message_has_attachment_echo(content: Any) -> bool:
+    if not isinstance(content, dict):
+        return False
+    text = content.get("text")
+    if not isinstance(text, str):
+        return False
+    return any(marker in text for marker in CODEX_ATTACHMENT_ECHO_MARKERS)
+
+
 def _message_text(content: Any) -> str:
     if not isinstance(content, dict):
         return ""
@@ -283,11 +374,14 @@ def _timeline_item_from_input(
     updated_seq: int,
     now: str,
     order_seq: int | None = None,
+    revision: int | None = None,
 ) -> TimelineItem:
     data = item.model_dump()
     data["updatedSeq"] = updated_seq
     if order_seq is not None:
         data["orderSeq"] = order_seq
+    if revision is not None:
+        data["revision"] = revision
     data["createdAt"] = item.createdAt or now
     data["updatedAt"] = item.updatedAt or now
     return TimelineItem.model_validate(data)

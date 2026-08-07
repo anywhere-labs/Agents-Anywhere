@@ -52,7 +52,8 @@ uvx anywhere-cli configure \
 
 Do not store `/api/v2` in `serverUrl`.
 
-`connector/connector/runtime.py` owns endpoint construction through `_api_v2_path()` and `_api_v2_url()`. Connector HTTP and WebSocket calls now target:
+`connector.server.urls` owns endpoint construction through `api_v2_path()`,
+`api_v2_url()`, and `ws_url()`. Connector HTTP and WebSocket calls now target:
 
 - `POST /api/v2/connector/auth`
 - `POST /api/v2/connector/ingest`

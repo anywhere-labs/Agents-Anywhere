@@ -6,6 +6,7 @@ from agent_server.core.capabilities import (
     CATALOG_EFFORT,
     CATALOG_MODEL,
     CATALOG_PERMISSION,
+    RUNTIME_ATTACHMENT,
     RUNTIME_CONFIG,
     SESSION_INTERACTION_APPROVAL,
     SESSION_INTERRUPT,
@@ -20,9 +21,11 @@ from agent_server.services.connector_presence import (
 )
 
 _INHERITED_RUNTIME_CAPABILITY_IDS = (
+    SESSION_SEND_MESSAGE,
     SESSION_INTERRUPT,
     SESSION_STEER,
     SESSION_INTERACTION_APPROVAL,
+    RUNTIME_ATTACHMENT,
     RUNTIME_CONFIG,
     CATALOG_MODEL,
     CATALOG_PERMISSION,
@@ -87,9 +90,7 @@ async def publish_connector_session_capabilities(
                 "sessionId": session.id,
                 "nextSeq": await store.get_session_seq(session.id),
                 "session": session.model_dump(mode="json"),
-                "effectiveCapabilities": effective_capabilities.model_dump(
-                    mode="json"
-                ),
+                "capabilitySet": effective_capabilities.model_dump(mode="json"),
             },
         )
 
@@ -99,72 +100,59 @@ def derive_session_effective_capabilities(
     session: SessionView,
     runtime_capabilities: ProtocolCapabilitySet,
 ) -> ProtocolCapabilitySet:
+    session_by_id = {
+        capability.capabilityId: capability
+        for capability in runtime_capabilities.capabilities
+        if capability.runtime == session.runtime
+        and capability.scope == "session"
+        and capability.sessionId == session.id
+    }
     runtime_by_id = {
         capability.capabilityId: capability
         for capability in runtime_capabilities.capabilities
         if capability.runtime == session.runtime and capability.scope == "runtime"
     }
     online = session.connectorStatus == "online"
-    capabilities = [
-        _session_capability(
-            session,
-            SESSION_SEND_MESSAGE,
-            supported=True,
-            available=online and session.status == "idle",
-            allowed=session.takeover,
-            unavailable_reason=_reason_for_send_message(session, online),
-        )
-    ]
+    capabilities: list[ProtocolCapability] = []
     for capability_id in _INHERITED_RUNTIME_CAPABILITY_IDS:
-        runtime_capability = runtime_by_id.get(capability_id)
-        supported = runtime_capability.supported if runtime_capability is not None else False
-        runtime_available = runtime_capability.available if runtime_capability is not None else False
-        runtime_allowed = runtime_capability.allowed if runtime_capability is not None else True
-        allowed = runtime_allowed and session.takeover
-        available = supported and runtime_available and online
-        unavailable_reason = _runtime_capability_unavailable_reason(
-            runtime_capability,
-            supported=supported,
-            available=available,
-            online=online,
-        )
-        if capability_id == SESSION_INTERRUPT:
-            status_available = session.status in {"pending", "running", "blocked"}
-            available = available and status_available
-            if unavailable_reason is None and not status_available:
-                unavailable_reason = "session_not_interruptible"
-        elif capability_id == SESSION_STEER:
-            status_available = session.status == "running"
-            available = available and status_available
-            if unavailable_reason is None and not status_available:
-                unavailable_reason = "session_not_running"
+        source_capability = session_by_id.get(capability_id)
+        if source_capability is None:
+            source_capability = runtime_by_id.get(capability_id)
         capabilities.append(
-            _session_capability(
+            platform_scoped_session_capability(
                 session,
                 capability_id,
-                supported=supported,
-                available=available,
-                allowed=allowed,
-                unavailable_reason=unavailable_reason,
-                parameters=runtime_capability.parameters if runtime_capability is not None else {},
+                source_capability,
+                online=online,
             )
         )
     return ProtocolCapabilitySet(
-        revision=_effective_capability_revision(session, runtime_capabilities),
+        revision=effective_capability_revision(session, runtime_capabilities),
         capabilities=capabilities,
     )
 
 
-def _session_capability(
+def platform_scoped_session_capability(
     session: SessionView,
     capability_id: str,
-    *,
-    supported: bool,
-    available: bool,
-    allowed: bool = True,
-    unavailable_reason: str | None = None,
-    parameters: dict[str, Any] | None = None,
+    source_capability: ProtocolCapability | None,
+    online: bool,
 ) -> ProtocolCapability:
+    supported = source_capability.supported if source_capability is not None else False
+    runtime_available = (
+        source_capability.available if source_capability is not None else False
+    )
+    runtime_allowed = source_capability.allowed if source_capability is not None else True
+    available = supported and runtime_available and online
+    allowed = runtime_allowed and session.takeover
+    unavailable_reason = platform_unavailable_reason(
+        source_capability,
+        supported,
+        available,
+        allowed,
+        online,
+        session.takeover,
+    )
     return ProtocolCapability(
         capabilityId=capability_id,
         scope="session",
@@ -174,40 +162,35 @@ def _session_capability(
         available=available,
         allowed=allowed,
         unavailableReason=unavailable_reason,
-        parameters=parameters or {},
+        parameters=source_capability.parameters if source_capability is not None else {},
     )
 
 
-def _effective_capability_revision(
+def effective_capability_revision(
     session: SessionView,
     runtime_capabilities: ProtocolCapabilitySet,
 ) -> int:
     return max(int(session.updatedSeq or 0), int(runtime_capabilities.revision))
 
 
-def _reason_for_send_message(session: SessionView, online: bool) -> str | None:
-    if not online:
-        return "connector_offline"
-    if session.status != "idle":
-        return "session_not_idle"
-    if not session.takeover:
-        return "session_not_taken_over"
-    return None
-
-
-def _runtime_capability_unavailable_reason(
+def platform_unavailable_reason(
     capability: ProtocolCapability | None,
-    *,
     supported: bool,
     available: bool,
+    allowed: bool,
     online: bool,
+    takeover: bool,
 ) -> str | None:
     if not supported:
         return "runtime_capability_unsupported"
     if not online:
         return "connector_offline"
-    if available:
+    if not takeover and not allowed:
+        return "session_not_taken_over"
+    if available and allowed:
         return None
     if capability is not None and capability.unavailableReason:
         return capability.unavailableReason
-    return "runtime_capability_unavailable"
+    if not available:
+        return "runtime_capability_unavailable"
+    return None

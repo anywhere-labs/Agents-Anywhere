@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils"
 export type SelectionOption = {
   id: string
   label: string
+  description?: string | null
 }
 
 export type ModelSelectionOption = SelectionOption & {
@@ -90,6 +91,7 @@ export function SelectionSettingsDrawer({
                   key={item.id}
                   selected={selectedPermission === item.id}
                   label={item.label}
+                  helper={item.description ?? undefined}
                   disabled={permissionDisabled}
                   onClick={() => {
                     onPermissionChange(item.id)

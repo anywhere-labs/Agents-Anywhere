@@ -71,6 +71,19 @@ function MessageAttachmentItem({
   const [previewOpen, setPreviewOpen] = useState(false)
 
   if (attachment.optimistic) {
+    if (isImage && attachment.previewUrl) {
+      return (
+        <ImageAttachment
+          name={name}
+          mediaType={mediaType}
+          size={attachment.size}
+          src={attachment.previewUrl}
+          previewOpen={previewOpen}
+          setPreviewOpen={setPreviewOpen}
+          state="uploading"
+        />
+      )
+    }
     return (
       <FileAttachment
         attachment={attachment}
@@ -83,42 +96,14 @@ function MessageAttachmentItem({
 
   if (isImage) {
     return (
-      <>
-        <Attachment
-          orientation="vertical"
-          className="w-[min(320px,85vw)] has-data-[slot=attachment-content]:w-[min(320px,85vw)]"
-        >
-          <AttachmentMedia variant="image">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={openUrl} alt={name} loading="lazy" />
-          </AttachmentMedia>
-          <AttachmentContent>
-            <AttachmentTitle>{name}</AttachmentTitle>
-            <AttachmentDescription>{attachmentDetails(mediaType, attachment.size)}</AttachmentDescription>
-          </AttachmentContent>
-          <AttachmentActions>
-            <AttachmentAction aria-label={`Preview ${name}`} onClick={() => setPreviewOpen(true)}>
-              <ExternalLink />
-            </AttachmentAction>
-            <AttachmentAction asChild aria-label={`Download ${name}`}>
-              <a href={openUrl} download={name}>
-                <Download />
-              </a>
-            </AttachmentAction>
-          </AttachmentActions>
-          <AttachmentTrigger aria-label={`Preview ${name}`} onClick={() => setPreviewOpen(true)} />
-        </Attachment>
-        <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-          <DialogContent
-            showCloseButton
-            className="flex h-[min(92vh,900px)] w-[min(96vw,1200px)] max-w-none items-center justify-center overflow-hidden rounded-lg bg-black p-0"
-          >
-            <DialogTitle className="sr-only">{name}</DialogTitle>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={openUrl} alt={name} className="max-h-full max-w-full object-contain" />
-          </DialogContent>
-        </Dialog>
-      </>
+      <ImageAttachment
+        name={name}
+        mediaType={mediaType}
+        size={attachment.size}
+        src={openUrl}
+        previewOpen={previewOpen}
+        setPreviewOpen={setPreviewOpen}
+      />
     )
   }
 
@@ -129,6 +114,66 @@ function MessageAttachmentItem({
       mediaType={mediaType}
       openUrl={openUrl}
     />
+  )
+}
+
+function ImageAttachment({
+  name,
+  mediaType,
+  size,
+  src,
+  previewOpen,
+  setPreviewOpen,
+  state = "done",
+}: {
+  name: string
+  mediaType: string
+  size: number | undefined
+  src: string
+  previewOpen: boolean
+  setPreviewOpen: (open: boolean) => void
+  state?: "uploading" | "done"
+}) {
+  return (
+    <>
+      <Attachment
+        orientation="vertical"
+        state={state}
+        className="w-[min(320px,85vw)] has-data-[slot=attachment-content]:w-[min(320px,85vw)]"
+      >
+        <AttachmentMedia variant="image">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={src} alt={name} loading="lazy" />
+        </AttachmentMedia>
+        <AttachmentContent>
+          <AttachmentTitle>{name}</AttachmentTitle>
+          <AttachmentDescription>{attachmentDetails(mediaType, size)}</AttachmentDescription>
+        </AttachmentContent>
+        <AttachmentActions>
+          <AttachmentAction aria-label={`Preview ${name}`} onClick={() => setPreviewOpen(true)}>
+            <ExternalLink />
+          </AttachmentAction>
+          {state === "done" ? (
+            <AttachmentAction asChild aria-label={`Download ${name}`}>
+              <a href={src} download={name}>
+                <Download />
+              </a>
+            </AttachmentAction>
+          ) : null}
+        </AttachmentActions>
+        <AttachmentTrigger aria-label={`Preview ${name}`} onClick={() => setPreviewOpen(true)} />
+      </Attachment>
+      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+        <DialogContent
+          showCloseButton
+          className="flex h-[min(92vh,900px)] w-[min(96vw,1200px)] max-w-none items-center justify-center overflow-hidden rounded-lg bg-black p-0"
+        >
+          <DialogTitle className="sr-only">{name}</DialogTitle>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={src} alt={name} className="max-h-full max-w-full object-contain" />
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }
 

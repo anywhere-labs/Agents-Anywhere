@@ -227,6 +227,7 @@ async def connector_ws(
         timeline_broker,
         websocket.app.state.device_runtime_service,
         manager,
+        websocket.app.state.session_runtime_state_cache,
     )
     logger.info("connector connected: {}", connector_id)
     try:

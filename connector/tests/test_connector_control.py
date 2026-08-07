@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Any, ClassVar
 
 from connector.control import ConnectorController, config_to_payload
-from connector.json_rpc import JsonRpcStdioServer
-from connector.runtime import ConnectorAuthenticationError, ConnectorConfig
+from connector.core.config import ConnectorConfig
+from connector.core.json_rpc import JsonRpcStdioServer
+from connector.server.auth import ConnectorAuthenticationError
 
 
 class FakeBackendRpcClient:
-    started: list[ConnectorConfig] = []
+    started: ClassVar[list[ConnectorConfig]] = []
 
     def __init__(self, config: ConnectorConfig) -> None:
         self.config = config
@@ -129,8 +130,12 @@ def test_connector_controller_getters_accept_json_rpc_params(tmp_path) -> None:
             },
         )
 
-        await server.handle_line(b'{"jsonrpc":"2.0","id":1,"method":"connector.getState","params":{}}\n')
-        await server.handle_line(b'{"jsonrpc":"2.0","id":2,"method":"connector.getConfig","params":{}}\n')
+        await server.handle_line(
+            b'{"jsonrpc":"2.0","id":1,"method":"connector.getState","params":{}}\n'
+        )
+        await server.handle_line(
+            b'{"jsonrpc":"2.0","id":2,"method":"connector.getConfig","params":{}}\n'
+        )
         return writer.lines
 
     lines = asyncio.run(exercise())
@@ -153,7 +158,7 @@ def test_config_to_payload_keeps_optional_state_path() -> None:
 
 
 def test_connector_controller_rejects_existing_runtime_owner(tmp_path) -> None:
-    from connector.local_runtime import write_runtime
+    from connector.core.runtime_owner import write_runtime
 
     async def exercise() -> dict[str, Any]:
         controller = ConnectorController(
