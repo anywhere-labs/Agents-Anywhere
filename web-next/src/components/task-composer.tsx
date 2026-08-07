@@ -627,7 +627,7 @@ export function TaskComposer() {
           : undefined,
         clientMessageId,
       })
-      bindOptimisticSession(localSessionId, created.session)
+      bindOptimisticSession(localSessionId, created.session, created.attachments)
       upsertSession(created.session)
     } catch (err) {
       const message = err instanceof Error ? err.message : t("createFailed")

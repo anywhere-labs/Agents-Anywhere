@@ -232,6 +232,7 @@ export type SessionCreateAndStartRequest = {
 export type SessionCreateResponse = {
   session: SessionView;
   connectorResult: unknown;
+  attachments?: AttachmentRef[];
 };
 
 export type TakeoverResponse = {

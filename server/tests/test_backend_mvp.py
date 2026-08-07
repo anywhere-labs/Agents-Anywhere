@@ -549,6 +549,7 @@ def test_session_create_and_start_preallocates_session_and_passes_selections(tmp
     assert response.status_code == 200, response.text
     body = response.json()
     session = body["session"]
+    response_attachment = body["attachments"][0]
     assert session["takeover"] is True
     assert session["externalSessionId"] == "thr_create_and_start"
     create_requests = [
@@ -570,6 +571,13 @@ def test_session_create_and_start_preallocates_session_and_passes_selections(tmp
     assert "contentBase64" not in attachment
     assert attachment["size"] == 5
     assert attachment["sha256"] == "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    assert response_attachment == {
+        "fileId": attachment["fileId"],
+        "name": "note.txt",
+        "mediaType": "text/plain",
+        "size": 5,
+        "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+    }
     timeline_attachment = create_params["timelineAttachments"][0]
     assert timeline_attachment == {
         "fileId": attachment["fileId"],
@@ -584,6 +592,12 @@ def test_session_create_and_start_preallocates_session_and_passes_selections(tmp
     )
     assert stored_attachment.status_code == 200
     assert stored_attachment.json()["contentBase64"] == "aGVsbG8="
+    open_attachment = client.get(
+        f"/sessions/{session['id']}/attachments/{response_attachment['fileId']}/open",
+        headers=headers,
+        follow_redirects=False,
+    )
+    assert open_attachment.status_code == 302
     state = client.get(f"/sessions/{session['id']}/runtime/state", headers=headers)
     assert state.status_code == 200
     assert state.json()["state"]["status"] == "idle"

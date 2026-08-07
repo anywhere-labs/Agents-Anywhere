@@ -19,12 +19,15 @@ import type {
   SessionRuntimeState,
   SessionView as RealSessionView,
   TimelineItem,
+  AttachmentRef,
 } from "@/features/dashboard/types"
 import {
   isOptimisticTimelineItem,
   markOptimisticItemFailed,
   mergeTimelineItems,
+  revokeOptimisticItemResources,
   timelineClientMessageId,
+  withServerAttachments,
 } from "@/components/session/optimistic-timeline"
 
 // ─── Panel / page types ───────────────────────────────────────
@@ -265,7 +268,7 @@ type WorkspaceState = {
   markSessionRead: (id: string) => void
   upsertSession: (session: RealSessionView) => void
   addOptimisticMessage: (message: OptimisticSessionMessage) => void
-  bindOptimisticSession: (localSessionId: string, session: RealSessionView) => void
+  bindOptimisticSession: (localSessionId: string, session: RealSessionView, attachments?: AttachmentRef[]) => void
   clearResolvedOptimisticMessages: (sessionId: string, items: TimelineItem[]) => void
   getOptimisticItems: (sessionId: string) => TimelineItem[]
   getOptimisticSessionState: (sessionId: string) => SessionLocalTimelineState | null
@@ -707,7 +710,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
-  const bindOptimisticSession = React.useCallback((localSessionId: string, session: RealSessionView) => {
+  const bindOptimisticSession = React.useCallback((localSessionId: string, session: RealSessionView, attachments: AttachmentRef[] = []) => {
     setOptimisticMessages((prev) =>
       prev.map((message) =>
         message.sessionId === localSessionId || message.sessionId === session.id
@@ -722,7 +725,12 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
                     externalSessionId: session.externalSessionId,
                   }
                 : undefined,
-              item: { ...message.item, sessionId: session.id },
+              item: {
+                ...(attachments.length > 0
+                  ? withServerAttachments(message.item, attachments)
+                  : message.item),
+                sessionId: session.id,
+              },
             }
           : message,
       ),
@@ -760,11 +768,18 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         .filter((id): id is string => Boolean(id)),
     )
     if (resolvedClientMessageIds.size === 0) return
-    setOptimisticMessages((prev) =>
-      prev.filter(
-        (message) => message.sessionId !== sessionId || !resolvedClientMessageIds.has(message.clientMessageId),
-      ),
-    )
+    setOptimisticMessages((prev) => {
+      const next: OptimisticSessionMessage[] = []
+      for (const message of prev) {
+        const resolved = message.sessionId === sessionId && resolvedClientMessageIds.has(message.clientMessageId)
+        if (resolved) {
+          revokeOptimisticItemResources(message.item)
+          continue
+        }
+        next.push(message)
+      }
+      return next
+    })
   }, [])
 
   const getOptimisticItems = React.useCallback((sessionId: string) => {

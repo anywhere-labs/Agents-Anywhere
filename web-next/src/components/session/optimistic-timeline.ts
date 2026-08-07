@@ -64,12 +64,15 @@ function mergeOptimisticAttachmentMetadata(serverItem: TimelineItem, optimisticI
   const nextAttachments = (serverAttachments.length > 0 ? serverAttachments : optimisticAttachments).map((attachment, index) => {
     const optimistic = optimisticAttachments[index]
     if (!optimistic || typeof optimistic !== "object") return attachment
+    const optimisticPreviewUrl = optimistic.previewUrl
     return {
       ...optimistic,
       ...attachment,
       name: attachment.name ?? optimistic.name,
       size: attachment.size ?? optimistic.size,
       mediaType: attachment.mediaType ?? optimistic.mediaType,
+      previewUrl: attachment.previewUrl ?? optimisticPreviewUrl,
+      optimistic: attachment.optimistic === true,
     }
   })
 
@@ -111,6 +114,7 @@ export function buildOptimisticUserMessage({
     name: attachment.name,
     size: attachment.size,
     mediaType: attachment.file.type,
+    previewUrl: attachment.type === "image" ? URL.createObjectURL(attachment.file) : undefined,
     optimistic: true,
   }))
   return {
@@ -130,6 +134,41 @@ export function buildOptimisticUserMessage({
     updatedAt: now,
     completedAt: null,
   }
+}
+
+export function withServerAttachments(
+  item: TimelineItem,
+  attachments: Array<Record<string, unknown>>,
+): TimelineItem {
+  if (attachments.length === 0) return item
+  const optimisticAttachments = attachmentsFromContent(item.content)
+  const nextAttachments = attachments.map((attachment, index) => {
+    const optimistic = optimisticAttachments[index]
+    if (optimistic) revokeOptimisticAttachmentPreview(optimistic)
+    return {
+      ...attachment,
+      optimistic: false,
+    }
+  })
+  return {
+    ...item,
+    content: {
+      ...item.content,
+      attachments: nextAttachments,
+    },
+  }
+}
+
+export function revokeOptimisticItemResources(item: TimelineItem): void {
+  for (const attachment of attachmentsFromContent(item.content)) {
+    revokeOptimisticAttachmentPreview(attachment)
+  }
+}
+
+function revokeOptimisticAttachmentPreview(attachment: Record<string, unknown>): void {
+  const previewUrl = attachment.previewUrl
+  if (typeof previewUrl !== "string" || !previewUrl.startsWith("blob:")) return
+  URL.revokeObjectURL(previewUrl)
 }
 
 export function markOptimisticItemFailed(item: TimelineItem, message: string): TimelineItem {

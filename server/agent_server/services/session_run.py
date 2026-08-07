@@ -134,20 +134,22 @@ class SessionRunService:
             params["selections"] = selections
         if payload.clientMessageId:
             params["clientMessageId"] = payload.clientMessageId
+        persisted_attachment_refs: list[dict[str, Any]] = []
         if payload.attachments:
             persisted_attachments = await self._persist_inline_attachments(
                 session_id=session.id,
                 user_id=user_id,
                 attachments=payload.attachments,
             )
+            persisted_attachment_refs = [
+                _timeline_payload_from_persisted_inline_attachment(attachment)
+                for attachment in persisted_attachments
+            ]
             params["attachments"] = [
                 _connector_attachment_reference_payload(attachment)
                 for attachment in persisted_attachments
             ]
-            params["timelineAttachments"] = [
-                _timeline_payload_from_persisted_inline_attachment(attachment)
-                for attachment in persisted_attachments
-            ]
+            params["timelineAttachments"] = persisted_attachment_refs
 
         await self._store.start_active_run(
             session_id=session.id,
@@ -203,7 +205,11 @@ class SessionRunService:
             last_synced_at=utc_now(),
             origin="platform",
         )
-        return {"session": session, "connectorResult": connector_result}
+        return {
+            "session": session,
+            "connectorResult": connector_result,
+            "attachments": persisted_attachment_refs,
+        }
 
     async def _mark_create_and_start_failed(
         self,
