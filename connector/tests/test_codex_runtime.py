@@ -448,6 +448,7 @@ class FakeCodexClient:
                     "name": attachment.name,
                     "path": attachment.path,
                     "mediaType": attachment.media_type,
+                    "byteSize": attachment.byte_size,
                 }
                 for attachment in request.attachments
             ]
@@ -1161,15 +1162,9 @@ def test_codex_raw_user_message_restores_attachment_card_without_injected_text()
             "id": "item_user",
             "type": "userMessage",
             "input": [
-                {"type": "text", "text": "这是什么文件"},
-                {
-                    "type": "mention",
-                    "name": "timeline.json",
-                    "path": "/tmp/file_abc-timeline.json",
-                },
                 {
                     "type": "text",
-                    "text": "Attached file: timeline.json\nPath: /tmp/file_abc-timeline.json\nFile content: {\"x\": 1}",
+                    "text": "这是什么文件\n\n[Attached file: timeline.json (application/json, 8 bytes) at /tmp/file_abc-timeline.json]",
                 },
             ],
         }
@@ -1190,6 +1185,8 @@ def test_codex_raw_user_message_restores_attachment_card_without_injected_text()
                 "fileId": "file_abc",
                 "path": "/tmp/file_abc-timeline.json",
                 "name": "timeline.json",
+                "mediaType": "application/json",
+                "size": 8,
             }
         ],
     }
@@ -2330,6 +2327,7 @@ async def _test_codex_runtime_materializes_attachments_for_turn_start() -> None:
     assert attachment["name"] == "note.txt"
     assert attachment["mediaType"] == "text/plain"
     assert attachment["path"].endswith("/sess_1/file_1-note.txt")
+    assert attachment["byteSize"] == 5
 
 
 def test_codex_runtime_materializes_inline_attachments_for_create_and_start(tmp_path, monkeypatch) -> None:
@@ -2372,6 +2370,7 @@ async def _test_codex_runtime_materializes_inline_attachments_for_create_and_sta
     assert attachment["name"] == "note.txt"
     assert attachment["mediaType"] == "text/plain"
     assert Path(attachment["path"]).read_bytes() == b"hello inline"
+    assert attachment["byteSize"] == 12
 
 
 def test_codex_runtime_does_not_restore_running_after_fast_terminal_turn() -> None:
@@ -3703,6 +3702,7 @@ async def _test_codex_sdk_start_turn_uses_low_level_for_attachments() -> None:
                     name="note.txt",
                     path="/tmp/note.txt",
                     media_type="text/plain",
+                    byte_size=9,
                 ),
             ),
         )
@@ -3716,14 +3716,14 @@ async def _test_codex_sdk_start_turn_uses_low_level_for_attachments() -> None:
     assert [item["type"] for item in wire_input] == [
         "text",
         "localImage",
-        "mention",
     ]
+    assert wire_input[0]["text"] == (
+        "inspect these\n\n[Attached file: note.txt (text/plain, 9 bytes) at /tmp/note.txt]"
+    )
     assert wire_input[1]["path"] == "/tmp/image.png"
-    assert wire_input[2]["path"] == "/tmp/note.txt"
     assert [item.root.type for item in turn_params.input] == [
         "text",
         "localImage",
-        "mention",
     ]
 
 

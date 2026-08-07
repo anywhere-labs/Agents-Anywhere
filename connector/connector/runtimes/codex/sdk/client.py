@@ -13,7 +13,6 @@ from openai_codex.generated.v2_all import (
     AskForApprovalValue,
     DangerFullAccessSandboxPolicy,
     LocalImageUserInput,
-    MentionUserInput,
     ReadOnlySandboxPolicy,
     ReasoningEffort,
     SandboxMode,
@@ -793,7 +792,7 @@ def codex_turn_user_input(request: CodexStartTurnRequest) -> list[UserInput]:
     values: list[UserInput] = [
         UserInput(
             root=TextUserInput(
-                text=request.content,
+                text=codex_turn_text_input(request),
                 type="text",
             )
         )
@@ -809,16 +808,18 @@ def codex_turn_user_input(request: CodexStartTurnRequest) -> list[UserInput]:
                 )
             )
             continue
-        values.append(
-            UserInput(
-                root=MentionUserInput(
-                    name=attachment.name,
-                    path=attachment.path,
-                    type="mention",
-                )
-            )
-        )
     return values
+
+
+def codex_turn_text_input(request: CodexStartTurnRequest) -> str:
+    notes = [
+        attachment.reference_note()
+        for attachment in request.attachments
+        if not attachment.is_image
+    ]
+    if not notes:
+        return request.content
+    return "\n\n".join([request.content, *notes])
 
 
 def codex_turn_user_input_wire(request: CodexStartTurnRequest) -> list[dict[str, Any]]:
@@ -841,8 +842,9 @@ def codex_high_level_turn_content(request: CodexStartTurnRequest) -> str:
 
 def codex_attachment_input_note(request: CodexStartTurnRequest) -> str:
     lines = [
-        f"Attached file: {attachment.name} at {attachment.path}"
+        attachment.reference_note()
         for attachment in request.attachments
+        if not attachment.is_image
     ]
     return "\n".join(lines)
 

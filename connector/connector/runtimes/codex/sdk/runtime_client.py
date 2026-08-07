@@ -17,10 +17,20 @@ class CodexTurnInputAttachment:
     name: str
     path: str
     media_type: str
+    byte_size: int | None = None
 
     @property
     def is_image(self) -> bool:
         return self.media_type.startswith("image/")
+
+    def reference_note(self) -> str:
+        media_type = self.media_type or "unknown type"
+        byte_size = (
+            f", {self.byte_size} bytes"
+            if self.byte_size is not None
+            else ""
+        )
+        return f"[Attached file: {self.name} ({media_type}{byte_size}) at {self.path}]"
 
 
 @dataclass(frozen=True, slots=True)

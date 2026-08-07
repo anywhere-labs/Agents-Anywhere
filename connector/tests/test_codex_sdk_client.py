@@ -290,6 +290,7 @@ async def _test_codex_sdk_client_sends_attachments_as_user_input() -> None:
                     name="note.txt",
                     path="/tmp/note.txt",
                     media_type="text/plain",
+                    byte_size=12,
                 ),
                 CodexTurnInputAttachment(
                     name="image.png",
@@ -303,24 +304,18 @@ async def _test_codex_sdk_client_sends_attachments_as_user_input() -> None:
 
     turn_input = native.low_level.turn_start_inputs[0]
     assert turn_input[0] == {
-        "text": "hello",
+        "text": "hello\n\n[Attached file: note.txt (text/plain, 12 bytes) at /tmp/note.txt]",
         "type": "text",
     }
     assert turn_input[1] == {
-        "name": "note.txt",
-        "path": "/tmp/note.txt",
-        "type": "mention",
-    }
-    assert turn_input[2] == {
         "path": "/tmp/image.png",
         "type": "localImage",
     }
-    assert len(turn_input) == 3
+    assert len(turn_input) == 2
     params_input = native.low_level.turn_start_params[0]["input"]
-    assert params_input[0]["text"] == "hello"
+    assert params_input[0]["text"] == turn_input[0]["text"]
     assert params_input[1] == turn_input[1]
-    assert params_input[2] == turn_input[2]
-    assert len(params_input) == 3
+    assert len(params_input) == 2
 
 
 async def _test_codex_sdk_client_resumes_thread_before_low_level_turn_start() -> None:

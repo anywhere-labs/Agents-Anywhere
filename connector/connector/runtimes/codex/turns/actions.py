@@ -26,6 +26,7 @@ from connector.runtimes.codex.sdk.runtime_client import (
     CodexRuntimeClient,
     CodexStartTurnRequest,
     CodexSteerTurnRequest,
+    CodexTurnInputAttachment,
 )
 from connector.runtimes.codex.turns.attachments import materialize_codex_attachments
 
@@ -377,12 +378,15 @@ def turn_completed_before_start_returned(state: Any | None) -> bool:
 
 def content_with_codex_attachment_notes(
     content: str,
-    attachments: tuple[Any, ...],
+    attachments: tuple[CodexTurnInputAttachment, ...],
 ) -> str:
     if not attachments:
         return content
     notes = [
-        f"Attached file: {attachment.name} at {attachment.path}"
+        attachment.reference_note()
         for attachment in attachments
+        if not attachment.is_image
     ]
+    if not notes:
+        return content
     return "\n\n".join([content, *notes])

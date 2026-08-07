@@ -46,6 +46,7 @@ async def materialize_codex_attachments(
                 name=name,
                 path=str(target),
                 media_type=downloaded.media_type or attachment.media_type or "application/octet-stream",
+                byte_size=len(downloaded.content),
             )
         )
     return tuple(materialized)
@@ -77,4 +78,5 @@ def materialize_inline_codex_attachment(
         name=name,
         path=str(target),
         media_type=attachment.media_type or "application/octet-stream",
+        byte_size=len(content),
     )

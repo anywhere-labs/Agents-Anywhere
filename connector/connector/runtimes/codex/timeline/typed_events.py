@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from enum import Enum
 
@@ -431,14 +432,22 @@ def user_input_text(items: Sequence[UserInput]) -> str | None:
 
 def is_attachment_note_text(text: str) -> bool:
     lines = [line for line in text.splitlines() if line.strip()]
-    return bool(lines) and all(line.startswith("Attached file: ") for line in lines)
+    return bool(lines) and all(
+        line.startswith("Attached file: ") or line.startswith("[Attached file: ")
+        for line in lines
+    )
 
 
 def strip_attachment_note_suffix(text: str) -> str | None:
     if is_attachment_note_text(text):
         return None
     cut = len(text)
-    for marker in ("\n\nAttached file: ", "\n\n[Attached file: ", "Attached file: "):
+    for marker in (
+        "\n\nAttached file: ",
+        "\n\n[Attached file: ",
+        "Attached file: ",
+        "[Attached file: ",
+    ):
         index = text.find(marker)
         if index >= 0 and index < cut:
             cut = index
@@ -451,7 +460,13 @@ def user_input_attachments(items: Sequence[UserInput]) -> tuple[Mapping[str, obj
     seen: set[str] = set()
     for item in items:
         root = item.root
-        if isinstance(root, MentionUserInput):
+        if isinstance(root, TextUserInput):
+            add_attachment_notes_from_text(
+                attachments=attachments,
+                seen=seen,
+                text=root.text,
+            )
+        elif isinstance(root, MentionUserInput):
             add_user_input_attachment(
                 attachments=attachments,
                 seen=seen,
@@ -470,12 +485,37 @@ def user_input_attachments(items: Sequence[UserInput]) -> tuple[Mapping[str, obj
     return tuple(attachments)
 
 
+ATTACHMENT_NOTE_PATTERN = re.compile(
+    r"\[Attached file: (?P<name>.+?) "
+    r"\((?P<media_type>.*?)(?:, (?P<size>\d+) bytes)?\) "
+    r"at (?P<path>.*?)\]"
+)
+
+
+def add_attachment_notes_from_text(
+    attachments: list[Mapping[str, object]],
+    seen: set[str],
+    text: str,
+) -> None:
+    for match in ATTACHMENT_NOTE_PATTERN.finditer(text):
+        size = int(match.group("size")) if match.group("size") is not None else None
+        add_user_input_attachment(
+            attachments=attachments,
+            seen=seen,
+            name=match.group("name"),
+            path=match.group("path"),
+            media_type=match.group("media_type"),
+            size=size,
+        )
+
+
 def add_user_input_attachment(
     attachments: list[Mapping[str, object]],
     seen: set[str],
     name: str | None,
     path: str,
     media_type: str | None,
+    size: int | None = None,
 ) -> None:
     file_id = file_id_from_codex_attachment_path(path)
     if file_id in seen:
@@ -491,6 +531,8 @@ def add_user_input_attachment(
         payload["name"] = path.rsplit("/", maxsplit=1)[-1]
     if media_type is not None:
         payload["mediaType"] = media_type
+    if size is not None:
+        payload["size"] = size
     attachments.append(payload)
 
 

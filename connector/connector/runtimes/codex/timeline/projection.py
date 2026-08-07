@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Any
@@ -462,6 +463,15 @@ def user_input_attachments_from_raw(value: Any) -> tuple[Mapping[str, Any], ...]
         if not isinstance(item, Mapping):
             continue
         input_type = item.get("type")
+        if input_type == "text":
+            text_value = item.get("text")
+            if isinstance(text_value, str):
+                add_raw_attachment_notes_from_text(
+                    attachments=attachments,
+                    seen=seen,
+                    text=text_value,
+                )
+            continue
         path = item.get("path")
         if not isinstance(path, str) or not path:
             continue
@@ -486,12 +496,37 @@ def user_input_attachments_from_raw(value: Any) -> tuple[Mapping[str, Any], ...]
     return tuple(attachments)
 
 
+ATTACHMENT_NOTE_PATTERN = re.compile(
+    r"\[Attached file: (?P<name>.+?) "
+    r"\((?P<media_type>.*?)(?:, (?P<size>\d+) bytes)?\) "
+    r"at (?P<path>.*?)\]"
+)
+
+
+def add_raw_attachment_notes_from_text(
+    attachments: list[Mapping[str, Any]],
+    seen: set[str],
+    text: str,
+) -> None:
+    for match in ATTACHMENT_NOTE_PATTERN.finditer(text):
+        size = int(match.group("size")) if match.group("size") is not None else None
+        add_raw_attachment(
+            attachments=attachments,
+            seen=seen,
+            path=match.group("path"),
+            name=match.group("name"),
+            media_type=match.group("media_type"),
+            size=size,
+        )
+
+
 def add_raw_attachment(
     attachments: list[Mapping[str, Any]],
     seen: set[str],
     path: str,
     name: str | None,
     media_type: str | None,
+    size: int | None = None,
 ) -> None:
     file_id = file_id_from_codex_attachment_path(path)
     if file_id in seen:
@@ -507,12 +542,19 @@ def add_raw_attachment(
         payload["name"] = path.rsplit("/", maxsplit=1)[-1]
     if media_type:
         payload["mediaType"] = media_type
+    if size is not None:
+        payload["size"] = size
     attachments.append(payload)
 
 
 def strip_attachment_note_suffix(text: str) -> str | None:
     cut = len(text)
-    for marker in ("\n\nAttached file: ", "\n\n[Attached file: ", "Attached file: "):
+    for marker in (
+        "\n\nAttached file: ",
+        "\n\n[Attached file: ",
+        "Attached file: ",
+        "[Attached file: ",
+    ):
         index = text.find(marker)
         if index >= 0 and index < cut:
             cut = index
