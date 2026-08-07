@@ -272,9 +272,9 @@ class CodexSdkClient:
                 turn_id=turn_id,
                 payload={"id": turn_id} if turn_id is not None else {},
             )
-        if codex_request_requires_low_level_approval(request):
+        if codex_request_requires_low_level_turn_start(request):
             raise RuntimeInvalidRequestError(
-                "Codex low-level client is required for explicit approval settings"
+                codex_low_level_turn_start_required_message(request)
             )
 
         thread = self._thread_handle(request.thread_id)
@@ -717,10 +717,28 @@ def approval_identifier(params: Mapping[str, Any]) -> str | int | None:
     return None
 
 
+def codex_request_requires_low_level_turn_start(
+    request: CodexStartTurnRequest,
+) -> bool:
+    return (
+        request.approval_policy is not None
+        or request.approvals_reviewer is not None
+        or len(request.attachments) > 0
+    )
+
+
 def codex_request_requires_low_level_approval(
     request: CodexStartThreadRequest | CodexStartTurnRequest,
 ) -> bool:
     return request.approval_policy is not None or request.approvals_reviewer is not None
+
+
+def codex_low_level_turn_start_required_message(
+    request: CodexStartTurnRequest,
+) -> str:
+    if request.attachments:
+        return "Codex low-level client is required for typed attachment input"
+    return "Codex low-level client is required for explicit approval settings"
 
 
 def codex_thread_start_params(request: CodexStartThreadRequest) -> ThreadStartParams:

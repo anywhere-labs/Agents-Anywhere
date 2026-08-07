@@ -78,6 +78,7 @@ from connector.runtimes.codex.sdk.runtime_client import (
     CodexThreadListResult,
     CodexThreadReadResult,
     CodexThreadResult,
+    CodexTurnInputAttachment,
     CodexTurnResult,
 )
 from connector.runtimes.codex.sdk.shapes import notification_dict, thread_ref
@@ -3563,6 +3564,44 @@ async def _test_codex_sdk_start_turn_initializes_before_low_level_detection() ->
 
 def test_codex_sdk_start_thread_initializes_before_low_level_detection() -> None:
     asyncio.run(_test_codex_sdk_start_thread_initializes_before_low_level_detection())
+
+
+def test_codex_sdk_start_turn_uses_low_level_for_attachments() -> None:
+    asyncio.run(_test_codex_sdk_start_turn_uses_low_level_for_attachments())
+
+
+async def _test_codex_sdk_start_turn_uses_low_level_for_attachments() -> None:
+    sdk_client = _LazyLowLevelSdkClient()
+    client = CodexSdkClient(sdk_client, sdk=_SdkWithHandles())
+
+    result = await client.start_turn(
+        CodexStartTurnRequest(
+            thread_id="thread_1",
+            content="inspect these",
+            attachments=(
+                CodexTurnInputAttachment(
+                    name="image.png",
+                    path="/tmp/image.png",
+                    media_type="image/png",
+                ),
+                CodexTurnInputAttachment(
+                    name="note.txt",
+                    path="/tmp/note.txt",
+                    media_type="text/plain",
+                ),
+            ),
+        )
+    )
+
+    assert sdk_client.initialized is True
+    assert sdk_client.low_level.turn_starts
+    assert not sdk_client.high_level_turns
+    _thread_id, wire_input, turn_params = sdk_client.low_level.turn_starts[0]
+    assert result.turn_id == "turn_low"
+    assert [item["type"] for item in wire_input] == ["text", "localImage", "mention"]
+    assert wire_input[1]["path"] == "/tmp/image.png"
+    assert wire_input[2]["path"] == "/tmp/note.txt"
+    assert [item.root.type for item in turn_params.input] == ["text", "localImage", "mention"]
 
 
 async def _test_codex_sdk_start_thread_initializes_before_low_level_detection() -> None:
