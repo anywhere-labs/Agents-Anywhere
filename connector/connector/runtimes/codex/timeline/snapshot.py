@@ -40,7 +40,9 @@ def timeline_items_from_thread(
 def limit_items[T](items: list[T], limit: int | None) -> list[T]:
     if limit is None:
         return items
-    return items[:limit]
+    if limit <= 0:
+        return []
+    return items[-limit:]
 
 
 def raw_timeline_items(thread: dict[str, Any]) -> list[dict[str, Any]]:

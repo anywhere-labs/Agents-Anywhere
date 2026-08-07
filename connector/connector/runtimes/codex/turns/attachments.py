@@ -9,25 +9,6 @@ from connector.runtime_protocol.attachments import attachment_target
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex.sdk.runtime_client import CodexTurnInputAttachment
 
-TEXT_ATTACHMENT_INLINE_LIMIT_BYTES = 256 * 1024
-TEXT_ATTACHMENT_MEDIA_TYPES = frozenset(
-    {
-        "application/csv",
-        "application/json",
-        "application/ld+json",
-        "application/sql",
-        "application/toml",
-        "application/x-yaml",
-        "application/xml",
-        "application/yaml",
-        "text/csv",
-        "text/markdown",
-        "text/plain",
-        "text/tab-separated-values",
-        "text/xml",
-    }
-)
-
 
 async def materialize_codex_attachments(
     host: RuntimeHostClient,
@@ -60,17 +41,11 @@ async def materialize_codex_attachments(
         target = attachment_target(session_id, attachment.file_id, name)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(downloaded.content)
-        content_text, content_truncated = text_attachment_content(
-            downloaded.media_type or attachment.media_type or "application/octet-stream",
-            downloaded.content,
-        )
         materialized.append(
             CodexTurnInputAttachment(
                 name=name,
                 path=str(target),
                 media_type=downloaded.media_type or attachment.media_type or "application/octet-stream",
-                content_text=content_text,
-                content_truncated=content_truncated,
             )
         )
     return tuple(materialized)
@@ -98,52 +73,8 @@ def materialize_inline_codex_attachment(
     target = attachment_target(session_id, attachment.file_id, name)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(content)
-    media_type = attachment.media_type or "application/octet-stream"
-    content_text, content_truncated = text_attachment_content(media_type, content)
     return CodexTurnInputAttachment(
         name=name,
         path=str(target),
-        media_type=media_type,
-        content_text=content_text,
-        content_truncated=content_truncated,
+        media_type=attachment.media_type or "application/octet-stream",
     )
-
-
-def text_attachment_content(
-    media_type: str,
-    content: bytes,
-) -> tuple[str | None, bool]:
-    if b"\x00" in content:
-        return None, False
-
-    candidate = content[:TEXT_ATTACHMENT_INLINE_LIMIT_BYTES]
-    truncated = len(content) > TEXT_ATTACHMENT_INLINE_LIMIT_BYTES
-    try:
-        text = candidate.decode("utf-8")
-    except UnicodeDecodeError:
-        return None, False
-
-    if attachment_media_type_is_text(media_type) or text_content_looks_safe(text):
-        return text, truncated
-    return None, False
-
-
-def attachment_media_type_is_text(media_type: str) -> bool:
-    normalized = media_type.split(";", maxsplit=1)[0].strip().lower()
-    if normalized.startswith("text/"):
-        return True
-    if normalized in TEXT_ATTACHMENT_MEDIA_TYPES:
-        return True
-    return normalized.endswith("+json") or normalized.endswith("+xml")
-
-
-def text_content_looks_safe(text: str) -> bool:
-    if text == "":
-        return True
-    sample = text[:4096]
-    control_count = sum(
-        1
-        for char in sample
-        if ord(char) < 32 and char not in "\n\r\t\f\b"
-    )
-    return control_count / len(sample) < 0.01

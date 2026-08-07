@@ -111,6 +111,7 @@ from connector.runtimes.codex.timeline.items import (
 from connector.runtimes.codex.timeline.projection import (
     CodexTimelineProjection,
     timeline_item_from_projection,
+    timeline_projection_from_raw,
 )
 from connector.runtimes.codex.timeline.typed_events import (
     timeline_projections_from_sdk_turn_event,
@@ -447,8 +448,6 @@ class FakeCodexClient:
                     "name": attachment.name,
                     "path": attachment.path,
                     "mediaType": attachment.media_type,
-                    "contentText": attachment.content_text,
-                    "contentTruncated": attachment.content_truncated,
                 }
                 for attachment in request.attachments
             ]
@@ -1146,6 +1145,54 @@ def test_codex_timeline_omits_attachment_inputs_from_user_message_text() -> None
     )
 
     assert items[0].content["text"] == "这个图里有什么"
+    assert items[0].content["attachments"] == [
+        {
+            "fileId": "image.png",
+            "path": "/tmp/image.png",
+            "name": "image.png",
+            "mediaType": "image/*",
+        }
+    ]
+
+
+def test_codex_raw_user_message_restores_attachment_card_without_injected_text() -> None:
+    projection = timeline_projection_from_raw(
+        {
+            "id": "item_user",
+            "type": "userMessage",
+            "input": [
+                {"type": "text", "text": "这是什么文件"},
+                {
+                    "type": "mention",
+                    "name": "timeline.json",
+                    "path": "/tmp/file_abc-timeline.json",
+                },
+                {
+                    "type": "text",
+                    "text": "Attached file: timeline.json\nPath: /tmp/file_abc-timeline.json\nFile content: {\"x\": 1}",
+                },
+            ],
+        }
+    )
+    item = timeline_item_from_projection(
+        projection=projection,
+        external_session_id="thread_1",
+        fallback_index=0,
+        event="thread/read",
+    ).to_platform_item(session_id="sess_1", order_seq=0)
+
+    assert item.content == {
+        "kind": "markdown",
+        "text": "这是什么文件",
+        "format": "markdown",
+        "attachments": [
+            {
+                "fileId": "file_abc",
+                "path": "/tmp/file_abc-timeline.json",
+                "name": "timeline.json",
+            }
+        ],
+    }
 
 
 def test_codex_sdk_event_normalizes_explicit_dict_shape() -> None:
@@ -2283,8 +2330,6 @@ async def _test_codex_runtime_materializes_attachments_for_turn_start() -> None:
     assert attachment["name"] == "note.txt"
     assert attachment["mediaType"] == "text/plain"
     assert attachment["path"].endswith("/sess_1/file_1-note.txt")
-    assert attachment["contentText"] == "hello"
-    assert attachment["contentTruncated"] is False
 
 
 def test_codex_runtime_materializes_inline_attachments_for_create_and_start(tmp_path, monkeypatch) -> None:
@@ -2327,8 +2372,6 @@ async def _test_codex_runtime_materializes_inline_attachments_for_create_and_sta
     assert attachment["name"] == "note.txt"
     assert attachment["mediaType"] == "text/plain"
     assert Path(attachment["path"]).read_bytes() == b"hello inline"
-    assert attachment["contentText"] == "hello inline"
-    assert attachment["contentTruncated"] is False
 
 
 def test_codex_runtime_does_not_restore_running_after_fast_terminal_turn() -> None:
@@ -3660,7 +3703,6 @@ async def _test_codex_sdk_start_turn_uses_low_level_for_attachments() -> None:
                     name="note.txt",
                     path="/tmp/note.txt",
                     media_type="text/plain",
-                    content_text="note body",
                 ),
             ),
         )
@@ -3675,16 +3717,13 @@ async def _test_codex_sdk_start_turn_uses_low_level_for_attachments() -> None:
         "text",
         "localImage",
         "mention",
-        "text",
     ]
     assert wire_input[1]["path"] == "/tmp/image.png"
     assert wire_input[2]["path"] == "/tmp/note.txt"
-    assert wire_input[3]["text"].endswith("note body")
     assert [item.root.type for item in turn_params.input] == [
         "text",
         "localImage",
         "mention",
-        "text",
     ]
 
 

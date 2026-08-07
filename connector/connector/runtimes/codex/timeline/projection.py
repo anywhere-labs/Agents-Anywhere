@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Any
@@ -370,13 +371,16 @@ def timeline_projection_from_event(
 
 def timeline_projection_from_raw(raw: Mapping[str, Any]) -> CodexTimelineProjection:
     raw_dict = dict(raw)
+    raw_type = timeline_raw_type(raw_dict)
     return CodexTimelineProjection(
         native_id=native_item_id(raw_dict),
-        raw_type=timeline_raw_type(raw_dict),
+        raw_type=raw_type,
         status=timeline_raw_status(raw_dict),
         role=timeline_item_role(raw_dict),
         turn_id=timeline_item_turn_id(raw_dict),
-        text=pending_text_from_raw(raw_dict) or text_from_value(raw_dict),
+        text=pending_text_from_raw(raw_dict)
+        or user_message_text_from_raw(raw_dict, raw_type)
+        or text_from_value(raw_dict),
         input_value=raw_dict.get("input"),
         message=first_string_from_mapping(raw_dict, "message"),
         name=first_string_from_mapping(raw_dict, "name", "function", "tool"),
@@ -395,15 +399,24 @@ def timeline_projection_from_raw(raw: Mapping[str, Any]) -> CodexTimelineProject
         patch=first_string_from_mapping(raw_dict, "patch", "diff"),
         changes=raw_dict.get("changes"),
         client_message_id=client_message_id_from_raw(raw_dict),
-        attachments=attachments_from_raw(raw_dict),
+        attachments=attachments_from_raw(raw_dict, raw_type),
         revision=timeline_item_revision(raw_dict),
     )
 
 
-def attachments_from_raw(raw: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
+def attachments_from_raw(
+    raw: Mapping[str, Any],
+    raw_type: str,
+) -> tuple[Mapping[str, Any], ...]:
     value = raw.get("_pendingAttachments")
-    if not isinstance(value, list):
+    if isinstance(value, list):
+        return attachments_from_mapping_list(value)
+    if raw_type not in {"userMessage", "steeringUserMessage"}:
         return ()
+    return user_input_attachments_from_raw(raw.get("input") or raw.get("content"))
+
+
+def attachments_from_mapping_list(value: list[Any]) -> tuple[Mapping[str, Any], ...]:
     attachments: list[Mapping[str, Any]] = []
     for item in value:
         if isinstance(item, Mapping):
@@ -416,6 +429,104 @@ def pending_text_from_raw(raw: Mapping[str, Any]) -> str | None:
     if isinstance(value, str):
         return value
     return None
+
+
+def user_message_text_from_raw(raw: Mapping[str, Any], raw_type: str) -> str | None:
+    if raw_type not in {"userMessage", "steeringUserMessage"}:
+        return None
+    inputs = raw.get("input") or raw.get("content")
+    if not isinstance(inputs, list):
+        text = text_from_value(raw)
+        return strip_attachment_note_suffix(text) if text is not None else None
+    parts: list[str] = []
+    for item in inputs:
+        if not isinstance(item, Mapping):
+            continue
+        if item.get("type") != "text":
+            continue
+        value = item.get("text")
+        if not isinstance(value, str):
+            continue
+        text = strip_attachment_note_suffix(value)
+        if text:
+            parts.append(text)
+    return "\n".join(parts) if parts else None
+
+
+def user_input_attachments_from_raw(value: Any) -> tuple[Mapping[str, Any], ...]:
+    if not isinstance(value, list):
+        return ()
+    attachments: list[Mapping[str, Any]] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, Mapping):
+            continue
+        input_type = item.get("type")
+        path = item.get("path")
+        if not isinstance(path, str) or not path:
+            continue
+        if input_type == "mention":
+            add_raw_attachment(
+                attachments=attachments,
+                seen=seen,
+                path=path,
+                name=item.get("name") if isinstance(item.get("name"), str) else None,
+                media_type=item.get("mediaType")
+                if isinstance(item.get("mediaType"), str)
+                else None,
+            )
+        elif input_type == "localImage":
+            add_raw_attachment(
+                attachments=attachments,
+                seen=seen,
+                path=path,
+                name=item.get("name") if isinstance(item.get("name"), str) else None,
+                media_type="image/*",
+            )
+    return tuple(attachments)
+
+
+def add_raw_attachment(
+    attachments: list[Mapping[str, Any]],
+    seen: set[str],
+    path: str,
+    name: str | None,
+    media_type: str | None,
+) -> None:
+    file_id = file_id_from_codex_attachment_path(path)
+    if file_id in seen:
+        return
+    seen.add(file_id)
+    payload: dict[str, Any] = {
+        "fileId": file_id,
+        "path": path,
+    }
+    if name:
+        payload["name"] = name
+    else:
+        payload["name"] = path.rsplit("/", maxsplit=1)[-1]
+    if media_type:
+        payload["mediaType"] = media_type
+    attachments.append(payload)
+
+
+def strip_attachment_note_suffix(text: str) -> str | None:
+    cut = len(text)
+    for marker in ("\n\nAttached file: ", "\n\n[Attached file: ", "Attached file: "):
+        index = text.find(marker)
+        if index >= 0 and index < cut:
+            cut = index
+    stripped = text[:cut].strip()
+    return stripped if stripped else None
+
+
+def file_id_from_codex_attachment_path(path: str) -> str:
+    basename = path.rsplit("/", maxsplit=1)[-1]
+    prefix = basename.split("-", maxsplit=1)[0]
+    if prefix:
+        return prefix
+    digest = hashlib.sha256(path.encode()).hexdigest()[:16]
+    return f"codex_{digest}"
 
 
 def timeline_item_from_projection(

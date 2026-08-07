@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from enum import Enum
 
 from openai_codex.generated.v2_all import (
@@ -25,8 +25,10 @@ from openai_codex.generated.v2_all import (
     InputTextDynamicToolCallOutputContentItem,
     ItemCompletedNotification,
     ItemStartedNotification,
+    LocalImageUserInput,
     McpToolCallThreadItem,
     MessageResponseItem,
+    MentionUserInput,
     OutputTextContentItem,
     PlanDeltaNotification,
     PlanThreadItem,
@@ -173,7 +175,9 @@ def timeline_projections_from_sdk_thread(
                 projections.append(projection)
     if limit is None:
         return tuple(projections)
-    return tuple(projections[:limit])
+    if limit <= 0:
+        return ()
+    return tuple(projections[-limit:])
 
 
 def sdk_event_delta_text(event: CodexSdkEvent) -> str | None:
@@ -214,6 +218,7 @@ def timeline_projection_from_thread_item(
             role="user",
             turn_id=turn_id,
             text=user_input_text(root.content),
+            attachments=user_input_attachments(root.content),
             client_message_id=root.client_id,
         )
     if isinstance(root, ReasoningThreadItem):
@@ -417,14 +422,84 @@ def user_input_text(items: Sequence[UserInput]) -> str | None:
     parts: list[str] = []
     for item in items:
         root = item.root
-        if isinstance(root, TextUserInput) and not is_attachment_note_text(root.text):
-            parts.append(root.text)
+        if isinstance(root, TextUserInput):
+            text = strip_attachment_note_suffix(root.text)
+            if text:
+                parts.append(text)
     return "\n".join(parts) if parts else None
 
 
 def is_attachment_note_text(text: str) -> bool:
     lines = [line for line in text.splitlines() if line.strip()]
     return bool(lines) and all(line.startswith("Attached file: ") for line in lines)
+
+
+def strip_attachment_note_suffix(text: str) -> str | None:
+    if is_attachment_note_text(text):
+        return None
+    cut = len(text)
+    for marker in ("\n\nAttached file: ", "\n\n[Attached file: ", "Attached file: "):
+        index = text.find(marker)
+        if index >= 0 and index < cut:
+            cut = index
+    stripped = text[:cut].strip()
+    return stripped if stripped else None
+
+
+def user_input_attachments(items: Sequence[UserInput]) -> tuple[Mapping[str, object], ...]:
+    attachments: list[Mapping[str, object]] = []
+    seen: set[str] = set()
+    for item in items:
+        root = item.root
+        if isinstance(root, MentionUserInput):
+            add_user_input_attachment(
+                attachments=attachments,
+                seen=seen,
+                name=root.name,
+                path=root.path,
+                media_type=None,
+            )
+        elif isinstance(root, LocalImageUserInput):
+            add_user_input_attachment(
+                attachments=attachments,
+                seen=seen,
+                name=None,
+                path=root.path,
+                media_type="image/*",
+            )
+    return tuple(attachments)
+
+
+def add_user_input_attachment(
+    attachments: list[Mapping[str, object]],
+    seen: set[str],
+    name: str | None,
+    path: str,
+    media_type: str | None,
+) -> None:
+    file_id = file_id_from_codex_attachment_path(path)
+    if file_id in seen:
+        return
+    seen.add(file_id)
+    payload: dict[str, object] = {
+        "fileId": file_id,
+        "path": path,
+    }
+    if name is not None and name:
+        payload["name"] = name
+    elif path:
+        payload["name"] = path.rsplit("/", maxsplit=1)[-1]
+    if media_type is not None:
+        payload["mediaType"] = media_type
+    attachments.append(payload)
+
+
+def file_id_from_codex_attachment_path(path: str) -> str:
+    basename = path.rsplit("/", maxsplit=1)[-1]
+    prefix = basename.split("-", maxsplit=1)[0]
+    if prefix:
+        return prefix
+    return f"codex:{path}"
 
 
 def reasoning_text(

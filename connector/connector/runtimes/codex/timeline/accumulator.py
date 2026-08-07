@@ -584,7 +584,9 @@ def limit_snapshot_items(
 ) -> tuple[dict[str, Any], ...]:
     if limit is None:
         return raw_items
-    return raw_items[:limit]
+    if limit <= 0:
+        return ()
+    return raw_items[-limit:]
 
 
 def is_compacted_transcript_message_mirror(raw: Mapping[str, Any]) -> bool:
