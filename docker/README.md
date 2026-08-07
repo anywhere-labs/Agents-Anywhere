@@ -211,7 +211,7 @@ Runtime install variables:
 | --- | --- |
 | `INSTALL_CODEX` | Install Codex CLI before starting the Connector when true/yes/1/on. |
 | `CODEX_NPM_PACKAGE` | Codex npm package. Defaults to `@openai/codex`. |
-| `CODEX_VERSION` | Optional Codex package version. |
+| `CODEX_VERSION` | Optional Codex package version. When unset, the entrypoint installs `@openai/codex@latest`. |
 | `INSTALL_CLAUDE` | Install Claude Code before starting the Connector when true/yes/1/on. |
 | `CLAUDE_NPM_PACKAGE` | Claude Code npm package. Defaults to `@anthropic-ai/claude-code`. |
 | `CLAUDE_VERSION` | Optional Claude Code package version. |

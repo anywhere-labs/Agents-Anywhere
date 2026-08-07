@@ -88,6 +88,8 @@ install_codex_if_requested() {
   local package_name="${CODEX_NPM_PACKAGE:-@openai/codex}"
   if [ -n "${CODEX_VERSION:-}" ]; then
     package_name="${package_name}@${CODEX_VERSION}"
+  else
+    package_name="${package_name}@latest"
   fi
   log "installing Codex CLI package ${package_name}"
   npm_install_global "$package_name"
