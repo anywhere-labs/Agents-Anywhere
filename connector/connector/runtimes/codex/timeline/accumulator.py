@@ -388,7 +388,7 @@ class CodexTimelineAccumulator:
     ) -> codex_timeline.CodexTimelineProjection:
         if self._pending_messages is None:
             return projection
-        client_message_id = self._pending_messages.attach_to_item(
+        match = self._pending_messages.attach_to_item(
             session_id=session_id,
             external_session_id=external_session_id,
             native_item_id=projection.native_id,
@@ -397,9 +397,13 @@ class CodexTimelineAccumulator:
             text=projection.pending_message_text(),
             turn_id=projection.turn_id,
         )
-        if client_message_id is None:
+        if match is None:
             return projection
-        return projection.with_client_message_id(client_message_id)
+        return projection.with_pending_message(
+            client_message_id=match.client_message_id,
+            text=match.text,
+            attachments=match.attachments,
+        )
 
     def event_delta(self, event: CodexSdkEvent) -> str:
         return (

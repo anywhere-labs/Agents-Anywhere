@@ -447,6 +447,8 @@ class FakeCodexClient:
                     "name": attachment.name,
                     "path": attachment.path,
                     "mediaType": attachment.media_type,
+                    "contentText": attachment.content_text,
+                    "contentTruncated": attachment.content_truncated,
                 }
                 for attachment in request.attachments
             ]
@@ -2281,6 +2283,8 @@ async def _test_codex_runtime_materializes_attachments_for_turn_start() -> None:
     assert attachment["name"] == "note.txt"
     assert attachment["mediaType"] == "text/plain"
     assert attachment["path"].endswith("/sess_1/file_1-note.txt")
+    assert attachment["contentText"] == "hello"
+    assert attachment["contentTruncated"] is False
 
 
 def test_codex_runtime_materializes_inline_attachments_for_create_and_start(tmp_path, monkeypatch) -> None:
@@ -2323,6 +2327,8 @@ async def _test_codex_runtime_materializes_inline_attachments_for_create_and_sta
     assert attachment["name"] == "note.txt"
     assert attachment["mediaType"] == "text/plain"
     assert Path(attachment["path"]).read_bytes() == b"hello inline"
+    assert attachment["contentText"] == "hello inline"
+    assert attachment["contentTruncated"] is False
 
 
 def test_codex_runtime_does_not_restore_running_after_fast_terminal_turn() -> None:
@@ -3424,6 +3430,72 @@ async def _test_codex_runtime_tags_live_user_echo_with_client_message_id() -> No
     assert item.content == {"kind": "markdown", "text": "live hello", "format": "markdown"}
 
 
+def test_codex_runtime_preserves_pending_user_attachments_after_codex_echo() -> None:
+    asyncio.run(
+        _test_codex_runtime_preserves_pending_user_attachments_after_codex_echo()
+    )
+
+
+async def _test_codex_runtime_preserves_pending_user_attachments_after_codex_echo() -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    host.attachments["file_1"] = RuntimeAttachmentContent(
+        file_id="file_1",
+        name="note.txt",
+        media_type="text/plain",
+        content=b"hello attachment",
+    )
+    await runtime.start_turn(
+        "sess_1",
+        "thread_1",
+        "read this",
+        attachments=(
+            RuntimeAttachment(
+                file_id="file_1",
+                name="note.txt",
+                media_type="text/plain",
+                size=16,
+            ),
+        ),
+        client_message_id="cm_file_1",
+    )
+    await runtime._handle_notification(
+        {
+            "method": "item/completed",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_new",
+                "item": {
+                    "id": "item_user_file",
+                    "type": "userMessage",
+                    "text": "read this\n\nAttached file: note.txt\nPath: /tmp/note.txt\nFile content:\nhello attachment",
+                    "status": "completed",
+                },
+            },
+        }
+    )
+
+    item = host.timeline_item_upserts[-1]
+    assert item.id == "codex_client_cm_file_1"
+    assert item.source["clientMessageId"] == "cm_file_1"
+    assert item.content == {
+        "kind": "markdown",
+        "text": "read this",
+        "format": "markdown",
+        "attachments": [
+            {
+                "fileId": "file_1",
+                "name": "note.txt",
+                "mediaType": "text/plain",
+                "size": 16,
+            }
+        ],
+    }
+
+
 def test_codex_runtime_tags_live_steer_echo_with_client_message_id() -> None:
     asyncio.run(_test_codex_runtime_tags_live_steer_echo_with_client_message_id())
 
@@ -3588,6 +3660,7 @@ async def _test_codex_sdk_start_turn_uses_low_level_for_attachments() -> None:
                     name="note.txt",
                     path="/tmp/note.txt",
                     media_type="text/plain",
+                    content_text="note body",
                 ),
             ),
         )
@@ -3598,10 +3671,21 @@ async def _test_codex_sdk_start_turn_uses_low_level_for_attachments() -> None:
     assert not sdk_client.high_level_turns
     _thread_id, wire_input, turn_params = sdk_client.low_level.turn_starts[0]
     assert result.turn_id == "turn_low"
-    assert [item["type"] for item in wire_input] == ["text", "localImage", "mention"]
+    assert [item["type"] for item in wire_input] == [
+        "text",
+        "localImage",
+        "mention",
+        "text",
+    ]
     assert wire_input[1]["path"] == "/tmp/image.png"
     assert wire_input[2]["path"] == "/tmp/note.txt"
-    assert [item.root.type for item in turn_params.input] == ["text", "localImage", "mention"]
+    assert wire_input[3]["text"].endswith("note body")
+    assert [item.root.type for item in turn_params.input] == [
+        "text",
+        "localImage",
+        "mention",
+        "text",
+    ]
 
 
 async def _test_codex_sdk_start_thread_initializes_before_low_level_detection() -> None:

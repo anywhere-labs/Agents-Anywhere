@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
+from connector.runtime_protocol import RuntimeAttachment
 from connector.runtimes.codex import timeline as codex_timeline
 
 
@@ -11,6 +13,7 @@ class PendingClientMessage:
     external_session_id: str
     client_message_id: str
     text: str
+    attachments: tuple[Mapping[str, object], ...] = ()
     steering: bool = False
     turn_id: str | None = None
 
@@ -21,6 +24,15 @@ class MatchedClientMessage:
     external_session_id: str
     native_item_id: str
     client_message_id: str
+    text: str
+    attachments: tuple[Mapping[str, object], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class PendingClientMessageMatch:
+    client_message_id: str
+    text: str
+    attachments: tuple[Mapping[str, object], ...] = ()
 
 
 class PendingClientMessageRegistry:
@@ -36,6 +48,7 @@ class PendingClientMessageRegistry:
         external_session_id: str,
         client_message_id: str | None,
         text: str,
+        attachments: tuple[RuntimeAttachment, ...] = (),
         steering: bool = False,
         turn_id: str | None = None,
     ) -> None:
@@ -52,6 +65,7 @@ class PendingClientMessageRegistry:
                 external_session_id=external_session_id,
                 client_message_id=client_message_id,
                 text=text,
+                attachments=tuple(attachment_to_mapping(item) for item in attachments),
                 steering=steering,
                 turn_id=turn_id,
             )
@@ -85,7 +99,7 @@ class PendingClientMessageRegistry:
         if not text:
             return None
         turn_id = codex_timeline.timeline_item_turn_id(raw)
-        client_message_id = self.attach_to_item(
+        match = self.attach_to_item(
             session_id=session_id,
             external_session_id=external_session_id,
             native_item_id=codex_timeline.native_item_id(raw),
@@ -94,9 +108,12 @@ class PendingClientMessageRegistry:
             text=text,
             turn_id=turn_id,
         )
-        if client_message_id is not None:
-            raw["_clientMessageId"] = client_message_id
-        return client_message_id
+        if match is not None:
+            raw["_clientMessageId"] = match.client_message_id
+            raw["_pendingText"] = match.text
+            raw["_pendingAttachments"] = list(match.attachments)
+            return match.client_message_id
+        return None
 
     def attach_to_item(
         self,
@@ -107,7 +124,7 @@ class PendingClientMessageRegistry:
         role: str | None,
         text: str,
         turn_id: str | None,
-    ) -> str | None:
+    ) -> PendingClientMessageMatch | None:
         matched = self.matched_client_message_id(
             session_id=session_id,
             external_session_id=external_session_id,
@@ -137,8 +154,14 @@ class PendingClientMessageRegistry:
                 external_session_id=external_session_id,
                 native_item_id=native_item_id,
                 client_message_id=pending.client_message_id,
+                text=pending.text,
+                attachments=pending.attachments,
             )
-            return pending.client_message_id
+            return PendingClientMessageMatch(
+                client_message_id=pending.client_message_id,
+                text=pending.text,
+                attachments=pending.attachments,
+            )
         return None
 
     def matched_client_message_id(
@@ -146,7 +169,7 @@ class PendingClientMessageRegistry:
         session_id: str,
         external_session_id: str,
         native_item_id: str | None,
-    ) -> str | None:
+    ) -> PendingClientMessageMatch | None:
         if native_item_id is None:
             return None
         for item in reversed(self._matched):
@@ -156,7 +179,11 @@ class PendingClientMessageRegistry:
                 continue
             if item.native_item_id != native_item_id:
                 continue
-            return item.client_message_id
+            return PendingClientMessageMatch(
+                client_message_id=item.client_message_id,
+                text=item.text,
+                attachments=item.attachments,
+            )
         return None
 
     def record_match(
@@ -165,6 +192,8 @@ class PendingClientMessageRegistry:
         external_session_id: str,
         native_item_id: str | None,
         client_message_id: str,
+        text: str,
+        attachments: tuple[Mapping[str, object], ...] = (),
     ) -> None:
         if native_item_id is None:
             return
@@ -183,6 +212,8 @@ class PendingClientMessageRegistry:
                 external_session_id=external_session_id,
                 native_item_id=native_item_id,
                 client_message_id=client_message_id,
+                text=text,
+                attachments=attachments,
             )
         )
 
@@ -202,8 +233,34 @@ def is_user_message(raw_type: str, role: str | None) -> bool:
 
 
 def _text_matches(actual: str, expected: str) -> bool:
-    return _normalize_text(actual) == _normalize_text(expected)
+    actual_text = _normalize_text(actual)
+    expected_text = _normalize_text(expected)
+    if actual_text == expected_text:
+        return True
+    if not actual_text.startswith(f"{expected_text}\n\n"):
+        return False
+    suffix = actual_text[len(expected_text) :].strip()
+    return attachment_suffix_matches(suffix)
 
 
 def _normalize_text(value: str) -> str:
     return "\n".join(line.rstrip() for line in value.strip().splitlines())
+
+
+def attachment_suffix_matches(value: str) -> bool:
+    if not value:
+        return False
+    return value.startswith("[Attached file: ") or value.startswith("Attached file: ")
+
+
+def attachment_to_mapping(attachment: RuntimeAttachment) -> Mapping[str, object]:
+    result: dict[str, object] = {"fileId": attachment.file_id}
+    if attachment.name is not None:
+        result["name"] = attachment.name
+    if attachment.media_type is not None:
+        result["mediaType"] = attachment.media_type
+    if attachment.size is not None:
+        result["size"] = attachment.size
+    if attachment.sha256 is not None:
+        result["sha256"] = attachment.sha256
+    return result

@@ -65,10 +65,24 @@ class CodexTimelineProjection:
     patch: str | None = None
     changes: Any = None
     client_message_id: str | None = None
+    attachments: tuple[Mapping[str, Any], ...] = ()
     revision: int = 1
 
     def with_client_message_id(self, client_message_id: str) -> CodexTimelineProjection:
         return replace(self, client_message_id=client_message_id)
+
+    def with_pending_message(
+        self,
+        client_message_id: str,
+        text: str,
+        attachments: tuple[Mapping[str, Any], ...],
+    ) -> CodexTimelineProjection:
+        return replace(
+            self,
+            client_message_id=client_message_id,
+            text=text,
+            attachments=attachments,
+        )
 
     def with_platform_id(self, platform_id: str) -> CodexTimelineProjection:
         return replace(self, platform_id=platform_id)
@@ -178,7 +192,15 @@ class CodexTimelineProjection:
         if self.raw_type == "contextCompaction":
             return self.context_compaction_content()
         if self.text:
-            return {"text": self.text, "format": "markdown"}
+            return {
+                "text": self.text,
+                "format": "markdown",
+                **(
+                    {"attachments": [dict(item) for item in self.attachments]}
+                    if self.attachments
+                    else {}
+                ),
+            }
         if self.raw_type in {
             "mcpToolCall",
             "dynamicToolCall",
@@ -354,7 +376,7 @@ def timeline_projection_from_raw(raw: Mapping[str, Any]) -> CodexTimelineProject
         status=timeline_raw_status(raw_dict),
         role=timeline_item_role(raw_dict),
         turn_id=timeline_item_turn_id(raw_dict),
-        text=text_from_value(raw_dict),
+        text=pending_text_from_raw(raw_dict) or text_from_value(raw_dict),
         input_value=raw_dict.get("input"),
         message=first_string_from_mapping(raw_dict, "message"),
         name=first_string_from_mapping(raw_dict, "name", "function", "tool"),
@@ -373,8 +395,27 @@ def timeline_projection_from_raw(raw: Mapping[str, Any]) -> CodexTimelineProject
         patch=first_string_from_mapping(raw_dict, "patch", "diff"),
         changes=raw_dict.get("changes"),
         client_message_id=client_message_id_from_raw(raw_dict),
+        attachments=attachments_from_raw(raw_dict),
         revision=timeline_item_revision(raw_dict),
     )
+
+
+def attachments_from_raw(raw: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
+    value = raw.get("_pendingAttachments")
+    if not isinstance(value, list):
+        return ()
+    attachments: list[Mapping[str, Any]] = []
+    for item in value:
+        if isinstance(item, Mapping):
+            attachments.append(dict(item))
+    return tuple(attachments)
+
+
+def pending_text_from_raw(raw: Mapping[str, Any]) -> str | None:
+    value = raw.get("_pendingText")
+    if isinstance(value, str):
+        return value
+    return None
 
 
 def timeline_item_from_projection(

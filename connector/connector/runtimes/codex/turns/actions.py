@@ -96,6 +96,7 @@ class CodexTurnActions:
             external_session_id=external_session_id,
             client_message_id=client_message_id,
             text=content,
+            attachments=attachments,
         )
         try:
             codex_attachments = await materialize_codex_attachments(
@@ -206,6 +207,7 @@ class CodexTurnActions:
             external_session_id=external_session_id,
             client_message_id=client_message_id,
             text=content,
+            attachments=attachments,
             steering=True,
             turn_id=turn_id,
         )

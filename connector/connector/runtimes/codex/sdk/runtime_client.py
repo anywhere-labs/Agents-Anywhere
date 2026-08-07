@@ -17,6 +17,8 @@ class CodexTurnInputAttachment:
     name: str
     path: str
     media_type: str
+    content_text: str | None = None
+    content_truncated: bool = False
 
     @property
     def is_image(self) -> bool:

@@ -818,6 +818,15 @@ def codex_turn_user_input(request: CodexStartTurnRequest) -> list[UserInput]:
                 )
             )
         )
+        if attachment.content_text is not None:
+            values.append(
+                UserInput(
+                    root=TextUserInput(
+                        text=codex_attachment_text_input(attachment),
+                        type="text",
+                    )
+                )
+            )
     return values
 
 
@@ -845,6 +854,23 @@ def codex_attachment_input_note(request: CodexStartTurnRequest) -> str:
         for attachment in request.attachments
     ]
     return "\n".join(lines)
+
+
+def codex_attachment_text_input(attachment: CodexTurnInputAttachment) -> str:
+    if attachment.content_text is None:
+        raise RuntimeInvalidRequestError("Codex text attachment content is required")
+    parts = [
+        f"Attached file: {attachment.name}",
+        f"Path: {attachment.path}",
+        f"Media type: {attachment.media_type}",
+        "",
+        "File content:",
+        attachment.content_text,
+    ]
+    if attachment.content_truncated:
+        parts.append("")
+        parts.append("[Attachment content truncated before sending to Codex.]")
+    return "\n".join(parts)
 
 
 def codex_approval_settings(
