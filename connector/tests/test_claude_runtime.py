@@ -49,6 +49,10 @@ async def _test_claude_runtime_reports_initial_runtime_capabilities() -> None:
     assert capability_set.connector_id == "conn_test"
     assert capabilities["session.send_message"].supported is True
     assert capabilities["session.send_message"].available is True
+    assert capabilities["catalog.model"].supported is True
+    assert capabilities["catalog.model"].available is True
+    assert capabilities["catalog.effort"].supported is True
+    assert capabilities["catalog.effort"].available is True
     assert capabilities["session.interrupt"].supported is True
     assert capabilities["session.interrupt"].available is True
     assert capabilities["session.interaction.approval"].supported is True
@@ -70,7 +74,16 @@ async def _test_claude_runtime_empty_reads_are_stable() -> None:
     empty_snapshot = await runtime.get_session_snapshot("missing")
     assert empty_snapshot.runtime == "claude"
     assert empty_snapshot.items == ()
-    assert (await runtime.list_model_catalog()).models == ()
+    catalog = await runtime.list_model_catalog(query="sonnet")
+    assert [model.id for model in catalog.models] == ["claude-sonnet-4-5"]
+    assert catalog.models[0].selection_id is None
+    assert [item.id for item in catalog.models[0].reasoning_items] == [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+    ]
     assert [item.id for item in (await runtime.list_permission_catalog()).permissions] == [
         "default",
         "acceptEdits",
@@ -469,6 +482,59 @@ async def _test_claude_runtime_applies_permission_selection_to_sdk_options() -> 
     assert host.session_state_updates[1]["selections"] == {
         "permission": permission.selection_id
     }
+
+
+def test_claude_runtime_applies_model_selection_to_sdk_options() -> None:
+    asyncio.run(_test_claude_runtime_applies_model_selection_to_sdk_options())
+
+
+async def _test_claude_runtime_applies_model_selection_to_sdk_options() -> None:
+    host = _RecordingHost()
+    client = _FakeClaudeClient(
+        messages=[SimpleNamespace(type="result", session_id="claude_model")]
+    )
+    runtime = _runtime(host=host, client=client)
+    model = (await runtime.list_model_catalog(query="sonnet")).models[0]
+    effort = next(
+        item for item in model.reasoning_items if item.id == "high"
+    )
+
+    result = await runtime.start_turn(
+        "sess_model",
+        "claude_model",
+        "use model",
+        selections={"model": effort.selection_id},
+    )
+    task = runtime._sessions["sess_model"].active_task
+
+    assert result.ok is True
+    assert task is not None
+
+    await task
+
+    assert client.options.kwargs["model"] == "claude-sonnet-4-5"
+    assert client.options.kwargs["effort"] == "high"
+    assert host.session_state_updates[0]["selections"] == {
+        "model": effort.selection_id
+    }
+
+
+def test_claude_runtime_rejects_unknown_model_selection() -> None:
+    asyncio.run(_test_claude_runtime_rejects_unknown_model_selection())
+
+
+async def _test_claude_runtime_rejects_unknown_model_selection() -> None:
+    runtime = _runtime()
+
+    result = await runtime.start_turn(
+        "sess_bad_model",
+        None,
+        "hello",
+        selections={"model": "sel_model_missing"},
+    )
+
+    assert result.ok is False
+    assert result.code == "claude_invalid_selection"
 
 
 def test_claude_runtime_rejects_unknown_permission_selection() -> None:

@@ -33,6 +33,10 @@ from connector.runtimes.claude.domain.approvals import (
     notice_transition,
     permission_result_from_decision,
 )
+from connector.runtimes.claude.domain.models import (
+    claude_model_catalog,
+    model_selection_from_selection_id,
+)
 from connector.runtimes.claude.domain.permissions import (
     claude_permission_catalog,
     permission_mode_from_selection_id,
@@ -166,9 +170,11 @@ class ClaudeRuntime(AgentRuntime):
         query: str | None = None,
         limit: int = 100,
     ) -> RuntimeModelCatalog:
-        _ = query
-        _ = limit
-        return RuntimeModelCatalog(runtime="claude", revision=self.config.revision, models=())
+        return claude_model_catalog(
+            revision=self.config.revision,
+            query=query,
+            limit=limit,
+        )
 
     async def list_permission_catalog(
         self,
@@ -825,8 +831,6 @@ class ClaudeRuntime(AgentRuntime):
         state = self._session_states.get(session_id)
         effective = dict(state.selections if state is not None else {})
         effective.update(dict(selections or {}))
-        model_selection = effective.get("model")
-        if model_selection is not None:
-            raise RuntimeInvalidRequestError("Claude model selection is not supported yet")
+        model_selection_from_selection_id(effective.get("model"))
         permission_mode_from_selection_id(effective.get("permission"))
         return effective

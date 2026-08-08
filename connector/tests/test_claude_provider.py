@@ -27,6 +27,7 @@ async def _test_claude_provider_discovers_sdk_with_initial_runtime_actions() -> 
 
     assert item.available is True
     assert item.configured is True
+    assert item.capabilities["modelCatalog"] is True
     assert item.capabilities["createAndStartSession"] is True
     assert item.capabilities["startTurn"] is True
     assert item.capabilities["interruptTurn"] is True
