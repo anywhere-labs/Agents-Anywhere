@@ -60,6 +60,10 @@ from connector.runtimes.claude.timeline.messages import (
     message_session_id,
     message_text,
 )
+from connector.runtimes.claude.turns.attachments import (
+    content_with_attachment_notes,
+    materialize_claude_attachments,
+)
 
 TERMINAL_NOTICE_STATUSES = {"closed", "resolved", "cancelled", "expired"}
 
@@ -323,12 +327,6 @@ class ClaudeRuntime(AgentRuntime):
         attachments: tuple[RuntimeAttachment, ...] = (),
         client_message_id: str | None = None,
     ) -> RuntimeOperationResult:
-        if attachments:
-            return RuntimeOperationResult(
-                ok=False,
-                code="claude_attachments_unsupported",
-                message="Claude runtime attachment support is not implemented yet",
-            )
         session = self._session_for(session_id, external_session_id, None)
         if session.active_task is not None and not session.active_task.done():
             return RuntimeOperationResult(
@@ -358,6 +356,7 @@ class ClaudeRuntime(AgentRuntime):
                 session=session,
                 turn_id=turn_id,
                 content=content,
+                attachments=attachments,
                 client_message_id=client_message_id,
             )
         )
@@ -449,6 +448,7 @@ class ClaudeRuntime(AgentRuntime):
         session: ClaudeSession,
         turn_id: str,
         content: str,
+        attachments: tuple[RuntimeAttachment, ...],
         client_message_id: str | None,
     ) -> None:
         try:
@@ -462,6 +462,15 @@ class ClaudeRuntime(AgentRuntime):
             )
             session.client = client
             await connect_client(client)
+            materialized_attachments = await materialize_claude_attachments(
+                self.host,
+                session.session_id,
+                attachments,
+            )
+            effective_content = content_with_attachment_notes(
+                content,
+                materialized_attachments,
+            )
             await self._set_session_state(
                 session,
                 "running",
@@ -475,9 +484,13 @@ class ClaudeRuntime(AgentRuntime):
                     text=content,
                     event="claude.turn.user",
                     client_message_id=client_message_id,
+                    attachments=tuple(
+                        attachment.to_mapping()
+                        for attachment in materialized_attachments
+                    ),
                 )
             )
-            await query_client(client, content)
+            await query_client(client, effective_content)
 
             result_error: Mapping[str, Any] | None = None
             async for message in receive_response_messages(client):

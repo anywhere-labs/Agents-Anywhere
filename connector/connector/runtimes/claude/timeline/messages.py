@@ -45,6 +45,7 @@ class ClaudeMessageProjector:
         event: str,
         client_message_id: str | None = None,
         native_item_id: str | None = None,
+        attachments: tuple[Mapping[str, object], ...] = (),
     ) -> RuntimeTimelineItem:
         stable_key = native_item_id or client_message_id or text
         item_id = _stable_id(
@@ -66,7 +67,14 @@ class ClaudeMessageProjector:
             status="done",
             role=role,  # type: ignore[arg-type]
             turn_id=turn_id,
-            content=MarkdownMessageContent(text=text),
+            content=MarkdownMessageContent(
+                text=text,
+                metadata=(
+                    {"attachments": [dict(attachment) for attachment in attachments]}
+                    if attachments
+                    else {}
+                ),
+            ),
             source=TimelineSource(
                 runtime="claude",
                 external_session_id=session.external_session_id,

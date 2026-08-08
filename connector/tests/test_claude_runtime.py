@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 from connector.runtime_protocol import (
     RuntimeAttachment,
+    RuntimeAttachmentContent,
     RuntimeConfig,
     RuntimeHostClient,
     RuntimeStatus,
@@ -52,7 +54,8 @@ async def _test_claude_runtime_reports_initial_runtime_capabilities() -> None:
     assert capabilities["session.interaction.approval"].available is True
     assert capabilities["catalog.permission"].supported is True
     assert capabilities["catalog.permission"].available is True
-    assert capabilities["runtime.attachment"].supported is False
+    assert capabilities["runtime.attachment"].supported is True
+    assert capabilities["runtime.attachment"].available is True
 
 
 def test_claude_runtime_empty_reads_are_stable() -> None:
@@ -401,24 +404,47 @@ async def _test_claude_runtime_interrupts_active_turn() -> None:
     assert host.session_state_updates[-1]["status"] == "idle"
 
 
-def test_claude_runtime_rejects_attachments_until_supported() -> None:
-    asyncio.run(_test_claude_runtime_rejects_attachments_until_supported())
+def test_claude_runtime_materializes_attachments_for_turn_start(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setenv("AGENT_CONNECTOR_ATTACHMENTS_ROOT", str(tmp_path))
+    asyncio.run(_test_claude_runtime_materializes_attachments_for_turn_start())
 
 
-async def _test_claude_runtime_rejects_attachments_until_supported() -> None:
+async def _test_claude_runtime_materializes_attachments_for_turn_start() -> None:
     host = _RecordingHost()
-    runtime = _runtime(host=host)
+    host.attachments["file_1"] = RuntimeAttachmentContent(
+        file_id="file_1",
+        name="note.txt",
+        media_type="text/plain",
+        content=b"hello attachment",
+    )
+    client = _FakeClaudeClient(
+        messages=[SimpleNamespace(type="result", session_id="claude_attachments")]
+    )
+    runtime = _runtime(host=host, client=client)
 
     result = await runtime.start_turn(
         "sess_attachments",
-        None,
-        "hello",
-        attachments=(RuntimeAttachment(file_id="file_1"),),
+        "claude_attachments",
+        "read this",
+        attachments=(RuntimeAttachment(file_id="file_1", name="note.txt"),),
     )
+    task = runtime._sessions["sess_attachments"].active_task
 
-    assert result.ok is False
-    assert result.code == "claude_attachments_unsupported"
-    assert host.timeline_item_upserts == []
+    assert result.ok is True
+    assert task is not None
+
+    await task
+
+    attachment = host.timeline_item_upserts[0].content["attachments"][0]
+    assert attachment["name"] == "note.txt"
+    assert attachment["mediaType"] == "text/plain"
+    assert attachment["byteSize"] == 16
+    assert Path(str(attachment["path"])).read_bytes() == b"hello attachment"
+    assert client.queries[0].startswith("read this\n\nAttached files:")
+    assert str(attachment["path"]) in client.queries[0]
 
 
 def test_claude_runtime_tool_approval_round_trips_to_sdk() -> None:
@@ -571,6 +597,7 @@ class _RecordingHost(RuntimeHostClient):
         self.session_state_updates: list[dict[str, Any]] = []
         self.timeline_item_upserts: list[RuntimeTimelineItem] = []
         self.notice_upserts: list[Any] = []
+        self.attachments: dict[str, RuntimeAttachmentContent] = {}
 
     @property
     def connector_id(self) -> str:
@@ -627,6 +654,14 @@ class _RecordingHost(RuntimeHostClient):
 
     async def notice_upsert(self, notice: Any) -> None:
         self.notice_upserts.append(notice)
+
+    async def attachment_download(
+        self,
+        session_id: str,
+        file_id: str,
+    ) -> RuntimeAttachmentContent:
+        _ = session_id
+        return self.attachments[file_id]
 
 
 class _PermissionResultAllow:

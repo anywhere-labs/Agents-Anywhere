@@ -56,7 +56,7 @@ def claude_capabilities() -> dict[str, bool]:
         "interruptTurn": True,
         "commands": False,
         "interactions": True,
-        "attachments": False,
+        "attachments": True,
         "ipc": False,
     }
 
