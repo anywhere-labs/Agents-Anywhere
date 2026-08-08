@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -21,3 +22,10 @@ class ClaudeSession:
     active_turn_id: str | None = None
     active_task: asyncio.Task[None] | None = None
     client: Any = None
+
+
+def stable_session_id(connector_id: str, external_session_id: str) -> str:
+    digest = hashlib.sha256(
+        f"{connector_id}:claude:{external_session_id}".encode("utf-8")
+    ).hexdigest()[:24]
+    return f"sess_claude_{digest}"

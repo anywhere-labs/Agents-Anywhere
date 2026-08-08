@@ -50,6 +50,7 @@ from connector.runtimes.claude.sdk.client import (
     receive_response_messages,
 )
 from connector.runtimes.claude.sessions.cache import ClaudeSessionStore
+from connector.runtimes.claude.sessions.reader import ClaudeSessionReader
 from connector.runtimes.claude.timeline.messages import (
     ClaudeMessageProjector,
     is_result_message,
@@ -78,6 +79,7 @@ class ClaudeRuntime(AgentRuntime):
     _sessions: dict[str, ClaudeSession] = field(default_factory=dict, init=False)
     _session_states: RuntimeSessionStateCache = field(init=False)
     _session_store: ClaudeSessionStore = field(init=False)
+    _session_reader: ClaudeSessionReader = field(init=False)
     _timeline: ClaudeMessageProjector = field(init=False)
     _notices: dict[str, SessionNotice] = field(default_factory=dict, init=False)
     _approval_futures: dict[str, asyncio.Future[ClaudeApprovalDecision]] = field(
@@ -89,6 +91,12 @@ class ClaudeRuntime(AgentRuntime):
     def __post_init__(self) -> None:
         self._session_states = RuntimeSessionStateCache("claude", self.host)
         self._session_store = ClaudeSessionStore(self._sessions)
+        self._session_reader = ClaudeSessionReader(
+            config=self.config,
+            host=self.host,
+            session_store=self._session_store,
+            sdk_loader=self.sdk_loader,
+        )
         self._timeline = ClaudeMessageProjector()
 
     @property
@@ -181,9 +189,16 @@ class ClaudeRuntime(AgentRuntime):
         state = self._session_states.get(session_id)
         if state is not None:
             return state
-        if external_session_id is None:
-            return None
-        return self._session_states.get_by_external_session_id(external_session_id)
+        if external_session_id is not None:
+            state = self._session_states.get_by_external_session_id(
+                external_session_id
+            )
+            if state is not None:
+                return state
+        return await self._session_reader.get_session_state(
+            session_id,
+            external_session_id,
+        )
 
     async def get_session_notices(
         self,
@@ -258,9 +273,11 @@ class ClaudeRuntime(AgentRuntime):
         cursor: str | None = None,
         force: bool = False,
     ) -> tuple[SessionMeta, ...]:
-        _ = cursor
-        _ = force
-        return self._session_store.list_sessions(limit=limit)
+        return await self._session_reader.list_sessions(
+            limit=limit,
+            cursor=cursor,
+            force=force,
+        )
 
     async def get_session_snapshot(
         self,
@@ -268,7 +285,7 @@ class ClaudeRuntime(AgentRuntime):
         external_session_id: str | None = None,
         limit: int | None = None,
     ) -> RuntimeTimelineSnapshot:
-        return self._session_store.snapshot(
+        return await self._session_reader.get_session_snapshot(
             session_id=session_id,
             external_session_id=external_session_id,
             limit=limit,

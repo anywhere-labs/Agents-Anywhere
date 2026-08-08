@@ -62,6 +62,18 @@ class ClaudeSessionStore:
         session.external_session_id = external_session_id
         return True
 
+    def get(
+        self,
+        session_id: str,
+        external_session_id: str | None = None,
+    ) -> ClaudeSession | None:
+        session = self._sessions.get(session_id)
+        if session is not None:
+            return session
+        if external_session_id is not None:
+            return self._session_by_external_id(external_session_id)
+        return None
+
     def record_timeline_item(self, item: RuntimeTimelineItem) -> None:
         session = self.ensure(item.session_id)
         previous = session.timeline_items.get(item.id)

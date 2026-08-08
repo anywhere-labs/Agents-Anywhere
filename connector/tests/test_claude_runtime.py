@@ -13,6 +13,7 @@ from connector.runtime_protocol import (
     RuntimeStatus,
     RuntimeTimelineItem,
 )
+from connector.runtimes.claude.domain.session import stable_session_id
 from connector.runtimes.claude.runtime import ClaudeRuntime
 
 
@@ -241,6 +242,194 @@ async def _test_claude_runtime_lists_sessions_and_returns_local_snapshot() -> No
     assert (
         sessions_after_snapshot[0].metadata["sync"]["requires_timeline_sync"] is False
     )
+
+
+def test_claude_runtime_lists_sessions_from_sdk_history() -> None:
+    asyncio.run(_test_claude_runtime_lists_sessions_from_sdk_history())
+
+
+async def _test_claude_runtime_lists_sessions_from_sdk_history() -> None:
+    host = _RecordingHost()
+    sdk = _HistorySdk(
+        sessions=[
+            SimpleNamespace(
+                session_id="claude_history_1",
+                summary="History session",
+                custom_title=None,
+                first_prompt="first prompt",
+                cwd="/repo",
+                last_modified=1_789_000_000_000,
+                file_size=123,
+                created_at=1_788_000_000_000,
+                git_branch="benson-workspace",
+            )
+        ]
+    )
+    runtime = _runtime(host=host, sdk=sdk)
+
+    sessions = await runtime.list_sessions(limit=10)
+
+    assert len(sessions) == 1
+    session = sessions[0]
+    assert session.session_id == stable_session_id("conn_test", "claude_history_1")
+    assert session.external_session_id == "claude_history_1"
+    assert session.title == "History session"
+    assert session.cwd == "/repo"
+    assert session.ordering_time == "2026-09-10T00:26:40Z"
+    assert session.metadata["source"] == "claude.session/list"
+    assert session.metadata["sync"]["changed"] is True
+    assert session.metadata["sync"]["requires_timeline_sync"] is True
+    assert host.sync_states["claude/session-sync/claude_history_1"]["session_id"] == (
+        stable_session_id("conn_test", "claude_history_1")
+    )
+    assert sdk.list_calls == [{"limit": 10, "offset": 0}]
+
+
+def test_claude_runtime_session_sync_marker_skips_unchanged_history() -> None:
+    asyncio.run(_test_claude_runtime_session_sync_marker_skips_unchanged_history())
+
+
+async def _test_claude_runtime_session_sync_marker_skips_unchanged_history() -> None:
+    host = _RecordingHost()
+    sdk = _HistorySdk(
+        sessions=[
+            SimpleNamespace(
+                session_id="claude_history_unchanged",
+                summary="History",
+                last_modified=1_789_000_000_000,
+                file_size=123,
+            )
+        ]
+    )
+    runtime = _runtime(host=host, sdk=sdk)
+
+    first = await runtime.list_sessions(limit=10)
+    second = await runtime.list_sessions(limit=10)
+    forced = await runtime.list_sessions(limit=10, force=True)
+
+    assert first[0].metadata["sync"]["changed"] is True
+    assert second[0].metadata["sync"]["changed"] is False
+    assert second[0].metadata["sync"]["requires_timeline_sync"] is False
+    assert forced[0].metadata["sync"]["changed"] is True
+    assert forced[0].metadata["sync"]["requires_timeline_sync"] is True
+
+
+def test_claude_runtime_projects_sdk_history_snapshot() -> None:
+    asyncio.run(_test_claude_runtime_projects_sdk_history_snapshot())
+
+
+async def _test_claude_runtime_projects_sdk_history_snapshot() -> None:
+    sdk = _HistorySdk(
+        infos={
+            "claude_history_snapshot": SimpleNamespace(
+                session_id="claude_history_snapshot",
+                summary="Snapshot",
+                cwd="/repo",
+                last_modified=1_789_000_000_000,
+                file_size=234,
+            )
+        },
+        messages={
+            "claude_history_snapshot": [
+                SimpleNamespace(
+                    type="user",
+                    uuid="user_1",
+                    session_id="claude_history_snapshot",
+                    message={"role": "user", "content": "hello"},
+                ),
+                SimpleNamespace(
+                    type="assistant",
+                    uuid="assistant_1",
+                    session_id="claude_history_snapshot",
+                    message={
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "hi"}],
+                    },
+                ),
+                SimpleNamespace(
+                    type="assistant",
+                    uuid="assistant_tool",
+                    session_id="claude_history_snapshot",
+                    message={
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "tool_1",
+                                "name": "Bash",
+                                "input": {"command": "pwd"},
+                            }
+                        ],
+                    },
+                ),
+                SimpleNamespace(
+                    type="user",
+                    uuid="tool_result_1",
+                    session_id="claude_history_snapshot",
+                    message={
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "tool_1",
+                                "content": "/repo",
+                            }
+                        ],
+                    },
+                ),
+            ]
+        },
+    )
+    runtime = _runtime(sdk=sdk)
+    session_id = stable_session_id("conn_test", "claude_history_snapshot")
+
+    snapshot = await runtime.get_session_snapshot(
+        session_id,
+        "claude_history_snapshot",
+    )
+
+    assert snapshot.runtime == "claude"
+    assert snapshot.external_session_id == "claude_history_snapshot"
+    assert snapshot.metadata["source"] == "claude.session.history"
+    assert [item.type for item in snapshot.items] == [
+        "message",
+        "message",
+        "tool",
+        "tool",
+    ]
+    assert [item.role for item in snapshot.items[:2]] == ["user", "assistant"]
+    assert snapshot.items[0].content["text"] == "hello"
+    assert snapshot.items[1].content["text"] == "hi"
+    assert snapshot.items[2].content["kind"] == "command"
+    assert snapshot.items[2].content["command"] == "pwd"
+    assert snapshot.items[3].status == "done"
+    assert snapshot.items[3].content["output"] == "/repo"
+
+
+def test_claude_runtime_session_state_defaults_to_idle_for_known_history() -> None:
+    asyncio.run(_test_claude_runtime_session_state_defaults_to_idle_for_known_history())
+
+
+async def _test_claude_runtime_session_state_defaults_to_idle_for_known_history() -> None:
+    sdk = _HistorySdk(
+        infos={
+            "claude_history_state": SimpleNamespace(
+                session_id="claude_history_state",
+                summary="State",
+            )
+        }
+    )
+    runtime = _runtime(sdk=sdk)
+
+    state = await runtime.get_session_state(
+        "sess_history_state",
+        "claude_history_state",
+    )
+
+    assert state is not None
+    assert state.status == "idle"
+    assert state.runtime == "claude"
+    assert state.metadata["source"] == "claude.session.history.state"
 
 
 def test_claude_runtime_applies_permission_selection_to_sdk_options() -> None:
@@ -505,9 +694,11 @@ async def _test_claude_runtime_tool_approval_round_trips_to_sdk() -> None:
 def _runtime(
     host: _RecordingHost | None = None,
     client: "_FakeClaudeClient | None" = None,
+    sdk: Any | None = None,
 ) -> ClaudeRuntime:
     active_host = host or _RecordingHost()
     active_client = client or _FakeClaudeClient()
+    active_sdk = sdk or _default_sdk()
 
     def client_factory(sdk: Any, options: Any) -> _FakeClaudeClient:
         _ = sdk
@@ -517,13 +708,20 @@ def _runtime(
     return ClaudeRuntime(
         config=_config(),
         host=active_host,
-        sdk_loader=lambda: SimpleNamespace(
-            __version__="1.0",
-            ClaudeAgentOptions=_FakeOptions,
-            PermissionResultAllow=_PermissionResultAllow,
-            PermissionResultDeny=_PermissionResultDeny,
-        ),
+        sdk_loader=lambda: active_sdk,
         client_factory=client_factory,
+    )
+
+
+def _default_sdk() -> Any:
+    return SimpleNamespace(
+        __version__="1.0",
+        ClaudeAgentOptions=_FakeOptions,
+        PermissionResultAllow=_PermissionResultAllow,
+        PermissionResultDeny=_PermissionResultDeny,
+        list_sessions=lambda **_: [],
+        get_session_info=lambda **_: None,
+        get_session_messages=lambda **_: [],
     )
 
 
@@ -591,6 +789,38 @@ class _BlockingClaudeClient(_FakeClaudeClient):
         return []
 
 
+class _HistorySdk:
+    def __init__(
+        self,
+        sessions: list[Any] | None = None,
+        infos: dict[str, Any] | None = None,
+        messages: dict[str, list[Any]] | None = None,
+    ) -> None:
+        self.__version__ = "1.0"
+        self.ClaudeAgentOptions = _FakeOptions
+        self.PermissionResultAllow = _PermissionResultAllow
+        self.PermissionResultDeny = _PermissionResultDeny
+        self.sessions = list(sessions or [])
+        self.infos = dict(infos or {})
+        self.messages = dict(messages or {})
+        self.list_calls: list[dict[str, Any]] = []
+
+    def list_sessions(
+        self,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[Any]:
+        self.list_calls.append({"limit": limit, "offset": offset})
+        sessions = self.sessions[offset:]
+        return sessions[:limit] if limit is not None else sessions
+
+    def get_session_info(self, session_id: str) -> Any | None:
+        return self.infos.get(session_id)
+
+    def get_session_messages(self, session_id: str) -> list[Any]:
+        return list(self.messages.get(session_id, []))
+
+
 class _RecordingHost(RuntimeHostClient):
     def __init__(self) -> None:
         self.session_meta_upserts: list[dict[str, Any]] = []
@@ -598,6 +828,7 @@ class _RecordingHost(RuntimeHostClient):
         self.timeline_item_upserts: list[RuntimeTimelineItem] = []
         self.notice_upserts: list[Any] = []
         self.attachments: dict[str, RuntimeAttachmentContent] = {}
+        self.sync_states: dict[str, dict[str, Any]] = {}
 
     @property
     def connector_id(self) -> str:
@@ -662,6 +893,15 @@ class _RecordingHost(RuntimeHostClient):
     ) -> RuntimeAttachmentContent:
         _ = session_id
         return self.attachments[file_id]
+
+    async def sync_state_read(self, key: str) -> dict[str, Any] | None:
+        return self.sync_states.get(key)
+
+    async def sync_state_write(self, key: str, value: dict[str, Any]) -> None:
+        self.sync_states[key] = value
+
+    async def sync_state_delete(self, key: str) -> None:
+        self.sync_states.pop(key, None)
 
 
 class _PermissionResultAllow:
