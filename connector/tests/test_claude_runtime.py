@@ -170,6 +170,71 @@ async def _test_claude_runtime_create_and_start_publishes_session_meta() -> None
     assert runtime._sessions["sess_new"].external_session_id == "claude_session_2"
 
 
+def test_claude_runtime_projects_tool_blocks_to_timeline() -> None:
+    asyncio.run(_test_claude_runtime_projects_tool_blocks_to_timeline())
+
+
+async def _test_claude_runtime_projects_tool_blocks_to_timeline() -> None:
+    host = _RecordingHost()
+    client = _FakeClaudeClient(
+        messages=[
+            SimpleNamespace(
+                type="assistant",
+                session_id="claude_tool_session",
+                message={
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "tool_1",
+                            "name": "Bash",
+                            "input": {"command": "pytest"},
+                        }
+                    ],
+                },
+            ),
+            SimpleNamespace(
+                type="user",
+                session_id="claude_tool_session",
+                message={
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "tool_1",
+                            "content": "ok",
+                        }
+                    ],
+                },
+            ),
+            SimpleNamespace(type="result", session_id="claude_tool_session"),
+        ]
+    )
+    runtime = _runtime(host=host, client=client)
+
+    result = await runtime.start_turn("sess_tools", "claude_tool_session", "run tests")
+    task = runtime._sessions["sess_tools"].active_task
+
+    assert result.ok is True
+    assert task is not None
+
+    await task
+
+    tool_call, tool_result = [
+        item for item in host.timeline_item_upserts if item.type == "tool"
+    ]
+    assert tool_call.id == tool_result.id
+    assert tool_call.status == "running"
+    assert tool_call.content["kind"] == "command"
+    assert tool_call.content["command"] == "pytest"
+    assert tool_call.source["itemType"] == "tool_use"
+    assert tool_result.status == "done"
+    assert tool_result.content["kind"] == "tool_result"
+    assert tool_result.content["output"] == "ok"
+    assert tool_result.content["toolName"] == "Bash"
+    assert tool_result.source["itemType"] == "tool_result"
+
+
 def test_claude_runtime_interrupts_active_turn() -> None:
     asyncio.run(_test_claude_runtime_interrupts_active_turn())
 

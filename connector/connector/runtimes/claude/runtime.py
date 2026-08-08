@@ -423,6 +423,12 @@ class ClaudeRuntime(AgentRuntime):
                             or "Claude turn completed with an error",
                         }
                     continue
+                for item in self._timeline.tool_items_for_message(
+                    session=session,
+                    turn_id=turn_id,
+                    message=message,
+                ):
+                    await self.host.timeline_item_upsert(item)
                 if message_role(message) != "assistant":
                     continue
                 text = message_text(message)
