@@ -13,11 +13,11 @@ from connector.runtimes.claude.provider import ClaudeProvider
 from connector.runtimes.claude.runtime import ClaudeRuntime
 
 
-def test_claude_provider_discovers_sdk() -> None:
-    asyncio.run(_test_claude_provider_discovers_sdk())
+def test_claude_provider_discovers_sdk_without_claiming_runtime_actions() -> None:
+    asyncio.run(_test_claude_provider_discovers_sdk_without_claiming_runtime_actions())
 
 
-async def _test_claude_provider_discovers_sdk() -> None:
+async def _test_claude_provider_discovers_sdk_without_claiming_runtime_actions() -> None:
     provider = ClaudeProvider(
         sdk_loader=_sdk,
         command_checker=_missing_command,
@@ -27,10 +27,10 @@ async def _test_claude_provider_discovers_sdk() -> None:
 
     assert item.available is True
     assert item.configured is True
-    assert item.capabilities["modelCatalog"] is False
-    assert item.capabilities["permissionCatalog"] is True
+    assert item.capabilities["startTurn"] is False
+    assert item.capabilities["interruptTurn"] is False
+    assert item.capabilities["interactions"] is False
     assert item.capabilities["commands"] is False
-    assert item.capabilities["interactions"] is True
     assert item.metadata["sdk"]["available"] is True
     assert item.metadata["platform"]
 
@@ -52,7 +52,7 @@ async def _test_claude_provider_reports_unavailable_without_sdk() -> None:
 
     assert item.available is False
     assert item.configured is False
-    assert "claude-agent-sdk" in (item.reason or "")
+    assert "claude_agent_sdk" in (item.reason or "")
 
 
 def test_claude_provider_schema_and_config_validation() -> None:
@@ -74,9 +74,11 @@ async def _test_claude_provider_schema_and_config_validation() -> None:
     )
 
     assert schema.defaults == {"environment": {}}
+    assert set(schema.schema["properties"]) == {"environment", "executablePath"}
     assert config.runtime == "claude"
     assert config.values["executablePath"] == "/opt/claude"
     assert config.values["environment"] == {"EXAMPLE": "1"}
+    assert config.metadata["launchTarget"]["path"] == "/opt/claude"
 
 
 def test_claude_provider_rejects_protected_environment() -> None:
@@ -90,11 +92,11 @@ async def _test_claude_provider_rejects_protected_environment() -> None:
         await provider.validate_config({"environment": {"AGENT_SERVER_URL": "http://x"}})
 
 
-def test_claude_provider_creates_native_runtime() -> None:
-    asyncio.run(_test_claude_provider_creates_native_runtime())
+def test_claude_provider_creates_skeleton_runtime() -> None:
+    asyncio.run(_test_claude_provider_creates_skeleton_runtime())
 
 
-async def _test_claude_provider_creates_native_runtime() -> None:
+async def _test_claude_provider_creates_skeleton_runtime() -> None:
     provider = ClaudeProvider(sdk_loader=_sdk, command_checker=_available_command)
     config = await provider.validate_config({"executablePath": "/opt/claude"})
 
