@@ -23,6 +23,13 @@ from connector.runtime_protocol import (
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.claude import provider_config
+from connector.runtimes.claude.domain.approvals import (
+    ClaudeApprovalDecision,
+    approval_notice,
+    decision_from_action,
+    notice_transition,
+    permission_result_from_decision,
+)
 from connector.runtimes.claude.domain.session import ClaudeSession
 from connector.runtimes.claude.sdk.client import (
     ClaudeClientFactory,
@@ -46,6 +53,8 @@ from connector.runtimes.claude.timeline.messages import (
     message_text,
 )
 
+TERMINAL_NOTICE_STATUSES = {"closed", "resolved", "cancelled", "expired"}
+
 
 @dataclass(slots=True)
 class ClaudeRuntime(AgentRuntime):
@@ -57,6 +66,12 @@ class ClaudeRuntime(AgentRuntime):
     _sessions: dict[str, ClaudeSession] = field(default_factory=dict, init=False)
     _session_states: RuntimeSessionStateCache = field(init=False)
     _timeline: ClaudeMessageProjector = field(init=False)
+    _notices: dict[str, SessionNotice] = field(default_factory=dict, init=False)
+    _approval_futures: dict[str, asyncio.Future[ClaudeApprovalDecision]] = field(
+        default_factory=dict,
+        init=False,
+    )
+    _approval_seq: int = field(default=1, init=False)
 
     def __post_init__(self) -> None:
         self._session_states = RuntimeSessionStateCache("claude", self.host)
@@ -163,9 +178,8 @@ class ClaudeRuntime(AgentRuntime):
         session_id: str,
         external_session_id: str | None = None,
     ) -> tuple[SessionNotice, ...]:
-        _ = session_id
         _ = external_session_id
-        return ()
+        return self._current_notices(session_id)
 
     async def get_session_capabilities(
         self,
@@ -200,6 +214,16 @@ class ClaudeRuntime(AgentRuntime):
                     supported=True,
                     available=active,
                     unavailable_reason=None if active else "no_active_turn",
+                    metadata={"source": "claude.runtime"},
+                ),
+                RuntimeCapability(
+                    capability_id="session.interaction.approval",
+                    scope="session",
+                    runtime="claude",
+                    session_id=session_id,
+                    connector_id=self.host.connector_id,
+                    supported=True,
+                    available=True,
                     metadata={"source": "claude.runtime"},
                 ),
             ),
@@ -337,6 +361,11 @@ class ClaudeRuntime(AgentRuntime):
                 **({"reason": reason} if reason else {}),
             },
         )
+        await self._close_open_approval_notices(
+            session,
+            status="closed",
+            reason="interrupted",
+        )
         return RuntimeOperationResult(
             ok=interrupted,
             code=None if interrupted else "claude_interrupt_unavailable",
@@ -360,6 +389,7 @@ class ClaudeRuntime(AgentRuntime):
                 config_values=self.config.values,
                 session=session,
                 client_factory=self.client_factory,
+                can_use_tool=self._approval_callback(sdk, session, turn_id),
             )
             session.client = client
             await connect_client(client)
@@ -423,6 +453,11 @@ class ClaudeRuntime(AgentRuntime):
                     metadata={"source": "claude.turn.completed", "turnId": turn_id},
                 )
         except asyncio.CancelledError:
+            await self._close_open_approval_notices(
+                session,
+                status="closed",
+                reason="cancelled",
+            )
             await self._set_session_state(
                 session,
                 "idle",
@@ -443,6 +478,165 @@ class ClaudeRuntime(AgentRuntime):
             session.client = None
             if session.active_turn_id == turn_id:
                 session.active_turn_id = None
+
+    async def respond_interaction(
+        self,
+        session_id: str,
+        notice_id: str,
+        action_id: str,
+        input_data: Mapping[str, Any] | None = None,
+    ) -> RuntimeOperationResult:
+        _ = input_data
+        notice = self._notices.get(notice_id)
+        if notice is None or notice.session_id != session_id:
+            return RuntimeOperationResult(
+                ok=False,
+                code="claude_notice_not_found",
+                message="Claude approval notice was not found",
+            )
+        future = self._approval_futures.get(notice_id)
+        if future is None or future.done():
+            return RuntimeOperationResult(
+                ok=False,
+                code="claude_notice_not_pending",
+                message="Claude approval notice is not waiting for a response",
+            )
+
+        decision = decision_from_action(action_id)
+        responding = notice_transition(
+            notice,
+            status="responding",
+            decision=decision,
+            metadata={"source": "claude.approval/responding"},
+        )
+        self._notices[notice_id] = responding
+        await self.host.notice_upsert(responding)
+        future.set_result(decision)
+
+        resolved = notice_transition(
+            responding,
+            status="resolved",
+            decision=decision,
+            response_required=False,
+            clear_blocking=True,
+            clear_actions=True,
+            metadata={"source": "claude.approval/responded"},
+        )
+        self._notices[notice_id] = resolved
+        await self.host.notice_upsert(resolved)
+
+        session = self._sessions.get(session_id)
+        if session is not None:
+            await self._set_session_state(
+                session,
+                "running" if self._has_active_turn(session_id) else "idle",
+                metadata={
+                    "source": "claude.approval/responded",
+                    "notice_id": notice_id,
+                    "decision": "approved" if decision.allowed else "rejected",
+                },
+            )
+        return RuntimeOperationResult(
+            ok=True,
+            result={
+                "resolved": True,
+                "noticeId": notice_id,
+                "sessionId": session_id,
+                "decision": "approved" if decision.allowed else "rejected",
+            },
+        )
+
+    def _approval_callback(
+        self,
+        sdk: Any,
+        session: ClaudeSession,
+        turn_id: str,
+    ) -> Any:
+        async def can_use_tool(
+            tool_name: str,
+            tool_input: dict[str, Any],
+            context: Any,
+        ) -> Any:
+            decision = await self._request_tool_approval(
+                session=session,
+                turn_id=turn_id,
+                tool_name=tool_name,
+                tool_input=tool_input,
+                context=context,
+            )
+            return permission_result_from_decision(sdk, decision)
+
+        return can_use_tool
+
+    async def _request_tool_approval(
+        self,
+        session: ClaudeSession,
+        turn_id: str,
+        tool_name: str,
+        tool_input: Mapping[str, Any],
+        context: Any,
+    ) -> ClaudeApprovalDecision:
+        notice = approval_notice(
+            session_id=session.session_id,
+            external_session_id=session.external_session_id,
+            turn_id=turn_id,
+            tool_name=tool_name,
+            tool_input=tool_input,
+            context=context,
+            approval_id=self._next_approval_id(turn_id),
+        )
+        future: asyncio.Future[ClaudeApprovalDecision] = (
+            asyncio.get_running_loop().create_future()
+        )
+        self._notices[notice.notice_id] = notice
+        self._approval_futures[notice.notice_id] = future
+        await self.host.notice_upsert(notice)
+        await self._set_session_state(
+            session,
+            "blocked",
+            metadata={
+                "source": "claude.can_use_tool",
+                "notice_id": notice.notice_id,
+                "turnId": turn_id,
+                "toolName": tool_name,
+            },
+        )
+        try:
+            return await future
+        finally:
+            self._approval_futures.pop(notice.notice_id, None)
+
+    async def _close_open_approval_notices(
+        self,
+        session: ClaudeSession,
+        status: str,
+        reason: str,
+    ) -> None:
+        decision = ClaudeApprovalDecision(
+            allowed=False,
+            action_id="reject",
+            message=f"Approval closed: {reason}",
+        )
+        for notice in self._current_notices(session.session_id):
+            if notice.interaction_type != "approval":
+                continue
+            future = self._approval_futures.get(notice.notice_id)
+            if future is not None and not future.done():
+                future.set_result(decision)
+            closed = notice_transition(
+                notice,
+                status=status,
+                decision=decision,
+                response_required=False,
+                clear_blocking=True,
+                clear_actions=True,
+                metadata={
+                    "source": "claude.approval/closed",
+                    "close_reason": reason,
+                },
+            )
+            self._notices[notice.notice_id] = closed
+            await self.host.notice_upsert(closed)
 
     def _session_for(
         self,
@@ -486,3 +680,16 @@ class ClaudeRuntime(AgentRuntime):
             and session.active_task is not None
             and not session.active_task.done()
         )
+
+    def _current_notices(self, session_id: str) -> tuple[SessionNotice, ...]:
+        return tuple(
+            notice
+            for notice in self._notices.values()
+            if notice.session_id == session_id
+            and notice.status not in TERMINAL_NOTICE_STATUSES
+        )
+
+    def _next_approval_id(self, turn_id: str) -> str:
+        approval_id = f"{turn_id}_{self._approval_seq}"
+        self._approval_seq += 1
+        return approval_id

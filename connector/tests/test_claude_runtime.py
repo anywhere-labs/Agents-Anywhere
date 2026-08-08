@@ -48,7 +48,8 @@ async def _test_claude_runtime_reports_initial_runtime_capabilities() -> None:
     assert capabilities["session.send_message"].available is True
     assert capabilities["session.interrupt"].supported is True
     assert capabilities["session.interrupt"].available is True
-    assert capabilities["session.interaction.approval"].supported is False
+    assert capabilities["session.interaction.approval"].supported is True
+    assert capabilities["session.interaction.approval"].available is True
     assert capabilities["runtime.attachment"].supported is False
 
 
@@ -228,6 +229,61 @@ async def _test_claude_runtime_rejects_attachments_until_supported() -> None:
     assert host.timeline_item_upserts == []
 
 
+def test_claude_runtime_tool_approval_round_trips_to_sdk() -> None:
+    asyncio.run(_test_claude_runtime_tool_approval_round_trips_to_sdk())
+
+
+async def _test_claude_runtime_tool_approval_round_trips_to_sdk() -> None:
+    host = _RecordingHost()
+    client = _ApprovalClaudeClient()
+    runtime = _runtime(host=host, client=client)
+
+    result = await runtime.start_turn(
+        "sess_approval",
+        "claude_session_approval",
+        "run ls",
+    )
+    task = runtime._sessions["sess_approval"].active_task
+
+    assert result.ok is True
+    assert task is not None
+    await _wait_until(lambda: bool(host.notice_upserts))
+
+    notice = host.notice_upserts[0]
+    assert notice.status == "open"
+    assert notice.interaction_type == "approval"
+    assert notice.message == "ls"
+    assert notice.context["toolName"] == "Bash"
+    assert notice.context["toolInput"] == {"command": "ls"}
+    assert await runtime.get_session_notices("sess_approval") == (notice,)
+    assert [update["status"] for update in host.session_state_updates][-3:] == [
+        "waiting",
+        "running",
+        "blocked",
+    ]
+    assert client.options.kwargs["permission_prompt_tool_name"] == "stdio"
+
+    response = await runtime.respond_interaction(
+        "sess_approval",
+        notice.notice_id,
+        "approve",
+    )
+
+    assert response.ok is True
+
+    await task
+
+    assert [notice.status for notice in host.notice_upserts] == [
+        "open",
+        "responding",
+        "resolved",
+    ]
+    assert isinstance(client.permission_results[0], _PermissionResultAllow)
+    assert client.permission_results[0].behavior == "allow"
+    assert await runtime.get_session_notices("sess_approval") == ()
+    assert host.session_state_updates[-1]["status"] == "idle"
+
+
 def _runtime(
     host: _RecordingHost | None = None,
     client: "_FakeClaudeClient | None" = None,
@@ -246,6 +302,8 @@ def _runtime(
         sdk_loader=lambda: SimpleNamespace(
             __version__="1.0",
             ClaudeAgentOptions=_FakeOptions,
+            PermissionResultAllow=_PermissionResultAllow,
+            PermissionResultDeny=_PermissionResultDeny,
         ),
         client_factory=client_factory,
     )
@@ -289,6 +347,22 @@ class _FakeClaudeClient:
         self.interrupted = True
 
 
+class _ApprovalClaudeClient(_FakeClaudeClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.permission_results: list[Any] = []
+
+    async def receive_response(self) -> list[Any]:
+        can_use_tool = self.options.kwargs["can_use_tool"]
+        result = await can_use_tool(
+            "Bash",
+            {"command": "ls"},
+            SimpleNamespace(session_id="claude_session_approval"),
+        )
+        self.permission_results.append(result)
+        return [SimpleNamespace(type="result", session_id="claude_session_approval")]
+
+
 class _BlockingClaudeClient(_FakeClaudeClient):
     def __init__(self, release: asyncio.Event) -> None:
         super().__init__()
@@ -304,6 +378,7 @@ class _RecordingHost(RuntimeHostClient):
         self.session_meta_upserts: list[dict[str, Any]] = []
         self.session_state_updates: list[dict[str, Any]] = []
         self.timeline_item_upserts: list[RuntimeTimelineItem] = []
+        self.notice_upserts: list[Any] = []
 
     @property
     def connector_id(self) -> str:
@@ -357,6 +432,20 @@ class _RecordingHost(RuntimeHostClient):
 
     async def timeline_item_upsert(self, item: RuntimeTimelineItem) -> None:
         self.timeline_item_upserts.append(item)
+
+    async def notice_upsert(self, notice: Any) -> None:
+        self.notice_upserts.append(notice)
+
+
+class _PermissionResultAllow:
+    def __init__(self, behavior: str = "allow") -> None:
+        self.behavior = behavior
+
+
+class _PermissionResultDeny:
+    def __init__(self, behavior: str = "deny", message: str = "") -> None:
+        self.behavior = behavior
+        self.message = message
 
 
 async def _wait_until(predicate: Any) -> None:

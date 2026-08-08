@@ -21,8 +21,9 @@ def new_sdk_client(
     config_values: Mapping[str, Any],
     session: ClaudeSession,
     client_factory: ClaudeClientFactory | None = None,
+    can_use_tool: Any | None = None,
 ) -> Any:
-    options = build_sdk_options(sdk, config_values, session)
+    options = build_sdk_options(sdk, config_values, session, can_use_tool=can_use_tool)
     if client_factory is not None:
         return client_factory(sdk, options)
     client_cls = getattr(sdk, "ClaudeSDKClient", None)
@@ -38,6 +39,7 @@ def build_sdk_options(
     sdk: Any,
     config_values: Mapping[str, Any],
     session: ClaudeSession,
+    can_use_tool: Any | None = None,
 ) -> Any:
     values = dict(config_values)
     kwargs: dict[str, Any] = {"include_partial_messages": True}
@@ -51,6 +53,9 @@ def build_sdk_options(
     environment = values.get("environment")
     if isinstance(environment, Mapping):
         kwargs["env"] = dict(environment)
+    if can_use_tool is not None:
+        kwargs["can_use_tool"] = can_use_tool
+        kwargs.setdefault("permission_prompt_tool_name", "stdio")
     options_cls = getattr(sdk, "ClaudeAgentOptions", None) or getattr(
         sdk,
         "ClaudeCodeOptions",
