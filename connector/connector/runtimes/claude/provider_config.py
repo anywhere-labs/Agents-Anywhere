@@ -49,7 +49,7 @@ def claude_capabilities() -> dict[str, bool]:
         "sessionDiscovery": True,
         "sessionSnapshot": True,
         "sessionState": True,
-        "sessionNotices": False,
+        "sessionNotices": True,
         "createAndStartSession": True,
         "startTurn": True,
         "steerTurn": False,
