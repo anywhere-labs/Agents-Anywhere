@@ -18,6 +18,8 @@ from connector.runtime_protocol import (
     RuntimeOperationResult,
     RuntimePermissionCatalog,
     RuntimeSessionStateCache,
+    RuntimeTimelineItem,
+    RuntimeTimelineSnapshot,
     SessionMeta,
     SessionNotice,
     SessionState,
@@ -47,6 +49,7 @@ from connector.runtimes.claude.sdk.client import (
     query_client,
     receive_response_messages,
 )
+from connector.runtimes.claude.sessions.cache import ClaudeSessionStore
 from connector.runtimes.claude.timeline.messages import (
     ClaudeMessageProjector,
     is_result_message,
@@ -70,6 +73,7 @@ class ClaudeRuntime(AgentRuntime):
     runtime_version: str = "native-0"
     _sessions: dict[str, ClaudeSession] = field(default_factory=dict, init=False)
     _session_states: RuntimeSessionStateCache = field(init=False)
+    _session_store: ClaudeSessionStore = field(init=False)
     _timeline: ClaudeMessageProjector = field(init=False)
     _notices: dict[str, SessionNotice] = field(default_factory=dict, init=False)
     _approval_futures: dict[str, asyncio.Future[ClaudeApprovalDecision]] = field(
@@ -80,6 +84,7 @@ class ClaudeRuntime(AgentRuntime):
 
     def __post_init__(self) -> None:
         self._session_states = RuntimeSessionStateCache("claude", self.host)
+        self._session_store = ClaudeSessionStore(self._sessions)
         self._timeline = ClaudeMessageProjector()
 
     @property
@@ -249,10 +254,21 @@ class ClaudeRuntime(AgentRuntime):
         cursor: str | None = None,
         force: bool = False,
     ) -> tuple[SessionMeta, ...]:
-        _ = limit
         _ = cursor
         _ = force
-        return ()
+        return self._session_store.list_sessions(limit=limit)
+
+    async def get_session_snapshot(
+        self,
+        session_id: str,
+        external_session_id: str | None = None,
+        limit: int | None = None,
+    ) -> RuntimeTimelineSnapshot:
+        return self._session_store.snapshot(
+            session_id=session_id,
+            external_session_id=external_session_id,
+            limit=limit,
+        )
 
     async def create_and_start_session(
         self,
@@ -265,6 +281,7 @@ class ClaudeRuntime(AgentRuntime):
         client_message_id: str | None = None,
     ) -> RuntimeOperationResult:
         session = self._session_for(session_id, None, cwd)
+        self._session_store.update_meta(session, title=title, cwd=cwd)
         await self.host.session_meta_upsert(
             session_id=session_id,
             runtime="claude",
@@ -450,7 +467,7 @@ class ClaudeRuntime(AgentRuntime):
                 "running",
                 metadata={"source": "claude.turn.running", "turnId": turn_id},
             )
-            await self.host.timeline_item_upsert(
+            await self._timeline_item_upsert(
                 self._timeline.message_item(
                     session=session,
                     turn_id=turn_id,
@@ -466,7 +483,7 @@ class ClaudeRuntime(AgentRuntime):
             async for message in receive_response_messages(client):
                 external_session_id = message_session_id(message)
                 if external_session_id is not None:
-                    session.external_session_id = external_session_id
+                    await self._update_external_session_id(session, external_session_id)
                 if is_result_message(message):
                     if message_is_error(message):
                         result_error = {
@@ -480,13 +497,13 @@ class ClaudeRuntime(AgentRuntime):
                     turn_id=turn_id,
                     message=message,
                 ):
-                    await self.host.timeline_item_upsert(item)
+                    await self._timeline_item_upsert(item)
                 if message_role(message) != "assistant":
                     continue
                 text = message_text(message)
                 if not text:
                     continue
-                await self.host.timeline_item_upsert(
+                await self._timeline_item_upsert(
                     self._timeline.message_item(
                         session=session,
                         turn_id=turn_id,
@@ -702,19 +719,35 @@ class ClaudeRuntime(AgentRuntime):
         external_session_id: str | None,
         cwd: str | None,
     ) -> ClaudeSession:
-        session = self._sessions.get(session_id)
-        if session is None:
-            session = ClaudeSession(
-                session_id=session_id,
-                external_session_id=external_session_id,
-                cwd=cwd,
-            )
-            self._sessions[session_id] = session
-        if external_session_id:
-            session.external_session_id = external_session_id
-        if cwd:
-            session.cwd = cwd
-        return session
+        return self._session_store.ensure(
+            session_id=session_id,
+            external_session_id=external_session_id,
+            cwd=cwd,
+        )
+
+    async def _update_external_session_id(
+        self,
+        session: ClaudeSession,
+        external_session_id: str,
+    ) -> None:
+        if not self._session_store.update_external_session_id(
+            session,
+            external_session_id,
+        ):
+            return
+        await self.host.session_meta_upsert(
+            session_id=session.session_id,
+            runtime="claude",
+            external_session_id=session.external_session_id,
+            title=session.title,
+            cwd=session.cwd,
+            ordering_time=session.ordering_time,
+            metadata={"source": "claude.session.external_id"},
+        )
+
+    async def _timeline_item_upsert(self, item: RuntimeTimelineItem) -> None:
+        self._session_store.record_timeline_item(item)
+        await self.host.timeline_item_upsert(item)
 
     async def _set_session_state(
         self,

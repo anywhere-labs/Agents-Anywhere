@@ -63,6 +63,9 @@ async def _test_claude_runtime_empty_reads_are_stable() -> None:
     runtime = _runtime()
 
     assert await runtime.list_sessions() == ()
+    empty_snapshot = await runtime.get_session_snapshot("missing")
+    assert empty_snapshot.runtime == "claude"
+    assert empty_snapshot.items == ()
     assert (await runtime.list_model_catalog()).models == ()
     assert [item.id for item in (await runtime.list_permission_catalog()).permissions] == [
         "default",
@@ -177,6 +180,64 @@ async def _test_claude_runtime_create_and_start_publishes_session_meta() -> None
 
     assert client.options.kwargs["cwd"] == "/repo"
     assert runtime._sessions["sess_new"].external_session_id == "claude_session_2"
+
+
+def test_claude_runtime_lists_sessions_and_returns_local_snapshot() -> None:
+    asyncio.run(_test_claude_runtime_lists_sessions_and_returns_local_snapshot())
+
+
+async def _test_claude_runtime_lists_sessions_and_returns_local_snapshot() -> None:
+    host = _RecordingHost()
+    client = _FakeClaudeClient(
+        messages=[
+            SimpleNamespace(
+                type="assistant",
+                uuid="assistant_snapshot",
+                session_id="claude_snapshot",
+                message={
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "snapshot done"}],
+                },
+            ),
+            SimpleNamespace(type="result", session_id="claude_snapshot"),
+        ]
+    )
+    runtime = _runtime(host=host, client=client)
+
+    result = await runtime.create_and_start_session(
+        "sess_snapshot",
+        "snapshot please",
+        title="Snapshot session",
+        cwd="/repo",
+    )
+    task = runtime._sessions["sess_snapshot"].active_task
+
+    assert result.ok is True
+    assert task is not None
+
+    await task
+
+    sessions = await runtime.list_sessions()
+    assert len(sessions) == 1
+    session = sessions[0]
+    assert session.session_id == "sess_snapshot"
+    assert session.external_session_id == "claude_snapshot"
+    assert session.title == "Snapshot session"
+    assert session.cwd == "/repo"
+    assert session.metadata["sync"]["requires_timeline_sync"] is True
+
+    snapshot = await runtime.get_session_snapshot("sess_snapshot", "claude_snapshot")
+
+    assert snapshot.external_session_id == "claude_snapshot"
+    assert [item.role for item in snapshot.items] == ["user", "assistant"]
+    assert snapshot.items[0].content["text"] == "snapshot please"
+    assert snapshot.items[1].content["text"] == "snapshot done"
+    assert host.session_meta_upserts[-1]["external_session_id"] == "claude_snapshot"
+
+    sessions_after_snapshot = await runtime.list_sessions()
+    assert (
+        sessions_after_snapshot[0].metadata["sync"]["requires_timeline_sync"] is False
+    )
 
 
 def test_claude_runtime_applies_permission_selection_to_sdk_options() -> None:

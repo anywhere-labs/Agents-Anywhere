@@ -46,8 +46,8 @@ def claude_capabilities() -> dict[str, bool]:
     return {
         "modelCatalog": False,
         "permissionCatalog": True,
-        "sessionDiscovery": False,
-        "sessionSnapshot": False,
+        "sessionDiscovery": True,
+        "sessionSnapshot": True,
         "sessionState": True,
         "sessionNotices": False,
         "createAndStartSession": True,
