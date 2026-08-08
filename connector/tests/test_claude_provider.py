@@ -13,11 +13,11 @@ from connector.runtimes.claude.provider import ClaudeProvider
 from connector.runtimes.claude.runtime import ClaudeRuntime
 
 
-def test_claude_provider_discovers_sdk_without_claiming_runtime_actions() -> None:
-    asyncio.run(_test_claude_provider_discovers_sdk_without_claiming_runtime_actions())
+def test_claude_provider_discovers_sdk_with_initial_runtime_actions() -> None:
+    asyncio.run(_test_claude_provider_discovers_sdk_with_initial_runtime_actions())
 
 
-async def _test_claude_provider_discovers_sdk_without_claiming_runtime_actions() -> None:
+async def _test_claude_provider_discovers_sdk_with_initial_runtime_actions() -> None:
     provider = ClaudeProvider(
         sdk_loader=_sdk,
         command_checker=_missing_command,
@@ -27,8 +27,10 @@ async def _test_claude_provider_discovers_sdk_without_claiming_runtime_actions()
 
     assert item.available is True
     assert item.configured is True
-    assert item.capabilities["startTurn"] is False
-    assert item.capabilities["interruptTurn"] is False
+    assert item.capabilities["createAndStartSession"] is True
+    assert item.capabilities["startTurn"] is True
+    assert item.capabilities["interruptTurn"] is True
+    assert item.capabilities["sessionState"] is True
     assert item.capabilities["interactions"] is False
     assert item.capabilities["commands"] is False
     assert item.metadata["sdk"]["available"] is True

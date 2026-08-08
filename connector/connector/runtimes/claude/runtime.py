@@ -1,23 +1,48 @@
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
+import asyncio
+import hashlib
+import inspect
+import json
+import secrets
+from collections.abc import AsyncIterator, Callable, Mapping
+from dataclasses import dataclass, field
 from typing import Any
 
 from connector.runtime_protocol import (
     AgentRuntime,
+    MarkdownMessageContent,
+    MessageTimelineItem,
+    RuntimeAttachment,
     RuntimeCapability,
     RuntimeCapabilitySet,
     RuntimeConfig,
     RuntimeIdentity,
     RuntimeModelCatalog,
+    RuntimeOperationResult,
     RuntimePermissionCatalog,
+    RuntimeSessionStateCache,
+    RuntimeTimelineItem,
     SessionMeta,
+    SessionNotice,
+    SessionState,
+    TimelineSource,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.claude import provider_config
 
 SdkLoader = Callable[[], Any]
+ClaudeClientFactory = Callable[[Any, Any], Any]
+
+
+@dataclass(slots=True)
+class ClaudeSession:
+    session_id: str
+    external_session_id: str | None = None
+    cwd: str | None = None
+    active_turn_id: str | None = None
+    active_task: asyncio.Task[None] | None = None
+    client: Any = None
 
 
 @dataclass(slots=True)
@@ -25,7 +50,15 @@ class ClaudeRuntime(AgentRuntime):
     config: RuntimeConfig
     host: RuntimeHostClient
     sdk_loader: SdkLoader | None = None
-    runtime_version: str = "native-skeleton-0"
+    client_factory: ClaudeClientFactory | None = None
+    runtime_version: str = "native-0"
+    _sessions: dict[str, ClaudeSession] = field(default_factory=dict, init=False)
+    _session_states: RuntimeSessionStateCache = field(init=False)
+    _order_by_id: dict[str, int] = field(default_factory=dict, init=False)
+    _next_order_seq: int = field(default=1, init=False)
+
+    def __post_init__(self) -> None:
+        self._session_states = RuntimeSessionStateCache("claude", self.host)
 
     @property
     def identity(self) -> RuntimeIdentity:
@@ -39,6 +72,16 @@ class ClaudeRuntime(AgentRuntime):
         return None
 
     async def stop(self) -> None:
+        tasks: list[asyncio.Task[None]] = []
+        for session in self._sessions.values():
+            if session.active_task is not None and not session.active_task.done():
+                session.active_task.cancel()
+                tasks.append(session.active_task)
+            await _disconnect_client(session.client)
+            session.client = None
+            session.active_turn_id = None
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
         return None
 
     async def get_config(self) -> RuntimeConfig:
@@ -62,7 +105,7 @@ class ClaudeRuntime(AgentRuntime):
                     unavailable_reason=None
                     if supported
                     else "not_implemented",
-                    metadata={"source": "claude.skeleton"},
+                    metadata={"source": "claude.runtime"},
                 )
                 for inventory_key, protocol_id in (
                     ("modelCatalog", "catalog.model"),
@@ -76,7 +119,7 @@ class ClaudeRuntime(AgentRuntime):
                 )
                 for supported in (capabilities.get(inventory_key) is True,)
             ),
-            metadata={"source": "claude.skeleton"},
+            metadata={"source": "claude.runtime"},
         )
 
     async def list_model_catalog(
@@ -101,6 +144,66 @@ class ClaudeRuntime(AgentRuntime):
             permissions=(),
         )
 
+    async def get_session_state(
+        self,
+        session_id: str,
+        external_session_id: str | None = None,
+    ) -> SessionState | None:
+        state = self._session_states.get(session_id)
+        if state is not None:
+            return state
+        if external_session_id is None:
+            return None
+        return self._session_states.get_by_external_session_id(external_session_id)
+
+    async def get_session_notices(
+        self,
+        session_id: str,
+        external_session_id: str | None = None,
+    ) -> tuple[SessionNotice, ...]:
+        _ = session_id
+        _ = external_session_id
+        return ()
+
+    async def get_session_capabilities(
+        self,
+        session_id: str,
+        external_session_id: str | None = None,
+    ) -> RuntimeCapabilitySet:
+        _ = external_session_id
+        active = self._has_active_turn(session_id)
+        return RuntimeCapabilitySet(
+            runtime="claude",
+            revision=self.config.revision,
+            session_id=session_id,
+            connector_id=self.host.connector_id,
+            capabilities=(
+                RuntimeCapability(
+                    capability_id="session.send_message",
+                    scope="session",
+                    runtime="claude",
+                    session_id=session_id,
+                    connector_id=self.host.connector_id,
+                    supported=True,
+                    available=not active,
+                    unavailable_reason="turn_active" if active else None,
+                    metadata={"source": "claude.runtime"},
+                ),
+                RuntimeCapability(
+                    capability_id="session.interrupt",
+                    scope="session",
+                    runtime="claude",
+                    session_id=session_id,
+                    connector_id=self.host.connector_id,
+                    supported=True,
+                    available=active,
+                    unavailable_reason=None if active else "no_active_turn",
+                    metadata={"source": "claude.runtime"},
+                ),
+            ),
+            metadata={"source": "claude.runtime"},
+        )
+
     async def list_sessions(
         self,
         limit: int = 100,
@@ -111,3 +214,475 @@ class ClaudeRuntime(AgentRuntime):
         _ = cursor
         _ = force
         return ()
+
+    async def create_and_start_session(
+        self,
+        session_id: str,
+        content: str,
+        title: str | None = None,
+        cwd: str | None = None,
+        selections: Mapping[str, str | None] | None = None,
+        attachments: tuple[RuntimeAttachment, ...] = (),
+        client_message_id: str | None = None,
+    ) -> RuntimeOperationResult:
+        _ = selections
+        session = self._session_for(session_id, None, cwd)
+        await self.host.session_meta_upsert(
+            session_id=session_id,
+            runtime="claude",
+            external_session_id=session.external_session_id,
+            title=title,
+            cwd=cwd,
+            metadata={"source": "claude.create_and_start_session"},
+        )
+        await self._set_session_state(
+            session,
+            "idle",
+            metadata={"source": "claude.create_and_start_session"},
+        )
+        result = await self.start_turn(
+            session_id=session_id,
+            external_session_id=session.external_session_id,
+            content=content,
+            attachments=attachments,
+            client_message_id=client_message_id,
+        )
+        return RuntimeOperationResult(
+            ok=result.ok,
+            code=result.code,
+            message=result.message,
+            result={
+                "sessionId": session_id,
+                "externalSessionId": session.external_session_id,
+                **result.result,
+            },
+        )
+
+    async def start_turn(
+        self,
+        session_id: str,
+        external_session_id: str | None,
+        content: str,
+        selections: Mapping[str, str | None] | None = None,
+        attachments: tuple[RuntimeAttachment, ...] = (),
+        client_message_id: str | None = None,
+    ) -> RuntimeOperationResult:
+        _ = selections
+        if attachments:
+            return RuntimeOperationResult(
+                ok=False,
+                code="claude_attachments_unsupported",
+                message="Claude runtime attachment support is not implemented yet",
+            )
+        session = self._session_for(session_id, external_session_id, None)
+        if session.active_task is not None and not session.active_task.done():
+            return RuntimeOperationResult(
+                ok=False,
+                code="claude_turn_already_running",
+                message="Claude runtime already has an active turn for this session",
+            )
+
+        turn_id = f"turn_claude_{secrets.token_urlsafe(12)}"
+        session.active_turn_id = turn_id
+        await self._set_session_state(
+            session,
+            "waiting",
+            metadata={"source": "claude.turn.start", "turnId": turn_id},
+        )
+        session.active_task = asyncio.create_task(
+            self._drive_turn(
+                session=session,
+                turn_id=turn_id,
+                content=content,
+                client_message_id=client_message_id,
+            )
+        )
+        return RuntimeOperationResult(
+            ok=True,
+            result={
+                "turnId": turn_id,
+                "externalSessionId": session.external_session_id,
+            },
+        )
+
+    async def interrupt_turn(
+        self,
+        session_id: str,
+        external_session_id: str | None = None,
+        reason: str | None = None,
+    ) -> RuntimeOperationResult:
+        _ = external_session_id
+        session = self._sessions.get(session_id)
+        if session is None or session.active_turn_id is None:
+            return RuntimeOperationResult(
+                ok=False,
+                code="claude_no_active_turn",
+                message="Claude runtime has no active turn to interrupt",
+            )
+
+        interrupted = False
+        interrupt = getattr(session.client, "interrupt", None)
+        if callable(interrupt):
+            await _maybe_await(interrupt())
+            interrupted = True
+        if session.active_task is not None and not session.active_task.done():
+            session.active_task.cancel()
+            interrupted = True
+        turn_id = session.active_turn_id
+        session.active_turn_id = None
+        await self._set_session_state(
+            session,
+            "idle",
+            metadata={
+                "source": "claude.turn.interrupt",
+                "turnId": turn_id,
+                **({"reason": reason} if reason else {}),
+            },
+        )
+        return RuntimeOperationResult(
+            ok=interrupted,
+            code=None if interrupted else "claude_interrupt_unavailable",
+            message=None
+            if interrupted
+            else "Claude SDK client did not expose interrupt",
+            result={"interrupted": interrupted, "turnId": turn_id},
+        )
+
+    async def _drive_turn(
+        self,
+        session: ClaudeSession,
+        turn_id: str,
+        content: str,
+        client_message_id: str | None,
+    ) -> None:
+        try:
+            sdk = self._load_sdk()
+            client = self._new_client(sdk, session)
+            session.client = client
+            connect = getattr(client, "connect", None)
+            if callable(connect):
+                await _maybe_await(connect())
+            await self._set_session_state(
+                session,
+                "running",
+                metadata={"source": "claude.turn.running", "turnId": turn_id},
+            )
+            await self.host.timeline_item_upsert(
+                self._message_item(
+                    session=session,
+                    turn_id=turn_id,
+                    role="user",
+                    text=content,
+                    event="claude.turn.user",
+                    client_message_id=client_message_id,
+                )
+            )
+            query = getattr(client, "query", None)
+            if not callable(query):
+                raise RuntimeError("ClaudeSDKClient.query is unavailable")
+            await _maybe_await(query(content))
+
+            result_error: Mapping[str, Any] | None = None
+            async for message in _receive_response_messages(client):
+                external_session_id = _message_session_id(message)
+                if external_session_id is not None:
+                    session.external_session_id = external_session_id
+                if _is_result_message(message):
+                    if _message_is_error(message):
+                        result_error = {
+                            "code": "claude_result_error",
+                            "message": _message_error_text(message)
+                            or "Claude turn completed with an error",
+                        }
+                    continue
+                if _message_role(message) != "assistant":
+                    continue
+                text = _message_text(message)
+                if not text:
+                    continue
+                await self.host.timeline_item_upsert(
+                    self._message_item(
+                        session=session,
+                        turn_id=turn_id,
+                        role="assistant",
+                        text=text,
+                        event="claude.turn.assistant",
+                        native_item_id=_message_id(message),
+                    )
+                )
+
+            if result_error is not None:
+                await self._set_session_state(
+                    session,
+                    "error",
+                    error=result_error,
+                    metadata={"source": "claude.turn.failed", "turnId": turn_id},
+                )
+            else:
+                await self._set_session_state(
+                    session,
+                    "idle",
+                    metadata={"source": "claude.turn.completed", "turnId": turn_id},
+                )
+        except asyncio.CancelledError:
+            await self._set_session_state(
+                session,
+                "idle",
+                metadata={"source": "claude.turn.cancelled", "turnId": turn_id},
+            )
+        except Exception as exc:  # noqa: BLE001
+            await self._set_session_state(
+                session,
+                "error",
+                error={
+                    "code": exc.__class__.__name__,
+                    "message": str(exc) or exc.__class__.__name__,
+                },
+                metadata={"source": "claude.turn.failed", "turnId": turn_id},
+            )
+        finally:
+            await _disconnect_client(session.client)
+            session.client = None
+            if session.active_turn_id == turn_id:
+                session.active_turn_id = None
+
+    def _load_sdk(self) -> Any:
+        if self.sdk_loader is None:
+            raise RuntimeError("Claude SDK loader is not configured")
+        return self.sdk_loader()
+
+    def _new_client(self, sdk: Any, session: ClaudeSession) -> Any:
+        options = self._sdk_options(sdk, session)
+        if self.client_factory is not None:
+            return self.client_factory(sdk, options)
+        client_cls = getattr(sdk, "ClaudeSDKClient", None)
+        if client_cls is None:
+            raise RuntimeError("ClaudeSDKClient is not available")
+        try:
+            return client_cls(options=options)
+        except TypeError:
+            return client_cls(options)
+
+    def _sdk_options(self, sdk: Any, session: ClaudeSession) -> Any:
+        values = dict(self.config.values)
+        kwargs: dict[str, Any] = {"include_partial_messages": True}
+        if session.cwd:
+            kwargs["cwd"] = session.cwd
+        if session.external_session_id:
+            kwargs["resume"] = session.external_session_id
+        executable_path = values.get("executablePath")
+        if isinstance(executable_path, str) and executable_path:
+            kwargs["cli_path"] = executable_path
+        environment = values.get("environment")
+        if isinstance(environment, Mapping):
+            kwargs["env"] = dict(environment)
+        options_cls = getattr(sdk, "ClaudeAgentOptions", None) or getattr(
+            sdk, "ClaudeCodeOptions", None
+        )
+        if options_cls is None:
+            return kwargs
+        return options_cls(**kwargs)
+
+    def _session_for(
+        self,
+        session_id: str,
+        external_session_id: str | None,
+        cwd: str | None,
+    ) -> ClaudeSession:
+        session = self._sessions.get(session_id)
+        if session is None:
+            session = ClaudeSession(
+                session_id=session_id,
+                external_session_id=external_session_id,
+                cwd=cwd,
+            )
+            self._sessions[session_id] = session
+        if external_session_id:
+            session.external_session_id = external_session_id
+        if cwd:
+            session.cwd = cwd
+        return session
+
+    async def _set_session_state(
+        self,
+        session: ClaudeSession,
+        status: str,
+        error: Mapping[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        await self._session_states.update(
+            session_id=session.session_id,
+            external_session_id=session.external_session_id,
+            status=status,  # type: ignore[arg-type]
+            error=error,
+            metadata=metadata,
+        )
+
+    def _message_item(
+        self,
+        session: ClaudeSession,
+        turn_id: str,
+        role: str,
+        text: str,
+        event: str,
+        client_message_id: str | None = None,
+        native_item_id: str | None = None,
+    ) -> RuntimeTimelineItem:
+        stable_key = native_item_id or client_message_id or text
+        item_id = _stable_id(
+            "message",
+            session.session_id,
+            session.external_session_id,
+            turn_id,
+            role,
+            stable_key,
+        )
+        order_seq = self._order_by_id.get(item_id)
+        if order_seq is None:
+            order_seq = self._next_order_seq
+            self._next_order_seq += 1
+            self._order_by_id[item_id] = order_seq
+        return MessageTimelineItem(
+            id=item_id,
+            type="message",
+            status="done",
+            role=role,  # type: ignore[arg-type]
+            turn_id=turn_id,
+            content=MarkdownMessageContent(text=text),
+            source=TimelineSource(
+                runtime="claude",
+                external_session_id=session.external_session_id,
+                turn_id=turn_id,
+                native_item_id=native_item_id,
+                event=event,
+                client_message_id=client_message_id,
+            ),
+        ).to_platform_item(session_id=session.session_id, order_seq=order_seq)
+
+    def _has_active_turn(self, session_id: str) -> bool:
+        session = self._sessions.get(session_id)
+        return bool(
+            session is not None
+            and session.active_task is not None
+            and not session.active_task.done()
+        )
+
+
+async def _receive_response_messages(client: Any) -> AsyncIterator[Any]:
+    receive_response = getattr(client, "receive_response", None)
+    if not callable(receive_response):
+        return
+    response = receive_response()
+    if hasattr(response, "__aiter__"):
+        async for message in response:
+            yield message
+        return
+    messages = await _maybe_await(response)
+    if messages is None:
+        return
+    for message in messages:
+        yield message
+
+
+async def _disconnect_client(client: Any) -> None:
+    disconnect = getattr(client, "disconnect", None)
+    if callable(disconnect):
+        await _maybe_await(disconnect())
+
+
+async def _maybe_await(value: Any) -> Any:
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
+
+def _message_role(message: Any) -> str | None:
+    raw_role = _extract(message, "role")
+    if isinstance(raw_role, str) and raw_role:
+        return raw_role
+    nested = _extract(message, "message")
+    if isinstance(nested, Mapping):
+        raw_nested_role = nested.get("role")
+        if isinstance(raw_nested_role, str) and raw_nested_role:
+            return raw_nested_role
+    raw_type = _extract(message, "type")
+    return raw_type if isinstance(raw_type, str) and raw_type else None
+
+
+def _message_text(message: Any) -> str | None:
+    nested = _extract(message, "message")
+    if isinstance(nested, Mapping):
+        text = _content_text(nested.get("content"))
+        if text:
+            return text
+    text = _content_text(_extract(message, "content"))
+    if text:
+        return text
+    result = _extract(message, "result")
+    return result if isinstance(result, str) and result else None
+
+
+def _content_text(content: Any) -> str | None:
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list | tuple):
+        return None
+    parts: list[str] = []
+    for block in content:
+        text = _extract(block, "text")
+        if isinstance(text, str) and text:
+            parts.append(text)
+    return "\n".join(parts) if parts else None
+
+
+def _message_session_id(message: Any) -> str | None:
+    value = _extract(message, "session_id", "sessionId")
+    return value if isinstance(value, str) and value else None
+
+
+def _message_id(message: Any) -> str | None:
+    value = _extract(message, "uuid", "message_id", "messageId", "id")
+    return value if isinstance(value, str) and value else None
+
+
+def _is_result_message(message: Any) -> bool:
+    if message.__class__.__name__ == "ResultMessage":
+        return True
+    raw_type = _extract(message, "type")
+    subtype = _extract(message, "subtype")
+    return raw_type == "result" or isinstance(subtype, str) and "result" in subtype
+
+
+def _message_is_error(message: Any) -> bool:
+    return _extract(message, "is_error", "isError") is True
+
+
+def _message_error_text(message: Any) -> str | None:
+    errors = _extract(message, "errors")
+    if isinstance(errors, list) and errors:
+        return "; ".join(str(error) for error in errors)
+    value = _extract(message, "error", "terminal_reason", "terminalReason")
+    return value if isinstance(value, str) and value else None
+
+
+def _extract(value: Any, *names: str) -> Any:
+    if isinstance(value, Mapping):
+        for name in names:
+            if name in value:
+                return value[name]
+        return None
+    for name in names:
+        candidate = getattr(value, name, None)
+        if candidate is not None:
+            return candidate
+    return None
+
+
+def _stable_id(*parts: Any) -> str:
+    payload = json.dumps(
+        parts,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return "claude_" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]

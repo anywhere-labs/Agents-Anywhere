@@ -8,7 +8,7 @@
 
 Claude 不能按旧 `Adapter` 方式接入，必须遵守 v2 的 typed runtime protocol。
 
-当前目录已被重置为文档占位状态。在 `provider.py` 和 `runtime.py` 重新实现之前，不要把 `ClaudeProvider` 注册进默认 runtime providers；如果注册表仍然 import `connector.runtimes.claude.provider`，Connector 启动会失败。
+当前目录已有最小 `provider.py` / `runtime.py` 骨架，并开始接入 Claude Agent SDK 的 turn loop。后续不要回到旧 adapter 写法；新增能力必须先在 `provider_config.py` 里声明真实 capability，再在 runtime 里补协议方法和测试。未实现的 model catalog、permission catalog、approval、attachment、command 等能力必须继续明确返回 unsupported / unavailable。
 
 ## 必须遵守的边界
 
