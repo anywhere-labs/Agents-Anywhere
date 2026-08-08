@@ -31,6 +31,7 @@ async def _test_claude_provider_discovers_sdk_with_initial_runtime_actions() -> 
     assert item.capabilities["startTurn"] is True
     assert item.capabilities["interruptTurn"] is True
     assert item.capabilities["sessionState"] is True
+    assert item.capabilities["permissionCatalog"] is True
     assert item.capabilities["interactions"] is True
     assert item.capabilities["commands"] is False
     assert item.metadata["sdk"]["available"] is True

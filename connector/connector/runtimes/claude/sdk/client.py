@@ -4,6 +4,9 @@ import inspect
 from collections.abc import AsyncIterator, Callable, Mapping
 from typing import Any
 
+from connector.runtimes.claude.domain.permissions import (
+    permission_mode_from_selection_id,
+)
 from connector.runtimes.claude.domain.session import ClaudeSession
 
 SdkLoader = Callable[[], Any]
@@ -47,6 +50,11 @@ def build_sdk_options(
         kwargs["cwd"] = session.cwd
     if session.external_session_id:
         kwargs["resume"] = session.external_session_id
+    permission_mode = permission_mode_from_selection_id(
+        session.selections.get("permission")
+    )
+    if permission_mode is not None:
+        kwargs["permission_mode"] = permission_mode
     executable_path = values.get("executablePath")
     if isinstance(executable_path, str) and executable_path:
         kwargs["cli_path"] = executable_path

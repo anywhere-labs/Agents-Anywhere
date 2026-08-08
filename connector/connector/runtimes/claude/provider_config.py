@@ -45,7 +45,7 @@ def claude_config_schema() -> dict[str, Any]:
 def claude_capabilities() -> dict[str, bool]:
     return {
         "modelCatalog": False,
-        "permissionCatalog": False,
+        "permissionCatalog": True,
         "sessionDiscovery": False,
         "sessionSnapshot": False,
         "sessionState": True,

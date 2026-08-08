@@ -50,6 +50,8 @@ async def _test_claude_runtime_reports_initial_runtime_capabilities() -> None:
     assert capabilities["session.interrupt"].available is True
     assert capabilities["session.interaction.approval"].supported is True
     assert capabilities["session.interaction.approval"].available is True
+    assert capabilities["catalog.permission"].supported is True
+    assert capabilities["catalog.permission"].available is True
     assert capabilities["runtime.attachment"].supported is False
 
 
@@ -62,7 +64,14 @@ async def _test_claude_runtime_empty_reads_are_stable() -> None:
 
     assert await runtime.list_sessions() == ()
     assert (await runtime.list_model_catalog()).models == ()
-    assert (await runtime.list_permission_catalog()).permissions == ()
+    assert [item.id for item in (await runtime.list_permission_catalog()).permissions] == [
+        "default",
+        "acceptEdits",
+        "plan",
+        "auto",
+        "dontAsk",
+        "bypassPermissions",
+    ]
 
 
 def test_claude_runtime_starts_turn_and_projects_timeline() -> None:
@@ -168,6 +177,63 @@ async def _test_claude_runtime_create_and_start_publishes_session_meta() -> None
 
     assert client.options.kwargs["cwd"] == "/repo"
     assert runtime._sessions["sess_new"].external_session_id == "claude_session_2"
+
+
+def test_claude_runtime_applies_permission_selection_to_sdk_options() -> None:
+    asyncio.run(_test_claude_runtime_applies_permission_selection_to_sdk_options())
+
+
+async def _test_claude_runtime_applies_permission_selection_to_sdk_options() -> None:
+    host = _RecordingHost()
+    client = _FakeClaudeClient(
+        messages=[SimpleNamespace(type="result", session_id="claude_permission")]
+    )
+    runtime = _runtime(host=host, client=client)
+    permission = (await runtime.list_permission_catalog(query="plan")).permissions[0]
+
+    update = await runtime.update_session_selections(
+        "sess_permission",
+        "claude_permission",
+        {"permission": permission.selection_id},
+    )
+    result = await runtime.start_turn(
+        "sess_permission",
+        "claude_permission",
+        "plan",
+    )
+    task = runtime._sessions["sess_permission"].active_task
+
+    assert update.ok is True
+    assert result.ok is True
+    assert task is not None
+
+    await task
+
+    assert client.options.kwargs["permission_mode"] == "plan"
+    assert host.session_state_updates[0]["selections"] == {
+        "permission": permission.selection_id
+    }
+    assert host.session_state_updates[1]["selections"] == {
+        "permission": permission.selection_id
+    }
+
+
+def test_claude_runtime_rejects_unknown_permission_selection() -> None:
+    asyncio.run(_test_claude_runtime_rejects_unknown_permission_selection())
+
+
+async def _test_claude_runtime_rejects_unknown_permission_selection() -> None:
+    runtime = _runtime()
+
+    result = await runtime.start_turn(
+        "sess_bad_permission",
+        None,
+        "hello",
+        selections={"permission": "sel_permission_missing"},
+    )
+
+    assert result.ok is False
+    assert result.code == "claude_invalid_selection"
 
 
 def test_claude_runtime_projects_tool_blocks_to_timeline() -> None:

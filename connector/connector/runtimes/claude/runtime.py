@@ -13,6 +13,7 @@ from connector.runtime_protocol import (
     RuntimeCapabilitySet,
     RuntimeConfig,
     RuntimeIdentity,
+    RuntimeInvalidRequestError,
     RuntimeModelCatalog,
     RuntimeOperationResult,
     RuntimePermissionCatalog,
@@ -29,6 +30,10 @@ from connector.runtimes.claude.domain.approvals import (
     decision_from_action,
     notice_transition,
     permission_result_from_decision,
+)
+from connector.runtimes.claude.domain.permissions import (
+    claude_permission_catalog,
+    permission_mode_from_selection_id,
 )
 from connector.runtimes.claude.domain.session import ClaudeSession
 from connector.runtimes.claude.sdk.client import (
@@ -153,12 +158,10 @@ class ClaudeRuntime(AgentRuntime):
         query: str | None = None,
         limit: int = 100,
     ) -> RuntimePermissionCatalog:
-        _ = query
-        _ = limit
-        return RuntimePermissionCatalog(
-            runtime="claude",
+        return claude_permission_catalog(
             revision=self.config.revision,
-            permissions=(),
+            query=query,
+            limit=limit,
         )
 
     async def get_session_state(
@@ -226,6 +229,16 @@ class ClaudeRuntime(AgentRuntime):
                     available=True,
                     metadata={"source": "claude.runtime"},
                 ),
+                RuntimeCapability(
+                    capability_id="catalog.permission",
+                    scope="session",
+                    runtime="claude",
+                    session_id=session_id,
+                    connector_id=self.host.connector_id,
+                    supported=True,
+                    available=True,
+                    metadata={"source": "claude.runtime"},
+                ),
             ),
             metadata={"source": "claude.runtime"},
         )
@@ -251,7 +264,6 @@ class ClaudeRuntime(AgentRuntime):
         attachments: tuple[RuntimeAttachment, ...] = (),
         client_message_id: str | None = None,
     ) -> RuntimeOperationResult:
-        _ = selections
         session = self._session_for(session_id, None, cwd)
         await self.host.session_meta_upsert(
             session_id=session_id,
@@ -270,6 +282,7 @@ class ClaudeRuntime(AgentRuntime):
             session_id=session_id,
             external_session_id=session.external_session_id,
             content=content,
+            selections=selections,
             attachments=attachments,
             client_message_id=client_message_id,
         )
@@ -293,7 +306,6 @@ class ClaudeRuntime(AgentRuntime):
         attachments: tuple[RuntimeAttachment, ...] = (),
         client_message_id: str | None = None,
     ) -> RuntimeOperationResult:
-        _ = selections
         if attachments:
             return RuntimeOperationResult(
                 ok=False,
@@ -307,12 +319,21 @@ class ClaudeRuntime(AgentRuntime):
                 code="claude_turn_already_running",
                 message="Claude runtime already has an active turn for this session",
             )
+        try:
+            session.selections = self._effective_selections(session_id, selections)
+        except RuntimeInvalidRequestError as exc:
+            return RuntimeOperationResult(
+                ok=False,
+                code="claude_invalid_selection",
+                message=str(exc),
+            )
 
         turn_id = f"turn_claude_{secrets.token_urlsafe(12)}"
         session.active_turn_id = turn_id
         await self._set_session_state(
             session,
             "waiting",
+            selections=session.selections,
             metadata={"source": "claude.turn.start", "turnId": turn_id},
         )
         session.active_task = asyncio.create_task(
@@ -328,6 +349,37 @@ class ClaudeRuntime(AgentRuntime):
             result={
                 "turnId": turn_id,
                 "externalSessionId": session.external_session_id,
+            },
+        )
+
+    async def update_session_selections(
+        self,
+        session_id: str,
+        external_session_id: str | None,
+        selections: Mapping[str, str | None],
+    ) -> RuntimeOperationResult:
+        session = self._session_for(session_id, external_session_id, None)
+        try:
+            session.selections = self._effective_selections(session_id, selections)
+        except RuntimeInvalidRequestError as exc:
+            return RuntimeOperationResult(
+                ok=False,
+                code="claude_invalid_selection",
+                message=str(exc),
+            )
+        state = self._session_states.get(session_id)
+        await self._set_session_state(
+            session,
+            state.status if state is not None else "idle",
+            selections=session.selections,
+            metadata={"source": "claude.selections.update"},
+        )
+        return RuntimeOperationResult(
+            ok=True,
+            result={
+                "sessionId": session_id,
+                "externalSessionId": session.external_session_id,
+                "selections": session.selections,
             },
         )
 
@@ -668,6 +720,7 @@ class ClaudeRuntime(AgentRuntime):
         self,
         session: ClaudeSession,
         status: str,
+        selections: Mapping[str, str | None] | None = None,
         error: Mapping[str, Any] | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
@@ -675,6 +728,7 @@ class ClaudeRuntime(AgentRuntime):
             session_id=session.session_id,
             external_session_id=session.external_session_id,
             status=status,  # type: ignore[arg-type]
+            selections=selections,
             error=error,
             metadata=metadata,
         )
@@ -699,3 +753,17 @@ class ClaudeRuntime(AgentRuntime):
         approval_id = f"{turn_id}_{self._approval_seq}"
         self._approval_seq += 1
         return approval_id
+
+    def _effective_selections(
+        self,
+        session_id: str,
+        selections: Mapping[str, str | None] | None,
+    ) -> dict[str, str | None]:
+        state = self._session_states.get(session_id)
+        effective = dict(state.selections if state is not None else {})
+        effective.update(dict(selections or {}))
+        model_selection = effective.get("model")
+        if model_selection is not None:
+            raise RuntimeInvalidRequestError("Claude model selection is not supported yet")
+        permission_mode_from_selection_id(effective.get("permission"))
+        return effective
