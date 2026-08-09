@@ -269,19 +269,12 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 7;
-				DEVELOPMENT_TEAM = 3J6C9L2VYJ;
+				DEVELOPMENT_TEAM = UM3Z9G5DNH;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleURLTypes = (
-					{
-						CFBundleURLName = "com.t4wefan.agents-anywhere";
-						CFBundleURLSchemes = (
-							"agents-anywhere",
-						);
-					},
-				);
+				INFOPLIST_KEY_CFBundleURLTypes = "{\n    CFBundleURLName = \"com.t4wefan.agents-anywhere\";\n    CFBundleURLSchemes =     (\n        \"agents-anywhere\"\n    );\n}";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Scan login QR codes and attach camera photos to sessions.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
@@ -299,7 +292,7 @@
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.6;
 				MARKETING_VERSION = 0.1.7.2;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.t4wefan.agents-anywhere";
+				PRODUCT_BUNDLE_IDENTIFIER = com.agentsanywhere.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -327,14 +320,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleURLTypes = (
-					{
-						CFBundleURLName = "com.t4wefan.agents-anywhere";
-						CFBundleURLSchemes = (
-							"agents-anywhere",
-						);
-					},
-				);
+				INFOPLIST_KEY_CFBundleURLTypes = "{\n    CFBundleURLName = \"com.t4wefan.agents-anywhere\";\n    CFBundleURLSchemes =     (\n        \"agents-anywhere\"\n    );\n}";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Scan login QR codes and attach camera photos to sessions.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
@@ -352,7 +338,7 @@
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.6;
 				MARKETING_VERSION = 0.1.7.2;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.t4wefan.agents-anywhere";
+				PRODUCT_BUNDLE_IDENTIFIER = com.agentsanywhere.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
