@@ -46,12 +46,15 @@ class ClaudeMessageProjector:
         role: str,
         text: str,
         event: str,
+        status: str = "done",
         client_message_id: str | None = None,
         native_item_id: str | None = None,
+        item_id: str | None = None,
+        revision: int = 1,
         attachments: tuple[Mapping[str, object], ...] = (),
     ) -> RuntimeTimelineItem:
         stable_key = native_item_id or client_message_id or text
-        item_id = _stable_id(
+        resolved_item_id = item_id or _stable_id(
             "message",
             session.session_id,
             session.external_session_id,
@@ -59,15 +62,15 @@ class ClaudeMessageProjector:
             role,
             stable_key,
         )
-        order_seq = self._order_by_id.get(item_id)
+        order_seq = self._order_by_id.get(resolved_item_id)
         if order_seq is None:
             order_seq = self._next_order_seq
             self._next_order_seq += 1
-            self._order_by_id[item_id] = order_seq
+            self._order_by_id[resolved_item_id] = order_seq
         return MessageTimelineItem(
-            id=item_id,
+            id=resolved_item_id,
             type="message",
-            status="done",
+            status=status,  # type: ignore[arg-type]
             role=role,  # type: ignore[arg-type]
             turn_id=turn_id,
             content=MarkdownMessageContent(
@@ -86,6 +89,7 @@ class ClaudeMessageProjector:
                 event=event,
                 client_message_id=client_message_id,
             ),
+            revision=revision,
         ).to_platform_item(session_id=session.session_id, order_seq=order_seq)
 
     def tool_items_for_message(

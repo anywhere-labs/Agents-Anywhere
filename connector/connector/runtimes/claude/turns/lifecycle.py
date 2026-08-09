@@ -32,6 +32,10 @@ from connector.runtimes.claude.timeline.messages import (
     message_session_id,
     message_text,
 )
+from connector.runtimes.claude.timeline.stream import (
+    ClaudeStreamAccumulator,
+    is_stream_event,
+)
 from connector.runtimes.claude.turns.attachments import (
     content_with_attachment_notes,
     materialize_claude_attachments,
@@ -107,11 +111,24 @@ class ClaudeTurnRunner:
             await query_client(client, effective_content)
 
             result_error: Mapping[str, Any] | None = None
-            emitted_assistant_content = False
+            emitted_final_assistant_content = False
+            stream_accumulator = ClaudeStreamAccumulator()
             async for message in receive_response_messages(client):
                 external_session_id = message_session_id(message)
                 if external_session_id is not None:
                     await self._update_external_session_id(session, external_session_id)
+                stream_item = stream_accumulator.item_from_stream_event(
+                    session=session,
+                    turn_id=turn_id,
+                    message=message,
+                    projector=self.timeline,
+                )
+                if stream_item is not None:
+                    await self.notifications.timeline_activity.timeline_item_upsert(
+                        stream_item
+                    )
+                if is_stream_event(message):
+                    continue
                 if is_result_message(message):
                     if message_is_error(message):
                         result_error = {
@@ -119,7 +136,7 @@ class ClaudeTurnRunner:
                             "message": message_error_text(message)
                             or "Claude turn completed with an error",
                         }
-                    if not emitted_assistant_content:
+                    if not emitted_final_assistant_content:
                         text = message_text(message)
                         if text:
                             await self.notifications.timeline_activity.timeline_item_upsert(
@@ -130,9 +147,15 @@ class ClaudeTurnRunner:
                                     text=text,
                                     event="claude.turn.result",
                                     native_item_id=message_id(message),
+                                    item_id=stream_accumulator.final_item_id(
+                                        session,
+                                        turn_id,
+                                    ),
+                                    revision=stream_accumulator.next_final_revision(),
                                 )
                             )
-                            emitted_assistant_content = True
+                            emitted_final_assistant_content = True
+                            stream_accumulator.reset()
                     continue
                 for item in self.timeline.tool_items_for_message(
                     session=session,
@@ -155,9 +178,12 @@ class ClaudeTurnRunner:
                         text=text,
                         event="claude.turn.assistant",
                         native_item_id=message_id(message),
+                        item_id=stream_accumulator.final_item_id(session, turn_id),
+                        revision=stream_accumulator.next_final_revision(),
                     )
                 )
-                emitted_assistant_content = True
+                emitted_final_assistant_content = True
+                stream_accumulator.reset()
 
             if result_error is not None:
                 await self.notifications.session_state.session_state_update(

@@ -188,6 +188,74 @@ async def _test_claude_runtime_starts_turn_and_projects_timeline() -> None:
     assert assistant_item.source["itemId"] == "assistant_1"
 
 
+def test_claude_runtime_stream_events_upsert_partial_assistant_message() -> None:
+    asyncio.run(_test_claude_runtime_stream_events_upsert_partial_assistant_message())
+
+
+async def _test_claude_runtime_stream_events_upsert_partial_assistant_message() -> None:
+    host = _RecordingHost()
+    client = _FakeClaudeClient(
+        messages=[
+            StreamEvent(
+                uuid="stream_uuid_1",
+                session_id="claude_stream",
+                event={"type": "message_start", "message": {"id": "msg_stream_1"}},
+            ),
+            StreamEvent(
+                uuid="stream_uuid_1",
+                session_id="claude_stream",
+                event={
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": "Hel"},
+                },
+            ),
+            StreamEvent(
+                uuid="stream_uuid_1",
+                session_id="claude_stream",
+                event={
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": "lo"},
+                },
+            ),
+            SimpleNamespace(
+                type="assistant",
+                uuid="assistant_final",
+                session_id="claude_stream",
+                message={
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "Hello!"}],
+                },
+            ),
+            SimpleNamespace(type="result", session_id="claude_stream"),
+        ]
+    )
+    runtime = _runtime(host=host, client=client)
+
+    result = await runtime.start_turn("sess_stream", None, "stream please")
+    task = runtime._sessions["sess_stream"].active_task
+
+    assert result.ok is True
+    assert task is not None
+
+    await task
+
+    assistant_items = [
+        item for item in host.timeline_item_upserts if item.role == "assistant"
+    ]
+    assert len(assistant_items) == 3
+    assert len({item.id for item in assistant_items}) == 1
+    assert [item.content["text"] for item in assistant_items] == [
+        "Hel",
+        "Hello",
+        "Hello!",
+    ]
+    assert [item.status for item in assistant_items] == ["running", "running", "done"]
+    assert [item.revision for item in assistant_items] == [1, 2, 3]
+    assert runtime._sessions["sess_stream"].external_session_id == "claude_stream"
+
+
 def test_claude_runtime_create_and_start_publishes_session_meta() -> None:
     asyncio.run(_test_claude_runtime_create_and_start_publishes_session_meta())
 
@@ -1538,6 +1606,10 @@ class _HistorySdk:
 
     def get_session_messages(self, session_id: str) -> list[Any]:
         return list(self.messages.get(session_id, []))
+
+
+class StreamEvent(SimpleNamespace):
+    pass
 
 
 class _RecordingHost(RuntimeHostClient):
