@@ -133,7 +133,7 @@ private struct ChatCardLayer: View {
     let onNewChat: () -> Void
     let onDismiss: () -> Void
 
-    private let screenShape = RoundedRectangle(cornerRadius: 48, style: .continuous)
+    private let screenShape = ConcentricRectangle()
 
     var body: some View {
         ChatSurfaceView(
@@ -154,7 +154,7 @@ private struct ChatCardLayer: View {
         .clipShape(screenShape)
         .overlay {
             screenShape
-                .strokeBorder(.primary.opacity(0.16), lineWidth: outlineWidth)
+                .stroke(.primary.opacity(0.16), lineWidth: outlineWidth)
         }
         .shadow(
             color: .black.opacity(0.34 * progress),
