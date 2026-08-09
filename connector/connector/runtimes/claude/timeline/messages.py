@@ -54,13 +54,17 @@ class ClaudeMessageProjector:
         attachments: tuple[Mapping[str, object], ...] = (),
     ) -> RuntimeTimelineItem:
         stable_key = native_item_id or client_message_id or text
-        resolved_item_id = item_id or _stable_id(
-            "message",
-            session.session_id,
-            session.external_session_id,
-            turn_id,
-            role,
-            stable_key,
+        resolved_item_id = item_id or (
+            stable_message_item_id(session, native_item_id)
+            if native_item_id
+            else _stable_id(
+                "message",
+                session.session_id,
+                session.external_session_id,
+                turn_id,
+                role,
+                stable_key,
+            )
         )
         order_seq = self._order_by_id.get(resolved_item_id)
         if order_seq is None:
@@ -235,7 +239,12 @@ def message_session_id(message: Any) -> str | None:
 
 
 def message_id(message: Any) -> str | None:
-    value = _extract(message, "uuid", "message_id", "messageId", "id")
+    nested = _extract(message, "message")
+    if isinstance(nested, Mapping):
+        value = _extract(nested, "id")
+        if isinstance(value, str) and value:
+            return value
+    value = _extract(message, "message_id", "messageId", "id", "uuid")
     return value if isinstance(value, str) and value else None
 
 
@@ -463,10 +472,22 @@ def _extract(value: Any, *names: str) -> Any:
 
 
 def _stable_id(*parts: Any) -> str:
+    return "claude_" + _short(*parts)
+
+
+def stable_message_item_id(
+    session: ClaudeSession,
+    native_message_id: str,
+) -> str:
+    scope = session.external_session_id or session.session_id
+    return "claude_msg_" + _short("message", scope, native_message_id)
+
+
+def _short(*parts: Any) -> str:
     payload = json.dumps(
         parts,
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
     )
-    return "claude_" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]

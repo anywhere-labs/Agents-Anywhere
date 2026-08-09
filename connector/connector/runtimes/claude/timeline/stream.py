@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -8,13 +7,15 @@ from typing import Any
 from connector.logging import logger
 from connector.runtime_protocol import RuntimeTimelineItem
 from connector.runtimes.claude.domain.session import ClaudeSession
-from connector.runtimes.claude.timeline.messages import ClaudeMessageProjector
+from connector.runtimes.claude.timeline.messages import (
+    ClaudeMessageProjector,
+    stable_message_item_id,
+)
 
 
 @dataclass(slots=True)
 class ClaudeStreamAccumulator:
     partial_message_id: str | None = None
-    partial_message_uuid: str | None = None
     partial_text_blocks: dict[int, str] = field(default_factory=dict)
     partial_revision: int = 0
 
@@ -37,7 +38,6 @@ class ClaudeStreamAccumulator:
             self.partial_message_id = (
                 _string(payload.get("id")) if isinstance(payload, Mapping) else None
             )
-            self.partial_message_uuid = _string(_extract(message, "uuid"))
             return None
         if event_type == "content_block_start":
             index = _int(event.get("index"))
@@ -63,7 +63,6 @@ class ClaudeStreamAccumulator:
 
     def reset(self) -> None:
         self.partial_message_id = None
-        self.partial_message_uuid = None
         self.partial_text_blocks.clear()
         self.partial_revision = 0
 
@@ -72,14 +71,10 @@ class ClaudeStreamAccumulator:
         session: ClaudeSession,
         turn_id: str,
     ) -> str | None:
+        _ = turn_id
         if self.partial_message_id is None:
             return None
-        return _stable_stream_item_id(
-            session.session_id,
-            session.external_session_id,
-            turn_id,
-            self.partial_message_id,
-        )
+        return stable_message_item_id(session, self.partial_message_id)
 
     def next_final_revision(self) -> int:
         if self.partial_revision <= 0:
@@ -108,12 +103,7 @@ class ClaudeStreamAccumulator:
             )
             return None
         self.partial_revision += 1
-        item_id = _stable_stream_item_id(
-            session.session_id,
-            session.external_session_id,
-            turn_id,
-            message_id,
-        )
+        item_id = stable_message_item_id(session, message_id)
         return projector.message_item(
             session=session,
             turn_id=turn_id,
@@ -121,7 +111,7 @@ class ClaudeStreamAccumulator:
             text=text,
             event="claude.turn.assistant.partial",
             status="running",
-            native_item_id=self.partial_message_uuid or message_id,
+            native_item_id=message_id,
             item_id=item_id,
             revision=self.partial_revision,
         )
@@ -147,25 +137,6 @@ def _text_from_stream_block(value: Any) -> str | None:
     if block_type == "input_json_delta":
         return None
     return _string(value.get("text"))
-
-
-def _stable_stream_item_id(
-    session_id: str,
-    external_session_id: str | None,
-    turn_id: str,
-    message_id: str,
-) -> str:
-    payload = ":".join(
-        (
-            "claude-stream-message",
-            session_id,
-            external_session_id or "",
-            turn_id,
-            message_id,
-        )
-    )
-    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
-    return f"msg_claude_{digest}"
 
 
 def _extract(value: Any, *names: str) -> Any:
