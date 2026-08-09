@@ -74,6 +74,9 @@ class ClaudeSessionStore:
             return self._session_by_external_id(external_session_id)
         return None
 
+    def sessions(self) -> tuple[ClaudeSession, ...]:
+        return tuple(self._sessions.values())
+
     def record_timeline_item(self, item: RuntimeTimelineItem) -> None:
         session = self.ensure(item.session_id)
         previous = session.timeline_items.get(item.id)
