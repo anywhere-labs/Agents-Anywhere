@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -20,8 +21,19 @@ class ClaudeSession:
     timeline_revision: int = 0
     synced_revision: int = 0
     active_turn_id: str | None = None
+    active_turn_started_at_monotonic: float | None = None
     active_task: asyncio.Task[None] | None = None
     client: Any = None
+
+    def start_active_turn(self, turn_id: str) -> None:
+        self.active_turn_id = turn_id
+        self.active_turn_started_at_monotonic = time.monotonic()
+
+    def clear_active_turn(self, turn_id: str | None = None) -> None:
+        if turn_id is not None and self.active_turn_id != turn_id:
+            return
+        self.active_turn_id = None
+        self.active_turn_started_at_monotonic = None
 
 
 def stable_session_id(connector_id: str, external_session_id: str) -> str:

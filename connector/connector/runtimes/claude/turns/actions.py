@@ -37,7 +37,7 @@ class ClaudeTurnActionHandler:
                 tasks.append(session.active_task)
             await disconnect_client(session.client)
             session.client = None
-            session.active_turn_id = None
+            session.clear_active_turn()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -71,7 +71,7 @@ class ClaudeTurnActionHandler:
             )
 
         turn_id = f"turn_claude_{secrets.token_urlsafe(12)}"
-        session.active_turn_id = turn_id
+        session.start_active_turn(turn_id)
         await self.notifications.session_state.session_state_update(
             session,
             "waiting",
@@ -115,7 +115,7 @@ class ClaudeTurnActionHandler:
             session.active_task.cancel()
             interrupted = True
         turn_id = session.active_turn_id
-        session.active_turn_id = None
+        session.clear_active_turn()
         await self.notifications.session_state.session_state_update(
             session,
             "idle",

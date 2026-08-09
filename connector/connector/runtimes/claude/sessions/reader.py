@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -35,6 +36,8 @@ from connector.runtimes.claude.timeline.messages import (
     message_text,
 )
 
+UNRESOLVED_LIVE_HISTORY_IMPORT_TTL_SECONDS = 120.0
+
 
 @dataclass(slots=True)
 class ClaudeSessionReader:
@@ -54,6 +57,11 @@ class ClaudeSessionReader:
             limit=limit,
             cursor=cursor,
             force=force,
+        )
+        history_sessions = _filter_history_sessions_for_unresolved_live_sessions(
+            runtime_sessions=self.session_store.sessions(),
+            local_sessions=local_sessions,
+            history_sessions=history_sessions,
         )
         return _merge_session_metas(local_sessions, history_sessions)[:limit]
 
@@ -337,6 +345,67 @@ def _merge_session_metas(
             reverse=True,
         )
     )
+
+
+def _filter_history_sessions_for_unresolved_live_sessions(
+    *,
+    runtime_sessions: tuple[ClaudeSession, ...],
+    local_sessions: tuple[SessionMeta, ...],
+    history_sessions: tuple[SessionMeta, ...],
+) -> tuple[SessionMeta, ...]:
+    barriers = _unresolved_live_session_barriers(runtime_sessions)
+    if not barriers:
+        return history_sessions
+
+    local_session_ids = {session.session_id for session in local_sessions}
+    local_external_session_ids = {
+        session.external_session_id
+        for session in local_sessions
+        if session.external_session_id is not None
+    }
+    filtered: list[SessionMeta] = []
+    for session in history_sessions:
+        if _session_meta_source(session) != "claude.session/list":
+            filtered.append(session)
+            continue
+        if session.session_id in local_session_ids:
+            filtered.append(session)
+            continue
+        if (
+            session.external_session_id is not None
+            and session.external_session_id in local_external_session_ids
+        ):
+            filtered.append(session)
+
+    return tuple(filtered)
+
+
+def _unresolved_live_session_barriers(
+    sessions: tuple[ClaudeSession, ...],
+) -> tuple[str, ...]:
+    now = time.monotonic()
+    barriers: list[str] = []
+    for session in sessions:
+        if session.external_session_id is not None:
+            continue
+        active_task_running = (
+            session.active_task is not None and not session.active_task.done()
+        )
+        if session.active_turn_id is None and not active_task_running:
+            continue
+        started_at = session.active_turn_started_at_monotonic
+        if started_at is None:
+            continue
+        age = now - started_at
+        if age > UNRESOLVED_LIVE_HISTORY_IMPORT_TTL_SECONDS:
+            continue
+        barriers.append(session.session_id)
+    return tuple(barriers)
+
+
+def _session_meta_source(session: SessionMeta) -> str:
+    source = session.metadata.get("source")
+    return str(source) if source is not None else "-"
 
 
 def _merge_session_meta(primary: SessionMeta, secondary: SessionMeta) -> SessionMeta:

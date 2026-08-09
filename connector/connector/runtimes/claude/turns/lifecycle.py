@@ -245,5 +245,4 @@ class ClaudeTurnRunner:
         )
 
     def _release_active_turn(self, session: ClaudeSession, turn_id: str) -> None:
-        if session.active_turn_id == turn_id:
-            session.active_turn_id = None
+        session.clear_active_turn(turn_id)
