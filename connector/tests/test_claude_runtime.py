@@ -219,6 +219,41 @@ async def _test_claude_runtime_create_and_start_publishes_session_meta() -> None
     assert runtime._sessions["sess_new"].external_session_id == "claude_session_2"
 
 
+def test_claude_runtime_projects_result_only_reply() -> None:
+    asyncio.run(_test_claude_runtime_projects_result_only_reply())
+
+
+async def _test_claude_runtime_projects_result_only_reply() -> None:
+    host = _RecordingHost()
+    client = _FakeClaudeClient(
+        messages=[
+            SimpleNamespace(
+                type="result",
+                uuid="result_1",
+                session_id="claude_result_only",
+                result="final answer",
+            )
+        ]
+    )
+    runtime = _runtime(host=host, client=client)
+
+    result = await runtime.start_turn("sess_result_only", None, "hello")
+    task = runtime._sessions["sess_result_only"].active_task
+
+    assert result.ok is True
+    assert task is not None
+
+    await task
+
+    assistant_items = [
+        item for item in host.timeline_item_upserts if item.role == "assistant"
+    ]
+    assert len(assistant_items) == 1
+    assert assistant_items[0].content["text"] == "final answer"
+    assert assistant_items[0].source["event"] == "claude.turn.result"
+    assert host.session_state_updates[-1]["status"] == "idle"
+
+
 def test_claude_runtime_lists_sessions_and_returns_local_snapshot() -> None:
     asyncio.run(_test_claude_runtime_lists_sessions_and_returns_local_snapshot())
 
@@ -903,6 +938,82 @@ async def _test_claude_runtime_projects_tool_blocks_to_timeline() -> None:
     assert tool_result.source["itemType"] == "tool_result"
 
 
+def test_claude_runtime_projects_special_tool_content() -> None:
+    asyncio.run(_test_claude_runtime_projects_special_tool_content())
+
+
+async def _test_claude_runtime_projects_special_tool_content() -> None:
+    host = _RecordingHost()
+    client = _FakeClaudeClient(
+        messages=[
+            SimpleNamespace(
+                type="assistant",
+                session_id="claude_special_tools",
+                message={
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "task_internal",
+                            "name": "TaskCreate",
+                            "input": {"description": "hidden"},
+                        },
+                        {
+                            "type": "tool_use",
+                            "id": "mcp_1",
+                            "name": "mcp__github__search",
+                            "input": {"query": "repo"},
+                        },
+                        {
+                            "type": "tool_use",
+                            "id": "web_1",
+                            "name": "WebSearch",
+                            "input": {"query": "Claude SDK"},
+                        },
+                        {
+                            "type": "tool_use",
+                            "id": "edit_1",
+                            "name": "Edit",
+                            "input": {
+                                "file_path": "app.py",
+                                "old_string": "old",
+                                "new_string": "new",
+                            },
+                        },
+                    ],
+                },
+            ),
+            SimpleNamespace(type="result", session_id="claude_special_tools"),
+        ]
+    )
+    runtime = _runtime(host=host, client=client)
+
+    result = await runtime.start_turn(
+        "sess_special_tools",
+        "claude_special_tools",
+        "use tools",
+    )
+    task = runtime._sessions["sess_special_tools"].active_task
+
+    assert result.ok is True
+    assert task is not None
+
+    await task
+
+    tool_items = [item for item in host.timeline_item_upserts if item.type == "tool"]
+    assert [item.content["kind"] for item in tool_items] == [
+        "mcp",
+        "web_search",
+        "file_change",
+    ]
+    assert tool_items[0].content["server"] == "github"
+    assert tool_items[0].content["tool"] == "search"
+    assert tool_items[1].content["query"] == "Claude SDK"
+    edit_change = tool_items[2].content["changes"][0]
+    assert edit_change["path"] == "app.py"
+    assert edit_change["diff"] == "--- app.py\n+++ app.py\n@@\n-old\n+new"
+
+
 def test_claude_runtime_interrupts_active_turn() -> None:
     asyncio.run(_test_claude_runtime_interrupts_active_turn())
 
@@ -979,6 +1090,61 @@ async def _test_claude_runtime_result_error_blocks_session_state() -> None:
     assert host.session_state_updates[-1]["status"] == "blocked"
     assert host.session_state_updates[-1]["error"] == state.error
     assert "error" not in [update["status"] for update in host.session_state_updates]
+
+
+def test_claude_runtime_includes_redacted_stderr_in_blocked_error() -> None:
+    asyncio.run(_test_claude_runtime_includes_redacted_stderr_in_blocked_error())
+
+
+async def _test_claude_runtime_includes_redacted_stderr_in_blocked_error() -> None:
+    host = _RecordingHost()
+    client = _StderrFailingClaudeClient()
+    runtime = _runtime(host=host, client=client)
+
+    result = await runtime.start_turn("sess_stderr", None, "hello")
+    task = runtime._sessions["sess_stderr"].active_task
+
+    assert result.ok is True
+    assert task is not None
+
+    await task
+
+    state = await runtime.get_session_state("sess_stderr")
+
+    assert state is not None
+    assert state.status == "blocked"
+    assert state.error is not None
+    assert "Claude stderr:" in state.error["message"]
+    assert "api_key=***" in state.error["message"]
+    assert "secret-token" not in state.error["message"]
+    assert "error" not in [update["status"] for update in host.session_state_updates]
+
+
+def test_claude_runtime_sets_permission_keepalive_hook_when_available() -> None:
+    asyncio.run(_test_claude_runtime_sets_permission_keepalive_hook_when_available())
+
+
+async def _test_claude_runtime_sets_permission_keepalive_hook_when_available() -> None:
+    client = _FakeClaudeClient(
+        messages=[SimpleNamespace(type="result", session_id="claude_hooks")]
+    )
+    sdk = _default_sdk()
+    sdk.HookMatcher = _FakeHookMatcher
+    runtime = _runtime(client=client, sdk=sdk)
+
+    result = await runtime.start_turn("sess_hooks", "claude_hooks", "hello")
+    task = runtime._sessions["sess_hooks"].active_task
+
+    assert result.ok is True
+    assert task is not None
+
+    await task
+
+    assert "hooks" in client.options.kwargs
+    hook = client.options.kwargs["hooks"]["PreToolUse"][0]
+    assert isinstance(hook, _FakeHookMatcher)
+    assert hook.matcher is None
+    assert len(hook.hooks) == 1
 
 
 def test_claude_runtime_materializes_attachments_for_turn_start(
@@ -1076,6 +1242,7 @@ async def _test_claude_runtime_tool_approval_round_trips_to_sdk() -> None:
     ]
     assert isinstance(client.permission_results[0], _PermissionResultAllow)
     assert client.permission_results[0].behavior == "allow"
+    assert client.permission_results[0].updated_input == {"command": "ls"}
     assert await runtime.get_session_notices("sess_approval") == ()
     assert host.session_state_updates[-1]["status"] == "idle"
 
@@ -1169,6 +1336,12 @@ class _ApprovalClaudeClient(_FakeClaudeClient):
         return [SimpleNamespace(type="result", session_id="claude_session_approval")]
 
 
+class _StderrFailingClaudeClient(_FakeClaudeClient):
+    async def receive_response(self) -> list[Any]:
+        self.options.kwargs["stderr"]("api_key=secret-token")
+        raise RuntimeError("Claude crashed")
+
+
 class _BlockingClaudeClient(_FakeClaudeClient):
     def __init__(self, release: asyncio.Event) -> None:
         super().__init__()
@@ -1177,6 +1350,12 @@ class _BlockingClaudeClient(_FakeClaudeClient):
     async def receive_response(self) -> list[Any]:
         await self._release.wait()
         return []
+
+
+class _FakeHookMatcher:
+    def __init__(self, matcher: Any, hooks: list[Any]) -> None:
+        self.matcher = matcher
+        self.hooks = hooks
 
 
 class _HistorySdk:
@@ -1316,8 +1495,13 @@ class _RecordingHost(RuntimeHostClient):
 
 
 class _PermissionResultAllow:
-    def __init__(self, behavior: str = "allow") -> None:
+    def __init__(
+        self,
+        behavior: str = "allow",
+        updated_input: dict[str, Any] | None = None,
+    ) -> None:
         self.behavior = behavior
+        self.updated_input = updated_input
 
 
 class _PermissionResultDeny:

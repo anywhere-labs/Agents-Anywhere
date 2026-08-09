@@ -114,7 +114,11 @@ class ClaudeInteractionController:
                 tool_input=tool_input,
                 context=context,
             )
-            return permission_result_from_decision(sdk, decision)
+            return permission_result_from_decision(
+                sdk,
+                decision,
+                updated_input=tool_input,
+            )
 
         return can_use_tool
 

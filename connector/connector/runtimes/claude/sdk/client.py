@@ -26,8 +26,15 @@ def new_sdk_client(
     session: ClaudeSession,
     client_factory: ClaudeClientFactory | None = None,
     can_use_tool: Any | None = None,
+    stderr: Callable[[str], None] | None = None,
 ) -> Any:
-    options = build_sdk_options(sdk, config_values, session, can_use_tool=can_use_tool)
+    options = build_sdk_options(
+        sdk,
+        config_values,
+        session,
+        can_use_tool=can_use_tool,
+        stderr=stderr,
+    )
     if client_factory is not None:
         return client_factory(sdk, options)
     client_cls = getattr(sdk, "ClaudeSDKClient", None)
@@ -44,6 +51,7 @@ def build_sdk_options(
     config_values: Mapping[str, Any],
     session: ClaudeSession,
     can_use_tool: Any | None = None,
+    stderr: Callable[[str], None] | None = None,
 ) -> Any:
     values = dict(config_values)
     kwargs: dict[str, Any] = {"include_partial_messages": True}
@@ -72,6 +80,11 @@ def build_sdk_options(
         kwargs["env"] = dict(environment)
     if can_use_tool is not None:
         kwargs["can_use_tool"] = can_use_tool
+    if stderr is not None:
+        kwargs["stderr"] = stderr
+    hooks = _permission_hooks(sdk)
+    if hooks is not None:
+        kwargs["hooks"] = hooks
     options_cls = getattr(sdk, "ClaudeAgentOptions", None) or getattr(
         sdk,
         "ClaudeCodeOptions",
@@ -129,3 +142,34 @@ async def maybe_await(value: Any) -> Any:
     if inspect.isawaitable(value):
         return await value
     return value
+
+
+def _permission_hooks(sdk: Any) -> dict[str, Any] | None:
+    hook_matcher = _optional_attr(sdk, "HookMatcher", "types.HookMatcher")
+    if hook_matcher is None:
+        return None
+
+    async def keep_permission_stream_open(
+        _input_data: Any,
+        _tool_use_id: Any = None,
+        _context: Any = None,
+    ) -> dict[str, bool]:
+        return {"continue_": True}
+
+    return {
+        "PreToolUse": [
+            hook_matcher(matcher=None, hooks=[keep_permission_stream_open])
+        ]
+    }
+
+
+def _optional_attr(root: Any, *paths: str) -> Any:
+    for path in paths:
+        current = root
+        for part in path.split("."):
+            current = getattr(current, part, None)
+            if current is None:
+                break
+        if current is not None:
+            return current
+    return None

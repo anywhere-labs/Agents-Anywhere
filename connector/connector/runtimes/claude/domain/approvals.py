@@ -85,17 +85,24 @@ def decision_from_action(action_id: str) -> ClaudeApprovalDecision:
 def permission_result_from_decision(
     sdk: Any,
     decision: ClaudeApprovalDecision,
+    updated_input: Mapping[str, Any] | None = None,
 ) -> Any:
     if decision.allowed:
         allow_cls = getattr(sdk, "PermissionResultAllow", None)
         if allow_cls is None:
-            return {"behavior": "allow"}
-        return allow_cls(behavior="allow")
+            return {"behavior": "allow", "updatedInput": dict(updated_input or {})}
+        try:
+            return allow_cls(behavior="allow", updated_input=dict(updated_input or {}))
+        except TypeError:
+            return allow_cls(updated_input=dict(updated_input or {}))
     deny_cls = getattr(sdk, "PermissionResultDeny", None)
     message = decision.message or "Denied by user"
     if deny_cls is None:
         return {"behavior": "deny", "message": message}
-    return deny_cls(behavior="deny", message=message)
+    try:
+        return deny_cls(behavior="deny", message=message)
+    except TypeError:
+        return deny_cls(message=message)
 
 
 def notice_transition(

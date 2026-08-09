@@ -11,11 +11,13 @@ from connector.runtime_protocol import (
     FileChangeToolContent,
     MarkdownMessageContent,
     MessageTimelineItem,
+    McpToolContent,
     RuntimeTimelineItem,
     TimelineSource,
     ToolCallContent,
     ToolResultContent,
     ToolTimelineItem,
+    WebSearchToolContent,
 )
 from connector.runtimes.claude.domain.session import ClaudeSession
 
@@ -35,6 +37,7 @@ class ClaudeMessageProjector:
         self._order_by_id: dict[str, int] = {}
         self._next_order_seq = 1
         self._tool_calls: dict[str, ClaudeToolBlock] = {}
+        self._ignored_task_tool_use_ids: set[str] = set()
 
     def message_item(
         self,
@@ -91,10 +94,21 @@ class ClaudeMessageProjector:
         turn_id: str,
         message: Any,
     ) -> tuple[RuntimeTimelineItem, ...]:
-        return tuple(
-            self.tool_item(session=session, turn_id=turn_id, block=block)
-            for block in message_tool_blocks(message)
-        )
+        items: list[RuntimeTimelineItem] = []
+        for block in message_tool_blocks(message):
+            if (
+                block.block_type == "tool_use"
+                and is_task_event_tool_name(block.tool_name)
+            ):
+                self._ignored_task_tool_use_ids.add(block.tool_use_id)
+                continue
+            if (
+                block.block_type == "tool_result"
+                and block.tool_use_id in self._ignored_task_tool_use_ids
+            ):
+                continue
+            items.append(self.tool_item(session=session, turn_id=turn_id, block=block))
+        return tuple(items)
 
     def tool_item(
         self,
@@ -294,6 +308,28 @@ def _tool_call_content(block: ClaudeToolBlock) -> Any:
                 "changes": _file_changes(tool_name, tool_input),
             }
         )
+    if tool_name in {"WebFetch", "WebSearch"}:
+        return WebSearchToolContent(
+            title=tool_name,
+            input=dict(tool_input),
+            metadata={
+                **common,
+                "query": _string(tool_input.get("query")),
+                "url": _string(tool_input.get("url")),
+            },
+        )
+    mcp_parts = _mcp_parts(tool_name)
+    if mcp_parts is not None:
+        server, tool = mcp_parts
+        return McpToolContent(
+            title=tool,
+            input=dict(tool_input),
+            metadata={
+                **common,
+                "server": server,
+                "tool": tool,
+            },
+        )
     return ToolCallContent(
         title=tool_name,
         input=block.tool_input,
@@ -311,13 +347,68 @@ def _file_changes(
         or tool_input.get("path")
     )
     action = "add" if tool_name == "Write" else "update"
+    diff = _file_diff(tool_name, path or "", tool_input)
     return (
         {
             "path": path,
             "action": action,
             "toolName": tool_name,
+            **({"diff": diff} if diff else {}),
         },
     )
+
+
+def _file_diff(
+    tool_name: str,
+    path: str,
+    tool_input: Mapping[str, Any],
+) -> str | None:
+    if tool_name == "Write":
+        return _string(tool_input.get("content"))
+    if tool_name == "Edit":
+        return _edit_diff(
+            path,
+            _string(tool_input.get("old_string")) or "",
+            _string(tool_input.get("new_string")) or "",
+        )
+    if tool_name == "MultiEdit":
+        edits = tool_input.get("edits")
+        if not isinstance(edits, list):
+            return None
+        parts: list[str] = []
+        for edit in edits:
+            if not isinstance(edit, Mapping):
+                continue
+            parts.append(
+                _edit_diff(
+                    path,
+                    _string(edit.get("old_string")) or "",
+                    _string(edit.get("new_string")) or "",
+                    include_header=not parts,
+                )
+            )
+        return "\n".join(part for part in parts if part) or None
+    if tool_name == "NotebookEdit":
+        return _edit_diff(path, "", _result_text(tool_input.get("new_source")))
+    return None
+
+
+def _edit_diff(
+    path: str,
+    old: str,
+    new: str,
+    *,
+    include_header: bool = True,
+) -> str:
+    lines: list[str] = []
+    if include_header:
+        lines.extend([f"--- {path}", f"+++ {path}"])
+    lines.append("@@")
+    if old:
+        lines.extend(f"-{line}" for line in old.splitlines())
+    if new:
+        lines.extend(f"+{line}" for line in new.splitlines())
+    return "\n".join(lines)
 
 
 def _result_text(result: Any) -> str:
@@ -333,6 +424,25 @@ def _result_text(result: Any) -> str:
 
 def _string(value: Any) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+def _mcp_parts(tool_name: str | None) -> tuple[str, str] | None:
+    if not tool_name or not tool_name.startswith("mcp__"):
+        return None
+    parts = tool_name.split("__", 2)
+    if len(parts) != 3 or not parts[1] or not parts[2]:
+        return None
+    return parts[1], parts[2]
+
+
+def is_task_event_tool_name(tool_name: str | None) -> bool:
+    return bool(
+        tool_name
+        and tool_name != "Task"
+        and tool_name.startswith("Task")
+        and len(tool_name) > 4
+        and tool_name[4].isupper()
+    )
 
 
 def _extract(value: Any, *names: str) -> Any:

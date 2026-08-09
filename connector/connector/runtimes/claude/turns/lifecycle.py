@@ -19,6 +19,7 @@ from connector.runtimes.claude.sdk.client import (
     query_client,
     receive_response_messages,
 )
+from connector.runtimes.claude.sdk.stderr import ClaudeStderrBuffer
 from connector.runtimes.claude.sessions.cache import ClaudeSessionStore
 from connector.runtimes.claude.sessions.reader import ClaudeSessionReader
 from connector.runtimes.claude.timeline.messages import (
@@ -58,6 +59,7 @@ class ClaudeTurnRunner:
         attachments: tuple[RuntimeAttachment, ...],
         client_message_id: str | None,
     ) -> None:
+        stderr = ClaudeStderrBuffer(session.session_id)
         try:
             sdk = load_sdk(self.sdk_loader)
             client = new_sdk_client(
@@ -70,6 +72,7 @@ class ClaudeTurnRunner:
                     session,
                     turn_id,
                 ),
+                stderr=stderr.record,
             )
             session.client = client
             await connect_client(client)
@@ -104,6 +107,7 @@ class ClaudeTurnRunner:
             await query_client(client, effective_content)
 
             result_error: Mapping[str, Any] | None = None
+            emitted_assistant_content = False
             async for message in receive_response_messages(client):
                 external_session_id = message_session_id(message)
                 if external_session_id is not None:
@@ -115,6 +119,20 @@ class ClaudeTurnRunner:
                             "message": message_error_text(message)
                             or "Claude turn completed with an error",
                         }
+                    if not emitted_assistant_content:
+                        text = message_text(message)
+                        if text:
+                            await self.notifications.timeline_activity.timeline_item_upsert(
+                                self.timeline.message_item(
+                                    session=session,
+                                    turn_id=turn_id,
+                                    role="assistant",
+                                    text=text,
+                                    event="claude.turn.result",
+                                    native_item_id=message_id(message),
+                                )
+                            )
+                            emitted_assistant_content = True
                     continue
                 for item in self.timeline.tool_items_for_message(
                     session=session,
@@ -139,6 +157,7 @@ class ClaudeTurnRunner:
                         native_item_id=message_id(message),
                     )
                 )
+                emitted_assistant_content = True
 
             if result_error is not None:
                 await self.notifications.session_state.session_state_update(
@@ -171,7 +190,7 @@ class ClaudeTurnRunner:
                 "blocked",
                 error={
                     "code": exc.__class__.__name__,
-                    "message": str(exc) or exc.__class__.__name__,
+                    "message": stderr.failure_message(exc),
                 },
                 metadata={"source": "claude.turn.failed", "turnId": turn_id},
             )
