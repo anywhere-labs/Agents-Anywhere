@@ -10,6 +10,7 @@ CONNECTOR_DIR="${ROOT_DIR}/connector"
 ENV_FILE="${AGENTS_ANYWHERE_ENV_FILE:-${ROOT_DIR}/.env.local}"
 ENV_FILE_EXPLICIT=false
 CONNECTOR_CONFIG_EXPLICIT=false
+LISTEN_HOST_CLI=""
 SKIP_INSTALL=false
 WITH_CONNECTOR=false
 SERVER_RELOAD=false
@@ -29,6 +30,7 @@ Usage:
 
 Options:
   --env-file PATH       Load environment overrides from PATH
+  --listen [HOST]       Bind Server and Web (HOST defaults to 0.0.0.0)
   --skip-install        Skip uv sync and yarn install
   --with-connector      Also start the local Connector
   --connector-config P  Connector config used with --with-connector
@@ -57,6 +59,15 @@ while [[ $# -gt 0 ]]; do
       ENV_FILE="$2"
       ENV_FILE_EXPLICIT=true
       shift 2
+      ;;
+    --listen)
+      LISTEN_HOST_CLI="0.0.0.0"
+      if [[ $# -ge 2 && "$2" != -* ]]; then
+        LISTEN_HOST_CLI="$2"
+        shift 2
+      else
+        shift
+      fi
       ;;
     --skip-install)
       SKIP_INSTALL=true
@@ -103,10 +114,18 @@ if [[ "${CONNECTOR_CONFIG_EXPLICIT}" != true ]]; then
   CONNECTOR_CONFIG="${AGENT_CONNECTOR_CONFIG:-${AGENT_CONNECTOR_DATA_DIR:-${HOME}/.agents-anywhere}/connector.json}"
 fi
 
-SERVER_HOST="${SERVER_HOST:-127.0.0.1}"
+LISTEN_HOST="${AGENTS_ANYWHERE_LISTEN_HOST:-0.0.0.0}"
+if [[ -n "${LISTEN_HOST_CLI}" ]]; then
+  LISTEN_HOST="${LISTEN_HOST_CLI}"
+  SERVER_HOST="${LISTEN_HOST}"
+  WEB_HOST="${LISTEN_HOST}"
+fi
+
+SERVER_HOST="${SERVER_HOST:-${LISTEN_HOST}}"
 SERVER_PORT="${SERVER_PORT:-8000}"
-WEB_HOST="${WEB_HOST:-127.0.0.1}"
+WEB_HOST="${WEB_HOST:-${LISTEN_HOST}}"
 WEB_PORT="${WEB_PORT:-5174}"
+LOCAL_ACCESS_HOST="127.0.0.1"
 LOCAL_DIR="${AGENTS_ANYWHERE_LOCAL_DIR:-${ROOT_DIR}/.local-dev}"
 LOG_DIR="${LOCAL_DIR}/logs"
 AGENT_SERVER_FILES_LOCAL_ROOT="${AGENT_SERVER_FILES_LOCAL_ROOT:-${LOCAL_DIR}/files}"
@@ -115,8 +134,11 @@ REDIS_PORT="${AGENTS_ANYWHERE_REDIS_PORT:-56379}"
 COMPOSE_FILE="${ROOT_DIR}/docker/docker-compose.local.yml"
 AGENT_SERVER_DB_URL="postgresql+asyncpg://agents_anywhere:agents_anywhere_dev_password@127.0.0.1:${POSTGRES_PORT}/agents_anywhere"
 AGENT_SERVER_REDIS_URL="redis://127.0.0.1:${REDIS_PORT}/0"
-LOCAL_SERVER_URL="http://${SERVER_HOST}:${SERVER_PORT}"
+LOCAL_SERVER_URL="http://${LOCAL_ACCESS_HOST}:${SERVER_PORT}"
+LOCAL_WEB_URL="http://${LOCAL_ACCESS_HOST}:${WEB_PORT}"
 AGENTS_ANYWHERE_API="${AGENTS_ANYWHERE_API:-${LOCAL_SERVER_URL}}"
+SERVER_PUBLIC_ORIGIN="${AGENT_SERVER_PUBLIC_ORIGIN:-${LOCAL_WEB_URL}}"
+SERVER_CORS_ORIGINS="${AGENT_SERVER_CORS_ORIGINS:-${LOCAL_WEB_URL},http://localhost:${WEB_PORT}}"
 
 if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
   RESET=$'\033[0m'
@@ -134,6 +156,44 @@ fi
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || fail "missing command: $1"
+}
+
+discover_lan_ipv4() {
+  local platform
+  platform="$(uname -s)"
+
+  if [[ "${platform}" == "Darwin" ]] && command -v route >/dev/null 2>&1 && command -v ipconfig >/dev/null 2>&1; then
+    local interface
+    interface="$(route -n get default 2>/dev/null | sed -n '/^[[:space:]]*interface: /{s/^[[:space:]]*interface: //;p;q;}')"
+    if [[ -n "${interface}" ]]; then
+      ipconfig getifaddr "${interface}" 2>/dev/null || true
+      return
+    fi
+  fi
+
+  if command -v ip >/dev/null 2>&1; then
+    local previous=""
+    local token
+    for token in $(ip -4 route get 1.1.1.1 2>/dev/null); do
+      if [[ "${previous}" == "src" ]]; then
+        printf '%s\n' "${token}"
+        return
+      fi
+      previous="${token}"
+    done
+  fi
+
+  if command -v hostname >/dev/null 2>&1; then
+    local address
+    for address in $(hostname -I 2>/dev/null || true); do
+      if [[ "${address}" != 127.* && "${address}" != *:* ]]; then
+        printf '%s\n' "${address}"
+        return
+      fi
+    done
+  fi
+
+  return 0
 }
 
 assert_port_available() {
@@ -311,8 +371,8 @@ SERVER_COMMAND=(
   "AGENT_SERVER_DB_URL=${AGENT_SERVER_DB_URL}"
   "AGENT_SERVER_REDIS_URL=${AGENT_SERVER_REDIS_URL}"
   "AGENT_SERVER_FILES_LOCAL_ROOT=${AGENT_SERVER_FILES_LOCAL_ROOT}"
-  "AGENT_SERVER_PUBLIC_ORIGIN=http://${WEB_HOST}:${WEB_PORT}"
-  "AGENT_SERVER_CORS_ORIGINS=http://${WEB_HOST}:${WEB_PORT},http://localhost:${WEB_PORT}"
+  "AGENT_SERVER_PUBLIC_ORIGIN=${SERVER_PUBLIC_ORIGIN}"
+  "AGENT_SERVER_CORS_ORIGINS=${SERVER_CORS_ORIGINS}"
   uv run uvicorn agent_server.app:create_app
   --factory
   --host "${SERVER_HOST}"
@@ -341,11 +401,26 @@ if [[ "${WITH_CONNECTOR}" == true ]]; then
 fi
 
 wait_for_url server "${LOCAL_SERVER_URL}/api/v2/health"
-wait_for_url web "http://${WEB_HOST}:${WEB_PORT}/"
+wait_for_url web "${LOCAL_WEB_URL}/"
 
 printf '\n%s[local]%s Stack is ready.\n' "${GREEN}" "${RESET}"
-printf '  Web:       http://%s:%s\n' "${WEB_HOST}" "${WEB_PORT}"
+printf '  Web:       %s\n' "${LOCAL_WEB_URL}"
 printf '  Server:    %s\n' "${AGENTS_ANYWHERE_API}"
+printf '  Listen:    server=%s:%s web=%s:%s\n' \
+  "${SERVER_HOST}" "${SERVER_PORT}" "${WEB_HOST}" "${WEB_PORT}"
+if [[ "${SERVER_HOST}" == "0.0.0.0" || "${WEB_HOST}" == "0.0.0.0" ]]; then
+  LAN_HOST="${AGENTS_ANYWHERE_LAN_HOST:-$(discover_lan_ipv4)}"
+  if [[ -n "${LAN_HOST}" ]]; then
+    if [[ "${WEB_HOST}" == "0.0.0.0" ]]; then
+      printf '  LAN Web:   http://%s:%s\n' "${LAN_HOST}" "${WEB_PORT}"
+    fi
+    if [[ "${SERVER_HOST}" == "0.0.0.0" ]]; then
+      printf '  LAN Server: http://%s:%s\n' "${LAN_HOST}" "${SERVER_PORT}"
+    fi
+  else
+    printf '  LAN:       address unavailable (set AGENTS_ANYWHERE_LAN_HOST)\n'
+  fi
+fi
 printf '  PostgreSQL: 127.0.0.1:%s/agents_anywhere\n' "${POSTGRES_PORT}"
 printf '  Redis:      127.0.0.1:%s\n' "${REDIS_PORT}"
 printf '  Logs:      %s\n' "${LOG_DIR}"
