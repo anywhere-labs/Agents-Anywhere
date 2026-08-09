@@ -108,6 +108,10 @@ async def _test_claude_runtime_empty_reads_are_stable() -> None:
         "dontAsk",
         "bypassPermissions",
     ]
+    permission = (await runtime.list_permission_catalog(query="default")).permissions[0]
+    assert permission.metadata["i18n"]["labelKey"] == (
+        "dashboard.new.permissionModes.claude.default.label"
+    )
 
 
 def test_claude_runtime_starts_turn_and_projects_timeline() -> None:

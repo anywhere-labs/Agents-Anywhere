@@ -339,6 +339,32 @@
         "fullAccess": {
           "label": "Full access",
           "description": "Allow unrestricted internet access and access to any file on this computer."
+        },
+        "claude": {
+          "default": {
+            "label": "Ask permissions",
+            "description": "Use Claude Code's default prompts for risky tools."
+          },
+          "acceptEdits": {
+            "label": "Accept edits",
+            "description": "Automatically accept file edits; still ask for other risky tools."
+          },
+          "plan": {
+            "label": "Plan mode",
+            "description": "Allow planning without executing writes or commands."
+          },
+          "auto": {
+            "label": "Auto mode",
+            "description": "Use Claude Code's automatic classifier for risky actions."
+          },
+          "dontAsk": {
+            "label": "Don't ask",
+            "description": "Deny unapproved tools instead of asking for permission."
+          },
+          "bypassPermissions": {
+            "label": "Bypass permissions",
+            "description": "Skip permission prompts and allow unrestricted tool use."
+          }
         }
       },
       "selectionSettings": "Settings",

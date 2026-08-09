@@ -339,6 +339,32 @@
         "fullAccess": {
           "label": "完全访问权限",
           "description": "可不受限制地访问互联网和您电脑上的任何文件"
+        },
+        "claude": {
+          "default": {
+            "label": "询问权限",
+            "description": "使用 Claude Code 默认的高风险工具确认方式。"
+          },
+          "acceptEdits": {
+            "label": "接受编辑",
+            "description": "自动接受文件编辑；其他高风险工具仍会询问。"
+          },
+          "plan": {
+            "label": "计划模式",
+            "description": "允许规划，但不执行写入或命令。"
+          },
+          "auto": {
+            "label": "自动模式",
+            "description": "使用 Claude Code 的自动分类器判断高风险操作。"
+          },
+          "dontAsk": {
+            "label": "不询问",
+            "description": "拒绝未获批准的工具，不再弹出权限确认。"
+          },
+          "bypassPermissions": {
+            "label": "完全访问权限",
+            "description": "跳过权限确认，允许不受限制地使用工具。"
+          }
         }
       },
       "selectionSettings": "设置",

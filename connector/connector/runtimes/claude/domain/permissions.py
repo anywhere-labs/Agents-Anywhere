@@ -16,31 +16,55 @@ CLAUDE_PERMISSION_MODES: tuple[Mapping[str, Any], ...] = (
         "title": "Ask permissions",
         "description": "Use Claude Code's default prompts for risky tools.",
         "default": True,
+        "i18n": {
+            "labelKey": "dashboard.new.permissionModes.claude.default.label",
+            "descriptionKey": "dashboard.new.permissionModes.claude.default.description",
+        },
     },
     {
         "id": "acceptEdits",
         "title": "Accept edits",
         "description": "Automatically accept file edits; still ask for other risky tools.",
+        "i18n": {
+            "labelKey": "dashboard.new.permissionModes.claude.acceptEdits.label",
+            "descriptionKey": "dashboard.new.permissionModes.claude.acceptEdits.description",
+        },
     },
     {
         "id": "plan",
         "title": "Plan mode",
         "description": "Allow planning without executing writes or commands.",
+        "i18n": {
+            "labelKey": "dashboard.new.permissionModes.claude.plan.label",
+            "descriptionKey": "dashboard.new.permissionModes.claude.plan.description",
+        },
     },
     {
         "id": "auto",
         "title": "Auto mode",
         "description": "Use Claude Code's automatic classifier for risky actions.",
+        "i18n": {
+            "labelKey": "dashboard.new.permissionModes.claude.auto.label",
+            "descriptionKey": "dashboard.new.permissionModes.claude.auto.description",
+        },
     },
     {
         "id": "dontAsk",
         "title": "Don't ask",
         "description": "Deny unapproved tools instead of asking for permission.",
+        "i18n": {
+            "labelKey": "dashboard.new.permissionModes.claude.dontAsk.label",
+            "descriptionKey": "dashboard.new.permissionModes.claude.dontAsk.description",
+        },
     },
     {
         "id": "bypassPermissions",
         "title": "Bypass permissions",
         "description": "Skip permission prompts and allow unrestricted tool use.",
+        "i18n": {
+            "labelKey": "dashboard.new.permissionModes.claude.bypassPermissions.label",
+            "descriptionKey": "dashboard.new.permissionModes.claude.bypassPermissions.description",
+        },
     },
 )
 
@@ -89,6 +113,7 @@ def _permission_item(item: Mapping[str, Any]) -> RuntimePermissionItem:
             "identity": {"permission_mode": permission_id},
             "runtimeSettings": {"permissionMode": permission_id},
             "nativeSettings": {"permissionMode": permission_id},
+            "i18n": item.get("i18n"),
         },
     )
 
