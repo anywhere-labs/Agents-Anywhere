@@ -92,23 +92,27 @@ class ClaudeSessionReader:
         limit: int | None = None,
     ) -> RuntimeTimelineSnapshot:
         local_session = self.session_store.get(session_id, external_session_id)
-        if local_session is not None and local_session.timeline_items:
-            return self.session_store.snapshot(
-                session_id=session_id,
-                external_session_id=external_session_id,
-                limit=limit,
-            )
-        if external_session_id is None:
-            return self.session_store.snapshot(
-                session_id=session_id,
-                external_session_id=external_session_id,
-                limit=limit,
-            )
-        return await self._history_snapshot(
+        local_snapshot = self.session_store.snapshot(
             session_id=session_id,
             external_session_id=external_session_id,
             limit=limit,
         )
+        if external_session_id is None:
+            return local_snapshot
+
+        history_snapshot = await self._history_snapshot(
+            session_id=session_id,
+            external_session_id=external_session_id,
+            limit=limit,
+        )
+        if history_snapshot.complete and (
+            history_snapshot.items or local_session is None or not local_snapshot.items
+        ):
+            self.session_store.mark_synced(session_id, external_session_id)
+            return history_snapshot
+        if local_snapshot.items:
+            return local_snapshot
+        return history_snapshot
 
     async def _list_history_sessions(
         self,
@@ -303,20 +307,23 @@ def _merge_session_metas(
     local_sessions: tuple[SessionMeta, ...],
     history_sessions: tuple[SessionMeta, ...],
 ) -> tuple[SessionMeta, ...]:
-    seen_session_ids: set[str] = set()
-    seen_external_ids: set[str] = set()
     merged: list[SessionMeta] = []
+    index_by_session_id: dict[str, int] = {}
+    index_by_external_id: dict[str, int] = {}
     for session in (*local_sessions, *history_sessions):
-        if session.session_id in seen_session_ids:
+        existing_index = index_by_session_id.get(session.session_id)
+        if existing_index is None and session.external_session_id is not None:
+            existing_index = index_by_external_id.get(session.external_session_id)
+        if existing_index is not None:
+            merged[existing_index] = _merge_session_meta(
+                merged[existing_index],
+                session,
+            )
             continue
-        if (
-            session.external_session_id is not None
-            and session.external_session_id in seen_external_ids
-        ):
-            continue
-        seen_session_ids.add(session.session_id)
+
+        index_by_session_id[session.session_id] = len(merged)
         if session.external_session_id is not None:
-            seen_external_ids.add(session.external_session_id)
+            index_by_external_id[session.external_session_id] = len(merged)
         merged.append(session)
     return tuple(
         sorted(
@@ -325,6 +332,51 @@ def _merge_session_metas(
             reverse=True,
         )
     )
+
+
+def _merge_session_meta(primary: SessionMeta, secondary: SessionMeta) -> SessionMeta:
+    metadata = dict(primary.metadata)
+    secondary_metadata = dict(secondary.metadata)
+    primary_sync = metadata.get("sync")
+    secondary_sync = secondary_metadata.get("sync")
+    if isinstance(primary_sync, Mapping) and isinstance(secondary_sync, Mapping):
+        metadata["sync"] = {
+            **primary_sync,
+            "sources": _sync_sources(primary, secondary),
+            "history": dict(secondary_sync)
+            if secondary.metadata.get("source") == "claude.session/list"
+            else primary_sync.get("history"),
+            "requires_timeline_sync": (
+                primary_sync.get("requires_timeline_sync") is True
+                or secondary_sync.get("requires_timeline_sync") is True
+            ),
+            "changed": (
+                primary_sync.get("changed") is True
+                or secondary_sync.get("changed") is True
+            ),
+        }
+    return SessionMeta(
+        session_id=primary.session_id,
+        external_session_id=primary.external_session_id or secondary.external_session_id,
+        runtime=primary.runtime,
+        title=primary.title or secondary.title,
+        cwd=primary.cwd or secondary.cwd,
+        ordering_time=max(
+            primary.ordering_time or "",
+            secondary.ordering_time or "",
+        )
+        or None,
+        metadata=metadata,
+    )
+
+
+def _sync_sources(primary: SessionMeta, secondary: SessionMeta) -> tuple[str, ...]:
+    sources: list[str] = []
+    for session in (primary, secondary):
+        source = session.metadata.get("source")
+        if isinstance(source, str) and source not in sources:
+            sources.append(source)
+    return tuple(sources)
 
 
 def _session_sync_key(external_session_id: str) -> str:

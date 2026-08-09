@@ -568,6 +568,7 @@ class ClaudeRuntime(AgentRuntime):
                     metadata={"source": "claude.turn.failed", "turnId": turn_id},
                 )
             else:
+                await self._sync_completed_turn_history(session)
                 await self._set_session_state(
                     session,
                     "idle",
@@ -794,6 +795,27 @@ class ClaudeRuntime(AgentRuntime):
     async def _timeline_item_upsert(self, item: RuntimeTimelineItem) -> None:
         self._session_store.record_timeline_item(item)
         await self.host.timeline_item_upsert(item)
+
+    async def _sync_completed_turn_history(self, session: ClaudeSession) -> None:
+        if session.external_session_id is None:
+            return
+        snapshot = await self._session_reader.get_session_snapshot(
+            session.session_id,
+            session.external_session_id,
+        )
+        if not snapshot.complete and not snapshot.items:
+            return
+        await self.host.timeline_sync(
+            session_id=snapshot.session_id,
+            runtime=snapshot.runtime,
+            external_session_id=snapshot.external_session_id,
+            items=snapshot.items,
+            complete=snapshot.complete,
+            metadata={
+                **dict(snapshot.metadata),
+                "source": "claude.turn.history_sync",
+            },
+        )
 
     async def _set_session_state(
         self,

@@ -81,6 +81,15 @@ class ClaudeSessionStore:
         if previous != item:
             session.timeline_revision += 1
 
+    def mark_synced(
+        self,
+        session_id: str,
+        external_session_id: str | None = None,
+    ) -> None:
+        session = self.get(session_id, external_session_id)
+        if session is not None:
+            session.synced_revision = session.timeline_revision
+
     def list_sessions(self, limit: int = 100) -> tuple[SessionMeta, ...]:
         sessions = sorted(
             self._sessions.values(),

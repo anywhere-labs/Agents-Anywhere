@@ -261,7 +261,8 @@ async def _test_claude_runtime_lists_sessions_and_returns_local_snapshot() -> No
     assert session.external_session_id == "claude_snapshot"
     assert session.title == "Snapshot session"
     assert session.cwd == "/repo"
-    assert session.metadata["sync"]["requires_timeline_sync"] is True
+    assert session.metadata["sync"]["requires_timeline_sync"] is False
+    assert len(host.timeline_syncs) == 1
 
     snapshot = await runtime.get_session_snapshot("sess_snapshot", "claude_snapshot")
 
@@ -437,6 +438,140 @@ async def _test_claude_runtime_projects_sdk_history_snapshot() -> None:
     assert snapshot.items[2].content["command"] == "pwd"
     assert snapshot.items[3].status == "done"
     assert snapshot.items[3].content["output"] == "/repo"
+
+
+def test_claude_runtime_prefers_sdk_history_over_local_partial_snapshot() -> None:
+    asyncio.run(_test_claude_runtime_prefers_sdk_history_over_local_partial_snapshot())
+
+
+async def _test_claude_runtime_prefers_sdk_history_over_local_partial_snapshot() -> None:
+    sdk = _HistorySdk(
+        messages={
+            "claude_history_complete": [
+                SimpleNamespace(
+                    type="user",
+                    uuid="history_user",
+                    session_id="claude_history_complete",
+                    message={"role": "user", "content": "hello"},
+                ),
+                SimpleNamespace(
+                    type="assistant",
+                    uuid="history_assistant",
+                    session_id="claude_history_complete",
+                    message={
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "history answer"}],
+                    },
+                ),
+            ]
+        }
+    )
+    runtime = _runtime(sdk=sdk)
+    session = runtime._session_store.ensure(
+        "sess_history_complete",
+        "claude_history_complete",
+    )
+    local_user = runtime._timeline.message_item(
+        session=session,
+        turn_id="turn_local",
+        role="user",
+        text="hello",
+        event="claude.turn.user",
+        client_message_id="client_1",
+    )
+    runtime._session_store.record_timeline_item(local_user)
+
+    snapshot = await runtime.get_session_snapshot(
+        "sess_history_complete",
+        "claude_history_complete",
+    )
+
+    assert snapshot.metadata["source"] == "claude.session.history"
+    assert [item.role for item in snapshot.items] == ["user", "assistant"]
+    assert snapshot.items[1].content["text"] == "history answer"
+    assert session.synced_revision == session.timeline_revision
+
+
+def test_claude_runtime_merges_local_and_history_sync_flags() -> None:
+    asyncio.run(_test_claude_runtime_merges_local_and_history_sync_flags())
+
+
+async def _test_claude_runtime_merges_local_and_history_sync_flags() -> None:
+    host = _RecordingHost()
+    sdk = _HistorySdk(
+        sessions=[
+            SimpleNamespace(
+                session_id="claude_history_merge",
+                summary="History merge",
+                last_modified=1_789_000_000_000,
+                file_size=123,
+            )
+        ]
+    )
+    runtime = _runtime(host=host, sdk=sdk)
+    runtime._session_store.ensure("sess_local_merge", "claude_history_merge")
+
+    sessions = await runtime.list_sessions(limit=10)
+
+    assert len(sessions) == 1
+    session = sessions[0]
+    assert session.session_id == "sess_local_merge"
+    assert session.external_session_id == "claude_history_merge"
+    assert session.metadata["source"] == "claude.session.local"
+    assert session.metadata["sync"]["requires_timeline_sync"] is True
+    assert session.metadata["sync"]["history"]["requires_timeline_sync"] is True
+    assert session.metadata["sync"]["sources"] == (
+        "claude.session.local",
+        "claude.session/list",
+    )
+
+
+def test_claude_runtime_syncs_sdk_history_after_turn_completion() -> None:
+    asyncio.run(_test_claude_runtime_syncs_sdk_history_after_turn_completion())
+
+
+async def _test_claude_runtime_syncs_sdk_history_after_turn_completion() -> None:
+    host = _RecordingHost()
+    sdk = _HistorySdk(
+        messages={
+            "claude_history_turn": [
+                SimpleNamespace(
+                    type="user",
+                    uuid="history_turn_user",
+                    session_id="claude_history_turn",
+                    message={"role": "user", "content": "hello"},
+                ),
+                SimpleNamespace(
+                    type="assistant",
+                    uuid="history_turn_assistant",
+                    session_id="claude_history_turn",
+                    message={
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "hello from history"}],
+                    },
+                ),
+            ]
+        }
+    )
+    client = _FakeClaudeClient(
+        messages=[SimpleNamespace(type="result", session_id="claude_history_turn")]
+    )
+    runtime = _runtime(host=host, client=client, sdk=sdk)
+
+    result = await runtime.start_turn("sess_history_turn", None, "hello")
+    task = runtime._sessions["sess_history_turn"].active_task
+
+    assert result.ok is True
+    assert task is not None
+
+    await task
+
+    assert len(host.timeline_syncs) == 1
+    sync = host.timeline_syncs[0]
+    assert sync["external_session_id"] == "claude_history_turn"
+    assert sync["metadata"]["source"] == "claude.turn.history_sync"
+    assert [item.role for item in sync["items"]] == ["user", "assistant"]
+    assert sync["items"][1].content["text"] == "hello from history"
 
 
 def test_claude_runtime_session_state_defaults_to_idle_for_known_history() -> None:
@@ -1081,6 +1216,7 @@ class _RecordingHost(RuntimeHostClient):
         self.session_meta_upserts: list[dict[str, Any]] = []
         self.session_state_updates: list[dict[str, Any]] = []
         self.timeline_item_upserts: list[RuntimeTimelineItem] = []
+        self.timeline_syncs: list[dict[str, Any]] = []
         self.notice_upserts: list[Any] = []
         self.attachments: dict[str, RuntimeAttachmentContent] = {}
         self.sync_states: dict[str, dict[str, Any]] = {}
@@ -1137,6 +1273,26 @@ class _RecordingHost(RuntimeHostClient):
 
     async def timeline_item_upsert(self, item: RuntimeTimelineItem) -> None:
         self.timeline_item_upserts.append(item)
+
+    async def timeline_sync(
+        self,
+        session_id: str,
+        runtime: str,
+        items: tuple[RuntimeTimelineItem, ...],
+        external_session_id: str | None = None,
+        complete: bool = True,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        self.timeline_syncs.append(
+            {
+                "session_id": session_id,
+                "runtime": runtime,
+                "items": items,
+                "external_session_id": external_session_id,
+                "complete": complete,
+                "metadata": metadata or {},
+            }
+        )
 
     async def notice_upsert(self, notice: Any) -> None:
         self.notice_upserts.append(notice)
