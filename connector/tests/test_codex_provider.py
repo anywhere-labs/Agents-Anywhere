@@ -89,6 +89,12 @@ async def _test_codex_provider_validates_sdk_config() -> None:
                 {
                     "modelId": " gpt-local-test ",
                     "displayName": " GPT Local Test ",
+                    "efforts": [
+                        {
+                            "effortId": " high ",
+                            "displayName": " High ",
+                        }
+                    ],
                 }
             ],
         }
@@ -101,6 +107,12 @@ async def _test_codex_provider_validates_sdk_config() -> None:
             {
                 "modelId": "gpt-local-test",
                 "displayName": "GPT Local Test",
+                "efforts": [
+                    {
+                        "effortId": "high",
+                        "displayName": "High",
+                    }
+                ],
             }
         ],
     }
@@ -147,6 +159,30 @@ async def _test_codex_provider_rejects_duplicate_custom_models() -> None:
                 "customModels": [
                     {"modelId": "gpt-local-test", "displayName": "Local"},
                     {"modelId": "gpt-local-test", "displayName": "Duplicate"},
+                ]
+            }
+        )
+
+
+def test_codex_provider_rejects_duplicate_custom_efforts() -> None:
+    asyncio.run(_test_codex_provider_rejects_duplicate_custom_efforts())
+
+
+async def _test_codex_provider_rejects_duplicate_custom_efforts() -> None:
+    provider = CodexProvider(sdk_checker=_available_sdk)
+
+    with pytest.raises(RuntimeInvalidRequestError, match="duplicate effortId"):
+        await provider.validate_config(
+            {
+                "customModels": [
+                    {
+                        "modelId": "gpt-local-test",
+                        "displayName": "Local",
+                        "efforts": [
+                            {"effortId": "high", "displayName": "High"},
+                            {"effortId": "high", "displayName": "Duplicate"},
+                        ],
+                    }
                 ]
             }
         )

@@ -72,7 +72,7 @@ from connector.runtimes.claude.turns.attachments import (
 from connector.runtimes.catalog_revisions import runtime_catalog_revision
 
 TERMINAL_NOTICE_STATUSES = {"closed", "resolved", "cancelled", "expired"}
-CLAUDE_MODEL_CATALOG_STATIC_REVISION = 2
+CLAUDE_MODEL_CATALOG_STATIC_REVISION = 3
 CLAUDE_PERMISSION_CATALOG_STATIC_REVISION = 1
 
 

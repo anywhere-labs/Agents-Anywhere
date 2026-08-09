@@ -1350,6 +1350,59 @@ async def _test_codex_runtime_applies_custom_model_selection_to_turn_start() -> 
     )
 
 
+def test_codex_runtime_applies_custom_model_effort_to_turn_start() -> None:
+    asyncio.run(_test_codex_runtime_applies_custom_model_effort_to_turn_start())
+
+
+async def _test_codex_runtime_applies_custom_model_effort_to_turn_start() -> None:
+    client = FakeCodexClient()
+    runtime = CodexRuntime(
+        config=RuntimeConfig(
+            runtime="codex",
+            revision=3,
+            values={
+                "environment": {},
+                "customModels": [
+                    {
+                        "modelId": "gpt-local-test",
+                        "displayName": "GPT Local Test",
+                        "efforts": [
+                            {
+                                "effortId": "high",
+                                "displayName": "High",
+                            }
+                        ],
+                    }
+                ],
+            },
+        ),
+        host=FakeHost(),
+        client=client,
+    )
+    model = (await runtime.list_model_catalog(query="local")).models[0]
+
+    result = await runtime.start_turn(
+        "sess_1",
+        "thread_1",
+        "hello",
+        selections={"model": model.reasoning_items[0].selection_id},
+    )
+
+    assert model.selection_id is None
+    assert model.reasoning_items[0].id == "high"
+    assert model.reasoning_items[0].title == "High"
+    assert result.ok is True
+    assert client.requests[-1] == (
+        "turn/start",
+        {
+            "threadId": "thread_1",
+            "input": [{"type": "text", "text": "hello", "text_elements": []}],
+            "model": "gpt-local-test",
+            "effort": "high",
+        },
+    )
+
+
 def test_codex_runtime_model_catalog_query_and_limit() -> None:
     asyncio.run(_test_codex_runtime_model_catalog_query_and_limit())
 

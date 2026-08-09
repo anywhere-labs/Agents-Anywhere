@@ -611,6 +611,58 @@ async def _test_claude_runtime_applies_custom_model_selection_to_sdk_options() -
     assert "effort" not in client.options.kwargs
 
 
+def test_claude_runtime_applies_custom_model_effort_to_sdk_options() -> None:
+    asyncio.run(_test_claude_runtime_applies_custom_model_effort_to_sdk_options())
+
+
+async def _test_claude_runtime_applies_custom_model_effort_to_sdk_options() -> None:
+    client = _FakeClaudeClient(
+        messages=[SimpleNamespace(type="result", session_id="claude_custom_effort")]
+    )
+    runtime = _runtime(
+        client=client,
+        config=RuntimeConfig(
+            runtime="claude",
+            revision=1,
+            values={
+                "environment": {},
+                "customModels": [
+                    {
+                        "modelId": "claude-local-test",
+                        "displayName": "Claude Local Test",
+                        "efforts": [
+                            {
+                                "effortId": "high",
+                                "displayName": "High",
+                            }
+                        ],
+                    }
+                ],
+            },
+        ),
+    )
+    model = (await runtime.list_model_catalog(query="local")).models[0]
+
+    result = await runtime.start_turn(
+        "sess_custom_effort",
+        "claude_custom_effort",
+        "use custom effort",
+        selections={"model": model.reasoning_items[0].selection_id},
+    )
+    task = runtime._sessions["sess_custom_effort"].active_task
+
+    assert model.selection_id is not None
+    assert model.reasoning_items[0].id == "high"
+    assert model.reasoning_items[0].title == "High"
+    assert result.ok is True
+    assert task is not None
+
+    await task
+
+    assert client.options.kwargs["model"] == "claude-local-test"
+    assert client.options.kwargs["effort"] == "high"
+
+
 def test_claude_runtime_rejects_unknown_model_selection() -> None:
     asyncio.run(_test_claude_runtime_rejects_unknown_model_selection())
 

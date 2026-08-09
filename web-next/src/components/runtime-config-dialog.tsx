@@ -355,7 +355,13 @@ function RuntimeConfigField({
 
 type EnvironmentRow = { id: number; key: string; value: string; removed: boolean }
 
-type CustomModelRow = { id: number; modelId: string; displayName: string }
+type CustomEffortRow = { id: number; effortId: string; displayName: string }
+type CustomModelRow = {
+  id: number
+  modelId: string
+  displayName: string
+  efforts: CustomEffortRow[]
+}
 
 function CustomModelsEditor({
   value,
@@ -375,6 +381,13 @@ function CustomModelsEditor({
         id: nextId.current++,
         modelId: typeof item.modelId === "string" ? item.modelId : "",
         displayName: typeof item.displayName === "string" ? item.displayName : "",
+        efforts: Array.isArray(item.efforts)
+          ? item.efforts.filter(isRecord).map((effort) => ({
+            id: nextId.current++,
+            effortId: typeof effort.effortId === "string" ? effort.effortId : "",
+            displayName: typeof effort.displayName === "string" ? effort.displayName : "",
+          }))
+          : [],
       })),
   )
 
@@ -383,10 +396,54 @@ function CustomModelsEditor({
     const customModels = next.flatMap((row) => {
       const modelId = row.modelId.trim()
       const displayName = row.displayName.trim()
-      if (!modelId && !displayName) return []
-      return [{ modelId, displayName }]
+      const efforts = row.efforts.flatMap((effort) => {
+        const effortId = effort.effortId.trim()
+        const effortName = effort.displayName.trim()
+        if (!effortId && !effortName) return []
+        return [{ effortId, displayName: effortName }]
+      })
+      if (!modelId && !displayName && efforts.length === 0) return []
+      return efforts.length > 0
+        ? [{ modelId, displayName, efforts }]
+        : [{ modelId, displayName }]
     })
     onChange(customModels)
+  }
+
+  const addEffort = (modelId: number) => {
+    update(rows.map((row) => row.id === modelId
+      ? {
+        ...row,
+        efforts: [
+          ...row.efforts,
+          { id: nextId.current++, effortId: "", displayName: "" },
+        ],
+      }
+      : row))
+  }
+
+  const updateEffort = (
+    modelId: number,
+    effortId: number,
+    patch: Partial<Omit<CustomEffortRow, "id">>,
+  ) => {
+    update(rows.map((row) => row.id === modelId
+      ? {
+        ...row,
+        efforts: row.efforts.map((effort) => effort.id === effortId
+          ? { ...effort, ...patch }
+          : effort),
+      }
+      : row))
+  }
+
+  const removeEffort = (modelId: number, effortId: number) => {
+    update(rows.map((row) => row.id === modelId
+      ? {
+        ...row,
+        efforts: row.efforts.filter((effort) => effort.id !== effortId),
+      }
+      : row))
   }
 
   return (
@@ -396,34 +453,83 @@ function CustomModelsEditor({
       ) : rows.map((row) => (
         <div
           key={row.id}
-          className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
+          className="flex flex-col gap-2 border-t border-border pt-3 first:border-t-0 first:pt-0"
         >
-          <Input
-            className="col-span-2 sm:col-span-1"
-            value={row.modelId}
-            onChange={(event) => update(rows.map((item) => item.id === row.id ? { ...item, modelId: event.currentTarget.value } : item))}
-            placeholder={t("customModelId")}
-            spellCheck={false}
-            aria-label={t("customModelId")}
-            aria-invalid={invalid}
-          />
-          <Input
-            value={row.displayName}
-            onChange={(event) => update(rows.map((item) => item.id === row.id ? { ...item, displayName: event.currentTarget.value } : item))}
-            placeholder={t("customModelDisplayName")}
-            spellCheck={false}
-            aria-label={t("customModelDisplayName")}
-            aria-invalid={invalid}
-          />
-          <Button
-            type="button"
-            size="icon"
-            variant="ghost"
-            onClick={() => update(rows.filter((item) => item.id !== row.id))}
-            aria-label={t("removeCustomModel")}
-          >
-            <Trash2 />
-          </Button>
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+            <Input
+              className="col-span-2 sm:col-span-1"
+              value={row.modelId}
+              onChange={(event) => update(rows.map((item) => item.id === row.id ? { ...item, modelId: event.currentTarget.value } : item))}
+              placeholder={t("customModelId")}
+              spellCheck={false}
+              aria-label={t("customModelId")}
+              aria-invalid={invalid}
+            />
+            <Input
+              value={row.displayName}
+              onChange={(event) => update(rows.map((item) => item.id === row.id ? { ...item, displayName: event.currentTarget.value } : item))}
+              placeholder={t("customModelDisplayName")}
+              spellCheck={false}
+              aria-label={t("customModelDisplayName")}
+              aria-invalid={invalid}
+            />
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              onClick={() => update(rows.filter((item) => item.id !== row.id))}
+              aria-label={t("removeCustomModel")}
+            >
+              <Trash2 />
+            </Button>
+          </div>
+          <div className="flex flex-col gap-2 border-l border-border pl-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-medium text-muted-foreground">{t("customModelEfforts")}</span>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => addEffort(row.id)}
+              >
+                <Plus data-icon="inline-start" />
+                {t("addCustomEffort")}
+              </Button>
+            </div>
+            {row.efforts.map((effort) => (
+              <div
+                key={effort.id}
+                className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
+              >
+                <Input
+                  className="col-span-2 sm:col-span-1"
+                  value={effort.effortId}
+                  onChange={(event) => updateEffort(row.id, effort.id, { effortId: event.currentTarget.value })}
+                  placeholder={t("customEffortId")}
+                  spellCheck={false}
+                  aria-label={t("customEffortId")}
+                  aria-invalid={invalid}
+                />
+                <Input
+                  value={effort.displayName}
+                  onChange={(event) => updateEffort(row.id, effort.id, { displayName: event.currentTarget.value })}
+                  placeholder={t("customEffortDisplayName")}
+                  spellCheck={false}
+                  aria-label={t("customEffortDisplayName")}
+                  aria-invalid={invalid}
+                />
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => removeEffort(row.id, effort.id)}
+                  aria-label={t("removeCustomEffort")}
+                >
+                  <Trash2 />
+                </Button>
+              </div>
+            ))}
+          </div>
         </div>
       ))}
       <Button
@@ -431,7 +537,7 @@ function CustomModelsEditor({
         variant="outline"
         size="sm"
         className="self-start"
-        onClick={() => update([...rows, { id: nextId.current++, modelId: "", displayName: "" }])}
+        onClick={() => update([...rows, { id: nextId.current++, modelId: "", displayName: "", efforts: [] }])}
       >
         <Plus data-icon="inline-start" />
         {t("addCustomModel")}

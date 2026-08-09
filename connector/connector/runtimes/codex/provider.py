@@ -23,6 +23,7 @@ from connector.runtimes.codex.sdk.discovery import check_codex_sdk
 
 SdkChecker = Callable[[], dict[str, Any]]
 SdkClientFactory = Callable[[RuntimeConfig], Any]
+CODEX_CONFIG_SCHEMA_REVISION = 2
 
 
 class CodexProvider(RuntimeProvider):
@@ -73,7 +74,7 @@ class CodexProvider(RuntimeProvider):
         schema = provider_config.codex_config_schema()
         return RuntimeConfigSchema(
             runtime=self.runtime,
-            revision=1,
+            revision=CODEX_CONFIG_SCHEMA_REVISION,
             schema=schema,
             ui_schema={
                 "order": ["environment", "customModels"],
@@ -114,7 +115,7 @@ class CodexProvider(RuntimeProvider):
 
         return RuntimeConfig(
             runtime=self.runtime,
-            revision=1,
+            revision=CODEX_CONFIG_SCHEMA_REVISION,
             values=normalized_values,
             schema=schema,
             ui_schema=(await self.get_config_schema()).ui_schema,

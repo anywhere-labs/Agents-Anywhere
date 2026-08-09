@@ -21,6 +21,8 @@ from connector.runtimes.custom_models import normalize_custom_models
 from connector.runtimes.claude import discovery, provider_config
 from connector.runtimes.claude.runtime import ClaudeRuntime
 
+CLAUDE_CONFIG_SCHEMA_REVISION = 2
+
 
 class ClaudeProvider(RuntimeProvider):
     @property
@@ -75,7 +77,7 @@ class ClaudeProvider(RuntimeProvider):
         schema = provider_config.claude_config_schema()
         return RuntimeConfigSchema(
             runtime=self.runtime,
-            revision=1,
+            revision=CLAUDE_CONFIG_SCHEMA_REVISION,
             schema=schema,
             ui_schema={
                 "order": ["executablePath", "environment", "customModels"],
@@ -131,7 +133,7 @@ class ClaudeProvider(RuntimeProvider):
         config_schema = await self.get_config_schema()
         return RuntimeConfig(
             runtime=self.runtime,
-            revision=1,
+            revision=CLAUDE_CONFIG_SCHEMA_REVISION,
             values=normalized_values,
             schema=schema,
             ui_schema=config_schema.ui_schema,

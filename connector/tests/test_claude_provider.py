@@ -82,6 +82,12 @@ async def _test_claude_provider_schema_and_config_validation() -> None:
                 {
                     "modelId": " claude-local-test ",
                     "displayName": " Claude Local Test ",
+                    "efforts": [
+                        {
+                            "effortId": " high ",
+                            "displayName": " High ",
+                        }
+                    ],
                 }
             ],
         }
@@ -101,6 +107,12 @@ async def _test_claude_provider_schema_and_config_validation() -> None:
         {
             "modelId": "claude-local-test",
             "displayName": "Claude Local Test",
+            "efforts": [
+                {
+                    "effortId": "high",
+                    "displayName": "High",
+                }
+            ],
         }
     ]
     assert config.metadata["launchTarget"]["path"] == "/opt/claude"
@@ -119,6 +131,30 @@ async def _test_claude_provider_rejects_duplicate_custom_models() -> None:
                 "customModels": [
                     {"modelId": "claude-local-test", "displayName": "Local"},
                     {"modelId": "claude-local-test", "displayName": "Duplicate"},
+                ]
+            }
+        )
+
+
+def test_claude_provider_rejects_duplicate_custom_efforts() -> None:
+    asyncio.run(_test_claude_provider_rejects_duplicate_custom_efforts())
+
+
+async def _test_claude_provider_rejects_duplicate_custom_efforts() -> None:
+    provider = ClaudeProvider(sdk_loader=_sdk, command_checker=_available_command)
+
+    with pytest.raises(RuntimeInvalidRequestError, match="duplicate effortId"):
+        await provider.validate_config(
+            {
+                "customModels": [
+                    {
+                        "modelId": "claude-local-test",
+                        "displayName": "Local",
+                        "efforts": [
+                            {"effortId": "high", "displayName": "High"},
+                            {"effortId": "high", "displayName": "Duplicate"},
+                        ],
+                    }
                 ]
             }
         )

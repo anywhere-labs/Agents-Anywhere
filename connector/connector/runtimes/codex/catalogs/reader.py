@@ -19,7 +19,7 @@ from connector.runtimes.custom_models import custom_model_items
 
 EnsureStarted = Callable[[], Awaitable[None]]
 GetModelListResult = Callable[[], CodexModelListResult | None]
-CODEX_MODEL_CATALOG_STATIC_REVISION = 2
+CODEX_MODEL_CATALOG_STATIC_REVISION = 3
 CODEX_PERMISSION_CATALOG_STATIC_REVISION = 1
 
 
