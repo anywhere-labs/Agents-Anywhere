@@ -33,8 +33,28 @@ struct RootView: View {
                 showingQRCodeLogin = false
             }
         }
+        .sheet(isPresented: serverUnavailableBinding) {
+            ServerUnavailableSheet(
+                isRetrying: appState.isRetryingServerConnection,
+                onReturnToLogin: appState.returnToLogin,
+                onRetry: retryServerConnection,
+            )
+        }
         .tint(AppTheme.primaryText(colorScheme))
         .background(AppTheme.appBackground(colorScheme))
+    }
+
+    private var serverUnavailableBinding: Binding<Bool> {
+        Binding(
+            get: { appState.serverConnectionIssue != nil },
+            set: { _ in },
+        )
+    }
+
+    private func retryServerConnection() {
+        Task {
+            await appState.retryServerConnection()
+        }
     }
 }
 

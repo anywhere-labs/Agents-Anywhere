@@ -12,6 +12,12 @@ final class AppState: ObservableObject {
         case signedIn
     }
 
+    enum ServerConnectionIssue: String, Identifiable {
+        case unavailable
+
+        var id: String { rawValue }
+    }
+
     @Published private(set) var route: Route = .loading
     @Published private(set) var serverURL: URL?
     @Published private(set) var me: AuthMe?
@@ -25,6 +31,8 @@ final class AppState: ObservableObject {
     @Published var sessionsError: String?
     @Published var connectorsError: String?
     @Published var isWorking = false
+    @Published private(set) var serverConnectionIssue: ServerConnectionIssue?
+    @Published private(set) var isRetryingServerConnection = false
 
     private let keychain = KeychainStore()
     private let serverDefaultsKey = "agentsAnywhere.serverURL"
@@ -58,15 +66,36 @@ final class AppState: ObservableObject {
 
         self.serverURL = serverURL
         do {
-            let client = APIClient(serverURL: serverURL)
-            me = try await client.me(token: token)
-            route = .signedIn
-            await refreshDashboard()
+            try await restoreAuthenticatedSession(serverURL: serverURL, token: token)
         } catch {
-            try? keychain.delete(account: tokenAccount)
-            authError = error.localizedDescription
-            route = .signedOut
+            handleSessionRestoreFailure(error)
         }
+    }
+
+    /// Performs network I/O to restore the saved session after a connection failure.
+    func retryServerConnection() async {
+        guard !isRetryingServerConnection else { return }
+        guard
+            let serverURL,
+            let token = try? keychain.readString(account: tokenAccount),
+            !token.isEmpty
+        else {
+            returnToLogin()
+            return
+        }
+
+        isRetryingServerConnection = true
+        defer { isRetryingServerConnection = false }
+
+        do {
+            try await restoreAuthenticatedSession(serverURL: serverURL, token: token)
+        } catch {
+            handleSessionRestoreFailure(error)
+        }
+    }
+
+    func returnToLogin() {
+        signOut()
     }
 
     func checkServer(_ value: String) async -> URL? {
@@ -264,6 +293,7 @@ final class AppState: ObservableObject {
         sessionsError = nil
         connectorsError = nil
         authError = nil
+        serverConnectionIssue = nil
         if showSignedOutRoute {
             route = .signedOut
         }
@@ -279,8 +309,34 @@ final class AppState: ObservableObject {
     }
 
     func activateSignedInRoute() {
+        serverConnectionIssue = nil
         route = .signedIn
         Task { await refreshDashboard() }
+    }
+
+    /// Performs authenticated network I/O and refreshes the initial signed-in state.
+    private func restoreAuthenticatedSession(serverURL: URL, token: String) async throws {
+        let client = APIClient(serverURL: serverURL)
+        me = try await client.me(token: token)
+        serverConnectionIssue = nil
+        route = .signedIn
+        await refreshDashboard()
+    }
+
+    private func handleSessionRestoreFailure(_ error: Error) {
+        if isAuthenticationFailure(error) {
+            signOut()
+            authError = error.localizedDescription
+            return
+        }
+
+        route = .loading
+        serverConnectionIssue = .unavailable
+    }
+
+    private func isAuthenticationFailure(_ error: Error) -> Bool {
+        guard case let APIClientError.server(status, _) = error else { return false }
+        return status == 401 || status == 403
     }
 
     private func saveSession(serverURL: URL, token: String) throws {
