@@ -1,6 +1,7 @@
 import Foundation
 
 struct V2APIClient {
+    let account: V2AccountAPI
     let connectors: V2ConnectorAPI
     let sessions: V2SessionAPI
     let runtime: V2RuntimeAPI
@@ -17,6 +18,7 @@ struct V2APIClient {
             urlSession: urlSession,
             tokenProvider: tokenProvider
         )
+        account = V2AccountAPI(transport: transport)
         connectors = V2ConnectorAPI(transport: transport)
         sessions = V2SessionAPI(transport: transport)
         runtime = V2RuntimeAPI(transport: transport)

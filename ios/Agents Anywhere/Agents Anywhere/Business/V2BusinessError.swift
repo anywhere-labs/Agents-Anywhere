@@ -4,6 +4,9 @@ enum V2BusinessError: LocalizedError {
     case emptyMessage
     case emptySessionSelection
     case emptySessionTitle
+    case emptyAvatar
+    case passwordTooShort
+    case passwordMismatch
     case tooManyAttachments(maximum: Int)
     case emptyAttachment(name: String)
     case invalidPageSize
@@ -16,6 +19,12 @@ enum V2BusinessError: LocalizedError {
             return String(localized: "Select at least one session.")
         case .emptySessionTitle:
             return String(localized: "Enter a session title.")
+        case .emptyAvatar:
+            return String(localized: "Choose an avatar image before uploading.")
+        case .passwordTooShort:
+            return String(localized: "Password must be at least 8 characters.")
+        case .passwordMismatch:
+            return String(localized: "Passwords do not match.")
         case let .tooManyAttachments(maximum):
             return "Attach no more than \(maximum) files."
         case let .emptyAttachment(name):

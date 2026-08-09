@@ -1,6 +1,7 @@
 import Foundation
 
 struct V2ClientServices {
+    let account: V2AccountService
     let dashboard: V2DashboardService
     let sessionDetail: V2SessionDetailService
     let sessionCreation: V2SessionCreationService
@@ -8,6 +9,7 @@ struct V2ClientServices {
     let interactions: V2RuntimeInteractionService
 
     init(api: V2APIClient) {
+        account = V2AccountService(accountAPI: api.account)
         dashboard = V2DashboardService(
             connectorAPI: api.connectors,
             sessionAPI: api.sessions,

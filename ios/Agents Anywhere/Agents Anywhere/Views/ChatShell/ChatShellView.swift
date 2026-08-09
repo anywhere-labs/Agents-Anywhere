@@ -24,7 +24,7 @@ struct ChatShellView: View {
                 devices: sidebarDevices,
                 pinnedSessions: matchingSessions.filter(\.pinned),
                 recentSessions: matchingSessions.filter { !$0.pinned },
-                account: appState.me.map(ChatSidebarAccount.init),
+                account: sidebarAccount,
                 selectedDeviceId: selectedDeviceId,
                 selectedSessionId: selectedSessionId,
                 isLoadingDevices: appState.isDashboardLoading && !appState.hasLoadedConnectors,
@@ -36,8 +36,7 @@ struct ChatShellView: View {
                 onToggleSessionPinned: setSessionPinned,
                 onArchiveSession: archiveSession,
                 onCopyDeviceId: copyDeviceId,
-                onCopySessionId: copySessionId,
-                onSignOut: { appState.signOut() }
+                onCopySessionId: copySessionId
             )
         } content: { safeAreaInsets in
             ChatSurfaceView(
@@ -58,6 +57,11 @@ struct ChatShellView: View {
 
     private var sidebarDevices: [ChatSidebarDevice] {
         appState.connectors.map(ChatSidebarDevice.init)
+    }
+
+    private var sidebarAccount: ChatSidebarAccount? {
+        guard let me = appState.me else { return nil }
+        return ChatSidebarAccount(me: me, avatarSource: appState.accountAvatarSource)
     }
 
     private var matchingSessions: [ChatSidebarSession] {

@@ -18,7 +18,6 @@ struct ChatSidebarView: View {
     let onArchiveSession: (V2SessionID) -> Void
     let onCopyDeviceId: (V2ConnectorID) -> Void
     let onCopySessionId: (V2SessionID) -> Void
-    let onSignOut: () -> Void
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
@@ -68,7 +67,7 @@ struct ChatSidebarView: View {
             .scrollIndicators(.hidden)
 
             if let account {
-                ChatSidebarAccountButton(account: account, onSignOut: onSignOut)
+                ChatSidebarAccountButton(account: account)
                     .padding(.leading, safeAreaInsets.leading + 18)
                     .padding(.bottom, max(safeAreaInsets.bottom, 12))
             }
@@ -398,28 +397,20 @@ private struct ChatSidebarEmptyRow: View {
 
 private struct ChatSidebarAccountButton: View {
     let account: ChatSidebarAccount
-    let onSignOut: () -> Void
 
-    @State private var isConfirmingSignOut = false
+    @State private var isShowingSettings = false
 
     var body: some View {
-        Menu {
-            Button(role: .destructive) {
-                isConfirmingSignOut = true
-            } label: {
-                Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
-            }
+        Button {
+            isShowingSettings = true
         } label: {
             ChatSidebarAvatar(account: account)
         }
         .buttonStyle(.glass)
         .buttonBorderShape(.circle)
         .accessibilityLabel("Account")
-        .alert("Sign out?", isPresented: $isConfirmingSignOut) {
-            Button("Cancel", role: .cancel) {}
-            Button("Sign out", role: .destructive, action: onSignOut)
-        } message: {
-            Text("You will need to connect to the server again to continue.")
+        .sheet(isPresented: $isShowingSettings) {
+            AccountSettingsSheet()
         }
     }
 }
@@ -428,19 +419,10 @@ private struct ChatSidebarAvatar: View {
     let account: ChatSidebarAccount
 
     var body: some View {
-        AsyncImage(url: account.avatarURL) { phase in
-            if case let .success(image) = phase {
-                image
-                    .resizable()
-                    .scaledToFill()
-            } else {
-                Text(account.initials)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.background)
-            }
-        }
-        .frame(width: 38, height: 38)
-        .background(.primary, in: Circle())
-        .clipShape(Circle())
+        AccountAvatarView(
+            userId: account.userId,
+            source: account.avatarSource,
+            size: 38
+        )
     }
 }

@@ -20,7 +20,12 @@ final class AppState: ObservableObject {
 
     @Published private(set) var route: Route = .loading
     @Published private(set) var serverURL: URL?
-    @Published private(set) var me: AuthMe?
+    @Published private(set) var me: AuthMe? {
+        didSet {
+            accountAvatarSource = AccountAvatarImageSource.parse(me?.avatar)
+        }
+    }
+    @Published private(set) var accountAvatarSource: AccountAvatarImageSource?
     @Published private(set) var connectors: [V2Connector] = []
     @Published private(set) var sessions: [V2SessionMeta] = []
     @Published private(set) var isDashboardLoading = false
@@ -34,6 +39,8 @@ final class AppState: ObservableObject {
     @Published private(set) var serverConnectionIssue: ServerConnectionIssue?
     @Published private(set) var isRetryingServerConnection = false
     @Published private(set) var sessionActionError: String?
+    @Published private(set) var isAccountWorking = false
+    @Published private(set) var accountError: String?
 
     private let keychain = KeychainStore()
     private let serverDefaultsKey = "agentsAnywhere.serverURL"
@@ -326,6 +333,89 @@ final class AppState: ObservableObject {
         sessionActionError = nil
     }
 
+    /// Performs authenticated network I/O and refreshes the current account profile.
+    func refreshAccount() async -> Bool {
+        guard !isAccountWorking else { return false }
+        accountError = nil
+        guard let services = makeV2Services() else {
+            accountError = String(localized: "The signed-in server is unavailable.")
+            return false
+        }
+        isAccountWorking = true
+        defer { isAccountWorking = false }
+        do {
+            me = try await services.account.profile()
+            return true
+        } catch {
+            accountError = error.localizedDescription
+            return false
+        }
+    }
+
+    /// Performs authenticated network I/O and replaces the stored account avatar.
+    func updateAccountAvatar(dataURL: String) async -> Bool {
+        guard !isAccountWorking else { return false }
+        accountError = nil
+        guard let services = makeV2Services() else {
+            accountError = String(localized: "The signed-in server is unavailable.")
+            return false
+        }
+        isAccountWorking = true
+        defer { isAccountWorking = false }
+        do {
+            me = try await services.account.updateAvatar(dataURL: dataURL)
+            return true
+        } catch {
+            accountError = error.localizedDescription
+            return false
+        }
+    }
+
+    /// Performs authenticated network I/O and removes the stored account avatar.
+    func clearAccountAvatar() async -> Bool {
+        guard !isAccountWorking else { return false }
+        accountError = nil
+        guard let services = makeV2Services() else {
+            accountError = String(localized: "The signed-in server is unavailable.")
+            return false
+        }
+        isAccountWorking = true
+        defer { isAccountWorking = false }
+        do {
+            me = try await services.account.clearAvatar()
+            return true
+        } catch {
+            accountError = error.localizedDescription
+            return false
+        }
+    }
+
+    /// Performs authenticated network I/O and changes the current account password.
+    func changeAccountPassword(newPassword: String, confirmation: String) async -> Bool {
+        guard !isAccountWorking else { return false }
+        accountError = nil
+        guard let services = makeV2Services() else {
+            accountError = String(localized: "The signed-in server is unavailable.")
+            return false
+        }
+        isAccountWorking = true
+        defer { isAccountWorking = false }
+        do {
+            try await services.account.changePassword(
+                newPassword: newPassword,
+                confirmation: confirmation
+            )
+            return true
+        } catch {
+            accountError = error.localizedDescription
+            return false
+        }
+    }
+
+    func dismissAccountError() {
+        accountError = nil
+    }
+
     func updateSession(_ updated: V2SessionMeta) {
         if let index = sessions.firstIndex(where: { $0.id == updated.id }) {
             sessions[index] = updated
@@ -348,6 +438,8 @@ final class AppState: ObservableObject {
         sessionsError = nil
         connectorsError = nil
         sessionActionError = nil
+        isAccountWorking = false
+        accountError = nil
         authError = nil
         serverConnectionIssue = nil
         if showSignedOutRoute {
