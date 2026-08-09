@@ -21,7 +21,7 @@ struct ChatSidebarView: View {
     let onSignOut: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        ZStack(alignment: .bottomLeading) {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 6) {
                     ChatSidebarNewSessionButton(action: onNewSession)
@@ -63,14 +63,13 @@ struct ChatSidebarView: View {
                 .padding(.leading, safeAreaInsets.leading + 14)
                 .padding(.trailing, safeAreaInsets.trailing + 14)
                 .padding(.top, 10)
-                .padding(.bottom, 24)
+                .padding(.bottom, safeAreaInsets.bottom + 82)
             }
             .scrollIndicators(.hidden)
 
             if let account {
                 ChatSidebarAccountButton(account: account, onSignOut: onSignOut)
                     .padding(.leading, safeAreaInsets.leading + 18)
-                    .padding(.trailing, safeAreaInsets.trailing + 18)
                     .padding(.bottom, max(safeAreaInsets.bottom, 12))
             }
         }
@@ -413,7 +412,8 @@ private struct ChatSidebarAccountButton: View {
         } label: {
             ChatSidebarAvatar(account: account)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.glass)
+        .buttonBorderShape(.circle)
         .accessibilityLabel("Account")
         .alert("Sign out?", isPresented: $isConfirmingSignOut) {
             Button("Cancel", role: .cancel) {}
@@ -439,7 +439,7 @@ private struct ChatSidebarAvatar: View {
                     .foregroundStyle(.background)
             }
         }
-        .frame(width: 42, height: 42)
+        .frame(width: 38, height: 38)
         .background(.primary, in: Circle())
         .clipShape(Circle())
     }
