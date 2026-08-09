@@ -563,7 +563,7 @@ class ClaudeRuntime(AgentRuntime):
             if result_error is not None:
                 await self._set_session_state(
                     session,
-                    "error",
+                    "blocked",
                     error=result_error,
                     metadata={"source": "claude.turn.failed", "turnId": turn_id},
                 )
@@ -587,7 +587,7 @@ class ClaudeRuntime(AgentRuntime):
         except Exception as exc:  # noqa: BLE001
             await self._set_session_state(
                 session,
-                "error",
+                "blocked",
                 error={
                     "code": exc.__class__.__name__,
                     "message": str(exc) or exc.__class__.__name__,

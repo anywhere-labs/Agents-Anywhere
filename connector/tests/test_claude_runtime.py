@@ -807,6 +807,45 @@ async def _test_claude_runtime_interrupts_active_turn() -> None:
     assert host.session_state_updates[-1]["status"] == "idle"
 
 
+def test_claude_runtime_result_error_blocks_session_state() -> None:
+    asyncio.run(_test_claude_runtime_result_error_blocks_session_state())
+
+
+async def _test_claude_runtime_result_error_blocks_session_state() -> None:
+    host = _RecordingHost()
+    client = _FakeClaudeClient(
+        messages=[
+            SimpleNamespace(
+                type="result",
+                session_id="claude_failed",
+                is_error=True,
+                error="Claude Code failed to start the turn",
+            )
+        ]
+    )
+    runtime = _runtime(host=host, client=client)
+
+    result = await runtime.start_turn("sess_failed", None, "hello")
+    task = runtime._sessions["sess_failed"].active_task
+
+    assert result.ok is True
+    assert task is not None
+
+    await task
+
+    state = await runtime.get_session_state("sess_failed")
+
+    assert state is not None
+    assert state.status == "blocked"
+    assert state.error == {
+        "code": "claude_result_error",
+        "message": "Claude Code failed to start the turn",
+    }
+    assert host.session_state_updates[-1]["status"] == "blocked"
+    assert host.session_state_updates[-1]["error"] == state.error
+    assert "error" not in [update["status"] for update in host.session_state_updates]
+
+
 def test_claude_runtime_materializes_attachments_for_turn_start(
     tmp_path: Path,
     monkeypatch: Any,
@@ -882,7 +921,8 @@ async def _test_claude_runtime_tool_approval_round_trips_to_sdk() -> None:
         "running",
         "blocked",
     ]
-    assert client.options.kwargs["permission_prompt_tool_name"] == "stdio"
+    assert "can_use_tool" in client.options.kwargs
+    assert "permission_prompt_tool_name" not in client.options.kwargs
 
     response = await runtime.respond_interaction(
         "sess_approval",

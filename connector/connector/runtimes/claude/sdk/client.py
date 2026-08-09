@@ -72,7 +72,6 @@ def build_sdk_options(
         kwargs["env"] = dict(environment)
     if can_use_tool is not None:
         kwargs["can_use_tool"] = can_use_tool
-        kwargs.setdefault("permission_prompt_tool_name", "stdio")
     options_cls = getattr(sdk, "ClaudeAgentOptions", None) or getattr(
         sdk,
         "ClaudeCodeOptions",
