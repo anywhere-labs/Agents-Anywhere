@@ -27,6 +27,8 @@ from connector.runtimes.claude.domain.capabilities import (
     claude_session_capabilities,
 )
 from connector.runtimes.claude.domain.session import ClaudeSession
+from connector.runtimes.claude.history.state import ClaudeHistoryCursorStore
+from connector.runtimes.claude.history.syncer import ClaudeHistorySyncer
 from connector.runtimes.claude.sdk.client import (
     ClaudeClientFactory,
     SdkLoader,
@@ -50,6 +52,7 @@ class ClaudeRuntime(AgentRuntime):
     _session_states: RuntimeSessionStateCache = field(init=False)
     _session_store: ClaudeSessionStore = field(init=False)
     _session_reader: ClaudeSessionReader = field(init=False)
+    _history_syncer: ClaudeHistorySyncer = field(init=False)
     _catalogs: ClaudeCatalogReader = field(init=False)
     _timeline: ClaudeMessageProjector = field(init=False)
     _notices: ClaudeNoticeRegistry = field(init=False)
@@ -66,6 +69,13 @@ class ClaudeRuntime(AgentRuntime):
             session_store=self._session_store,
             sdk_loader=self.sdk_loader,
         )
+        self._history_syncer = ClaudeHistorySyncer(
+            config=self.config,
+            host=self.host,
+            session_store=self._session_store,
+            sdk_loader=self.sdk_loader,
+            cursor_store=ClaudeHistoryCursorStore(self.host),
+        )
         self._timeline = ClaudeMessageProjector()
         self._notices = ClaudeNoticeRegistry()
         self._notifications = ClaudeNotificationProjector(
@@ -80,6 +90,7 @@ class ClaudeRuntime(AgentRuntime):
             session_states=self._session_states,
             session_store=self._session_store,
             session_reader=self._session_reader,
+            history_syncer=self._history_syncer,
             catalogs=self._catalogs,
             timeline=self._timeline,
             notices=self._notices,
@@ -191,6 +202,16 @@ class ClaudeRuntime(AgentRuntime):
             session_id=session_id,
             external_session_id=external_session_id,
             limit=limit,
+        )
+
+    async def sync_session_timeline(
+        self,
+        session_id: str,
+        external_session_id: str | None = None,
+    ) -> bool:
+        return await self._history_syncer.sync_session_timeline(
+            session_id=session_id,
+            external_session_id=external_session_id,
         )
 
     async def create_and_start_session(

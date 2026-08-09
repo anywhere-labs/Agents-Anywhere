@@ -77,6 +77,19 @@ class AgentRuntime(ABC):
     ) -> RuntimeTimelineSnapshot:
         raise RuntimeUnsupportedError("get_session_snapshot")
 
+    async def sync_session_timeline(
+        self,
+        session_id: str,
+        external_session_id: str | None = None,
+    ) -> bool:
+        """Let runtimes override background scanner timeline sync.
+
+        Return True when the runtime published or intentionally skipped timeline
+        updates. Return False to let the connector publish get_session_snapshot().
+        """
+        _ = session_id, external_session_id
+        return False
+
     async def get_session_state(
         self,
         session_id: str,

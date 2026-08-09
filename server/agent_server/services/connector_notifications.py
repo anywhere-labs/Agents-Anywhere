@@ -372,11 +372,7 @@ class TimelineNotificationHandler:
         items = [_timeline_item_for_session(item, session_id) for item in items]
         items = await _tag_active_run_user_messages(self._store, session_id, items)
         previous_seq = await self._store.get_session_seq(session_id)
-        replace_snapshot = await _should_replace_timeline_snapshot(
-            self._store,
-            session_id,
-            items,
-        )
+        replace_snapshot = params.get("complete") is True
         if replace_snapshot:
             stored_items = await self._store.replace_timeline_snapshot(
                 session_id=session_id,
@@ -801,20 +797,6 @@ def _timeline_item_is_active_work(item: TimelineItemIn) -> bool:
     if item.type == "turn.start":
         return False
     return item.status in {"pending", "running", "waiting_approval"}
-
-
-async def _should_replace_timeline_snapshot(
-    store: ConnectorNotificationRepository,
-    session_id: str,
-    items: list[TimelineItemIn],
-) -> bool:
-    if items:
-        return all(item.source.runtime == "claude" for item in items)
-    try:
-        session = await store.get_session(session_id)
-    except KeyError:
-        return False
-    return session.runtime == "claude"
 
 
 async def _reconcile_active_run_from_timeline(

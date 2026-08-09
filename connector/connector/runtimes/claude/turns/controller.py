@@ -12,6 +12,7 @@ from connector.runtime_protocol import (
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.claude.catalogs.reader import ClaudeCatalogReader
+from connector.runtimes.claude.history.syncer import ClaudeHistorySyncer
 from connector.runtimes.claude.notifications.notices import ClaudeNoticeRegistry
 from connector.runtimes.claude.notifications.projector import ClaudeNotificationProjector
 from connector.runtimes.claude.sdk.client import ClaudeClientFactory, SdkLoader
@@ -32,6 +33,7 @@ class ClaudeTurnController:
     session_states: RuntimeSessionStateCache
     session_store: ClaudeSessionStore
     session_reader: ClaudeSessionReader
+    history_syncer: ClaudeHistorySyncer
     catalogs: ClaudeCatalogReader
     timeline: ClaudeMessageProjector
     notices: ClaudeNoticeRegistry
@@ -61,7 +63,7 @@ class ClaudeTurnController:
             config=self.config,
             host=self.host,
             session_store=self.session_store,
-            session_reader=self.session_reader,
+            history_syncer=self.history_syncer,
             timeline=self.timeline,
             notifications=self.notifications,
             interactions=self.interactions,

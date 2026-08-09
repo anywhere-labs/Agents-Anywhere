@@ -297,7 +297,7 @@ async def _test_claude_runtime_lists_sessions_and_returns_local_snapshot() -> No
     assert session.title == "Snapshot session"
     assert session.cwd == "/repo"
     assert session.metadata["sync"]["requires_timeline_sync"] is False
-    assert len(host.timeline_syncs) == 1
+    assert host.timeline_syncs == []
 
     snapshot = await runtime.get_session_snapshot("sess_snapshot", "claude_snapshot")
 
@@ -373,12 +373,23 @@ async def _test_claude_runtime_session_sync_marker_skips_unchanged_history() -> 
     runtime = _runtime(host=host, sdk=sdk)
 
     first = await runtime.list_sessions(limit=10)
+    await runtime.sync_session_timeline(
+        first[0].session_id,
+        first[0].external_session_id,
+    )
     second = await runtime.list_sessions(limit=10)
+    host.timeline_syncs.clear()
+    await runtime.sync_session_timeline(
+        second[0].session_id,
+        second[0].external_session_id,
+    )
     forced = await runtime.list_sessions(limit=10, force=True)
 
     assert first[0].metadata["sync"]["changed"] is True
     assert second[0].metadata["sync"]["changed"] is False
-    assert second[0].metadata["sync"]["requires_timeline_sync"] is False
+    assert second[0].metadata["sync"]["requires_timeline_sync"] is True
+    assert second[0].metadata["sync"]["history_cursor_missing"] is False
+    assert host.timeline_syncs == []
     assert forced[0].metadata["sync"]["changed"] is True
     assert forced[0].metadata["sync"]["requires_timeline_sync"] is True
 
@@ -561,11 +572,11 @@ async def _test_claude_runtime_merges_local_and_history_sync_flags() -> None:
     )
 
 
-def test_claude_runtime_syncs_sdk_history_after_turn_completion() -> None:
-    asyncio.run(_test_claude_runtime_syncs_sdk_history_after_turn_completion())
+def test_claude_runtime_marks_sdk_history_consumed_after_turn_completion() -> None:
+    asyncio.run(_test_claude_runtime_marks_sdk_history_consumed_after_turn_completion())
 
 
-async def _test_claude_runtime_syncs_sdk_history_after_turn_completion() -> None:
+async def _test_claude_runtime_marks_sdk_history_consumed_after_turn_completion() -> None:
     host = _RecordingHost()
     sdk = _HistorySdk(
         messages={
@@ -601,12 +612,151 @@ async def _test_claude_runtime_syncs_sdk_history_after_turn_completion() -> None
 
     await task
 
+    assert host.timeline_syncs == []
+    cursor = host.sync_states["claude/history/cursor/claude_history_turn"]
+    assert cursor["cursor"]["messageCount"] == 2
+    assert cursor["cursor"]["lastMessageUuid"] == "history_turn_assistant"
+
+
+def test_claude_runtime_scanner_syncs_full_history_without_cursor() -> None:
+    asyncio.run(_test_claude_runtime_scanner_syncs_full_history_without_cursor())
+
+
+async def _test_claude_runtime_scanner_syncs_full_history_without_cursor() -> None:
+    host = _RecordingHost()
+    sdk = _HistorySdk(
+        messages={
+            "claude_history_full": [
+                SimpleNamespace(
+                    type="user",
+                    uuid="history_full_user",
+                    session_id="claude_history_full",
+                    message={"role": "user", "content": "hello"},
+                ),
+                SimpleNamespace(
+                    type="assistant",
+                    uuid="history_full_assistant",
+                    session_id="claude_history_full",
+                    message={
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "history answer"}],
+                    },
+                ),
+            ]
+        }
+    )
+    runtime = _runtime(host=host, sdk=sdk)
+
+    handled = await runtime.sync_session_timeline(
+        "sess_history_full",
+        "claude_history_full",
+    )
+
+    assert handled is True
     assert len(host.timeline_syncs) == 1
     sync = host.timeline_syncs[0]
-    assert sync["external_session_id"] == "claude_history_turn"
-    assert sync["metadata"]["source"] == "claude.turn.history_sync"
+    assert sync["complete"] is True
+    assert sync["metadata"]["source"] == "claude.history.sync"
     assert [item.role for item in sync["items"]] == ["user", "assistant"]
-    assert sync["items"][1].content["text"] == "hello from history"
+    assert (
+        host.sync_states["claude/history/cursor/claude_history_full"]["cursor"][
+            "lastMessageUuid"
+        ]
+        == "history_full_assistant"
+    )
+
+
+def test_claude_runtime_scanner_syncs_delta_after_cursor() -> None:
+    asyncio.run(_test_claude_runtime_scanner_syncs_delta_after_cursor())
+
+
+async def _test_claude_runtime_scanner_syncs_delta_after_cursor() -> None:
+    host = _RecordingHost()
+    sdk = _HistorySdk(
+        messages={
+            "claude_history_delta": [
+                SimpleNamespace(
+                    type="user",
+                    uuid="history_delta_user",
+                    session_id="claude_history_delta",
+                    message={"role": "user", "content": "hello"},
+                ),
+                SimpleNamespace(
+                    type="assistant",
+                    uuid="history_delta_assistant_1",
+                    session_id="claude_history_delta",
+                    message={
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "first"}],
+                    },
+                ),
+            ]
+        }
+    )
+    runtime = _runtime(host=host, sdk=sdk)
+    await runtime.sync_session_timeline("sess_history_delta", "claude_history_delta")
+    host.timeline_syncs.clear()
+    sdk.messages["claude_history_delta"].append(
+        SimpleNamespace(
+            type="assistant",
+            uuid="history_delta_assistant_2",
+            session_id="claude_history_delta",
+            message={
+                "role": "assistant",
+                "content": [{"type": "text", "text": "second"}],
+            },
+        )
+    )
+
+    handled = await runtime.sync_session_timeline(
+        "sess_history_delta",
+        "claude_history_delta",
+    )
+
+    assert handled is True
+    assert len(host.timeline_syncs) == 1
+    sync = host.timeline_syncs[0]
+    assert sync["complete"] is False
+    assert [item.role for item in sync["items"]] == ["assistant"]
+    assert sync["items"][0].content["text"] == "second"
+
+
+def test_claude_runtime_scanner_skips_active_session_without_storing_cursor() -> None:
+    asyncio.run(_test_claude_runtime_scanner_skips_active_session_without_storing_cursor())
+
+
+async def _test_claude_runtime_scanner_skips_active_session_without_storing_cursor() -> None:
+    host = _RecordingHost()
+    sdk = _HistorySdk(
+        messages={
+            "claude_history_active": [
+                SimpleNamespace(
+                    type="assistant",
+                    uuid="history_active_assistant",
+                    session_id="claude_history_active",
+                    message={
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "active"}],
+                    },
+                )
+            ]
+        }
+    )
+    runtime = _runtime(host=host, sdk=sdk)
+    session = runtime._session_store.ensure(
+        "sess_history_active",
+        "claude_history_active",
+    )
+    session.active_turn_id = "turn_active"
+
+    handled = await runtime.sync_session_timeline(
+        "sess_history_active",
+        "claude_history_active",
+    )
+
+    assert handled is True
+    assert host.timeline_syncs == []
+    assert "claude/history/cursor/claude_history_active" not in host.sync_states
 
 
 def test_claude_runtime_session_state_defaults_to_idle_for_known_history() -> None:

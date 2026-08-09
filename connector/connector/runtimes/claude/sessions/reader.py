@@ -20,6 +20,7 @@ from connector.runtimes.claude.domain.session import (
     ClaudeSession,
     stable_session_id,
 )
+from connector.runtimes.claude.history.state import history_cursor_key
 from connector.runtimes.claude.sdk.client import SdkLoader, load_sdk
 from connector.runtimes.claude.sdk.history import (
     list_sdk_sessions,
@@ -165,6 +166,9 @@ class ClaudeSessionReader:
         previous_marker = (
             previous_sync.get("marker") if isinstance(previous_sync, Mapping) else None
         )
+        previous_cursor = await self.host.sync_state_read(
+            history_cursor_key(external_session_id)
+        )
         changed = force or previous_marker != sync_marker
         await self.host.sync_state_write(
             sync_key,
@@ -189,7 +193,8 @@ class ClaudeSessionReader:
                     "key": sync_key,
                     "marker": sync_marker,
                     "changed": changed,
-                    "requires_timeline_sync": changed,
+                    "requires_timeline_sync": True,
+                    "history_cursor_missing": previous_cursor is None,
                     "previous_marker": previous_marker,
                 },
                 "sdk": _sdk_session_metadata(sdk_session),

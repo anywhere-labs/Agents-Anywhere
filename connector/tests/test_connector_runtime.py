@@ -1100,6 +1100,10 @@ def test_runtime_sync_pushes_each_session_snapshot_before_next_meta() -> None:
     asyncio.run(_exercise_runtime_sync_pushes_each_session_snapshot_before_next_meta())
 
 
+def test_runtime_sync_uses_runtime_timeline_hook_when_available() -> None:
+    asyncio.run(_exercise_runtime_sync_uses_runtime_timeline_hook_when_available())
+
+
 async def _exercise_runtime_host_notification_ingest_fallback() -> None:
     client = _client()
     enqueued: list[tuple[str, dict[str, Any]]] = []
@@ -1184,6 +1188,81 @@ async def _exercise_runtime_sync_pushes_each_session_snapshot_before_next_meta()
     ]
     sync_call = next(call for call in runtime.calls if call[0] == "session.sync")
     assert sync_call[1]["limit"] is None
+
+
+async def _exercise_runtime_sync_uses_runtime_timeline_hook_when_available() -> None:
+    class HookRuntime(FakeAgentRuntime):
+        async def list_sessions(
+            self,
+            limit: int = 100,
+            cursor: str | None = None,
+            force: bool = False,
+        ) -> tuple[SessionMeta, ...]:
+            self.calls.append(
+                (
+                    "session.discover",
+                    {"limit": limit, "cursor": cursor, "force": force},
+                )
+            )
+            return (
+                SessionMeta(
+                    session_id="sess_hook",
+                    external_session_id="thr_hook",
+                    runtime=self.runtime_id,
+                    title="Hook",
+                    cwd="/repo",
+                    ordering_time="2026-08-02T00:00:00Z",
+                    metadata={"sync": {"requires_timeline_sync": True}},
+                ),
+            )
+
+        async def sync_session_timeline(
+            self,
+            session_id: str,
+            external_session_id: str | None = None,
+        ) -> bool:
+            self.calls.append(
+                (
+                    "session.timelineHook",
+                    {
+                        "sessionId": session_id,
+                        "externalSessionId": external_session_id,
+                    },
+                )
+            )
+            return True
+
+    runtime = HookRuntime()
+    host = RecordingRuntimeHost()
+    runner = RuntimeSyncRunner(
+        config=ConnectorConfig(
+            server_url="http://127.0.0.1:8000",
+            connector_id="conn_1",
+            connector_token="token",
+        ),
+        supervisor=FakeRuntimeSupervisor(runtime),  # type: ignore[arg-type]
+        host=host,
+        preferences_reader=dict,
+        send_notification=unused_notification_sender,
+    )
+
+    await runner.sync_existing_once()
+
+    assert host.events == [
+        ("model_catalog", "codex"),
+        ("permission_catalog", "codex"),
+        ("meta", "sess_hook"),
+        ("state", "sess_hook"),
+        ("notice", "sess_hook"),
+    ]
+    assert [call[0] for call in runtime.calls] == [
+        "runtime.modelCatalog",
+        "runtime.permissionCatalog",
+        "session.discover",
+        "session.timelineHook",
+        "session.state",
+        "session.notices",
+    ]
 
 
 def test_connector_refreshes_expiring_access_token_before_ingest() -> None:

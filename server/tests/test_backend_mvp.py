@@ -5996,6 +5996,7 @@ def test_claude_timeline_sync_replaces_existing_timeline(tmp_path):
                 "method": "timeline.sync",
                 "params": {
                     "sessionId": session_id,
+                    "complete": True,
                     "items": [
                         {
                             "id": "turn_history:turn-start",
@@ -6083,6 +6084,82 @@ def test_claude_timeline_sync_replaces_existing_timeline(tmp_path):
         assert "claude_msg_history_answer" in item_ids
 
 
+def test_claude_timeline_sync_without_complete_merges_existing_timeline(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, _, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+    session_id = _create_claude_session(client, connector_id, headers, fake_rpc)
+
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.itemUpsert",
+                    "params": {
+                        "sessionId": session_id,
+                        "item": {
+                            "id": "claude_live_answer",
+                            "sessionId": session_id,
+                            "turnId": "turn_live",
+                            "type": "message",
+                            "status": "done",
+                            "role": "assistant",
+                            "content": {"text": "live"},
+                            "source": {
+                                "runtime": "claude",
+                                "sessionId": "claude_session_1",
+                                "turnId": "turn_live",
+                                "itemId": "msg_live",
+                                "itemType": "assistant",
+                            },
+                            "orderSeq": 1,
+                            "revision": 1,
+                            "contentHash": "sha256:live",
+                        },
+                    },
+                },
+                {
+                    "method": "timeline.sync",
+                    "params": {
+                        "sessionId": session_id,
+                        "items": [
+                            {
+                                "id": "claude_history_answer",
+                                "sessionId": session_id,
+                                "turnId": "turn_history",
+                                "type": "message",
+                                "status": "done",
+                                "role": "assistant",
+                                "content": {"text": "history"},
+                                "source": {
+                                    "runtime": "claude",
+                                    "sessionId": "claude_session_1",
+                                    "turnId": "turn_history",
+                                    "itemId": "msg_history",
+                                    "itemType": "assistant",
+                                },
+                                "orderSeq": 2,
+                                "revision": 1,
+                                "contentHash": "sha256:history",
+                            }
+                        ],
+                    },
+                },
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    state = session_view_for_assertions(client, session_id, headers)
+    assert {item["id"] for item in state["items"]} == {
+        "claude_live_answer",
+        "claude_history_answer",
+    }
+
+
 def test_claude_empty_timeline_sync_clears_existing_timeline(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, _, headers = create_connector_and_session(client)
@@ -6124,6 +6201,7 @@ def test_claude_empty_timeline_sync_clears_existing_timeline(tmp_path):
                     "method": "timeline.sync",
                     "params": {
                         "sessionId": session_id,
+                        "complete": True,
                         "items": [],
                     },
                 },

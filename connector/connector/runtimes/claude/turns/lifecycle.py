@@ -8,6 +8,7 @@ from typing import Any
 from connector.runtime_protocol import RuntimeAttachment, RuntimeConfig
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.claude.domain.session import ClaudeSession
+from connector.runtimes.claude.history.syncer import ClaudeHistorySyncer
 from connector.runtimes.claude.notifications.projector import ClaudeNotificationProjector
 from connector.runtimes.claude.sdk.client import (
     ClaudeClientFactory,
@@ -21,7 +22,6 @@ from connector.runtimes.claude.sdk.client import (
 )
 from connector.runtimes.claude.sdk.stderr import ClaudeStderrBuffer
 from connector.runtimes.claude.sessions.cache import ClaudeSessionStore
-from connector.runtimes.claude.sessions.reader import ClaudeSessionReader
 from connector.runtimes.claude.timeline.messages import (
     ClaudeMessageProjector,
     is_result_message,
@@ -44,7 +44,7 @@ class ClaudeTurnRunner:
     config: RuntimeConfig
     host: RuntimeHostClient
     session_store: ClaudeSessionStore
-    session_reader: ClaudeSessionReader
+    history_syncer: ClaudeHistorySyncer
     timeline: ClaudeMessageProjector
     notifications: ClaudeNotificationProjector
     interactions: ClaudeInteractionController
@@ -167,7 +167,7 @@ class ClaudeTurnRunner:
                     metadata={"source": "claude.turn.failed", "turnId": turn_id},
                 )
             else:
-                await self._sync_completed_turn_history(session)
+                await self.history_syncer.mark_session_consumed(session)
                 await self.notifications.session_state.session_state_update(
                     session,
                     "idle",
@@ -213,18 +213,4 @@ class ClaudeTurnRunner:
         await self.notifications.session_state.session_meta_upsert(
             session,
             source="claude.session.external_id",
-        )
-
-    async def _sync_completed_turn_history(self, session: ClaudeSession) -> None:
-        if session.external_session_id is None:
-            return
-        snapshot = await self.session_reader.get_session_snapshot(
-            session.session_id,
-            session.external_session_id,
-        )
-        if not snapshot.complete and not snapshot.items:
-            return
-        await self.notifications.timeline_activity.timeline_sync(
-            snapshot,
-            source="claude.turn.history_sync",
         )

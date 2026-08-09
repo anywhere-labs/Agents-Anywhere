@@ -117,38 +117,47 @@ class RuntimeSyncRunner:
             session.session_id,
             session.external_session_id,
         )
-        read_started_at = time.monotonic()
-        snapshot = await runtime.get_session_snapshot(
+        read_elapsed_ms = 0.0
+        publish_elapsed_ms = 0.0
+        synced_items = 0
+        timeline_handled = await runtime.sync_session_timeline(
             session.session_id,
             session.external_session_id,
         )
-        read_elapsed_ms = (time.monotonic() - read_started_at) * 1000
-        logger.info(
-            "existing session timeline sync read runtime={} session_id={} items={} complete={} elapsed_ms={:.1f}",
-            snapshot.runtime,
-            snapshot.session_id,
-            len(snapshot.items),
-            snapshot.complete,
-            read_elapsed_ms,
-        )
-        publish_started_at = time.monotonic()
-        await self.host.timeline_sync(
-            session_id=snapshot.session_id,
-            runtime=snapshot.runtime,
-            external_session_id=snapshot.external_session_id,
-            items=snapshot.items,
-            complete=snapshot.complete,
-            metadata=snapshot.metadata,
-        )
-        publish_elapsed_ms = (time.monotonic() - publish_started_at) * 1000
-        if publish_elapsed_ms >= 250 or len(snapshot.items) >= 100:
+        if not timeline_handled:
+            read_started_at = time.monotonic()
+            snapshot = await runtime.get_session_snapshot(
+                session.session_id,
+                session.external_session_id,
+            )
+            read_elapsed_ms = (time.monotonic() - read_started_at) * 1000
+            synced_items = len(snapshot.items)
             logger.info(
-                "existing session timeline sync published runtime={} session_id={} items={} elapsed_ms={:.1f}",
+                "existing session timeline sync read runtime={} session_id={} items={} complete={} elapsed_ms={:.1f}",
                 snapshot.runtime,
                 snapshot.session_id,
-                len(snapshot.items),
-                publish_elapsed_ms,
+                synced_items,
+                snapshot.complete,
+                read_elapsed_ms,
             )
+            publish_started_at = time.monotonic()
+            await self.host.timeline_sync(
+                session_id=snapshot.session_id,
+                runtime=snapshot.runtime,
+                external_session_id=snapshot.external_session_id,
+                items=snapshot.items,
+                complete=snapshot.complete,
+                metadata=snapshot.metadata,
+            )
+            publish_elapsed_ms = (time.monotonic() - publish_started_at) * 1000
+            if publish_elapsed_ms >= 250 or synced_items >= 100:
+                logger.info(
+                    "existing session timeline sync published runtime={} session_id={} items={} elapsed_ms={:.1f}",
+                    snapshot.runtime,
+                    snapshot.session_id,
+                    synced_items,
+                    publish_elapsed_ms,
+                )
         state = await runtime.get_session_state(
             session.session_id,
             session.external_session_id,
@@ -172,9 +181,9 @@ class RuntimeSyncRunner:
             await self.host.notice_upsert(notice)
         logger.info(
             "existing session sync completed runtime={} session_id={} items={} notices={} read_elapsed_ms={:.1f} publish_elapsed_ms={:.1f}",
-            snapshot.runtime,
-            snapshot.session_id,
-            len(snapshot.items),
+            session.runtime,
+            session.session_id,
+            synced_items,
             len(notices),
             read_elapsed_ms,
             publish_elapsed_ms,
