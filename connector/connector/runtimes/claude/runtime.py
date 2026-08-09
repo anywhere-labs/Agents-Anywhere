@@ -242,6 +242,7 @@ class ClaudeRuntime(AgentRuntime):
         selections: Mapping[str, str | None] | None = None,
         attachments: tuple[RuntimeAttachment, ...] = (),
         client_message_id: str | None = None,
+        cwd: str | None = None,
     ) -> RuntimeOperationResult:
         return await self._turns.start_turn(
             session_id=session_id,
@@ -250,6 +251,7 @@ class ClaudeRuntime(AgentRuntime):
             selections=selections,
             attachments=attachments,
             client_message_id=client_message_id,
+            cwd=cwd,
         )
 
     async def update_session_selections(

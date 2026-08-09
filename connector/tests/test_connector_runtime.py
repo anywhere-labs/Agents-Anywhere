@@ -603,6 +603,7 @@ class FakeAgentRuntime(AgentRuntime):
         selections=None,  # type: ignore[no-untyped-def]
         attachments=(),  # type: ignore[no-untyped-def]
         client_message_id: str | None = None,
+        cwd: str | None = None,
     ) -> RuntimeOperationResult:
         self.calls.append(
             (
@@ -611,6 +612,7 @@ class FakeAgentRuntime(AgentRuntime):
                     "sessionId": session_id,
                     "externalSessionId": external_session_id,
                     "content": content,
+                    "cwd": cwd,
                     "selections": dict(selections or {}),
                     "attachments": attachments,
                     "clientMessageId": client_message_id,
@@ -2165,6 +2167,7 @@ async def _exercise_agent_runtime_turn_rpc(tmp_path) -> None:
             "sessionId": "sess_1",
             "externalSessionId": "thr_1",
             "content": "hi",
+            "cwd": "/Users/t4wefan",
             "clientMessageId": "cm_1",
             "attachments": [{"fileId": "file_1", "name": "a.txt"}],
         },
@@ -2200,6 +2203,7 @@ async def _exercise_agent_runtime_turn_rpc(tmp_path) -> None:
     ]
     assert agent_runtime.calls[0][1]["attachments"][0].file_id == "file_1"
     assert agent_runtime.calls[0][1]["clientMessageId"] == "cm_1"
+    assert agent_runtime.calls[0][1]["cwd"] == "/Users/t4wefan"
 
 
 async def _exercise_agent_runtime_discovery() -> None:

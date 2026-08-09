@@ -49,8 +49,9 @@ class ClaudeTurnActionHandler:
         selections: Mapping[str, str | None] | None = None,
         attachments: tuple[RuntimeAttachment, ...] = (),
         client_message_id: str | None = None,
+        cwd: str | None = None,
     ) -> RuntimeOperationResult:
-        session = self._session_for(session_id, external_session_id, None)
+        session = self._session_for(session_id, external_session_id, cwd)
         if self.has_active_turn(session_id):
             return RuntimeOperationResult(
                 ok=False,

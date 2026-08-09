@@ -115,6 +115,7 @@ class ClaudeTurnController:
         selections: Mapping[str, str | None] | None = None,
         attachments: tuple[RuntimeAttachment, ...] = (),
         client_message_id: str | None = None,
+        cwd: str | None = None,
     ) -> RuntimeOperationResult:
         return await self.actions.start_turn(
             session_id=session_id,
@@ -123,6 +124,7 @@ class ClaudeTurnController:
             selections=selections,
             attachments=attachments,
             client_message_id=client_message_id,
+            cwd=cwd,
         )
 
     async def interrupt_turn(

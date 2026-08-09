@@ -154,6 +154,7 @@ async def _test_claude_runtime_starts_turn_and_projects_timeline() -> None:
         "claude_session_0",
         "hello",
         client_message_id="client_msg_1",
+        cwd="/Users/t4wefan",
     )
     task = runtime._sessions["sess_1"].active_task
 
@@ -168,6 +169,8 @@ async def _test_claude_runtime_starts_turn_and_projects_timeline() -> None:
     assert client.disconnected is True
     assert client.queries == ["hello"]
     assert client.options.kwargs["resume"] == "claude_session_0"
+    assert client.options.kwargs["cwd"] == "/Users/t4wefan"
+    assert runtime._sessions["sess_1"].cwd == "/Users/t4wefan"
     assert runtime._sessions["sess_1"].external_session_id == "claude_session_1"
     assert [update["status"] for update in host.session_state_updates] == [
         "waiting",

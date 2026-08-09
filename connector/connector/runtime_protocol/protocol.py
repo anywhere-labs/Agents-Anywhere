@@ -140,7 +140,9 @@ class AgentRuntime(ABC):
         selections: Mapping[str, str | None] | None = None,
         attachments: tuple[RuntimeAttachment, ...] = (),
         client_message_id: str | None = None,
+        cwd: str | None = None,
     ) -> RuntimeOperationResult:
+        _ = cwd
         raise RuntimeUnsupportedError("start_turn")
 
     async def steer_turn(

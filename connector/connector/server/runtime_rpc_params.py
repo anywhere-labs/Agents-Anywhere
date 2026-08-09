@@ -286,6 +286,7 @@ class TurnStartParams:
     session_id: str
     external_session_id: str | None
     content: str
+    cwd: str | None
     selections: dict[str, str | None]
     attachments: tuple[RuntimeAttachment, ...]
     client_message_id: str | None
@@ -296,6 +297,7 @@ class TurnStartParams:
             session_id=required_session_id(params),
             external_session_id=optional_string(params.get("externalSessionId")),
             content=required_content(params),
+            cwd=optional_string(params.get("cwd")),
             selections=runtime_selections(params),
             attachments=runtime_attachments(params),
             client_message_id=optional_string(params.get("clientMessageId")),
