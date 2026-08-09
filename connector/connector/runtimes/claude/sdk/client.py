@@ -51,7 +51,10 @@ def build_sdk_options(
         kwargs["cwd"] = session.cwd
     if session.external_session_id:
         kwargs["resume"] = session.external_session_id
-    model_selection = model_selection_from_selection_id(session.selections.get("model"))
+    model_selection = model_selection_from_selection_id(
+        session.selections.get("model"),
+        values.get("customModels"),
+    )
     if model_selection is not None:
         kwargs["model"] = model_selection.model_id
         if model_selection.effort_id is not None:

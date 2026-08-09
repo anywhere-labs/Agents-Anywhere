@@ -4,6 +4,7 @@ import os
 from typing import Any
 
 from connector.runtime_protocol import RuntimeInvalidRequestError
+from connector.runtimes.custom_models import custom_models_schema
 
 PROTECTED_ENV_PREFIXES = ("AGENT_CONNECTOR_", "AGENT_SERVER_")
 PROTECTED_ENV_NAMES = {
@@ -37,6 +38,7 @@ def claude_config_schema() -> dict[str, Any]:
                 },
                 "default": {},
             },
+            "customModels": custom_models_schema(),
         },
         "additionalProperties": False,
     }

@@ -78,15 +78,50 @@ async def _test_claude_provider_schema_and_config_validation() -> None:
         {
             "executablePath": "/opt/claude",
             "environment": {"EXAMPLE": "1"},
+            "customModels": [
+                {
+                    "modelId": " claude-local-test ",
+                    "displayName": " Claude Local Test ",
+                }
+            ],
         }
     )
 
-    assert schema.defaults == {"environment": {}}
-    assert set(schema.schema["properties"]) == {"environment", "executablePath"}
+    assert schema.defaults == {"environment": {}, "customModels": []}
+    assert schema.ui_schema["customModels"]["component"] == "customModels"
+    assert set(schema.schema["properties"]) == {
+        "customModels",
+        "environment",
+        "executablePath",
+    }
     assert config.runtime == "claude"
     assert config.values["executablePath"] == "/opt/claude"
     assert config.values["environment"] == {"EXAMPLE": "1"}
+    assert config.values["customModels"] == [
+        {
+            "modelId": "claude-local-test",
+            "displayName": "Claude Local Test",
+        }
+    ]
     assert config.metadata["launchTarget"]["path"] == "/opt/claude"
+
+
+def test_claude_provider_rejects_duplicate_custom_models() -> None:
+    asyncio.run(_test_claude_provider_rejects_duplicate_custom_models())
+
+
+async def _test_claude_provider_rejects_duplicate_custom_models() -> None:
+    provider = ClaudeProvider(sdk_loader=_sdk, command_checker=_available_command)
+
+    with pytest.raises(RuntimeInvalidRequestError, match="duplicate modelId"):
+        await provider.validate_config(
+            {
+                "customModels": [
+                    {"modelId": "claude-local-test", "displayName": "Local"},
+                    {"modelId": "claude-local-test", "displayName": "Duplicate"},
+                ]
+            }
+        )
 
 
 def test_claude_provider_rejects_protected_environment() -> None:

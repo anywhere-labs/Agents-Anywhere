@@ -17,6 +17,7 @@ from connector.runtime_protocol import (
     RuntimeProvider,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
+from connector.runtimes.custom_models import normalize_custom_models
 from connector.runtimes.claude import discovery, provider_config
 from connector.runtimes.claude.runtime import ClaudeRuntime
 
@@ -77,10 +78,11 @@ class ClaudeProvider(RuntimeProvider):
             revision=1,
             schema=schema,
             ui_schema={
-                "order": ["executablePath", "environment"],
+                "order": ["executablePath", "environment", "customModels"],
                 "environment": {"component": "keyValue"},
+                "customModels": {"component": "customModels"},
             },
-            defaults={"environment": {}},
+            defaults={"environment": {}, "customModels": []},
         )
 
     async def validate_config(
@@ -121,6 +123,7 @@ class ClaudeProvider(RuntimeProvider):
 
         normalized_values: dict[str, Any] = {
             "environment": dict(raw_values.get("environment") or {}),
+            "customModels": normalize_custom_models(raw_values.get("customModels")),
         }
         if isinstance(executable_path, str) and executable_path:
             normalized_values["executablePath"] = executable_path

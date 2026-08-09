@@ -1272,6 +1272,83 @@ async def _test_codex_runtime_model_catalog_from_app_server() -> None:
     assert catalog.models[1].selection_id.startswith("sel_model_")
 
 
+def test_codex_runtime_model_catalog_includes_custom_models() -> None:
+    asyncio.run(_test_codex_runtime_model_catalog_includes_custom_models())
+
+
+async def _test_codex_runtime_model_catalog_includes_custom_models() -> None:
+    runtime = CodexRuntime(
+        config=RuntimeConfig(
+            runtime="codex",
+            revision=3,
+            values={
+                "environment": {},
+                "customModels": [
+                    {
+                        "modelId": "gpt-local-test",
+                        "displayName": "GPT Local Test",
+                    }
+                ],
+            },
+        ),
+        host=FakeHost(),
+        client=FakeCodexClient(),
+    )
+
+    catalog = await runtime.list_model_catalog(query="local")
+
+    assert [model.id for model in catalog.models] == ["gpt-local-test"]
+    assert catalog.models[0].title == "GPT Local Test"
+    assert catalog.models[0].selection_id is not None
+    assert catalog.models[0].selection_id.startswith("sel_model_")
+    assert catalog.models[0].metadata["custom"] is True
+
+
+def test_codex_runtime_applies_custom_model_selection_to_turn_start() -> None:
+    asyncio.run(_test_codex_runtime_applies_custom_model_selection_to_turn_start())
+
+
+async def _test_codex_runtime_applies_custom_model_selection_to_turn_start() -> None:
+    client = FakeCodexClient()
+    runtime = CodexRuntime(
+        config=RuntimeConfig(
+            runtime="codex",
+            revision=3,
+            values={
+                "environment": {},
+                "customModels": [
+                    {
+                        "modelId": "gpt-local-test",
+                        "displayName": "GPT Local Test",
+                    }
+                ],
+            },
+        ),
+        host=FakeHost(),
+        client=client,
+    )
+    model_selection = (await runtime.list_model_catalog(query="local")).models[
+        0
+    ].selection_id
+
+    result = await runtime.start_turn(
+        "sess_1",
+        "thread_1",
+        "hello",
+        selections={"model": model_selection},
+    )
+
+    assert result.ok is True
+    assert client.requests[-1] == (
+        "turn/start",
+        {
+            "threadId": "thread_1",
+            "input": [{"type": "text", "text": "hello", "text_elements": []}],
+            "model": "gpt-local-test",
+        },
+    )
+
+
 def test_codex_runtime_model_catalog_query_and_limit() -> None:
     asyncio.run(_test_codex_runtime_model_catalog_query_and_limit())
 

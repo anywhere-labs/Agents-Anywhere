@@ -563,6 +563,53 @@ async def _test_claude_runtime_applies_plain_model_selection_to_sdk_options() ->
     assert "effort" not in client.options.kwargs
 
 
+def test_claude_runtime_applies_custom_model_selection_to_sdk_options() -> None:
+    asyncio.run(_test_claude_runtime_applies_custom_model_selection_to_sdk_options())
+
+
+async def _test_claude_runtime_applies_custom_model_selection_to_sdk_options() -> None:
+    client = _FakeClaudeClient(
+        messages=[SimpleNamespace(type="result", session_id="claude_custom_model")]
+    )
+    runtime = _runtime(
+        client=client,
+        config=RuntimeConfig(
+            runtime="claude",
+            revision=1,
+            values={
+                "environment": {},
+                "customModels": [
+                    {
+                        "modelId": "claude-local-test",
+                        "displayName": "Claude Local Test",
+                    }
+                ],
+            },
+        ),
+    )
+    catalog = await runtime.list_model_catalog(query="local")
+    model = catalog.models[0]
+
+    result = await runtime.start_turn(
+        "sess_custom_model",
+        "claude_custom_model",
+        "use custom model",
+        selections={"model": model.selection_id},
+    )
+    task = runtime._sessions["sess_custom_model"].active_task
+
+    assert [item.id for item in catalog.models] == ["claude-local-test"]
+    assert model.title == "Claude Local Test"
+    assert model.metadata["custom"] is True
+    assert result.ok is True
+    assert task is not None
+
+    await task
+
+    assert client.options.kwargs["model"] == "claude-local-test"
+    assert "effort" not in client.options.kwargs
+
+
 def test_claude_runtime_rejects_unknown_model_selection() -> None:
     asyncio.run(_test_claude_runtime_rejects_unknown_model_selection())
 
@@ -805,6 +852,7 @@ def _runtime(
     host: _RecordingHost | None = None,
     client: "_FakeClaudeClient | None" = None,
     sdk: Any | None = None,
+    config: RuntimeConfig | None = None,
 ) -> ClaudeRuntime:
     active_host = host or _RecordingHost()
     active_client = client or _FakeClaudeClient()
@@ -816,7 +864,7 @@ def _runtime(
         return active_client
 
     return ClaudeRuntime(
-        config=_config(),
+        config=config or _config(),
         host=active_host,
         sdk_loader=lambda: active_sdk,
         client_factory=client_factory,

@@ -174,6 +174,7 @@ class ClaudeRuntime(AgentRuntime):
             revision=self.config.revision,
             query=query,
             limit=limit,
+            custom_models=self.config.values.get("customModels"),
         )
 
     async def list_permission_catalog(
@@ -831,6 +832,9 @@ class ClaudeRuntime(AgentRuntime):
         state = self._session_states.get(session_id)
         effective = dict(state.selections if state is not None else {})
         effective.update(dict(selections or {}))
-        model_selection_from_selection_id(effective.get("model"))
+        model_selection_from_selection_id(
+            effective.get("model"),
+            self.config.values.get("customModels"),
+        )
         permission_mode_from_selection_id(effective.get("permission"))
         return effective

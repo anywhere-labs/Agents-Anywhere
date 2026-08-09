@@ -14,6 +14,7 @@ from connector.runtimes.codex.domain.catalogs import (
     permission_catalog_from_codex_items,
 )
 from connector.runtimes.codex.sdk.runtime_client import CodexModelListResult
+from connector.runtimes.custom_models import custom_model_items
 
 EnsureStarted = Callable[[], Awaitable[None]]
 GetModelListResult = Callable[[], CodexModelListResult | None]
@@ -35,6 +36,18 @@ class CodexCatalogReader:
         catalog = model_catalog_from_codex_items(
             list(model_list_result.models) if model_list_result is not None else [],
             revision=self.config.revision,
+        )
+        catalog = RuntimeModelCatalog(
+            runtime=catalog.runtime,
+            revision=catalog.revision,
+            models=(
+                *catalog.models,
+                *custom_model_items(
+                    "codex",
+                    self.config.values.get("customModels"),
+                    existing_model_ids={model.id for model in catalog.models},
+                ),
+            ),
         )
         if query:
             lowered = query.casefold()

@@ -15,6 +15,7 @@ from connector.runtime_protocol import (
     RuntimeProvider,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
+from connector.runtimes.custom_models import normalize_custom_models
 from connector.runtimes.codex import provider_config
 from connector.runtimes.codex.runtime import CodexRuntime
 from connector.runtimes.codex.sdk.client import sdk_client_from_config
@@ -75,11 +76,13 @@ class CodexProvider(RuntimeProvider):
             revision=1,
             schema=schema,
             ui_schema={
-                "order": ["environment"],
+                "order": ["environment", "customModels"],
                 "environment": {"component": "keyValue"},
+                "customModels": {"component": "customModels"},
             },
             defaults={
                 "environment": {},
+                "customModels": [],
             },
         )
 
@@ -106,6 +109,7 @@ class CodexProvider(RuntimeProvider):
 
         normalized_values: dict[str, Any] = {
             "environment": dict(raw_values.get("environment") or {}),
+            "customModels": normalize_custom_models(raw_values.get("customModels")),
         }
 
         return RuntimeConfig(

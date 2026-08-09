@@ -41,6 +41,7 @@ type JsonSchema = {
   properties?: Record<string, JsonSchema>
   required?: string[]
   additionalProperties?: boolean | JsonSchema
+  items?: JsonSchema
   minimum?: number
   maximum?: number
   minLength?: number
@@ -212,6 +213,21 @@ function RuntimeConfigField({
   const inputId = `runtime-config-${name}`
   const effectiveValue = value === undefined ? schema.default : value
 
+  if (ui.component === "customModels") {
+    return (
+      <Field data-invalid={Boolean(error)}>
+        <FieldLabel>{title}{required ? " *" : ""}</FieldLabel>
+        {description ? <FieldDescription>{description}</FieldDescription> : null}
+        <CustomModelsEditor
+          value={Array.isArray(effectiveValue) ? effectiveValue : []}
+          onChange={onChange}
+          invalid={Boolean(error)}
+        />
+        <FieldError>{error}</FieldError>
+      </Field>
+    )
+  }
+
   if (ui.component === "keyValue" || (schema.type === "object" && isRecord(schema.additionalProperties))) {
     return (
       <Field data-invalid={Boolean(error)}>
@@ -338,6 +354,91 @@ function RuntimeConfigField({
 }
 
 type EnvironmentRow = { id: number; key: string; value: string; removed: boolean }
+
+type CustomModelRow = { id: number; modelId: string; displayName: string }
+
+function CustomModelsEditor({
+  value,
+  onChange,
+  invalid,
+}: {
+  value: unknown[]
+  onChange: (value: unknown) => void
+  invalid: boolean
+}) {
+  const t = useTranslations("dashboard.device")
+  const nextId = React.useRef(1)
+  const [rows, setRows] = React.useState<CustomModelRow[]>(() =>
+    value
+      .filter(isRecord)
+      .map((item) => ({
+        id: nextId.current++,
+        modelId: typeof item.modelId === "string" ? item.modelId : "",
+        displayName: typeof item.displayName === "string" ? item.displayName : "",
+      })),
+  )
+
+  const update = (next: CustomModelRow[]) => {
+    setRows(next)
+    const customModels = next.flatMap((row) => {
+      const modelId = row.modelId.trim()
+      const displayName = row.displayName.trim()
+      if (!modelId && !displayName) return []
+      return [{ modelId, displayName }]
+    })
+    onChange(customModels)
+  }
+
+  return (
+    <div className="flex flex-col gap-3 rounded-md border border-border p-3">
+      {rows.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{t("noCustomModels")}</p>
+      ) : rows.map((row) => (
+        <div
+          key={row.id}
+          className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
+        >
+          <Input
+            className="col-span-2 sm:col-span-1"
+            value={row.modelId}
+            onChange={(event) => update(rows.map((item) => item.id === row.id ? { ...item, modelId: event.currentTarget.value } : item))}
+            placeholder={t("customModelId")}
+            spellCheck={false}
+            aria-label={t("customModelId")}
+            aria-invalid={invalid}
+          />
+          <Input
+            value={row.displayName}
+            onChange={(event) => update(rows.map((item) => item.id === row.id ? { ...item, displayName: event.currentTarget.value } : item))}
+            placeholder={t("customModelDisplayName")}
+            spellCheck={false}
+            aria-label={t("customModelDisplayName")}
+            aria-invalid={invalid}
+          />
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            onClick={() => update(rows.filter((item) => item.id !== row.id))}
+            aria-label={t("removeCustomModel")}
+          >
+            <Trash2 />
+          </Button>
+        </div>
+      ))}
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="self-start"
+        onClick={() => update([...rows, { id: nextId.current++, modelId: "", displayName: "" }])}
+      >
+        <Plus data-icon="inline-start" />
+        {t("addCustomModel")}
+      </Button>
+    </div>
+  )
+}
 
 function EnvironmentEditor({
   value,

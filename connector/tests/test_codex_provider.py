@@ -34,7 +34,7 @@ async def _test_codex_provider_requires_sdk_for_runnable_surface() -> None:
 
     assert item.available is False
     assert item.configured is False
-    assert item.capabilities["commands"] is True
+    assert item.capabilities["commands"] is False
     assert item.capabilities["ipc"] is False
     assert item.metadata["sdk"]["available"] is False
     assert "appServer" not in item.metadata
@@ -66,9 +66,10 @@ async def _test_codex_provider_schema_exposes_no_ipc_or_app_server_switches() ->
 
     schema = await provider.get_config_schema()
 
-    assert schema.defaults == {"environment": {}}
-    assert schema.ui_schema["order"] == ["environment"]
-    assert set(schema.schema["properties"]) == {"environment"}
+    assert schema.defaults == {"environment": {}, "customModels": []}
+    assert schema.ui_schema["order"] == ["environment", "customModels"]
+    assert schema.ui_schema["customModels"]["component"] == "customModels"
+    assert set(schema.schema["properties"]) == {"customModels", "environment"}
     assert "sdkMode" not in schema.schema["properties"]
     assert "ipcEnabled" not in schema.schema["properties"]
     assert "executablePath" not in schema.schema["properties"]
@@ -81,10 +82,28 @@ def test_codex_provider_validates_sdk_config() -> None:
 async def _test_codex_provider_validates_sdk_config() -> None:
     provider = CodexProvider(sdk_checker=_available_sdk)
 
-    config = await provider.validate_config({"environment": {"EXAMPLE": "1"}})
+    config = await provider.validate_config(
+        {
+            "environment": {"EXAMPLE": "1"},
+            "customModels": [
+                {
+                    "modelId": " gpt-local-test ",
+                    "displayName": " GPT Local Test ",
+                }
+            ],
+        }
+    )
 
     assert config.runtime == "codex"
-    assert config.values == {"environment": {"EXAMPLE": "1"}}
+    assert config.values == {
+        "environment": {"EXAMPLE": "1"},
+        "customModels": [
+            {
+                "modelId": "gpt-local-test",
+                "displayName": "GPT Local Test",
+            }
+        ],
+    }
     assert config.metadata["sdk"]["available"] is True
     assert "launchTarget" not in config.metadata
 
@@ -113,6 +132,24 @@ async def _test_codex_provider_rejects_legacy_config_fields() -> None:
         await provider.validate_config({"ipcEnabled": True})
     with pytest.raises(RuntimeInvalidRequestError, match="Additional properties"):
         await provider.validate_config({"executablePath": "/opt/codex"})
+
+
+def test_codex_provider_rejects_duplicate_custom_models() -> None:
+    asyncio.run(_test_codex_provider_rejects_duplicate_custom_models())
+
+
+async def _test_codex_provider_rejects_duplicate_custom_models() -> None:
+    provider = CodexProvider(sdk_checker=_available_sdk)
+
+    with pytest.raises(RuntimeInvalidRequestError, match="duplicate modelId"):
+        await provider.validate_config(
+            {
+                "customModels": [
+                    {"modelId": "gpt-local-test", "displayName": "Local"},
+                    {"modelId": "gpt-local-test", "displayName": "Duplicate"},
+                ]
+            }
+        )
 
 
 def test_codex_provider_rejects_protected_environment() -> None:

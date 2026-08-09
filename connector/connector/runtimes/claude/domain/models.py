@@ -9,6 +9,7 @@ from connector.runtime_protocol import (
     RuntimeModelItem,
     RuntimeReasoningItem,
 )
+from connector.runtimes.custom_models import custom_model_items
 from connector.server.protocol import protocol_selection_id
 
 
@@ -115,8 +116,17 @@ def claude_model_catalog(
     revision: int,
     query: str | None = None,
     limit: int = 100,
+    custom_models: object | None = None,
 ) -> RuntimeModelCatalog:
     models = tuple(_model_item(model) for model in _CLAUDE_MODELS)
+    models = (
+        *models,
+        *custom_model_items(
+            "claude",
+            custom_models,
+            existing_model_ids={model.id for model in models},
+        ),
+    )
     if query:
         lowered = query.casefold()
         models = tuple(
@@ -133,10 +143,11 @@ def claude_model_catalog(
 
 def model_selection_from_selection_id(
     selection_id: str | None,
+    custom_models: object | None = None,
 ) -> ClaudeModelSelection | None:
     if selection_id is None:
         return None
-    for model in claude_model_catalog(revision=0).models:
+    for model in claude_model_catalog(revision=0, custom_models=custom_models).models:
         if model.selection_id == selection_id:
             return ClaudeModelSelection(model_id=model.id)
         for effort in model.reasoning_items:
