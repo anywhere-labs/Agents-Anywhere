@@ -69,8 +69,11 @@ from connector.runtimes.claude.turns.attachments import (
     content_with_attachment_notes,
     materialize_claude_attachments,
 )
+from connector.runtimes.catalog_revisions import runtime_catalog_revision
 
 TERMINAL_NOTICE_STATUSES = {"closed", "resolved", "cancelled", "expired"}
+CLAUDE_MODEL_CATALOG_STATIC_REVISION = 2
+CLAUDE_PERMISSION_CATALOG_STATIC_REVISION = 1
 
 
 @dataclass(slots=True)
@@ -171,7 +174,10 @@ class ClaudeRuntime(AgentRuntime):
         limit: int = 100,
     ) -> RuntimeModelCatalog:
         return claude_model_catalog(
-            revision=self.config.revision,
+            revision=runtime_catalog_revision(
+                self.config.revision,
+                CLAUDE_MODEL_CATALOG_STATIC_REVISION,
+            ),
             query=query,
             limit=limit,
             custom_models=self.config.values.get("customModels"),
@@ -183,7 +189,10 @@ class ClaudeRuntime(AgentRuntime):
         limit: int = 100,
     ) -> RuntimePermissionCatalog:
         return claude_permission_catalog(
-            revision=self.config.revision,
+            revision=runtime_catalog_revision(
+                self.config.revision,
+                CLAUDE_PERMISSION_CATALOG_STATIC_REVISION,
+            ),
             query=query,
             limit=limit,
         )

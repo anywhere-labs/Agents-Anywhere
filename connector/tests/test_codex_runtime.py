@@ -1297,6 +1297,7 @@ async def _test_codex_runtime_model_catalog_includes_custom_models() -> None:
 
     catalog = await runtime.list_model_catalog(query="local")
 
+    assert catalog.revision > runtime.config.revision
     assert [model.id for model in catalog.models] == ["gpt-local-test"]
     assert catalog.models[0].title == "GPT Local Test"
     assert catalog.models[0].selection_id is not None

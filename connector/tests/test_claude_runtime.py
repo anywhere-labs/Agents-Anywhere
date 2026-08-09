@@ -590,6 +590,7 @@ async def _test_claude_runtime_applies_custom_model_selection_to_sdk_options() -
     catalog = await runtime.list_model_catalog(query="local")
     model = catalog.models[0]
 
+    assert catalog.revision > runtime.config.revision
     result = await runtime.start_turn(
         "sess_custom_model",
         "claude_custom_model",

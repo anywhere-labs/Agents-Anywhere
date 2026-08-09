@@ -14,10 +14,13 @@ from connector.runtimes.codex.domain.catalogs import (
     permission_catalog_from_codex_items,
 )
 from connector.runtimes.codex.sdk.runtime_client import CodexModelListResult
+from connector.runtimes.catalog_revisions import runtime_catalog_revision
 from connector.runtimes.custom_models import custom_model_items
 
 EnsureStarted = Callable[[], Awaitable[None]]
 GetModelListResult = Callable[[], CodexModelListResult | None]
+CODEX_MODEL_CATALOG_STATIC_REVISION = 2
+CODEX_PERMISSION_CATALOG_STATIC_REVISION = 1
 
 
 @dataclass(slots=True)
@@ -33,13 +36,17 @@ class CodexCatalogReader:
     ) -> RuntimeModelCatalog:
         await self.ensure_started()
         model_list_result = self.get_model_list_result()
+        revision = runtime_catalog_revision(
+            self.config.revision,
+            CODEX_MODEL_CATALOG_STATIC_REVISION,
+        )
         catalog = model_catalog_from_codex_items(
             list(model_list_result.models) if model_list_result is not None else [],
-            revision=self.config.revision,
+            revision=revision,
         )
         catalog = RuntimeModelCatalog(
             runtime=catalog.runtime,
-            revision=catalog.revision,
+            revision=revision,
             models=(
                 *catalog.models,
                 *custom_model_items(
@@ -69,9 +76,13 @@ class CodexCatalogReader:
         query: str | None = None,
         limit: int = 100,
     ) -> RuntimePermissionCatalog:
+        revision = runtime_catalog_revision(
+            self.config.revision,
+            CODEX_PERMISSION_CATALOG_STATIC_REVISION,
+        )
         permissions = permission_catalog_from_codex_items(
             codex_permission_catalog_items(),
-            revision=self.config.revision,
+            revision=revision,
         ).permissions
         if query:
             lowered = query.casefold()
@@ -82,6 +93,6 @@ class CodexCatalogReader:
             )
         return RuntimePermissionCatalog(
             runtime="codex",
-            revision=self.config.revision,
+            revision=revision,
             permissions=permissions[:limit],
         )
