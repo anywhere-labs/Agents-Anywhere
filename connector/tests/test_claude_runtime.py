@@ -74,9 +74,25 @@ async def _test_claude_runtime_empty_reads_are_stable() -> None:
     empty_snapshot = await runtime.get_session_snapshot("missing")
     assert empty_snapshot.runtime == "claude"
     assert empty_snapshot.items == ()
+    full_catalog = await runtime.list_model_catalog()
+    assert [model.id for model in full_catalog.models] == [
+        "claude-fable-5",
+        "claude-opus-5",
+        "claude-sonnet-5",
+        "claude-haiku-4-5-20251001",
+        "claude-opus-4-8",
+        "claude-opus-4-7",
+        "claude-sonnet-4-6",
+        "claude-sonnet-4-5",
+    ]
     catalog = await runtime.list_model_catalog(query="sonnet")
-    assert [model.id for model in catalog.models] == ["claude-sonnet-4-5"]
-    assert catalog.models[0].selection_id is None
+    assert [model.id for model in catalog.models] == [
+        "claude-sonnet-5",
+        "claude-sonnet-4-6",
+        "claude-sonnet-4-5",
+    ]
+    assert catalog.models[0].selection_id is not None
+    assert catalog.models[0].selection_id.startswith("sel_model_")
     assert [item.id for item in catalog.models[0].reasoning_items] == [
         "low",
         "medium",
@@ -512,11 +528,39 @@ async def _test_claude_runtime_applies_model_selection_to_sdk_options() -> None:
 
     await task
 
-    assert client.options.kwargs["model"] == "claude-sonnet-4-5"
+    assert client.options.kwargs["model"] == "claude-sonnet-5"
     assert client.options.kwargs["effort"] == "high"
     assert host.session_state_updates[0]["selections"] == {
         "model": effort.selection_id
     }
+
+
+def test_claude_runtime_applies_plain_model_selection_to_sdk_options() -> None:
+    asyncio.run(_test_claude_runtime_applies_plain_model_selection_to_sdk_options())
+
+
+async def _test_claude_runtime_applies_plain_model_selection_to_sdk_options() -> None:
+    client = _FakeClaudeClient(
+        messages=[SimpleNamespace(type="result", session_id="claude_plain_model")]
+    )
+    runtime = _runtime(client=client)
+    model = (await runtime.list_model_catalog(query="claude-opus-4-8")).models[0]
+
+    result = await runtime.start_turn(
+        "sess_plain_model",
+        "claude_plain_model",
+        "use plain model",
+        selections={"model": model.selection_id},
+    )
+    task = runtime._sessions["sess_plain_model"].active_task
+
+    assert result.ok is True
+    assert task is not None
+
+    await task
+
+    assert client.options.kwargs["model"] == "claude-opus-4-8"
+    assert "effort" not in client.options.kwargs
 
 
 def test_claude_runtime_rejects_unknown_model_selection() -> None:
