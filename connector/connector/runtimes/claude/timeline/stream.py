@@ -108,9 +108,6 @@ class ClaudeStreamAccumulator:
             )
             return None
         self.partial_revision += 1
-        external_session_id = _string(_extract(message, "session_id", "sessionId"))
-        if external_session_id is not None and session.external_session_id is None:
-            session.external_session_id = external_session_id
         item_id = _stable_stream_item_id(
             session.session_id,
             session.external_session_id,

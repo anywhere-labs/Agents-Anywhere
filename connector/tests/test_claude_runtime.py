@@ -257,6 +257,12 @@ async def _test_claude_runtime_stream_events_upsert_partial_assistant_message() 
     assert [item.status for item in assistant_items] == ["running", "running", "done"]
     assert [item.revision for item in assistant_items] == [1, 2, 3]
     assert runtime._sessions["sess_stream"].external_session_id == "claude_stream"
+    assert any(
+        upsert["session_id"] == "sess_stream"
+        and upsert["external_session_id"] == "claude_stream"
+        and upsert["metadata"]["source"] == "claude.session.external_id"
+        for upsert in host.session_meta_upserts
+    )
 
 
 def test_claude_runtime_create_and_start_publishes_session_meta() -> None:
@@ -687,6 +693,51 @@ async def _test_claude_runtime_marks_sdk_history_consumed_after_turn_completion(
     cursor = host.sync_states["claude/history/cursor/claude_history_turn"]
     assert cursor["cursor"]["messageCount"] == 2
     assert cursor["cursor"]["lastMessageUuid"] == "history_turn_assistant"
+    assert runtime._sessions["sess_history_turn"].active_turn_id is None
+
+
+def test_claude_runtime_keeps_active_marker_when_cursor_update_fails() -> None:
+    asyncio.run(_test_claude_runtime_keeps_active_marker_when_cursor_update_fails())
+
+
+async def _test_claude_runtime_keeps_active_marker_when_cursor_update_fails() -> None:
+    host = _RecordingHost()
+    sdk = _HistorySdk(
+        messages={
+            "claude_cursor_fail": [
+                SimpleNamespace(
+                    type="assistant",
+                    uuid="cursor_fail_assistant",
+                    session_id="claude_cursor_fail",
+                    message={
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "answer"}],
+                    },
+                )
+            ]
+        }
+    )
+
+    async def fail_sync_state_write(_key: str, _value: dict[str, Any]) -> None:
+        raise RuntimeError("sync state write failed")
+
+    host.sync_state_write = fail_sync_state_write  # type: ignore[method-assign]
+    client = _FakeClaudeClient(
+        messages=[SimpleNamespace(type="result", session_id="claude_cursor_fail")]
+    )
+    runtime = _runtime(host=host, client=client, sdk=sdk)
+
+    result = await runtime.start_turn("sess_cursor_fail", None, "hello")
+    task = runtime._sessions["sess_cursor_fail"].active_task
+
+    assert result.ok is True
+    assert task is not None
+
+    await task
+
+    assert runtime._sessions["sess_cursor_fail"].active_turn_id is not None
+    assert host.session_state_updates[-1]["status"] == "idle"
+    assert "claude/history/cursor/claude_cursor_fail" not in host.sync_states
 
 
 def test_claude_runtime_scanner_syncs_full_history_without_cursor() -> None:

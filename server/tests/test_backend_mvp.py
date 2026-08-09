@@ -5555,6 +5555,72 @@ def test_connector_ingest_archives_local_hidden_session_meta(tmp_path):
     assert state.json()["session"]["archivedAt"] is not None
 
 
+def test_connector_ingest_prefers_explicit_platform_session_over_external_match(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, _, headers = create_connector_and_session(client)
+
+    async def _seed_sessions() -> tuple[str, str]:
+        platform = await client.app.state.store.create_session(
+            connector_id=connector_id,
+            user_id=ADMIN_USER,
+            runtime="claude",
+            external_session_id=None,
+            title="Platform Claude",
+            cwd="/repo",
+        )
+        imported = await client.app.state.store.upsert_connector_session(
+            connector_id=connector_id,
+            session_id="sess_claude_imported",
+            runtime="claude",
+            external_session_id="claude_external_race",
+            title="Imported Claude",
+            cwd="/repo",
+        )
+        return platform.id, imported.id
+
+    platform_session_id, imported_session_id = asyncio.run(_seed_sessions())
+
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.itemUpsert",
+                    "params": {
+                        "sessionId": platform_session_id,
+                        "item": {
+                            "id": "assistant_live",
+                            "sessionId": platform_session_id,
+                            "type": "message",
+                            "status": "done",
+                            "role": "assistant",
+                            "content": {
+                                "kind": "markdown",
+                                "text": "live answer",
+                            },
+                            "orderSeq": 1,
+                            "revision": 1,
+                            "contentHash": "sha256:assistant-live",
+                            "source": {
+                                "runtime": "claude",
+                                "sessionId": "claude_external_race",
+                                "event": "claude.turn.result",
+                            },
+                        },
+                    },
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    platform_state = session_view_for_assertions(client, platform_session_id, headers)
+    imported_state = session_view_for_assertions(client, imported_session_id, headers)
+    assert [item["id"] for item in platform_state["items"]] == ["assistant_live"]
+    assert imported_state["items"] == []
+
+
 def test_connector_ingest_does_not_overwrite_platform_archive_state(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)

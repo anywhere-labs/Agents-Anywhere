@@ -186,6 +186,7 @@ class ClaudeTurnRunner:
                 stream_accumulator.reset()
 
             if result_error is not None:
+                self._release_active_turn(session, turn_id)
                 await self.notifications.session_state.session_state_update(
                     session,
                     "blocked",
@@ -193,7 +194,9 @@ class ClaudeTurnRunner:
                     metadata={"source": "claude.turn.failed", "turnId": turn_id},
                 )
             else:
-                await self.history_syncer.mark_session_consumed(session)
+                consumed = await self.history_syncer.mark_session_consumed(session)
+                if consumed:
+                    self._release_active_turn(session, turn_id)
                 await self.notifications.session_state.session_state_update(
                     session,
                     "idle",
@@ -205,12 +208,14 @@ class ClaudeTurnRunner:
                 status="closed",
                 reason="cancelled",
             )
+            self._release_active_turn(session, turn_id)
             await self.notifications.session_state.session_state_update(
                 session,
                 "idle",
                 metadata={"source": "claude.turn.cancelled", "turnId": turn_id},
             )
         except Exception as exc:  # noqa: BLE001
+            self._release_active_turn(session, turn_id)
             await self.notifications.session_state.session_state_update(
                 session,
                 "blocked",
@@ -223,8 +228,6 @@ class ClaudeTurnRunner:
         finally:
             await disconnect_client(session.client)
             session.client = None
-            if session.active_turn_id == turn_id:
-                session.active_turn_id = None
 
     async def _update_external_session_id(
         self,
@@ -240,3 +243,7 @@ class ClaudeTurnRunner:
             session,
             source="claude.session.external_id",
         )
+
+    def _release_active_turn(self, session: ClaudeSession, turn_id: str) -> None:
+        if session.active_turn_id == turn_id:
+            session.active_turn_id = None

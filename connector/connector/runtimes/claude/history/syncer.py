@@ -87,28 +87,29 @@ class ClaudeHistorySyncer:
         self.session_store.mark_synced(session_id, external_session_id)
         return True
 
-    async def mark_session_consumed(self, session: ClaudeSession) -> None:
+    async def mark_session_consumed(self, session: ClaudeSession) -> bool:
         if session.external_session_id is None:
-            return
+            return True
         try:
             info, messages = await self._read_history(
                 session.external_session_id,
                 cwd=session.cwd,
+            )
+            await self.cursor_store.write(
+                session.external_session_id,
+                cursor_for(info, messages),
             )
         except Exception:  # noqa: BLE001
             logger.exception(
                 "Claude history cursor update failed external_session_id={}",
                 session.external_session_id,
             )
-            return
-        await self.cursor_store.write(
-            session.external_session_id,
-            cursor_for(info, messages),
-        )
+            return False
         self.session_store.mark_synced(
             session.session_id,
             session.external_session_id,
         )
+        return True
 
     async def _read_history(
         self,
