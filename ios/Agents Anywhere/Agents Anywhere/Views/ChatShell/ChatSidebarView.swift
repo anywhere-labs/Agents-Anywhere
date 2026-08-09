@@ -2,8 +2,7 @@ import SwiftUI
 
 struct ChatSidebarView: View {
     let width: CGFloat
-    let topInset: CGFloat
-    let bottomInset: CGFloat
+    let safeAreaInsets: EdgeInsets
     let selectedConversationID: String?
     let onSelectConversation: (ChatMockConversation) -> Void
     let onNewChat: () -> Void
@@ -11,8 +10,9 @@ struct ChatSidebarView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             ChatSidebarHeader(onSearch: {})
-                .padding(.top, topInset + 12)
-                .padding(.horizontal, 22)
+                .padding(.top, safeAreaInsets.top + 12)
+                .padding(.leading, safeAreaInsets.leading + 22)
+                .padding(.trailing, safeAreaInsets.trailing + 22)
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 4) {
@@ -23,15 +23,17 @@ struct ChatSidebarView: View {
                         onSelectConversation: onSelectConversation,
                     )
                 }
-                .padding(.horizontal, 14)
+                .padding(.leading, safeAreaInsets.leading + 14)
+                .padding(.trailing, safeAreaInsets.trailing + 14)
                 .padding(.top, 18)
                 .padding(.bottom, 24)
             }
             .scrollIndicators(.hidden)
 
             ChatSidebarAccount()
-                .padding(.horizontal, 18)
-                .padding(.bottom, max(bottomInset, 12))
+                .padding(.leading, safeAreaInsets.leading + 18)
+                .padding(.trailing, safeAreaInsets.trailing + 18)
+                .padding(.bottom, max(safeAreaInsets.bottom, 12))
         }
         .frame(width: width, alignment: .leading)
     }

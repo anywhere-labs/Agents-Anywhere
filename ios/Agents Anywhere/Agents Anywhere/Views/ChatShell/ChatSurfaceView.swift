@@ -2,8 +2,7 @@ import SwiftUI
 
 struct ChatSurfaceView: View {
     let conversationTitle: String?
-    let topInset: CGFloat
-    let bottomInset: CGFloat
+    let safeAreaInsets: EdgeInsets
     let onMenu: () -> Void
     let onNewChat: () -> Void
 
@@ -11,21 +10,24 @@ struct ChatSurfaceView: View {
         VStack(spacing: 0) {
             ChatSurfaceHeader(
                 conversationTitle: conversationTitle,
-                topInset: topInset,
+                safeAreaInsets: safeAreaInsets,
                 onMenu: onMenu,
                 onNewChat: onNewChat,
             )
 
-            ChatSurfaceEmptyState(conversationTitle: conversationTitle)
+            ChatSurfaceEmptyState(
+                conversationTitle: conversationTitle,
+                safeAreaInsets: safeAreaInsets,
+            )
 
-            ChatComposer(bottomInset: bottomInset)
+            ChatComposer(safeAreaInsets: safeAreaInsets)
         }
     }
 }
 
 private struct ChatSurfaceHeader: View {
     let conversationTitle: String?
-    let topInset: CGFloat
+    let safeAreaInsets: EdgeInsets
     let onMenu: () -> Void
     let onNewChat: () -> Void
 
@@ -40,8 +42,9 @@ private struct ChatSurfaceHeader: View {
 
             ChatCircleButton(systemImage: "square.and.pencil", label: "New chat", action: onNewChat)
         }
-        .padding(.horizontal, 14)
-        .padding(.top, topInset + 8)
+        .padding(.leading, safeAreaInsets.leading + 14)
+        .padding(.trailing, safeAreaInsets.trailing + 14)
+        .padding(.top, safeAreaInsets.top + 8)
         .padding(.bottom, 10)
     }
 }
@@ -69,6 +72,7 @@ private struct ChatCircleButton: View {
 
 private struct ChatSurfaceEmptyState: View {
     let conversationTitle: String?
+    let safeAreaInsets: EdgeInsets
 
     var body: some View {
         VStack(spacing: 16) {
@@ -90,13 +94,14 @@ private struct ChatSurfaceEmptyState: View {
 
             Spacer()
         }
-        .padding(.horizontal, 28)
+        .padding(.leading, safeAreaInsets.leading + 28)
+        .padding(.trailing, safeAreaInsets.trailing + 28)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
 private struct ChatComposer: View {
-    let bottomInset: CGFloat
+    let safeAreaInsets: EdgeInsets
 
     @State private var prompt = ""
 
@@ -135,7 +140,8 @@ private struct ChatComposer: View {
             RoundedRectangle(cornerRadius: 26, style: .continuous)
                 .strokeBorder(.primary.opacity(0.12), lineWidth: 1)
         }
-        .padding(.horizontal, 12)
-        .padding(.bottom, max(bottomInset, 10))
+        .padding(.leading, safeAreaInsets.leading + 12)
+        .padding(.trailing, safeAreaInsets.trailing + 12)
+        .padding(.bottom, max(safeAreaInsets.bottom, 10))
     }
 }
