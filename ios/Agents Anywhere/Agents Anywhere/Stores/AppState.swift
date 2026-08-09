@@ -416,11 +416,68 @@ final class AppState: ObservableObject {
         accountError = nil
     }
 
+    /// Creates durable connector credentials for a new device pairing attempt.
+    func createDevicePairing(name: String) async throws -> V2ConnectorCreateResponse {
+        guard let services = makeV2Services() else {
+            throw V2BusinessError.signedInServerUnavailable
+        }
+        let response = try await services.devicePairing.createDevice(name: name)
+        updateConnector(response.connector)
+        return response
+    }
+
+    /// Claims a one-time code and updates the in-memory dashboard projection.
+    func claimDevicePairing(
+        code: String,
+        name: String,
+        connectorId: V2ConnectorID,
+        connectorToken: String
+    ) async throws -> V2Connector {
+        guard let services = makeV2Services(), let serverURL else {
+            throw V2BusinessError.signedInServerUnavailable
+        }
+        let connector = try await services.devicePairing.claimPairing(
+            code: code,
+            name: name,
+            serverURL: serverURL,
+            connectorId: connectorId,
+            connectorToken: connectorToken
+        )
+        updateConnector(connector)
+        return connector
+    }
+
+    /// Reads effective connector presence while a pairing flow waits for the device.
+    func devicePairingConnector(connectorId: V2ConnectorID) async throws -> V2Connector {
+        guard let services = makeV2Services() else {
+            throw V2BusinessError.signedInServerUnavailable
+        }
+        let connector = try await services.devicePairing.connector(connectorId: connectorId)
+        updateConnector(connector)
+        return connector
+    }
+
+    /// Requests fresh Agent discovery from an online paired device.
+    func discoverDevicePairingRuntimes(connectorId: V2ConnectorID) async throws -> [V2DeviceRuntime] {
+        guard let services = makeV2Services() else {
+            throw V2BusinessError.signedInServerUnavailable
+        }
+        return try await services.devicePairing.discoverRuntimes(connectorId: connectorId)
+    }
+
     func updateSession(_ updated: V2SessionMeta) {
         if let index = sessions.firstIndex(where: { $0.id == updated.id }) {
             sessions[index] = updated
         } else {
             sessions.insert(updated, at: 0)
+        }
+    }
+
+    private func updateConnector(_ updated: V2Connector) {
+        if let index = connectors.firstIndex(where: { $0.id == updated.id }) {
+            connectors[index] = updated
+        } else {
+            connectors.insert(updated, at: 0)
         }
     }
 

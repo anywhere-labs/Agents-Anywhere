@@ -7,6 +7,7 @@ struct V2ClientServices {
     let sessionCreation: V2SessionCreationService
     let attachments: V2AttachmentService
     let interactions: V2RuntimeInteractionService
+    let devicePairing: V2DevicePairingService
 
     init(api: V2APIClient) {
         account = V2AccountService(accountAPI: api.account)
@@ -23,5 +24,6 @@ struct V2ClientServices {
         sessionCreation = V2SessionCreationService(sessionAPI: api.sessions)
         attachments = V2AttachmentService(attachmentAPI: api.attachments)
         interactions = V2RuntimeInteractionService(runtimeAPI: api.runtime)
+        devicePairing = V2DevicePairingService(connectorAPI: api.connectors)
     }
 }

@@ -65,9 +65,10 @@ struct ChatSidebarView: View {
                 .padding(.bottom, safeAreaInsets.bottom + 82)
             }
             .scrollIndicators(.hidden)
+            .scrollEdgeEffectStyle(.automatic, for: .bottom)
 
             if let account {
-                ChatSidebarAccountButton(account: account)
+                ChatSidebarBottomControls(account: account)
                     .padding(.leading, safeAreaInsets.leading + 18)
                     .padding(.bottom, max(safeAreaInsets.bottom, 12))
             }
@@ -395,22 +396,39 @@ private struct ChatSidebarEmptyRow: View {
     }
 }
 
-private struct ChatSidebarAccountButton: View {
+private struct ChatSidebarBottomControls: View {
     let account: ChatSidebarAccount
 
     @State private var isShowingSettings = false
+    @State private var isShowingPairing = false
 
     var body: some View {
-        Button {
-            isShowingSettings = true
-        } label: {
-            ChatSidebarAvatar(account: account)
+        HStack(spacing: 10) {
+            Button {
+                isShowingSettings = true
+            } label: {
+                ChatSidebarAvatar(account: account)
+            }
+            .buttonStyle(.glass)
+            .buttonBorderShape(.circle)
+            .accessibilityLabel("Account")
+
+            Button {
+                isShowingPairing = true
+            } label: {
+                Image(systemName: "plus")
+                    .font(.body.weight(.semibold))
+                    .frame(width: 38, height: 38)
+            }
+            .buttonStyle(.glassProminent)
+            .buttonBorderShape(.circle)
+            .accessibilityLabel("Pair new device")
         }
-        .buttonStyle(.glass)
-        .buttonBorderShape(.circle)
-        .accessibilityLabel("Account")
         .sheet(isPresented: $isShowingSettings) {
             AccountSettingsSheet()
+        }
+        .sheet(isPresented: $isShowingPairing) {
+            PairDeviceSheet()
         }
     }
 }

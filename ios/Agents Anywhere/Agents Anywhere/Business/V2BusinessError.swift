@@ -7,6 +7,10 @@ enum V2BusinessError: LocalizedError {
     case emptyAvatar
     case passwordTooShort
     case passwordMismatch
+    case emptyDeviceName
+    case invalidPairingCode
+    case pairingNotClaimed
+    case signedInServerUnavailable
     case tooManyAttachments(maximum: Int)
     case emptyAttachment(name: String)
     case invalidPageSize
@@ -25,6 +29,14 @@ enum V2BusinessError: LocalizedError {
             return String(localized: "Password must be at least 8 characters.")
         case .passwordMismatch:
             return String(localized: "Passwords do not match.")
+        case .emptyDeviceName:
+            return String(localized: "Enter a device name before continuing.")
+        case .invalidPairingCode:
+            return String(localized: "Enter the 6-digit pairing code shown on the device.")
+        case .pairingNotClaimed:
+            return String(localized: "The server did not accept this pairing request.")
+        case .signedInServerUnavailable:
+            return String(localized: "The signed-in server is unavailable.")
         case let .tooManyAttachments(maximum):
             return "Attach no more than \(maximum) files."
         case let .emptyAttachment(name):
