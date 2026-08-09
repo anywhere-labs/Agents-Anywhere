@@ -81,7 +81,7 @@ final class OAuthLoginCoordinator: NSObject, ObservableObject, ASWebAuthenticati
 
     private func mobileOAuthURL(serverURL: URL, pkce: PKCEPair, state: String) throws -> URL {
         guard var components = URLComponents(
-            url: URL(string: "/en", relativeTo: serverURL.normalizedServerURL())?.absoluteURL ?? serverURL,
+            url: URL(string: "/", relativeTo: serverURL.normalizedServerURL())?.absoluteURL ?? serverURL,
             resolvingAgainstBaseURL: false,
         ) else {
             throw OAuthLoginError.invalidAuthorizeURL

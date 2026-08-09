@@ -182,7 +182,7 @@ struct APIClient {
 
     func filePreviewURL(previewToken: String, name: String? = nil) throws -> URL {
         guard var components = URLComponents(
-            url: URL(string: "/en", relativeTo: serverURL)?.absoluteURL ?? serverURL,
+            url: URL(string: "/", relativeTo: serverURL)?.absoluteURL ?? serverURL,
             resolvingAgainstBaseURL: false,
         ) else {
             throw APIClientError.invalidResponse
