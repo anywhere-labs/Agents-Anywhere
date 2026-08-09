@@ -32,6 +32,26 @@ struct V2DashboardService {
         return try await sessionAPI.markRead(sessionIds: sessionIds).sessions
     }
 
+    func renameSession(sessionId: V2SessionID, title: String) async throws -> V2SessionMeta {
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTitle.isEmpty else { throw V2BusinessError.emptySessionTitle }
+        let request = V2SessionMetaPatchRequest(
+            title: trimmedTitle,
+            pinned: nil,
+            archived: nil
+        )
+        return try await sessionAPI.patchSessionMeta(sessionId: sessionId, request: request).session
+    }
+
+    func setSessionPinned(sessionId: V2SessionID, pinned: Bool) async throws -> V2SessionMeta {
+        let request = V2SessionMetaPatchRequest(
+            title: nil,
+            pinned: pinned,
+            archived: nil
+        )
+        return try await sessionAPI.patchSessionMeta(sessionId: sessionId, request: request).session
+    }
+
     func archive(sessionIds: [V2SessionID]) async throws -> [V2SessionMeta] {
         try validateSessionIds(sessionIds)
         return try await sessionAPI.archive(sessionIds: sessionIds).sessions

@@ -21,8 +21,8 @@ final class AppState: ObservableObject {
     @Published private(set) var route: Route = .loading
     @Published private(set) var serverURL: URL?
     @Published private(set) var me: AuthMe?
-    @Published private(set) var connectors: [ConnectorSummary] = []
-    @Published private(set) var sessions: [SessionSummary] = []
+    @Published private(set) var connectors: [V2Connector] = []
+    @Published private(set) var sessions: [V2SessionMeta] = []
     @Published private(set) var isDashboardLoading = false
     @Published private(set) var hasLoadedConnectors = false
     @Published private(set) var hasLoadedSessions = false
@@ -33,6 +33,7 @@ final class AppState: ObservableObject {
     @Published var isWorking = false
     @Published private(set) var serverConnectionIssue: ServerConnectionIssue?
     @Published private(set) var isRetryingServerConnection = false
+    @Published private(set) var sessionActionError: String?
 
     private let keychain = KeychainStore()
     private let serverDefaultsKey = "agentsAnywhere.serverURL"
@@ -242,7 +243,7 @@ final class AppState: ObservableObject {
     }
 
     func refreshDashboard() async {
-        guard let api, let token = try? keychain.readString(account: tokenAccount) else { return }
+        guard let services = makeV2Services() else { return }
         if isDashboardLoading { return }
         dashboardError = nil
         sessionsError = nil
@@ -254,24 +255,78 @@ final class AppState: ObservableObject {
         }
 
         do {
-            let sessionResponse = try await api.listSessions(token: token)
-            sessions = sessionResponse.sessions
+            let dashboard = try await services.dashboard.load()
+            connectors = dashboard.connectors
+            sessions = dashboard.sessions
+            hasLoadedConnectors = true
             hasLoadedSessions = true
         } catch {
-            sessionsError = error.localizedDescription
-        }
-
-        do {
-            let connectorResponse = try await api.listConnectors(token: token)
-            connectors = connectorResponse.connectors
-            hasLoadedConnectors = true
-        } catch {
-            connectorsError = error.localizedDescription
+            let message = error.localizedDescription
+            sessionsError = message
+            connectorsError = message
         }
         dashboardError = sessionsError ?? connectorsError
     }
 
-    func updateSession(_ updated: SessionSummary) {
+    func renameSession(sessionId: V2SessionID, title: String) async -> Bool {
+        sessionActionError = nil
+        guard let services = makeV2Services() else {
+            sessionActionError = String(localized: "The signed-in server is unavailable.")
+            return false
+        }
+        do {
+            let updated = try await services.dashboard.renameSession(sessionId: sessionId, title: title)
+            updateSession(updated)
+            return true
+        } catch {
+            sessionActionError = error.localizedDescription
+            return false
+        }
+    }
+
+    func setSessionPinned(sessionId: V2SessionID, pinned: Bool) async -> Bool {
+        sessionActionError = nil
+        guard let services = makeV2Services() else {
+            sessionActionError = String(localized: "The signed-in server is unavailable.")
+            return false
+        }
+        do {
+            let updated = try await services.dashboard.setSessionPinned(sessionId: sessionId, pinned: pinned)
+            updateSession(updated)
+            return true
+        } catch {
+            sessionActionError = error.localizedDescription
+            return false
+        }
+    }
+
+    func setSessionArchived(sessionId: V2SessionID, archived: Bool) async -> Bool {
+        sessionActionError = nil
+        guard let services = makeV2Services() else {
+            sessionActionError = String(localized: "The signed-in server is unavailable.")
+            return false
+        }
+        do {
+            let updatedSessions = if archived {
+                try await services.dashboard.archive(sessionIds: [sessionId])
+            } else {
+                try await services.dashboard.unarchive(sessionIds: [sessionId])
+            }
+            for updated in updatedSessions {
+                updateSession(updated)
+            }
+            return true
+        } catch {
+            sessionActionError = error.localizedDescription
+            return false
+        }
+    }
+
+    func dismissSessionActionError() {
+        sessionActionError = nil
+    }
+
+    func updateSession(_ updated: V2SessionMeta) {
         if let index = sessions.firstIndex(where: { $0.id == updated.id }) {
             sessions[index] = updated
         } else {
@@ -292,6 +347,7 @@ final class AppState: ObservableObject {
         dashboardError = nil
         sessionsError = nil
         connectorsError = nil
+        sessionActionError = nil
         authError = nil
         serverConnectionIssue = nil
         if showSignedOutRoute {
@@ -337,6 +393,21 @@ final class AppState: ObservableObject {
     private func isAuthenticationFailure(_ error: Error) -> Bool {
         guard case let APIClientError.server(status, _) = error else { return false }
         return status == 401 || status == 403
+    }
+
+    private func makeV2Services() -> V2ClientServices? {
+        guard
+            let serverURL,
+            let token = try? keychain.readString(account: tokenAccount),
+            !token.isEmpty
+        else {
+            return nil
+        }
+        let api = V2APIClient(
+            serverURL: serverURL,
+            tokenProvider: StaticAuthTokenProvider(token: token)
+        )
+        return V2ClientServices(api: api)
     }
 
     private func saveSession(serverURL: URL, token: String) throws {

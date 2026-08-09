@@ -3,6 +3,7 @@ import Foundation
 enum V2BusinessError: LocalizedError {
     case emptyMessage
     case emptySessionSelection
+    case emptySessionTitle
     case tooManyAttachments(maximum: Int)
     case emptyAttachment(name: String)
     case invalidPageSize
@@ -10,15 +11,17 @@ enum V2BusinessError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .emptyMessage:
-            return "Enter a message before sending."
+            return String(localized: "Enter a message before sending.")
         case .emptySessionSelection:
-            return "Select at least one session."
+            return String(localized: "Select at least one session.")
+        case .emptySessionTitle:
+            return String(localized: "Enter a session title.")
         case let .tooManyAttachments(maximum):
             return "Attach no more than \(maximum) files."
         case let .emptyAttachment(name):
             return "The attachment '\(name)' is empty."
         case .invalidPageSize:
-            return "The requested page size is outside the supported range."
+            return String(localized: "The requested page size is outside the supported range.")
         }
     }
 }
