@@ -1,7 +1,6 @@
 import SwiftUI
 
 struct ChatSidebarView: View {
-    let width: CGFloat
     let safeAreaInsets: EdgeInsets
     let selectedConversationID: String?
     let onSelectConversation: (ChatMockConversation) -> Void
@@ -9,11 +8,6 @@ struct ChatSidebarView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ChatSidebarHeader(onSearch: {})
-                .padding(.top, safeAreaInsets.top + 12)
-                .padding(.leading, safeAreaInsets.leading + 22)
-                .padding(.trailing, safeAreaInsets.trailing + 22)
-
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 4) {
                     ChatSidebarActions(onNewChat: onNewChat)
@@ -35,11 +29,11 @@ struct ChatSidebarView: View {
                 .padding(.trailing, safeAreaInsets.trailing + 18)
                 .padding(.bottom, max(safeAreaInsets.bottom, 12))
         }
-        .frame(width: width, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
 }
 
-private struct ChatSidebarHeader: View {
+struct ChatSidebarHeaderView: View {
     let onSearch: () -> Void
 
     var body: some View {
@@ -61,6 +55,8 @@ private struct ChatSidebarHeader: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Search")
         }
+        .padding(.horizontal, 22)
+        .padding(.vertical, 12)
     }
 }
 
