@@ -2178,6 +2178,7 @@ async def _exercise_runtime_config_read() -> None:
         {
             "runtimeId": "codex",
             "config": {"environment": {"EXAMPLE": "1"}},
+            "configRevision": 42,
         },
     )
     running = await client.dispatch("runtime.config", {"runtimeId": "codex"})
@@ -2192,7 +2193,7 @@ async def _exercise_runtime_config_read() -> None:
         "running": True,
         "config": {
             "runtime": "codex",
-            "revision": 1,
+            "revision": 42,
             "values": {"environment": {"EXAMPLE": "1"}},
             "schema": {
                 "type": "object",

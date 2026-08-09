@@ -260,6 +260,24 @@ async def _test_runtime_protocol_supervisor_validate_config_does_not_mark_runnin
     ]
 
 
+def test_runtime_protocol_supervisor_applies_revision_override() -> None:
+    asyncio.run(_test_runtime_protocol_supervisor_applies_revision_override())
+
+
+async def _test_runtime_protocol_supervisor_applies_revision_override() -> None:
+    provider = FakeProvider()
+    supervisor = RuntimeSupervisor(providers=(provider,), host=FakeHost())
+
+    runtime = await supervisor.start("fake", {"mode": "auto"}, revision=42)
+    validated = await supervisor.validate_config("fake", {"mode": "sdk"}, revision=43)
+
+    assert runtime.started is True
+    assert provider.created[0].revision == 42
+    assert supervisor.entry("fake").config is not None
+    assert supervisor.entry("fake").config.revision == 42
+    assert validated.revision == 43
+
+
 def test_runtime_protocol_supervisor_validate_config_failure_keeps_running_runtime() -> (
     None
 ):
