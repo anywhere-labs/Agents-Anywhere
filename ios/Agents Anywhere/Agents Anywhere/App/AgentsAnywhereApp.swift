@@ -4,6 +4,10 @@ import SwiftUI
 struct AgentsAnywhereApp: App {
     @StateObject private var appState = AppState()
 
+    init() {
+        AppFontRegistry.registerBundledFonts()
+    }
+
     var body: some Scene {
         WindowGroup {
             RootView()
@@ -11,4 +15,3 @@ struct AgentsAnywhereApp: App {
         }
     }
 }
-
