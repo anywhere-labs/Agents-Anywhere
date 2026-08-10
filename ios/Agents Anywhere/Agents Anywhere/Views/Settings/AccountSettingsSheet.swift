@@ -110,7 +110,10 @@ private struct SignOutConfirmationSheet: View {
                 .tint(.red)
                 .foregroundStyle(.white)
 
-                Button("Cancel", action: dismiss.callAsFunction)
+                Button(action: dismiss.callAsFunction) {
+                    Text("Cancel")
+                        .frame(maxWidth: .infinity)
+                }
                     .buttonStyle(.glass)
                     .buttonBorderShape(.capsule)
                     .controlSize(.large)
@@ -118,11 +121,6 @@ private struct SignOutConfirmationSheet: View {
             .padding(24)
             .navigationTitle("Sign out")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel", action: dismiss.callAsFunction)
-                }
-            }
         }
         .alert("Could not sign out", isPresented: $isShowingError) {
             Button("OK", role: .cancel) {}
