@@ -76,7 +76,7 @@ connector/connector/runtimes/claude/
 - Claude 的消息、tool use、file change、approval、error、compact 等事件，必须转成 `RuntimeTimelineItem`。
 - timeline item 的 `type/status/role/content/source/content_hash/order_seq` 要稳定。
 - optimistic user message 要用 `client_message_id` 对齐 runtime echo，不能制造重复用户消息。
-- session state 使用 `idle`、`waiting`、`running`、`blocked`、`error`、`disconnected`。
+- session state 使用 `idle`、`waiting`、`running`、`waiting_approval`、`blocked`、`error`、`disconnected`。
 - approval/input 类交互要转成 `SessionNotice`，用户响应通过 `respond_interaction()` 回到 Claude。
 - Connector 重启或 reconnect 后，state、catalogs、notices、commands、capabilities 要能重新读取或重新发布。
 

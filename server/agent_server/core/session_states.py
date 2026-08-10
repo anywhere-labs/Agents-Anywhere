@@ -5,12 +5,14 @@ from dataclasses import dataclass
 from agent_server.core.models import SessionStatus
 
 SESSION_TRANSITIONS: dict[SessionStatus, frozenset[SessionStatus]] = {
-    "idle": frozenset({"waiting", "pending", "running", "blocked"}),
-    "waiting": frozenset({"idle", "running", "stopping", "blocked"}),
-    "pending": frozenset({"idle", "running", "stopping", "blocked"}),
-    "running": frozenset({"idle", "waiting", "pending", "stopping", "blocked"}),
-    "stopping": frozenset({"idle", "waiting", "pending", "running", "blocked"}),
-    "blocked": frozenset({"idle", "waiting", "pending", "running", "stopping"}),
+    "idle": frozenset({"waiting", "pending", "running", "waiting_approval", "error", "blocked"}),
+    "waiting": frozenset({"idle", "running", "stopping", "waiting_approval", "error", "blocked"}),
+    "pending": frozenset({"idle", "running", "stopping", "waiting_approval", "error", "blocked"}),
+    "running": frozenset({"idle", "waiting", "pending", "stopping", "waiting_approval", "error", "blocked"}),
+    "stopping": frozenset({"idle", "waiting", "pending", "running", "waiting_approval", "error", "blocked"}),
+    "waiting_approval": frozenset({"idle", "waiting", "pending", "running", "stopping", "error", "blocked"}),
+    "error": frozenset({"idle", "waiting", "pending", "running", "stopping", "waiting_approval", "blocked"}),
+    "blocked": frozenset({"idle", "waiting", "pending", "running", "stopping", "waiting_approval", "error"}),
 }
 
 
@@ -30,9 +32,9 @@ class SessionStateFacts:
 
 def derive_session_status(facts: SessionStateFacts) -> SessionStatus:
     if facts.has_blocking_interaction:
-        return "blocked"
-    if facts.observed_status == "blocked":
-        return "blocked"
+        return "waiting_approval"
+    if facts.observed_status in {"waiting_approval", "error", "blocked"}:
+        return facts.observed_status
     if facts.current_status == "stopping" and not facts.settle_stopping:
         return "stopping"
     if facts.observed_status == "stopping" and (
@@ -73,7 +75,14 @@ def can_interrupt_turn(
     *,
     has_active_work: bool,
 ) -> bool:
-    return has_active_work or status in {"waiting", "pending", "running", "blocked"}
+    return has_active_work or status in {
+        "waiting",
+        "pending",
+        "running",
+        "stopping",
+        "waiting_approval",
+        "blocked",
+    }
 
 
 def can_steer_turn(

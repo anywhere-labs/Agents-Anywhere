@@ -365,7 +365,7 @@ class CodexTurnActions:
 def turn_completed_before_start_returned(state: Any | None) -> bool:
     if state is None:
         return False
-    if state.status not in {"idle", "blocked"}:
+    if state.status not in {"idle", "blocked", "error"}:
         return False
     source = state.metadata.get("source")
     if not isinstance(source, str):

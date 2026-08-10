@@ -743,8 +743,12 @@
     "sessionStatus": {
       "idle": "Idle",
       "pending": "Pending",
+      "waiting": "Waiting",
       "running": "Running",
       "stopping": "Stopping",
+      "waitingApproval": "Waiting approval",
+      "error": "Error",
+      "unread": "Unread",
       "blocked": "Blocked"
     },
     "signOut": {

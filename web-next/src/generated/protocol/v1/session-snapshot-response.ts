@@ -48,7 +48,7 @@ export type Style = "primary" | "secondary" | "danger"
 export type Actions = NoticeAction[]
 export type Scope1 = "session"
 export type Targetid = string
-export type Createdat1 = string
+export type Createdat1 = string | null
 export type Expiresat = string | null
 export type Interactiontype = ("approval" | "execution_error" | "confirmation" | "input_request" | "unknown") | null
 export type Message = string | null
@@ -63,12 +63,11 @@ export type Component = string | null
 export type Operationid = string | null
 export type Runtime2 = ("codex" | "claude" | "opencode" | "acp") | "platform" | null
 export type Timelineitemid = string | null
-export type Status1 = "open" | "response_accepted" | "resolving" | "resolved" | "expired" | "cancelled" | "failed"
+export type Status1 =
+  "open" | "responding" | "response_accepted" | "resolving" | "resolved" | "closed" | "expired" | "cancelled" | "failed"
 export type Title1 = string
 export type Type = "notification" | "interaction"
-export type Updatedat = string
-export type Updatedseq1 = number
-export type Notices = Notice[]
+export type Notices = NoticeIn[]
 export type Servertime = string
 export type Archived = boolean
 export type Archivedat = string | null
@@ -87,11 +86,11 @@ export type Pinnedat = string | null
 export type Runtime3 = "codex" | "claude" | "opencode" | "acp"
 export type Sortat = string | null
 export type Sourceobservedat = string | null
-export type Status2 = "idle" | "waiting" | "pending" | "running" | "stopping" | "blocked"
+export type Status2 = "idle" | "waiting" | "pending" | "running" | "stopping" | "waiting_approval" | "error" | "blocked"
 export type Takeover = boolean
 export type Title2 = string | null
 export type Unread = boolean
-export type Updatedseq2 = number
+export type Updatedseq1 = number
 export type Createdat2 = string
 export type Error = {
   [k: string]: unknown
@@ -99,10 +98,10 @@ export type Error = {
 export type Externalsessionid1 = string | null
 export type Runtime4 = "codex" | "claude" | "opencode" | "acp"
 export type Sessionid4 = string
-export type Status3 = "idle" | "waiting" | "pending" | "running" | "stopping" | "blocked"
+export type Status3 = "idle" | "waiting" | "pending" | "running" | "stopping" | "waiting_approval" | "error" | "blocked"
 export type Statusreason = string | null
-export type Updatedat1 = string
-export type Updatedseq3 = number
+export type Updatedat = string
+export type Updatedseq2 = number
 export type Hasmore = boolean
 export type Completedat = string | null
 export type Contenthash = string
@@ -123,8 +122,8 @@ export type Turnid2 = string | null
 export type Status4 = "pending" | "running" | "waiting_approval" | "done" | "failed" | "cancelled" | "interrupted"
 export type Turnid3 = string | null
 export type Type1 = "turn.start" | "turn.end" | "message" | "tool" | "artifact" | "system"
-export type Updatedat2 = string
-export type Updatedseq4 = number
+export type Updatedat1 = string
+export type Updatedseq3 = number
 export type Items = TimelineItem[]
 export type Nextseq = number
 
@@ -194,11 +193,11 @@ export interface ProtocolCapability {
 export interface Parameters {
   [k: string]: unknown
 }
-export interface Notice {
+export interface NoticeIn {
   actions?: Actions
   blocking?: NoticeBlocking | null
   context?: Context
-  createdAt: Createdat1
+  createdAt?: Createdat1
   expiresAt?: Expiresat
   interactionType?: Interactiontype
   message?: Message
@@ -213,8 +212,6 @@ export interface Notice {
   status?: Status1
   title: Title1
   type: Type
-  updatedAt: Updatedat
-  updatedSeq: Updatedseq1
   [k: string]: unknown
 }
 export interface NoticeAction {
@@ -271,7 +268,7 @@ export interface SessionView {
   takeover: Takeover
   title?: Title2
   unread?: Unread
-  updatedSeq: Updatedseq2
+  updatedSeq: Updatedseq1
   [k: string]: unknown
 }
 export interface SessionRuntimeState {
@@ -284,8 +281,8 @@ export interface SessionRuntimeState {
   sessionId: Sessionid4
   status?: Status3
   statusReason?: Statusreason
-  updatedAt: Updatedat1
-  updatedSeq: Updatedseq3
+  updatedAt: Updatedat
+  updatedSeq: Updatedseq2
   [k: string]: unknown
 }
 export interface Metadata1 {
@@ -314,8 +311,8 @@ export interface TimelineItem {
   status: Status4
   turnId?: Turnid3
   type: Type1
-  updatedAt: Updatedat2
-  updatedSeq: Updatedseq4
+  updatedAt: Updatedat1
+  updatedSeq: Updatedseq3
   [k: string]: unknown
 }
 export interface Content {

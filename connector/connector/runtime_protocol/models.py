@@ -7,7 +7,10 @@ from typing import Any, Literal
 RuntimeStatus = Literal[
     "idle",
     "waiting",
+    "pending",
     "running",
+    "stopping",
+    "waiting_approval",
     "blocked",
     "error",
     "disconnected",

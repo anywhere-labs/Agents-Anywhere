@@ -78,6 +78,8 @@ export type SessionStatusValue =
   | "pending"
   | "running"
   | "stopping"
+  | "waiting_approval"
+  | "error"
   | "blocked";
 
 export type RuntimeStatusValue = SessionStatusValue | "error" | "disconnected";

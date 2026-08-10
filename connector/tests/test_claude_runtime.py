@@ -1475,21 +1475,21 @@ async def _test_claude_runtime_result_error_blocks_session_state() -> None:
     state = await runtime.get_session_state("sess_failed")
 
     assert state is not None
-    assert state.status == "blocked"
+    assert state.status == "error"
     assert state.error == {
         "code": "claude_result_error",
         "message": "Claude Code failed to start the turn",
     }
-    assert host.session_state_updates[-1]["status"] == "blocked"
+    assert host.session_state_updates[-1]["status"] == "error"
     assert host.session_state_updates[-1]["error"] == state.error
-    assert "error" not in [update["status"] for update in host.session_state_updates]
+    assert "blocked" not in [update["status"] for update in host.session_state_updates]
 
 
-def test_claude_runtime_includes_redacted_stderr_in_blocked_error() -> None:
-    asyncio.run(_test_claude_runtime_includes_redacted_stderr_in_blocked_error())
+def test_claude_runtime_includes_redacted_stderr_in_error_state() -> None:
+    asyncio.run(_test_claude_runtime_includes_redacted_stderr_in_error_state())
 
 
-async def _test_claude_runtime_includes_redacted_stderr_in_blocked_error() -> None:
+async def _test_claude_runtime_includes_redacted_stderr_in_error_state() -> None:
     host = _RecordingHost()
     client = _StderrFailingClaudeClient()
     runtime = _runtime(host=host, client=client)
@@ -1505,12 +1505,12 @@ async def _test_claude_runtime_includes_redacted_stderr_in_blocked_error() -> No
     state = await runtime.get_session_state("sess_stderr")
 
     assert state is not None
-    assert state.status == "blocked"
+    assert state.status == "error"
     assert state.error is not None
     assert "Claude stderr:" in state.error["message"]
     assert "api_key=***" in state.error["message"]
     assert "secret-token" not in state.error["message"]
-    assert "error" not in [update["status"] for update in host.session_state_updates]
+    assert "blocked" not in [update["status"] for update in host.session_state_updates]
 
 
 def test_claude_runtime_sets_permission_keepalive_hook_when_available() -> None:
@@ -1613,7 +1613,7 @@ async def _test_claude_runtime_tool_approval_round_trips_to_sdk() -> None:
     assert [update["status"] for update in host.session_state_updates][-3:] == [
         "waiting",
         "running",
-        "blocked",
+        "waiting_approval",
     ]
     assert "can_use_tool" in client.options.kwargs
     assert "permission_prompt_tool_name" not in client.options.kwargs

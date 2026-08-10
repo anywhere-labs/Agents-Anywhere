@@ -22,6 +22,7 @@ import { toast } from "sonner"
 import { dashboardApi } from "@/features/dashboard/api"
 import type { Notice, SessionView as SessionViewData, TimelineItem } from "@/features/dashboard/types"
 import { sortTimelineItems } from "@/components/session/session-utils"
+import { SessionSkeleton } from "@/components/session/session-skeleton"
 
 const HORIZONTAL_LAYOUT_KEY = "aa-session-runtime-horizontal-layout"
 const SESSION_PANEL_ID = "session-main"
@@ -38,13 +39,15 @@ export function SessionView() {
   const isMobile = useIsMobile()
   const {
     activeSessionId,
-    sessions,
+    activeSession,
+    activeSessionFallback,
+    activeSessionPending,
     connectors,
     panels,
     upsertSession,
     markSessionRead,
   } = useWorkspace()
-  const session = activeSessionId ? sessions.find((item) => item.id === activeSessionId) : null
+  const session = activeSession
   const connector = connectors.find((item) => item.id === session?.connectorId)
 
   const token = authSession?.accessToken ?? null
@@ -138,6 +141,7 @@ export function SessionView() {
   }, [exporting, session?.id, t, token])
 
   if (!session) {
+    if (activeSessionPending) return <SessionSkeleton />
     return (
       <div className="flex h-full min-h-0 items-center justify-center overflow-hidden bg-background text-sm text-muted-foreground">
         {t("noSelected")}
@@ -176,8 +180,8 @@ export function SessionView() {
                 {token ? (
                   <SessionDetail
                     token={token}
-                    sessionId={session.id}
-                    fallbackSession={null}
+                    sessionId={activeSessionId ?? session.id}
+                    fallbackSession={activeSessionFallback}
                     onSessionUpdated={upsertSession}
                     onMemorySnapshotUpdated={setMemorySnapshot}
                   />

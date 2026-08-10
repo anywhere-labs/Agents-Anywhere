@@ -204,7 +204,7 @@ class ClaudeTurnRunner:
                 self._release_active_turn(session, turn_id)
                 await self.notifications.session_state.session_state_update(
                     session,
-                    "blocked",
+                    "error",
                     error=result_error,
                     metadata={"source": "claude.turn.failed", "turnId": turn_id},
                 )
@@ -233,7 +233,7 @@ class ClaudeTurnRunner:
             self._release_active_turn(session, turn_id)
             await self.notifications.session_state.session_state_update(
                 session,
-                "blocked",
+                "error",
                 error={
                     "code": exc.__class__.__name__,
                     "message": stderr.failure_message(exc),

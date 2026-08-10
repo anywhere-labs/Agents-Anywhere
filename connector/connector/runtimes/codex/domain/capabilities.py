@@ -24,6 +24,7 @@ CODEX_RUNTIME = "codex"
 ACTIVE_TURN_STATUSES: tuple[RuntimeStatus, ...] = (
     "waiting",
     "running",
+    "waiting_approval",
     "blocked",
 )
 

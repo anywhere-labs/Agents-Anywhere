@@ -99,9 +99,10 @@ export function SessionComposer({
     useAttachments()
   const composerRef = React.useRef<HTMLDivElement | null>(null)
   const composerWidth = useElementWidth(composerRef)
-  const runtimeStatus = effectiveRuntimeStatus(runtimeState, session.connectorStatus)
+  const runtimeStatus = effectiveRuntimeStatus(runtimeState, session)
   const runtimeSelections = runtimeState?.selections ?? {}
   const isRunning = runtimeStatus === "running"
+  const isWaitingApproval = runtimeStatus === "waiting_approval"
   const isBlocked = runtimeStatus === "blocked"
   const isStopping = runtimeStatus === "stopping"
   const isWaiting = runtimeStatus === "waiting" || runtimeStatus === "pending"
@@ -114,6 +115,7 @@ export function SessionComposer({
     !isWaiting &&
     !isRunning &&
     !isStopping &&
+    !isWaitingApproval &&
     !isBlocked &&
     !isError
   const canUseSendMessage = capabilityIsUsable(effectiveCapabilities, CAPABILITY.sendMessage)
@@ -134,7 +136,7 @@ export function SessionComposer({
     connectorOnline &&
     interruptCapability?.supported &&
     interruptCapability.allowed &&
-    (isWaiting || isRunning || isStopping),
+    (isWaiting || isRunning || isStopping || isWaitingApproval || isBlocked),
   )
   const showInterrupt = !creatingSession && canUseInterrupt && activeSessionCanInterrupt
   const [selectedPermissionMode, setSelectedPermissionMode] = React.useState("")
@@ -247,11 +249,11 @@ export function SessionComposer({
           ? tSession("pendingPlaceholder")
           : isStopping || isRunning
             ? tSession("busyPlaceholder")
-            : isBlocked
+            : isWaitingApproval || isBlocked
               ? tSession("waitingApprovalPlaceholder")
               : isError
                 ? tSession("errorPlaceholder")
-            : tSession("replyPlaceholder")
+                : tSession("replyPlaceholder")
   const commandQuery = commandQueryFromValue(value)
   const showCommandMenu = commandQuery !== null && attachments.length === 0
   const commandSuggestions = React.useMemo(
@@ -615,8 +617,8 @@ function parseCommandValue(value: string): { command: string | null; args: strin
 
 function effectiveRuntimeStatus(
   runtimeState: SessionRuntimeState | null | undefined,
-  connectorStatus: SessionView["connectorStatus"],
+  session: SessionView,
 ): RuntimeStatusValue {
   if (runtimeState) return runtimeState.status
-  return connectorStatus === "offline" ? "disconnected" : "idle"
+  return session.connectorStatus === "offline" ? "disconnected" : session.status
 }

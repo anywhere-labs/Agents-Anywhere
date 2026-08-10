@@ -28,6 +28,7 @@ import type {
   ProtocolPermissionCatalog,
   RuntimeCommand,
   RuntimeStatusValue,
+  SessionLocalTimelineState,
   SessionSnapshotResponse,
   SessionRuntimeState,
   SessionView,
@@ -89,6 +90,16 @@ type SessionRemoteState = {
     model?: ProtocolModelCatalog
     permission?: ProtocolPermissionCatalog
     [key: string]: unknown
+  }
+}
+
+function remoteStateFromOptimisticState(optimisticState: SessionLocalTimelineState): SessionRemoteState {
+  return {
+    ...optimisticState,
+    notices: optimisticState.notices ?? [],
+    eventCursor: `seq:${optimisticState.nextSeq}`,
+    effectiveCapabilities: null,
+    catalogs: {},
   }
 }
 
@@ -224,8 +235,11 @@ export function SessionDetail({
     isOptimisticSession,
     markOptimisticMessageFailed,
   } = useWorkspace()
-  const [state, setState] = React.useState<SessionRemoteState | null>(null)
-  const [loading, setLoading] = React.useState(true)
+  const initialOptimisticState = getOptimisticSessionState(sessionId)
+  const [state, setState] = React.useState<SessionRemoteState | null>(() =>
+    initialOptimisticState ? remoteStateFromOptimisticState(initialOptimisticState) : null,
+  )
+  const [loading, setLoading] = React.useState(() => !initialOptimisticState)
   const [error, setError] = React.useState<string | null>(null)
   const [sending, setSending] = React.useState(false)
   const [interrupting, setInterrupting] = React.useState(false)
@@ -458,13 +472,7 @@ export function SessionDetail({
     const optimisticState = getOptimisticSessionState(sessionId)
     if (isLocalOptimisticSession) {
       if (optimisticState) {
-        setState({
-          ...optimisticState,
-          notices: [],
-          eventCursor: `seq:${optimisticState.nextSeq}`,
-          effectiveCapabilities: null,
-          catalogs: {},
-        })
+        setState(remoteStateFromOptimisticState(optimisticState))
       }
       return
     }
@@ -656,13 +664,7 @@ export function SessionDetail({
     setError(null)
     const optimisticState = getOptimisticSessionStateRef.current(sessionId)
     if (optimisticState) {
-      setState({
-        ...optimisticState,
-        notices: [],
-        eventCursor: `seq:${optimisticState.nextSeq}`,
-        effectiveCapabilities: null,
-        catalogs: {},
-      })
+      setState(remoteStateFromOptimisticState(optimisticState))
       nextSeqRef.current = optimisticState.nextSeq
       setLoading(false)
     } else {
@@ -2011,7 +2013,7 @@ function effectiveRuntimeStatus(
 ): RuntimeStatusValue {
   if (runtimeState) return runtimeState.status
   if (session?.connectorStatus === "offline") return "disconnected"
-  return "idle"
+  return session?.status ?? "idle"
 }
 
 function mergeNotices(current: Notice[], incoming: Notice[]): Notice[] {

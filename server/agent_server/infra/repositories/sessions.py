@@ -284,7 +284,17 @@ class SessionRepositoryMixin:
             .where(
                 sessions_t.c.connector_id == connector_id,
                 sessions_t.c.runtime == runtime,
-                sessions_t.c.status.in_(("waiting", "pending", "running", "blocked", "stopping")),
+                sessions_t.c.status.in_(
+                    (
+                        "waiting",
+                        "pending",
+                        "running",
+                        "stopping",
+                        "waiting_approval",
+                        "error",
+                        "blocked",
+                    )
+                ),
                 connectors_t.c.revoked == 0,
             )
             .order_by(sessions_t.c.updated_at.asc())
@@ -339,6 +349,7 @@ class SessionRepositoryMixin:
                 sessions_t.c.id,
                 sessions_t.c.runtime,
                 sessions_t.c.external_session_id,
+                sessions_t.c.status,
                 sessions_t.c.updated_seq,
                 sessions_t.c.created_at,
                 sessions_t.c.updated_at,
@@ -356,7 +367,7 @@ class SessionRepositoryMixin:
             sessionId=row["id"],
             runtime=row["runtime"],
             externalSessionId=row["external_session_id"],
-            status="idle",
+            status=row["status"],
             selections={},
             updatedSeq=int(row["updated_seq"] or 0),
             createdAt=row["created_at"],

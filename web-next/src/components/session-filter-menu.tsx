@@ -32,6 +32,9 @@ export function SessionFilterMenu() {
     { value: "running", label: t("sessionStatus.running") },
     { value: "idle", label: t("sessionStatus.idle") },
     { value: "pending", label: t("sessionStatus.pending") },
+    { value: "waiting", label: t("sessionStatus.waiting") },
+    { value: "waiting_approval", label: t("sessionStatus.waitingApproval") },
+    { value: "error", label: t("sessionStatus.error") },
     { value: "blocked", label: t("sessionStatus.blocked") },
     { value: "stopping", label: t("sessionStatus.stopping") },
   ]

@@ -342,6 +342,10 @@ function SessionSidebarItem({
   const [renameOpen, setRenameOpen] = React.useState(false)
   const [titleDraft, setTitleDraft] = React.useState(item.title ?? "")
   const [renaming, setRenaming] = React.useState(false)
+  const isBusy = item.status === "running" || item.status === "waiting" || item.status === "pending"
+  const isWaitingApproval = item.status === "waiting_approval"
+  const isError = item.status === "error"
+  const isUnreadIdle = item.unread && item.status === "idle"
 
   React.useEffect(() => {
     if (!renameOpen) setTitleDraft(item.title ?? "")
@@ -397,21 +401,13 @@ function SessionSidebarItem({
                   isActive && "pr-[4.25rem]",
                 )}
               >
-                <span
-                  className={cn(
-                    "size-1.5 shrink-0 rounded-full border",
-                    item.unread
-                      ? "border-primary bg-primary"
-                      : item.status === "running"
-                      ? "border-emerald-500 bg-emerald-500"
-                      : item.status === "blocked"
-                        ? "border-amber-400/70"
-                        : item.status === "waiting" || item.status === "pending" || item.status === "stopping"
-                          ? "border-blue-400/70"
-                          : "border-muted-foreground/50",
-                  )}
+                <span className="min-w-0 flex-1 truncate">{item.title}</span>
+                <SessionSidebarIndicator
+                  busy={isBusy}
+                  error={isError}
+                  unreadIdle={isUnreadIdle}
+                  waitingApproval={isWaitingApproval}
                 />
-                <span className="truncate">{item.title}</span>
               </SidebarMenuButton>
             </div>
           </ContextMenuTrigger>
@@ -521,6 +517,53 @@ function SessionSidebarItem({
       </Dialog>
     </>
   )
+}
+
+function SessionSidebarIndicator({
+  busy,
+  error,
+  unreadIdle,
+  waitingApproval,
+}: {
+  busy: boolean
+  error: boolean
+  unreadIdle: boolean
+  waitingApproval: boolean
+}) {
+  const t = useTranslations("dashboard")
+
+  if (waitingApproval) {
+    return (
+      <span className="ml-2 shrink-0 rounded-full bg-emerald-500/20 px-2 py-0.5 text-[11px] font-medium leading-4 text-emerald-400 ring-1 ring-emerald-500/20">
+        {t("sessionStatus.waitingApproval")}
+      </span>
+    )
+  }
+  if (error) {
+    return (
+      <span
+        aria-label={t("sessionStatus.error")}
+        className="ml-2 size-2 shrink-0 rounded-full bg-destructive"
+      />
+    )
+  }
+  if (busy) {
+    return (
+      <span
+        aria-label={t("sessionStatus.running")}
+        className="ml-2 size-3.5 shrink-0 animate-spin rounded-full border-2 border-sidebar-foreground/25 border-t-sidebar-foreground/75"
+      />
+    )
+  }
+  if (unreadIdle) {
+    return (
+      <span
+        aria-label={t("sessionStatus.unread")}
+        className="ml-2 size-2 shrink-0 rounded-full bg-emerald-500"
+      />
+    )
+  }
+  return null
 }
 
 function DeviceSidebarItem({

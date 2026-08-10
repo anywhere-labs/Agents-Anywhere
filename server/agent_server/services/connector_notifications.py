@@ -657,10 +657,17 @@ async def _resolve_timeline_session_id(
 def _v2_session_status(value: Any) -> SessionStatus | None:
     if value is None:
         return None
-    if value in {"idle", "waiting", "pending", "running", "stopping", "blocked"}:
+    if value in {
+        "idle",
+        "waiting",
+        "pending",
+        "running",
+        "stopping",
+        "waiting_approval",
+        "error",
+        "blocked",
+    }:
         return str(value)
-    if value in {"waiting_approval", "error"}:
-        return "blocked"
     return "idle"
 
 

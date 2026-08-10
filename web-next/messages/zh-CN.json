@@ -743,8 +743,12 @@
     "sessionStatus": {
       "idle": "空闲",
       "pending": "等待中",
+      "waiting": "等待中",
       "running": "运行中",
       "stopping": "停止中",
+      "waitingApproval": "等待批准",
+      "error": "出错",
+      "unread": "未读",
       "blocked": "阻塞"
     },
     "signOut": {
