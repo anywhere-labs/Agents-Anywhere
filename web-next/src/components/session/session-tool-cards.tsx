@@ -60,8 +60,9 @@ export function ToolCard({
     textOf(item.content.outputText) ||
     textOf(item.content.error)
   const changes = recordsOf(item.content.changes)
+  const displayOutput = changes.length > 0 ? null : output
   const title = timelineToolTitle(item, session, tSession)
-  const hasDetail = Boolean(command || output || changes.length > 0 || interaction)
+  const hasDetail = Boolean(command || displayOutput || changes.length > 0 || interaction)
   const shouldOpenForInteraction = Boolean(interaction)
   const [localOpen, setLocalOpen] = React.useState(shouldOpenForInteraction)
   const actualOpen = open ?? localOpen
@@ -107,7 +108,7 @@ export function ToolCard({
             token={token}
             session={session}
             command={command}
-            output={output}
+            output={displayOutput}
             changes={changes}
           />
           {interaction ? (
