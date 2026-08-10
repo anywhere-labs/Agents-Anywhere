@@ -154,7 +154,8 @@ struct DeviceManagementView: View {
                 workspace: workspace,
                 service: workspaceFilesService
             )
-            .presentationDetents([.large])
+            .presentationDetents([.medium, .large])
+            .presentationContentInteraction(.resizes)
             .presentationDragIndicator(.visible)
         }
     }
