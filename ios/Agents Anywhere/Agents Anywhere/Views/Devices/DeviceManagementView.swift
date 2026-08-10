@@ -137,6 +137,9 @@ struct DeviceManagementView: View {
                     )
                 }
             )
+            .presentationDetents([.medium, .large])
+            .presentationContentInteraction(.resizes)
+            .presentationDragIndicator(.visible)
         }
         .sheet(item: $credential) { response in
             ConnectorCredentialSheet(

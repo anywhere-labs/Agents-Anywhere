@@ -486,6 +486,29 @@ final class AppState: ObservableObject {
         return try await services.devicePairing.discoverRuntimes(connectorId: connectorId)
     }
 
+    func devicePairingRuntimeConfigSchema(runtime: V2DeviceRuntime) throws -> V2RuntimeConfigSchema {
+        guard let services = makeV2Services() else {
+            throw V2BusinessError.signedInServerUnavailable
+        }
+        return try services.deviceManagement.configSchema(runtime: runtime)
+    }
+
+    /// Performs authenticated network I/O to save configuration and start a paired runtime.
+    func configureAndStartDevicePairingRuntime(
+        connectorId: V2ConnectorID,
+        runtimeId: V2RuntimeID,
+        config: [String: JSONValue]
+    ) async throws -> V2DeviceRuntime {
+        guard let services = makeV2Services() else {
+            throw V2BusinessError.signedInServerUnavailable
+        }
+        return try await services.deviceManagement.configureAndStartRuntime(
+            connectorId: connectorId,
+            runtimeId: runtimeId,
+            config: config
+        )
+    }
+
     var deviceManagementService: V2DeviceManagementService? {
         makeV2Services()?.deviceManagement
     }
