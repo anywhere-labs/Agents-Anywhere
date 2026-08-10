@@ -184,6 +184,50 @@ function sortSessionViews(sessions: SessionView[]): SessionView[] {
   )
 }
 
+function resolveSessionAlias(sessionId: string, aliases: Record<string, string>): string {
+  let current = sessionId
+  const seen = new Set<string>()
+  let next = aliases[current]
+  while (next && !seen.has(current)) {
+    seen.add(current)
+    current = next
+    next = aliases[current]
+  }
+  return current
+}
+
+function optimisticMessageMatchesSession(
+  message: OptimisticSessionMessage,
+  sessionId: string,
+  aliases: Record<string, string>,
+): boolean {
+  const canonicalId = resolveSessionAlias(sessionId, aliases)
+  const messageSessionId = resolveSessionAlias(message.sessionId, aliases)
+  const localSessionId = message.localSessionId ? resolveSessionAlias(message.localSessionId, aliases) : null
+  return (
+    message.sessionId === sessionId ||
+    message.localSessionId === sessionId ||
+    messageSessionId === canonicalId ||
+    localSessionId === canonicalId
+  )
+}
+
+function mergePendingOptimisticSessions(
+  sessions: SessionView[],
+  optimisticMessages: OptimisticSessionMessage[],
+  aliases: Record<string, string>,
+): SessionView[] {
+  const byId = new Map(sessions.map((session) => [session.id, session]))
+  for (const message of optimisticMessages) {
+    if (!message.session) continue
+    const mapped = mapSession(message.session)
+    const canonicalId = resolveSessionAlias(mapped.id, aliases)
+    if (byId.has(canonicalId)) continue
+    byId.set(canonicalId, mapped.id === canonicalId ? mapped : { ...mapped, id: canonicalId })
+  }
+  return sortSessionViews(Array.from(byId.values()))
+}
+
 function isDashboardSnapshotMessage(value: unknown): value is DashboardSnapshotMessage {
   if (!value || typeof value !== "object") return false
   const message = value as Partial<DashboardSnapshotMessage>
@@ -231,6 +275,9 @@ type WorkspaceState = {
   // Navigation
   page: AppPage
   activeSessionId: string | null
+  activeSession: SessionView | null
+  activeSessionFallback: RealSessionView | null
+  activeSessionPending: boolean
   activeConnectorId: string | null
   activeWorkspacePath: string | null
   settingsTab: string
@@ -354,16 +401,26 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [pairDeviceDialogOpen, setPairDeviceDialogOpen] = React.useState(false)
   const [composerInsertion, setComposerInsertion] = React.useState<ComposerInsertion | null>(null)
   const [optimisticMessages, setOptimisticMessages] = React.useState<OptimisticSessionMessage[]>([])
+  const [sessionAliases, setSessionAliases] = React.useState<Record<string, string>>({})
+  const optimisticMessagesRef = React.useRef<OptimisticSessionMessage[]>(optimisticMessages)
+  const sessionAliasesRef = React.useRef<Record<string, string>>(sessionAliases)
   const firstDeviceWizardCheckedRef = React.useRef(false)
   const composerInsertionSeqRef = React.useRef(0)
   const routeRef = React.useRef<ParsedRoute>({ page: "home" })
+
+  optimisticMessagesRef.current = optimisticMessages
+  sessionAliasesRef.current = sessionAliases
 
   // ── Fetch data from mock API ──────────────────────────────
   const initialLoadDoneRef = React.useRef(false)
 
   const applyDashboardSnapshot = React.useCallback((message: DashboardSnapshotMessage) => {
     const nextConnectors = message.connectors.map(mapConnector)
-    const nextSessions = sortSessionViews(message.sessions.map(mapSession))
+    const nextSessions = mergePendingOptimisticSessions(
+      message.sessions.map(mapSession),
+      optimisticMessagesRef.current,
+      sessionAliasesRef.current,
+    )
     setConnectors((current) => sameStableValue(current, nextConnectors) ? current : nextConnectors)
     setSessions((current) => sameStableValue(current, nextSessions) ? current : nextSessions)
     setIsLoading(false)
@@ -381,7 +438,11 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
           dashboardApi.listSessions(authSession.accessToken),
         ])
         const nextConnectors = connRes.connectors.map(mapConnector)
-        const nextSessions = sortSessionViews(sessRes.sessions.map(mapSession))
+        const nextSessions = mergePendingOptimisticSessions(
+          sessRes.sessions.map(mapSession),
+          optimisticMessagesRef.current,
+          sessionAliasesRef.current,
+        )
         setConnectors((current) => sameStableValue(current, nextConnectors) ? current : nextConnectors)
         setSessions((current) => sameStableValue(current, nextSessions) ? current : nextSessions)
         return
@@ -390,7 +451,11 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         listMockConnectors("mock-token"),
         listMockSessions("mock-token"),
       ])
-      const nextSessions = sortSessionViews(sessRes.sessions)
+      const nextSessions = mergePendingOptimisticSessions(
+        sessRes.sessions,
+        optimisticMessagesRef.current,
+        sessionAliasesRef.current,
+      )
       setConnectors((current) => sameStableValue(current, connRes.connectors) ? current : connRes.connectors)
       setSessions((current) => sameStableValue(current, nextSessions) ? current : nextSessions)
     } finally {
@@ -502,6 +567,12 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const pushRoute = React.useCallback((r: ParsedRoute) => {
     routeRef.current = r
     window.location.hash = buildHash(r)
+    React.startTransition(() => setRoute(r))
+  }, [])
+
+  const replaceRoute = React.useCallback((r: ParsedRoute) => {
+    routeRef.current = r
+    window.history.replaceState(null, "", buildHash(r))
     React.startTransition(() => setRoute(r))
   }, [])
 
@@ -693,9 +764,14 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const addOptimisticMessage = React.useCallback((message: OptimisticSessionMessage) => {
     setOptimisticMessages((prev) => {
       const index = prev.findIndex((item) => item.clientMessageId === message.clientMessageId)
-      if (index === -1) return [...prev, message]
+      if (index === -1) {
+        const next = [...prev, message]
+        optimisticMessagesRef.current = next
+        return next
+      }
       const next = [...prev]
       next[index] = message
+      optimisticMessagesRef.current = next
       return next
     })
     if (message.session) {
@@ -711,8 +787,14 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const bindOptimisticSession = React.useCallback((localSessionId: string, session: RealSessionView, attachments: AttachmentRef[] = []) => {
-    setOptimisticMessages((prev) =>
-      prev.map((message) =>
+    setSessionAliases((prev) => {
+      if (prev[localSessionId] === session.id) return prev
+      const next = { ...prev, [localSessionId]: session.id }
+      sessionAliasesRef.current = next
+      return next
+    })
+    setOptimisticMessages((prev) => {
+      const next = prev.map((message) =>
         message.sessionId === localSessionId || message.sessionId === session.id
           ? {
               ...message,
@@ -733,8 +815,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
               },
             }
           : message,
-      ),
-    )
+      )
+      optimisticMessagesRef.current = next
+      return next
+    })
     const mapped = mapSession(session)
     setSessions((prev) => {
       const withoutLocal = prev.filter((item) => item.id !== localSessionId)
@@ -746,18 +830,20 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     })
     const currentRoute = routeRef.current
     if (currentRoute.page === "session" && currentRoute.sessionId === localSessionId) {
-      pushRoute({ page: "session", sessionId: session.id })
+      replaceRoute({ page: "session", sessionId: session.id })
     }
-  }, [pushRoute])
+  }, [replaceRoute])
 
   const markOptimisticMessageFailed = React.useCallback((clientMessageId: string, message: string) => {
-    setOptimisticMessages((prev) =>
-      prev.map((entry) =>
+    setOptimisticMessages((prev) => {
+      const next = prev.map((entry) =>
         entry.clientMessageId === clientMessageId
           ? { ...entry, item: markOptimisticItemFailed(entry.item, message) }
           : entry,
-      ),
-    )
+      )
+      optimisticMessagesRef.current = next
+      return next
+    })
   }, [])
 
   const clearResolvedOptimisticMessages = React.useCallback((sessionId: string, items: TimelineItem[]) => {
@@ -778,18 +864,21 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         }
         next.push(message)
       }
+      optimisticMessagesRef.current = next
       return next
     })
   }, [])
 
   const getOptimisticItems = React.useCallback((sessionId: string) => {
     return optimisticMessages
-      .filter((message) => message.sessionId === sessionId)
+      .filter((message) => optimisticMessageMatchesSession(message, sessionId, sessionAliases))
       .map((message) => message.item)
-  }, [optimisticMessages])
+  }, [optimisticMessages, sessionAliases])
 
   const getOptimisticSessionState = React.useCallback((sessionId: string): SessionLocalTimelineState | null => {
-    const messages = optimisticMessages.filter((message) => message.sessionId === sessionId)
+    const messages = optimisticMessages.filter((message) =>
+      optimisticMessageMatchesSession(message, sessionId, sessionAliases),
+    )
     const session = messages.find((message) => message.session)?.session
     const state = messages.find((message) => message.state)?.state
     if (!session) return null
@@ -803,11 +892,15 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       hasMore: false,
       serverTime: new Date().toISOString(),
     }
-  }, [optimisticMessages])
+  }, [optimisticMessages, sessionAliases])
 
   const isOptimisticSession = React.useCallback((sessionId: string) => {
-    return optimisticMessages.some((message) => message.localSessionId === sessionId && message.sessionId === sessionId)
-  }, [optimisticMessages])
+    return optimisticMessages.some((message) =>
+      message.localSessionId === sessionId &&
+      message.sessionId === sessionId &&
+      !sessionAliases[sessionId],
+    )
+  }, [optimisticMessages, sessionAliases])
 
   const appendPathToComposer = React.useCallback((path: string) => {
     if (route.page !== "session" || !route.sessionId) return false
@@ -827,7 +920,18 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const validPages: AppPage[] = ["home", "session", "settings", "dashboard", "team", "service", "device", "device-workspace"]
   const page: AppPage = validPages.includes(route.page as AppPage) ? (route.page as AppPage) : "home"
 
-  const activeSessionId = route.page === "session" ? route.sessionId : null
+  const routeSessionId = route.page === "session" ? route.sessionId : null
+  const activeSessionId = routeSessionId ? resolveSessionAlias(routeSessionId, sessionAliases) : null
+  const activeSessionOptimisticState = activeSessionId ? getOptimisticSessionState(activeSessionId) : null
+  const activeSession = activeSessionId
+    ? sessions.find((item) => item.id === activeSessionId) ??
+      (activeSessionOptimisticState?.session ? mapSession(activeSessionOptimisticState.session) : null)
+    : null
+  const activeSessionPending = Boolean(
+    routeSessionId &&
+      !activeSession &&
+      (routeSessionId.startsWith("session_") || sessionAliases[routeSessionId]),
+  )
   const activeConnectorId = (route.page === "device" || route.page === "device-workspace") ? route.connectorId : null
   const activeWorkspacePath = route.page === "device-workspace" ? route.workspacePath : null
   const settingsTab = route.page === "settings" ? route.tab : "account"
@@ -839,6 +943,9 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     routeReady,
     page,
     activeSessionId,
+    activeSession,
+    activeSessionFallback: activeSessionOptimisticState?.session ?? null,
+    activeSessionPending,
     activeConnectorId,
     activeWorkspacePath,
     settingsTab,
